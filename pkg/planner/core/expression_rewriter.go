@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -91,7 +92,7 @@ func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema 
 	}
 	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
 	b.allowBuildCastArray = allowCastArray
-	fakePlan := LogicalTableDual{}.Init(sctx, 0)
+	fakePlan := logicalop.LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
 		fakePlan.SetSchema(schema)
 		fakePlan.SetOutputNames(names)
@@ -813,7 +814,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 // it will be rewrote to t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np base.LogicalPlan, useMin bool, cmpFunc string, all, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
-	plan4Agg := LogicalAggregation{}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
+	plan4Agg := logicalop.LogicalAggregation{}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
 		plan4Agg.PreferAggType = hintinfo.PreferAggType
 		plan4Agg.PreferAggToCop = hintinfo.PreferAggToCop
@@ -848,12 +849,12 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 }
 
 // buildQuantifierPlan adds extra condition for any / all subquery.
-func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, plan4Agg *LogicalAggregation, cond, lexpr, rexpr expression.Expression, all, markNoDecorrelate bool) {
+func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, plan4Agg *logicalop.LogicalAggregation, cond, lexpr, rexpr expression.Expression, all, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
 	innerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr)
 	outerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), lexpr)
-
-	funcSum, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{innerIsNull}, false)
+	exprCtx := planCtx.builder.ctx.GetExprCtx()
+	funcSum, err := aggregation.NewAggFuncDesc(exprCtx, ast.AggFuncSum, []expression.Expression{innerIsNull}, false)
 	if err != nil {
 		er.err = err
 		return
@@ -868,7 +869,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	innerHasNull := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colSum, expression.NewZero())
 
 	// Build `count(1)` aggregation to check if subquery is empty.
-	funcCount, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
+	funcCount, err := aggregation.NewAggFuncDesc(exprCtx, ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
 	if err != nil {
 		er.err = err
 		return
@@ -911,9 +912,9 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	}
 	// If we treat the result as a scalar value, we will add a projection with a extra column to output true, false or null.
 	outerSchemaLen := planCtx.plan.Schema().Len()
-	planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, plan4Agg, InnerJoin, markNoDecorrelate)
+	planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, plan4Agg, logicalop.InnerJoin, markNoDecorrelate)
 	joinSchema := planCtx.plan.Schema()
-	proj := LogicalProjection{
+	proj := logicalop.LogicalProjection{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
 	}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 	proj.SetOutputNames(make([]*types.FieldName, outerSchemaLen, outerSchemaLen+1))
@@ -950,7 +951,7 @@ func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, r
 		er.err = err
 		return
 	}
-	plan4Agg := LogicalAggregation{
+	plan4Agg := logicalop.LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(sctx, planCtx.builder.getSelectOffset())
 	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
@@ -993,7 +994,7 @@ func (er *expressionRewriter) handleEQAll(planCtx *exprRewriterPlanCtx, lexpr, r
 		er.err = err
 		return
 	}
-	plan4Agg := LogicalAggregation{
+	plan4Agg := logicalop.LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(sctx, planCtx.builder.getSelectOffset())
 	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
@@ -1117,11 +1118,11 @@ out:
 		switch plan := p.(type) {
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
-		case *LogicalProjection, *LogicalSort:
+		case *logicalop.LogicalProjection, *logicalop.LogicalSort:
 			p = p.Children()[0]
-		case *LogicalAggregation:
+		case *logicalop.LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {
-				p = LogicalTableDual{RowCount: 1}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
+				p = logicalop.LogicalTableDual{RowCount: 1}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 				break out
 			}
 			p = p.Children()[0]
@@ -1236,7 +1237,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 			return v, true
 		}
 		// Build inner join above the aggregation.
-		join := LogicalJoin{JoinType: InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
+		join := logicalop.LogicalJoin{JoinType: logicalop.InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 		join.SetChildren(planCtx.plan, agg)
 		join.SetSchema(expression.MergeSchema(planCtx.plan.Schema(), agg.Schema()))
 		join.SetOutputNames(make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len()))
@@ -1245,7 +1246,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if planCtx.builder.TableHints() != nil {
-			join.setPreferredJoinTypeAndOrder(planCtx.builder.TableHints())
+			join.SetPreferredJoinTypeAndOrder(planCtx.builder.TableHints())
 		}
 		planCtx.plan = join
 	} else {
@@ -1282,7 +1283,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	}
 
 	if planCtx.builder.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
-		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, LeftOuterJoin, noDecorrelate)
+		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, logicalop.LeftOuterJoin, noDecorrelate)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
 			for _, col := range np.Schema().Columns {
@@ -1898,7 +1899,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 					if c.GetType(er.sctx.GetEvalCtx()).EvalType() == types.ETInt {
 						continue // no need to refine it
 					}
-					er.sctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to INT", c.String()))
+					er.sctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to INT", c.StringWithCtx(er.sctx.GetEvalCtx(), errors.RedactLogDisable)))
 					if err := expression.RemoveMutableConst(er.sctx, []expression.Expression{c}); err != nil {
 						er.err = err
 						return
@@ -2456,7 +2457,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
-	if _, ok := planCtx.plan.(*LogicalUnionAll); ok && v.Table.O != "" {
+	if _, ok := planCtx.plan.(*logicalop.LogicalUnionAll); ok && v.Table.O != "" {
 		er.err = plannererrors.ErrTablenameNotAllowedHere.GenWithStackByArgs(v.Table.O, "SELECT", clauseMsg[planCtx.builder.curClause])
 		return
 	}
@@ -2468,9 +2469,9 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 
 func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, err error) {
 	switch x := p.(type) {
-	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
+	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
-	case *LogicalJoin:
+	case *logicalop.LogicalJoin:
 		if x.FullSchema != nil {
 			idx, err := expression.FindFieldName(x.FullNames, v)
 			if err != nil {
@@ -2545,7 +2546,7 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 		return
 	}
 	var tbl table.Table
-	tbl, er.err = planCtx.builder.is.TableByName(dbName, name.OrigTblName)
+	tbl, er.err = planCtx.builder.is.TableByName(context.Background(), dbName, name.OrigTblName)
 	if er.err != nil {
 		return
 	}

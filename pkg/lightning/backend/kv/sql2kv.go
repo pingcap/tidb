@@ -246,7 +246,7 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
 		record = append(record, value)
 	}
 
-	if common.TableHasAutoRowID(kvcodec.Table.Meta()) {
+	if common.TableHasAutoRowID(kvcodec.table.Meta()) {
 		rowValue := rowID
 		j := columnPermutation[len(kvcodec.Columns)]
 		if j >= 0 && j < len(row) {
@@ -261,7 +261,7 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
 			return nil, kvcodec.LogKVConvertFailed(row, j, ExtraHandleColumnInfo, err)
 		}
 		record = append(record, value)
-		alloc := kvcodec.Table.Allocators(kvcodec.SessionCtx.GetTableCtx()).Get(autoid.RowIDAllocType)
+		alloc := kvcodec.TableAllocators().Get(autoid.RowIDAllocType)
 		if err := alloc.Rebase(context.Background(), rowValue, false); err != nil {
 			return nil, errors.Trace(err)
 		}

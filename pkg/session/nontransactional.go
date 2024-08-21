@@ -585,7 +585,7 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Sessio
 
 	if len(tableSources) == 1 {
 		// single table
-		leftMostTable, err := domain.GetDomain(se).InfoSchema().TableByName(leftMostTableName.Schema, leftMostTableName.Name)
+		leftMostTable, err := domain.GetDomain(se).InfoSchema().TableByName(context.Background(), leftMostTableName.Schema, leftMostTableName.Name)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -598,7 +598,7 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Sessio
 	} else {
 		// multi table join
 		if stmt.ShardColumn == nil {
-			leftMostTable, err := domain.GetDomain(se).InfoSchema().TableByName(leftMostTableName.Schema, leftMostTableName.Name)
+			leftMostTable, err := domain.GetDomain(se).InfoSchema().TableByName(context.Background(), leftMostTableName.Schema, leftMostTableName.Name)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -636,7 +636,7 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Sessio
 					)
 			}
 
-			tbl, err := domain.GetDomain(se).InfoSchema().TableByName(specifiedDbName, chosenTableName)
+			tbl, err := domain.GetDomain(se).InfoSchema().TableByName(context.Background(), specifiedDbName, chosenTableName)
 			if err != nil {
 				return nil, nil, err
 			}

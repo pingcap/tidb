@@ -138,7 +138,7 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(
 ) (paths []*util.AccessPath, needSelection bool, usedMap []bool) {
 	paths = make([]*util.AccessPath, 0, len(dnfItems))
 	usedMap = make([]bool, len(dnfItems))
-	pushDownCtx := GetPushDownCtx(ds.SCtx())
+	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	for offset, item := range dnfItems {
 		cnfItems := expression.SplitCNFItems(item)
 		pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
@@ -207,7 +207,7 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(
 //	}
 func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression) error {
 	usedIndexCount := len(ds.PossibleAccessPaths)
-	pushDownCtx := GetPushDownCtx(ds.SCtx())
+	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	for k, cond := range filters {
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
@@ -524,7 +524,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 	finalFilters := make([]expression.Expression, 0)
 	partialFilters := make([]expression.Expression, 0, len(partialPaths))
 	hashCodeSet := make(map[string]struct{})
-	pushDownCtx := GetPushDownCtx(ds.SCtx())
+	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	for _, path := range partialPaths {
 		// Classify filters into coveredConds and notCoveredConds.
 		coveredConds := make([]expression.Expression, 0, len(path.AccessConds)+len(path.IndexFilters))
@@ -730,7 +730,7 @@ func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, index
 			// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
 			warnings := stmtCtx.GetWarnings()
 			extraWarnings := stmtCtx.GetExtraWarnings()
-			_, remaining := expression.PushDownExprs(GetPushDownCtx(ds.SCtx()), indexMergeConds, kv.UnSpecified)
+			_, remaining := expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), indexMergeConds, kv.UnSpecified)
 			stmtCtx.SetWarnings(warnings)
 			stmtCtx.SetExtraWarnings(extraWarnings)
 			if len(remaining) > 0 {
@@ -981,7 +981,29 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			remainedCNFs = append(remainedCNFs, CNFItem)
 		}
 	}
-	mvp := ds.buildPartialPathUp4MVIndex(combinedPartialPaths, true, remainedCNFs, ds.TableStats.HistColl)
+
+	condInIdxFilter := make(map[string]struct{}, len(remainedCNFs))
+	// try to derive index filters for each path
+	for _, path := range combinedPartialPaths {
+		idxFilters, _ := ds.splitIndexFilterConditions(remainedCNFs, path.FullIdxCols, path.FullIdxColLens)
+		idxFilters = util.CloneExprs(idxFilters)
+		path.IndexFilters = append(path.IndexFilters, idxFilters...)
+		for _, idxFilter := range idxFilters {
+			condInIdxFilter[string(idxFilter.HashCode())] = struct{}{}
+		}
+	}
+
+	// Collect the table filters.
+	// Since it's the intersection type index merge here, as long as a filter appears in one path, we don't need it in
+	// the table filters.
+	var tableFilters []expression.Expression
+	for _, CNFItem := range remainedCNFs {
+		if _, ok := condInIdxFilter[string(CNFItem.HashCode())]; !ok {
+			tableFilters = append(tableFilters, CNFItem)
+		}
+	}
+
+	mvp := buildPartialPathUp4MVIndex(combinedPartialPaths, true, tableFilters, ds.TableStats.HistColl)
 
 	ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, mvp)
 	return nil
@@ -1046,10 +1068,27 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue
 		}
 
-		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, ds.buildPartialPathUp4MVIndex(
+		// Here, all partial paths are built from the same MV index, so we can directly use the first one to get the
+		// metadata.
+		// And according to buildPartialPaths4MVIndex, there must be at least one partial path if it returns ok.
+		firstPath := partialPaths[0]
+		idxFilters, tableFilters := ds.splitIndexFilterConditions(
+			remainingFilters,
+			firstPath.FullIdxCols,
+			firstPath.FullIdxColLens,
+		)
+
+		// Add the index filters to every partial path.
+		// For union type index merge, this is necessary for correctness.
+		for _, path := range partialPaths {
+			clonedIdxFilters := util.CloneExprs(idxFilters)
+			path.IndexFilters = append(path.IndexFilters, clonedIdxFilters...)
+		}
+
+		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, buildPartialPathUp4MVIndex(
 			partialPaths,
 			isIntersection,
-			remainingFilters,
+			tableFilters,
 			ds.TableStats.HistColl,
 		),
 		)
@@ -1058,7 +1097,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 }
 
 // buildPartialPathUp4MVIndex builds these partial paths up to a complete index merge path.
-func (*DataSource) buildPartialPathUp4MVIndex(
+func buildPartialPathUp4MVIndex(
 	partialPaths []*util.AccessPath,
 	isIntersection bool,
 	remainingFilters []expression.Expression,
@@ -1214,10 +1253,16 @@ func buildPartialPath4MVIndex(
 	partialPath := &util.AccessPath{Index: mvIndex}
 	partialPath.Ranges = ranger.FullRange()
 	for i := 0; i < len(idxCols); i++ {
+		length := mvIndex.Columns[i].Length
+		// For full length prefix index, we consider it as non prefix index.
+		// This behavior is the same as in IndexInfo2Cols(), which is used for non mv index.
+		if length == idxCols[i].RetType.GetFlen() {
+			length = types.UnspecifiedLength
+		}
 		partialPath.IdxCols = append(partialPath.IdxCols, idxCols[i])
-		partialPath.IdxColLens = append(partialPath.IdxColLens, mvIndex.Columns[i].Length)
+		partialPath.IdxColLens = append(partialPath.IdxColLens, length)
 		partialPath.FullIdxCols = append(partialPath.FullIdxCols, idxCols[i])
-		partialPath.FullIdxColLens = append(partialPath.FullIdxColLens, mvIndex.Columns[i].Length)
+		partialPath.FullIdxColLens = append(partialPath.FullIdxColLens, length)
 	}
 	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl); err != nil {
 		return nil, false, err

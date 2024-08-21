@@ -57,6 +57,7 @@ go_library(
         "//pkg/util/set",
         "//pkg/util/size",
         "//pkg/util/stmtsummary",
+        "//pkg/util/tracing",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

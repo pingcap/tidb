@@ -157,7 +157,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 	if !isView {
 		return false, nil
 	}
-	viewTbl, err := tne.is.TableByName(schema, table)
+	viewTbl, err := tne.is.TableByName(context.Background(), schema, table)
 	if err != nil {
 		return false, err
 	}
@@ -449,7 +449,7 @@ func dumpTiFlashReplica(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableN
 	for pair := range pairs {
 		dbName := model.NewCIStr(pair.DBName)
 		tableName := model.NewCIStr(pair.TableName)
-		t, err := is.TableByName(dbName, tableName)
+		t, err := is.TableByName(context.Background(), dbName, tableName)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to find table info", zap.Error(err),
 				zap.String("dbName", dbName.L), zap.String("tableName", tableName.L))
@@ -500,7 +500,7 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 		if pair.IsView {
 			continue
 		}
-		tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 		if err != nil {
 			return err
 		}
@@ -780,7 +780,7 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*util.JSONTable, []string, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
-	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 	if err != nil {
 		return nil, nil, err
 	}

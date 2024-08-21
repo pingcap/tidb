@@ -15,7 +15,6 @@
 package contextstatic
 
 import (
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,16 +40,13 @@ func TestNewStaticExprCtx(t *testing.T) {
 
 func TestStaticExprCtxApplyOptions(t *testing.T) {
 	ctx := NewStaticExprContext()
-	oldCanUseCache := ctx.canUseCache
 	oldEvalCtx := ctx.evalCtx
 	oldColumnIDAllocator := ctx.columnIDAllocator
 
 	// apply with options
 	opts, s := getExprCtxOptionsForTest()
 	ctx2 := ctx.Apply(opts...)
-	require.NotSame(t, oldCanUseCache, ctx2.canUseCache)
 	require.Equal(t, oldEvalCtx, ctx.evalCtx)
-	require.Same(t, oldCanUseCache, ctx.canUseCache)
 	require.Same(t, oldColumnIDAllocator, ctx.columnIDAllocator)
 	checkDefaultStaticExprCtx(t, ctx)
 	checkOptionsStaticExprCtx(t, ctx2, s)
@@ -59,7 +55,6 @@ func TestStaticExprCtxApplyOptions(t *testing.T) {
 	ctx3 := ctx2.Apply()
 	s.skipCacheArgs = nil
 	checkOptionsStaticExprCtx(t, ctx3, s)
-	require.NotSame(t, ctx2.canUseCache, ctx3.canUseCache)
 }
 
 func checkDefaultStaticExprCtx(t *testing.T, ctx *StaticExprContext) {
@@ -76,7 +71,6 @@ func checkDefaultStaticExprCtx(t *testing.T, ctx *StaticExprContext) {
 	require.Equal(t, variable.TiDBOptOnOffWarn(variable.DefTiDBEnableNoopFuncs), ctx.GetNoopFuncsMode())
 	require.NotNil(t, ctx.Rng())
 	require.True(t, ctx.IsUseCache())
-	require.Nil(t, ctx.skipCacheHandleFunc)
 	require.NotNil(t, ctx.columnIDAllocator)
 	_, ok := ctx.columnIDAllocator.(*context.SimplePlanColumnIDAllocator)
 	require.True(t, ok)
@@ -98,6 +92,7 @@ func getExprCtxOptionsForTest() ([]StaticExprCtxOption, *exprCtxOptionsTestState
 		colIDAlloc: context.NewSimplePlanColumnIDAllocator(1024),
 		rng:        mathutil.NewWithSeed(12345678),
 	}
+	planCacheTracker := contextutil.NewPlanCacheTracker(s.evalCtx)
 
 	return []StaticExprCtxOption{
 		WithEvalCtx(s.evalCtx),
@@ -107,10 +102,7 @@ func getExprCtxOptionsForTest() ([]StaticExprCtxOption, *exprCtxOptionsTestState
 		WithSysDateIsNow(true),
 		WithNoopFuncsMode(variable.WarnInt),
 		WithRng(s.rng),
-		WithUseCache(false),
-		WithSkipCacheHandleFunc(func(useCache *atomic.Bool, skipReason string) {
-			s.skipCacheArgs = []any{useCache, skipReason}
-		}),
+		WithPlanCacheTracker(&planCacheTracker),
 		WithColumnIDAllocator(s.colIDAlloc),
 		WithConnectionID(778899),
 		WithWindowingUseHighPrecision(false),
@@ -131,89 +123,10 @@ func checkOptionsStaticExprCtx(t *testing.T, ctx *StaticExprContext, s *exprCtxO
 	require.False(t, ctx.IsUseCache())
 	require.Nil(t, s.skipCacheArgs)
 	ctx.SetSkipPlanCache("reason")
-	require.Equal(t, []any{ctx.canUseCache, "reason"}, s.skipCacheArgs)
 	require.Same(t, s.colIDAlloc, ctx.columnIDAllocator)
 	require.Equal(t, uint64(778899), ctx.ConnectionID())
 	require.False(t, ctx.GetWindowingUseHighPrecision())
 	require.Equal(t, uint64(2233445566), ctx.GetGroupConcatMaxLen())
-}
-
-func TestStaticExprCtxUseCache(t *testing.T) {
-	// default implement
-	ctx := NewStaticExprContext()
-	require.True(t, ctx.IsUseCache())
-	require.Nil(t, ctx.skipCacheHandleFunc)
-	ctx.SetSkipPlanCache("reason")
-	require.False(t, ctx.IsUseCache())
-	require.Empty(t, ctx.GetEvalCtx().TruncateWarnings(0))
-
-	ctx = NewStaticExprContext(WithUseCache(false))
-	require.False(t, ctx.IsUseCache())
-	require.Nil(t, ctx.skipCacheHandleFunc)
-	ctx.SetSkipPlanCache("reason")
-	require.False(t, ctx.IsUseCache())
-	require.Empty(t, ctx.GetEvalCtx().TruncateWarnings(0))
-
-	ctx = NewStaticExprContext(WithUseCache(true))
-	require.True(t, ctx.IsUseCache())
-	require.Nil(t, ctx.skipCacheHandleFunc)
-	ctx.SetSkipPlanCache("reason")
-	require.False(t, ctx.IsUseCache())
-	require.Empty(t, ctx.GetEvalCtx().TruncateWarnings(0))
-
-	// custom skip func
-	var args []any
-	calls := 0
-	ctx = NewStaticExprContext(WithSkipCacheHandleFunc(func(useCache *atomic.Bool, skipReason string) {
-		args = []any{useCache, skipReason}
-		calls++
-		if calls > 1 {
-			useCache.Store(false)
-		}
-	}))
-	ctx.SetSkipPlanCache("reason1")
-	// If we use `WithSkipCacheHandleFunc`, useCache will be set in function
-	require.Equal(t, 1, calls)
-	require.True(t, ctx.IsUseCache())
-	require.Equal(t, []any{ctx.canUseCache, "reason1"}, args)
-
-	args = nil
-	ctx.SetSkipPlanCache("reason2")
-	require.Equal(t, 2, calls)
-	require.False(t, ctx.IsUseCache())
-	require.Equal(t, []any{ctx.canUseCache, "reason2"}, args)
-
-	// apply
-	ctx = NewStaticExprContext()
-	require.True(t, ctx.IsUseCache())
-	ctx2 := ctx.Apply(WithUseCache(false))
-	require.False(t, ctx2.IsUseCache())
-	require.True(t, ctx.IsUseCache())
-	require.NotSame(t, ctx.canUseCache, ctx2.canUseCache)
-	require.Nil(t, ctx.skipCacheHandleFunc)
-	require.Nil(t, ctx2.skipCacheHandleFunc)
-
-	var args2 []any
-	fn1 := func(useCache *atomic.Bool, skipReason string) { args = []any{useCache, skipReason} }
-	fn2 := func(useCache *atomic.Bool, skipReason string) { args2 = []any{useCache, skipReason} }
-	ctx = NewStaticExprContext(WithUseCache(false), WithSkipCacheHandleFunc(fn1))
-	require.False(t, ctx.IsUseCache())
-	ctx2 = ctx.Apply(WithUseCache(true), WithSkipCacheHandleFunc(fn2))
-	require.NotSame(t, ctx.canUseCache, ctx2.canUseCache)
-	require.False(t, ctx.IsUseCache())
-	require.True(t, ctx2.IsUseCache())
-
-	args = nil
-	args2 = nil
-	ctx.SetSkipPlanCache("reasonA")
-	require.Equal(t, []any{ctx.canUseCache, "reasonA"}, args)
-	require.Nil(t, args2)
-
-	args = nil
-	args2 = nil
-	ctx2.SetSkipPlanCache("reasonB")
-	require.Nil(t, args)
-	require.Equal(t, []any{ctx2.canUseCache, "reasonB"}, args2)
 }
 
 func TestExprCtxColumnIDAllocator(t *testing.T) {

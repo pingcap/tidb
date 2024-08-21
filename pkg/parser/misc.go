@@ -1025,6 +1025,7 @@ var hintTokenMap = map[string]int{
 	"SET_VAR":               hintSetVar,
 	"RESOURCE_GROUP":        hintResourceGroup,
 	"QB_NAME":               hintQBName,
+	"HYPO_INDEX":            hintHypoIndex,
 
 	// TiDB hint names
 	"AGG_TO_COP":              hintAggToCop,

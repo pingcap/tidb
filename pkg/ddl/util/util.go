@@ -423,5 +423,5 @@ func GenKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model
 			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
 		return errors.Trace(kv.ErrKeyExists.FastGenByArgs(key, indexName))
 	}
-	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
+	return kv.GenKeyExistsErr(valueStr, indexName)
 }

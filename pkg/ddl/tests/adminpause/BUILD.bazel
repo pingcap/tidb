@@ -29,12 +29,11 @@ go_test(
     ],
     embed = [":adminpause"],
     flaky = True,
-    shard_count = 14,
+    shard_count = 15,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/testutil",
-        "//pkg/ddl/util/callback",
         "//pkg/domain",
         "//pkg/errno",
         "//pkg/parser/model",

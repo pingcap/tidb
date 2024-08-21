@@ -29,12 +29,17 @@ import (
 	"github.com/pingcap/tidb/pkg/util/serialization"
 )
 
-const sizeOfNextPtr = int(unsafe.Sizeof(unsafe.Pointer(nil)))
+const sizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
 const sizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
 const usedFlagMaskBigEndian = uint32(1) << 31
 const usedFlagMaskLittleEndian = uint32(1) << 7
+const sizeOfUnsafePointer = int(unsafe.Sizeof(unsafe.Pointer(nil)))
+const sizeOfUintptr = int(unsafe.Sizeof(uintptr(0)))
 
 var fakeAddrPlaceHolder = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+
+//go:linkname heapObjectsCanMove runtime.heapObjectsCanMove
+func heapObjectsCanMove() bool
 
 type rowTableSegment struct {
 	/*
@@ -61,35 +66,41 @@ type rowTableSegment struct {
 	   * join key is not inlined + have other conditions: columns used in other condition, rest columns that will be used as join output
 	   * join key is not inlined + no other conditions: columns that will be used as join output
 	*/
-	rawData         []byte           // the chunk of memory to save the row data
-	hashValues      []uint64         // the hash value of each rows
-	rowLocations    []unsafe.Pointer // the start address of each row
-	validJoinKeyPos []int            // the pos of rows that need to be inserted into hash table, used in hash table build
-	finalized       bool
+	rawData         []byte   // the chunk of memory to save the row data
+	hashValues      []uint64 // the hash value of each rows
+	rowStartOffset  []uint64 // the start address of each row
+	validJoinKeyPos []int    // the pos of rows that need to be inserted into hash table, used in hash table build
+	finalized       bool     // after finalized is set to true, no further modification is allowed
 }
 
 func (rts *rowTableSegment) totalUsedBytes() int64 {
 	ret := int64(cap(rts.rawData))
 	ret += int64(cap(rts.hashValues) * int(serialization.Uint64Len))
-	ret += int64(cap(rts.rowLocations) * sizeOfNextPtr)
+	ret += int64(cap(rts.rowStartOffset) * int(serialization.Uint64Len))
 	ret += int64(cap(rts.validJoinKeyPos) * int(serialization.IntLen))
 	return ret
 }
 
+func (rts *rowTableSegment) getRowPointer(index int) unsafe.Pointer {
+	return unsafe.Pointer(&rts.rawData[rts.rowStartOffset[index]])
+}
+
 const maxRowTableSegmentSize = 1024
 
-func newRowTableSegment() *rowTableSegment {
+// 64 MB
+const maxRowTableSegmentByteSize = 64 * 1024 * 1024
+
+func newRowTableSegment(rowSizeHint uint) *rowTableSegment {
 	return &rowTableSegment{
-		// TODO: @XuHuaiyu if joinKeyIsInlined, the cap of rawData can be calculated
 		rawData:         make([]byte, 0),
-		hashValues:      make([]uint64, 0, maxRowTableSegmentSize),
-		rowLocations:    make([]unsafe.Pointer, 0, maxRowTableSegmentSize),
-		validJoinKeyPos: make([]int, 0, maxRowTableSegmentSize),
+		hashValues:      make([]uint64, 0, rowSizeHint),
+		rowStartOffset:  make([]uint64, 0, rowSizeHint),
+		validJoinKeyPos: make([]int, 0, rowSizeHint),
 	}
 }
 
 func (rts *rowTableSegment) rowCount() int64 {
-	return int64(len(rts.rowLocations))
+	return int64(len(rts.rowStartOffset))
 }
 
 func (rts *rowTableSegment) validKeyCount() uint64 {
@@ -100,14 +111,14 @@ func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress unsafe.Pointer) {
 	// Save unsafe.Pointer into current Row header. Generally speaking it is unsafe or even illegal in go
 	// since after save the value of unsafe.Pointer into row header, it has no pointer semantics the value
 	// in the row header may become invalid after GC. It is ok to save unsafe.Pointer so far because
-	// 1. Go has a non-moving GC(https://tip.golang.org/doc/gc-guide), which means if the object is in heap, the address will not be changed after GC
+	// 1. the check of heapObjectsCanMove makes sure that if the object is in heap, the address will not be changed after GC
 	// 2. `rowStart` only points to a valid address in `rawData`. `rawData` is a slice in `rowTableSegment`, and it will be used by multiple goroutines,
 	//    and its size will be runtime expanded, this kind of slice will always be allocated in heap
 	*(*unsafe.Pointer)(rowStart) = nextRowAddress
 }
 
-func getNextRowAddress(rowStart unsafe.Pointer) unsafe.Pointer {
-	return *(*unsafe.Pointer)(rowStart)
+func getNextRowAddress(rowStart unsafe.Pointer) uintptr {
+	return uintptr(*(*unsafe.Pointer)(rowStart))
 }
 
 // TableMeta is the join table meta used in hash join v2
@@ -172,7 +183,7 @@ func (meta *TableMeta) getKeyBytes(rowStart unsafe.Pointer) []byte {
 func (meta *TableMeta) advanceToRowData(matchedRowInfo *matchedRowInfo) {
 	if meta.rowDataOffset == -1 {
 		// variable length, non-inlined key
-		matchedRowInfo.buildRowOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfLengthField + int(meta.getSerializedKeyLength(matchedRowInfo.buildRowStart))
+		matchedRowInfo.buildRowOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfLengthField + int(meta.getSerializedKeyLength(*(*unsafe.Pointer)(unsafe.Pointer(&matchedRowInfo.buildRowStart))))
 	} else {
 		matchedRowInfo.buildRowOffset = meta.rowDataOffset
 	}
@@ -201,12 +212,12 @@ type rowTable struct {
 }
 
 // used for test
-func (rt *rowTable) getRowStart(rowIndex int) unsafe.Pointer {
+func (rt *rowTable) getRowPointer(rowIndex int) unsafe.Pointer {
 	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
-		if rowIndex < len(rt.segments[segIndex].rowLocations) {
-			return rt.segments[segIndex].rowLocations[rowIndex]
+		if rowIndex < len(rt.segments[segIndex].rowStartOffset) {
+			return rt.segments[segIndex].getRowPointer(rowIndex)
 		}
-		rowIndex -= len(rt.segments[segIndex].rowLocations)
+		rowIndex -= len(rt.segments[segIndex].rowStartOffset)
 	}
 	return nil
 }
@@ -218,17 +229,16 @@ func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 			return startOffset + rt.segments[segIndex].validJoinKeyPos[rowIndex]
 		}
 		rowIndex -= len(rt.segments[segIndex].validJoinKeyPos)
-		startOffset += len(rt.segments[segIndex].rowLocations)
+		startOffset += len(rt.segments[segIndex].rowStartOffset)
 	}
 	return -1
 }
 
 type keyProp struct {
-	canBeInlined        bool
-	keyLength           int
-	isStringRelatedType bool
-	isKeyInteger        bool
-	isKeyUnsigned       bool
+	canBeInlined  bool
+	keyLength     int
+	isKeyInteger  bool
+	isKeyUnsigned bool
 }
 
 func getKeyProp(tp *types.FieldType) *keyProp {
@@ -243,31 +253,31 @@ func getKeyProp(tp *types.FieldType) *keyProp {
 			// duration type is always signed
 			isKeyUnsigned = false
 		}
-		return &keyProp{canBeInlined: true, keyLength: chunk.GetFixedLen(tp), isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: isKeyUnsigned}
+		return &keyProp{canBeInlined: true, keyLength: chunk.GetFixedLen(tp), isKeyInteger: true, isKeyUnsigned: isKeyUnsigned}
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		collator := collate.GetCollator(tp.GetCollate())
-		return &keyProp{canBeInlined: collate.CanUseRawMemAsKey(collator), keyLength: chunk.VarElemLen, isStringRelatedType: true, isKeyInteger: false, isKeyUnsigned: false}
+		return &keyProp{canBeInlined: collate.CanUseRawMemAsKey(collator), keyLength: chunk.VarElemLen, isKeyInteger: false, isKeyUnsigned: false}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		// date related type will use uint64 as serialized key
-		return &keyProp{canBeInlined: false, keyLength: int(serialization.Uint64Len), isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: true}
+		return &keyProp{canBeInlined: false, keyLength: int(serialization.Uint64Len), isKeyInteger: true, isKeyUnsigned: true}
 	case mysql.TypeFloat:
 		// float will use float64 as serialized key
-		return &keyProp{canBeInlined: false, keyLength: int(serialization.Float64Len), isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
+		return &keyProp{canBeInlined: false, keyLength: int(serialization.Float64Len), isKeyInteger: false, isKeyUnsigned: false}
 	case mysql.TypeNewDecimal:
 		// Although decimal is fixed length, but its key is not fixed length
-		return &keyProp{canBeInlined: false, keyLength: chunk.VarElemLen, isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
+		return &keyProp{canBeInlined: false, keyLength: chunk.VarElemLen, isKeyInteger: false, isKeyUnsigned: false}
 	case mysql.TypeEnum:
 		if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
 			// enum int type is always unsigned
-			return &keyProp{canBeInlined: false, keyLength: int(serialization.Uint64Len), isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: true}
+			return &keyProp{canBeInlined: false, keyLength: int(serialization.Uint64Len), isKeyInteger: true, isKeyUnsigned: true}
 		}
-		return &keyProp{canBeInlined: false, keyLength: chunk.VarElemLen, isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
+		return &keyProp{canBeInlined: false, keyLength: chunk.VarElemLen, isKeyInteger: false, isKeyUnsigned: false}
 	case mysql.TypeBit:
 		// bit type is always unsigned
-		return &keyProp{canBeInlined: false, keyLength: int(serialization.Uint64Len), isStringRelatedType: false, isKeyInteger: true, isKeyUnsigned: true}
+		return &keyProp{canBeInlined: false, keyLength: int(serialization.Uint64Len), isKeyInteger: true, isKeyUnsigned: true}
 	default:
 		keyLength := chunk.GetFixedLen(tp)
-		return &keyProp{canBeInlined: false, keyLength: keyLength, isStringRelatedType: false, isKeyInteger: false, isKeyUnsigned: false}
+		return &keyProp{canBeInlined: false, keyLength: keyLength, isKeyInteger: false, isKeyUnsigned: false}
 	}
 }
 
@@ -314,6 +324,7 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	meta.serializeModes = make([]codec.SerializeMode, 0, len(buildKeyIndex))
 	isAllKeyInteger := true
 	hasFixedSizeKeyColumn := false
+	varLengthKeyNumber := 0
 	for index, keyIndex := range buildKeyIndex {
 		keyType := buildKeyTypes[index]
 		prop := getKeyProp(keyType)
@@ -322,6 +333,7 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 			hasFixedSizeKeyColumn = true
 		} else {
 			meta.isJoinKeysFixedLength = false
+			varLengthKeyNumber++
 		}
 		if !prop.canBeInlined {
 			meta.isJoinKeysInlined = false
@@ -347,8 +359,9 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 			if !prop.isKeyInteger {
 				isAllKeyInteger = false
 			}
-			if meta.isJoinKeysInlined && prop.isStringRelatedType {
-				meta.serializeModes = append(meta.serializeModes, codec.KeepStringLength)
+			if prop.keyLength == chunk.VarElemLen {
+				// keep var column by default for var length column
+				meta.serializeModes = append(meta.serializeModes, codec.KeepVarColumnLength)
 			} else {
 				meta.serializeModes = append(meta.serializeModes, codec.Normal)
 			}
@@ -363,9 +376,12 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		meta.isJoinKeysInlined = false
 	}
 	if !meta.isJoinKeysInlined {
-		for i := 0; i < len(buildKeyIndex); i++ {
-			if meta.serializeModes[i] == codec.KeepStringLength {
-				meta.serializeModes[i] = codec.Normal
+		if varLengthKeyNumber == 1 {
+			// if key is not inlined and there is only one var-length key, then don't need to record the var length
+			for i := 0; i < len(buildKeyIndex); i++ {
+				if meta.serializeModes[i] == codec.KeepVarColumnLength {
+					meta.serializeModes[i] = codec.Normal
+				}
 			}
 		}
 	} else {
@@ -481,27 +497,23 @@ type rowTableBuilder struct {
 	selRows                   []int
 	usedRows                  []int
 	hashValue                 []uint64
+	firstSegRowSizeHint       uint
 	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
 	filterVector  []bool // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector []bool // nullKeyVector[i] = true if any of the key is null
 
-	crrntSizeOfRowTable []int64
-	// store the start position of each row in the rawData,
-	// we'll use this temp array to get the address of each row at the end
-	startPosInRawData [][]uint64
+	rowNumberInCurrentRowTableSeg []int64
 }
 
-func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber int, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
+func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber uint, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
 	builder := &rowTableBuilder{
-		buildKeyIndex:       buildKeyIndex,
-		buildKeyTypes:       buildKeyTypes,
-		crrntSizeOfRowTable: make([]int64, partitionNumber),
-		startPosInRawData:   make([][]uint64, partitionNumber),
-		hasNullableKey:      hasNullableKey,
-		hasFilter:           hasFilter,
-		keepFilteredRows:    keepFilteredRows,
+		buildKeyIndex:                 buildKeyIndex,
+		buildKeyTypes:                 buildKeyTypes,
+		rowNumberInCurrentRowTableSeg: make([]int64, partitionNumber),
+		hasNullableKey:                hasNullableKey,
+		hasFilter:                     hasFilter,
+		keepFilteredRows:              keepFilteredRows,
 	}
-	builder.initBuffer()
 	return builder
 }
 
@@ -524,26 +536,27 @@ func (b *rowTableBuilder) initBuffer() {
 	}
 }
 
-func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionNumber uint64) {
+func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffset int, partitionNumber uint) {
 	h := fnv.New64()
 	fakePartIndex := uint64(0)
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
 		if (b.filterVector != nil && !b.filterVector[physicalRowIndex]) || (b.nullKeyVector != nil && b.nullKeyVector[physicalRowIndex]) {
 			b.hashValue[logicalRowIndex] = fakePartIndex
 			b.partIdxVector[logicalRowIndex] = int(fakePartIndex)
-			fakePartIndex = (fakePartIndex + 1) % partitionNumber
+			fakePartIndex = (fakePartIndex + 1) % uint64(partitionNumber)
 			continue
 		}
 		h.Write(b.serializedKeyVectorBuffer[logicalRowIndex])
 		hash := h.Sum64()
 		b.hashValue[logicalRowIndex] = hash
-		b.partIdxVector[logicalRowIndex] = int(hash % partitionNumber)
+		b.partIdxVector[logicalRowIndex] = int(hash >> partitionMaskOffset)
 		h.Reset()
 	}
 }
 
 func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Context, hashJoinCtx *HashJoinCtxV2, workerID int) error {
 	b.ResetBuffer(chk)
+	b.firstSegRowSizeHint = max(uint(1), uint(float64(len(b.usedRows))/float64(hashJoinCtx.partitionNumber)*float64(1.2)))
 	var err error
 	if b.hasFilter {
 		b.filterVector, err = expression.VectorizedFilter(hashJoinCtx.SessCtx.GetExprCtx().GetEvalCtx(), hashJoinCtx.SessCtx.GetSessionVars().EnableVectorizedExpression, hashJoinCtx.BuildFilter, chunk.NewIterator4Chunk(chk), b.filterVector)
@@ -567,7 +580,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 		return err
 	}
 
-	b.initHashValueAndPartIndexForOneChunk(uint64(hashJoinCtx.PartitionNumber))
+	b.initHashValueAndPartIndexForOneChunk(hashJoinCtx.partitionMaskOffset, hashJoinCtx.partitionNumber)
 
 	// 2. build rowtable
 	return b.appendToRowTable(chk, hashJoinCtx, workerID)
@@ -624,8 +637,7 @@ func newRowTable(meta *TableMeta) *rowTable {
 
 func (b *rowTableBuilder) appendRemainingRowLocations(workerID int, htCtx *hashTableContext) {
 	for partID := 0; partID < int(htCtx.hashTable.partitionNumber); partID++ {
-		startPosInRawData := b.startPosInRawData[partID]
-		if len(startPosInRawData) > 0 {
+		if b.rowNumberInCurrentRowTableSeg[partID] > 0 {
 			htCtx.finalizeCurrentSeg(workerID, partID, b)
 		}
 	}
@@ -719,20 +731,24 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		if !hasValidKey && !b.keepFilteredRows {
 			continue
 		}
+		// need append the row to rowTable
 		var (
 			row     = chk.GetRow(logicalRowIndex)
 			partIdx = b.partIdxVector[logicalRowIndex]
 			seg     *rowTableSegment
 		)
-		if b.crrntSizeOfRowTable[partIdx] >= maxRowTableSegmentSize {
+		seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, hashJoinCtx.hashTableMeta, true, b.firstSegRowSizeHint)
+		// first check if current seg is full
+		if b.rowNumberInCurrentRowTableSeg[partIdx] >= maxRowTableSegmentSize || len(seg.rawData) >= maxRowTableSegmentByteSize {
+			// finalize current seg and create a new seg
 			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partIdx, b)
+			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, hashJoinCtx.hashTableMeta, true, b.firstSegRowSizeHint)
 		}
-		seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, hashJoinCtx.hashTableMeta, true)
 		if hasValidKey {
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		}
 		seg.hashValues = append(seg.hashValues, b.hashValue[logicalRowIndex])
-		b.startPosInRawData[partIdx] = append(b.startPosInRawData[partIdx], uint64(len(seg.rawData)))
+		seg.rowStartOffset = append(seg.rowStartOffset, uint64(len(seg.rawData)))
 		rowLength := 0
 		// fill next_row_ptr field
 		rowLength += fillNextRowPtr(seg)
@@ -746,7 +762,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		if rowLength%8 != 0 {
 			seg.rawData = append(seg.rawData, fakeAddrPlaceHolder[:8-rowLength%8]...)
 		}
-		b.crrntSizeOfRowTable[partIdx]++
+		b.rowNumberInCurrentRowTableSeg[partIdx]++
 	}
 	return nil
 }

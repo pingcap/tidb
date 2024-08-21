@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -25,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
-func appendItemPruneTraceStep(p base.LogicalPlan, itemType string, prunedObjects []fmt.Stringer,
+func appendItemPruneTraceStep(p base.LogicalPlan, itemType string, prunedObjects []expression.StringerWithCtx,
 	opt *optimizetrace.LogicalOptimizeOp) {
 	if len(prunedObjects) < 1 {
 		return
@@ -36,7 +37,7 @@ func appendItemPruneTraceStep(p base.LogicalPlan, itemType string, prunedObjects
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(item.String())
+			buffer.WriteString(item.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
 		}
 		buffer.WriteString("] have been pruned")
 		return buffer.String()
@@ -53,7 +54,7 @@ func AppendColumnPruneTraceStep(p base.LogicalPlan, prunedColumns []*expression.
 	if len(prunedColumns) < 1 {
 		return
 	}
-	s := make([]fmt.Stringer, 0, len(prunedColumns))
+	s := make([]expression.StringerWithCtx, 0, len(prunedColumns))
 	for _, item := range prunedColumns {
 		s = append(s, item)
 	}
@@ -66,7 +67,7 @@ func AppendFunctionPruneTraceStep(p base.LogicalPlan, prunedFunctions []*aggrega
 	if len(prunedFunctions) < 1 {
 		return
 	}
-	s := make([]fmt.Stringer, 0, len(prunedFunctions))
+	s := make([]expression.StringerWithCtx, 0, len(prunedFunctions))
 	for _, item := range prunedFunctions {
 		s = append(s, item)
 	}
@@ -79,7 +80,7 @@ func AppendByItemsPruneTraceStep(p base.LogicalPlan, prunedByItems []*util.ByIte
 	if len(prunedByItems) < 1 {
 		return
 	}
-	s := make([]fmt.Stringer, 0, len(prunedByItems))
+	s := make([]expression.StringerWithCtx, 0, len(prunedByItems))
 	for _, item := range prunedByItems {
 		s = append(s, item)
 	}
@@ -92,7 +93,7 @@ func AppendGroupByItemsPruneTraceStep(p base.LogicalPlan, prunedGroupByItems []e
 	if len(prunedGroupByItems) < 1 {
 		return
 	}
-	s := make([]fmt.Stringer, 0, len(prunedGroupByItems))
+	s := make([]expression.StringerWithCtx, 0, len(prunedGroupByItems))
 	for _, item := range prunedGroupByItems {
 		s = append(s, item)
 	}

@@ -48,7 +48,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
 	dbInfo, exists := info.SchemaByName(model.NewCIStr("test"))
 	require.Truef(t, exists, "Error get db info")
-	tableInfo, err := info.TableByName(model.NewCIStr("test"), model.NewCIStr("\"t\""))
+	tableInfo, err := info.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("\"t\""))
 	require.NoErrorf(t, err, "Error get table info: %s", err)
 	table := metautil.Table{
 		Info: tableInfo.Meta(),
@@ -186,7 +186,7 @@ func prepareAllocTables(
 	tableInfos = make([]*metautil.Table, 0, 4)
 	for i := 1; i <= len(createTableSQLs); i += 1 {
 		tableName := fmt.Sprintf("t%d", i)
-		tableInfo, err := info.TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
+		tableInfo, err := info.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(tableName))
 		require.NoError(t, err)
 		tableInfos = append(tableInfos, &metautil.Table{
 			DB:   dbInfo.Clone(),
@@ -348,7 +348,7 @@ func TestUpdateMetaVersion(t *testing.T) {
 	db.Session().Execute(ctx, "insert into test.t values (1),(2),(3);")
 	info, err := s.Mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	tableInfo, err := info.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := info.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	restoreTS := uint64(0)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
@@ -428,15 +428,15 @@ func TestDDLJobMap(t *testing.T) {
 	require.NoError(t, err)
 	dbInfo, exists := info.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	tableInfo1, err := info.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tableInfo1, err := info.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
-	tableInfo2, err := info.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tableInfo2, err := info.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
-	tableInfo3, err := info.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	tableInfo3, err := info.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
 	require.NoError(t, err)
-	tableInfo4, err := info.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	tableInfo4, err := info.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t4"))
 	require.NoError(t, err)
-	tableInfo5, err := info.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	tableInfo5, err := info.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t5"))
 	require.NoError(t, err)
 
 	toBeCorrectedTables := map[restore.UniqueTableName]bool{
@@ -565,7 +565,7 @@ func TestCreateTableConsistent(t *testing.T) {
 		require.NoError(t, err)
 		dbInfo, exists := info.SchemaByName(model.NewCIStr("test"))
 		require.True(t, exists)
-		tableInfo, err := info.TableByName(model.NewCIStr("test"), model.NewCIStr(name))
+		tableInfo, err := info.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(name))
 		require.NoError(t, err)
 		return dbInfo, tableInfo.Meta()
 	}

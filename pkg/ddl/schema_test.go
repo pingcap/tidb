@@ -31,14 +31,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
-func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
@@ -49,7 +48,7 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *mo
 		Args:       []any{tblInfo},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -134,7 +133,7 @@ func testSchemaInfo(store kv.Storage, name string) (*model.DBInfo, error) {
 	return dbInfo, nil
 }
 
-func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo) *model.Job {
+func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
@@ -146,7 +145,7 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *m
 		}},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 
 	v := getSchemaVer(t, ctx)
 	dbInfo.State = model.StatePublic
@@ -168,10 +167,10 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 	}
 }
 
-func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo) (*model.Job, int64) {
+func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := buildDropSchemaJob(dbInfo)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.NoError(t, err)
 	ver := getSchemaVer(t, ctx)
 	return job, ver
@@ -227,8 +226,8 @@ func TestSchema(t *testing.T) {
 
 	// create a database.
 	tk := testkit.NewTestKit(t, store)
-	d := domain.DDL()
-	job := testCreateSchema(t, tk.Session(), d, dbInfo)
+	de := domain.DDLExecutor().(ddl.ExecutorForTest)
+	job := testCreateSchema(t, tk.Session(), de, dbInfo)
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
 
@@ -236,32 +235,32 @@ func TestSchema(t *testing.T) {
 	// create table t with 100 records.
 	tblInfo1, err := testTableInfo(store, "t", 3)
 	require.NoError(t, err)
-	tJob1 := testCreateTable(t, tk.Session(), d, dbInfo, tblInfo1)
+	tJob1 := testCreateTable(t, tk.Session(), de, dbInfo, tblInfo1)
 	testCheckTableState(t, store, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(t, store, tJob1.ID, true)
 	tbl1 := testGetTable(t, domain, tblInfo1.ID)
-	err = sessiontxn.NewTxn(context.Background(), tk.Session())
+	txn, err := newTxn(tk.Session())
 	require.NoError(t, err)
 	for i := 1; i <= 100; i++ {
-		_, err := tbl1.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(i, i, i))
+		_, err := tbl1.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
 	// create table t1 with 1034 records.
 	tblInfo2, err := testTableInfo(store, "t1", 3)
 	require.NoError(t, err)
 	tk2 := testkit.NewTestKit(t, store)
-	tJob2 := testCreateTable(t, tk2.Session(), d, dbInfo, tblInfo2)
+	tJob2 := testCreateTable(t, tk2.Session(), de, dbInfo, tblInfo2)
 	testCheckTableState(t, store, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(t, store, tJob2.ID, true)
 	tbl2 := testGetTable(t, domain, tblInfo2.ID)
-	err = sessiontxn.NewTxn(context.Background(), tk2.Session())
+	txn, err = newTxn(tk.Session())
 	require.NoError(t, err)
 	for i := 1; i <= 1034; i++ {
-		_, err := tbl2.AddRecord(tk2.Session().GetTableCtx(), types.MakeDatums(i, i, i))
+		_, err := tbl2.AddRecord(tk2.Session().GetTableCtx(), txn, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
 	tk3 := testkit.NewTestKit(t, store)
-	job, v := testDropSchema(t, tk3.Session(), d, dbInfo)
+	job, v := testDropSchema(t, tk3.Session(), de, dbInfo)
 	testCheckSchemaState(t, store, dbInfo, model.StateNone)
 	ids := make(map[int64]struct{})
 	ids[tblInfo1.ID] = struct{}{}
@@ -277,16 +276,16 @@ func TestSchema(t *testing.T) {
 	}
 	ctx := testkit.NewTestKit(t, store).Session()
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJob(ctx, job)
+	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
 
 	// Drop a database without a table.
 	dbInfo1, err := testSchemaInfo(store, "test1")
 	require.NoError(t, err)
-	job = testCreateSchema(t, ctx, d, dbInfo1)
+	job = testCreateSchema(t, ctx, de, dbInfo1)
 	testCheckSchemaState(t, store, dbInfo1, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
-	job, _ = testDropSchema(t, ctx, d, dbInfo1)
+	job, _ = testDropSchema(t, ctx, de, dbInfo1)
 	testCheckSchemaState(t, store, dbInfo1, model.StateNone)
 	testCheckJobDone(t, store, job.ID, false)
 }
@@ -296,13 +295,14 @@ func TestSchemaWaitJob(t *testing.T) {
 
 	require.True(t, domain.DDL().OwnerManager().IsOwner())
 
-	d2 := ddl.NewDDL(context.Background(),
+	d2, de2 := ddl.NewDDL(context.Background(),
 		ddl.WithEtcdClient(domain.EtcdClient()),
 		ddl.WithStore(store),
 		ddl.WithInfoCache(domain.InfoCache()),
 		ddl.WithLease(testLease),
 		ddl.WithSchemaLoader(domain),
 	)
+	det2 := de2.(ddl.ExecutorForTest)
 	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
 		session.GetSessionVars().CommonGlobalLoaded = true
@@ -322,7 +322,7 @@ func TestSchemaWaitJob(t *testing.T) {
 	dbInfo, err := testSchemaInfo(store, "test_schema")
 	require.NoError(t, err)
 	se := testkit.NewTestKit(t, store).Session()
-	testCreateSchema(t, se, d2, dbInfo)
+	testCreateSchema(t, se, det2, dbInfo)
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 
 	// d2 must not be owner.
@@ -331,7 +331,8 @@ func TestSchemaWaitJob(t *testing.T) {
 	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
 	schemaID := genIDs[0]
-	doDDLJobErr(t, schemaID, 0, "test_schema", "", model.ActionCreateSchema, []any{dbInfo}, testkit.NewTestKit(t, store).Session(), d2, store)
+	doDDLJobErr(t, schemaID, 0, "test_schema", "", model.ActionCreateSchema,
+		[]any{dbInfo}, testkit.NewTestKit(t, store).Session(), det2, store)
 }
 
 func doDDLJobErr(
@@ -341,7 +342,7 @@ func doDDLJobErr(
 	tp model.ActionType,
 	args []any,
 	ctx sessionctx.Context,
-	d ddl.DDL,
+	d ddl.ExecutorForTest,
 	store kv.Storage,
 ) *model.Job {
 	job := &model.Job{
@@ -355,7 +356,7 @@ func doDDLJobErr(
 	}
 	// TODO: check error detail
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.Error(t, d.DoDDLJob(ctx, job))
+	require.Error(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 	testCheckJobCancelled(t, store, job, nil)
 
 	return job
@@ -372,7 +373,7 @@ func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state
 }
 
 func TestRenameTableAutoIDs(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk3 := testkit.NewTestKit(t, store)
@@ -396,6 +397,7 @@ func TestRenameTableAutoIDs(t *testing.T) {
 			if len(res) == 1 && res[0][col] == s {
 				break
 			}
+
 			logutil.DDLLogger().Info("Could not find match", zap.String("tableName", tableName), zap.String("s", s), zap.Int("colNum", col))
 
 			for i := range res {
@@ -412,19 +414,32 @@ func TestRenameTableAutoIDs(t *testing.T) {
 	tk2.MustExec(`set @@session.innodb_lock_wait_timeout = 0`)
 	tk2.MustExec(`BEGIN`)
 	tk2.MustExec(`insert into t values (null, 4)`)
+
+	v1 := dom.InfoSchema().SchemaMetaVersion()
+
 	go func() {
 		alterChan <- tk1.ExecToErr(`rename table t to ` + dbName + `2.t2`)
 	}()
 	waitFor(11, "t", "running")
 	waitFor(4, "t", "public")
+
+	// ddl finish does not mean the infoschema loaded.
+	// when infoschema v1->v2 switch, it take more time, so we must wait to ensure
+	// the new infoschema is used.
+	require.Eventually(t, func() bool { return dom.InfoSchema().SchemaMetaVersion() > v1 }, time.Minute, 2*time.Millisecond)
+
 	tk3.MustExec(`BEGIN`)
 	tk3.MustExec(`insert into ` + dbName + `2.t2 values (50, 5)`)
-
+	// TODO: still unstable here.
+	// This is caused by a known rename table and autoid compatibility issue.
+	// In the past we try to fix it by the same auto id allocator before and after table renames.
+	//     https://github.com/pingcap/tidb/pull/47892
+	// But during infoschema v1->v2 switch, infoschema full load happen, then both the old and new
+	// autoid instance exists. tk2 here use the old autoid allocator, cause txn conflict on index key
+	// b=20, conflicting with the next line insert values (20, 5)
 	tk2.MustExec(`insert into t values (null, 6)`)
 	tk3.MustExec(`insert into ` + dbName + `2.t2 values (20, 5)`)
-
 	// Done: Fix https://github.com/pingcap/tidb/issues/46904
-	//tk2.MustContainErrMsg(`insert into t values (null, 6)`, "[tikv:1205]Lock wait timeout exceeded; try restarting transaction")
 	tk2.MustExec(`insert into t values (null, 6)`)
 	tk3.MustExec(`insert into ` + dbName + `2.t2 values (null, 7)`)
 	tk2.MustExec(`COMMIT`)

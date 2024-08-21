@@ -15,6 +15,7 @@
 package cache
 
 import (
+	"context"
 	"sync/atomic"
 	"time"
 
@@ -63,7 +64,7 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 }
 
 // Update reads stats meta from store and updates the stats map.
-func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
+func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) error {
 	start := time.Now()
 	lastVersion := s.getLastVersion()
 	var (
@@ -73,7 +74,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		rows, _, err = util.ExecRows(
 			sctx,
-			"SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version",
+			"SELECT version, table_id, modify_count, count, snapshot from mysql.stats_meta where version > %? order by version",
 			lastVersion,
 		)
 		return err
@@ -89,6 +90,14 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
+		snapshot := row.GetUint64(4)
+
+		// Detect the context cancel signal, since it may take a long time for the loop.
+		// TODO: add context to TableInfoByID and remove this code block?
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
 		table, ok := s.statsHandle.TableInfoByID(is, physicalID)
 		if !ok {
 			logutil.BgLogger().Debug(
@@ -128,6 +137,16 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
+		// It only occurs in the following situations:
+		// 1. The table has already been analyzed,
+		//	but because the predicate columns feature is turned on, and it doesn't have any columns or indexes analyzed,
+		//	it only analyzes _row_id and refreshes stats_meta, in which case the snapshot is not zero.
+		// 2. LastAnalyzeVersion is 0 because it has never been loaded.
+		// In this case, we can initialize LastAnalyzeVersion to the snapshot,
+		//	otherwise auto-analyze will assume that the table has never been analyzed and try to analyze it again.
+		if tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
+			tbl.LastAnalyzeVersion = snapshot
+		}
 		tables = append(tables, tbl)
 	}
 
@@ -239,7 +258,14 @@ func (s *StatsCacheImpl) SetStatsCacheCapacity(c int64) {
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
 	distribution := make([]int64, 5)
+	uneligibleAnalyze := 0
 	for _, tbl := range s.Values() {
+		distribution[4]++ // total table count
+		isEligibleForAnalysis := tbl.IsEligibleForAnalysis()
+		if !isEligibleForAnalysis {
+			uneligibleAnalyze++
+			continue
+		}
 		healthy, ok := tbl.GetStatsHealthy()
 		if !ok {
 			continue
@@ -253,9 +279,9 @@ func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
 		} else {
 			distribution[3]++
 		}
-		distribution[4]++
 	}
 	for i, val := range distribution {
 		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
 	}
+	handle_metrics.StatsHealthyGauges[5].Set(float64(uneligibleAnalyze))
 }

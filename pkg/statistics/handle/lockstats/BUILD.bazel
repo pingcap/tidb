@@ -15,6 +15,7 @@ go_library(
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
+        "//pkg/util",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",

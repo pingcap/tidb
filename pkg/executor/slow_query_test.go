@@ -59,12 +59,13 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	data := infoschema.NewData()
-	newISBuilder, err := infoschema.NewBuilder(nil, nil, data).InitWithDBInfos(nil, nil, nil, 0)
+	newISBuilder := infoschema.NewBuilder(nil, nil, data, variable.SchemaCacheSize.Load() > 0)
+	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
 	is := newISBuilder.Build(math.MaxUint64)
-	tbl, err := is.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
+	tbl, err := is.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
 	if err != nil {
 		return nil, err
 	}
@@ -532,8 +533,8 @@ func TestSplitbyColon(t *testing.T) {
 		},
 		{
 			"123a",
-			[]string{},
 			[]string{"123a"},
+			[]string{},
 		},
 		{
 			"1a: 2b",
@@ -549,6 +550,36 @@ func TestSplitbyColon(t *testing.T) {
 			"1a: [2b,3c] 4d: 5e",
 			[]string{"1a", "4d"},
 			[]string{"[2b,3c]", "5e"},
+		},
+		{
+			"1a: [2b,[3c: 3cc]] 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"[2b,[3c: 3cc]]", "5e"},
+		},
+		{
+			"1a: {2b 3c} 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"{2b 3c}", "5e"},
+		},
+		{
+			"1a: {2b,3c} 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"{2b,3c}", "5e"},
+		},
+		{
+			"1a: {2b,{3c: 3cc}} 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"{2b,{3c: 3cc}}", "5e"},
+		},
+		{
+			"1a: {{{2b,{3c: 3cc}} 4d: 5e",
+			nil,
+			nil,
+		},
+		{
+			"1a: [2b,[3c: 3cc]]]] 4d: 5e",
+			nil,
+			nil,
 		},
 		{
 

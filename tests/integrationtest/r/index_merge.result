@@ -814,18 +814,18 @@ c1	c2	c3	c4	c5
 5	5	5	5	5
 explain with recursive cte1 as (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10 UNION ALL select c1 + 100 from cte1 where c1 < 10) select * from cte1 order by 1;
 id	estRows	task	access object	operator info
-Sort_23	7309.33	root		index_merge.t1.c1
-└─CTEFullScan_26	7309.33	root	CTE:cte1	data:CTE_0
+Sort_24	7309.33	root		index_merge.t1.c1
+└─CTEFullScan_27	7309.33	root	CTE:cte1	data:CTE_0
 CTE_0	7309.33	root		Recursive CTE
 ├─Projection_14(Seed Part)	4060.74	root		index_merge.t1.c1
-│ └─IndexMerge_19	2250.55	root		type: union
-│   ├─IndexRangeScan_15(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-│   ├─IndexRangeScan_16(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-│   └─Selection_18(Probe)	2250.55	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-│     └─TableRowIDScan_17	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_20(Recursive Part)	3248.59	root		cast(plus(index_merge.t1.c1, 100), int(11))->index_merge.t1.c1
-  └─Selection_21	3248.59	root		lt(index_merge.t1.c1, 10)
-    └─CTETable_22	4060.74	root		Scan on CTE_0
+│ └─IndexMerge_20	2250.55	root		type: union
+│   ├─IndexRangeScan_16(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+│   ├─IndexRangeScan_17(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+│   └─Selection_19(Probe)	2250.55	cop[tikv]		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+│     └─TableRowIDScan_18	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection_21(Recursive Part)	3248.59	root		cast(plus(index_merge.t1.c1, 100), int(11))->index_merge.t1.c1
+  └─Selection_22	3248.59	root		lt(index_merge.t1.c1, 10)
+    └─CTETable_23	4060.74	root		Scan on CTE_0
 with recursive cte1 as (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10 UNION ALL select c1 + 100 from cte1 where c1 < 10) select * from cte1 order by 1;
 c1
 1

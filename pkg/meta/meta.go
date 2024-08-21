@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/partialjson"
 )
 
 var (
@@ -68,13 +71,8 @@ var (
 	mNextGlobalIDKey     = []byte("NextGlobalID")
 	mSchemaVersionKey    = []byte("SchemaVersionKey")
 	mDBs                 = []byte("DBs")
-	mNames               = []byte("Names")
-	mDBNames             = []byte("DBNames")
-	mDBNameInitialized   = []byte("DBNameInitialized")
-	mDDLV2Initialized    = []byte("DDLV2Initialized")
 	mDBPrefix            = "DB"
 	mTablePrefix         = "Table"
-	mNameSep             = []byte("\x00")
 	mSequencePrefix      = "SID"
 	mSeqCyclePrefix      = "SequenceCycle"
 	mTableIDPrefix       = "TID"
@@ -91,6 +89,7 @@ var (
 	mDDLTableVersion     = []byte("DDLTableVersion")
 	mBDRRole             = []byte("BDRRole")
 	mMetaDataLock        = []byte("metadataLock")
+	mSchemaCacheSize     = []byte("SchemaCacheSize")
 	mRequestUnitStats    = []byte("RequestUnitStats")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
@@ -173,20 +172,11 @@ func (ver DDLTableVersion) Bytes() []byte {
 // Option is for Meta option.
 type Option func(m *Meta)
 
-// WithUpdateTableName is for updating the name of the table.
-// Only used for ddl v2.
-func WithUpdateTableName() Option {
-	return func(m *Meta) {
-		m.needUpdateName = true
-	}
-}
-
 // Meta is for handling meta information in a transaction.
 type Meta struct {
-	txn            *structure.TxStructure
-	StartTS        uint64 // StartTS is the txn's start TS.
-	jobListKey     JobListKeyType
-	needUpdateName bool
+	txn        *structure.TxStructure
+	StartTS    uint64 // StartTS is the txn's start TS.
+	jobListKey JobListKeyType
 }
 
 // NewMeta creates a Meta in transaction txn.
@@ -263,6 +253,11 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 		ids = append(ids, i)
 	}
 	return ids, nil
+}
+
+// GlobalIDKey returns the key for the global ID.
+func (m *Meta) GlobalIDKey() []byte {
+	return m.txn.EncodeStringDataKey(mNextGlobalIDKey)
 }
 
 // GenPlacementPolicyID generates next placement policy id globally.
@@ -673,9 +668,6 @@ func (m *Meta) CreateDatabase(dbInfo *model.DBInfo) error {
 	if err := m.txn.HSet(mDBs, dbKey, data); err != nil {
 		return errors.Trace(err)
 	}
-	if m.needUpdateName {
-		return errors.Trace(m.CreateDatabaseName(dbInfo.Name.L, dbInfo.ID))
-	}
 	return nil
 }
 
@@ -696,7 +688,7 @@ func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
 }
 
 // CreateTableOrView creates a table with tableInfo in database.
-func (m *Meta) CreateTableOrView(dbID int64, dbName string, tableInfo *model.TableInfo) error {
+func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -716,9 +708,6 @@ func (m *Meta) CreateTableOrView(dbID int64, dbName string, tableInfo *model.Tab
 
 	if err := m.txn.HSet(dbKey, tableKey, data); err != nil {
 		return errors.Trace(err)
-	}
-	if m.needUpdateName {
-		return errors.Trace(m.CreateTableName(dbName, tableInfo.Name.L, tableInfo.ID))
 	}
 	return nil
 }
@@ -822,10 +811,28 @@ func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
 	return bytes.Equal(val, []byte("1")), false, nil
 }
 
+// SetSchemaCacheSize sets the schema cache size.
+func (m *Meta) SetSchemaCacheSize(size uint64) error {
+	return errors.Trace(m.txn.Set(mSchemaCacheSize, []byte(strconv.FormatUint(size, 10))))
+}
+
+// GetSchemaCacheSize gets the schema cache size.
+func (m *Meta) GetSchemaCacheSize() (size uint64, isNull bool, err error) {
+	val, err := m.txn.Get(mSchemaCacheSize)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return 0, true, nil
+	}
+	size, err = strconv.ParseUint(string(val), 10, 64)
+	return size, false, errors.Trace(err)
+}
+
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
-func (m *Meta) CreateTableAndSetAutoID(dbID int64, dbName string, tableInfo *model.TableInfo, autoIDs AutoIDGroup) error {
-	err := m.CreateTableOrView(dbID, dbName, tableInfo)
+func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIDs AutoIDGroup) error {
+	err := m.CreateTableOrView(dbID, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -849,8 +856,8 @@ func (m *Meta) CreateTableAndSetAutoID(dbID int64, dbName string, tableInfo *mod
 }
 
 // CreateSequenceAndSetSeqValue creates sequence with tableInfo in database, and rebase the sequence seqValue.
-func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, dbName string, tableInfo *model.TableInfo, seqValue int64) error {
-	err := m.CreateTableOrView(dbID, dbName, tableInfo)
+func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, tableInfo *model.TableInfo, seqValue int64) error {
+	err := m.CreateTableOrView(dbID, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -888,7 +895,7 @@ func (m *Meta) DropPolicy(policyID int64) error {
 }
 
 // DropDatabase drops whole database.
-func (m *Meta) DropDatabase(dbID int64, dbName string) error {
+func (m *Meta) DropDatabase(dbID int64) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.txn.HClear(dbKey); err != nil {
@@ -899,16 +906,13 @@ func (m *Meta) DropDatabase(dbID int64, dbName string) error {
 		return errors.Trace(err)
 	}
 
-	if m.needUpdateName {
-		return errors.Trace(m.DropDatabaseName(dbName))
-	}
 	return nil
 }
 
 // DropSequence drops sequence in database.
 // Sequence is made of table struct and kv value pair.
-func (m *Meta) DropSequence(dbID int64, dbName string, tblID int64, tbName string) error {
-	err := m.DropTableOrView(dbID, dbName, tblID, tbName)
+func (m *Meta) DropSequence(dbID int64, tblID int64) error {
+	err := m.DropTableOrView(dbID, tblID)
 	if err != nil {
 		return err
 	}
@@ -923,7 +927,7 @@ func (m *Meta) DropSequence(dbID int64, dbName string, tblID int64, tbName strin
 // DropTableOrView drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.
-func (m *Meta) DropTableOrView(dbID int64, dbName string, tblID int64, tbName string) error {
+func (m *Meta) DropTableOrView(dbID int64, tblID int64) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -938,9 +942,6 @@ func (m *Meta) DropTableOrView(dbID int64, dbName string, tblID int64, tbName st
 
 	if err := m.txn.HDel(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
-	}
-	if m.needUpdateName {
-		return errors.Trace(m.DropTableName(dbName, tbName))
 	}
 	return nil
 }
@@ -1012,6 +1013,87 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
+var checkSubstringsInOrder = [7]string{
+	`"fk_info":null`,
+	`"partition":null`,
+	`"Lock":null`,
+	`"tiflash_replica":null`,
+	`"temp_table_type":0`,
+	`"policy_ref_info":null`,
+	`"ttl_info":null`,
+}
+
+// IsTableInfoMustLoad checks the above substrings in a table info's json representing.
+// When a table contains one of them, tidb must load the table info during schema full load.
+// hasSpecialAttributes() is a subset of it, the difference is that:
+// If a table need to be resident in-memory, its table info MUST be loaded.
+// If a table info is loaded, it's NOT NECESSARILY to be keep in-memory.
+// Exported for testing.
+func IsTableInfoMustLoad(json []byte) bool {
+	idx := 0
+	for _, substr := range checkSubstringsInOrder {
+		idx = bytes.Index(json, hack.Slice(substr))
+		if idx == -1 {
+			return true
+		}
+		json = json[idx:]
+	}
+	return false
+}
+
+// NameExtractRegexp is exported for testing.
+const NameExtractRegexp = `"L":"([^"\\]*(?:\\.[^"\\]*)*)"}`
+
+// Unescape is exported for testing.
+func Unescape(s string) string {
+	s = strings.ReplaceAll(s, `\"`, `"`)
+	s = strings.ReplaceAll(s, `\\`, `\`)
+	return s
+}
+
+// GetAllNameToIDAndTheMustLoadedTableInfo gets all the fields and values and table info for special attributes in a hash.
+// It's used to get some infos for information schema cache in a faster way.
+func GetAllNameToIDAndTheMustLoadedTableInfo(m *Meta, dbID int64) (map[string]int64, []*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	res := make(map[string]int64)
+	idRegex := regexp.MustCompile(`"id":(\d+)`)
+	nameLRegex := regexp.MustCompile(NameExtractRegexp)
+
+	tableInfos := make([]*model.TableInfo, 0)
+
+	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
+		if !strings.HasPrefix(string(hack.String(field)), "Table") {
+			return nil
+		}
+
+		idMatch := idRegex.FindStringSubmatch(string(hack.String(value)))
+		nameLMatch := nameLRegex.FindStringSubmatch(string(hack.String(value)))
+		id, err := strconv.Atoi(idMatch[1])
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		key := Unescape(nameLMatch[1])
+		res[strings.Clone(key)] = int64(id)
+		if IsTableInfoMustLoad(value) {
+			tbInfo := &model.TableInfo{}
+			err = json.Unmarshal(value, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tbInfo.DBID = dbID
+			tableInfos = append(tableInfos, tbInfo)
+		}
+		return nil
+	})
+
+	return res, tableInfos, errors.Trace(err)
+}
+
 // ListTables shows all tables in database.
 func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 	res, err := m.GetMetasByDBID(dbID)
@@ -1055,16 +1137,61 @@ func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
 			continue
 		}
 
-		tbInfo := &model.TableNameInfo{}
-		err = json.Unmarshal(r.Value, tbInfo)
-		if err != nil {
-			return nil, errors.Trace(err)
+		tbInfo, err2 := FastUnmarshalTableNameInfo(r.Value)
+		if err2 != nil {
+			return nil, errors.Trace(err2)
 		}
 
 		tables = append(tables, tbInfo)
 	}
 
 	return tables, nil
+}
+
+var tableNameInfoFields = []string{"id", "name"}
+
+// FastUnmarshalTableNameInfo is exported for testing.
+func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
+	m, err := partialjson.ExtractTopLevelMembers(data, tableNameInfoFields)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	idTokens, ok := m["id"]
+	if !ok {
+		return nil, errors.New("id field not found in JSON")
+	}
+	if len(idTokens) != 1 {
+		return nil, errors.Errorf("unexpected id field in JSON, %v", idTokens)
+	}
+	num, ok := idTokens[0].(json.Number)
+	if !ok {
+		return nil, errors.Errorf(
+			"id field is not a number, got %T %v", idTokens[0], idTokens[0],
+		)
+	}
+	id, err := num.Int64()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	nameTokens, ok := m["name"]
+	if !ok {
+		return nil, errors.New("name field not found in JSON")
+	}
+	// 6 tokens; {, O, ..., L, ..., }
+	if len(nameTokens) != 6 {
+		return nil, errors.Errorf("unexpected name field in JSON, %v", nameTokens)
+	}
+	name, ok := nameTokens[2].(string)
+	if !ok {
+		return nil, errors.Errorf("unexpected name field in JSON, %v", nameTokens)
+	}
+
+	return &model.TableNameInfo{
+		ID:   id,
+		Name: model.NewCIStr(name),
+	}, nil
 }
 
 // ListDatabases shows all databases.
@@ -1184,7 +1311,7 @@ func (m *Meta) GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error)
 		return nil, errors.Trace(err)
 	}
 	if value == nil {
-		// the default group is not persistanted to tikv by default.
+		// the default group is not persistent to tikv by default.
 		if groupID == defaultGroupID {
 			return defaultRGroupMeta, nil
 		}
@@ -1556,163 +1683,6 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	err = m.txn.Set(diffKey, data)
 	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
-}
-
-// TableNameKey constructs the key for table name.
-func (*Meta) TableNameKey(dbName string, tableName string) kv.Key {
-	var sb strings.Builder
-	sb.Write(mNames)
-	sb.WriteByte(':')
-	sb.WriteString(strings.ToLower(dbName))
-	sb.Write(mNameSep)
-	sb.WriteString(strings.ToLower(tableName))
-	return kv.Key(sb.String())
-}
-
-// DatabaseNameKey constructs the key for database name.
-func (*Meta) DatabaseNameKey(dbName string) kv.Key {
-	var sb strings.Builder
-	sb.Write(mDBNames)
-	sb.WriteByte(':')
-	sb.WriteString(strings.ToLower(dbName))
-	return kv.Key(sb.String())
-}
-
-// CheckTableNameExists checks if the table name exists.
-func (m *Meta) CheckTableNameExists(name []byte) error {
-	v, err := m.txn.Get(name)
-	if err == nil && v == nil {
-		err = ErrTableNotExists.FastGenByArgs(string(name))
-	}
-	return errors.Trace(err)
-}
-
-// CheckTableNameNotExists checks if the table name not exists.
-func (m *Meta) CheckTableNameNotExists(name []byte) error {
-	v, err := m.txn.Get(name)
-	if err == nil && v != nil {
-		err = ErrTableExists.FastGenByArgs(string(name))
-	}
-	return errors.Trace(err)
-}
-
-// CheckDatabaseNameExists checks if the database name exists.
-func (m *Meta) CheckDatabaseNameExists(name []byte) error {
-	v, err := m.txn.Get(name)
-	if err == nil && v == nil {
-		err = ErrDBNotExists.FastGenByArgs(string(name))
-	}
-	return errors.Trace(err)
-}
-
-// CheckDatabaseNameNotExists checks if the database name not exists.
-func (m *Meta) CheckDatabaseNameNotExists(name []byte) error {
-	v, err := m.txn.Get(name)
-	if err == nil && v != nil {
-		err = ErrDBExists.FastGenByArgs(string(name))
-	}
-	return errors.Trace(err)
-}
-
-// CreateDatabaseName creates a database name.
-// Used by CreateDatabase/RenameDatabase
-func (m *Meta) CreateDatabaseName(dbName string, dbID int64) error {
-	// Check if database exists.
-	key := m.DatabaseNameKey(dbName)
-	if err := m.CheckDatabaseNameNotExists(key); err != nil {
-		return errors.Trace(err)
-	}
-	return m.txn.Set(key, []byte(strconv.FormatInt(dbID, 10)))
-}
-
-// CreateTableName creates a table name.
-// Used by CreateTable/RenameTable/TruncateTable/RecoverTable/RecoverSchema/CreateView...
-func (m *Meta) CreateTableName(dbName string, tableName string, tableID int64) error {
-	// Check if table exists.
-	key := m.TableNameKey(dbName, tableName)
-	if err := m.CheckTableNameNotExists(key); err != nil {
-		return errors.Trace(err)
-	}
-	return m.txn.Set(key, []byte(strconv.FormatInt(tableID, 10)))
-}
-
-// DropTableName drops a table name.
-// Used by DropTable/RenameTable/TruncateTable/DropView...
-func (m *Meta) DropTableName(dbName string, tableName string) error {
-	// Check if table exists.
-	key := m.TableNameKey(dbName, tableName)
-	if err := m.CheckTableNameExists(key); err != nil {
-		return errors.Trace(err)
-	}
-	return m.txn.Clear(key)
-}
-
-// DropDatabaseName drops a database name.
-// Used by DropDatabase.
-func (m *Meta) DropDatabaseName(dbName string) error {
-	// Check if database exists.
-	key := m.DatabaseNameKey(dbName)
-	if err := m.CheckDatabaseNameExists(key); err != nil {
-		return errors.Trace(err)
-	}
-	if err := m.txn.Clear(key); err != nil {
-		return errors.Trace(err)
-	}
-
-	// iterate all tables
-	prefix := m.TableNameKey(dbName, "")
-	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, _ []byte) error {
-		return m.txn.Clear(key)
-	})
-}
-
-// ClearAllTableNames clears all table names.
-func (m *Meta) ClearAllTableNames() error {
-	prefix := kv.Key(fmt.Sprintf("%s:", mNames))
-	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, _ []byte) error {
-		return m.txn.Clear(key)
-	})
-}
-
-// ClearAllDatabaseNames clears all database names.
-func (m *Meta) ClearAllDatabaseNames() error {
-	prefix := kv.Key(fmt.Sprintf("%s:", mDBNames))
-	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, _ []byte) error {
-		return m.txn.Clear(key)
-	})
-}
-
-// SetFastCreateTableInitialized set fast create table initialized.
-func (m *Meta) SetFastCreateTableInitialized(b bool) error {
-	var data []byte
-	if b {
-		data = []byte("1")
-	} else {
-		data = []byte("0")
-	}
-	if err := m.txn.Set(mDDLV2Initialized, data); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(m.txn.Set(mDBNameInitialized, data))
-}
-
-// GetFastCreateTableInitialized gets fast create table initialized.
-func (m *Meta) GetFastCreateTableInitialized() (initialized bool, err error) {
-	val1, err := m.txn.Get(mDDLV2Initialized)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if len(val1) == 0 {
-		return false, nil
-	}
-	val2, err := m.txn.Get(mDBNameInitialized)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if len(val2) == 0 {
-		return false, nil
-	}
-	return bytes.Equal(val1, []byte("1")) && bytes.Equal(val2, []byte("1")), nil
 }
 
 // GroupRUStats keeps the ru consumption statistics data.

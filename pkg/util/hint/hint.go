@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
@@ -55,7 +56,7 @@ const (
 	HintINLJ = "inl_join"
 	// HintINLHJ is hint enforce index nested loop hash join.
 	HintINLHJ = "inl_hash_join"
-	// HintINLMJ is hint enforce index nested loop merge join.
+	// Deprecated: HintINLMJ is hint enforce index nested loop merge join.
 	HintINLMJ = "inl_merge_join"
 	// HintNoIndexJoin is the hint to enforce the query not to use index join.
 	HintNoIndexJoin = "no_index_join"
@@ -224,6 +225,9 @@ type StmtHints struct {
 	HasResourceGroup               bool
 	SetVars                        map[string]string
 
+	// Hypo Indexes from Hints
+	HintedHypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+
 	// the original table hints
 	OriginalTableHints []*ast.TableOptimizerHint
 }
@@ -270,10 +274,24 @@ func (sh *StmtHints) Clone() *StmtHints {
 	}
 }
 
+func (sh *StmtHints) addHypoIndex(db, tbl, idx string, idxInfo *model.IndexInfo) {
+	if sh.HintedHypoIndexes == nil {
+		sh.HintedHypoIndexes = make(map[string]map[string]map[string]*model.IndexInfo)
+	}
+	if sh.HintedHypoIndexes[db] == nil {
+		sh.HintedHypoIndexes[db] = make(map[string]map[string]*model.IndexInfo)
+	}
+	if sh.HintedHypoIndexes[db][tbl] == nil {
+		sh.HintedHypoIndexes[db][tbl] = make(map[string]*model.IndexInfo)
+	}
+	sh.HintedHypoIndexes[db][tbl][idx] = idxInfo
+}
+
 // ParseStmtHints parses statement hints.
 func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	setVarHintChecker func(varName, hint string) (ok bool, warning error),
-	replicaReadFollower byte) ( // to avoid cycle import
+	hypoIndexChecker func(db, tbl, col model.CIStr) (colOffset int, err error),
+	currentDB string, replicaReadFollower byte) ( // to avoid cycle import
 	stmtHints StmtHints, offs []int, warns []error) {
 	if len(hints) == 0 {
 		return
@@ -312,6 +330,46 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 		case "straight_join":
 			hintOffs[hint.HintName.L] = i
 			straightJoinHintCnt++
+		case "hypo_index":
+			// to make it simpler, use Tables[0] as table, Tables[1] as index name, and Tables[2:] as column name.
+			if len(hint.Tables) < 3 {
+				warn := errors.NewNoStackErrorf("Invalid HYPO_INDEX hint, valid usage: HYPO_INDEX(tableName, indexName, cols...)")
+				warns = append(warns, warn)
+				continue
+			}
+			db := hint.Tables[0].DBName.L
+			if db == "" {
+				db = currentDB
+			}
+			tbl := hint.Tables[0].TableName
+			idx := hint.Tables[1].TableName
+			var colNames []model.CIStr
+			var cols []*model.IndexColumn
+			invalid := false
+			for i := 2; i < len(hint.Tables); i++ {
+				colNames = append(colNames, hint.Tables[i].TableName)
+				offset, err := hypoIndexChecker(model.NewCIStr(db), tbl, hint.Tables[i].TableName)
+				if err != nil {
+					invalid = true
+					warns = append(warns, errors.NewNoStackErrorf("invalid HYPO_INDEX hint: %v", err))
+					break
+				}
+				cols = append(cols, &model.IndexColumn{
+					Name:   hint.Tables[i].TableName,
+					Offset: offset,
+					Length: types.UnspecifiedLength,
+				})
+			}
+			if invalid {
+				continue
+			}
+			idxInfo := &model.IndexInfo{
+				Name:    idx,
+				Columns: cols,
+				State:   model.StatePublic,
+				Tp:      model.IndexTypeHypo,
+			}
+			stmtHints.addHypoIndex(db, tbl.L, idx.L, idxInfo)
 		case "set_var":
 			setVarHint := hint.HintData.(ast.HintSetVar)
 
@@ -718,7 +776,10 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintINLHJ:
 			inlhjTables = append(inlhjTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintINLMJ:
-			inlmjTables = append(inlmjTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			if hint.Tables != nil {
+				warnHandler.SetHintWarning("The INDEX MERGE JOIN hint is deprecated for usage, try other hints.")
+				continue
+			}
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintNoHashJoin:

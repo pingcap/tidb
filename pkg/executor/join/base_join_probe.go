@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -66,6 +66,10 @@ type ProbeV2 interface {
 	NeedScanRowTable() bool
 	// InitForScanRowTable do some pre-work before ScanRowTable, it must be called before ScanRowTable
 	InitForScanRowTable()
+	// Return probe collsion
+	GetProbeCollision() uint64
+	// Reset probe collsion
+	ResetProbeCollision()
 }
 
 type offsetAndLength struct {
@@ -77,9 +81,15 @@ type matchedRowInfo struct {
 	// probeRowIndex mean the probe side index of current matched row
 	probeRowIndex int
 	// buildRowStart mean the build row start of the current matched row
-	buildRowStart unsafe.Pointer
+	buildRowStart uintptr
 	// buildRowOffset mean the current offset of current BuildRow, used to construct column data from BuildRow
 	buildRowOffset int
+}
+
+func createMatchRowInfo(probeRowIndex int, buildRowStart unsafe.Pointer) *matchedRowInfo {
+	ret := &matchedRowInfo{probeRowIndex: probeRowIndex}
+	*(*unsafe.Pointer)(unsafe.Pointer(&ret.buildRowStart)) = buildRowStart
+	return ret
 }
 
 type posAndHashValue struct {
@@ -96,8 +106,8 @@ type baseJoinProbe struct {
 	selRows  []int
 	usedRows []int
 	// matchedRowsHeaders, serializedKeys is indexed by logical row index
-	matchedRowsHeaders []unsafe.Pointer // the start address of each matched rows
-	serializedKeys     [][]byte         // used for save serialized keys
+	matchedRowsHeaders []uintptr // the start address of each matched rows
+	serializedKeys     [][]byte  // used for save serialized keys
 	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
 	filterVector                  []bool              // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector                 []bool              // nullKeyVector[i] = true if any of the key is null
@@ -124,6 +134,16 @@ type baseJoinProbe struct {
 	tmpChk        *chunk.Chunk
 	rowIndexInfos []*matchedRowInfo
 	selected      []bool
+
+	probeCollision uint64
+}
+
+func (j *baseJoinProbe) GetProbeCollision() uint64 {
+	return j.probeCollision
+}
+
+func (j *baseJoinProbe) ResetProbeCollision() {
+	j.probeCollision = 0
 }
 
 func (j *baseJoinProbe) IsCurrentChunkProbeDone() bool {
@@ -164,9 +184,9 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	if cap(j.matchedRowsHeaders) >= logicalRows {
 		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRows]
 	} else {
-		j.matchedRowsHeaders = make([]unsafe.Pointer, logicalRows)
+		j.matchedRowsHeaders = make([]uintptr, logicalRows)
 	}
-	for i := 0; i < j.ctx.PartitionNumber; i++ {
+	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		j.hashValues[i] = j.hashValues[i][:0]
 	}
 	if j.ctx.ProbeFilter != nil {
@@ -213,7 +233,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	for logicalRowIndex, physicalRowIndex := range j.usedRows {
 		if (j.filterVector != nil && !j.filterVector[physicalRowIndex]) || (j.nullKeyVector != nil && j.nullKeyVector[physicalRowIndex]) {
 			// explicit set the matchedRowsHeaders[logicalRowIndex] to nil to indicate there is no matched rows
-			j.matchedRowsHeaders[logicalRowIndex] = nil
+			j.matchedRowsHeaders[logicalRowIndex] = 0
 			continue
 		}
 		hash.Reset()
@@ -221,11 +241,11 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		// See https://golang.org/pkg/hash/#Hash
 		_, _ = hash.Write(j.serializedKeys[logicalRowIndex])
 		hashValue := hash.Sum64()
-		partIndex := hashValue % uint64(j.ctx.PartitionNumber)
+		partIndex := hashValue >> j.ctx.partitionMaskOffset
 		j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
 	}
 	j.currentProbeRow = 0
-	for i := 0; i < j.ctx.PartitionNumber; i++ {
+	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		for index := range j.hashValues[i] {
 			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.hashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
 		}
@@ -337,14 +357,14 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 		if ok {
 			currentColumn = chk.Column(indexInDstChk)
 			for index := range j.cachedBuildRows {
-				currentColumn.AppendNullBitmap(!meta.isColumnNull(j.cachedBuildRows[index].buildRowStart, columnIndex))
-				j.cachedBuildRows[index].buildRowOffset = chunk.AppendCellFromRawData(currentColumn, j.cachedBuildRows[index].buildRowStart, j.cachedBuildRows[index].buildRowOffset)
+				currentColumn.AppendNullBitmap(!meta.isColumnNull(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), columnIndex))
+				j.cachedBuildRows[index].buildRowOffset = chunk.AppendCellFromRawData(currentColumn, *(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset)
 			}
 		} else {
 			// not used so don't need to insert into chk, but still need to advance rowData
 			if meta.columnsSize[columnIndex] < 0 {
 				for index := range j.cachedBuildRows {
-					size := *(*uint64)(unsafe.Add(j.cachedBuildRows[index].buildRowStart, j.cachedBuildRows[index].buildRowOffset))
+					size := *(*uint64)(unsafe.Add(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset))
 					j.cachedBuildRows[index].buildRowOffset += sizeOfLengthField + int(size)
 				}
 			} else {
@@ -478,7 +498,7 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 }
 
 // NewJoinProbe create a join probe used for hash join v2
-func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
+func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
 	base := baseJoinProbe{
 		ctx:                   ctx,
 		workID:                workID,
@@ -497,13 +517,13 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 		}
 	}
 	base.cachedBuildRows = make([]*matchedRowInfo, 0, batchBuildRowSize)
-	base.matchedRowsHeaders = make([]unsafe.Pointer, 0, chunk.InitialCapacity)
+	base.matchedRowsHeaders = make([]uintptr, 0, chunk.InitialCapacity)
 	base.selRows = make([]int, 0, chunk.InitialCapacity)
 	for i := 0; i < chunk.InitialCapacity; i++ {
 		base.selRows = append(base.selRows, i)
 	}
-	base.hashValues = make([][]posAndHashValue, ctx.PartitionNumber)
-	for i := 0; i < ctx.PartitionNumber; i++ {
+	base.hashValues = make([][]posAndHashValue, ctx.partitionNumber)
+	for i := 0; i < int(ctx.partitionNumber); i++ {
 		base.hashValues[i] = make([]posAndHashValue, 0, chunk.InitialCapacity)
 	}
 	base.serializedKeys = make([][]byte, 0, chunk.InitialCapacity)
@@ -520,10 +540,12 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType core.JoinType, keyIn
 		base.rowIndexInfos = make([]*matchedRowInfo, 0, chunk.InitialCapacity)
 	}
 	switch joinType {
-	case core.InnerJoin:
+	case logicalop.InnerJoin:
 		return &innerJoinProbe{base}
-	case core.LeftOuterJoin:
-		return &leftOuterJoinProbe{baseJoinProbe: base}
+	case logicalop.LeftOuterJoin:
+		return newOuterJoinProbe(base, !rightAsBuildSide, rightAsBuildSide)
+	case logicalop.RightOuterJoin:
+		return newOuterJoinProbe(base, rightAsBuildSide, rightAsBuildSide)
 	default:
 		panic("unsupported join type")
 	}

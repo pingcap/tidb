@@ -51,6 +51,7 @@ func TestPlanStatsLoad(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
+	tk.MustExec("set tidb_opt_projection_push_down = 0")
 	tk.MustExec("create table t(a int, b int, c int, d int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(3,3,3,3)")
 	tk.MustExec("create table pt(a int, b int, c int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
@@ -61,8 +62,8 @@ func TestPlanStatsLoad(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
-	tk.MustExec("analyze table pt")
+	tk.MustExec("analyze table t all columns")
+	tk.MustExec("analyze table pt all columns")
 
 	testCases := []struct {
 		sql   string
@@ -207,14 +208,14 @@ func TestPlanStatsLoad(t *testing.T) {
 		}
 		is := dom.InfoSchema()
 		dom.StatsHandle().Clear() // clear statsCache
-		require.NoError(t, dom.StatsHandle().Update(is))
+		require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 		stmt, err := p.ParseOneStmt(testCase.sql, "", "")
 		require.NoError(t, err)
 		err = executor.ResetContextOfStmt(ctx, stmt)
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		require.NoError(t, err)
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		testCase.check(p, tableInfo)
@@ -263,10 +264,10 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	is := dom.InfoSchema()
-	require.NoError(t, dom.StatsHandle().Update(is))
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	neededColumn := model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}, FullLoad: true}
@@ -361,7 +362,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 	tblName2TblID := make(map[string]int64)
 	tblID2Tbl := make(map[int64]table.Table)
 	for _, tblName := range tableNames {
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tblName))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblName2TblID[tblName] = tbl.Meta().ID
 		tblID2Tbl[tbl.Meta().ID] = tbl
@@ -431,10 +432,10 @@ func TestPartialStatsInExplain(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	tk.MustExec("analyze table t2")
-	tk.MustExec("analyze table tp")
-	tk.RequireNoError(dom.StatsHandle().Update(dom.InfoSchema()))
+	tk.MustExec("analyze table tp all columns")
+	tk.RequireNoError(dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("explain select * from tp where a = 1")
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 	var (

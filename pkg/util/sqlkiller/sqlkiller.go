@@ -16,6 +16,7 @@ package sqlkiller
 
 import (
 	"math/rand"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
@@ -33,6 +34,7 @@ const (
 	MaxExecTimeExceeded
 	QueryMemoryExceeded
 	ServerMemoryExceeded
+	RunawayQueryExceeded
 	// When you add a new signal, you should also modify store/driver/error/ToTidbErr,
 	// so that errors in client can be correctly converted to tidb errors.
 )
@@ -41,7 +43,11 @@ const (
 type SQLKiller struct {
 	Signal killSignal
 	ConnID uint64
-	Finish func()
+	// FinishFuncLock is used to ensure that Finish is not called and modified at the same time.
+	// An external call to the Finish function only allows when the main goroutine to be in the writeResultSet process.
+	// When the main goroutine exits the writeResultSet process, the Finish function will be cleared.
+	FinishFuncLock sync.Mutex
+	Finish         func()
 	// InWriteResultSet is used to indicate whether the query is currently calling clientConn.writeResultSet().
 	// If the query is in writeResultSet and Finish() can acquire rs.finishLock, we can assume the query is waiting for the client to receive data from the server over network I/O.
 	InWriteResultSet atomic.Bool
@@ -72,6 +78,9 @@ func (killer *SQLKiller) getKillError(status killSignal) error {
 		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(killer.ConnID)
 	case ServerMemoryExceeded:
 		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(killer.ConnID)
+	case RunawayQueryExceeded:
+		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.GenWithStackByArgs()
+	default:
 	}
 	return nil
 }
@@ -80,9 +89,25 @@ func (killer *SQLKiller) getKillError(status killSignal) error {
 // If a kill signal is sent but the SQL query is stuck in the network stack while writing packets to the client,
 // encountering some bugs that cause it to hang, or failing to detect the kill signal, we can call Finish to release resources used during the SQL execution process.
 func (killer *SQLKiller) FinishResultSet() {
+	killer.FinishFuncLock.Lock()
+	defer killer.FinishFuncLock.Unlock()
 	if killer.Finish != nil {
 		killer.Finish()
 	}
+}
+
+// SetFinishFunc sets the finish function.
+func (killer *SQLKiller) SetFinishFunc(fn func()) {
+	killer.FinishFuncLock.Lock()
+	defer killer.FinishFuncLock.Unlock()
+	killer.Finish = fn
+}
+
+// ClearFinishFunc clears the finish function.1
+func (killer *SQLKiller) ClearFinishFunc() {
+	killer.FinishFuncLock.Lock()
+	defer killer.FinishFuncLock.Unlock()
+	killer.Finish = nil
 }
 
 // HandleSignal handles the kill signal and return the error.
@@ -112,5 +137,4 @@ func (killer *SQLKiller) Reset() {
 		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID))
 	}
 	atomic.StoreUint32(&killer.Signal, 0)
-	killer.Finish = nil
 }

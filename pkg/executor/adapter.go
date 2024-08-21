@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -100,10 +101,6 @@ type recordSet struct {
 	lastErrs   []error
 	txnStartTS uint64
 	once       sync.Once
-	// finishLock is a mutex used to synchronize access to the `Next` and `Finish` functions of the adapter.
-	// It ensures that only one goroutine can access the `Next` and `Finish` functions at a time, preventing race conditions.
-	// When we terminate the current SQL externally (e.g., kill query), an additional goroutine would be used to call the `Finish` function.
-	finishLock sync.Mutex
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
@@ -164,8 +161,6 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = util2.GetRecoverError(r)
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
-	a.finishLock.Lock()
-	defer a.finishLock.Unlock()
 	if a.stmt != nil {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return err
@@ -201,27 +196,24 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 
 func (a *recordSet) Finish() error {
 	var err error
-	if a.finishLock.TryLock() {
-		defer a.finishLock.Unlock()
-		a.once.Do(func() {
-			err = exec.Close(a.executor)
-			cteErr := resetCTEStorageMap(a.stmt.Ctx)
-			if cteErr != nil {
-				logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+	a.once.Do(func() {
+		err = exec.Close(a.executor)
+		cteErr := resetCTEStorageMap(a.stmt.Ctx)
+		if cteErr != nil {
+			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+		}
+		if err == nil {
+			err = cteErr
+		}
+		a.executor = nil
+		if a.stmt != nil {
+			status := a.stmt.Ctx.GetSessionVars().SQLKiller.GetKillSignal()
+			inWriteResultSet := a.stmt.Ctx.GetSessionVars().SQLKiller.InWriteResultSet.Load()
+			if status > 0 && inWriteResultSet {
+				logutil.BgLogger().Warn("kill, this SQL might be stuck in the network stack while writing packets to the client.", zap.Uint64("connection ID", a.stmt.Ctx.GetSessionVars().ConnectionID))
 			}
-			if err == nil {
-				err = cteErr
-			}
-			a.executor = nil
-			if a.stmt != nil {
-				status := a.stmt.Ctx.GetSessionVars().SQLKiller.GetKillSignal()
-				inWriteResultSet := a.stmt.Ctx.GetSessionVars().SQLKiller.InWriteResultSet.Load()
-				if status > 0 && inWriteResultSet {
-					logutil.BgLogger().Warn("kill, this SQL might be stuck in the network stack while writing packets to the client.", zap.Uint64("connection ID", a.stmt.Ctx.GetSessionVars().ConnectionID))
-				}
-			}
-		})
-	}
+		}
+	})
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
 	}
@@ -242,15 +234,18 @@ func (a *recordSet) OnFetchReturned() {
 	a.stmt.LogSlowQuery(a.txnStartTS, len(a.lastErrs) == 0, true)
 }
 
-// Detach creates a new `RecordSet` which doesn't depend on the current session context.
+// TryDetach creates a new `RecordSet` which doesn't depend on the current session context.
 func (a *recordSet) TryDetach() (sqlexec.RecordSet, bool, error) {
-	// TODO: also detach the executor. Currently, the executor inside may contain the session context. Once
-	// the executor itself supports detach, we should also detach it here.
-	e, ok := a.executor.(*TableReaderExecutor)
+	e, ok := Detach(a.executor)
 	if !ok {
 		return nil, false, nil
 	}
 	return staticrecordset.New(a.Fields(), e, a.stmt.GetTextToLog(false)), true, nil
+}
+
+// GetExecutor4Test exports the internal executor for test purpose.
+func (a *recordSet) GetExecutor4Test() any {
+	return a.executor
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
@@ -546,11 +541,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	// must set plan according to the `Execute` plan before getting planDigest
 	a.inheritContextFromExecuteStmt()
-	if variable.EnableResourceControl.Load() && domain.GetDomain(sctx).RunawayManager() != nil {
-		stmtCtx := sctx.GetSessionVars().StmtCtx
+	if rm := domain.GetDomain(sctx).RunawayManager(); variable.EnableResourceControl.Load() && rm != nil {
+		sessionVars := sctx.GetSessionVars()
+		stmtCtx := sessionVars.StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
 		_, sqlDigest := stmtCtx.SQLDigest()
-		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().StmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, sqlDigest.String(), planDigest.String())
+		stmtCtx.RunawayChecker = rm.DeriveChecker(stmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, sqlDigest.String(), planDigest.String(), sessionVars.StartTime)
 		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
 			return nil, err
 		}
@@ -588,9 +584,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
-	// Special handle for "select for update statement" in pessimistic transaction.
-	if isPessimistic && a.isSelectForUpdate {
-		return a.handlePessimisticSelectForUpdate(ctx, e)
+	if a.isSelectForUpdate {
+		if sctx.GetSessionVars().UseLowResolutionTSO() {
+			return nil, errors.New("can not execute select for update statement when 'tidb_low_resolution_tso' is set")
+		}
+		// Special handle for "select for update statement" in pessimistic transaction.
+		if isPessimistic {
+			return a.handlePessimisticSelectForUpdate(ctx, e)
+		}
 	}
 
 	a.prepareFKCascadeContext(e)
@@ -852,7 +853,7 @@ func isNoResultPlan(p base.Plan) bool {
 	// the Projection has two expressions and two columns in the schema, but we should
 	// not return the result of the two expressions.
 	switch raw := p.(type) {
-	case *plannercore.LogicalProjection:
+	case *logicalop.LogicalProjection:
 		if raw.CalculateNoDelay {
 			return true
 		}
@@ -984,14 +985,15 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
+	// TODO: it's better to use a.ReadOnly to check if the statement is a write statement
+	// instead of listing executor types here.
 	switch e.(type) {
 	case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadDataExec, *DDLExec, *ImportIntoExec:
 		snapshotTS := sctx.GetSessionVars().SnapshotTS
 		if snapshotTS != 0 {
 			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 		}
-		lowResolutionTSO := sctx.GetSessionVars().LowResolutionTSO
-		if lowResolutionTSO {
+		if sctx.GetSessionVars().UseLowResolutionTSO() {
 			return nil, errors.New("can not execute write statement when 'tidb_low_resolution_tso' is set")
 		}
 	}
@@ -1413,7 +1415,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.updatePrevStmt()
 	a.recordLastQueryInfo(err)
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
-	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
+	executeDuration := sessVars.GetExecuteDuration()
 	if sessVars.InRestrictedSQL {
 		executor_metrics.SessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
 	} else {
@@ -1552,7 +1554,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	stmtCtx := sessVars.StmtCtx
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
+	costTime := sessVars.GetTotalCostDuration()
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
 	enable := cfg.Instance.EnableSlowLog.Load()
 	// if the level is Debug, or trace is enabled, print slow logs anyway
@@ -1884,7 +1886,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		stmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
-	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
+	costTime := sessVars.GetTotalCostDuration()
 	charset, collation := sessVars.GetCharsetInfo()
 
 	var prevSQL, prevSQLDigest string
@@ -2125,7 +2127,7 @@ func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	}
 	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		execDuration := time.Since(vars.StartTime) + vars.DurationParse
+		execDuration := vars.GetTotalCostDuration()
 		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
 	}
 }

@@ -41,6 +41,10 @@ const (
 	PseudoRowCount = 10000
 )
 
+// AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
+// Exported for testing.
+var AutoAnalyzeMinCnt int64 = 1000
+
 var (
 	// Below functions are used to solve cycle import problem.
 	// Note: all functions below will be removed after finishing moving all estimation functions into the cardinality package.
@@ -63,6 +67,10 @@ type Table struct {
 	HistColl
 	Version uint64
 	// It's the timestamp of the last analyze time.
+	// We used it in auto-analyze to determine if this table has been analyzed.
+	// The source of this field comes from two parts:
+	// 1. Initialized by snapshot when loading stats_meta.
+	// 2. Updated by the analysis time of a specific column or index when loading the histogram of the column or index.
 	LastAnalyzeVersion uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
@@ -211,7 +219,7 @@ const (
 	ExtendedStatsDeleted
 )
 
-// HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
+// HistColl is a collection of histograms. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
 	// Note that when used in a query, Column use UniqueID as the key while Indices use the index ID in the
 	// metadata. (See GenerateHistCollFromColumnInfo() for details)
@@ -703,6 +711,19 @@ func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram,
 // A valid timestamp must be greater than 0.
 func (t *Table) IsAnalyzed() bool {
 	return t.LastAnalyzeVersion > 0
+}
+
+// IsEligibleForAnalysis checks whether the table is eligible for analysis.
+func (t *Table) IsEligibleForAnalysis() bool {
+	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
+	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
+	// 2. If the table is too small, we don't want to waste time to analyze it.
+	//    Leave the opportunity to other bigger tables.
+	if t == nil || t.Pseudo || t.RealtimeCount < AutoAnalyzeMinCnt {
+		return false
+	}
+
+	return true
 }
 
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.

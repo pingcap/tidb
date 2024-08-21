@@ -11,12 +11,12 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/ddl/ingest",
-        "//pkg/ddl/util/callback",
         "//pkg/disttask/framework/storage",
         "//pkg/errno",
         "//pkg/parser/model",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",

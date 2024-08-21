@@ -73,8 +73,8 @@ func (sr selectResultHook) SelectResult(ctx context.Context, dctx *distsqlctx.Di
 }
 
 type kvRangeBuilder interface {
-	buildKeyRange(ranges []*ranger.Range) ([][]kv.KeyRange, error)
-	buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error)
+	buildKeyRange(dctx *distsqlctx.DistSQLContext, ranges []*ranger.Range) ([][]kv.KeyRange, error)
+	buildKeyRangeSeparately(dctx *distsqlctx.DistSQLContext, ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error)
 }
 
 // tableReaderExecutorContext is the execution context for the `TableReaderExecutor`
@@ -421,7 +421,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 }
 
 func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges []*ranger.Range) ([]*kv.Request, error) {
-	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(ranges)
+	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(e.dctx, ranges)
 	if err != nil {
 		return nil, err
 	}
@@ -458,7 +458,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 }
 
 func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
-	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(ranges)
+	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(e.dctx, ranges)
 	if err != nil {
 		return nil, err
 	}
@@ -501,7 +501,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 	var builder distsql.RequestBuilder
 	var reqBuilder *distsql.RequestBuilder
 	if e.kvRangeBuilder != nil {
-		kvRange, err := e.kvRangeBuilder.buildKeyRange(ranges)
+		kvRange, err := e.kvRangeBuilder.buildKeyRange(e.dctx, ranges)
 		if err != nil {
 			return nil, err
 		}

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	compressutil "github.com/pingcap/tidb/pkg/util/compress"
@@ -87,7 +88,13 @@ func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn
 }
 
 // GenJSONTableFromStats generate jsonTable from tableInfo and stats
-func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *model.TableInfo, tbl *statistics.Table) (*util.JSONTable, error) {
+func GenJSONTableFromStats(
+	sctx sessionctx.Context,
+	dbName string,
+	tableInfo *model.TableInfo,
+	tbl *statistics.Table,
+	colStatsUsage map[model.TableItemID]statstypes.ColStatsTimeInfo,
+) (*util.JSONTable, error) {
 	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
 	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
 	defer tracker.Detach()
@@ -135,6 +142,27 @@ func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *mo
 		return nil, outerErr
 	}
 	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
+	if colStatsUsage != nil {
+		// nilIfNil checks if the provided *time.Time is nil and returns a nil or its string representation accordingly.
+		nilIfNil := func(t *types.Time) *string {
+			if t == nil {
+				return nil
+			}
+			s := t.String()
+			return &s
+		}
+		jsonColStatsUsage := make([]*util.JSONPredicateColumn, 0, len(colStatsUsage))
+		for id, usage := range colStatsUsage {
+			jsonCol := &util.JSONPredicateColumn{
+				ID:             id.ID,
+				LastUsedAt:     nilIfNil(usage.LastUsedAt),
+				LastAnalyzedAt: nilIfNil(usage.LastAnalyzedAt),
+			}
+			jsonColStatsUsage = append(jsonColStatsUsage, jsonCol)
+		}
+		jsonTbl.PredicateColumns = jsonColStatsUsage
+	}
+
 	return jsonTbl, nil
 }
 

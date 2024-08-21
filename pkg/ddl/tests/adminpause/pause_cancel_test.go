@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -127,11 +126,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 		stmtKit.MustExec(prepareStmt)
 	}
 
-	var hook = &callback.TestDDLCallback{Do: dom}
-	originalHook := dom.DDL().GetHook()
-
-	hook.OnJobRunBeforeExported = pauseFunc
-	dom.DDL().SetHook(hook.Clone())
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", pauseFunc)
 
 	isPaused.Store(false)
 	isCancelled.Store(false)
@@ -151,7 +146,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 	}
 
 	// Release the hook, so that we could run the `rollbackStmts` successfully.
-	dom.DDL().SetHook(originalHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRefreshJob")
 
 	for _, rollbackStmt := range stmtCase.rollbackStmts {

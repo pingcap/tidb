@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -546,6 +547,7 @@ var collationsCols = []columnInfo{
 	{name: "IS_DEFAULT", tp: mysql.TypeVarchar, size: 3},
 	{name: "IS_COMPILED", tp: mysql.TypeVarchar, size: 3},
 	{name: "SORTLEN", tp: mysql.TypeLonglong, size: 3},
+	{name: "PAD_ATTRIBUTE", tp: mysql.TypeVarchar, size: 9},
 }
 
 var keyColumnUsageCols = []columnInfo{
@@ -854,6 +856,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "SESSION_ALIAS", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
+	{name: "ROWS_AFFECTED", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -2350,13 +2353,13 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 }
 
-func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
+func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
 	columns := make([]*table.Column, len(meta.Columns))
 	for i, col := range meta.Columns {
 		columns[i] = table.ToColumn(col)
 	}
 	tp := table.VirtualTable
-	if isClusterTableByName(util.InformationSchemaName.O, meta.Name.O) {
+	if IsClusterTableByName(util.InformationSchemaName.O, meta.Name.O) {
 		tp = table.ClusterTable
 	}
 	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil
@@ -2408,6 +2411,11 @@ func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
+// WritableConstraint implements table.Table WritableConstraint interface.
+func (it *infoschemaTable) WritableConstraint() []*table.Constraint {
+	return nil
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (it *infoschemaTable) RecordPrefix() kv.Key {
 	return nil
@@ -2419,17 +2427,17 @@ func (it *infoschemaTable) IndexPrefix() kv.Key {
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (it *infoschemaTable) AddRecord(ctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+func (it *infoschemaTable) AddRecord(ctx table.MutateContext, txn kv.Transaction, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
+func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (it *infoschemaTable) UpdateRecord(gctx context.Context, ctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (it *infoschemaTable) UpdateRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -2496,6 +2504,11 @@ func (vt *VirtualTable) Indices() []table.Index {
 	return nil
 }
 
+// WritableConstraint implements table.Table WritableConstraint interface.
+func (vt *VirtualTable) WritableConstraint() []*table.Constraint {
+	return nil
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (vt *VirtualTable) RecordPrefix() kv.Key {
 	return nil
@@ -2507,17 +2520,17 @@ func (vt *VirtualTable) IndexPrefix() kv.Key {
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (vt *VirtualTable) AddRecord(ctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+func (vt *VirtualTable) AddRecord(ctx table.MutateContext, txn kv.Transaction, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
+func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (vt *VirtualTable) UpdateRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
 	return table.ErrUnsupportedOp
 }
 

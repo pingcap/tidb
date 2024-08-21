@@ -52,7 +52,7 @@ func TestLitBackendCtxMgr(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("insert into mysql.tidb_ddl_job (job_id, processing) values (100, true);")
-	tk.MustExec("insert into mysql.tidb_ddl_job (job_id, processing) values (101, true);")
+	tk.MustExec("insert into mysql.tidb_ddl_job (job_id, processing) values (101, false);")
 
 	ingest.CleanUpTempDir(ctx, tk.Session(), sortPath)
 	require.DirExists(t, staleJobDir)
@@ -63,7 +63,7 @@ func TestLitBackendCtxMgr(t *testing.T) {
 	require.DirExists(t, staleJobDir)
 	require.NoDirExists(t, staleJobDir2)
 
-	tk.MustExec("update mysql.tidb_ddl_job set processing = false where job_id = 100;")
+	tk.MustExec("delete from mysql.tidb_ddl_job where job_id = 100;")
 	ingest.CleanUpTempDir(ctx, tk.Session(), sortPath)
 	require.NoDirExists(t, staleJobDir)
 	require.NoDirExists(t, staleJobDir2)

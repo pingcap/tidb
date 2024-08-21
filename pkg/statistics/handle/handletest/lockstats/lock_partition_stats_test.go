@@ -15,6 +15,7 @@
 package lockstats
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -536,7 +537,7 @@ func setupTestEnvironmentWithPartitionedTableT(t *testing.T) (kv.Storage, *domai
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.Nil(t, err)
 
 	return store, dom, tk, tbl.Meta()

@@ -5,11 +5,11 @@ insert into t1 values(1,1),(2,2);
 insert into t2 values(1,1),(2,1);
 explain format = 'brief' select /*+ inl_merge_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b;
 id	estRows	task	access object	operator info
-IndexMergeJoin	12500.00	root		left outer join, inner:TableReader, outer key:planner__core__casetest__physicalplantest__physical_plan.t1.a, inner key:planner__core__casetest__physicalplantest__physical_plan.t2.a, other cond:eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)
+HashJoin	12500.00	root		left outer join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a) eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─TableReader(Probe)	10000.00	root		data:TableRangeScan
-  └─TableRangeScan	10000.00	cop[tikv]	table:t2	range: decided by [planner__core__casetest__physicalplantest__physical_plan.t1.a], keep order:true, stats:pseudo
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ inl_merge_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b;
 a	a
 1	1
@@ -230,12 +230,12 @@ insert into t1 values (1), (5), (10), (25), (40), (60), (100);
 insert into t2 values (1), (5), (10), (25), (40), (60), (100);
 insert into t3 values (1), (5), (10), (25), (40), (60), (100);
 insert into t4 values (1), (5), (10), (25), (40), (60), (100);
-analyze table tc;
-analyze table te;
-analyze table t1;
-analyze table t2;
-analyze table t3;
-analyze table t4;
+analyze table tc all columns;
+analyze table te all columns;
+analyze table t1 all columns;
+analyze table t2 all columns;
+analyze table t3 all columns;
+analyze table t4 all columns;
 create definer='root'@'localhost' view v as select * from tc;
 explain format = 'brief' with cte as (select /*+ MERGE() */ * from tc where tc.a < 60) select * from cte where cte.a <18;
 id	estRows	task	access object	operator info

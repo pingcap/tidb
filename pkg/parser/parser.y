@@ -274,6 +274,7 @@ import (
 	tableSample       "TABLESAMPLE"
 	terminated        "TERMINATED"
 	then              "THEN"
+	tidbCurrentTSO    "TIDB_CURRENT_TSO"
 	tinyblobType      "TINYBLOB"
 	tinyIntType       "TINYINT"
 	tinytextType      "TINYTEXT"
@@ -281,7 +282,6 @@ import (
 	trailing          "TRAILING"
 	trigger           "TRIGGER"
 	trueKwd           "TRUE"
-	tidbCurrentTSO    "TiDB_CURRENT_TSO"
 	union             "UNION"
 	unique            "UNIQUE"
 	unlock            "UNLOCK"
@@ -1170,6 +1170,7 @@ import (
 	FirstAndLastPartOpt                    "First and Last partition option"
 	FuncDatetimePrec                       "Function datetime precision"
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
+	GlobalOrLocal                          "{GLOBAL|LOCAL}"
 	GlobalScope                            "The scope of variable"
 	StatementScope                         "The scope of statement"
 	GroupByClause                          "GROUP BY clause"
@@ -1324,6 +1325,8 @@ import (
 	StatementList                          "statement list"
 	StatsPersistentVal                     "stats_persistent value"
 	StatsType                              "stats type value"
+	StringLitOrUserVariable                "stringLit or user variable"
+	StringLitOrUserVariableList            "stringLit or user variable list"
 	BindingStatusType                      "binding status type value"
 	StringList                             "string list"
 	SubPartDefinition                      "SubPartition definition"
@@ -1363,6 +1366,9 @@ import (
 	TransactionChars                       "Transaction characteristic list"
 	TrimDirection                          "Trim string direction"
 	SetOprOpt                              "Union/Except/Intersect Option(empty/ALL/DISTINCT)"
+	UpdateIndexElem                        "IndexName {GLOBAL|LOCAL}"
+	UpdateIndexesList                      "UpdateIndexElem[,...]"
+	UpdateIndexesOpt                       "UPDATE INDEXES (UpdateIndexesList) or empty"
 	Username                               "Username"
 	UsernameList                           "UsernameList"
 	UserSpec                               "Username and auth option"
@@ -1555,6 +1561,7 @@ import (
 	FirstOrNext       "FIRST or NEXT"
 	RowOrRows         "ROW or ROWS"
 	Replica           "{REPLICA | SLAVE}"
+	GlobalOrLocalOpt  "GLOBAL, LOCAL or empty"
 
 %type	<ident>
 	Identifier                      "identifier or unreserved keyword"
@@ -1793,29 +1800,29 @@ ResourceGroupRunawayOptionList:
 ResourceGroupRunawayWatchOption:
 	"EXACT"
 	{
-		$$ = int32(model.WatchExact)
+		$$ = model.WatchExact
 	}
 |	"SIMILAR"
 	{
-		$$ = int32(model.WatchSimilar)
+		$$ = model.WatchSimilar
 	}
 |	"PLAN"
 	{
-		$$ = int32(model.WatchPlan)
+		$$ = model.WatchPlan
 	}
 
 ResourceGroupRunawayActionOption:
 	"DRYRUN"
 	{
-		$$ = int32(model.RunawayActionDryRun)
+		$$ = &ast.ResourceGroupRunawayActionOption{Type: model.RunawayActionDryRun}
 	}
 |	"COOLDOWN"
 	{
-		$$ = int32(model.RunawayActionCooldown)
+		$$ = &ast.ResourceGroupRunawayActionOption{Type: model.RunawayActionCooldown}
 	}
 |	"KILL"
 	{
-		$$ = int32(model.RunawayActionKill)
+		$$ = &ast.ResourceGroupRunawayActionOption{Type: model.RunawayActionKill}
 	}
 
 DirectResourceGroupRunawayOption:
@@ -1826,11 +1833,19 @@ DirectResourceGroupRunawayOption:
 			yylex.AppendError(yylex.Errorf("The EXEC_ELAPSED option is not a valid duration: %s", err.Error()))
 			return 1
 		}
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayRule, StrValue: $3}
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp: ast.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{
+				ExecElapsed: $3,
+			},
+		}
 	}
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
 	{
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayAction, IntValue: $3.(int32)}
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp:           ast.RunawayAction,
+			ActionOption: $3.(*ast.ResourceGroupRunawayActionOption),
+		}
 	}
 |	"WATCH" EqOpt ResourceGroupRunawayWatchOption WatchDurationOption
 	{
@@ -1845,7 +1860,13 @@ DirectResourceGroupRunawayOption:
 				return 1
 			}
 		}
-		$$ = &ast.ResourceGroupRunawayOption{Tp: ast.RunawayWatch, StrValue: dur, IntValue: $3.(int32)}
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp: ast.RunawayWatch,
+			WatchOption: &ast.ResourceGroupRunawayWatchOption{
+				Type:     $3.(model.RunawayWatchType),
+				Duration: dur,
+			},
+		}
 	}
 
 WatchDurationOption:
@@ -1865,6 +1886,10 @@ DirectResourceGroupOption:
 	"RU_PER_SEC" EqOpt LengthNum
 	{
 		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, UintValue: $3.(uint64)}
+	}
+|	"RU_PER_SEC" EqOpt "UNLIMITED"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, BoolValue: true}
 	}
 |	"PRIORITY" EqOpt ResourceGroupPriorityOption
 	{
@@ -2754,6 +2779,19 @@ WithClustered:
 		$$ = model.PrimaryKeyTypeNonClustered
 	}
 
+GlobalOrLocalOpt:
+	{
+		$$ = ""
+	}
+|	"LOCAL"
+	{
+		$$ = ""
+	}
+|	"GLOBAL"
+	{
+		$$ = "Global"
+	}
+
 AlgorithmClause:
 	"ALGORITHM" EqOpt "DEFAULT"
 	{
@@ -3549,27 +3587,35 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoIncrement}
 	}
-|	PrimaryOpt "KEY"
+|	PrimaryOpt "KEY" GlobalOrLocalOpt
 	{
 		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY
 		// can also be specified as just KEY when given in a column definition.
 		// See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey, StrValue: $3}
 	}
-|	PrimaryOpt "KEY" WithClustered
+|	PrimaryOpt "KEY" WithClustered GlobalOrLocalOpt
 	{
 		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY
 		// can also be specified as just KEY when given in a column definition.
 		// See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey, PrimaryKeyTp: $3.(model.PrimaryKeyType)}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey, PrimaryKeyTp: $3.(model.PrimaryKeyType), StrValue: $4}
+	}
+|	"UNIQUE" "GLOBAL"
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey, StrValue: "Global"}
+	}
+|	"UNIQUE" "LOCAL"
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey}
 	}
 |	"UNIQUE" %prec lowerThanKey
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey}
 	}
-|	"UNIQUE" "KEY"
+|	"UNIQUE" "KEY" GlobalOrLocalOpt
 	{
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey, StrValue: $3}
 	}
 |	"DEFAULT" DefaultValueExpr
 	{
@@ -4115,6 +4161,7 @@ DropStatisticsStmt:
  *   | WITH PARSER parser_name
  *   | COMMENT 'string'
  *   | {VISIBLE | INVISIBLE}
+ *   | GLOBAL
  *
  * index_type:
  *     USING {BTREE | HASH}
@@ -4438,22 +4485,63 @@ PartitionOpt:
 	{
 		$$ = nil
 	}
-|	"PARTITION" "BY" PartitionMethod PartitionNumOpt SubPartitionOpt PartitionDefinitionListOpt
+|	"PARTITION" "BY" PartitionMethod PartitionNumOpt SubPartitionOpt PartitionDefinitionListOpt UpdateIndexesOpt
 	{
 		method := $3.(*ast.PartitionMethod)
 		method.Num = $4.(uint64)
 		sub, _ := $5.(*ast.PartitionMethod)
 		defs, _ := $6.([]*ast.PartitionDefinition)
+		UpdateIndexes, _ := $7.([]*ast.Constraint)
 		opt := &ast.PartitionOptions{
 			PartitionMethod: *method,
 			Sub:             sub,
 			Definitions:     defs,
+			UpdateIndexes:   UpdateIndexes,
 		}
 		if err := opt.Validate(); err != nil {
 			yylex.AppendError(err)
 			return 1
 		}
 		$$ = opt
+	}
+
+GlobalOrLocal:
+	"LOCAL"
+	{
+		$$ = false
+	}
+|	"GLOBAL"
+	{
+		$$ = true
+	}
+
+UpdateIndexElem:
+	Identifier GlobalOrLocal
+	{
+		opt := &ast.IndexOption{Global: $2.(bool)}
+		$$ = &ast.Constraint{
+			Name:   $1,
+			Option: opt,
+		}
+	}
+
+UpdateIndexesList:
+	UpdateIndexElem
+	{
+		$$ = []*ast.Constraint{$1.(*ast.Constraint)}
+	}
+|	UpdateIndexesList ',' UpdateIndexElem
+	{
+		$$ = append($1.([]*ast.Constraint), $3.(*ast.Constraint))
+	}
+
+UpdateIndexesOpt:
+	{
+		$$ = nil
+	}
+|	"UPDATE" "INDEXES" '(' UpdateIndexesList ')'
+	{
+		$$ = $4
 	}
 
 SubPartitionMethod:
@@ -6445,6 +6533,8 @@ IndexOptionList:
 				opt1.Visibility = opt2.Visibility
 			} else if opt2.PrimaryKeyTp != model.PrimaryKeyTypeDefault {
 				opt1.PrimaryKeyTp = opt2.PrimaryKeyTp
+			} else if opt2.Global {
+				opt1.Global = true
 			}
 			$$ = opt1
 		}
@@ -6487,6 +6577,18 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			PrimaryKeyTp: $1.(model.PrimaryKeyType),
+		}
+	}
+|	"GLOBAL"
+	{
+		$$ = &ast.IndexOption{
+			Global: true,
+		}
+	}
+|	"LOCAL"
+	{
+		$$ = &ast.IndexOption{
+			Global: false,
 		}
 	}
 
@@ -7932,7 +8034,7 @@ FunctionNameOptionalBraces:
 |	"CURRENT_DATE"
 |	"CURRENT_ROLE"
 |	"UTC_DATE"
-|	"TiDB_CURRENT_TSO"
+|	"TIDB_CURRENT_TSO"
 
 FunctionNameDatetimePrecision:
 	"CURRENT_TIME"
@@ -9863,6 +9965,10 @@ JoinTable:
 	{
 		on := &ast.OnCondition{Expr: $5}
 		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), StraightJoin: true, On: on}
+	}
+|	TableRef "STRAIGHT_JOIN" TableRef "USING" '(' ColumnNameList ')'
+	{
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), StraightJoin: true, Using: $6.([]*ast.ColumnName)}
 	}
 
 JoinType:
@@ -13923,14 +14029,34 @@ CreateBindingStmt:
 
 		$$ = x
 	}
-|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
+|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" StringLitOrUserVariableList
 	{
 		x := &ast.CreateBindingStmt{
 			GlobalScope: $2.(bool),
-			PlanDigest:  $9,
+			PlanDigests:  $9.([]*ast.StringOrUserVar),
 		}
 
 		$$ = x
+	}
+
+StringLitOrUserVariableList:
+	StringLitOrUserVariable
+	{
+		$$ = []*ast.StringOrUserVar{$1.(*ast.StringOrUserVar)}
+	}
+|	StringLitOrUserVariableList ',' StringLitOrUserVariable
+	{
+		$$ = append($1.([]*ast.StringOrUserVar), $3.(*ast.StringOrUserVar))
+	}
+
+StringLitOrUserVariable:
+	stringLit
+	{
+		$$ = &ast.StringOrUserVar{StringLit: $1}
+	}
+|	UserVariable
+	{
+		$$ = &ast.StringOrUserVar{UserVar: $1.(*ast.VariableExpr)}
 	}
 
 /*******************************************************************
@@ -13973,11 +14099,11 @@ DropBindingStmt:
 
 		$$ = x
 	}
-|	"DROP" GlobalScope "BINDING" "FOR" "SQL" "DIGEST" stringLit
+|	"DROP" GlobalScope "BINDING" "FOR" "SQL" "DIGEST" StringLitOrUserVariableList
 	{
 		x := &ast.DropBindingStmt{
 			GlobalScope: $2.(bool),
-			SQLDigest:   $7,
+			SQLDigests:  $7.([]*ast.StringOrUserVar),
 		}
 
 		$$ = x
@@ -16246,33 +16372,59 @@ QueryWatchOptionList:
 QueryWatchOption:
 	"RESOURCE" "GROUP" ResourceGroupName
 	{
-		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchResourceGroup, StrValue: model.NewCIStr($3)}
+		$$ = &ast.QueryWatchOption{
+			Tp: ast.QueryWatchResourceGroup,
+			ResourceGroupOption: &ast.QueryWatchResourceGroupOption{
+				GroupNameStr: model.NewCIStr($3),
+			},
+		}
 	}
 |	"RESOURCE" "GROUP" UserVariable
 	{
-		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchResourceGroup, ExprValue: $3}
+		$$ = &ast.QueryWatchOption{
+			Tp: ast.QueryWatchResourceGroup,
+			ResourceGroupOption: &ast.QueryWatchResourceGroupOption{
+				GroupNameExpr: $3,
+			},
+		}
 	}
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
 	{
-		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchAction, IntValue: $3.(int32)}
+		$$ = &ast.QueryWatchOption{
+			Tp:           ast.QueryWatchAction,
+			ActionOption: $3.(*ast.ResourceGroupRunawayActionOption),
+		}
 	}
 |	QueryWatchTextOption
 	{
-		$$ = $1.(*ast.QueryWatchOption)
+		$$ = &ast.QueryWatchOption{
+			Tp:         ast.QueryWatchType,
+			TextOption: $1.(*ast.QueryWatchTextOption),
+		}
 	}
 
 QueryWatchTextOption:
 	"SQL" "DIGEST" SimpleExpr
 	{
-		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchType, IntValue: int32(model.WatchSimilar), ExprValue: $3}
+		$$ = &ast.QueryWatchTextOption{
+			Type:        model.WatchSimilar,
+			PatternExpr: $3,
+		}
 	}
 |	"PLAN" "DIGEST" SimpleExpr
 	{
-		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchType, IntValue: int32(model.WatchPlan), ExprValue: $3}
+		$$ = &ast.QueryWatchTextOption{
+			Type:        model.WatchPlan,
+			PatternExpr: $3,
+		}
 	}
 |	"SQL" "TEXT" ResourceGroupRunawayWatchOption "TO" SimpleExpr
 	{
-		$$ = &ast.QueryWatchOption{Tp: ast.QueryWatchType, IntValue: $3.(int32), ExprValue: $5, BoolValue: true}
+		$$ = &ast.QueryWatchTextOption{
+			Type:          $3.(model.RunawayWatchType),
+			PatternExpr:   $5,
+			TypeSpecified: true,
+		}
 	}
 
 DropQueryWatchStmt:

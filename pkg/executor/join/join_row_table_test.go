@@ -24,9 +24,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestHeapObjectCanMove(t *testing.T) {
+	require.Equal(t, false, heapObjectsCanMove())
+}
+
 func TestFixedOffsetInRowLayout(t *testing.T) {
 	require.Equal(t, 8, sizeOfNextPtr)
 	require.Equal(t, 8, sizeOfLengthField)
+}
+
+func TestUintptrCanHoldPointer(t *testing.T) {
+	require.Equal(t, true, sizeOfUintptr >= sizeOfUnsafePointer)
 }
 
 func TestJoinTableMetaKeyMode(t *testing.T) {
@@ -170,6 +178,11 @@ func TestJoinTableMetaSerializedMode(t *testing.T) {
 	stringTp := types.NewFieldType(mysql.TypeVarString)
 	binaryStringTp := types.NewFieldType(mysql.TypeBlob)
 	decimalTp := types.NewFieldType(mysql.TypeNewDecimal)
+	enumTp := types.NewFieldType(mysql.TypeEnum)
+	enumWithIntFlag := types.NewFieldType(mysql.TypeEnum)
+	enumWithIntFlag.AddFlag(mysql.EnumSetAsIntFlag)
+	setTp := types.NewFieldType(mysql.TypeSet)
+	jsonTp := types.NewFieldType(mysql.TypeJSON)
 
 	type testCase struct {
 		buildKeyIndex  []int
@@ -184,12 +197,23 @@ func TestJoinTableMetaSerializedMode(t *testing.T) {
 		// test NeedSignFlag
 		{[]int{0, 1}, []*types.FieldType{uintTp, intTp}, []*types.FieldType{uintTp, intTp}, []*types.FieldType{intTp, intTp}, []codec.SerializeMode{codec.NeedSignFlag, codec.Normal}},
 		{[]int{0}, []*types.FieldType{uintTp}, []*types.FieldType{uintTp}, []*types.FieldType{intTp}, []codec.SerializeMode{codec.NeedSignFlag}},
-		// test KeepStringLength
-		{[]int{0, 1}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, []codec.SerializeMode{codec.Normal, codec.KeepStringLength}},
-		{[]int{0}, []*types.FieldType{binaryStringTp}, []*types.FieldType{binaryStringTp}, []*types.FieldType{binaryStringTp}, []codec.SerializeMode{codec.KeepStringLength}},
-		// binaryString is not inlined, no need to keep string length
+		// test KeepVarColumnLength
+		{[]int{0, 1}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, []codec.SerializeMode{codec.Normal, codec.KeepVarColumnLength}},
+		{[]int{0}, []*types.FieldType{binaryStringTp}, []*types.FieldType{binaryStringTp}, []*types.FieldType{binaryStringTp}, []codec.SerializeMode{codec.KeepVarColumnLength}},
+		// binaryString is not inlined, no need to keep var column length
 		{[]int{0, 1}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{uintTp, binaryStringTp}, []codec.SerializeMode{codec.NeedSignFlag, codec.Normal}},
-		{[]int{0, 1}, []*types.FieldType{stringTp, binaryStringTp}, []*types.FieldType{stringTp, binaryStringTp}, []*types.FieldType{stringTp, binaryStringTp}, []codec.SerializeMode{codec.Normal, codec.Normal}},
+		// multiple var-length column, need keep var column length
+		{[]int{0, 1}, []*types.FieldType{stringTp, binaryStringTp}, []*types.FieldType{stringTp, binaryStringTp}, []*types.FieldType{stringTp, binaryStringTp}, []codec.SerializeMode{codec.KeepVarColumnLength, codec.KeepVarColumnLength}},
+		{[]int{0, 1}, []*types.FieldType{stringTp, decimalTp}, []*types.FieldType{stringTp, decimalTp}, []*types.FieldType{stringTp, decimalTp}, []codec.SerializeMode{codec.KeepVarColumnLength, codec.KeepVarColumnLength}},
+		// set/json/decimal/enum is treated as var-length column
+		{[]int{0, 1}, []*types.FieldType{setTp, jsonTp, decimalTp, enumTp}, []*types.FieldType{setTp, jsonTp, decimalTp, enumTp}, []*types.FieldType{setTp, jsonTp, decimalTp, enumTp}, []codec.SerializeMode{codec.KeepVarColumnLength, codec.KeepVarColumnLength, codec.KeepVarColumnLength, codec.KeepVarColumnLength}},
+		{[]int{0, 1}, []*types.FieldType{setTp, jsonTp, decimalTp}, []*types.FieldType{setTp, jsonTp, decimalTp}, []*types.FieldType{setTp, jsonTp, decimalTp}, []codec.SerializeMode{codec.KeepVarColumnLength, codec.KeepVarColumnLength, codec.KeepVarColumnLength}},
+		{[]int{0, 1}, []*types.FieldType{jsonTp, decimalTp}, []*types.FieldType{jsonTp, decimalTp}, []*types.FieldType{jsonTp, decimalTp}, []codec.SerializeMode{codec.KeepVarColumnLength, codec.KeepVarColumnLength}},
+		{[]int{0, 1}, []*types.FieldType{setTp, enumTp}, []*types.FieldType{setTp, enumTp}, []*types.FieldType{setTp, enumTp}, []codec.SerializeMode{codec.KeepVarColumnLength, codec.KeepVarColumnLength}},
+		// enumWithIntFlag is fix length column
+		{[]int{0, 1}, []*types.FieldType{enumWithIntFlag, enumTp}, []*types.FieldType{enumWithIntFlag, enumTp}, []*types.FieldType{enumWithIntFlag, enumTp}, []codec.SerializeMode{codec.Normal, codec.Normal}},
+		// single non-inlined var length column don't need keep var column length
+		{[]int{0, 1}, []*types.FieldType{setTp, enumWithIntFlag}, []*types.FieldType{setTp, enumWithIntFlag}, []*types.FieldType{setTp, enumWithIntFlag}, []codec.SerializeMode{codec.Normal, codec.Normal}},
 	}
 	for index, test := range testCases {
 		meta := newTableMeta(test.buildKeyIndex, test.buildTypes, test.buildKeyTypes, test.probeKeyTypes, nil, []int{}, false)

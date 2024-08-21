@@ -437,7 +437,8 @@ func TestParamList(t *testing.T) {
 		WithParamList(paramList),
 	)
 	for i := 0; i < 3; i++ {
-		val := ctx.GetParamValue(i)
+		val, err := ctx.GetParamValue(i)
+		require.NoError(t, err)
 		require.Equal(t, int64(i+1), val.GetInt64())
 	}
 
@@ -445,7 +446,8 @@ func TestParamList(t *testing.T) {
 	paramList.Reset()
 	paramList.Append(types.NewDatum(4))
 	for i := 0; i < 3; i++ {
-		val := ctx.GetParamValue(i)
+		val, err := ctx.GetParamValue(i)
+		require.NoError(t, err)
 		require.Equal(t, int64(i+1), val.GetInt64())
 	}
 }

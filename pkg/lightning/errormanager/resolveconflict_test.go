@@ -118,20 +118,19 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(7),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data4)
+	_, err = encoder.AddRecord(data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data5)
+	_, err = encoder.AddRecord(data5)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data6)
+	_, err = encoder.AddRecord(data6)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data7)
+	_, err = encoder.AddRecord(data7)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -321,16 +320,15 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(5),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data4)
+	_, err = encoder.AddRecord(data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data5)
+	_, err = encoder.AddRecord(data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -490,16 +488,15 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(5),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data4)
+	_, err = encoder.AddRecord(data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data5)
+	_, err = encoder.AddRecord(data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -697,16 +694,15 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 		types.NewStringDatum("5.csv"),
 		types.NewIntDatum(5),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data4)
+	_, err = encoder.AddRecord(data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data5)
+	_, err = encoder.AddRecord(data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 

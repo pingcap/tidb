@@ -15,6 +15,7 @@
 package storage_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -42,7 +43,7 @@ func TestLoadStats(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	colAID := tableInfo.Columns[0].ID

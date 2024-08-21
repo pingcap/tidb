@@ -735,18 +735,36 @@ func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expres
 	retType := col.GetType(ctx.GetEvalCtx())
 	args := make([]expression.Expression, 0, len(points)/2)
 	args = append(args, col)
+	orArgs := make([]expression.Expression, 0, 2)
 	for i := 0; i < len(points); i = i + 2 {
-		value := &expression.Constant{
-			Value:   points[i].value,
-			RetType: retType,
+		if points[i].value.IsNull() {
+			orArgs = append(orArgs, expression.NewFunctionInternal(ctx, ast.IsNull, retType, col))
+		} else {
+			value := &expression.Constant{
+				Value:   points[i].value,
+				RetType: retType,
+			}
+			args = append(args, value)
 		}
-		args = append(args, value)
 	}
-	funcName := ast.EQ
-	if len(args) > 2 {
-		funcName = ast.In
+	var result expression.Expression
+	if len(args) > 1 {
+		funcName := ast.EQ
+		if len(args) > 2 {
+			funcName = ast.In
+		}
+		result = expression.NewFunctionInternal(ctx, funcName, col.GetType(ctx.GetEvalCtx()), args...)
 	}
-	return expression.NewFunctionInternal(ctx, funcName, col.GetType(ctx.GetEvalCtx()), args...)
+	if len(orArgs) == 0 {
+		return result
+	}
+	if result != nil {
+		orArgs = append(orArgs, result)
+	}
+	if len(orArgs) == 1 {
+		return orArgs[0]
+	}
+	return expression.NewFunctionInternal(ctx, ast.Or, col.GetType(ctx.GetEvalCtx()), orArgs...)
 }
 
 // RangesToString print a list of Ranges into a string which can appear in an SQL as a condition.

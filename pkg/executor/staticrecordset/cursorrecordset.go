@@ -49,6 +49,11 @@ func (c *cursorRecordSet) Close() error {
 	return c.recordSet.Close()
 }
 
+// GetExecutor4Test exports the internal executor for test purpose.
+func (c *cursorRecordSet) GetExecutor4Test() any {
+	return c.recordSet.(interface{ GetExecutor4Test() any }).GetExecutor4Test()
+}
+
 // WrapRecordSetWithCursor wraps a record set with a cursor handle. The cursor handle will be closed
 // automatically when the record set is closed
 func WrapRecordSetWithCursor(cursor cursor.Handle, recordSet sqlexec.RecordSet) sqlexec.RecordSet {

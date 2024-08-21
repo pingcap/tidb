@@ -781,13 +781,13 @@ func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInf
 }
 
 // CreateTable implements glue.Session
-func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return BRIECreateTable(gs.se, dbName, table, "", cs...)
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
 func (gs *tidbGlueSession) CreateTables(_ context.Context,
-	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return BRIECreateTables(gs.se, tables, "", cs...)
 }
 
@@ -796,7 +796,7 @@ func (gs *tidbGlueSession) CreatePlacementPolicy(_ context.Context, policy *mode
 	originQueryString := gs.se.Value(sessionctx.QueryString)
 	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
 	gs.se.SetValue(sessionctx.QueryString, ConstructResultOfShowCreatePlacementPolicy(policy))
-	d := domain.GetDomain(gs.se).DDL()
+	d := domain.GetDomain(gs.se).DDLExecutor()
 	// the default behaviour is ignoring duplicated policy during restore.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }

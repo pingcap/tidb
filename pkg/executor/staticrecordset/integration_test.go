@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -29,6 +31,8 @@ import (
 func TestStaticRecordSet(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+
+	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int)")
@@ -60,6 +64,8 @@ func TestStaticRecordSet(t *testing.T) {
 func TestStaticRecordSetWithTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+
+	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int)")
@@ -100,6 +106,8 @@ func TestStaticRecordSetExceedGCTime(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
+	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int)")
 	tk.MustExec("insert into t values (1), (2), (3)")
@@ -135,6 +143,8 @@ func TestDetachError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
+	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int)")
 	tk.MustExec("insert into t values (1), (2), (3)")
@@ -153,6 +163,8 @@ func TestDetachError(t *testing.T) {
 func TestCursorWillBeClosed(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+
+	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int)")
@@ -178,6 +190,8 @@ func TestCursorWillBeClosed(t *testing.T) {
 func TestCursorWillBlockMinStartTS(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+
+	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int)")
@@ -210,4 +224,26 @@ func TestCursorWillBlockMinStartTS(t *testing.T) {
 		infoSyncer.ReportMinStartTS(store)
 		return infoSyncer.GetMinStartTS() == secondStartTS
 	}, time.Second*5, time.Millisecond*100)
+}
+
+func TestFinishStmtError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+
+	rs, err := tk.Exec("select * from t")
+	require.NoError(t, err)
+	drs := rs.(sqlexec.DetachableRecordSet)
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/session/finishStmtError", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/session/finishStmtError")
+	// Then `TryDetach` should return `true`, because the original record set is detached and cannot be used anymore.
+	_, ok, err := drs.TryDetach()
+	require.True(t, ok)
+	require.Error(t, err)
 }

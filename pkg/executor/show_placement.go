@@ -331,8 +331,11 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 
 func (e *ShowExec) fetchDBScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, db *model.DBInfo) (infosync.PlacementScheduleState, error) {
 	state := infosync.PlacementScheduleStateScheduled
-	for _, table := range e.is.SchemaTables(db.Name) {
-		tbl := table.Meta()
+	tblInfos, err := e.is.SchemaTableInfos(ctx, db.Name)
+	if err != nil {
+		return state, errors.Trace(err)
+	}
+	for _, tbl := range tblInfos {
 		schedule, err := fetchTableScheduleState(ctx, scheduleState, tbl)
 		if err != nil {
 			return state, err
@@ -359,9 +362,11 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 
 	for _, dbName := range dbs {
 		tableRowSets := make([]tableRowSet, 0)
-
-		for _, tbl := range e.is.SchemaTables(dbName) {
-			tblInfo := tbl.Meta()
+		tblInfos, err := e.is.SchemaTableInfos(ctx, dbName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, tblInfo := range tblInfos {
 			if checker != nil && !checker.RequestVerification(activeRoles, dbName.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
 				continue
 			}

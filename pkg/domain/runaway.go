@@ -69,7 +69,7 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 	})
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := model.NewCIStr(tableName)
-	tbl, err := do.InfoSchema().TableByName(systemSchemaCIStr, tbCIStr)
+	tbl, err := do.InfoSchema().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
@@ -216,7 +216,7 @@ func (do *Domain) GetRunawayWatchList() []*resourcegroup.QuarantineRecord {
 	return do.runawayManager.GetWatchList()
 }
 
-// TryToUpdateRunawayWatch is used to to update watch list including
+// TryToUpdateRunawayWatch is used to update watch list including
 // creation and deletion by manual trigger.
 func (do *Domain) TryToUpdateRunawayWatch() error {
 	return do.updateNewAndDoneWatch()
@@ -242,21 +242,21 @@ func (do *Domain) runawayRecordFlushLoop() {
 
 	// this times is used to batch flushing records, with 1s duration,
 	// we can guarantee a watch record can be seen by the user within 1s.
-	runawayRecordFluashTimer := time.NewTimer(runawayRecordFlushInterval)
+	runawayRecordFlushTimer := time.NewTimer(runawayRecordFlushInterval)
 	runawayRecordGCTicker := time.NewTicker(runawayRecordGCInterval)
 	failpoint.Inject("FastRunawayGC", func() {
-		runawayRecordFluashTimer.Stop()
+		runawayRecordFlushTimer.Stop()
 		runawayRecordGCTicker.Stop()
-		runawayRecordFluashTimer = time.NewTimer(time.Millisecond * 50)
+		runawayRecordFlushTimer = time.NewTimer(time.Millisecond * 50)
 		runawayRecordGCTicker = time.NewTicker(time.Millisecond * 200)
 	})
 
 	fired := false
-	recordCh := do.RunawayManager().RunawayRecordChan()
-	quarantineRecordCh := do.RunawayManager().QuarantineRecordChan()
-	staleQuarantineRecordCh := do.RunawayManager().StaleQuarantineRecordChan()
-	flushThrehold := do.runawayManager.FlushThreshold()
-	records := make([]*resourcegroup.RunawayRecord, 0, flushThrehold)
+	recordCh := do.runawayManager.RunawayRecordChan()
+	quarantineRecordCh := do.runawayManager.QuarantineRecordChan()
+	staleQuarantineRecordCh := do.runawayManager.StaleQuarantineRecordChan()
+	flushThreshold := do.runawayManager.FlushThreshold()
+	records := make([]*resourcegroup.RunawayRecord, 0, flushThreshold)
 
 	flushRunawayRecords := func() {
 		if len(records) == 0 {
@@ -273,7 +273,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 		select {
 		case <-do.exit:
 			return
-		case <-runawayRecordFluashTimer.C:
+		case <-runawayRecordFlushTimer.C:
 			flushRunawayRecords()
 			fired = true
 		case r := <-recordCh:
@@ -281,12 +281,12 @@ func (do *Domain) runawayRecordFlushLoop() {
 			failpoint.Inject("FastRunawayGC", func() {
 				flushRunawayRecords()
 			})
-			if len(records) >= flushThrehold {
+			if len(records) >= flushThreshold {
 				flushRunawayRecords()
 			} else if fired {
 				fired = false
 				// meet a new record, reset the timer.
-				runawayRecordFluashTimer.Reset(runawayRecordFlushInterval)
+				runawayRecordFlushTimer.Reset(runawayRecordFlushInterval)
 			}
 		case <-runawayRecordGCTicker.C:
 			go do.deleteExpiredRows("tidb_runaway_queries", "time", runawayRecordExpiredDuration)
@@ -440,7 +440,7 @@ func (do *Domain) handleRemoveStaleRunawayWatch(record *resourcegroup.Quarantine
 	return err
 }
 
-func execRestrictedSQL(sessPool *sessionPool, sql string, params []any) ([]chunk.Row, error) {
+func execRestrictedSQL(sessPool util.SessionPool, sql string, params []any) ([]chunk.Row, error) {
 	se, err := sessPool.Get()
 	defer func() {
 		sessPool.Put(se)
@@ -484,11 +484,11 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 type runawaySyncer struct {
 	newWatchReader      *SystemTableReader
 	deletionWatchReader *SystemTableReader
-	sysSessionPool      *sessionPool
+	sysSessionPool      util.SessionPool
 	mu                  sync.Mutex
 }
 
-func newRunawaySyncer(sysSessionPool *sessionPool) *runawaySyncer {
+func newRunawaySyncer(sysSessionPool util.SessionPool) *runawaySyncer {
 	return &runawaySyncer{
 		sysSessionPool: sysSessionPool,
 		newWatchReader: &SystemTableReader{

@@ -356,7 +356,7 @@ func TestFormatSQLDatum(t *testing.T) {
 	sb.WriteString("\n);")
 	tk.MustExec(sb.String())
 
-	tbl, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	for i, c := range cases {

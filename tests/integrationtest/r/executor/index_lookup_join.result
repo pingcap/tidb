@@ -90,12 +90,12 @@ select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1, t2;
 a	b	a	b
 show warnings;
 Level	Code	Message
-Warning	1815	Optimizer Hint /*+ INL_MERGE_JOIN(t1, t2) */ is inapplicable without column equal ON condition
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
 a	b	a	b
 show warnings;
 Level	Code	Message
-Warning	1815	Optimizer Hint /*+ INL_MERGE_JOIN(t1, t2) */ is inapplicable
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 drop table if exists t1, t2;
 create table t1(a bigint, b bigint, index idx_a(a));
 create table t2(a bigint, b bigint);
@@ -123,12 +123,12 @@ select /*+ INL_MERGE_JOIN(t1) */ * from t1 left join t2 on t1.a=t2.a;
 a	b	a	b
 show warnings;
 Level	Code	Message
-Warning	1815	Optimizer Hint /*+ INL_MERGE_JOIN(t1) */ is inapplicable
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 select /*+ INL_MERGE_JOIN(t2) */ * from t1 right join t2 on t1.a=t2.a;
 a	b	a	b
 show warnings;
 Level	Code	Message
-Warning	1815	Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 drop table if exists t1, t2;
 create table t1 (a int, key(a));
 create table t2 (a int, key(a));
@@ -532,8 +532,8 @@ postfiller bigint(20) NOT NULL,
 PRIMARY KEY (pk) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ;
 insert into t2 values ( pow(2,32), 1, 1), ( pow(2,32)+1, 2, 0);
-analyze table t1;
-analyze table t2;
+analyze table t1 all columns;
+analyze table t2 all columns;
 explain format='brief' select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 );
 id	estRows	task	access object	operator info
 IndexJoin	1.25	root		inner join, inner:TableReader, outer key:executor__index_lookup_join.t2.prefiller, inner key:executor__index_lookup_join.t1.id, equal cond:eq(executor__index_lookup_join.t2.prefiller, executor__index_lookup_join.t1.id)

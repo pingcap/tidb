@@ -47,7 +47,8 @@ var (
 	ErrTxnTooLarge = dbterror.ClassKV.NewStd(mysql.ErrTxnTooLarge)
 	// ErrEntryTooLarge is the error when a key value entry is too large.
 	ErrEntryTooLarge = dbterror.ClassKV.NewStd(mysql.ErrEntryTooLarge)
-	// ErrKeyExists returns when key is already exist.
+	// ErrKeyExists returns when key is already exist. Caller should try to use
+	// GenKeyExistsErr to generate this error for correct format.
 	ErrKeyExists = dbterror.ClassKV.NewStd(mysql.ErrDupEntry)
 	// ErrNotImplemented returns when a function is not implemented yet.
 	ErrNotImplemented = dbterror.ClassKV.NewStd(mysql.ErrNotImplemented)
@@ -91,23 +92,8 @@ func IsErrNotFound(err error) bool {
 	return ErrNotExist.Equal(err)
 }
 
-// GetDuplicateErrorHandleString is used to concat the handle columns data with '-'.
-// This is consistent with MySQL.
-func GetDuplicateErrorHandleString(handle Handle) string {
-	dt, err := handle.Data()
-	if err != nil {
-		return err.Error()
-	}
-	var sb strings.Builder
-	for i, d := range dt {
-		if i != 0 {
-			sb.WriteString("-")
-		}
-		s, err := d.ToString()
-		if err != nil {
-			return err.Error()
-		}
-		sb.WriteString(s)
-	}
-	return sb.String()
+// GenKeyExistsErr generates a ErrKeyExists, it concat the handle columns data
+// with '-'. This is consistent with MySQL.
+func GenKeyExistsErr(keyCols []string, keyName string) error {
+	return ErrKeyExists.FastGenByArgs(strings.Join(keyCols, "-"), keyName)
 }

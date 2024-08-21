@@ -1234,7 +1234,7 @@ func (local *Backend) executeJob(
 		for _, peer := range job.region.Region.GetPeers() {
 			store, err := local.pdHTTPCli.GetStore(ctx, peer.StoreId)
 			if err != nil {
-				log.FromContext(ctx).Error("failed to get StoreInfo from pd http api", zap.Error(err))
+				log.FromContext(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
 				continue
 			}
 			err = checkDiskAvail(ctx, store)

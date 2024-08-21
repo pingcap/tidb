@@ -114,12 +114,11 @@ func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.
 		types.NewStringDatum("3.csv"),
 		types.NewIntDatum(103),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
 	return tbl, encoder.SessionCtx.TakeKvPairs()
 }

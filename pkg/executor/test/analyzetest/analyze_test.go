@@ -39,8 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
@@ -63,10 +63,11 @@ PARTITION BY RANGE ( a ) (
 		for i := 1; i < 21; i++ {
 			tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
 		}
+		analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c")
 		tk.MustExec("analyze table t")
 
 		is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-		table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		pi := table.Meta().GetPartitionInfo()
 		require.NotNil(t, pi)
@@ -95,7 +96,7 @@ PARTITION BY RANGE ( a ) (
 		}
 		tk.MustExec("alter table t analyze partition p0")
 		is = tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-		table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		table, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		pi = table.Meta().GetPartitionInfo()
 		require.NotNil(t, pi)
@@ -152,7 +153,7 @@ func TestAnalyzeParameters(t *testing.T) {
 	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("analyze table t with 30 samples")
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
@@ -205,9 +206,10 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("insert into t values ('%s')", value))
 
 	tk.MustExec("set @@session.tidb_analyze_skip_column_types = ''")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
 	tk.MustExec("analyze table t")
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
@@ -249,7 +251,7 @@ func TestExtractTopN(t *testing.T) {
 	}
 	tk.MustExec("analyze table test_extract_topn")
 	is := dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test_extract_topn"), model.NewCIStr("test_extract_topn"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test_extract_topn"), model.NewCIStr("test_extract_topn"))
 	require.NoError(t, err)
 	tblInfo := table.Meta()
 	tblStats := dom.StatsHandle().GetTableStats(tblInfo)
@@ -432,7 +434,7 @@ func testSnapshotAnalyzeAndMaxTSAnalyzeHelper(analyzeSnapshot bool) func(t *test
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int, index index_a(a))")
 		is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		tid := tblInfo.ID
@@ -496,23 +498,29 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	tk.MustExec("create table t(a int, index index_a(a))")
 	require.NoError(t, statsHandle.HandleDDLEvent(<-statsHandle.DDLEventCh()))
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	tid := tblInfo.ID
 	tk.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 220000 where table_id=%d", tid))
-	require.NoError(t, statsHandle.Update(is))
+	require.NoError(t, statsHandle.Update(context.Background(), is))
 	result := tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Equal(t, "220000", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 0.500000 for table test.t, reason to use this rate is \"use min(1, 110000/220000) as the sample-rate=0.5\""))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+		"Note 1105 Analyze use auto adjusted sample rate 0.500000 for table test.t, reason to use this rate is \"use min(1, 110000/220000) as the sample-rate=0.5\"",
+	))
 	tk.MustExec("insert into t values(1),(1),(1)")
 	require.NoError(t, statsHandle.DumpStatsDeltaToKV(true))
-	require.NoError(t, statsHandle.Update(is))
+	require.NoError(t, statsHandle.Update(context.Background(), is))
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Equal(t, "3", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\""))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\"",
+	))
 }
 
 func TestAnalyzeIndex(t *testing.T) {
@@ -620,7 +628,7 @@ func TestAnalyzeSamplingWorkPanic(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
-	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t(a int, index idx(a))")
 	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)")
 	tk.MustExec("split table t between (-9223372036854775808) and (9223372036854775807) regions 12")
 
@@ -644,6 +652,7 @@ func TestSmallTableAnalyzeV2(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("create table small_table_inject_pd(a int)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "small_table_inject_pd", "a")
 	tk.MustExec("insert into small_table_inject_pd values(1), (2), (3), (4), (5)")
 	tk.MustExec("analyze table small_table_inject_pd")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\""))
@@ -656,6 +665,7 @@ create table small_table_inject_pd_with_partition(
 	partition p2 values less than (15)
 )`)
 	tk.MustExec("insert into small_table_inject_pd_with_partition values(1), (6), (11)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "small_table_inject_pd_with_partition", "a")
 	tk.MustExec("analyze table small_table_inject_pd_with_partition")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
@@ -692,17 +702,18 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
-	originalVal3 := exec.AutoAnalyzeMinCnt
+	originalVal3 := statistics.AutoAnalyzeMinCnt
 	defer func() {
-		exec.AutoAnalyzeMinCnt = originalVal3
+		statistics.AutoAnalyzeMinCnt = originalVal3
 	}()
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c")
 
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
@@ -714,7 +725,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	is := dom.InfoSchema()
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms())
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	tbl := h.GetTableStats(tableInfo)
@@ -734,7 +745,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	// auto-analyze uses the table-level options
 	tk.MustExec("insert into t values (10,10,10)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	h.HandleAutoAnalyze()
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -803,7 +814,7 @@ PARTITION BY RANGE ( a ) (
 	// analyze partition only sets options of partition
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
 	is := dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
@@ -911,7 +922,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("insert into t values (21,21,21),(22,22,22),(23,23,23),(24,24,24)")
 	tk.MustExec("analyze table t partition p2")
 	is = dom.InfoSchema()
-	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = table.Meta()
 	pi = tableInfo.GetPartitionInfo()
@@ -999,9 +1010,9 @@ func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
 	tk.MustExec("analyze table t2 with 0 topn, 2 buckets")
 	tk.MustExec("analyze table t1,t2 with 2 topn")
 	is := dom.InfoSchema()
-	table1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	table1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
-	table2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	table2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tableInfo1 := table1.Meta()
 	tableInfo2 := table2.Meta()
@@ -1034,11 +1045,11 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
-	originalVal3 := exec.AutoAnalyzeMinCnt
+	originalVal3 := statistics.AutoAnalyzeMinCnt
 	defer func() {
-		exec.AutoAnalyzeMinCnt = originalVal3
+		statistics.AutoAnalyzeMinCnt = originalVal3
 	}()
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	originalVal4 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal4))
@@ -1056,7 +1067,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 		h.SetLease(oriLease)
 	}()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	tk.MustExec("select * from t where b > 1")
@@ -1086,7 +1097,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 
 	tk.MustExec("insert into t values (5,5,5),(6,6,6)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	// auto analyze uses the saved option(predicate columns).
 	h.HandleAutoAnalyze()
 	tblStats = h.GetTableStats(tblInfo)
@@ -1137,7 +1148,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 			is := dom.InfoSchema()
-			tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 			require.NoError(t, err)
 			tblID := tbl.Meta().ID
 
@@ -1204,7 +1215,7 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 			is := dom.InfoSchema()
-			tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 			require.NoError(t, err)
 			tblID := tbl.Meta().ID
 
@@ -1280,7 +1291,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 			is := dom.InfoSchema()
-			tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 			require.NoError(t, err)
 			tblID := tbl.Meta().ID
 
@@ -1357,7 +1368,7 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 			is := dom.InfoSchema()
-			tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 			require.NoError(t, err)
 			tblID := tbl.Meta().ID
 			defs := tbl.Meta().Partition.Definitions
@@ -1481,7 +1492,7 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 			is := dom.InfoSchema()
-			tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 			require.NoError(t, err)
 			defs := tbl.Meta().Partition.Definitions
 			p0ID := defs[0].ID
@@ -1587,7 +1598,7 @@ func TestAnalyzeColumnsWithExtendedStats(t *testing.T) {
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 			is := dom.InfoSchema()
-			tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 			require.NoError(t, err)
 			tblID := tbl.Meta().ID
 
@@ -1656,7 +1667,7 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 			is := dom.InfoSchema()
-			tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 			require.NoError(t, err)
 			tblID := tbl.Meta().ID
 
@@ -1722,11 +1733,11 @@ func TestAnalyzeColumnsAfterAnalyzeAll(t *testing.T) {
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 			is := dom.InfoSchema()
-			tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 			require.NoError(t, err)
 			tblID := tbl.Meta().ID
 
-			tk.MustExec("analyze table t with 2 topn, 2 buckets")
+			tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
 			tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
 				testkit.Rows("0 6"))
 			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
@@ -1750,10 +1761,6 @@ func TestAnalyzeColumnsAfterAnalyzeAll(t *testing.T) {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
 			case model.PredicateColumns:
-				originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
-				defer func() {
-					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
-				}()
 				tk.MustExec("select * from t where b > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1792,6 +1799,7 @@ func TestAnalyzeSampleRateReason(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`show warnings`).Sort().Check(testkit.Rows(
@@ -1879,9 +1887,9 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -1890,14 +1898,15 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("insert into t values (1,2), (3,4)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t values (5,6), (7,8), (9, 10)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, h.Update(context.Background(), is))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	lastVersion := h.GetTableStats(tableInfo).Version
@@ -1962,9 +1971,9 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -1973,12 +1982,13 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("insert into t values (1,2), (3,4)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
 	tk.MustExec("alter table t add index idx(b)")
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	lastVersion := h.GetTableStats(tblInfo).Version
@@ -2053,8 +2063,8 @@ func TestAnalyzeJob(t *testing.T) {
 		require.Equal(t, addr, rows[0][9])
 		connID := strconv.FormatUint(tk.Session().GetSessionVars().ConnectionID, 10)
 		require.Equal(t, connID, rows[0][10])
-
-		executor.StartAnalyzeJob(se, job)
+		statsHandle := domain.GetDomain(tk.Session()).StatsHandle()
+		statsHandle.StartAnalyzeJob(job)
 		ctx := context.WithValue(context.Background(), executor.AnalyzeProgressTest, 100)
 		rows = tk.MustQueryWithContext(ctx, "show analyze status").Rows()
 		checkTime := func(val any) {
@@ -2069,12 +2079,12 @@ func TestAnalyzeJob(t *testing.T) {
 		require.Equal(t, "0.1", rows[0][12])  // PROGRESS
 		require.Equal(t, "0", rows[0][13])    // ESTIMATED_TOTAL_ROWS
 
-		// UpdateAnalyzeJob requires the interval between two updates to mysql.analyze_jobs is more than 5 second.
+		// UpdateAnalyzeJobProgress requires the interval between two updates to mysql.analyze_jobs is more than 5 second.
 		// Hence we fake last dump time as 10 second ago in order to make update to mysql.analyze_jobs happen.
 		lastDumpTime := time.Now().Add(-10 * time.Second)
 		job.Progress.SetLastDumpTime(lastDumpTime)
 		const smallCount int64 = 100
-		executor.UpdateAnalyzeJob(se, job, smallCount)
+		statsHandle.UpdateAnalyzeJobProgress(job, smallCount)
 		// Delta count doesn't reach threshold so we don't dump it to mysql.analyze_jobs
 		require.Equal(t, smallCount, job.Progress.GetDeltaCount())
 		require.Equal(t, lastDumpTime, job.Progress.GetLastDumpTime())
@@ -2082,7 +2092,7 @@ func TestAnalyzeJob(t *testing.T) {
 		require.Equal(t, "0", rows[0][4])
 
 		const largeCount int64 = 15000000
-		executor.UpdateAnalyzeJob(se, job, largeCount)
+		statsHandle.UpdateAnalyzeJobProgress(job, largeCount)
 		// Delta count reaches threshold so we dump it to mysql.analyze_jobs and update last dump time.
 		require.Equal(t, int64(0), job.Progress.GetDeltaCount())
 		require.True(t, job.Progress.GetLastDumpTime().After(lastDumpTime))
@@ -2090,7 +2100,7 @@ func TestAnalyzeJob(t *testing.T) {
 		rows = tk.MustQuery("show analyze status").Rows()
 		require.Equal(t, strconv.FormatInt(smallCount+largeCount, 10), rows[0][4])
 
-		executor.UpdateAnalyzeJob(se, job, largeCount)
+		statsHandle.UpdateAnalyzeJobProgress(job, largeCount)
 		// We have just updated mysql.analyze_jobs in the previous step so we don't update it until 5 second passes or the analyze job is over.
 		require.Equal(t, largeCount, job.Progress.GetDeltaCount())
 		require.Equal(t, lastDumpTime, job.Progress.GetLastDumpTime())
@@ -2101,7 +2111,7 @@ func TestAnalyzeJob(t *testing.T) {
 		if result == statistics.AnalyzeFailed {
 			analyzeErr = errors.Errorf("analyze meets error")
 		}
-		executor.FinishAnalyzeJob(se, job, analyzeErr)
+		statsHandle.FinishAnalyzeJob(job, analyzeErr, statistics.TableAnalysisJob)
 		rows = tk.MustQuery("show analyze status").Rows()
 		require.Equal(t, strconv.FormatInt(smallCount+2*largeCount, 10), rows[0][4])
 		checkTime(rows[0][6])
@@ -2156,19 +2166,19 @@ func TestShowAanalyzeStatusJobInfo(t *testing.T) {
 		require.Equal(t, expected, rows[0][3])
 		tk.MustExec("delete from mysql.analyze_jobs")
 	}
-	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
+	checkJobInfo("analyze table all indexes, columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
 	tk.MustExec("set global tidb_persist_analyze_options = 1")
 	tk.MustExec("select * from t where c > 1")
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
-	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
+	checkJobInfo("analyze table all indexes, columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
 	tk.MustExec("analyze table t")
-	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
+	checkJobInfo("analyze table all indexes, columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
 	tk.MustExec("analyze table t columns a with 1 topn, 3 buckets")
-	checkJobInfo("analyze table columns a, b, d with 3 buckets, 1 topn, 1 samplerate")
+	checkJobInfo("analyze table all indexes, columns a, b, d with 3 buckets, 1 topn, 1 samplerate")
 	tk.MustExec("analyze table t")
-	checkJobInfo("analyze table columns a, b, d with 3 buckets, 1 topn, 1 samplerate")
+	checkJobInfo("analyze table all indexes, columns a, b, d with 3 buckets, 1 topn, 1 samplerate")
 }
 
 func TestAnalyzePartitionTableWithDynamicMode(t *testing.T) {
@@ -2199,7 +2209,7 @@ PARTITION BY RANGE ( a ) (
 		h.SetLease(oriLease)
 	}()
 	is := dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
@@ -2293,7 +2303,7 @@ PARTITION BY RANGE ( a ) (
 		h.SetLease(oriLease)
 	}()
 	is := dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
@@ -2420,6 +2430,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec(createTable)
 	tk.MustExec("insert into t values (1,1,1,1),(2,1,2,2),(3,1,3,3),(4,1,4,4),(5,1,5,5),(6,1,6,6),(7,7,7,7),(8,8,8,8),(9,9,9,9)")
 	tk.MustExec("insert into t values (10,10,10,10),(11,11,11,11),(12,12,12,12),(13,13,13,13),(14,14,14,14)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c", "d")
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
 	h.SetLease(1)
@@ -2427,7 +2438,7 @@ PARTITION BY RANGE ( a ) (
 		h.SetLease(oriLease)
 	}()
 	is := dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
@@ -2476,6 +2487,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec(createTable)
 	tk.MustExec("insert into t values (1,1,1,1),(2,1,2,2),(3,1,3,3),(4,1,4,4),(5,1,5,5),(6,1,6,6),(7,7,7,7),(8,8,8,8),(9,9,9,9)")
 	tk.MustExec("insert into t values (10,10,10,10),(11,11,11,11),(12,12,12,12),(13,13,13,13),(14,14,14,14)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c", "d")
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
 	h.SetLease(1)
@@ -2483,7 +2495,7 @@ PARTITION BY RANGE ( a ) (
 		h.SetLease(oriLease)
 	}()
 	is := dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
@@ -2565,7 +2577,7 @@ PARTITION BY RANGE ( a ) (
 		h.SetLease(oriLease)
 	}()
 	is := dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
@@ -2615,7 +2627,7 @@ PARTITION BY RANGE ( id ) (
 	h.HandleAutoAnalyze()
 	tk.MustExec("create index idxa on t (a)")
 	tk.MustExec("create index idxb on t (b)")
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
@@ -2650,7 +2662,7 @@ PARTITION BY RANGE ( id ) (
 	h.HandleAutoAnalyze()
 	tk.MustExec("alter table t add column a int")
 	tk.MustExec("alter table t add column b int")
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
@@ -2682,7 +2694,7 @@ PARTITION BY RANGE ( a ) (
 		h.SetLease(oriLease)
 	}()
 	is := dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
@@ -2705,26 +2717,27 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_analyze_snapshot = 1")
 	tk.MustExec("set @@global.tidb_analyze_version = 2")
 	tk.MustExec("create table t(a int)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
 	h := dom.StatsHandle()
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tbl.Meta().ID
 	tk.MustExec("insert into t values(1),(2),(3)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	err = h.Update(dom.InfoSchema())
+	err = h.Update(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 	tk.MustExec("analyze table t")
 	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
 		"3 0",
 	))
 
-	originalVal1 := exec.AutoAnalyzeMinCnt
+	originalVal1 := statistics.AutoAnalyzeMinCnt
 	originalVal2 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
 	defer func() {
-		exec.AutoAnalyzeMinCnt = originalVal1
+		statistics.AutoAnalyzeMinCnt = originalVal1
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 
@@ -2736,7 +2749,7 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 
 	tk.MustExec("insert into t values(4),(5),(6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	err = h.Update(dom.InfoSchema())
+	err = h.Update(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 
 	// Simulate that the analyze would start before and finish after the second insert.
@@ -2775,11 +2788,11 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Sort().Check(
 		testkit.Rows(
 			"analyze index idx_c",
-			"analyze table columns a, b with 256 buckets, 100 topn, 1 samplerate",
+			"analyze table index idx_b, columns a, b with 256 buckets, 100 topn, 1 samplerate",
 		))
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	stats := h.GetTableStats(tblInfo)
@@ -2793,11 +2806,9 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 // TestAnalyzeMVIndex tests analyzing the mv index use some real data in the table.
 // It checks the analyze jobs, async loading and the stats content in the memory.
 func TestAnalyzeMVIndex(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/DebugAnalyzeJobOperations", "return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/DebugAnalyzeJobOperations", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/DebugAnalyzeJobOperations", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/DebugAnalyzeJobOperations"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/DebugAnalyzeJobOperations"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/DebugAnalyzeJobOperations"))
 	}()
 	// 1. prepare the table and insert data
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -2914,7 +2925,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	// 2. analyze and check analyze jobs
 	tk.MustExec("analyze table t with 1 samplerate, 3 topn")
 	tk.MustQuery("select id, table_schema, table_name, partition_name, job_info, processed_rows, state from mysql.analyze_jobs order by id").
-		Check(testkit.Rows("1 test t  analyze table columns a with 256 buckets, 3 topn, 1 samplerate 27 finished",
+		Check(testkit.Rows("1 test t  analyze table index ia, column a with 256 buckets, 3 topn, 1 samplerate 27 finished",
 			"2 test t  analyze index ij_signed 190 finished",
 			"3 test t  analyze index ij_unsigned 135 finished",
 			"4 test t  analyze index ij_double 154 finished",
@@ -3094,6 +3105,7 @@ func TestAnalyzePartitionVerify(t *testing.T) {
 	}
 	insertStr += ";"
 	tk.MustExec(insertStr)
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c")
 	tk.MustExec("analyze table t")
 
 	result := tk.MustQuery("show stats_histograms where Db_name='test'").Sort()

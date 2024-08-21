@@ -44,7 +44,7 @@ type readIndexExecutor struct {
 	job     *model.Job
 	indexes []*model.IndexInfo
 	ptbl    table.PhysicalTable
-	jc      *JobContext
+	jc      *ReorgContext
 
 	avgRowSize      int
 	cloudStorageURI string
@@ -65,7 +65,7 @@ func newReadIndexExecutor(
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
-	jc *JobContext,
+	jc *ReorgContext,
 	bcGetter func() (ingest.BackendCtx, error),
 	cloudStorageURI string,
 	avgRowSize int,
@@ -109,25 +109,29 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	defer opCtx.Cancel()
 	r.curRowCount.Store(0)
 
-	var pipe *operator.AsyncPipeline
 	if len(r.cloudStorageURI) > 0 {
-		pipe, err = r.buildExternalStorePipeline(opCtx, subtask.ID, sm, subtask.Concurrency)
-	} else {
-		pipe, err = r.buildLocalStorePipeline(opCtx, sm, subtask.Concurrency)
-	}
-	if err != nil {
-		return err
+		pipe, err := r.buildExternalStorePipeline(opCtx, subtask.ID, sm, subtask.Concurrency)
+		if err != nil {
+			return err
+		}
+		return executeAndClosePipeline(opCtx, pipe)
 	}
 
-	err = pipe.Execute()
+	pipe, err := r.buildLocalStorePipeline(opCtx, sm, subtask.Concurrency)
 	if err != nil {
 		return err
 	}
-	err = pipe.Close()
-	if opCtx.OperatorErr() != nil {
-		return opCtx.OperatorErr()
+	err = executeAndClosePipeline(opCtx, pipe)
+	if err != nil {
+		// For dist task local based ingest, checkpoint is unsupported.
+		// If there is an error we should keep local sort dir clean.
+		err1 := r.bc.FinishAndUnregisterEngines(ingest.OptCleanData)
+		if err1 != nil {
+			logutil.DDLLogger().Warn("read index executor unregister engine failed", zap.Error(err1))
+		}
+		return err
 	}
-	return err
+	return r.bc.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
 func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -187,7 +191,7 @@ func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 	}
 	if parTbl, ok := r.ptbl.(table.PartitionedTable); ok {
 		pid := sm.PhysicalTableID
-		start, end, err = getTableRange(r.jc, r.d.ddlCtx, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
+		start, end, err = getTableRange(r.jc, r.d.store, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
 		if err != nil {
 			logutil.DDLLogger().Error("get table range error",
 				zap.Error(err))
@@ -217,7 +221,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		indexIDs = append(indexIDs, index.ID)
 		uniques = append(uniques, index.Unique)
 	}
-	engines, err := r.bc.Register(indexIDs, uniques, r.ptbl.Meta())
+	engines, err := r.bc.Register(indexIDs, uniques, r.ptbl)
 	if err != nil {
 		tidblogutil.Logger(opCtx).Error("cannot register new engine",
 			zap.Error(err),

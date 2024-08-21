@@ -60,7 +60,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 					assertAction: "TableDual_4's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
 				},
 				{
-					assertAction: "Join_7's columns[Column#28,test.t.a] have been pruned",
+					assertAction: "Join_7's columns[Column#27] have been pruned",
 				},
 			},
 		},

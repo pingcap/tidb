@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -229,7 +230,7 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 
 // Column represents a column.
 type Column struct {
-	RetType *types.FieldType
+	RetType *types.FieldType `plan-cache-clone:"shallow"`
 	// ID is used to specify whether this column is ExtraHandleColumn or to access histogram.
 	// We'll try to remove it in the future.
 	ID int64
@@ -388,11 +389,21 @@ func (col *Column) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 
 const columnPrefix = "Column#"
 
+// StringWithCtx implements Expression interface.
+func (col *Column) StringWithCtx(_ ParamValues, redact string) string {
+	return col.string(redact)
+}
+
 // String implements Stringer interface.
 func (col *Column) String() string {
+	return col.string(errors.RedactLogDisable)
+}
+
+func (col *Column) string(redact string) string {
 	if col.IsHidden && col.VirtualExpr != nil {
 		// A hidden column without virtual expression indicates it's a stored type.
-		return col.VirtualExpr.String()
+		// a virtual column should be able to be stringified without context.
+		return col.VirtualExpr.StringWithCtx(exprctx.EmptyParamValues, redact)
 	}
 	if col.OrigName != "" {
 		return col.OrigName
@@ -506,6 +517,10 @@ func (col *Column) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, b
 // Clone implements Expression interface.
 func (col *Column) Clone() Expression {
 	newCol := *col
+	if col.hashcode != nil {
+		newCol.hashcode = make([]byte, len(col.hashcode))
+		copy(newCol.hashcode, col.hashcode)
+	}
 	return &newCol
 }
 

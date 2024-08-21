@@ -18,7 +18,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -29,42 +31,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
+func getIndexMergePathDigest(ctx expression.EvalContext, paths []*util.AccessPath, startIndex int) string {
 	if len(paths) == startIndex {
 		return "[]"
 	}
-	idxMergeDisgest := "["
+	idxMergeDigest := "["
 	for i := startIndex; i < len(paths); i++ {
 		if i != startIndex {
-			idxMergeDisgest += ","
+			idxMergeDigest += ","
 		}
 		path := paths[i]
-		idxMergeDisgest += "{Idxs:["
+		idxMergeDigest += "{Idxs:["
 		for j := 0; j < len(path.PartialAlternativeIndexPaths); j++ {
 			if j > 0 {
-				idxMergeDisgest += ","
+				idxMergeDigest += ","
 			}
-			idxMergeDisgest += "{"
+			idxMergeDigest += "{"
 			// for every ONE index partial alternatives, output a set.
 			for k, one := range path.PartialAlternativeIndexPaths[j] {
 				if k != 0 {
-					idxMergeDisgest += ","
+					idxMergeDigest += ","
 				}
-				idxMergeDisgest += one.Index.Name.L
+				idxMergeDigest += one.Index.Name.L
 			}
-			idxMergeDisgest += "}"
+			idxMergeDigest += "}"
 		}
-		idxMergeDisgest += "],TbFilters:["
+		idxMergeDigest += "],TbFilters:["
 		for j := 0; j < len(path.TableFilters); j++ {
 			if j > 0 {
-				idxMergeDisgest += ","
+				idxMergeDigest += ","
 			}
-			idxMergeDisgest += path.TableFilters[j].String()
+			idxMergeDigest += path.TableFilters[j].StringWithCtx(ctx, errors.RedactLogDisable)
 		}
-		idxMergeDisgest += "]}"
+		idxMergeDigest += "]}"
 	}
-	idxMergeDisgest += "]"
-	return idxMergeDisgest
+	idxMergeDigest += "]"
+	return idxMergeDigest
 }
 
 func TestIndexMergePathGeneration(t *testing.T) {
@@ -111,7 +113,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		idxMergeStartIndex := len(ds.PossibleAccessPaths)
 		_, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err)
-		result := getIndexMergePathDigest(ds.PossibleAccessPaths, idxMergeStartIndex)
+		result := getIndexMergePathDigest(sctx.GetExprCtx().GetEvalCtx(), ds.PossibleAccessPaths, idxMergeStartIndex)
 		testdata.OnRecord(func() {
 			output[i] = result
 		})

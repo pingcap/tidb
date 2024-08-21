@@ -1773,7 +1773,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 		isQuery bool
 	}{
 		{"insert into t () values (),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),()", "", false},
-		{"analyze table t", "", false},
+		{"analyze table t all columns", "", false},
 		{"explain analyze select sum(a+b) from t", ".*TableReader.*", true},
 		{"trace select sum(b*a), sum(a+b) from t", "", true},
 		{"set global tidb_stmt_summary_history_size=5;", "", false},
@@ -3091,12 +3091,12 @@ func TestTypeAndCharsetOfSendLongData(t *testing.T) {
 
 func TestIssue53634(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
-	ts.RunTestIssue53634(t, ts.Domain)
+	ts.RunTestIssue53634(t)
 }
 
 func TestIssue54254(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
-	ts.RunTestIssue54254(t, ts.Domain)
+	ts.RunTestIssue54254(t)
 }
 
 func TestAuthSocket(t *testing.T) {

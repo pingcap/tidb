@@ -316,7 +316,6 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	vars := variable.NewSessionVars(s)
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
-	vars.StmtCtx.BatchCheck = true
 	vars.SQLMode = sqlMode
 
 	typeFlags := vars.StmtCtx.TypeFlags().
@@ -363,7 +362,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 		Session:             s,
 		PlanCtxExtendedImpl: planctximpl.NewPlanCtxExtendedImpl(s),
 	}
-	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprCtx)
+	s.tblctx = tbctximpl.NewTableContextImpl(s)
 	s.txn.kvPairs = &Pairs{}
 
 	return s

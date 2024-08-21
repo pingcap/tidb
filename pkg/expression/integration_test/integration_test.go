@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -426,6 +427,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
 		sctx := tk.Session()
+		ectx := sctx.GetExprCtx().GetEvalCtx()
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err, "error %v, for expr %s", err, tt.exprStr)
 		require.Len(t, stmts, 1)
@@ -434,7 +436,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		require.NoError(t, err, "error %v, for resolve name, expr %s", err, tt.exprStr)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoError(t, err, "error %v, for build plan, expr %s", err, tt.exprStr)
-		selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {
 			conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
@@ -443,7 +445,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		sort.Slice(afterFunc, func(i, j int) bool {
 			return bytes.Compare(afterFunc[i].HashCode(), afterFunc[j].HashCode()) < 0
 		})
-		require.Equal(t, fmt.Sprintf("%s", afterFunc), tt.result, "wrong result for expr: %s", tt.exprStr)
+		require.Equal(t, expression.StringifyExpressionsWithCtx(ectx, afterFunc), tt.result, "wrong result for expr: %s", tt.exprStr)
 	}
 }
 
@@ -485,7 +487,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a varchar(255), b int, c datetime, primary key (a, b, c));")
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	getTime := func(year, month, day int, timeType byte) types.Time {
 		ret := types.NewTime(types.FromDate(year, month, day, 0, 0, 0, 0), timeType, types.DefaultFsp)
@@ -516,7 +518,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a varchar(255), b int, c datetime, index idx(a, b, c));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	buildIndexKeyFromData := func(tableID, indexID int64, data []types.Datum) string {
 		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, data...)
@@ -555,7 +557,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a int primary key nonclustered, b int, key bk (b));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	buildTableRowKey := func(tableID, rowID int64) string {
 		return hex.EncodeToString(
@@ -574,7 +576,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a int primary key clustered, b int, key bk (b));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	hexKey = buildTableRowKey(tbl.Meta().ID, rowID)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
@@ -586,7 +588,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a int primary key clustered, b int, key bk (b)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (1), PARTITION p1 VALUES LESS THAN (2));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl.Meta().Partition)
 	hexKey = buildTableRowKey(tbl.Meta().Partition.Definitions[0].ID, rowID)
@@ -648,16 +650,11 @@ func TestShardIndexOnTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
@@ -671,7 +668,7 @@ func TestShardIndexOnTiFlash(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enforce_mpp = 0")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
 	// when we isolated the read engine as 'tiflash' and banned TiDB opening allow-mpp, no suitable plan is generated.
-	_, err := tk.Exec("explain select max(b) from t")
+	_, err = tk.Exec("explain select max(b) from t")
 	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "[planner:1815]Internal : Can't find a proper physical plan for this query")
 }
@@ -689,16 +686,11 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist " +

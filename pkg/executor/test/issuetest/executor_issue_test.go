@@ -183,7 +183,7 @@ func TestIssue30289(t *testing.T) {
 	}()
 	useHashJoinV2 := []bool{true, false}
 	for _, hashJoinV2 := range useHashJoinV2 {
-		join.EnableHashJoinV2.Store(hashJoinV2)
+		join.SetEnableHashJoinV2(hashJoinV2)
 		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
 		require.EqualError(t, err, "issue30289 build return error")
 	}
@@ -202,7 +202,7 @@ func TestIssue51998(t *testing.T) {
 	}()
 	useHashJoinV2 := []bool{true, false}
 	for _, hashJoinV2 := range useHashJoinV2 {
-		join.EnableHashJoinV2.Store(hashJoinV2)
+		join.SetEnableHashJoinV2(hashJoinV2)
 		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
 		require.EqualError(t, err, "issue51998 build return error")
 	}
@@ -619,7 +619,7 @@ func TestIssue42662(t *testing.T) {
 	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
 	useHashJoinV2 := []bool{true, false}
 	for _, hashJoinV2 := range useHashJoinV2 {
-		join.EnableHashJoinV2.Store(hashJoinV2)
+		join.SetEnableHashJoinV2(hashJoinV2)
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1", `return(true)`))
 		// tk.Session() should be marked as MemoryTop1Tracker but not killed.
 		tk.MustQuery("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")

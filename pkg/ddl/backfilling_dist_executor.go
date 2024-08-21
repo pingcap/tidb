@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/tikv/client-go/v2/tikv"
@@ -99,7 +100,7 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 
 	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
 	// we should move this operation out of GetStepExecutor, and put into Init.
-	_, tblIface, err := ddlObj.getTableByTxn((*asAutoIDRequirement)(ddlObj.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
+	_, tblIface, err := ddlObj.getTableByTxn(ddlObj.ddlCtx.getAutoIDRequirement(), jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +148,14 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 	ddlObj := s.d
 	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 
-	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, hasUnique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+	return ingest.LitBackCtxMgr.Register(
+		s.BaseTaskExecutor.Ctx(),
+		job.ID, hasUnique,
+		ddlObj.etcdCli,
+		discovery,
+		job.ReorgMeta.ResourceGroupName,
+		job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())),
+	)
 }
 
 func hasUniqueIndex(job *model.Job) (bool, error) {

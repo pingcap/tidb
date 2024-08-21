@@ -15,6 +15,7 @@
 package core_test
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -40,7 +41,9 @@ func TestRowSizeInMPP(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+	require.NoError(t, err)
+	for _, tblInfo := range tblInfos {
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,

@@ -84,6 +84,7 @@ func NewPool(initCap int) *Pool {
 func (p *Pool) GetChunk(fields []*types.FieldType) *Chunk {
 	chk := new(Chunk)
 	chk.capacity = p.initCap
+	chk.requiredRows = p.initCap
 	chk.columns = make([]*Column, len(fields))
 	for i, f := range fields {
 		switch elemLen := getFixedLen(f); elemLen {

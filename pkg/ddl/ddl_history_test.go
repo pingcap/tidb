@@ -24,7 +24,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"

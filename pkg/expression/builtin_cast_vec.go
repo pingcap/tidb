@@ -21,6 +21,7 @@ import (
 	"strings"
 	gotime "time"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -916,7 +917,7 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(ctx EvalContext, input *chu
 		if !b.inUnion || bufreal[i] >= 0 {
 			if err = resdecimal[i].FromFloat64(bufreal[i]); err != nil {
 				if types.ErrOverflow.Equal(err) {
-					warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
+					warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0].StringWithCtx(ctx, perrors.RedactLogDisable))
 					err = ec.HandleErrorWithAlias(err, err, warnErr)
 				} else if types.ErrTruncated.Equal(err) {
 					// This behavior is consistent with MySQL.
@@ -1148,7 +1149,7 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chun
 				result.AppendJSON(types.CreateBinaryJSON(nums[i] != 0))
 			}
 		}
-	} else if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
+	} else if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) || b.args[0].GetType(ctx).GetType() == mysql.TypeYear {
 		for i := 0; i < n; i++ {
 			if buf.IsNull(i) {
 				result.AppendNull()

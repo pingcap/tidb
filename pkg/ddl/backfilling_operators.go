@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -171,15 +171,11 @@ func NewAddIndexIngestPipeline(
 	if err != nil {
 		return nil, err
 	}
-	poolSize := copReadChunkPoolSize()
-	srcChkPool := make(chan *chunk.Chunk, poolSize)
-	for i := 0; i < poolSize; i++ {
-		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
-	}
+	srcChkPool := createChunkPool(copCtx, concurrency, reorgMeta.BatchSize)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, cpMgr)
-	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr)
+	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr, reorgMeta.BatchSize)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, cpMgr, rowCntListener)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, cpMgr, rowCntListener)
@@ -226,11 +222,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	if err != nil {
 		return nil, err
 	}
-	poolSize := copReadChunkPoolSize()
-	srcChkPool := make(chan *chunk.Chunk, poolSize)
-	for i := 0; i < poolSize; i++ {
-		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
-	}
+	srcChkPool := createChunkPool(copCtx, concurrency, reorgMeta.BatchSize)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
@@ -248,7 +240,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	})
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, nil)
-	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, nil)
+	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, nil, reorgMeta.BatchSize)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSizePerIndex, reorgMeta)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, nil, rowCntListener)
@@ -268,6 +260,16 @@ func NewWriteIndexToExternalStoragePipeline(
 	return operator.NewAsyncPipeline(
 		srcOp, scanOp, writeOp, sinkOp,
 	), nil
+}
+
+func createChunkPool(copCtx copr.CopContext, hintConc, hintBatchSize int) chan *chunk.Chunk {
+	poolSize := ingest.CopReadChunkPoolSize(hintConc)
+	batchSize := ingest.CopReadBatchSize(hintBatchSize)
+	srcChkPool := make(chan *chunk.Chunk, poolSize)
+	for i := 0; i < poolSize; i++ {
+		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
+	}
+	return srcChkPool
 }
 
 // TableScanTask contains the start key and the end key of a region.
@@ -340,13 +342,13 @@ func (src *TableScanTaskSource) Open() error {
 
 // adjustStartKey adjusts the start key so that we can skip the ranges that have been processed
 // according to the information of checkpoint manager.
-func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) kv.Key {
+func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) (adjusted kv.Key, done bool) {
 	if src.cpMgr == nil {
-		return start
+		return start, false
 	}
 	cpKey := src.cpMgr.LastProcessedKey()
 	if len(cpKey) == 0 {
-		return start
+		return start, false
 	}
 	if cpKey.Cmp(start) < 0 || cpKey.Cmp(end) > 0 {
 		logutil.Logger(src.ctx).Error("invalid checkpoint key",
@@ -357,18 +359,25 @@ func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) kv.Key {
 		if intest.InTest {
 			panic("invalid checkpoint key")
 		}
-		return start
+		return start, false
 	}
-	return cpKey.Next()
+	if cpKey.Cmp(end) == 0 {
+		return cpKey, true
+	}
+	return cpKey.Next(), false
 }
 
 func (src *TableScanTaskSource) generateTasks() error {
 	taskIDAlloc := newTaskIDAllocator()
 	defer src.sink.Finish()
 
-	startKey := src.adjustStartKey(src.startKey, src.endKey)
+	startKey, done := src.adjustStartKey(src.startKey, src.endKey)
+	if done {
+		// All table data are done.
+		return nil
+	}
 	for {
-		kvRanges, err := splitAndValidateTableRanges(
+		kvRanges, err := loadTableRanges(
 			src.ctx,
 			src.tbl,
 			src.store,
@@ -450,6 +459,7 @@ func NewTableScanOperator(
 	srcChkPool chan *chunk.Chunk,
 	concurrency int,
 	cpMgr *ingest.CheckpointManager,
+	hintBatchSize int,
 ) *TableScanOperator {
 	pool := workerpool.NewWorkerPool(
 		"TableScanOperator",
@@ -457,12 +467,13 @@ func NewTableScanOperator(
 		concurrency,
 		func() workerpool.Worker[TableScanTask, IndexRecordChunk] {
 			return &tableScanWorker{
-				ctx:        ctx,
-				copCtx:     copCtx,
-				sessPool:   sessPool,
-				se:         nil,
-				srcChkPool: srcChkPool,
-				cpMgr:      cpMgr,
+				ctx:           ctx,
+				copCtx:        copCtx,
+				sessPool:      sessPool,
+				se:            nil,
+				srcChkPool:    srcChkPool,
+				cpMgr:         cpMgr,
+				hintBatchSize: hintBatchSize,
 			}
 		})
 	return &TableScanOperator{
@@ -477,7 +488,8 @@ type tableScanWorker struct {
 	se         *session.Session
 	srcChkPool chan *chunk.Chunk
 
-	cpMgr *ingest.CheckpointManager
+	cpMgr         *ingest.CheckpointManager
+	hintBatchSize int
 }
 
 func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) {
@@ -547,7 +559,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 
 func (w *tableScanWorker) getChunk() *chunk.Chunk {
 	chk := <-w.srcChkPool
-	newCap := copReadBatchSize()
+	newCap := ingest.CopReadBatchSize(w.hintBatchSize)
 	if chk.Capacity() != newCap {
 		chk = chunk.NewChunkWithCapacity(w.copCtx.GetBase().FieldTypes, newCap)
 	}
@@ -750,15 +762,17 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 		return
 	}
 	w.rowCntListener.Written(rs.Added)
+	flushed, imported, err := w.backendCtx.Flush(ingest.FlushModeAuto)
+	if err != nil {
+		w.ctx.onError(err)
+		return
+	}
 	if w.cpMgr != nil {
 		totalCnt, nextKey := w.cpMgr.Status()
 		rs.Total = totalCnt
 		rs.Next = nextKey
-		err := w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
-		if err != nil {
-			w.ctx.onError(err)
-			return
-		}
+		w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
+		w.cpMgr.AdvanceWatermark(flushed, imported)
 	}
 	send(rs)
 }
@@ -928,22 +942,24 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
-	_, _, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
+	flushed, imported, err := s.backendCtx.Flush(ingest.FlushModeForceFlushAndImport)
+	if s.cpMgr != nil {
+		// Try to advance watermark even if there is an error.
+		s.cpMgr.AdvanceWatermark(flushed, imported)
+	}
 	if err != nil {
-		logutil.Logger(s.ctx).Error("flush error",
-			zap.String("category", "ddl"), zap.Error(err))
+		msg := "flush error"
+		if flushed {
+			msg = "import error"
+		}
+		logutil.Logger(s.ctx).Error(msg, zap.String("category", "ddl"), zap.Error(err))
 		return err
 	}
 	return nil
 }
 
 func (s *indexWriteResultSink) Close() error {
-	err := s.errGroup.Wait()
-	// for local pipeline
-	if bc := s.backendCtx; bc != nil {
-		bc.UnregisterEngines()
-	}
-	return err
+	return s.errGroup.Wait()
 }
 
 func (*indexWriteResultSink) String() string {

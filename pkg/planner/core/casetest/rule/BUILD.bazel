@@ -20,7 +20,6 @@ go_test(
         "//pkg/expression/aggregation",
         "//pkg/expression/contextstatic",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/util/coretestsdk",
         "//pkg/planner/util/coreusage",

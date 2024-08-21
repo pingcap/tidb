@@ -77,3 +77,8 @@ func (s *staticRecordSet) Close() error {
 
 	return err
 }
+
+// GetExecutor4Test exports the internal executor for test purpose.
+func (s *staticRecordSet) GetExecutor4Test() any {
+	return s.executor
+}

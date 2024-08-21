@@ -1173,6 +1173,13 @@ type ExchangePartitionInfo struct {
 	XXXExchangePartitionFlag bool `json:"exchange_partition_flag"`
 }
 
+// UpdateIndexInfo is to carry the entries in the list of indexes in UPDATE INDEXES
+// during ALTER TABLE t PARTITION BY ... UPDATE INDEXES (idx_a GLOBAL, idx_b LOCAL...)
+type UpdateIndexInfo struct {
+	IndexName string `json:"index_name"`
+	Global    bool   `json:"global"`
+}
+
 // PartitionInfo provides table partition info.
 type PartitionInfo struct {
 	Type    PartitionType `json:"type"`
@@ -1210,6 +1217,8 @@ type PartitionInfo struct {
 	DDLType    PartitionType `json:"ddl_type"`
 	DDLExpr    string        `json:"ddl_expr"`
 	DDLColumns []CIStr       `json:"ddl_columns"`
+	// For ActionAlterTablePartitioning, UPDATE INDEXES
+	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes"`
 }
 
 // Clone clones itself.
@@ -1687,21 +1696,24 @@ func (fk *FKInfo) Clone() *FKInfo {
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-	ID                 int64          `json:"id"`      // Database ID
-	Name               CIStr          `json:"db_name"` // DB name.
-	Charset            string         `json:"charset"`
-	Collate            string         `json:"collate"`
-	Tables             []*TableInfo   `json:"-"` // Tables in the DB.
-	State              SchemaState    `json:"state"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
+	ID         int64    `json:"id"`      // Database ID
+	Name       CIStr    `json:"db_name"` // DB name.
+	Charset    string   `json:"charset"`
+	Collate    string   `json:"collate"`
+	Deprecated struct { // Tables is not set in infoschema v2, use infoschema SchemaTableInfos() instead.
+		Tables []*TableInfo `json:"-"` // Tables in the DB.
+	}
+	State              SchemaState      `json:"state"`
+	PlacementPolicyRef *PolicyRefInfo   `json:"policy_ref_info"`
+	TableName2ID       map[string]int64 `json:"-"`
 }
 
 // Clone clones DBInfo.
 func (db *DBInfo) Clone() *DBInfo {
 	newInfo := *db
-	newInfo.Tables = make([]*TableInfo, len(db.Tables))
-	for i := range db.Tables {
-		newInfo.Tables[i] = db.Tables[i].Clone()
+	newInfo.Deprecated.Tables = make([]*TableInfo, len(db.Deprecated.Tables))
+	for i := range db.Deprecated.Tables {
+		newInfo.Deprecated.Tables[i] = db.Deprecated.Tables[i].Clone()
 	}
 	return &newInfo
 }
@@ -1709,8 +1721,8 @@ func (db *DBInfo) Clone() *DBInfo {
 // Copy shallow copies DBInfo.
 func (db *DBInfo) Copy() *DBInfo {
 	newInfo := *db
-	newInfo.Tables = make([]*TableInfo, len(db.Tables))
-	copy(newInfo.Tables, db.Tables)
+	newInfo.Deprecated.Tables = make([]*TableInfo, len(db.Deprecated.Tables))
+	copy(newInfo.Deprecated.Tables, db.Deprecated.Tables)
 	return &newInfo
 }
 
@@ -1997,12 +2009,6 @@ func (t RunawayActionType) String() string {
 	default:
 		return "DRYRUN"
 	}
-}
-
-// ResourceGroupRefInfo is the struct to refer the resource group.
-type ResourceGroupRefInfo struct {
-	ID   int64 `json:"id"`
-	Name CIStr `json:"name"`
 }
 
 // ResourceGroupRunawaySettings is the runaway settings of the resource group

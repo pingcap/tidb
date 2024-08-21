@@ -51,10 +51,11 @@ import (
 // to achieve this similar effect, put it in the last logical optimizing phase is much
 // more reasonable.
 
-// resolveExpand generating Expand projection list when all the logical optimization is done.
-type resolveExpand struct {
+// ResolveExpand generating Expand projection list when all the logical optimization is done.
+type ResolveExpand struct {
 }
 
+// Optimize implements the base.LogicalOptRule.<0th> interface.
 // By now, rollup syntax will build a LogicalExpand from bottom up. In LogicalExpand itself, its schema out should be 3 parts:
 //
 // +---------------------------------------------------------------------+
@@ -75,7 +76,7 @@ type resolveExpand struct {
 //	                              (upper required)   (grouping sets columns appended)
 //
 // Expand operator itself is kind like a projection, while difference is that it has a multi projection list, named as leveled projection.
-func (*resolveExpand) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*ResolveExpand) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	// As you see, Expand's leveled projection should be built after all column-prune is done. So we just make generating-leveled-projection
 	// as the last rule of logical optimization, which is more clear. (spark has column prune action before building expand)
@@ -83,7 +84,8 @@ func (*resolveExpand) optimize(_ context.Context, p base.LogicalPlan, opt *optim
 	return newLogicalPlan, planChanged, err
 }
 
-func (*resolveExpand) name() string {
+// Name implements the base.LogicalOptRule.<1st> interface.
+func (*ResolveExpand) Name() string {
 	return "resolve_expand"
 }
 

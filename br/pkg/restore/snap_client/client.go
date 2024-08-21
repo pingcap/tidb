@@ -857,34 +857,7 @@ func (rc *SnapClient) IsSkipCreateSQL() bool {
 // user may have created some users or made other changes.
 func (rc *SnapClient) CheckTargetClusterFresh(ctx context.Context) error {
 	log.Info("checking whether target cluster is fresh")
-	userDBs := restore.GetExistedUserDBs(rc.dom)
-	if len(userDBs) == 0 {
-		return nil
-	}
-
-	const maxPrintCount = 10
-	userTableOrDBNames := make([]string, 0, maxPrintCount+1)
-	addName := func(name string) bool {
-		if len(userTableOrDBNames) == maxPrintCount {
-			userTableOrDBNames = append(userTableOrDBNames, "...")
-			return false
-		}
-		userTableOrDBNames = append(userTableOrDBNames, name)
-		return true
-	}
-outer:
-	for _, db := range userDBs {
-		if !addName(db.Name.L) {
-			break outer
-		}
-		for _, tbl := range db.Tables {
-			if !addName(tbl.Name.L) {
-				break outer
-			}
-		}
-	}
-	log.Error("not fresh cluster", zap.Strings("user tables", userTableOrDBNames))
-	return errors.Annotate(berrors.ErrRestoreNotFreshCluster, "user db/tables: "+strings.Join(userTableOrDBNames, ", "))
+	return restore.AssertUserDBsEmpty(rc.dom)
 }
 
 // ExecDDLs executes the queries of the ddl jobs.

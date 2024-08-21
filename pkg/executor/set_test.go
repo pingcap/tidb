@@ -682,11 +682,11 @@ func TestSetVar(t *testing.T) {
 	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))
 
 	// test for tidb_analyze_column_options
-	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
-	tk.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
 	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("PREDICATE"))
-	tk.MustExec("set global tidb_analyze_column_options = 'all'")
+	tk.MustExec("set global tidb_analyze_column_options = 'ALL'")
 	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
+	tk.MustExec("set global tidb_analyze_column_options = 'predicate'")
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("PREDICATE"))
 	require.Error(t, tk.ExecToErr("set global tidb_analyze_column_options = 'UNKNOWN'"))
 
 	// test for tidb_ignore_prepared_cache_close_stmt
@@ -766,6 +766,23 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global tidb_max_auto_analyze_time = -1")
 	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("0"))
 
+	// test for instance plan cache variables
+	tk.MustQuery("select @@global.tidb_enable_instance_plan_cache").Check(testkit.Rows("0")) // default 0
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_target_mem_size").Check(testkit.Rows("104857600"))
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_mem_size").Check(testkit.Rows("125829120"))
+	tk.MustExecToErr("set global tidb_instance_plan_cache_target_mem_size = 125829121") // target <= max
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_mem_size = 104857599")
+	tk.MustExec("set global tidb_instance_plan_cache_target_mem_size = 114857600")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_target_mem_size").Check(testkit.Rows("114857600"))
+	tk.MustExec("set global tidb_instance_plan_cache_max_mem_size = 135829120")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_mem_size").Check(testkit.Rows("135829120"))
+	tk.MustExec("set global tidb_instance_plan_cache_max_mem_size = 1GiB")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_mem_size").Check(testkit.Rows("1073741824"))
+	tk.MustExec("set global tidb_instance_plan_cache_target_mem_size = 999MiB")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_target_mem_size").Check(testkit.Rows("1047527424"))
+	tk.MustExec("set global tidb_instance_plan_cache_target_mem_size = 998MiB")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_target_mem_size").Check(testkit.Rows("1046478848"))
+
 	// test variables for cost model ver2
 	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBCostModelVer)))
 	tk.MustExec("set tidb_cost_model_version=3")
@@ -825,8 +842,9 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_opt_force_inline_cte").Check(testkit.Rows("1"))
 
 	// test tidb_auto_analyze_partition_batch_size
-	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("128")) // default value is 128
+	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("8192")) // default value is 8192
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 2")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1681 Updating 'tidb_auto_analyze_partition_batch_size' is deprecated. It will be made read-only in a future release."))
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("2"))
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 0")
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1")) // min value is 1
@@ -966,6 +984,16 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_txn_entry_size_limit, @@global.tidb_txn_entry_size_limit").Check(testkit.Rows("2048 4096"))
 	tk.MustExec("set global tidb_txn_entry_size_limit = 0")
 	tk.MustQuery("select @@session.tidb_txn_entry_size_limit, @@global.tidb_txn_entry_size_limit").Check(testkit.Rows("2048 0"))
+
+	// test for tidb_opt_projection_push_down
+	tk.MustQuery("select @@session.tidb_opt_projection_push_down, @@global.tidb_opt_projection_push_down").Check(testkit.Rows("1 1"))
+	tk.MustExec("set global tidb_opt_projection_push_down = 'OFF'")
+	tk.MustQuery("select @@session.tidb_opt_projection_push_down, @@global.tidb_opt_projection_push_down").Check(testkit.Rows("1 0"))
+	tk.MustExec("set session tidb_opt_projection_push_down = 'OFF'")
+	tk.MustQuery("select @@session.tidb_opt_projection_push_down, @@global.tidb_opt_projection_push_down").Check(testkit.Rows("0 0"))
+	tk.MustExec("set global tidb_opt_projection_push_down = 'on'")
+	tk.MustQuery("select @@session.tidb_opt_projection_push_down, @@global.tidb_opt_projection_push_down").Check(testkit.Rows("0 1"))
+	require.Error(t, tk.ExecToErr("set global tidb_opt_projection_push_down = 'UNKNOWN'"))
 }
 
 func TestSetCollationAndCharset(t *testing.T) {
@@ -1625,6 +1653,8 @@ func TestSetClusterConfig(t *testing.T) {
 		{ServerType: "tikv", Address: "127.0.0.1:5555", StatusAddr: "127.0.0.1:5555"},
 		{ServerType: "tikv", Address: "127.0.0.1:6666", StatusAddr: "127.0.0.1:6666"},
 		{ServerType: "tiflash", Address: "127.0.0.1:3933", StatusAddr: "127.0.0.1:7777"},
+		{ServerType: "tso", Address: "127.0.0.1:22379", StatusAddr: "127.0.0.1:22379"},
+		{ServerType: "scheduling", Address: "127.0.0.1:22479", StatusAddr: "127.0.0.1:22479"},
 	}
 	var serverInfoErr error
 	serverInfoFunc := func(sessionctx.Context) ([]infoschema.ServerInfo, error) {
@@ -1634,6 +1664,8 @@ func TestSetClusterConfig(t *testing.T) {
 
 	require.EqualError(t, tk.ExecToErr("set config xxx log.level='info'"), "unknown type xxx")
 	require.EqualError(t, tk.ExecToErr("set config tidb log.level='info'"), "TiDB doesn't support to change configs online, please use SQL variables")
+	require.EqualError(t, tk.ExecToErr("set config tso log.level='info'"), "tso doesn't support to change configs online")
+	require.EqualError(t, tk.ExecToErr("set config scheduling log.level='info'"), "scheduling doesn't support to change configs online")
 	require.EqualError(t, tk.ExecToErr("set config '127.0.0.1:1111' log.level='info'"), "TiDB doesn't support to change configs online, please use SQL variables")
 	require.EqualError(t, tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), "invalid instance 127.a.b.c:1234")                          // name doesn't resolve.
 	require.EqualError(t, tk.ExecToErr("set config 'example.com:1111' log.level='info'"), "instance example.com:1111 is not found in this cluster") // name resolves.

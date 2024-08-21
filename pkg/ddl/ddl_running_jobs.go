@@ -233,11 +233,23 @@ func (j *runningJobs) addRunning(jobID int64, involves []model.InvolvingSchemaIn
 	}
 }
 
+func (j *runningJobs) finishOrPendJob(jobID int64, involves []model.InvolvingSchemaInfo, moveToPending bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.removeRunningWithoutLock(jobID, involves)
+	if moveToPending {
+		j.addPendingWithoutLock(involves)
+	}
+}
+
 // removeRunning can be concurrently called with add and checkRunnable.
 func (j *runningJobs) removeRunning(jobID int64, involves []model.InvolvingSchemaInfo) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	j.removeRunningWithoutLock(jobID, involves)
+}
 
+func (j *runningJobs) removeRunningWithoutLock(jobID int64, involves []model.InvolvingSchemaInfo) {
 	if intest.InTest {
 		if _, ok := j.ids[jobID]; !ok {
 			panic(fmt.Sprintf("job %d is not running", jobID))
@@ -296,6 +308,10 @@ func (j *runningJobs) addPending(involves []model.InvolvingSchemaInfo) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
+	j.addPendingWithoutLock(involves)
+}
+
+func (j *runningJobs) addPendingWithoutLock(involves []model.InvolvingSchemaInfo) {
 	for _, info := range involves {
 		if info.Database != model.InvolvingNone {
 			if _, ok := j.pending.schemas[info.Database]; !ok {

@@ -53,7 +53,9 @@ func TestIterRawIndexKeysClusteredPK(t *testing.T) {
 	require.NoError(t, err)
 
 	sctx := kv.NewSession(sessionOpts, log.L())
-	handle, err := tbl.AddRecord(sctx.GetTableCtx(), []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
+	txn, err := sctx.Txn(true)
+	require.NoError(t, err)
+	handle, err := tbl.AddRecord(sctx.GetTableCtx(), txn, []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
 	require.NoError(t, err)
 	paris := sctx.TakeKvPairs()
 	require.Len(t, paris.Pairs, 2)
@@ -92,7 +94,9 @@ func TestIterRawIndexKeysIntPK(t *testing.T) {
 	require.NoError(t, err)
 
 	sctx := kv.NewSession(sessionOpts, log.L())
-	handle, err := tbl.AddRecord(sctx.GetTableCtx(), []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
+	txn, err := sctx.Txn(true)
+	require.NoError(t, err)
+	handle, err := tbl.AddRecord(sctx.GetTableCtx(), txn, []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
 	require.NoError(t, err)
 	paris := sctx.TakeKvPairs()
 	require.Len(t, paris.Pairs, 2)

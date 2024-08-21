@@ -54,8 +54,8 @@ type SessionStatesHandler interface {
 
 // SessionPlanCache is an interface for prepare and non-prepared plan cache
 type SessionPlanCache interface {
-	Get(key string, opts any) (value any, ok bool)
-	Put(key string, value, opts any)
+	Get(key string, paramTypes any) (value any, ok bool)
+	Put(key string, value, paramTypes any)
 	Delete(key string)
 	DeleteAll()
 	Size() int
@@ -67,13 +67,19 @@ type SessionPlanCache interface {
 // Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
 type InstancePlanCache interface {
 	// Get gets the cached value from the cache according to key and opts.
-	Get(sctx Context, key string, opts any) (value any, ok bool)
+	Get(key string, paramTypes any) (value any, ok bool)
 	// Put puts the key and value into the cache.
-	Put(sctx Context, key string, value, opts any) (succ bool)
+	Put(key string, value, paramTypes any) (succ bool)
 	// Evict evicts some cached values.
-	Evict() (evicted bool)
+	Evict() (detailInfo string, numEvicted int)
+	// Size returns the number of cached values.
+	Size() int64
 	// MemUsage returns the total memory usage of this plan cache.
 	MemUsage() int64
+	// GetLimits returns the soft and hard memory limits of this plan cache.
+	GetLimits() (softLimit, hardLimit int64)
+	// SetLimits sets the soft and hard memory limits of this plan cache.
+	SetLimits(softLimit, hardLimit int64)
 }
 
 // Context is an interface for transaction and executive args environment.

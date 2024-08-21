@@ -448,7 +448,7 @@ func TestSnapshotInterceptor(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
-	tbl, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tmp1"))
+	tbl, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tmp1"))
 	require.NoError(t, err)
 	require.Equal(t, model.TempTableLocal, tbl.Meta().TempTableType)
 	tblID := tbl.Meta().ID

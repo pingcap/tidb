@@ -1013,12 +1013,12 @@ func containOuterNot(expr Expression, not bool) bool {
 }
 
 // Contains tests if `exprs` contains `e`.
-func Contains(exprs []Expression, e Expression) bool {
+func Contains(ectx EvalContext, exprs []Expression, e Expression) bool {
 	for _, expr := range exprs {
 		// Check string equivalence if one of the expressions is a clone.
 		sameString := false
 		if e != nil && expr != nil {
-			sameString = (e.String() == expr.String())
+			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		if e == expr || sameString {
 			return true
@@ -1204,7 +1204,6 @@ func ParamMarkerExpression(ctx variable.SessionVarsProvider, v *driver.ParamMark
 	if useCache || needParam {
 		value.ParamMarker = &ParamMarker{
 			order: v.Order,
-			ctx:   ctx,
 		}
 	}
 	return value, nil
@@ -1426,7 +1425,12 @@ func GetUint64FromConstant(ctx EvalContext, expr Expression) (uint64, bool, bool
 	}
 	dt := con.Value
 	if con.ParamMarker != nil {
-		dt = con.ParamMarker.GetUserVar(ctx)
+		var err error
+		dt, err = con.ParamMarker.GetUserVar(ctx)
+		if err != nil {
+			logutil.BgLogger().Warn("get param failed", zap.Error(err))
+			return 0, false, false
+		}
 	} else if con.DeferredExpr != nil {
 		var err error
 		dt, err = con.DeferredExpr.Eval(ctx, chunk.Row{})
@@ -1859,7 +1863,7 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, exec contex
 // to make it better for display and debug, it also escapes the string to corresponding golang string literal,
 // which means using \t, \n, \x??, \u????, ... to represent newline, control character, non-printable character,
 // invalid utf-8 bytes and so on.
-func ExprsToStringsForDisplay(exprs []Expression) []string {
+func ExprsToStringsForDisplay(ctx EvalContext, exprs []Expression) []string {
 	strs := make([]string, len(exprs))
 	for i, cond := range exprs {
 		quote := `"`
@@ -1867,7 +1871,7 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 		// so we trim the \" prefix and suffix here.
 		strs[i] = strings.TrimSuffix(
 			strings.TrimPrefix(
-				strconv.Quote(cond.String()),
+				strconv.Quote(cond.StringWithCtx(ctx, errors.RedactLogDisable)),
 				quote),
 			quote)
 	}

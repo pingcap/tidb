@@ -114,9 +114,9 @@ Error 1659 (HY000): Field 'a' is of a not allowed type for this type of partitio
 insert into tint values (0), (1), (2), (3);
 insert into tdate values ('2000-01-01'), ('2000-01-02'), ('2000-01-03'), ('2000-01-04');
 insert into tstring values ('a'), ('b'), ('c'), ('d');
-analyze table tint;
-analyze table tdate;
-analyze table tstring;
+analyze table tint all columns;
+analyze table tdate all columns;
+analyze table tstring all columns;
 explain format = 'brief' select * from tint where a<=1;
 id	estRows	task	access object	operator info
 TableReader	2.00	root		data:Selection
