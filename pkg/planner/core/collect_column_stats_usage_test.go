@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -396,7 +397,7 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		flags := builder.GetOptFlag()
 		// JoinReOrder may need columns stats so collecting hist-needed columns must happen before JoinReOrder.
 		// Hence, we disable JoinReOrder and PruneColumnsAgain here.
-		flags &= ^(flagJoinReOrder | flagPrunColumnsAgain)
+		flags &= ^(rule.FlagJoinReOrder | rule.FlagPruneColumnsAgain)
 		lp, err = logicalOptimize(ctx, flags, lp)
 		require.NoError(t, err, comment)
 		checkColumnStatsUsageForStatsLoad(t, s.is, lp, tt.res, comment)

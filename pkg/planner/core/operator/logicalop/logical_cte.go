@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"context"
@@ -22,18 +22,18 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 // LogicalCTE is for CTE.
 type LogicalCTE struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 
 	Cte       *CTEClass
 	CteAsName model.CIStr
@@ -45,7 +45,7 @@ type LogicalCTE struct {
 
 // Init only assigns type and context.
 func (p LogicalCTE) Init(ctx base.PlanContext, offset int) *LogicalCTE {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeCTE, &p, offset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeCTE, &p, offset)
 	return &p
 }
 
@@ -147,16 +147,16 @@ func (p *LogicalCTE) PruneColumns(_ []*expression.Column, _ *optimizetrace.Logic
 
 // FindBestTask implements the base.LogicalPlan.<3rd> interface.
 func (p *LogicalCTE) FindBestTask(prop *property.PhysicalProperty, counter *base.PlanCounterTp, pop *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	return findBestTask4LogicalCTE(p, prop, counter, pop)
+	return utilfuncp.FindBestTask4LogicalCTE(p, prop, counter, pop)
 }
 
 // BuildKeyInfo inherits the BaseLogicalPlan.<4th> implementation.
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
 func (p *LogicalCTE) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *logicalop.LogicalTopN
+	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*logicalop.LogicalTopN)
+		topN = topNLogicalPlan.(*LogicalTopN)
 	}
 	if topN != nil {
 		return topN.AttachChild(p, opt)
@@ -185,12 +185,12 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 		// Build push-downed predicates.
 		if len(p.Cte.PushDownPredicates) > 0 {
 			newCond := expression.ComposeDNFCondition(p.SCtx().GetExprCtx(), p.Cte.PushDownPredicates...)
-			newSel := logicalop.LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.Cte.SeedPartLogicalPlan.QueryBlockOffset())
+			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.Cte.SeedPartLogicalPlan.QueryBlockOffset())
 			newSel.SetChildren(p.Cte.SeedPartLogicalPlan)
 			p.Cte.SeedPartLogicalPlan = newSel
-			p.Cte.OptFlag |= flagPredicatePushDown
+			p.Cte.OptFlag = ruleutil.SetPredicatePushDownFlag(p.Cte.OptFlag)
 		}
-		p.Cte.SeedPartLogicalPlan, p.Cte.SeedPartPhysicalPlan, _, err = doOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.SeedPartLogicalPlan)
+		p.Cte.SeedPartLogicalPlan, p.Cte.SeedPartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.SeedPartLogicalPlan)
 		if err != nil {
 			return nil, err
 		}
@@ -210,7 +210,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	}
 	if p.Cte.RecursivePartLogicalPlan != nil {
 		if p.Cte.RecursivePartPhysicalPlan == nil {
-			p.Cte.RecursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.RecursivePartLogicalPlan)
+			_, p.Cte.RecursivePartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.RecursivePartLogicalPlan)
 			if err != nil {
 				return nil, err
 			}
@@ -234,7 +234,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 
 // ExhaustPhysicalPlans implements the base.LogicalPlan.<14th> interface.
 func (p *LogicalCTE) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return exhaustPhysicalPlans4LogicalCTE(p, prop)
+	return utilfuncp.ExhaustPhysicalPlans4LogicalCTE(p, prop)
 }
 
 // ExtractCorrelatedCols implements the base.LogicalPlan.<15th> interface.
