@@ -394,6 +394,7 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		},
 		Definitions: []model.PartitionDefinition{
 			{ID: 1, Name: model.NewCIStr("p1")},
+			{ID: 2, Name: model.NewCIStr("p2")},
 		},
 		Enable:   true,
 		DDLState: model.StatePublic,
@@ -402,8 +403,9 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, PartitionAttribute, true)
 	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
 	// drop partition
-	tblInfo.Partition = nil
-	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, PartitionAttribute, false)
+	tblInfo.Partition.Definitions = tblInfo.Partition.Definitions[:1]
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, PartitionAttribute, true)
+	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
 
 	// test placement policy correctness in schema change
 	tblInfo.PlacementPolicyRef = &model.PolicyRefInfo{
@@ -439,12 +441,13 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 
 	// test foreign key correctness in schema change
 	tblInfo.ForeignKeys = []*model.FKInfo{{
-		ID:       1,
-		Name:     model.NewCIStr("fk"),
-		RefTable: model.NewCIStr("t"),
-		RefCols:  []model.CIStr{model.NewCIStr("a")},
-		Cols:     []model.CIStr{model.NewCIStr("t_a")},
-		State:    model.StateWriteOnly,
+		ID:        1,
+		Name:      model.NewCIStr("fk_1"),
+		RefSchema: model.NewCIStr("t"),
+		RefTable:  model.NewCIStr("t"),
+		RefCols:   []model.CIStr{model.NewCIStr("a")},
+		Cols:      []model.CIStr{model.NewCIStr("t_a")},
+		State:     model.StateWriteOnly,
 	}}
 	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddForeignKey, 11, ForeignKeysAttribute, true)
 	require.Equal(t, tblInfo.ForeignKeys, tblInfo1.ForeignKeys)
