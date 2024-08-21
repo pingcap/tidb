@@ -71,7 +71,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/printer"
-	processProfile "github.com/pingcap/tidb/pkg/util/profileprocess"
+	profileprocess "github.com/pingcap/tidb/pkg/util/profileprocess"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/servicescope"
@@ -337,7 +337,7 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopSQL()
-	processProfile.SetupProcessProfiling(svr)
+	profileprocess.SetupProcessProfiling(svr)
 	terror.MustNil(svr.Run(dom))
 	<-exited
 	syncLog()
@@ -970,7 +970,7 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	disk.CleanUp()
 	closeStmtSummary()
 	topsql.Close()
-	processProfile.Close()
+	profileprocess.Close()
 	cgmon.StopCgroupMonitor()
 }
 
