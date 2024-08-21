@@ -272,7 +272,7 @@ func TestAddDate(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		res := AddDate(int64(tt.year), int64(tt.month), int64(tt.day), tt.ot)
+		res, _ := AddDate(int64(tt.year), int64(tt.month), int64(tt.day), tt.ot)
 		require.Equal(t, tt.year+tt.ot.Year(), res.Year())
 	}
 }
