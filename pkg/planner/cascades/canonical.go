@@ -111,6 +111,7 @@ func (h *Hasher) HashRune(val rune) {
 // HashString hashes a string value.
 // eg: "我是谁" is with 3 rune inside, each rune of them takes up 3-4 bytes.
 func (h *Hasher) HashString(val string) {
+	h.HashInt(len(val))
 	for _, c := range val {
 		h.HashRune(c)
 	}
@@ -124,6 +125,7 @@ func (h *Hasher) HashByte(val byte) {
 
 // HashBytes hashes a byte slice value.
 func (h *Hasher) HashBytes(val []byte) {
+	h.HashInt(len(val))
 	for _, c := range val {
 		h.HashByte(c)
 	}

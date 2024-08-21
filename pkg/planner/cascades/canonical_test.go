@@ -16,9 +16,35 @@ package cascades
 
 import (
 	"testing"
-	
+
 	"github.com/stretchr/testify/require"
 )
+
+type TmpStr struct {
+	str1 string
+	str2 string
+}
+
+func (ts *TmpStr) Hash64(h *Hasher) {
+	h.HashString(ts.str1)
+	h.HashString(ts.str2)
+}
+
+func TestStringLen(t *testing.T) {
+	hasher1 := NewHasher()
+	hasher2 := NewHasher()
+	a := TmpStr{
+		str1: "abc",
+		str2: "def",
+	}
+	b := TmpStr{
+		str1: "abcdef",
+		str2: "",
+	}
+	a.Hash64(hasher1)
+	b.Hash64(hasher2)
+	require.NotEqual(t, hasher1.hash64a, hasher2.hash64a)
+}
 
 func TestHash64a(t *testing.T) {
 	hasher1 := NewHasher()
