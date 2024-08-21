@@ -144,17 +144,6 @@ func getOffsetsCap(capacity int) int64 {
 	return int64(capacity + 1)
 }
 
-// This function returns the total memory usage that may be used in the future
-func (c *Column) getMemoryUsageCap(capacity int) (sum int64) {
-	if c.isFixed() {
-		elemLen := len(c.elemBuf)
-		sum += int64(elemLen) + getDataMemCap(capacity, elemLen) + getNullBitmapCap(capacity)
-	} else {
-		sum += getOffsetsCap(capacity) + getDataMemCap(estimatedElemLen, capacity) + getNullBitmapCap(capacity)
-	}
-	return sum
-}
-
 func (c *Column) typeSize() int {
 	if len(c.elemBuf) > 0 {
 		return len(c.elemBuf)

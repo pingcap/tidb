@@ -192,19 +192,6 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 	return
 }
 
-// GetMemoryUsageCap returns the total memory usage that may be used in the future.
-// We ignore the size of Column.length and Column.nullCount
-// since they have little effect of the total memory usage.
-func (c *Chunk) GetMemoryUsageCap(capacity int) (sum int64) {
-	if c == nil {
-		return 0
-	}
-	for _, col := range c.columns {
-		sum += int64(unsafe.Sizeof(*col)) + col.getMemoryUsageCap(capacity)
-	}
-	return sum
-}
-
 // RequiredRows returns how many rows is considered full.
 func (c *Chunk) RequiredRows() int {
 	return c.requiredRows

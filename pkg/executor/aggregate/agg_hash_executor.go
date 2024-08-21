@@ -328,12 +328,10 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			e.partialWorkers[i].stats = &AggWorkerStat{}
 			e.stats.PartialStats = append(e.stats.PartialStats, e.partialWorkers[i].stats)
 		}
-		e.memTracker.Consume(e.partialWorkers[i].chk.GetMemoryUsageCap(e.MaxChunkSize()))
 		input := &HashAggInput{
 			chk:        chunk.New(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()),
 			giveBackCh: e.partialWorkers[i].inputCh,
 		}
-		e.memTracker.Consume(input.chk.GetMemoryUsageCap(e.MaxChunkSize()))
 		e.inputCh <- input
 	}
 }
