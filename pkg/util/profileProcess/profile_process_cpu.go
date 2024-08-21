@@ -17,17 +17,18 @@ package profileProcess
 import (
 	"context"
 	"fmt"
+	"runtime/pprof"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"go.uber.org/zap"
-	"runtime/pprof"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 )
 
 var (
