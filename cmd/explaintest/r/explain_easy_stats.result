@@ -178,7 +178,9 @@ id	estRows	task	access object	operator info
 Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
 explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b ORDER BY a limit 1;
 id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
+TopN	1.00	root		explain_easy_stats.index_prune.a, offset:0, count:1
+└─StreamAgg	1.00	root		group by:explain_easy_stats.index_prune.b, funcs:firstrow(explain_easy_stats.index_prune.a)->explain_easy_stats.index_prune.a, funcs:firstrow(explain_easy_stats.index_prune.b)->explain_easy_stats.index_prune.b, funcs:firstrow(explain_easy_stats.index_prune.c)->explain_easy_stats.index_prune.c
+  └─Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
 drop table if exists t1, t2, t3, index_prune;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
 drop table if exists tbl;
