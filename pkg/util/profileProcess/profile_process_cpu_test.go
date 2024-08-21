@@ -16,20 +16,19 @@ package profileprocess
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile/testutil"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 func TestPProfCPUProfile(t *testing.T) {
 	// short the interval to speed up the test.
-	interval := time.Millisecond * 400
+	interval := time.Millisecond * 200
 	defCollectTickerInterval = interval
 	cpuprofile.DefProfileDuration = interval
 
@@ -38,22 +37,51 @@ func TestPProfCPUProfile(t *testing.T) {
 	defer cpuprofile.StopCPUProfiler()
 
 	topsqlstate.EnableTopSQL()
-	mu := &mockUpdater{}
-	sqlCPUCollector := NewProcessCPUProfiler(mu)
+	updater := &mockUpdater{}
+	updater.data = make(map[uint64]uint64)
+	sqlCPUCollector := NewProcessCPUProfiler(updater)
 	sqlCPUCollector.Start()
 	defer sqlCPUCollector.Stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	testutil.MockCPULoad(ctx, "sql_global")
-	time.Sleep(interval * 2)
+	testutil.MockCPULoadV2(ctx, "0_0", "1_0", "2_1", "3_1")
+	time.Sleep(interval * 4)
+	updater.Lock()
+	currDataLen := len(updater.data)
+	updater.Unlock()
+	require.Equal(t, 4, currDataLen)
+
+	// Test disable then re-enable.
+	topsqlstate.DisableTopSQL()
+	time.Sleep(interval * 4)
+	updater.Lock()
+	updater.data = make(map[uint64]uint64)
+	updater.Unlock()
+
+	time.Sleep(interval * 4)
+	updater.Lock()
+	currDataLen = len(updater.data)
+	updater.Unlock()
+	require.Equal(t, 0, currDataLen)
+
+	topsqlstate.EnableTopSQL()
+	time.Sleep(interval * 4)
+	updater.Lock()
+	currDataLen = len(updater.data)
+	updater.Unlock()
+	require.Equal(t, 4, currDataLen)
 }
 
 type mockUpdater struct {
+	sync.Mutex
+	data map[uint64]uint64
 }
 
 // UpdateProcessCPUTime updates specific process's tidb CPU time when the process is still running
 // It implements ProcessCPUTimeUpdater interface
-func (s *mockUpdater) UpdateProcessCPUTime(connID uint64, sqlID uint64, cpuTime time.Duration) {
-	logutil.BgLogger().Info("", zap.Uint64("", connID), zap.Uint64("", sqlID), zap.Float64("", cpuTime.Seconds()))
+func (s *mockUpdater) UpdateProcessCPUTime(connID uint64, sqlID uint64, _ time.Duration) {
+	s.Lock()
+	defer s.Unlock()
+	s.data[connID] = sqlID
 }
