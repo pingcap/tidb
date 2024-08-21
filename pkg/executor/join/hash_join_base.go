@@ -208,11 +208,6 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunksImpl(ctx context.C
 				return
 			}
 
-			failpoint.Inject("ConsumeMemAfterBuildFinished", func() {
-				// TODO enable it
-				// hashJoinCtx.memTracker.Consume()
-			})
-
 			hasWaitedForBuild = true
 		}
 
