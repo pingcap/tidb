@@ -325,7 +325,7 @@ type tidbBackend struct {
 	// affecting the cluster too much.
 	maxChunkSize uint64
 	maxChunkRows int
-	// implement stmtCache to improve performance, especially when the downstream is TiDB
+	// implement stmtCache to improve performance
 	stmtCache      *kvcache.SimpleLRUCache
 	stmtCacheMutex sync.RWMutex
 	// Indicate if the CachePrepStmts should be enabled or not
