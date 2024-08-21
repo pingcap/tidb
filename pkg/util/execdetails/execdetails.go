@@ -416,6 +416,8 @@ func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *
 		s.execDetails.RequestCount++
 		s.mergeScanDetail(details.ScanDetail)
 		s.mergeTimeDetail(details.TimeDetail)
+		s.execDetails.TidbCPUTime += details.TidbCPUTime
+		s.execDetails.TikvCPUTime += details.TikvCPUTime
 		detail := &DetailsNeedP90{
 			BackoffSleep:  details.BackoffSleep,
 			BackoffTimes:  details.BackoffTimes,
