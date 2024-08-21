@@ -32,16 +32,16 @@ import (
 
 var (
 	profiler *ProcessCPUProfiler
-	updater  ProcessCpuTimeUpdater
+	updater  ProcessCPUTimeUpdater
 )
 
-// ProcessCpuTimeUpdater Introduce this interface due to the dependency cycle
-type ProcessCpuTimeUpdater interface {
-	UpdateProcessCpuTime(id uint64, sqlId uint64, cpuTime time.Duration)
+// ProcessCPUTimeUpdater Introduce this interface due to the dependency cycle
+type ProcessCPUTimeUpdater interface {
+	UpdateProcessCPUTime(connID uint64, sqlID uint64, cpuTime time.Duration)
 }
 
 // SetupProcessProfiling sets up the process cpu profile worker.
-func SetupProcessProfiling(ud ProcessCpuTimeUpdater) {
+func SetupProcessProfiling(ud ProcessCPUTimeUpdater) {
 	profiler = NewProcessCPUProfiler()
 	updater = ud
 	profiler.Start()
@@ -53,8 +53,8 @@ func Close() {
 }
 
 // AttachAndRegisterProcessInfo attach the ProcessInfo into Goroutine labels.
-func AttachAndRegisterProcessInfo(ctx context.Context, connId uint64, sqlId uint64) context.Context {
-	processLabel := fmt.Sprintf("%d_%d", connId, sqlId)
+func AttachAndRegisterProcessInfo(ctx context.Context, connID uint64, sqlID uint64) context.Context {
+	processLabel := fmt.Sprintf("%d_%d", connID, sqlID)
 	ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLUID, processLabel))
 	pprof.SetGoroutineLabels(ctx)
 	return ctx
@@ -64,9 +64,9 @@ const (
 	labelSQLUID = "sql_global_uid"
 )
 
-// SQLCPUTimeRecord represents a single record of how much cpu time a sql consumes in one second.
-type SQLCPUTimeRecord struct {
-	SqlGlobalUID uint64
+// sqlCPUTimeRecord represents a single record of how much cpu time a sql consumes in one second.
+type sqlCPUTimeRecord struct {
+	sqlGlobalUID uint64
 	total        int64
 }
 
@@ -178,7 +178,7 @@ func (sp *ProcessCPUProfiler) doUnregister(profileConsumer cpuprofile.ProfileCon
 // Since `SQLCPUCollector` only care about the cpu time that consume by (sql_global_uid), the other sample data
 // without those label will be ignore.
 func (sp *ProcessCPUProfiler) parseCPUProfile(p *profile.Profile) {
-	sqlMap := make(map[uint64]SQLCPUTimeRecord)
+	sqlMap := make(map[uint64]sqlCPUTimeRecord)
 	idx := len(p.SampleType) - 1
 	// Reverse traverse sample data, since only the latest sqlID for each connection is usable
 	for i := len(p.Sample) - 1; i >= 0; i-- {
@@ -192,19 +192,18 @@ func (sp *ProcessCPUProfiler) parseCPUProfile(p *profile.Profile) {
 			connID, _ := strconv.ParseUint(keys[0], 10, 64)
 			sqlID, _ := strconv.ParseUint(keys[1], 10, 64)
 			if timeRecord, ok := sqlMap[connID]; ok {
-				if sqlID != sqlMap[connID].SqlGlobalUID {
+				if sqlID != sqlMap[connID].sqlGlobalUID {
 					// Ignore previous sql's cpu profile data inside the same connection
 					continue
-				} else {
-					timeRecord.total += s.Value[idx]
-					sqlMap[connID] = timeRecord
 				}
+				timeRecord.total += s.Value[idx]
+				sqlMap[connID] = timeRecord
 			} else {
-				sqlMap[connID] = SQLCPUTimeRecord{sqlID, 0}
+				sqlMap[connID] = sqlCPUTimeRecord{sqlID, 0}
 			}
 		}
 	}
 	for key, val := range sqlMap {
-		updater.UpdateProcessCpuTime(key, val.SqlGlobalUID, time.Duration(val.total))
+		updater.UpdateProcessCPUTime(key, val.sqlGlobalUID, time.Duration(val.total))
 	}
 }

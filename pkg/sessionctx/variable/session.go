@@ -798,8 +798,8 @@ type SessionVars struct {
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
-	// SqlID is the unique id of sql
-	SqlID atomic.Uint64
+	// SQLID is the unique id of sql
+	SQLID atomic.Uint64
 
 	// PlanID is the unique id of logical and physical plan.
 	PlanID atomic.Int32
@@ -1877,9 +1877,9 @@ func (s *SessionVars) AllocNewPlanID() int {
 	return int(s.PlanID.Add(1))
 }
 
-// AllocNewSqlID alloc new ID
-func (s *SessionVars) AllocNewSqlID() uint64 {
-	return s.SqlID.Add(1)
+// AllocNewSQLID alloc new ID
+func (s *SessionVars) AllocNewSQLID() uint64 {
+	return s.SQLID.Add(1)
 }
 
 // GetTotalCostDuration returns the total cost duration of the last statement in the current session.

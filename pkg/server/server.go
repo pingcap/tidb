@@ -855,13 +855,13 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 	return rs
 }
 
-// UpdateProcessCpuTime updates specific process's tidb CPU time when the process is still running
-// It implements ProcessCpuTimeUpdater interface
-func (s *Server) UpdateProcessCpuTime(connID uint64, sqlID uint64, cpuTime time.Duration) {
+// UpdateProcessCPUTime updates specific process's tidb CPU time when the process is still running
+// It implements ProcessCPUTimeUpdater interface
+func (s *Server) UpdateProcessCPUTime(connID uint64, sqlID uint64, cpuTime time.Duration) {
 	s.rwlock.RLock()
 	conn, ok := s.clients[connID]
 	s.rwlock.RUnlock()
-	if !ok || conn.ctx.GetSessionVars().SqlID.Load() != sqlID {
+	if !ok || conn.ctx.GetSessionVars().SQLID.Load() != sqlID {
 		return
 	}
 	vars := conn.ctx.GetSessionVars()
