@@ -26,7 +26,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"net"
 	"net/http"
@@ -358,16 +357,7 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	}
 
 	// taskID is uint64, So using hashed uuid
-	tmp1 := uuid.New().String()
-	tmp2 := time.Now().UnixNano()
-	combined := fmt.Sprintf("%s-%d", tmp1, tmp2)
-	h := fnv.New64a()
-	_, err := h.Write([]byte(combined))
-	if err != nil {
-		return err
-	}
-	id := int64(h.Sum64())
-	taskCfg.TaskID = id
+	taskCfg.TaskID = time.Now().UnixNano()
 
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
