@@ -93,7 +93,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/printer",
-        "//pkg/util/profileProcess",
+        "//pkg/util/profileprocess",
         "//pkg/util/redact",
         "//pkg/util/resourcegrouptag",
         "//pkg/util/sqlexec",

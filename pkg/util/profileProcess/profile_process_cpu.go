@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package profileProcess
+package profileprocess
 
 import (
 	"context"
@@ -178,7 +178,7 @@ func (sp *ProcessCPUProfiler) doUnregister(profileConsumer cpuprofile.ProfileCon
 // Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
 // Since `SQLCPUCollector` only care about the cpu time that consume by (sql_global_uid), the other sample data
 // without those label will be ignore.
-func (sp *ProcessCPUProfiler) parseCPUProfile(p *profile.Profile) {
+func (_ *ProcessCPUProfiler) parseCPUProfile(p *profile.Profile) {
 	sqlMap := make(map[uint64]sqlCPUTimeRecord)
 	idx := len(p.SampleType) - 1
 	// Reverse traverse sample data, since only the latest sqlID for each connection is usable
