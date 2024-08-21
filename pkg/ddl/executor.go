@@ -4186,8 +4186,8 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	}
 
 	var partCount int
-	if tb.Meta().Partition != nil {
-		partCount = len(tb.Meta().Partition.Definitions)
+	if tblInfo.Partition != nil {
+		partCount = len(tblInfo.Partition.Definitions)
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -6423,8 +6423,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 // HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted
 // successfully. exported for testing purpose.
 func HandleLockTablesOnSuccessSubmit(ctx sessionctx.Context, jobW *JobWrapper) {
-	switch jobW.Type {
-	case model.ActionTruncateTable:
+	if jobW.Type == model.ActionTruncateTable {
 		if ok, lockTp := ctx.CheckTableLocked(jobW.TableID); ok {
 			newTableID := jobW.Args[0].(int64)
 			ctx.AddTableLock([]model.TableLockTpInfo{{SchemaID: jobW.SchemaID, TableID: newTableID, Tp: lockTp}})
@@ -6435,8 +6434,7 @@ func HandleLockTablesOnSuccessSubmit(ctx sessionctx.Context, jobW *JobWrapper) {
 // HandleLockTablesOnFinish handles the table lock for the job which is finished.
 // exported for testing purpose.
 func HandleLockTablesOnFinish(ctx sessionctx.Context, jobW *JobWrapper, ddlErr error) {
-	switch jobW.Type {
-	case model.ActionTruncateTable:
+	if jobW.Type == model.ActionTruncateTable {
 		if ddlErr != nil {
 			newTableID := jobW.Args[0].(int64)
 			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
