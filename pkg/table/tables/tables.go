@@ -1052,7 +1052,7 @@ func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*tab
 	if err != nil {
 		return nil, err
 	}
-	v, _, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
+	v, _, err := DecodeRawRowData(ctx.GetExprCtx(), t.Meta(), h, cols, value)
 	if err != nil {
 		return nil, err
 	}
@@ -1072,7 +1072,7 @@ func containFullColInHandle(meta *model.TableInfo, col *table.Column) (containFu
 }
 
 // DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
-func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle, cols []*table.Column,
+func DecodeRawRowData(ctx expression.BuildContext, meta *model.TableInfo, h kv.Handle, cols []*table.Column,
 	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
@@ -1096,7 +1096,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 				if err != nil {
 					return nil, nil, err
 				}
-				dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
+				dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetEvalCtx().Location())
 				if err != nil {
 					return nil, nil, err
 				}
@@ -1107,7 +1107,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
+	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetEvalCtx().Location())
 	if err != nil {
 		return nil, rowMap, err
 	}
@@ -1130,9 +1130,9 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			continue
 		}
 		if col.ChangeStateInfo != nil {
-			v[i], _, err = GetChangingColVal(ctx.GetExprCtx(), cols, col, rowMap, defaultVals)
+			v[i], _, err = GetChangingColVal(ctx, cols, col, rowMap, defaultVals)
 		} else {
-			v[i], err = GetColDefaultValue(ctx.GetExprCtx(), col, defaultVals)
+			v[i], err = GetColDefaultValue(ctx, col, defaultVals)
 		}
 		if err != nil {
 			return nil, rowMap, err
