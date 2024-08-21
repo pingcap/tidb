@@ -19,6 +19,7 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
@@ -29,11 +30,13 @@ func TestMapTableToFiles(t *testing.T) {
 			Name:     "table1-1.sst",
 			StartKey: tablecodec.EncodeTablePrefix(1),
 			EndKey:   tablecodec.EncodeTablePrefix(1),
+			Cf:       restoreutils.WriteCFName,
 		},
 		{
 			Name:     "table1-2.sst",
 			StartKey: tablecodec.EncodeTablePrefix(1),
 			EndKey:   tablecodec.EncodeTablePrefix(1),
+			Cf:       restoreutils.WriteCFName,
 		},
 		{
 			Name:     "table1-3.sst",
@@ -46,6 +49,7 @@ func TestMapTableToFiles(t *testing.T) {
 			Name:     "table2-1.sst",
 			StartKey: tablecodec.EncodeTablePrefix(2),
 			EndKey:   tablecodec.EncodeTablePrefix(2),
+			Cf:       restoreutils.WriteCFName,
 		},
 		{
 			Name:     "table2-2.sst",

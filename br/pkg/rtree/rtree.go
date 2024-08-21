@@ -275,19 +275,6 @@ func (rangeTree *RangeTree) InsertRange(rg Range) *Range {
 	return out.(*Range)
 }
 
-// GetSortedRanges collects and returns sorted ranges.
-func (rangeTree *RangeStatsTree) GetSortedRanges() []RangeStats {
-	sortedRanges := make([]RangeStats, 0, rangeTree.Len())
-	rangeTree.Ascend(func(rg btree.Item) bool {
-		if rg == nil {
-			return false
-		}
-		sortedRanges = append(sortedRanges, *rg.(*RangeStats))
-		return true
-	})
-	return sortedRanges
-}
-
 // GetIncompleteRange returns missing range covered by startKey and endKey.
 func (rangeTree *RangeTree) GetIncompleteRange(
 	startKey, endKey []byte,
