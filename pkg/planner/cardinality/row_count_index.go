@@ -335,7 +335,8 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
 				c := coll.GetCol(idx.Histogram.ID)
-				// If this is single column of a multi-column index - use the column's NDV rather than index NDV
+				// If this is single column predicate - use the column's information rather than index.
+				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range estimation.
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
 				if isSingleColRange && c != nil && c.Histogram.NDV > 0 {
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
