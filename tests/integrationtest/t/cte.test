@@ -378,7 +378,6 @@ select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 wher
 select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
 
 ## sub case-4: simplified user query
-use test;
 drop table if exists table_a, table_b, table_c, table_d, table_e;
 CREATE TABLE `table_a` (
   `col_1` varchar(40) DEFAULT NULL,
@@ -539,7 +538,7 @@ VALUES
  7.0, 'Source A', 'Unit A', 'Region A', '2023-06-28 15:00:00', '20230627',
  6.9, 'user_001', CURRENT_TIMESTAMP, 'Exchange rate on 2023-06-28');
 
-desc analyze WITH date_table AS (
+desc WITH date_table AS (
   SELECT
         d.col_1 AS date,
         (SELECT MAX(col_1)
