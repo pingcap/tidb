@@ -25,6 +25,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/dbterror",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

@@ -50,6 +50,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -329,7 +330,7 @@ func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint6
 }
 
 func (w *GCWorker) isNeedToWait() bool {
-	if config.GetGlobalConfig().EnableGCFastStart {
+	if config.GetGlobalConfig().EnableGCFastStart && !intest.InTest {
 		return time.Since(w.lastFinish) < gcWaitTime && w.isFirstTickFinished
 	}
 	return time.Since(w.lastFinish) < gcWaitTime
