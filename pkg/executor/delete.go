@@ -109,7 +109,6 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		return errors.New("schema columns and fields mismatch")
 	}
 	memUsageOfChk := int64(0)
-	datumRow := make([]types.Datum, 0, len(fields))
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
 		iter := chunk.NewIterator4Chunk(chk)
@@ -129,7 +128,6 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				}
 				rowCount = 0
 			}
-
 			for i, field := range fields {
 				if columns[i].ID == model.ExtraPhysTblID {
 					continue
