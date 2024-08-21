@@ -4814,61 +4814,33 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 		case infoschema.TableTiKVRegionPeers:
 			p.Extractor = &TikvRegionPeersExtractor{}
 		case infoschema.TableColumns:
-			ex := &InfoSchemaColumnsExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaColumnsExtractor()
 		case infoschema.TableTables:
-			ex := &InfoSchemaTablesExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaTablesExtractor()
 		case infoschema.TablePartitions:
-			ex := &InfoSchemaPartitionsExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaPartitionsExtractor()
 		case infoschema.TableStatistics:
-			ex := &InfoSchemaStatisticsExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaStatisticsExtractor()
 		case infoschema.TableSchemata:
-			ex := &InfoSchemaSchemataExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaSchemataExtractor()
 		case infoschema.TableSequences:
-			ex := &InfoSchemaSequenceExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaSequenceExtractor()
 		case infoschema.TableTiDBIndexUsage:
-			ex := &InfoSchemaIndexUsageExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaTiDBIndexUsageExtractor()
 		case infoschema.TableCheckConstraints:
-			ex := &InfoSchemaCheckConstraintsExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaCheckConstraintsExtractor()
 		case infoschema.TableTiDBCheckConstraints:
-			ex := &InfoSchemaTiDBCheckConstraintsExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaTiDBCheckConstraintsExtractor()
 		case infoschema.TableReferConst:
-			ex := &InfoSchemaReferConstExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaReferConstExtractor()
 		case infoschema.TableTiDBIndexes:
-			ex := &InfoSchemaIndexesExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaIndexesExtractor()
 		case infoschema.TableViews:
-			ex := &InfoSchemaViewsExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaViewsExtractor()
 		case infoschema.TableKeyColumn:
-			ex := &InfoSchemaKeyColumnUsageExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaKeyColumnUsageExtractor()
 		case infoschema.TableConstraints:
-			ex := &InfoSchemaTableConstraintsExtractor{}
-			ex.initExtractableColNames(upTbl)
-			p.Extractor = ex
+			p.Extractor = NewInfoSchemaTableConstraintsExtractor()
 		case infoschema.TableTiKVRegionStatus:
 			p.Extractor = &TiKVRegionStatusExtractor{tablesID: make([]int64, 0)}
 		}
