@@ -89,4 +89,11 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show full tables like '%lmn'").Check(testkit.Rows("abclmn BASE TABLE"))
 	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
 	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
+
+	tk.MustExec("drop database test;")
+	tk.MustExec("create database test;")
+	tk.MustExec("create temporary table test.t1(id int);")
+	tk.MustQuery("show tables from test like 't1';").Check(testkit.Rows( /* empty */ ))
+	tk.MustExec("create global temporary table test.t2(id int) ON COMMIT DELETE ROWS;")
+	tk.MustQuery("show tables from test like 't2';").Check(testkit.Rows("t2"))
 }

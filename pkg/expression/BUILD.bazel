@@ -188,6 +188,7 @@ go_test(
         "main_test.go",
         "scalar_function_test.go",
         "schema_test.go",
+        "simple_rewriter_test.go",
         "typeinfer_test.go",
         "util_test.go",
     ],

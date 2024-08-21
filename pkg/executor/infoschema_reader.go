@@ -115,14 +115,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		e.is = is
 
-		var getAllSchemas = func() []model.CIStr {
-			dbs := is.AllSchemaNames()
-			slices.SortFunc(dbs, func(a, b model.CIStr) int {
-				return strings.Compare(a.L, b.L)
-			})
-			return dbs
-		}
-
 		var err error
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
@@ -176,8 +168,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
-			dbs := getAllSchemas()
-			err = e.dataForTableTiFlashReplica(ctx, sctx, dbs)
+			err = e.dataForTableTiFlashReplica(ctx, sctx)
 		case infoschema.TableTiKVStoreStatus:
 			err = e.dataForTiKVStoreStatus(ctx, sctx)
 		case infoschema.TableClientErrorsSummaryGlobal,
@@ -415,34 +406,36 @@ func (e *memtableRetriever) setDataForStatistics(ctx context.Context, sctx sessi
 	return nil
 }
 
-func (e *memtableRetriever) setDataForStatisticsInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaStatisticsExtractor) {
+func (e *memtableRetriever) setDataForStatisticsInTable(
+	schema model.CIStr,
+	table *model.TableInfo,
+	ex *plannercore.InfoSchemaStatisticsExtractor,
+) {
 	var rows [][]types.Datum
-	if table.PKIsHandle {
-		if !extractor.Filter("index_name", "primary") {
-			for _, col := range table.Columns {
-				if mysql.HasPriKeyFlag(col.GetFlag()) {
-					record := types.MakeDatums(
-						infoschema.CatalogVal, // TABLE_CATALOG
-						schema.O,              // TABLE_SCHEMA
-						table.Name.O,          // TABLE_NAME
-						"0",                   // NON_UNIQUE
-						schema.O,              // INDEX_SCHEMA
-						"PRIMARY",             // INDEX_NAME
-						1,                     // SEQ_IN_INDEX
-						col.Name.O,            // COLUMN_NAME
-						"A",                   // COLLATION
-						0,                     // CARDINALITY
-						nil,                   // SUB_PART
-						nil,                   // PACKED
-						"",                    // NULLABLE
-						"BTREE",               // INDEX_TYPE
-						"",                    // COMMENT
-						"",                    // INDEX_COMMENT
-						"YES",                 // IS_VISIBLE
-						nil,                   // Expression
-					)
-					rows = append(rows, record)
-				}
+	if table.PKIsHandle && ex.HasPrimaryKey() {
+		for _, col := range table.Columns {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
+				record := types.MakeDatums(
+					infoschema.CatalogVal, // TABLE_CATALOG
+					schema.O,              // TABLE_SCHEMA
+					table.Name.O,          // TABLE_NAME
+					"0",                   // NON_UNIQUE
+					schema.O,              // INDEX_SCHEMA
+					"PRIMARY",             // INDEX_NAME
+					1,                     // SEQ_IN_INDEX
+					col.Name.O,            // COLUMN_NAME
+					"A",                   // COLLATION
+					0,                     // CARDINALITY
+					nil,                   // SUB_PART
+					nil,                   // PACKED
+					"",                    // NULLABLE
+					"BTREE",               // INDEX_TYPE
+					"",                    // COMMENT
+					"",                    // INDEX_COMMENT
+					"YES",                 // IS_VISIBLE
+					nil,                   // Expression
+				)
+				rows = append(rows, record)
 			}
 		}
 	}
@@ -451,7 +444,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema model.CIStr, tabl
 		nameToCol[c.Name.L] = c
 	}
 	for _, index := range table.Indices {
-		if extractor.Filter("index_name", index.Name.L) {
+		if !ex.HasIndex(index.Name.L) {
 			continue
 		}
 		nonUnique := "1"
@@ -528,7 +521,7 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 			continue
 		}
 		for _, fk := range table.ForeignKeys {
-			if ok && ex.Filter("constraint_name", fk.Name.L) {
+			if ok && !ex.HasConstraint(fk.Name.L) {
 				continue
 			}
 			updateRule, deleteRule := "NO ACTION", "NO ACTION"
@@ -753,7 +746,7 @@ func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sct
 					if constraint.State != model.StatePublic {
 						continue
 					}
-					if ok && ex.Filter("constraint_name", constraint.Name.L) {
+					if ok && !ex.HasConstraint(constraint.Name.L) {
 						continue
 					}
 					record := types.MakeDatums(
@@ -797,7 +790,7 @@ func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context,
 				if constraint.State != model.StatePublic {
 					continue
 				}
-				if ok && ex.Filter("constraint_name", constraint.Name.L) {
+				if ok && !ex.HasConstraint(constraint.Name.L) {
 					continue
 				}
 				record := types.MakeDatums(
@@ -1152,7 +1145,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			rows = append(rows, record)
 		} else {
 			for i, pi := range table.GetPartitionInfo().Definitions {
-				if ex.Filter("partition_name", pi.Name.L) {
+				if !ex.HasPartition(pi.Name.L) {
 					continue
 				}
 				rowCount = cache.TableRowStatsCache.GetTableRows(pi.ID)
@@ -1676,7 +1669,7 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx 
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
-		if ex.Filter("constraint_schema", schema.O) {
+		if !ex.HasConstraintSchema(schema.L) {
 			continue
 		}
 		rs := keyColumnUsageInTable(schema, table, ex)
@@ -1748,29 +1741,27 @@ func (e *memtableRetriever) setDataForMetricTables() {
 	e.rows = rows
 }
 
-func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor *plannercore.InfoSchemaKeyColumnUsageExtractor) [][]types.Datum {
+func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, ex *plannercore.InfoSchemaKeyColumnUsageExtractor) [][]types.Datum {
 	var rows [][]types.Datum
-	if table.PKIsHandle {
-		if extractor == nil || !extractor.Filter("constraint_name", lowerPrimaryKeyName) {
-			for _, col := range table.Columns {
-				if mysql.HasPriKeyFlag(col.GetFlag()) {
-					record := types.MakeDatums(
-						infoschema.CatalogVal,        // CONSTRAINT_CATALOG
-						schema.O,                     // CONSTRAINT_SCHEMA
-						infoschema.PrimaryConstraint, // CONSTRAINT_NAME
-						infoschema.CatalogVal,        // TABLE_CATALOG
-						schema.O,                     // TABLE_SCHEMA
-						table.Name.O,                 // TABLE_NAME
-						col.Name.O,                   // COLUMN_NAME
-						1,                            // ORDINAL_POSITION
-						1,                            // POSITION_IN_UNIQUE_CONSTRAINT
-						nil,                          // REFERENCED_TABLE_SCHEMA
-						nil,                          // REFERENCED_TABLE_NAME
-						nil,                          // REFERENCED_COLUMN_NAME
-					)
-					rows = append(rows, record)
-					break
-				}
+	if table.PKIsHandle && ex.HasPrimaryKey() {
+		for _, col := range table.Columns {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
+				record := types.MakeDatums(
+					infoschema.CatalogVal,        // CONSTRAINT_CATALOG
+					schema.O,                     // CONSTRAINT_SCHEMA
+					infoschema.PrimaryConstraint, // CONSTRAINT_NAME
+					infoschema.CatalogVal,        // TABLE_CATALOG
+					schema.O,                     // TABLE_SCHEMA
+					table.Name.O,                 // TABLE_NAME
+					col.Name.O,                   // COLUMN_NAME
+					1,                            // ORDINAL_POSITION
+					1,                            // POSITION_IN_UNIQUE_CONSTRAINT
+					nil,                          // REFERENCED_TABLE_SCHEMA
+					nil,                          // REFERENCED_TABLE_NAME
+					nil,                          // REFERENCED_COLUMN_NAME
+				)
+				rows = append(rows, record)
+				break
 			}
 		}
 	}
@@ -1792,7 +1783,7 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor
 			continue
 		}
 
-		if extractor != nil && extractor.Filter("constraint_name", filterIdxName) {
+		if !ex.HasConstraint(filterIdxName) {
 			continue
 		}
 
@@ -1819,7 +1810,7 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, extractor
 		}
 	}
 	for _, fk := range table.ForeignKeys {
-		if extractor != nil && extractor.Filter("constraint_name", fk.Name.L) {
+		if !ex.HasConstraint(fk.Name.L) {
 			continue
 		}
 
@@ -2077,7 +2068,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 	rows := make([][]types.Datum, 0, len(tables))
 	for i, tbl := range tables {
 		schema := schemas[i]
-		if ex.Filter("constraint_schema", schema.L) {
+		if !ex.HasConstraintSchema(schema.L) {
 			continue
 		}
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
@@ -2085,7 +2076,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 		}
 
 		if tbl.PKIsHandle {
-			if !ex.Filter("constraint_name", lowerPrimaryKeyName) {
+			if ex.HasPrimaryKey() {
 				record := types.MakeDatums(
 					infoschema.CatalogVal,     // CONSTRAINT_CATALOG
 					schema.O,                  // CONSTRAINT_SCHEMA
@@ -2113,7 +2104,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 				// The index has no constriant.
 				continue
 			}
-			if ex.Filter("constraint_name", filterName) {
+			if !ex.HasConstraint(filterName) {
 				continue
 			}
 			record := types.MakeDatums(
@@ -2128,7 +2119,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 		}
 		//  TiDB includes foreign key information for compatibility but foreign keys are not yet enforced.
 		for _, fk := range tbl.ForeignKeys {
-			if ex.Filter("constraint_name", fk.Name.L) {
+			if !ex.HasConstraint(fk.Name.L) {
 				continue
 			}
 			record := types.MakeDatums(
@@ -2571,7 +2562,7 @@ func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessi
 }
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx sessionctx.Context, _ []model.CIStr) error {
+func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx sessionctx.Context) error {
 	var (
 		checker       = privilege.GetPrivilegeManager(sctx)
 		rows          [][]types.Datum
@@ -3677,7 +3668,7 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 	dom := domain.GetDomain(sctx)
 	rows := make([][]types.Datum, 0, 100)
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaIndexUsageExtractor)
+	extractor, ok := e.extractor.(*plannercore.InfoSchemaTiDBIndexUsageExtractor)
 	if !ok {
 		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaIndexUsageExtractor", e.extractor)
 	}
