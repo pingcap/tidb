@@ -2038,42 +2038,11 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	for _, ca := range cases {
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
-		var base *plannercore.InfoSchemaBaseExtractor
-		switch ex := logicalMemTable.Extractor.(type) {
-		case *plannercore.InfoSchemaBaseExtractor:
-			base = ex
-		case *plannercore.InfoSchemaTablesExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaPartitionsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaStatisticsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaSchemataExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaIndexesExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaIndexUsageExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaViewsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaKeyColumnUsageExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaTableConstraintsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaSequenceExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaCheckConstraintsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaReferConstExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaTiDBCheckConstraintsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaColumnsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		default:
-			require.Failf(t, "unexpected extractor type", "%T", ex)
-		}
-		require.Equal(t, ca.skipRequest, base.SkipRequest, "SQL: %v", ca.sql)
-		require.Equal(t, ca.colPredicates, base.ColPredicates, "SQL: %v", ca.sql)
+		ex, ok := logicalMemTable.Extractor.(interface {
+			GetBase() *plannercore.InfoSchemaBaseExtractor
+		})
+		require.True(t, ok)
+		require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
+		require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
 	}
 }
