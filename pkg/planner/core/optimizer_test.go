@@ -304,7 +304,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	require.NoError(t, failpoint.Enable(fpName, fpExpr))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 	fpName2 := "github.com/pingcap/tidb/pkg/planner/core/mockTiFlashStreamCountUsingMinLogicalCores"
-	require.NoError(t, failpoint.Enable(fpName2, `return("8")`))
+	require.NoError(t, failpoint.Enable(fpName2, `return("16")`))
 	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = 0
 
 	col0 := &expression.Column{
@@ -329,7 +329,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	recv.children = []PhysicalPlan{hashSender}
 	hashSender.children = []PhysicalPlan{tableScan}
 	tableScan.Schema().Columns = append(tableScan.Schema().Columns, col0)
-	start(hashAgg, 8, 3, 0)
+	start(hashAgg, 16, 3, 0)
 
 	// Join(x) <- ExchangeReceiver <- ExchangeSender
 	//                   <- ExchangeReceiver <- ExchangeSender
@@ -356,10 +356,17 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	hashSender1.children = []PhysicalPlan{tableScan1}
 	hashSender1.HashCols = partitionCols
 	tableScan1.Schema().Columns = append(tableScan1.Schema().Columns, col0)
+<<<<<<< HEAD
 	handleFineGrainedShuffle(nil, sctx, tableReader)
 	require.Equal(t, uint64(8), hashJoin.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(8), recv1.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(8), hashSender1.TiFlashFineGrainedShuffleStreamCount)
+=======
+	handleFineGrainedShuffle(nil, sctx.GetPlanCtx(), tableReader)
+	require.Equal(t, uint64(16), hashJoin.TiFlashFineGrainedShuffleStreamCount)
+	require.Equal(t, uint64(16), recv1.TiFlashFineGrainedShuffleStreamCount)
+	require.Equal(t, uint64(16), hashSender1.TiFlashFineGrainedShuffleStreamCount)
+>>>>>>> 38f9d702ff6 (planner: use logical cores as default fine grained stream count (#55544))
 	require.Equal(t, uint64(0), recv.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(0), hashSender.TiFlashFineGrainedShuffleStreamCount)
 	clear(plans)
