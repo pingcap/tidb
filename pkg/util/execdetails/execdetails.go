@@ -416,8 +416,6 @@ func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *
 		s.execDetails.RequestCount++
 		s.mergeScanDetail(details.ScanDetail)
 		s.mergeTimeDetail(details.TimeDetail)
-		s.MergeTidbCPUTime(details.TidbCPUTime)
-		s.MergeTikvCPUTime(details.TikvCPUTime)
 		detail := &DetailsNeedP90{
 			BackoffSleep:  details.BackoffSleep,
 			BackoffTimes:  details.BackoffTimes,
@@ -455,11 +453,15 @@ func (s *SyncExecDetails) mergeTimeDetail(timeDetail util.TimeDetail) {
 
 // MergeTikvCPUTime merges tikvCPU time into self.
 func (s *SyncExecDetails) MergeTikvCPUTime(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.execDetails.TikvCPUTime += d
 }
 
 // MergeTidbCPUTime merges tidbCPU time into self.
 func (s *SyncExecDetails) MergeTidbCPUTime(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.execDetails.TidbCPUTime += d
 }
 
