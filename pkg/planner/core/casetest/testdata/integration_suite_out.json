@@ -1225,15 +1225,6 @@
           "      └─Sort 12487.50 mpp[tiflash]  test.t1.c1, stream_count: 8",
           "        └─ExchangeReceiver 12487.50 mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
-<<<<<<< HEAD
-          "            └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.c1, test.t1.c2)]",
-          "              ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "              │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "              │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.c1))",
-          "              │     └─TableFullScan 10000.00 mpp[tiflash] table:a pushed down filter:empty, keep order:false, stats:pseudo",
-          "              └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.c2))",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false, stats:pseudo"
-=======
           "            └─Projection 12487.50 mpp[tiflash]  test.t1.c1",
           "              └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.c1, test.t1.c2)]",
           "                ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -1259,7 +1250,6 @@
           "                │     └─TableFullScan 10000.00 mpp[tiflash] table:a pushed down filter:empty, keep order:false, stats:pseudo",
           "                └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.c2))",
           "                  └─TableFullScan 10000.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false, stats:pseudo"
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
         ]
       },
       {
