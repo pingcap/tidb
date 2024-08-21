@@ -2644,11 +2644,17 @@ var defaultSysVars = []*SysVar{
 		s.OptimizerUseInvisibleIndexes = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzePartitionConcurrency, Value: strconv.FormatInt(DefTiDBAnalyzePartitionConcurrency, 10),
-		MinValue: 1, MaxValue: uint64(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota), SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession,
+		Name:     TiDBAnalyzePartitionConcurrency,
+		Value:    strconv.FormatInt(DefTiDBAnalyzePartitionConcurrency, 10),
+		Type:     TypeInt,
+		MinValue: 1,
+		MaxValue: 128,
+		SetSession: func(s *SessionVars, val string) error {
 			s.AnalyzePartitionConcurrency = int(TidbOptInt64(val, DefTiDBAnalyzePartitionConcurrency))
 			return nil
-		}},
+		},
+	},
 	{
 		Scope: ScopeGlobal | ScopeSession, Name: TiDBMergePartitionStatsConcurrency, Value: strconv.FormatInt(DefTiDBMergePartitionStatsConcurrency, 10), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency,
 		SetSession: func(s *SessionVars, val string) error {

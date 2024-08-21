@@ -694,7 +694,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	// Handle exchange partition
 	tbl := e.Table.Meta()
 	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
-		if err := checkRowForExchangePartition(e.Ctx().GetTableCtx(), row, tbl); err != nil {
+		if err := checkRowForExchangePartition(e.Ctx(), row, tbl); err != nil {
 			return nil, err
 		}
 	}

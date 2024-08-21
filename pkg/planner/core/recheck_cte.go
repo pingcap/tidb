@@ -36,17 +36,17 @@ func findCTEs(
 		cte := cteReader.Cte
 		if !isRootTree {
 			// Set it to false since it's referenced by other CTEs.
-			cte.isOuterMostCTE = false
+			cte.IsOuterMostCTE = false
 		}
 		if visited.Has(cte.IDForStorage) {
 			return
 		}
 		visited.Insert(cte.IDForStorage)
 		// Set it when we meet it first time.
-		cte.isOuterMostCTE = isRootTree
-		findCTEs(cte.seedPartLogicalPlan, visited, false)
-		if cte.recursivePartLogicalPlan != nil {
-			findCTEs(cte.recursivePartLogicalPlan, visited, false)
+		cte.IsOuterMostCTE = isRootTree
+		findCTEs(cte.SeedPartLogicalPlan, visited, false)
+		if cte.RecursivePartLogicalPlan != nil {
+			findCTEs(cte.RecursivePartLogicalPlan, visited, false)
 		}
 		return
 	}

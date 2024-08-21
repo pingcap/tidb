@@ -2013,7 +2013,7 @@ func TestSkylinePruning(t *testing.T) {
 				lp = lp.Children()[0]
 			}
 		}
-		paths := ds.skylinePruning(byItemsToProperty(byItems))
+		paths := skylinePruning(ds, byItemsToProperty(byItems))
 		require.Equal(t, tt.result, pathsName(paths), comment)
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}

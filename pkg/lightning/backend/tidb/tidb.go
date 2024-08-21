@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
@@ -90,7 +89,6 @@ func (rows tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 type tidbEncoder struct {
 	mode mysql.SQLMode
 	tbl  table.Table
-	se   sessionctx.Context
 	// the index of table columns for each data field.
 	// index == len(table.columns) means this field is `_tidb_rowid`
 	columnIdx []int
@@ -113,17 +111,10 @@ func NewEncodingBuilder() encode.EncodingBuilder {
 
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
-func (*encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	se := kv.NewSessionCtx(&config.SessionOptions, log.FromContext(ctx))
-	if config.SQLMode.HasStrictMode() {
-		se.GetSessionVars().SkipUTF8Check = false
-		se.GetSessionVars().SkipASCIICheck = false
-	}
-
+func (*encodingBuilder) NewEncoder(_ context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
 	return &tidbEncoder{
 		mode:                  config.SQLMode,
 		tbl:                   config.Table,
-		se:                    se,
 		path:                  config.Path,
 		logger:                config.Logger,
 		logicalImportPrepStmt: config.LogicalImportPrepStmt,

@@ -199,8 +199,8 @@ type PlanBuilder struct {
 	outerNames   [][]*types.FieldName
 	outerCTEs    []*cteInfo
 	// outerBlockExpand register current Expand OP for rollup syntax in every select query block.
-	outerBlockExpand   []*LogicalExpand
-	currentBlockExpand *LogicalExpand
+	outerBlockExpand   []*logicalop.LogicalExpand
+	currentBlockExpand *logicalop.LogicalExpand
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -372,7 +372,7 @@ func GetDBTableInfo(visitInfo []visitInfo) []stmtctx.TableEntry {
 	return tables
 }
 
-// GetOptFlag gets the optFlag of the PlanBuilder.
+// GetOptFlag gets the OptFlag of the PlanBuilder.
 func (b *PlanBuilder) GetOptFlag() uint64 {
 	if b.isSampling {
 		// Disable logical optimization to avoid the optimizer
@@ -4011,7 +4011,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 			RetType: &x.Type,
 		}
 	case *driver.ParamMarkerExpr:
-		outExpr, err = expression.ParamMarkerExpression(b.ctx, x, false)
+		outExpr, err = expression.ParamMarkerExpression(b.ctx.GetExprCtx(), x, false)
 	default:
 		b.curClause = fieldList
 		// subquery in insert values should not reference upper scope

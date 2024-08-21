@@ -1082,7 +1082,7 @@ GROUP BY
 			if err != nil {
 				logutil.Logger(ctx).Error("failed to get table's job interval",
 					zap.Error(err),
-					zap.String("db", v.DBName),
+					zap.String("db", v.DBName.O),
 					zap.String("table", tblInfo.Name.String()),
 				)
 				interval = time.Hour

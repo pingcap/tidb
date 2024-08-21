@@ -235,8 +235,8 @@ select count(1) from information_schema.statistics where table_name = 'temp_tabl
 drop table temp_table;
 
 # TestSequenceColumns
-create database if not exists db1;
-create database if not exists db2;
+create database if not exists Db1;
+create database if not exists dB2;
 create sequence db1.s1;
 create sequence db2.s2;
 select sequence_schema, sequence_name from information_schema.sequences where sequence_schema = 'db1';

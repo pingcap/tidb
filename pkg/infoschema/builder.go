@@ -954,9 +954,9 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 	if b.enableV2 {
 		for name, id := range di.TableName2ID {
 			item := tableItem{
-				dbName:        di.Name.L,
+				dbName:        di.Name,
 				dbID:          di.ID,
-				tableName:     name,
+				tableName:     model.NewCIStr(name),
 				tableID:       id,
 				schemaVersion: schemaVersion,
 			}
@@ -984,9 +984,9 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
 	if b.enableV2 {
 		b.infoData.add(tableItem{
-			dbName:        di.Name.L,
+			dbName:        di.Name,
 			dbID:          di.ID,
-			tableName:     tblInfo.Name.L,
+			tableName:     tblInfo.Name,
 			tableID:       tblInfo.ID,
 			schemaVersion: schemaVersion,
 		}, tbl)

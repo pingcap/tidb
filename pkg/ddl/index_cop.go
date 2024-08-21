@@ -148,7 +148,7 @@ func buildDAGPB(exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLCont
 }
 
 func constructTableScanPB(ctx exprctx.BuildContext, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
-	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos)
+	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos, false)
 	tblScan.TableId = tblInfo.ID
 	err := tables.SetPBColumnsDefaultValue(ctx, tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err

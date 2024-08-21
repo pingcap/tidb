@@ -985,7 +985,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 	condInIdxFilter := make(map[string]struct{}, len(remainedCNFs))
 	// try to derive index filters for each path
 	for _, path := range combinedPartialPaths {
-		idxFilters, _ := ds.splitIndexFilterConditions(remainedCNFs, path.FullIdxCols, path.FullIdxColLens)
+		idxFilters, _ := splitIndexFilterConditions(ds, remainedCNFs, path.FullIdxCols, path.FullIdxColLens)
 		idxFilters = util.CloneExprs(idxFilters)
 		path.IndexFilters = append(path.IndexFilters, idxFilters...)
 		for _, idxFilter := range idxFilters {
@@ -1072,7 +1072,8 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 		// metadata.
 		// And according to buildPartialPaths4MVIndex, there must be at least one partial path if it returns ok.
 		firstPath := partialPaths[0]
-		idxFilters, tableFilters := ds.splitIndexFilterConditions(
+		idxFilters, tableFilters := splitIndexFilterConditions(
+			ds,
 			remainingFilters,
 			firstPath.FullIdxCols,
 			firstPath.FullIdxColLens,

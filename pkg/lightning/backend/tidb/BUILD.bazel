@@ -18,7 +18,6 @@ go_library(
         "//pkg/lightning/verification",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx",
         "//pkg/table",
         "//pkg/types",
         "//pkg/util/dbutil",
