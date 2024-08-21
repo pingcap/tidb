@@ -1302,6 +1302,10 @@ func (e *Explain) RenderResult() error {
 			if err != nil {
 				return err
 			}
+			err = e.explainPlanInRowFormatScalarSubquery()
+			if err != nil {
+				return err
+			}
 		}
 	case types.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
@@ -1334,6 +1338,25 @@ func (e *Explain) explainPlanInRowFormatCTE() (err error) {
 		explainedCTEPlan[x.CTE.IDForStorage] = struct{}{}
 	}
 
+	return
+}
+
+func (e *Explain) explainPlanInRowFormatScalarSubquery() (err error) {
+	if e.ctx == nil {
+		return nil
+	}
+	for _, subQ := range e.ctx.GetSessionVars().MapScalarSubQ {
+		scalarQ, ok := subQ.(*ScalarSubqueryEvalCtx)
+		if !ok {
+			continue
+		}
+		e.prepareOperatorInfo(scalarQ, "root", "", "", true)
+		childIndent := texttree.Indent4Child("", true)
+		err = e.explainPlanInRowFormat(scalarQ.scalarSubQuery, "root", "", childIndent, true)
+		if err != nil {
+			return
+		}
+	}
 	return
 }
 
