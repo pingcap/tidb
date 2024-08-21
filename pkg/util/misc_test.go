@@ -17,7 +17,6 @@ package util
 import (
 	"bytes"
 	"crypto/x509/pkix"
-	"fmt"
 	"testing"
 	"time"
 
@@ -186,30 +185,4 @@ func TestComposeURL(t *testing.T) {
 	assert.Equal(t, ComposeURL("https://httpserver.example.com", "/api/test"), "https://httpserver.example.com/api/test")
 	assert.Equal(t, ComposeURL("http://server.example.com", ""), "http://server.example.com")
 	assert.Equal(t, ComposeURL("https://server.example.com", ""), "https://server.example.com")
-}
-
-func assertChannel[T any](t *testing.T, ch <-chan T, items ...T) {
-	for i, item := range items {
-		assert.Equal(t, <-ch, item, "the %d-th item doesn't match", i)
-	}
-	select {
-	case item, ok := <-ch:
-		assert.False(t, ok, "channel not closed: more item %v", item)
-	case <-time.After(50 * time.Microsecond):
-		t.Fatal("channel not closed: blocked")
-	}
-}
-
-func TestChannelMap(t *testing.T) {
-	ch := make(chan int, 4)
-	ch <- 1
-	ch <- 2
-	ch <- 3
-
-	tableCh := ChanMap(ch, func(i int) string {
-		return fmt.Sprintf("table%d", i)
-	})
-	close(ch)
-
-	assertChannel(t, tableCh, "table1", "table2", "table3")
 }

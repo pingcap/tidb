@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -70,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -96,6 +94,9 @@ var errCheckConstraintIsOff = errors.NewNoStackError(variable.TiDBEnableCheckCon
 
 // Executor is the interface for executing DDL statements.
 // it's mostly called by SQL executor.
+// DDL statements are converted into DDL jobs, JobSubmitter will submit the jobs
+// to DDL job table. Then jobScheduler will schedule them to run on workers
+// asynchronously in parallel. Executor will wait them to finish.
 type Executor interface {
 	CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error
 	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
@@ -174,19 +175,19 @@ type executor struct {
 	sessPool    *sess.Pool
 	statsHandle *handle.Handle
 
-	ctx             context.Context
-	uuid            string
-	store           kv.Storage
-	etcdCli         *clientv3.Client
-	autoidCli       *autoid.ClientDiscover
-	infoCache       *infoschema.InfoCache
-	limitJobCh      chan *JobWrapper
-	schemaLoader    SchemaLoader
-	lease           time.Duration // lease is schema lease, default 45s, see config.Lease.
-	ownerManager    owner.Manager
+	ctx        context.Context
+	uuid       string
+	store      kv.Storage
+	autoidCli  *autoid.ClientDiscover
+	infoCache  *infoschema.InfoCache
+	limitJobCh chan *JobWrapper
+	lease      time.Duration // lease is schema lease, default 45s, see config.Lease.
+	// ddlJobDoneChMap is used to notify the session that the DDL job is finished.
+	// jobID -> chan struct{}
 	ddlJobDoneChMap *generic.SyncMap[int64, chan struct{}]
-	ddlJobNotifyCh  chan struct{}
-	globalIDLock    *sync.Mutex
+	// globalIDLock locks global id to reduce write conflict.
+	// TODO after we move all id allocation into job submitter we can remove it.
+	globalIDLock *sync.Mutex
 }
 
 var _ Executor = (*executor)(nil)
@@ -1549,7 +1550,6 @@ func (e *executor) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newE
 	return nil
 }
 
-// TODO we can unify this part with ddlCtx.
 func (e *executor) getAutoIDRequirement() autoid.Requirement {
 	return &asAutoIDRequirement{
 		store:     e.store,
@@ -6363,8 +6363,6 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	sessVars.StmtCtx.IsDDLJobInQueue = true
 
 	ddlAction := job.Type
-	// Notice worker that we push a new job and wait the job done.
-	e.notifyNewJobSubmitted(e.ddlJobNotifyCh, addingDDLJobNotifyKey, jobID, ddlAction.String())
 	if result.merged {
 		logutil.DDLLogger().Info("DDL job submitted", zap.Int64("job_id", jobID), zap.String("query", job.Query), zap.String("merged", "true"))
 	} else {

@@ -21,6 +21,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// GetCache is exported for testing.
+func (is *infoschemaV2) HasCache(tableID int64, schemaVersion int64) bool {
+	key := tableCacheKey{tableID, schemaVersion}
+	_, found := is.tableCache.Get(key)
+	return found
+}
+
 func TestInfoSchemaAddDel(t *testing.T) {
 	is := newInfoSchema()
 	is.addSchema(&schemaTables{

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
@@ -45,8 +46,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -86,7 +89,10 @@ const (
 )
 
 type ownerListener struct {
-	ddl       *ddl
+	ddl          *ddl
+	jobSubmitter *JobSubmitter
+	ddlExecutor  *executor
+
 	scheduler *jobScheduler
 }
 
@@ -104,11 +110,15 @@ func (l *ownerListener) OnBecomeOwner() {
 		minJobIDRefresher: l.ddl.minJobIDRefresher,
 		unSyncedTracker:   newUnSyncedJobTracker(),
 		schemaVerMgr:      newSchemaVersionManager(l.ddl.store),
+		schemaVerSyncer:   l.ddl.schemaVerSyncer,
+		binlogCli:         l.ddl.binlogCli,
 
 		ddlCtx:         l.ddl.ddlCtx,
-		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
+		ddlJobNotifyCh: l.jobSubmitter.ddlJobNotifyCh,
 		sessPool:       l.ddl.sessPool,
 		delRangeMgr:    l.ddl.delRangeMgr,
+
+		ddlJobDoneChMap: l.ddlExecutor.ddlJobDoneChMap,
 	}
 	l.ddl.reorgCtx.setOwnerTS(time.Now().Unix())
 	l.scheduler.start()
@@ -133,6 +143,8 @@ type jobScheduler struct {
 	minJobIDRefresher *systable.MinJobIDRefresher
 	unSyncedTracker   *unSyncedJobTracker
 	schemaVerMgr      *schemaVersionManager
+	schemaVerSyncer   schemaver.Syncer
+	binlogCli         *pumpcli.PumpsClient
 
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
@@ -145,6 +157,9 @@ type jobScheduler struct {
 	ddlJobNotifyCh chan struct{}
 	sessPool       *sess.Pool
 	delRangeMgr    delRangeManager
+
+	// shared with ddl executor and job submitter.
+	ddlJobDoneChMap *generic.SyncMap[int64, chan struct{}]
 }
 
 func (s *jobScheduler) start() {
@@ -458,7 +473,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-	jobCtx := s.getJobRunCtx()
+	jobCtx := s.getJobRunCtx(job.ID)
 	s.wg.Run(func() {
 		defer func() {
 			r := recover()
@@ -511,7 +526,8 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx() *jobContext {
+func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
+	ch, _ := s.ddlJobDoneChMap.Load(jobID)
 	return &jobContext{
 		ctx:                  s.schCtx,
 		unSyncedJobTracker:   s.unSyncedTracker,
@@ -519,6 +535,10 @@ func (s *jobScheduler) getJobRunCtx() *jobContext {
 		infoCache:            s.infoCache,
 		autoidCli:            s.autoidCli,
 		store:                s.store,
+		schemaVerSyncer:      s.schemaVerSyncer,
+		binlogCli:            s.binlogCli,
+
+		notifyCh: ch,
 
 		oldDDLCtx: s.ddlCtx,
 	}
@@ -538,7 +558,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		if variable.EnableMDL.Load() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err == nil {
-				err = waitSchemaSyncedForMDL(wk.ctx, s.ddlCtx, job, version)
+				err = waitVersionSynced(jobCtx, job, version)
 				if err != nil {
 					return err
 				}
@@ -548,7 +568,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 				return err
 			}
 		} else {
-			err := waitSchemaSynced(wk.ctx, s.ddlCtx, job)
+			err := waitVersionSyncedWithoutMDL(jobCtx, job)
 			if err != nil {
 				time.Sleep(time.Second)
 				return err
@@ -557,7 +577,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		jobCtx.setAlreadyRunOnce(job.ID)
 	}
 
-	schemaVer, err := wk.transitOneJobStep(s.ddlCtx, jobCtx, job)
+	schemaVer, err := wk.transitOneJobStep(jobCtx, job)
 	if err != nil {
 		tidblogutil.Logger(wk.logCtx).Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		return err
@@ -575,7 +595,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
-	if err = waitSchemaChanged(wk.ctx, s.ddlCtx, schemaVer, job); err != nil {
+	if err = updateGlobalVersionAndWaitSynced(jobCtx, schemaVer, job); err != nil {
 		return err
 	}
 	s.cleanMDLInfo(job, ownerID)

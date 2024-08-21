@@ -42,7 +42,7 @@ var (
 	_ base.LogicalPlan = &logicalop.LogicalMemTable{}
 	_ base.LogicalPlan = &logicalop.LogicalShow{}
 	_ base.LogicalPlan = &logicalop.LogicalShowDDLJobs{}
-	_ base.LogicalPlan = &LogicalCTE{}
+	_ base.LogicalPlan = &logicalop.LogicalCTE{}
 	_ base.LogicalPlan = &logicalop.LogicalCTETable{}
 	_ base.LogicalPlan = &logicalop.LogicalSequence{}
 )
