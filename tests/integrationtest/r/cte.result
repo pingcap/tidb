@@ -927,3 +927,348 @@ c1
 4
 5
 6
+use test;
+drop table if exists table_a, table_b, table_c, table_d, table_e;
+CREATE TABLE `table_a` (
+`col_1` varchar(40) DEFAULT NULL,
+`col_2` varchar(40) DEFAULT NULL,
+`col_3` varchar(500) DEFAULT NULL,
+`col_4` varchar(500) DEFAULT NULL,
+`col_5` varchar(500) DEFAULT NULL,
+`col_6` varchar(500) DEFAULT NULL,
+`col_7` decimal(38,6) DEFAULT NULL,
+`col_8` decimal(38,6) DEFAULT NULL,
+`col_9` decimal(38,6) DEFAULT NULL,
+`col_10` decimal(38,6) DEFAULT NULL,
+`col_11` decimal(38,6) DEFAULT NULL,
+`col_12` decimal(38,6) DEFAULT NULL,
+`col_13` decimal(38,6) DEFAULT NULL,
+`col_14` decimal(38,6) DEFAULT NULL,
+`col_15` decimal(38,6) DEFAULT NULL,
+`col_16` decimal(38,6) DEFAULT NULL,
+`col_17` decimal(38,6) DEFAULT NULL,
+`col_18` decimal(38,6) DEFAULT NULL,
+`col_19` varchar(40) DEFAULT NULL,
+`col_20` varchar(100) DEFAULT NULL,
+`col_21` varchar(100) DEFAULT NULL,
+`created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+KEY `index_col_1` (`col_1`),
+KEY `index_col_2_3` (`col_2`,`col_3`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE `table_b` (
+`col_1` varchar(8) NOT NULL,
+`col_2` varchar(100) NOT NULL,
+`col_3` varchar(200) DEFAULT NULL,
+`col_4` varchar(10) NOT NULL,
+`col_5` decimal(38,6) DEFAULT NULL,
+`col_6` decimal(38,6) DEFAULT NULL,
+`col_7` decimal(38,6) DEFAULT NULL,
+`col_8` decimal(38,6) DEFAULT NULL,
+`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+KEY `index_col_1_2` (`col_1`,`col_2`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE `table_c` (
+`col_1` varchar(50) DEFAULT NULL,
+`col_2` varchar(50) DEFAULT NULL,
+`col_3` varchar(30) DEFAULT NULL,
+`col_4` varchar(100) DEFAULT NULL,
+`col_5` varchar(50) DEFAULT NULL,
+`col_6` varchar(100) DEFAULT NULL,
+`col_7` decimal(38,6) DEFAULT NULL,
+`col_8` decimal(38,6) DEFAULT NULL,
+`col_9` decimal(38,6) DEFAULT NULL,
+`col_10` decimal(38,6) DEFAULT NULL,
+`col_11` decimal(38,6) DEFAULT NULL,
+`col_12` decimal(38,6) DEFAULT NULL,
+`col_13` decimal(38,6) DEFAULT NULL,
+`col_14` decimal(38,6) DEFAULT NULL,
+`col_15` decimal(38,6) DEFAULT NULL,
+`col_16` decimal(38,6) DEFAULT NULL,
+`col_17` varchar(50) DEFAULT NULL,
+`col_18` varchar(50) DEFAULT NULL,
+`col_19` varchar(50) DEFAULT NULL,
+`created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+KEY `index_col_1_3` (`col_1`,`col_3`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE `table_d` (
+`col_1` decimal(10,0) DEFAULT NULL,
+`col_2` varchar(1) DEFAULT NULL,
+`col_3` date NOT NULL,
+`col_4` varchar(13) DEFAULT NULL,
+`col_5` varchar(6) DEFAULT NULL,
+`col_6` varchar(255) DEFAULT NULL,
+`col_7` decimal(10,0) DEFAULT NULL,
+`col_8` varchar(12) DEFAULT NULL,
+`col_9` decimal(10,0) DEFAULT NULL,
+`col_10` varchar(17) DEFAULT NULL,
+`col_11` decimal(10,0) DEFAULT NULL,
+`col_12` varchar(7) DEFAULT NULL,
+`col_13` date DEFAULT NULL,
+`col_14` date DEFAULT NULL,
+`col_15` date DEFAULT NULL,
+`col_16` date DEFAULT NULL,
+`col_17` date DEFAULT NULL,
+`col_18` date DEFAULT NULL,
+`col_19` date DEFAULT NULL,
+`col_20` varchar(1) DEFAULT NULL,
+`col_21` varchar(1) DEFAULT NULL,
+`col_22` decimal(1,0) DEFAULT NULL,
+`col_23` varchar(1) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE `table_e` (
+`col_1` varchar(8) NOT NULL,
+`col_2` varchar(100) NOT NULL,
+`col_3` varchar(100) DEFAULT NULL,
+`col_4` varchar(100) NOT NULL,
+`col_5` varchar(100) DEFAULT NULL,
+`col_6` varchar(100) DEFAULT NULL,
+`col_7` decimal(38,12) DEFAULT NULL,
+`col_8` varchar(100) DEFAULT NULL,
+`col_9` varchar(100) DEFAULT NULL,
+`col_10` varchar(100) DEFAULT NULL,
+`col_11` varchar(100) DEFAULT NULL,
+`col_12` varchar(8) DEFAULT NULL,
+`col_13` decimal(38,12) DEFAULT NULL,
+`col_14` varchar(100) DEFAULT NULL,
+`created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+`col_15` varchar(500) DEFAULT NULL,
+PRIMARY KEY (`col_2`, `col_1`, `col_4`),
+KEY `index_col_5_6` (`col_5`, `col_6`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+INSERT INTO `table_a`
+(`col_1`, `col_2`, `col_3`, `col_4`, `col_5`, `col_6`, `col_7`,
+`col_8`, `col_9`, `col_10`, `col_11`, `col_12`, `col_13`,
+`col_14`, `col_15`, `col_16`, `col_17`, `col_18`, `col_19`,
+`col_20`, `col_21`, `created_at`)
+VALUES
+('20230628', '20230628', 'Portfolio A', 'Product B', 'Direct', 'USD',
+200000, 150000, 50000, 100000,
+50000, 10000, 5000, 1.2, 0.1,
+0.15, 0.08, 0.02, '2023-06-28',
+'2023-06-28', '2025-06-28', CURRENT_TIMESTAMP);
+INSERT INTO `table_b`
+(`col_1`, `col_2`, `col_3`, `col_4`, `col_5`, `col_6`, `col_7`, `col_8`, `created_at`)
+VALUES
+('20240628', 'DR201800093', 'Product A', '申购', 1000, 100000, 95000, 1.1, CURRENT_TIMESTAMP);
+INSERT INTO `table_c`
+(`col_1`, `col_2`, `col_3`, `col_4`, `col_5`, `col_6`, `col_7`,
+`col_8`, `col_9`, `col_10`, `col_11`, `col_12`, `col_13`,
+`col_14`, `col_15`, `col_16`, `col_17`, `col_18`, `col_19`, `created_at`)
+VALUES
+('20230628', 'Dept A', 'DR201800093', 'Product A', '孵化', 'Strategy 1',
+100000, 100000, 120000, 100, 1.2,
+0.2, 0.15, 0.1, 0.05, 0.08,
+'2023-06-28', '2025-06-28', '2Y', CURRENT_TIMESTAMP);
+INSERT INTO `table_d`
+(`col_1`, `col_2`, `col_3`, `col_4`, `col_5`, `col_6`, `col_7`,
+`col_8`, `col_9`, `col_10`, `col_11`, `col_12`, `col_13`, `col_14`,
+`col_15`, `col_16`, `col_17`, `col_18`, `col_19`, `col_20`, `col_21`,
+`col_22`, `col_23`)
+VALUES
+('20240628', '1', '2024-06-28', 'Friday', '28', 'End of Month', 202406,
+'June', 20242, 'Q2', 2024, '2024', '2024-06-27', '2024-05-28',
+'2024-03-28', '2023-06-28', '2024-06-27', '2024-06-27', '2024-06-27',
+'1', '1', '1', '1');
+INSERT INTO `table_e`
+(`col_1`, `col_2`, `col_3`, `col_4`, `col_5`, `col_6`, `col_7`,
+`col_8`, `col_9`, `col_10`, `col_11`, `col_12`, `col_13`, `col_14`,
+`created_at`, `col_15`)
+VALUES
+('20230628', 'CFETS_MID', 'Mid', 'USD/CNY', 'USD', 'CNY',
+7.0, 'Source A', 'Unit A', 'Region A', '2023-06-28 15:00:00', '20230627',
+6.9, 'user_001', CURRENT_TIMESTAMP, 'Exchange rate on 2023-06-28');
+desc analyze WITH date_table AS (
+SELECT
+d.col_1 AS date,
+(SELECT MAX(col_1)
+FROM table_c a
+WHERE col_1 <=
+CONCAT(YEAR(DATE_SUB(d.col_1, INTERVAL 1 YEAR)),
+'1231')
+AND EXISTS (SELECT 1
+FROM table_d d
+WHERE a.col_1 = d.col_1
+AND d.col_2 = 1)) AS date1,
+(SELECT MAX(col_1)
+FROM table_a a
+WHERE col_1 <= CONCAT(YEAR(DATE_SUB(d.col_1, INTERVAL 1 YEAR)),
+'1231')
+AND EXISTS (SELECT 1
+FROM table_d d
+WHERE a.col_1 = d.col_1
+AND d.col_2 = 1)) AS date2,
+(SELECT MAX(col_1)
+FROM table_c
+WHERE col_1 <= d.col_1) AS date3,
+(SELECT MAX(col_1)
+FROM table_a
+WHERE col_1 <= d.col_1) AS date4
+FROM table_d d
+WHERE d.col_1 = '20240628'
+),
+rm_am_champs_ex_risk_portfolio_seed_money_1 AS (
+SELECT b.col_2
+FROM table_a b
+LEFT JOIN table_e rb
+ON rb.col_1 = b.col_19
+AND b.col_6 = rb.col_3
+WHERE b.col_2 = (SELECT date4 FROM date_table)
+),
+rm_am_champs_ex_risk_portfolio_seed_money_2 AS (
+SELECT b.col_2
+FROM table_a b
+LEFT JOIN table_e rb
+ON rb.col_1 = b.col_19
+AND b.col_6 = rb.col_3
+),
+product_base AS (
+SELECT DISTINCT t.col_3, col_4, 'ML' AS is_do
+FROM table_c t
+),
+product_detail AS (
+SELECT t.col_4,
+"3集合" AS nature_investment
+FROM product_base t
+LEFT JOIN date_table dt
+ON 1 = 1
+LEFT JOIN table_c a
+ON t.col_4 = a.col_4
+AND a.col_1 = dt.date3
+)
+SELECT col_4
+FROM (
+SELECT col_4
+FROM product_detail
+UNION ALL
+SELECT col_4
+FROM product_detail
+) a;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Union_212	199600.20	2	root		time:4.81ms, loops:3, RU:4.285513		N/A	N/A
+├─Projection_213	99800.10	1	root		time:4.37ms, loops:2, Concurrency:5	test.table_c.col_4->Column#418	2.03 KB	N/A
+│ └─CTEFullScan_214	99800.10	1	root	CTE:product_detail	time:4.26ms, loops:2	data:CTE_4	564 Bytes	0 Bytes
+└─Projection_215	99800.10	1	root		time:4.34ms, loops:2, Concurrency:5	test.table_c.col_4->Column#418	2.03 KB	N/A
+  └─CTEFullScan_216	99800.10	1	root	CTE:product_detail	time:4.22ms, loops:2	data:CTE_4	N/A	N/A
+CTE_4	99800.10	1	root		time:4.26ms, loops:2	Non-Recursive CTE	564 Bytes	0 Bytes
+└─Projection_174(Seed Part)	99800.10	1	root		time:4.16ms, loops:2, Concurrency:5	test.table_c.col_4, 3集合->Column#413	2.01 KB	N/A
+  └─HashJoin_190	99800.10	1	root		time:4ms, loops:2, build_hash_table:{total:414.3µs, fetch:384.5µs, build:29.8µs}, probe:{concurrency:1, total:3.86ms, max:3.86ms, probe:14.8µs, fetch and wait:3.85ms}	left outer join, equal:[eq(test.table_c.col_4, test.table_c.col_4) eq(Column#390, test.table_c.col_1)]	2.46 KB	0 Bytes
+    ├─TableReader_206(Build)	9980.01	1	root		time:346.1µs, loops:2, cop_task: {num: 1, max: 301µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 5.89µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:273.5µs}}	data:Selection_205	253 Bytes	N/A
+    │ └─Selection_205	9980.01	1	cop[tikv]		tikv_task:{time:231.3µs, loops:0}	not(isnull(test.table_c.col_1)), not(isnull(test.table_c.col_4))	N/A	N/A
+    │   └─TableFullScan_204	10000.00	1	cop[tikv]	table:a	tikv_task:{time:231.3µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+    └─HashJoin_192(Probe)	80000.00	1	root		time:3.84ms, loops:2, build_hash_table:{total:3.69ms, fetch:3.67ms, build:23.2µs}, probe:{concurrency:1, total:3.71ms, max:3.71ms, probe:15.8µs, fetch and wait:3.7ms}	CARTESIAN left outer join	1.98 KB	0 Bytes
+      ├─CTEFullScan_202(Build)	10.00	1	root	CTE:date_table AS dt	time:3.61ms, loops:2	data:CTE_0	1.45 KB	0 Bytes
+      └─HashAgg_198(Probe)	8000.00	1	root		time:263µs, loops:2, partial_worker:{wall_time:228.298µs, concurrency:5, task_num:1, tot_wait:713.525µs, tot_exec:35.626µs, tot_time:793.331µs, max:172.611µs, p95:172.611µs}, final_worker:{wall_time:247.925µs, concurrency:5, task_num:5, tot_wait:118.267µs, tot_exec:351ns, tot_time:1.093619ms, max:231.735µs, p95:231.735µs}	group by:test.table_c.col_3, test.table_c.col_4, funcs:firstrow(test.table_c.col_4)->test.table_c.col_4	7.73 KB	0 Bytes
+        └─TableReader_199	8000.00	1	root		time:106.2µs, loops:2, cop_task: {num: 1, max: 253.9µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 10.7µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:219.7µs}}	data:HashAgg_194	256 Bytes	N/A
+          └─HashAgg_194	8000.00	1	cop[tikv]		tikv_task:{time:166.7µs, loops:0}	group by:test.table_c.col_3, test.table_c.col_4, 	N/A	N/A
+            └─TableFullScan_197	10000.00	1	cop[tikv]	table:t	tikv_task:{time:166.7µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+CTE_0	10.00	1	root		time:3.61ms, loops:2	Non-Recursive CTE	1.45 KB	0 Bytes
+└─Apply_97(Seed Part)	10.00	1	root		time:3.54ms, loops:2, concurrency:OFF, cache:ON, cacheHitRatio:0.000%	CARTESIAN left outer join	8 Bytes	N/A
+  ├─Apply_99(Build)	10.00	1	root		time:2.76ms, loops:3, concurrency:OFF, cache:ON, cacheHitRatio:0.000%	CARTESIAN left outer join	8 Bytes	N/A
+  │ ├─Apply_101(Build)	10.00	1	root		time:1.98ms, loops:4, concurrency:OFF, cache:ON, cacheHitRatio:0.000%	CARTESIAN left outer join	8 Bytes	N/A
+  │ │ ├─Apply_103(Build)	10.00	1	root		time:1.14ms, loops:5, concurrency:OFF, cache:ON, cacheHitRatio:0.000%	CARTESIAN left outer join	8 Bytes	N/A
+  │ │ │ ├─TableReader_106(Build)	10.00	1	root		time:166.6µs, loops:6, cop_task: {num: 1, max: 541.3µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 6.63µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:514.7µs}}	data:Selection_105	236 Bytes	N/A
+  │ │ │ │ └─Selection_105	10.00	1	cop[tikv]		tikv_task:{time:469.9µs, loops:0}	eq(test.table_d.col_1, 20240628)	N/A	N/A
+  │ │ │ │   └─TableFullScan_104	10000.00	1	cop[tikv]	table:d	tikv_task:{time:469.9µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+  │ │ │ └─StreamAgg_108(Probe)	10.00	1	root		time:508.6µs, loops:2	funcs:max(test.table_c.col_1)->Column#159	169 Bytes	N/A
+  │ │ │   └─TopN_111	10.00	0	root		time:499.2µs, loops:1	test.table_c.col_1:desc, offset:0, count:1	0 Bytes	0 Bytes
+  │ │ │     └─HashJoin_116	63936.00	0	root		time:466.5µs, loops:2, build_hash_table:{total:333.6µs, fetch:304.5µs, build:29.1µs}, probe:{concurrency:1, total:331.8µs, max:331.8µs, probe:11.2µs, fetch and wait:320.6µs}	semi join, equal:[eq(Column#423, Column#424)]	1.35 KB	0 Bytes
+  │ │ │       ├─Projection_121(Build)	80000.00	1	root		time:272.4µs, loops:2, Concurrency:5	cast(test.table_d.col_1, double BINARY)->Column#424	2.24 KB	N/A
+  │ │ │       │ └─TableReader_124	80000.00	1	root		time:139.4µs, loops:2, cop_task: {num: 1, max: 215.8µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 8.89µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:194.4µs}}	data:Selection_123	261 Bytes	N/A
+  │ │ │       │   └─Selection_123	80000.00	1	cop[tikv]		tikv_task:{time:158.7µs, loops:0}	eq(cast(test.table_d.col_2, double BINARY), 1)	N/A	N/A
+  │ │ │       │     └─TableFullScan_122	100000.00	1	cop[tikv]	table:d	tikv_task:{time:158.7µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+  │ │ │       └─Projection_117(Probe)	79920.00	1	root		time:306.3µs, loops:2, Concurrency:5	test.table_c.col_1, cast(test.table_c.col_1, double BINARY)->Column#423	1.97 KB	N/A
+  │ │ │         └─Selection_118	79920.00	1	root		time:185µs, loops:2	le(test.table_c.col_1, concat(cast(year(cast(date_sub(test.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))	137 Bytes	N/A
+  │ │ │           └─IndexReader_120	99900.00	1	root		time:63.9µs, loops:3, cop_task: {num: 1, max: 171.6µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 12.5µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:143.4µs}}	index:IndexFullScan_119	210 Bytes	N/A
+  │ │ │             └─IndexFullScan_119	99900.00	1	cop[tikv]	table:a, index:index_col_1_3(col_1, col_3)	tikv_task:{time:99.9µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+  │ │ └─StreamAgg_126(Probe)	10.00	1	root		time:476.7µs, loops:2	funcs:max(test.table_a.col_1)->Column#208	169 Bytes	N/A
+  │ │   └─TopN_129	10.00	0	root		time:467.9µs, loops:1	test.table_a.col_1:desc, offset:0, count:1	0 Bytes	0 Bytes
+  │ │     └─HashJoin_134	63936.00	0	root		time:433.8µs, loops:2, build_hash_table:{total:340.7µs, fetch:315.4µs, build:25.3µs}, probe:{concurrency:1, total:354.2µs, max:354.2µs, probe:11.1µs, fetch and wait:343.1µs}	semi join, equal:[eq(Column#429, Column#430)]	1.35 KB	0 Bytes
+  │ │       ├─Projection_139(Build)	80000.00	1	root		time:287.1µs, loops:2, Concurrency:5	cast(test.table_d.col_1, double BINARY)->Column#430	2.29 KB	N/A
+  │ │       │ └─TableReader_142	80000.00	1	root		time:161.9µs, loops:2, cop_task: {num: 1, max: 249.6µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 5.59µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:228µs}}	data:Selection_141	261 Bytes	N/A
+  │ │       │   └─Selection_141	80000.00	1	cop[tikv]		tikv_task:{time:187µs, loops:0}	eq(cast(test.table_d.col_2, double BINARY), 1)	N/A	N/A
+  │ │       │     └─TableFullScan_140	100000.00	1	cop[tikv]	table:d	tikv_task:{time:187µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+  │ │       └─Projection_135(Probe)	79920.00	1	root		time:302.2µs, loops:2, Concurrency:5	test.table_a.col_1, cast(test.table_a.col_1, double BINARY)->Column#429	1.97 KB	N/A
+  │ │         └─Selection_136	79920.00	1	root		time:175.4µs, loops:2	le(test.table_a.col_1, concat(cast(year(cast(date_sub(test.table_d.col_1, 1, "YEAR"), datetime(6) BINARY)), var_string(20)), "1231"))	137 Bytes	N/A
+  │ │           └─IndexReader_138	99900.00	1	root		time:78.4µs, loops:3, cop_task: {num: 1, max: 146.8µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 9.28µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:123µs}}	index:IndexFullScan_137	210 Bytes	N/A
+  │ │             └─IndexFullScan_137	99900.00	1	cop[tikv]	table:a, index:index_col_1(col_1)	tikv_task:{time:87µs, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+  │ └─StreamAgg_144(Probe)	10.00	1	root		time:543.2µs, loops:2	funcs:max(test.table_c.col_1)->Column#230	184 Bytes	N/A
+  │   └─Limit_148	10.00	1	root		time:514.8µs, loops:2	offset:0, count:1	N/A	N/A
+  │     └─IndexReader_157	10.00	1	root		time:506.3µs, loops:1, cop_task: {num: 1, max: 373.7µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 13.8µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:338.4µs}}	index:Limit_156	226 Bytes	N/A
+  │       └─Limit_156	10.00	1	cop[tikv]		tikv_task:{time:277.8µs, loops:0}	offset:0, count:1	N/A	N/A
+  │         └─Selection_155	10.00	1	cop[tikv]		tikv_task:{time:277.8µs, loops:0}	le(cast(test.table_c.col_1, double BINARY), cast(test.table_d.col_1, double BINARY))	N/A	N/A
+  │           └─IndexFullScan_154	12.50	1	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	tikv_task:{time:277.8µs, loops:0}	keep order:true, desc, stats:pseudo	N/A	N/A
+  └─StreamAgg_159(Probe)	10.00	1	root		time:573.9µs, loops:2	funcs:max(test.table_a.col_1)->Column#254	184 Bytes	N/A
+    └─Limit_163	10.00	1	root		time:553.7µs, loops:2	offset:0, count:1	N/A	N/A
+      └─IndexReader_172	10.00	1	root		time:547.7µs, loops:1, cop_task: {num: 1, max: 360µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 13.8µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:323µs}}	index:Limit_171	226 Bytes	N/A
+        └─Limit_171	10.00	1	cop[tikv]		tikv_task:{time:264.1µs, loops:0}	offset:0, count:1	N/A	N/A
+          └─Selection_170	10.00	1	cop[tikv]		tikv_task:{time:264.1µs, loops:0}	le(cast(test.table_a.col_1, double BINARY), cast(test.table_d.col_1, double BINARY))	N/A	N/A
+            └─IndexFullScan_169	12.50	1	cop[tikv]	table:table_a, index:index_col_1(col_1)	tikv_task:{time:264.1µs, loops:0}	keep order:true, desc, stats:pseudo	N/A	N/A
+WITH date_table AS (
+SELECT
+d.col_1 AS date,
+(SELECT MAX(col_1)
+FROM table_c a
+WHERE col_1 <=
+CONCAT(YEAR(DATE_SUB(d.col_1, INTERVAL 1 YEAR)),
+'1231')
+AND EXISTS (SELECT 1
+FROM table_d d
+WHERE a.col_1 = d.col_1
+AND d.col_2 = 1)) AS date1,
+(SELECT MAX(col_1)
+FROM table_a a
+WHERE col_1 <= CONCAT(YEAR(DATE_SUB(d.col_1, INTERVAL 1 YEAR)),
+'1231')
+AND EXISTS (SELECT 1
+FROM table_d d
+WHERE a.col_1 = d.col_1
+AND d.col_2 = 1)) AS date2,
+(SELECT MAX(col_1)
+FROM table_c
+WHERE col_1 <= d.col_1) AS date3,
+(SELECT MAX(col_1)
+FROM table_a
+WHERE col_1 <= d.col_1) AS date4
+FROM table_d d
+WHERE d.col_1 = '20240628'
+),
+rm_am_champs_ex_risk_portfolio_seed_money_1 AS (
+SELECT b.col_2
+FROM table_a b
+LEFT JOIN table_e rb
+ON rb.col_1 = b.col_19
+AND b.col_6 = rb.col_3
+WHERE b.col_2 = (SELECT date4 FROM date_table)
+),
+rm_am_champs_ex_risk_portfolio_seed_money_2 AS (
+SELECT b.col_2
+FROM table_a b
+LEFT JOIN table_e rb
+ON rb.col_1 = b.col_19
+AND b.col_6 = rb.col_3
+),
+product_base AS (
+SELECT DISTINCT t.col_3, col_4, 'ML' AS is_do
+FROM table_c t
+),
+product_detail AS (
+SELECT t.col_4,
+"3集合" AS nature_investment
+FROM product_base t
+LEFT JOIN date_table dt
+ON 1 = 1
+LEFT JOIN table_c a
+ON t.col_4 = a.col_4
+AND a.col_1 = dt.date3
+)
+SELECT col_4
+FROM (
+SELECT col_4
+FROM product_detail
+UNION ALL
+SELECT col_4
+FROM product_detail
+) a;
+col_4
+Product A
+Product A
