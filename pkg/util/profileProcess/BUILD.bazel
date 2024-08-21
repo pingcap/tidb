@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "profileprocess",
@@ -11,6 +11,22 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/topsql/state",
         "@com_github_google_pprof//profile",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "profileprocess_test",
+    timeout = "short",
+    srcs = ["profile_process_cpu_test.go"],
+    embed = [":profileprocess"],
+    flaky = True,
+    deps = [
+        "//pkg/util/cpuprofile",
+        "//pkg/util/cpuprofile/testutil",
+        "//pkg/util/logutil",
+        "//pkg/util/topsql/state",
+        "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",
     ],
 )
