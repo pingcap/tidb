@@ -902,12 +902,6 @@ func (b *builtinRowCountSig) evalInt(ctx EvalContext, row chunk.Row) (res int64,
 
 type tidbMVCCInfoFunctionClass struct {
 	baseFunctionClass
-	contextopt.KVStorePropReader
-}
-
-// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
-func (c *tidbMVCCInfoFunctionClass) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return c.KVStorePropReader.RequiredOptionalEvalProps()
 }
 
 func (c *tidbMVCCInfoFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
