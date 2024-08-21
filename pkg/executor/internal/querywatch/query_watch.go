@@ -42,12 +42,13 @@ func setWatchOption(ctx context.Context,
 ) error {
 	switch op.Tp {
 	case ast.QueryWatchResourceGroup:
-		if op.ExprValue != nil {
-			expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), op.ExprValue, nil, nil, false)
+		resourceGroupOption := op.ResourceGroupOption
+		if resourceGroupOption.GroupNameExpr != nil {
+			expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), resourceGroupOption.GroupNameExpr, nil, nil, false)
 			if err != nil {
 				return err
 			}
-			name, isNull, err := expr.EvalString(sctx.GetExprCtx(), chunk.Row{})
+			name, isNull, err := expr.EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -56,24 +57,26 @@ func setWatchOption(ctx context.Context,
 			}
 			record.ResourceGroupName = name
 		} else {
-			record.ResourceGroupName = op.StrValue.L
+			record.ResourceGroupName = resourceGroupOption.GroupNameStr.L
 		}
 	case ast.QueryWatchAction:
-		record.Action = rmpb.RunawayAction(op.IntValue)
+		record.Action = rmpb.RunawayAction(op.ActionOption.Type)
 	case ast.QueryWatchType:
-		expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), op.ExprValue, nil, nil, false)
+		textOption := op.TextOption
+		expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), textOption.PatternExpr, nil, nil, false)
 		if err != nil {
 			return err
 		}
-		strval, isNull, err := expr.EvalString(sctx.GetExprCtx(), chunk.Row{})
+		strval, isNull, err := expr.EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}
 		if isNull {
 			return errors.Errorf("invalid watch text expression")
 		}
-		record.Watch = rmpb.RunawayWatchType(op.IntValue)
-		if op.BoolValue {
+		watchType := textOption.Type
+		record.Watch = rmpb.RunawayWatchType(watchType)
+		if textOption.TypeSpecified {
 			p := parser.New()
 			stmts, _, err := p.ParseSQL(strval)
 			if err != nil {
@@ -83,7 +86,7 @@ func setWatchOption(ctx context.Context,
 				return errors.Errorf("only support one SQL")
 			}
 			sql := stmts[0].Text()
-			switch model.RunawayWatchType(op.IntValue) {
+			switch watchType {
 			case model.WatchNone:
 				return errors.Errorf("watch type must be specified")
 			case model.WatchExact:
@@ -129,7 +132,7 @@ func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Cont
 
 // validateWatchRecord follows several designs:
 //  1. If no resource group is set, the default resource group is used
-//  2. If no action is specified, the action of the resource group is used. If no, an error message is displayed.
+//  2. If no action is specified, the action of the resource group is used. If no, an error message displayed.
 func validateWatchRecord(record *resourcegroup.QuarantineRecord, client *rmclient.ResourceGroupsController) error {
 	if len(record.ResourceGroupName) == 0 {
 		record.ResourceGroupName = resourcegroup.DefaultResourceGroupName

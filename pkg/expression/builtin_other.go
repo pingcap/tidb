@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -90,17 +91,17 @@ func (c *inFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
-		argTps[i] = args[0].GetType().EvalType()
+		argTps[i] = args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
 	for i := 1; i < len(args); i++ {
-		DisableParseJSONFlag4Expr(args[i])
+		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
 	}
 	bf.tp.SetFlen(1)
-	switch args[0].GetType().EvalType() {
+	switch args[0].GetType(ctx.GetEvalCtx()).EvalType() {
 	case types.ETInt:
 		inInt := builtinInIntSig{baseInSig: baseInSig{baseBuiltinFunc: bf}}
 		err := inInt.buildHashMapForConstArgs(ctx)
@@ -157,7 +158,7 @@ func (c *inFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 }
 
 func (c *inFunctionClass) verifyArgs(ctx BuildContext, args []Expression) ([]Expression, error) {
-	columnType := args[0].GetType()
+	columnType := args[0].GetType(ctx.GetEvalCtx())
 	validatedArgs := make([]Expression, 0, len(args))
 	for _, arg := range args {
 		if constant, ok := arg.(*Constant); ok {
@@ -165,7 +166,7 @@ func (c *inFunctionClass) verifyArgs(ctx BuildContext, args []Expression) ([]Exp
 			case columnType.GetType() == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
 				if constant.Value.GetInt64() < 0 {
 					if MaybeOverOptimized4PlanCache(ctx, args) {
-						ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackErrorf("Bit Column in (%v)", constant.Value.GetInt64()))
+						ctx.SetSkipPlanCache(fmt.Sprintf("Bit Column in (%v)", constant.Value.GetInt64()))
 					}
 					continue
 				}
@@ -198,7 +199,7 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstLevel() == ConstStrict {
-			val, isNull, err := b.args[i].EvalInt(ctx, chunk.Row{})
+			val, isNull, err := b.args[i].EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -206,7 +207,7 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				b.hasNull = true
 				continue
 			}
-			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType().GetFlag())
+			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag())
 		} else {
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
@@ -229,7 +230,7 @@ func (b *builtinInIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 	if isNull0 || err != nil {
 		return 0, isNull0, err
 	}
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 
 	args := b.args[1:]
 	if len(b.hashSet) != 0 {
@@ -257,7 +258,7 @@ func (b *builtinInIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 			hasNull = true
 			continue
 		}
-		isUnsigned := mysql.HasUnsignedFlag(arg.GetType().GetFlag())
+		isUnsigned := mysql.HasUnsignedFlag(arg.GetType(ctx).GetFlag())
 		if isUnsigned0 && isUnsigned {
 			if evaledArg == arg0 {
 				return 1, false, nil
@@ -291,7 +292,7 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	collator := collate.GetCollator(b.collation)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstLevel() == ConstStrict {
-			val, isNull, err := b.args[i].EvalString(ctx, chunk.Row{})
+			val, isNull, err := b.args[i].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -364,7 +365,7 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.hashSet = set.NewFloat64Set()
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstLevel() == ConstStrict {
-			val, isNull, err := b.args[i].EvalReal(ctx, chunk.Row{})
+			val, isNull, err := b.args[i].EvalReal(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -435,7 +436,7 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.hashSet = set.NewStringSet()
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstLevel() == ConstStrict {
-			val, isNull, err := b.args[i].EvalDecimal(ctx, chunk.Row{})
+			val, isNull, err := b.args[i].EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -515,7 +516,7 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.hashSet = make(map[types.CoreTime]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstLevel() == ConstStrict {
-			val, isNull, err := b.args[i].EvalTime(ctx, chunk.Row{})
+			val, isNull, err := b.args[i].EvalTime(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -586,7 +587,7 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error 
 	b.hashSet = make(map[time.Duration]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstLevel() == ConstStrict {
-			val, isNull, err := b.args[i].EvalDuration(ctx, chunk.Row{})
+			val, isNull, err := b.args[i].EvalDuration(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -690,7 +691,7 @@ func (c *rowFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range argTps {
-		argTps[i] = args[i].GetType().EvalType()
+		argTps[i] = args[i].GetType(ctx.GetEvalCtx()).EvalType()
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
 	if err != nil {
@@ -723,7 +724,7 @@ func (c *setVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	argTp := args[1].GetType().EvalType()
+	argTp := args[1].GetType(ctx.GetEvalCtx()).EvalType()
 	if argTp == types.ETTimestamp || argTp == types.ETDuration || argTp == types.ETJson {
 		argTp = types.ETString
 	}
@@ -731,7 +732,7 @@ func (c *setVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlenUnderLimit(args[1].GetType().GetFlen())
+	bf.tp.SetFlenUnderLimit(args[1].GetType(ctx.GetEvalCtx()).GetFlen())
 	switch argTp {
 	case types.ETString:
 		sig = &builtinSetStringVarSig{baseBuiltinFunc: bf}
@@ -1615,7 +1616,6 @@ func (c *getParamFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinGetParamStringSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinGetParamStringSig) Clone() builtinFunc {
@@ -1624,20 +1624,16 @@ func (b *builtinGetParamStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetParamStringSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetParamStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return "", true, err
-	}
 	idx, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	v := sessionVars.PlanCacheParams.GetParamValue(int(idx))
+
+	v, err := ctx.GetParamValue(int(idx))
+	if err != nil {
+		return "", true, err
+	}
 
 	str, err := v.ToString()
 	if err != nil {

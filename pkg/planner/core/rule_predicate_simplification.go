@@ -16,16 +16,17 @@ package core
 
 import (
 	"context"
-	"errors"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
-// predicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
+// PredicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
 // in-list and not equal list intersection.
-type predicateSimplification struct {
+type PredicateSimplification struct {
 }
 
 type predicateType = byte
@@ -64,23 +65,15 @@ func findPredicateType(expr expression.Expression) (*expression.Column, predicat
 	return nil, otherPredicate
 }
 
-func (*predicateSimplification) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+// Optimize implements base.LogicalOptRule.<0th> interface.
+func (*PredicateSimplification) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	return p.predicateSimplification(opt), planChanged, nil
-}
-
-func (s *baseLogicalPlan) predicateSimplification(opt *logicalOptimizeOp) LogicalPlan {
-	p := s.self
-	for i, child := range p.Children() {
-		newChild := child.predicateSimplification(opt)
-		p.SetChild(i, newChild)
-	}
-	return p
+	return p.PredicateSimplification(opt), planChanged, nil
 }
 
 // updateInPredicate applies intersection of an in list with <> value. It returns updated In list and a flag for
 // a special case if an element in the inlist is not removed to keep the list not empty.
-func updateInPredicate(ctx PlanContext, inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
+func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
 	_, inPredicateType := findPredicateType(inPredicate)
 	_, notEQPredicateType := findPredicateType(notEQPredicate)
 	if inPredicateType != inListPredicate || notEQPredicateType != notEqualPredicate {
@@ -96,7 +89,7 @@ func updateInPredicate(ctx PlanContext, inPredicate expression.Expression, notEQ
 	var lastValue *expression.Constant
 	for _, element := range v.GetArgs() {
 		value, valueOK := element.(*expression.Constant)
-		redundantValue := valueOK && value.Equal(ctx.GetExprCtx(), notEQValue)
+		redundantValue := valueOK && value.Equal(ctx.GetExprCtx().GetEvalCtx(), notEQValue)
 		if !redundantValue {
 			newValues = append(newValues, element)
 		}
@@ -116,7 +109,7 @@ func updateInPredicate(ctx PlanContext, inPredicate expression.Expression, notEQ
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(sctx PlanContext, predicates []expression.Expression) []expression.Expression {
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	if len(predicates) <= 1 {
 		return predicates
 	}
@@ -131,13 +124,13 @@ func applyPredicateSimplification(sctx PlanContext, predicates []expression.Expr
 			if iCol == jCol {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
 					if !specialCase {
 						removeValues = append(removeValues, i)
 					}
 				} else if iType == inListPredicate && jType == notEqualPredicate {
 					predicates[i], specialCase = updateInPredicate(sctx, ithPredicate, jthPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
 					if !specialCase {
 						removeValues = append(removeValues, j)
 					}
@@ -154,13 +147,7 @@ func applyPredicateSimplification(sctx PlanContext, predicates []expression.Expr
 	return newValues
 }
 
-func (ds *DataSource) predicateSimplification(*logicalOptimizeOp) LogicalPlan {
-	p := ds.self.(*DataSource)
-	p.pushedDownConds = applyPredicateSimplification(p.SCtx(), p.pushedDownConds)
-	p.allConds = applyPredicateSimplification(p.SCtx(), p.allConds)
-	return p
-}
-
-func (*predicateSimplification) name() string {
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*PredicateSimplification) Name() string {
 	return "predicate_simplification"
 }

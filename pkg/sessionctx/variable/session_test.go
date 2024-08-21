@@ -16,6 +16,7 @@ package variable_test
 
 import (
 	"context"
+	"math/rand"
 	"strconv"
 	"sync"
 	"testing"
@@ -151,7 +152,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
 	seVar.ConnectionID = 1
 	seVar.SessionAlias = "aliasabc"
-	// the out put of the loged CurrentDB should be 'test', should be to lower cased.
+	// the output of the logged CurrentDB should be 'test', should be to lower cased.
 	seVar.CurrentDB = "TeST"
 	seVar.InRestrictedSQL = true
 	seVar.StmtCtx.WaitLockLeaseTime = 1
@@ -558,4 +559,71 @@ func TestSetStatus(t *testing.T) {
 	require.True(t, sv.HasStatusFlag(mysql.ServerStatusCursorExists))
 	require.False(t, sv.InTxn())
 	require.Equal(t, mysql.ServerStatusAutocommit|mysql.ServerStatusCursorExists, sv.Status())
+}
+
+func TestMapDeltaCols(t *testing.T) {
+	for _, c := range []struct {
+		m    map[int64]int64
+		cols variable.DeltaColsMap
+		r    map[int64]int64
+	}{
+		{},
+		{
+			cols: map[int64]int64{1: 2},
+			r:    map[int64]int64{1: 2},
+		},
+		{
+			m: map[int64]int64{1: 2},
+			r: map[int64]int64{1: 2},
+		},
+		{
+			m:    map[int64]int64{1: 3, 3: 5, 5: 7},
+			cols: map[int64]int64{1: 2, 3: -4, 6: 8},
+			r:    map[int64]int64{1: 5, 3: 1, 5: 7, 6: 8},
+		},
+	} {
+		originalCols := make(map[int64]int64)
+		for k, v := range c.cols {
+			originalCols[k] = v
+		}
+
+		m2 := c.cols.UpdateColSizeMap(c.m)
+		require.Equal(t, c.r, m2)
+		if c.m == nil {
+			if len(c.cols) == 0 {
+				require.Nil(t, m2)
+			}
+		} else {
+			require.Equal(t, m2, c.m)
+		}
+
+		if c.cols != nil {
+			// deltaCols not change
+			require.Equal(t, originalCols, map[int64]int64(c.cols))
+		}
+	}
+}
+
+func TestRowIDShardGenerator(t *testing.T) {
+	g := variable.NewRowIDShardGenerator(rand.New(rand.NewSource(12345)), 128) // #nosec G404)
+	// default settings
+	require.Equal(t, 128, g.GetShardStep())
+	shard := g.GetCurrentShard(127)
+	require.Equal(t, int64(3535546008), shard)
+	require.Equal(t, shard, g.GetCurrentShard(1))
+	// reset alloc step
+	g.SetShardStep(5)
+	require.Equal(t, 5, g.GetShardStep())
+	// generate shard in step
+	shard = g.GetCurrentShard(1)
+	require.Equal(t, int64(1371624976), shard)
+	require.Equal(t, shard, g.GetCurrentShard(1))
+	require.Equal(t, shard, g.GetCurrentShard(1))
+	require.Equal(t, shard, g.GetCurrentShard(2))
+	// generate shard in next step
+	shard = g.GetCurrentShard(1)
+	require.Equal(t, int64(895725277), shard)
+	// set step will reset clear remain
+	g.SetShardStep(5)
+	require.NotEqual(t, shard, g.GetCurrentShard(1))
 }

@@ -30,6 +30,7 @@ go_test(
         "//pkg/infoschema",
         "//pkg/parser",
         "//pkg/planner/core",
+        "//pkg/planner/core/base",
         "//pkg/sessionctx",
         "//pkg/sessiontxn",
         "//pkg/testkit",

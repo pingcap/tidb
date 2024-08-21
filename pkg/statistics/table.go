@@ -17,9 +17,9 @@ package statistics
 import (
 	"cmp"
 	"fmt"
+	stdmaps "maps"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -42,6 +42,10 @@ const (
 	PseudoRowCount = 10000
 )
 
+// AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
+// Exported for testing.
+var AutoAnalyzeMinCnt int64 = 1000
+
 var (
 	// Below functions are used to solve cycle import problem.
 	// Note: all functions below will be removed after finishing moving all estimation functions into the cardinality package.
@@ -61,10 +65,13 @@ type Table struct {
 	ExtendedStats *ExtendedStatsColl
 
 	ColAndIdxExistenceMap *ColAndIdxExistenceMap
-	Name                  string
 	HistColl
 	Version uint64
 	// It's the timestamp of the last analyze time.
+	// We used it in auto-analyze to determine if this table has been analyzed.
+	// The source of this field comes from two parts:
+	// 1. Initialized by snapshot when loading stats_meta.
+	// 2. Updated by the analysis time of a specific column or index when loading the histogram of the column or index.
 	LastAnalyzeVersion uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
@@ -163,10 +170,10 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
-	mm.colInfoMap = maps.Clone(m.colInfoMap)
-	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
-	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
-	mm.idxInfoMap = maps.Clone(m.idxInfoMap)
+	mm.colInfoMap = stdmaps.Clone(m.colInfoMap)
+	mm.colAnalyzed = stdmaps.Clone(m.colAnalyzed)
+	mm.idxAnalyzed = stdmaps.Clone(m.idxAnalyzed)
+	mm.idxInfoMap = stdmaps.Clone(m.idxInfoMap)
 	return mm
 }
 
@@ -213,19 +220,13 @@ const (
 	ExtendedStatsDeleted
 )
 
-// HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
+// HistColl is a collection of histograms. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
-	Columns map[int64]*Column
-	Indices map[int64]*Index
-	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
-	Idx2ColumnIDs map[int64][]int64
-	// ColID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
-	ColID2IdxIDs map[int64][]int64
-	// MVIdx2Columns maps the index id to its columns by expression.Column.
-	// For normal index, the column id is enough, as we already have in Idx2ColumnIDs. But currently, mv index needs more
-	// information to match the filter against the mv index columns, and we need this map to provide this information.
-	MVIdx2Columns map[int64][]*expression.Column
-	PhysicalID    int64
+	// Note that when used in a query, Column use UniqueID as the key while Indices use the index ID in the
+	// metadata. (See GenerateHistCollFromColumnInfo() for details)
+	columns    map[int64]*Column
+	indices    map[int64]*Index
+	PhysicalID int64
 	// TODO: add AnalyzeCount here
 	RealtimeCount int64 // RealtimeCount is the current table row count, maintained by applying stats delta based on AnalyzeCount.
 	ModifyCount   int64 // Total modify count in a table.
@@ -234,9 +235,183 @@ type HistColl struct {
 	StatsVer int
 	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
 	// The physical id is used when try to load column stats from storage.
-	HavePhysicalID    bool
-	Pseudo            bool
+	HavePhysicalID bool
+	Pseudo         bool
+
+	/*
+		Fields below are only used in a query, like for estimation, and they will be useless when stored in
+		the stats cache. (See GenerateHistCollFromColumnInfo() for details)
+	*/
+
 	CanNotTriggerLoad bool
+	// Idx2ColUniqueIDs maps the index id to its column UniqueIDs. It's used to calculate the selectivity in planner.
+	Idx2ColUniqueIDs map[int64][]int64
+	// ColUniqueID2IdxIDs maps the column UniqueID to a list index ids whose first column is it.
+	// It's used to calculate the selectivity in planner.
+	ColUniqueID2IdxIDs map[int64][]int64
+	// UniqueID2colInfoID maps the column UniqueID to its ID in the metadata.
+	UniqueID2colInfoID map[int64]int64
+	// MVIdx2Columns maps the index id to its columns by expression.Column.
+	// For normal index, the column id is enough, as we already have in Idx2ColUniqueIDs. But currently, mv index needs more
+	// information to match the filter against the mv index columns, and we need this map to provide this information.
+	MVIdx2Columns map[int64][]*expression.Column
+}
+
+// NewHistColl creates a new HistColl.
+func NewHistColl(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, colNum, idxNum int) *HistColl {
+	return &HistColl{
+		columns:            make(map[int64]*Column, colNum),
+		indices:            make(map[int64]*Index, idxNum),
+		PhysicalID:         id,
+		HavePhysicalID:     havePhysicalID,
+		RealtimeCount:      realtimeCnt,
+		ModifyCount:        modifyCnt,
+		Idx2ColUniqueIDs:   make(map[int64][]int64),
+		ColUniqueID2IdxIDs: make(map[int64][]int64),
+		UniqueID2colInfoID: make(map[int64]int64),
+		MVIdx2Columns:      make(map[int64][]*expression.Column),
+	}
+}
+
+// NewHistCollWithColsAndIdxs creates a new HistColl with given columns and indices.
+func NewHistCollWithColsAndIdxs(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, cols map[int64]*Column, idxs map[int64]*Index) *HistColl {
+	return &HistColl{
+		columns:            cols,
+		indices:            idxs,
+		PhysicalID:         id,
+		HavePhysicalID:     havePhysicalID,
+		RealtimeCount:      realtimeCnt,
+		ModifyCount:        modifyCnt,
+		Idx2ColUniqueIDs:   make(map[int64][]int64),
+		ColUniqueID2IdxIDs: make(map[int64][]int64),
+		UniqueID2colInfoID: make(map[int64]int64),
+		MVIdx2Columns:      make(map[int64][]*expression.Column),
+	}
+}
+
+// SetCol sets the column with the given id.
+func (coll *HistColl) SetCol(id int64, col *Column) {
+	coll.columns[id] = col
+}
+
+// SetIdx sets the index with the given id.
+func (coll *HistColl) SetIdx(id int64, idx *Index) {
+	coll.indices[id] = idx
+}
+
+// GetCol gets the column with the given id.
+func (coll *HistColl) GetCol(id int64) *Column {
+	return coll.columns[id]
+}
+
+// GetIdx gets the index with the given id.
+func (coll *HistColl) GetIdx(id int64) *Index {
+	return coll.indices[id]
+}
+
+// ForEachColumnImmutable iterates all columns in the HistColl.
+// The bool return value of f is used to control the iteration. If f returns true, the iteration will be stopped.
+// Warning: Don't change the content when calling this function.
+func (coll *HistColl) ForEachColumnImmutable(f func(int64, *Column) bool) {
+	for id, col := range coll.columns {
+		if f(id, col) {
+			return
+		}
+	}
+}
+
+// ForEachIndexImmutable iterates all columns in the HistColl.
+// The bool return value of f is used to control the iteration. If f returns true, the iteration will be stopped.
+// WARNING: Don't change the content when calling this function.
+func (coll *HistColl) ForEachIndexImmutable(f func(int64, *Index) bool) {
+	for id, idx := range coll.indices {
+		if f(id, idx) {
+			return
+		}
+	}
+}
+
+// ColNum returns the number of columns in the HistColl.
+func (coll *HistColl) ColNum() int {
+	return len(coll.columns)
+}
+
+// IdxNum returns the number of indices in the HistColl.
+func (coll *HistColl) IdxNum() int {
+	return len(coll.indices)
+}
+
+// DelCol deletes the column with the given id.
+func (coll *HistColl) DelCol(id int64) {
+	delete(coll.columns, id)
+}
+
+// DelIdx deletes the index with the given id.
+func (coll *HistColl) DelIdx(id int64) {
+	delete(coll.indices, id)
+}
+
+// StableOrderColSlice returns a slice of columns in stable order.
+func (coll *HistColl) StableOrderColSlice() []*Column {
+	cols := make([]*Column, 0, len(coll.columns))
+	for _, col := range coll.columns {
+		cols = append(cols, col)
+	}
+	slices.SortFunc(cols, func(c1, c2 *Column) int {
+		return cmp.Compare(c1.ID, c2.ID)
+	})
+	return cols
+}
+
+// StableOrderIdxSlice returns a slice of indices in stable order.
+func (coll *HistColl) StableOrderIdxSlice() []*Index {
+	idxs := make([]*Index, 0, len(coll.indices))
+	for _, idx := range coll.indices {
+		idxs = append(idxs, idx)
+	}
+	slices.SortFunc(idxs, func(i1, i2 *Index) int {
+		return cmp.Compare(i1.ID, i2.ID)
+	})
+	return idxs
+}
+
+// SetAllIndexFullLoadForBootstrap sets all indices' stats loaded status to full load for bootstrap.
+func (coll *HistColl) SetAllIndexFullLoadForBootstrap() {
+	for _, idx := range coll.indices {
+		idx.StatsLoadedStatus = NewStatsFullLoadStatus()
+	}
+}
+
+// CalcPreScalar calculates the pre-calculated scalar for all columns and indices.
+func (coll *HistColl) CalcPreScalar() {
+	for _, idx := range coll.indices {
+		for i := 1; i < idx.Len(); i++ {
+			idx.Buckets[i].Count += idx.Buckets[i-1].Count
+		}
+		idx.PreCalculateScalar()
+	}
+	for _, col := range coll.columns {
+		for i := 1; i < col.Len(); i++ {
+			col.Buckets[i].Count += col.Buckets[i-1].Count
+		}
+		col.PreCalculateScalar()
+	}
+}
+
+// DropEvicted will drop the unnecessary data for all columns and indices. It's triggerred by stats cache.
+func (coll *HistColl) DropEvicted() {
+	for _, col := range coll.columns {
+		if !col.IsStatsInitialized() || col.GetEvictedStatus() == AllEvicted {
+			continue
+		}
+		col.DropUnnecessaryData()
+	}
+	for _, idx := range coll.indices {
+		if !idx.IsStatsInitialized() || idx.GetEvictedStatus() == AllEvicted {
+			continue
+		}
+		idx.DropUnnecessaryData()
+	}
 }
 
 // TableMemoryUsage records tbl memory usage
@@ -378,14 +553,14 @@ func (t *Table) MemoryUsage() *TableMemoryUsage {
 		ColumnsMemUsage: make(map[int64]CacheItemMemoryUsage),
 		IndicesMemUsage: make(map[int64]CacheItemMemoryUsage),
 	}
-	for _, col := range t.Columns {
+	for _, col := range t.columns {
 		if col != nil {
 			colMemUsage := col.MemoryUsage()
 			tMemUsage.ColumnsMemUsage[colMemUsage.ItemID()] = colMemUsage
 			tMemUsage.TotalMemUsage += colMemUsage.TotalMemoryUsage()
 		}
 	}
-	for _, index := range t.Indices {
+	for _, index := range t.indices {
 		if index != nil {
 			idxMemUsage := index.MemoryUsage()
 			tMemUsage.IndicesMemUsage[idxMemUsage.ItemID()] = idxMemUsage
@@ -401,22 +576,21 @@ func (t *Table) Copy() *Table {
 		PhysicalID:     t.PhysicalID,
 		HavePhysicalID: t.HavePhysicalID,
 		RealtimeCount:  t.RealtimeCount,
-		Columns:        make(map[int64]*Column, len(t.Columns)),
-		Indices:        make(map[int64]*Index, len(t.Indices)),
+		columns:        make(map[int64]*Column, len(t.columns)),
+		indices:        make(map[int64]*Index, len(t.indices)),
 		Pseudo:         t.Pseudo,
 		ModifyCount:    t.ModifyCount,
 		StatsVer:       t.StatsVer,
 	}
-	for id, col := range t.Columns {
-		newHistColl.Columns[id] = col.Copy()
+	for id, col := range t.columns {
+		newHistColl.columns[id] = col.Copy()
 	}
-	for id, idx := range t.Indices {
-		newHistColl.Indices[id] = idx.Copy()
+	for id, idx := range t.indices {
+		newHistColl.indices[id] = idx.Copy()
 	}
 	nt := &Table{
 		HistColl:           newHistColl,
 		Version:            t.Version,
-		Name:               t.Name,
 		TblInfoUpdateTS:    t.TblInfoUpdateTS,
 		IsPkIsHandle:       t.IsPkIsHandle,
 		LastAnalyzeVersion: t.LastAnalyzeVersion,
@@ -445,8 +619,8 @@ func (t *Table) ShallowCopy() *Table {
 		PhysicalID:     t.PhysicalID,
 		HavePhysicalID: t.HavePhysicalID,
 		RealtimeCount:  t.RealtimeCount,
-		Columns:        t.Columns,
-		Indices:        t.Indices,
+		columns:        t.columns,
+		indices:        t.indices,
 		Pseudo:         t.Pseudo,
 		ModifyCount:    t.ModifyCount,
 		StatsVer:       t.StatsVer,
@@ -454,7 +628,6 @@ func (t *Table) ShallowCopy() *Table {
 	nt := &Table{
 		HistColl:              newHistColl,
 		Version:               t.Version,
-		Name:                  t.Name,
 		TblInfoUpdateTS:       t.TblInfoUpdateTS,
 		ExtendedStats:         t.ExtendedStats,
 		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
@@ -465,18 +638,18 @@ func (t *Table) ShallowCopy() *Table {
 
 // String implements Stringer interface.
 func (t *Table) String() string {
-	strs := make([]string, 0, len(t.Columns)+1)
+	strs := make([]string, 0, len(t.columns)+1)
 	strs = append(strs, fmt.Sprintf("Table:%d RealtimeCount:%d", t.PhysicalID, t.RealtimeCount))
-	cols := make([]*Column, 0, len(t.Columns))
-	for _, col := range t.Columns {
+	cols := make([]*Column, 0, len(t.columns))
+	for _, col := range t.columns {
 		cols = append(cols, col)
 	}
 	slices.SortFunc(cols, func(i, j *Column) int { return cmp.Compare(i.ID, j.ID) })
 	for _, col := range cols {
 		strs = append(strs, col.String())
 	}
-	idxs := make([]*Index, 0, len(t.Indices))
-	for _, idx := range t.Indices {
+	idxs := make([]*Index, 0, len(t.indices))
+	for _, idx := range t.indices {
 		idxs = append(idxs, idx)
 	}
 	slices.SortFunc(idxs, func(i, j *Index) int { return cmp.Compare(i.ID, j.ID) })
@@ -489,7 +662,7 @@ func (t *Table) String() string {
 
 // IndexStartWithColumn finds the first index whose first column is the given column.
 func (t *Table) IndexStartWithColumn(colName string) *Index {
-	for _, index := range t.Indices {
+	for _, index := range t.indices {
 		if index.Info.Columns[0].Name.L == colName {
 			return index
 		}
@@ -499,7 +672,7 @@ func (t *Table) IndexStartWithColumn(colName string) *Index {
 
 // ColumnByName finds the statistics.Column for the given column.
 func (t *Table) ColumnByName(colName string) *Column {
-	for _, c := range t.Columns {
+	for _, c := range t.columns {
 		if c.Info.Name.L == colName {
 			return c
 		}
@@ -512,7 +685,7 @@ func (t *Table) ColumnByName(colName string) *Column {
 //	needCopy: In order to protect the item in the cache from being damaged, we need to copy the item.
 func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
 	if isIndex {
-		if idxStatsInfo, ok := t.Indices[id]; ok {
+		if idxStatsInfo, ok := t.indices[id]; ok {
 			if needCopy {
 				return idxStatsInfo.Histogram.Copy(),
 					idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy(), true
@@ -523,7 +696,7 @@ func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram,
 		// newly added index which is not analyzed yet
 		return nil, nil, nil, nil, false
 	}
-	if colStatsInfo, ok := t.Columns[id]; ok {
+	if colStatsInfo, ok := t.columns[id]; ok {
 		if needCopy {
 			return colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(),
 				colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy(), true
@@ -541,21 +714,34 @@ func (t *Table) IsAnalyzed() bool {
 	return t.LastAnalyzeVersion > 0
 }
 
+// IsEligibleForAnalysis checks whether the table is eligible for analysis.
+func (t *Table) IsEligibleForAnalysis() bool {
+	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
+	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
+	// 2. If the table is too small, we don't want to waste time to analyze it.
+	//    Leave the opportunity to other bigger tables.
+	if t == nil || t.Pseudo || t.RealtimeCount < AutoAnalyzeMinCnt {
+		return false
+	}
+
+	return true
+}
+
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {
-	ids := maps.Keys(coll.Columns)
+	ids := maps.Keys(coll.columns)
 	slices.Sort(ids)
 	for _, id := range ids {
-		col := coll.Columns[id]
+		col := coll.columns[id]
 		if col != nil && col.IsFullLoad() {
 			return col.TotalRowCount()
 		}
 	}
-	ids = maps.Keys(coll.Indices)
+	ids = maps.Keys(coll.indices)
 	slices.Sort(ids)
 	for _, id := range ids {
-		idx := coll.Indices[id]
+		idx := coll.indices[id]
 		if idx == nil {
 			continue
 		}
@@ -598,6 +784,9 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	if t == nil || t.Pseudo {
 		return 0, false
 	}
+	if !t.IsAnalyzed() {
+		return 0, true
+	}
 	var healthy int64
 	count := float64(t.RealtimeCount)
 	if histCount := t.GetAnalyzeRowCount(); histCount > 0 {
@@ -615,13 +804,25 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 // The Column should be visible in the table and really has analyzed statistics in the stroage.
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
-func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool) {
-	col, ok := t.Columns[id]
+// The first bool is whether we have it in memory. The second bool is whether this column has stats in the system table or not.
+func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool) {
+	if t.Pseudo {
+		return nil, false, false
+	}
+	col, ok := t.columns[id]
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
-	// If it's not analyzed yet. Don't need to load it.
+	// If it's not analyzed yet.
 	if !hasAnalyzed {
-		return nil, false
+		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
+		if !ok {
+			// If we don't have this column. We skip it.
+			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
+			// We need to find a way to maintain it more correctly.
+			return nil, t.ColAndIdxExistenceMap.Has(id, false), false
+		}
+		// Otherwise we don't need to load it.
+		return nil, false, false
 	}
 
 	// Restore the condition from the simplified form:
@@ -629,11 +830,11 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool) {
 	// 2. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
 	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
 	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
-		return col, true
+		return col, true, true
 	}
 
 	// Otherwise don't need load it.
-	return col, false
+	return col, false, true
 }
 
 // IndexIsLoadNeeded checks whether the index needs trigger the async/sync load.
@@ -641,7 +842,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool) {
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Index together with the checking result, to avoid accessing the map multiple times.
 func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
-	idx, ok := t.Indices[id]
+	idx, ok := t.indices[id]
 	// If the index is not in the memory, and we have its stats in the storage. We need to trigger the load.
 	if !ok && t.ColAndIdxExistenceMap.HasAnalyzed(id, true) {
 		return nil, true
@@ -653,51 +854,18 @@ func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 	return idx, false
 }
 
-type neededStatsMap struct {
-	items map[model.TableItemID]struct{}
-	m     sync.RWMutex
-}
-
-func (n *neededStatsMap) AllItems() []model.TableItemID {
-	n.m.RLock()
-	keys := make([]model.TableItemID, 0, len(n.items))
-	for key := range n.items {
-		keys = append(keys, key)
-	}
-	n.m.RUnlock()
-	return keys
-}
-
-func (n *neededStatsMap) Insert(col model.TableItemID) {
-	n.m.Lock()
-	n.items[col] = struct{}{}
-	n.m.Unlock()
-}
-
-func (n *neededStatsMap) Delete(col model.TableItemID) {
-	n.m.Lock()
-	delete(n.items, col)
-	n.m.Unlock()
-}
-
-func (n *neededStatsMap) Length() int {
-	n.m.RLock()
-	defer n.m.RUnlock()
-	return len(n.items)
-}
-
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
 
 // IsInitialized returns true if any column/index stats of the table is initialized.
 func (t *Table) IsInitialized() bool {
-	for _, col := range t.Columns {
+	for _, col := range t.columns {
 		if col != nil && col.IsStatsInitialized() {
 			return true
 		}
 	}
-	for _, idx := range t.Indices {
+	for _, idx := range t.indices {
 		if idx != nil && idx.IsStatsInitialized() {
 			return true
 		}
@@ -719,21 +887,21 @@ func (t *Table) IsOutdated() bool {
 
 // ReleaseAndPutToPool releases data structures of Table and put itself back to pool.
 func (t *Table) ReleaseAndPutToPool() {
-	for _, col := range t.Columns {
+	for _, col := range t.columns {
 		col.FMSketch.DestroyAndPutToPool()
 	}
-	maps.Clear(t.Columns)
-	for _, idx := range t.Indices {
+	maps.Clear(t.columns)
+	for _, idx := range t.indices {
 		idx.FMSketch.DestroyAndPutToPool()
 	}
-	maps.Clear(t.Indices)
+	maps.Clear(t.indices)
 }
 
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
 func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 	cols := make(map[int64]*Column)
 	for _, col := range columns {
-		colHist, ok := coll.Columns[col.ID]
+		colHist, ok := coll.columns[col.ID]
 		if ok {
 			cols[col.UniqueID] = colHist
 		}
@@ -744,20 +912,22 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 		Pseudo:         coll.Pseudo,
 		RealtimeCount:  coll.RealtimeCount,
 		ModifyCount:    coll.ModifyCount,
-		Columns:        cols,
+		columns:        cols,
 	}
 	return newColl
 }
 
-// GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxIDs and IdxID2ColIDs is built from the given parameter.
+// GenerateHistCollFromColumnInfo generates a new HistColl whose ColUniqueID2IdxIDs and Idx2ColUniqueIDs is built from the given parameter.
 func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64, len(columns))
+	uniqueID2colInfoID := make(map[int64]int64, len(columns))
 	idxID2idxInfo := make(map[int64]*model.IndexInfo)
 	for _, col := range columns {
 		colInfoID2UniqueID[col.ID] = col.UniqueID
+		uniqueID2colInfoID[col.UniqueID] = col.ID
 	}
-	for id, colHist := range coll.Columns {
+	for id, colHist := range coll.columns {
 		uniqueID, ok := colInfoID2UniqueID[id]
 		// Collect the statistics by the given columns.
 		if ok {
@@ -771,7 +941,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 	idx2Columns := make(map[int64][]int64)
 	colID2IdxIDs := make(map[int64][]int64)
 	mvIdx2Columns := make(map[int64][]*expression.Column)
-	for id, idxHist := range coll.Indices {
+	for id, idxHist := range coll.indices {
 		idxInfo := idxID2idxInfo[id]
 		if idxInfo == nil {
 			continue
@@ -802,16 +972,17 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		slices.Sort(idxIDs)
 	}
 	newColl := &HistColl{
-		PhysicalID:     coll.PhysicalID,
-		HavePhysicalID: coll.HavePhysicalID,
-		Pseudo:         coll.Pseudo,
-		RealtimeCount:  coll.RealtimeCount,
-		ModifyCount:    coll.ModifyCount,
-		Columns:        newColHistMap,
-		Indices:        newIdxHistMap,
-		ColID2IdxIDs:   colID2IdxIDs,
-		Idx2ColumnIDs:  idx2Columns,
-		MVIdx2Columns:  mvIdx2Columns,
+		PhysicalID:         coll.PhysicalID,
+		HavePhysicalID:     coll.HavePhysicalID,
+		Pseudo:             coll.Pseudo,
+		RealtimeCount:      coll.RealtimeCount,
+		ModifyCount:        coll.ModifyCount,
+		columns:            newColHistMap,
+		indices:            newIdxHistMap,
+		ColUniqueID2IdxIDs: colID2IdxIDs,
+		Idx2ColUniqueIDs:   idx2Columns,
+		UniqueID2colInfoID: uniqueID2colInfoID,
+		MVIdx2Columns:      mvIdx2Columns,
 	}
 	return newColl
 }
@@ -825,8 +996,8 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 		RealtimeCount:     PseudoRowCount,
 		PhysicalID:        tblInfo.ID,
 		HavePhysicalID:    true,
-		Columns:           make(map[int64]*Column, 2),
-		Indices:           make(map[int64]*Index, 2),
+		columns:           make(map[int64]*Column, 2),
+		indices:           make(map[int64]*Index, 2),
 		Pseudo:            true,
 		CanNotTriggerLoad: !allowTriggerLoading,
 	}
@@ -841,7 +1012,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 		if col.State == model.StatePublic && !col.Hidden {
 			t.ColAndIdxExistenceMap.InsertCol(col.ID, col, false)
 			if allowFillHistMeta {
-				t.Columns[col.ID] = &Column{
+				t.columns[col.ID] = &Column{
 					PhysicalID: tblInfo.ID,
 					Info:       col,
 					IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
@@ -854,7 +1025,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 		if idx.State == model.StatePublic {
 			t.ColAndIdxExistenceMap.InsertIndex(idx.ID, idx, false)
 			if allowFillHistMeta {
-				t.Indices[idx.ID] = &Index{
+				t.indices[idx.ID] = &Index{
 					PhysicalID: tblInfo.ID,
 					Info:       idx,
 					Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),

@@ -5,7 +5,7 @@ set @@session.tidb_distsql_scan_concurrency = 15;
 drop table if exists tbl;
 create table tbl(a int, b int, c int, key idx_b_c(b,c));
 insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5);
-analyze table tbl;
+analyze table tbl all columns;
 explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 limit 2,1;
 id	estRows	task	access object	operator info
 IndexLookUp	1.00	root		limit embedded(offset:2, count:1)
@@ -37,22 +37,93 @@ Limit	1.00	root		offset:2, count:1
 set tidb_cost_model_version=2;
 drop table if exists t;
 create table t (a int, b real, i int, id int, value decimal(6,3), name char(128), d decimal(6,3), s char(128), t datetime, c bigint as ((a+1)) virtual, e real as ((b+a)));
+create table t2(a json);
 analyze table t;
+analyze table t2;
 set session tidb_opt_projection_push_down=1;
-desc format = 'brief' select i * 2 from t;
+desc format = 'brief' select a from t2;
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:TableFullScan
+└─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select a->'$.key0' from t2;
 id	estRows	task	access object	operator info
 TableReader	10000.00	root		data:Projection
-└─Projection	10000.00	cop[tikv]		mul(planner__core__casetest__pushdown__push_down.t.i, 2)->Column#13
+└─Projection	10000.00	cop[tikv]		json_extract(planner__core__casetest__pushdown__push_down.t2.a, $.key0)->Column#3
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select a->>'$.key0' from t2;
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		json_unquote(cast(json_extract(planner__core__casetest__pushdown__push_down.t2.a, $.key0), var_string(16777216)))->Column#3
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select json_length(a) from t2;
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		json_length(planner__core__casetest__pushdown__push_down.t2.a)->Column#3
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select json_valid(a) from t2;
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		json_valid(planner__core__casetest__pushdown__push_down.t2.a)->Column#3
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select json_type(a) from t2;
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		json_type(planner__core__casetest__pushdown__push_down.t2.a)->Column#3
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select json_depth(a) from t2;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		json_depth(planner__core__casetest__pushdown__push_down.t2.a)->Column#3
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select json_contains(a, '$.key0')from t2;
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		json_contains(planner__core__casetest__pushdown__push_down.t2.a, cast($.key0, json BINARY))->Column#3
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select json_contains_path(a, 'one', '$.key0', '$.key1') from t2;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		json_contains_path(planner__core__casetest__pushdown__push_down.t2.a, one, $.key0, $.key1)->Column#3
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select json_keys(a) from t2;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		json_keys(planner__core__casetest__pushdown__push_down.t2.a)->Column#3
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select 'ab' MEMBER OF(a) from t2;
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:Projection
+└─Projection	10000.00	cop[tikv]		json_memberof(cast(ab, json BINARY), planner__core__casetest__pushdown__push_down.t2.a)->Column#3
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select json_overlaps(a, a) from t2;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		json_overlaps(planner__core__casetest__pushdown__push_down.t2.a, planner__core__casetest__pushdown__push_down.t2.a)->Column#3
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select json_search(a, 'one', 'key0') from t2;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		json_search(planner__core__casetest__pushdown__push_down.t2.a, one, key0)->Column#3
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select json_unquote(a) from t2;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		json_unquote(cast(planner__core__casetest__pushdown__push_down.t2.a, var_string(4294967295)))->Column#3
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc format = 'brief' select i * 2 from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		mul(planner__core__casetest__pushdown__push_down.t.i, 2)->Column#13
+└─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format = 'brief' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t;
 id	estRows	task	access object	operator info
-TableReader	10000.00	root		data:Projection
-└─Projection	10000.00	cop[tikv]		date_format(planner__core__casetest__pushdown__push_down.t.t, %Y-%m-%d %H)->Column#13
+Projection	10000.00	root		date_format(planner__core__casetest__pushdown__push_down.t.t, %Y-%m-%d %H)->Column#13
+└─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format = 'brief' select md5(s) from t;
 id	estRows	task	access object	operator info
-TableReader	10000.00	root		data:Projection
-└─Projection	10000.00	cop[tikv]		md5(planner__core__casetest__pushdown__push_down.t.s)->Column#13
+Projection	10000.00	root		md5(planner__core__casetest__pushdown__push_down.t.s)->Column#13
+└─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format = 'brief' select c from t where a+1=3;
 id	estRows	task	access object	operator info
@@ -99,19 +170,19 @@ StreamAgg	1.00	root		funcs:sum(Column#16)->Column#14
 desc format = 'brief' select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b;
 id	estRows	task	access object	operator info
 HashJoin	10000.00	root		inner join, equal:[eq(Column#13, Column#26)]
-├─TableReader(Build)	8000.00	root		data:Projection
-│ └─Projection	8000.00	cop[tikv]		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#26
+├─Projection(Build)	8000.00	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#26
+│ └─TableReader	8000.00	root		data:Selection
 │   └─Selection	8000.00	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
 │     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-└─TableReader(Probe)	8000.00	root		data:Projection
-  └─Projection	8000.00	cop[tikv]		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#13
+└─Projection(Probe)	8000.00	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#13
+  └─TableReader	8000.00	root		data:Selection
     └─Selection	8000.00	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format = 'brief' select * from t join (select id-2 as b from t) A on A.b=t.id;
 id	estRows	task	access object	operator info
 HashJoin	10000.00	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column#25)]
-├─TableReader(Build)	8000.00	root		data:Projection
-│ └─Projection	8000.00	cop[tikv]		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#25
+├─Projection(Build)	8000.00	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#25
+│ └─TableReader	8000.00	root		data:Selection
 │   └─Selection	8000.00	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
 │     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─TableReader(Probe)	9990.00	root		data:Selection
@@ -120,8 +191,8 @@ HashJoin	10000.00	root		inner join, equal:[eq(planner__core__casetest__pushdown_
 desc format = 'brief' select * from t left join (select id-2 as b from t) A on A.b=t.id;
 id	estRows	task	access object	operator info
 HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column#25)]
-├─TableReader(Build)	8000.00	root		data:Projection
-│ └─Projection	8000.00	cop[tikv]		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#25
+├─Projection(Build)	8000.00	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#25
+│ └─TableReader	8000.00	root		data:Selection
 │   └─Selection	8000.00	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
 │     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -129,8 +200,8 @@ HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__push
 desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id;
 id	estRows	task	access object	operator info
 HashJoin	12487.50	root		right outer join, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column#25)]
-├─TableReader(Build)	10000.00	root		data:Projection
-│ └─Projection	10000.00	cop[tikv]		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#25
+├─Projection(Build)	10000.00	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#25
+│ └─TableReader	10000.00	root		data:TableFullScan
 │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─TableReader(Probe)	9990.00	root		data:Selection
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__pushdown__push_down.t.id))
@@ -139,12 +210,12 @@ desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (sel
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#26, Column#13
 └─HashJoin	10000.00	root		inner join, equal:[eq(Column#13, Column#26)]
-  ├─TableReader(Build)	8000.00	root		data:Projection
-  │ └─Projection	8000.00	cop[tikv]		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#26
+  ├─Projection(Build)	8000.00	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#26
+  │ └─TableReader	8000.00	root		data:Selection
   │   └─Selection	8000.00	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
   │     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─TableReader(Probe)	8000.00	root		data:Projection
-    └─Projection	8000.00	cop[tikv]		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#13
+  └─Projection(Probe)	8000.00	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#13
+    └─TableReader	8000.00	root		data:Selection
       └─Selection	8000.00	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id);
@@ -168,3 +239,31 @@ id	estRows	task	access object	operator info
 Projection	10000.00	root		from_unixtime(cast(planner__core__casetest__pushdown__push_down.t.name, decimal(65,6) BINARY), %Y-%m-%d)->Column#13
 └─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+CREATE TABLE `t4a8656d1` (
+`col_73` json NOT NULL,
+`col_74` date DEFAULT '1984-06-10',
+KEY `idx_39` ((cast(`col_73` as double array)),`col_74`),
+KEY `idx_40` ((cast(`col_73` as double array)),`col_74`),
+UNIQUE KEY `idx_41` (`col_74`,(cast(`col_73` as double array)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+CREATE TABLE `tld47bc815` (
+`col_1` text NOT NULL,
+PRIMARY KEY (`col_1`(3)) /*T![clustered_index] NONCLUSTERED */,
+KEY `idx_2` (`col_1`(5)),
+UNIQUE KEY `idx_3` (`col_1`(5)),
+KEY `idx_4` (`col_1`(4))
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
+explain select 1, r0 as col_754 from (     select format(t4a8656d1.col_74, 1) as r0     from t4a8656d1     join tld47bc815 on t4a8656d1.col_74 = tld47bc815.col_1     where JSON_OVERLAPS(t4a8656d1.col_73, '[0.035131302371695955]')     group by t4a8656d1.col_74, t4a8656d1.col_73 ) as subquery where IsNull(subquery.r0)
+id	estRows	task	access object	operator info
+Projection_14	6.40	root		1->Column#10, Column#9
+└─Projection_15	6.40	root		format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)->Column#9
+  └─HashAgg_16	6.40	root		group by:planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, funcs:firstrow(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74)->planner__core__casetest__pushdown__push_down.t4a8656d1.col_74
+    └─HashJoin_19	10.00	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, Column#13)]
+      ├─Selection_20(Build)	8.00	root		isnull(format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)), json_overlaps(planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, cast("[0.035131302371695955]", json BINARY))
+      │ └─IndexMerge_27	10.00	root		type: union
+      │   ├─Selection_25(Build)	0.00	cop[tikv]		
+      │   │ └─IndexRangeScan_24	10.00	cop[tikv]	table:t4a8656d1, index:idx_39(cast(`col_73` as double array), col_74)	range:[0.035131302371695955,0.035131302371695955], keep order:false, stats:pseudo
+      │   └─TableRowIDScan_26(Probe)	10.00	cop[tikv]	table:t4a8656d1	keep order:false, stats:pseudo
+      └─Projection_34(Probe)	10000.00	root		cast(planner__core__casetest__pushdown__push_down.tld47bc815.col_1, datetime(6) BINARY)->Column#13
+        └─TableReader_36	10000.00	root		data:TableFullScan_35
+          └─TableFullScan_35	10000.00	cop[tikv]	table:tld47bc815	keep order:false, stats:pseudo

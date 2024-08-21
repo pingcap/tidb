@@ -573,17 +573,35 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 				return nil
 			})
 		}
+		if n.StrValue == "Global" {
+			ctx.WriteKeyWord(" GLOBAL")
+		}
 	case ColumnOptionNotNull:
 		ctx.WriteKeyWord("NOT NULL")
 	case ColumnOptionAutoIncrement:
 		ctx.WriteKeyWord("AUTO_INCREMENT")
 	case ColumnOptionDefaultValue:
 		ctx.WriteKeyWord("DEFAULT ")
+		printOuterParentheses := false
+		if funcCallExpr, ok := n.Expr.(*FuncCallExpr); ok {
+			if name := funcCallExpr.FnName.L; name != CurrentTimestamp {
+				printOuterParentheses = true
+			}
+		}
+		if printOuterParentheses {
+			ctx.WritePlain("(")
+		}
 		if err := n.Expr.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing ColumnOption DefaultValue Expr")
 		}
+		if printOuterParentheses {
+			ctx.WritePlain(")")
+		}
 	case ColumnOptionUniqKey:
 		ctx.WriteKeyWord("UNIQUE KEY")
+		if n.StrValue == "Global" {
+			ctx.WriteKeyWord(" GLOBAL")
+		}
 	case ColumnOptionNull:
 		ctx.WriteKeyWord("NULL")
 	case ColumnOptionOnUpdate:
@@ -703,8 +721,10 @@ const (
 //	| index_type
 //	| WITH PARSER parser_name
 //	| COMMENT 'string'
+//	| GLOBAL
 //
 // See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
+// with the addition of Global Index
 type IndexOption struct {
 	node
 
@@ -714,6 +734,22 @@ type IndexOption struct {
 	ParserName   model.CIStr
 	Visibility   IndexVisibility
 	PrimaryKeyTp model.PrimaryKeyType
+	Global       bool
+}
+
+// IsEmpty is true if only default options are given
+// and it should not be added to the output
+func (n *IndexOption) IsEmpty() bool {
+	if n.PrimaryKeyTp != model.PrimaryKeyTypeDefault ||
+		n.KeyBlockSize > 0 ||
+		n.Tp != model.IndexTypeInvalid ||
+		len(n.ParserName.O) > 0 ||
+		n.Comment != "" ||
+		n.Global ||
+		n.Visibility != IndexVisibilityDefault {
+		return false
+	}
+	return true
 }
 
 // Restore implements Node interface.
@@ -759,6 +795,17 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord("COMMENT ")
 		ctx.WriteString(n.Comment)
+		hasPrevOption = true
+	}
+
+	if n.Global {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDGlobalIndex, func() error {
+			ctx.WriteKeyWord("GLOBAL")
+			return nil
+		})
 		hasPrevOption = true
 	}
 
@@ -908,7 +955,7 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if n.Option != nil {
+	if n.Option != nil && !n.Option.IsEmpty() {
 		ctx.WritePlain(" ")
 		if err := n.Option.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing Constraint Option")
@@ -1811,7 +1858,7 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain(")")
 
-	if n.IndexOption.Tp != model.IndexTypeInvalid || n.IndexOption.KeyBlockSize > 0 || n.IndexOption.Comment != "" || len(n.IndexOption.ParserName.O) > 0 || n.IndexOption.Visibility != IndexVisibilityDefault {
+	if n.IndexOption != nil && !n.IndexOption.IsEmpty() {
 		ctx.WritePlain(" ")
 		if err := n.IndexOption.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore CreateIndexStmt.IndexOption")
@@ -2190,7 +2237,11 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	case ResourceRURate:
 		ctx.WriteKeyWord("RU_PER_SEC ")
 		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
+		if n.BoolValue {
+			ctx.WriteKeyWord("UNLIMITED")
+		} else {
+			ctx.WritePlainf("%d", n.UintValue)
+		}
 	case ResourcePriority:
 		ctx.WriteKeyWord("PRIORITY ")
 		ctx.WritePlain("= ")
@@ -2261,35 +2312,78 @@ const (
 
 // ResourceGroupRunawayOption is used for parsing resource group runaway rule option.
 type ResourceGroupRunawayOption struct {
-	Tp       RunawayOptionType
-	StrValue string
-	IntValue int32
+	Tp           RunawayOptionType
+	RuleOption   *ResourceGroupRunawayRuleOption
+	ActionOption *ResourceGroupRunawayActionOption
+	WatchOption  *ResourceGroupRunawayWatchOption
 }
 
 func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case RunawayRule:
-		ctx.WriteKeyWord("EXEC_ELAPSED ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
+		n.RuleOption.restore(ctx)
 	case RunawayAction:
-		ctx.WriteKeyWord("ACTION ")
-		ctx.WritePlain("= ")
-		ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
+		n.ActionOption.Restore(ctx)
 	case RunawayWatch:
-		ctx.WriteKeyWord("WATCH ")
-		ctx.WritePlain("= ")
-		ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
-		ctx.WritePlain(" ")
-		ctx.WriteKeyWord("DURATION ")
-		ctx.WritePlain("= ")
-		if len(n.StrValue) > 0 {
-			ctx.WriteString(n.StrValue)
-		} else {
-			ctx.WriteKeyWord("UNLIMITED")
-		}
+		n.WatchOption.restore(ctx)
 	default:
 		return errors.Errorf("invalid ResourceGroupRunawayOption: %d", n.Tp)
+	}
+	return nil
+}
+
+// ResourceGroupRunawayRuleOption is used for parsing the resource group/query watch runaway rule.
+type ResourceGroupRunawayRuleOption struct {
+	ExecElapsed string
+}
+
+func (n *ResourceGroupRunawayRuleOption) restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("EXEC_ELAPSED ")
+	ctx.WritePlain("= ")
+	ctx.WriteString(n.ExecElapsed)
+	return nil
+}
+
+// ResourceGroupRunawayActionOption is used for parsing the resource group runaway action.
+type ResourceGroupRunawayActionOption struct {
+	node
+	Type model.RunawayActionType
+}
+
+// Restore implements Node interface.
+func (n *ResourceGroupRunawayActionOption) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ACTION ")
+	ctx.WritePlain("= ")
+	ctx.WriteKeyWord(n.Type.String())
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *ResourceGroupRunawayActionOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	return v.Leave(n)
+}
+
+// ResourceGroupRunawayWatchOption is used for parsing the resource group runaway watch.
+type ResourceGroupRunawayWatchOption struct {
+	Type     model.RunawayWatchType
+	Duration string
+}
+
+func (n *ResourceGroupRunawayWatchOption) restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("WATCH ")
+	ctx.WritePlain("= ")
+	ctx.WriteKeyWord(n.Type.String())
+	ctx.WritePlain(" ")
+	ctx.WriteKeyWord("DURATION ")
+	ctx.WritePlain("= ")
+	if len(n.Duration) > 0 {
+		ctx.WriteString(n.Duration)
+	} else {
+		ctx.WriteKeyWord("UNLIMITED")
 	}
 	return nil
 }
@@ -4285,8 +4379,9 @@ func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
 // PartitionOptions specifies the partition options.
 type PartitionOptions struct {
 	PartitionMethod
-	Sub         *PartitionMethod
-	Definitions []*PartitionDefinition
+	Sub           *PartitionMethod
+	Definitions   []*PartitionDefinition
+	UpdateIndexes []*Constraint
 }
 
 // Validate checks if the partition is well-formed.
@@ -4375,6 +4470,22 @@ func (n *PartitionOptions) Restore(ctx *format.RestoreCtx) error {
 			}
 			if err := def.Restore(ctx); err != nil {
 				return errors.Annotatef(err, "An error occurred while restore PartitionOptions.Definitions[%d]", i)
+			}
+		}
+		ctx.WritePlain(")")
+	}
+
+	if len(n.UpdateIndexes) > 0 {
+		ctx.WritePlain(" UPDATE INDEXES (")
+		for i, update := range n.UpdateIndexes {
+			if i > 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteName(update.Name)
+			if update.Option != nil && update.Option.Global {
+				ctx.WritePlain(" GLOBAL")
+			} else {
+				ctx.WritePlain(" LOCAL")
 			}
 		}
 		ctx.WritePlain(")")

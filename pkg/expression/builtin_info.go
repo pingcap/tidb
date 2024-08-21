@@ -636,13 +636,13 @@ func (c *benchmarkFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 	// Syntax: BENCHMARK(loop_count, expression)
 	// Define with same eval type of input arg to avoid unnecessary cast function.
-	sameEvalType := args[1].GetType().EvalType()
+	sameEvalType := args[1].GetType(ctx.GetEvalCtx()).EvalType()
 	// constLoopCount is used by VecEvalInt
 	// since non-constant loop count would be different between rows, and cannot be vectorized.
 	var constLoopCount int64
 	con, ok := args[0].(*Constant)
 	if ok && con.Value.Kind() == types.KindInt64 {
-		if lc, isNull, err := con.EvalInt(ctx, chunk.Row{}); err == nil && !isNull {
+		if lc, isNull, err := con.EvalInt(ctx.GetEvalCtx(), chunk.Row{}); err == nil && !isNull {
 			constLoopCount = lc
 		}
 	}
@@ -692,7 +692,7 @@ func (b *builtinBenchmarkSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 	// behavior observed on MySQL 5.7.24.
 	var i int64
 	arg := b.args[1]
-	switch evalType := arg.GetType().EvalType(); evalType {
+	switch evalType := arg.GetType(ctx).EvalType(); evalType {
 	case types.ETInt:
 		for ; i < loopCount; i++ {
 			_, isNull, err = arg.EvalInt(ctx, row)
@@ -760,13 +760,13 @@ func (c *charsetFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	}
 	argsTps := make([]types.EvalType, 0, len(args))
 	for _, arg := range args {
-		argsTps = append(argsTps, arg.GetType().EvalType())
+		argsTps = append(argsTps, arg.GetType(ctx.GetEvalCtx()).EvalType())
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argsTps...)
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
@@ -785,7 +785,7 @@ func (b *builtinCharsetSig) Clone() builtinFunc {
 }
 
 func (b *builtinCharsetSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	return b.args[0].GetType().GetCharset(), false, nil
+	return b.args[0].GetType(ctx).GetCharset(), false, nil
 }
 
 type coercibilityFunctionClass struct {
@@ -796,7 +796,7 @@ func (c *coercibilityFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, args[0].GetType().EvalType())
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, args[0].GetType(ctx.GetEvalCtx()).EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -829,13 +829,13 @@ func (c *collationFunctionClass) getFunction(ctx BuildContext, args []Expression
 	}
 	argsTps := make([]types.EvalType, 0, len(args))
 	for _, arg := range args {
-		argsTps = append(argsTps, arg.GetType().EvalType())
+		argsTps = append(argsTps, arg.GetType(ctx.GetEvalCtx()).EvalType())
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argsTps...)
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
@@ -854,7 +854,7 @@ func (b *builtinCollationSig) Clone() builtinFunc {
 }
 
 func (b *builtinCollationSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	return b.args[0].GetType().GetCollate(), false, nil
+	return b.args[0].GetType(ctx).GetCollate(), false, nil
 }
 
 type rowCountFunctionClass struct {
@@ -915,27 +915,23 @@ func (c *tidbMVCCInfoFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err != nil {
 		return nil, err
 	}
-	store, err := c.GetKVStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	hStore, ok := store.(helper.Storage)
-	if !ok {
-		return nil, errors.New("storage is not a helper.Storage")
-	}
-	sig := &builtinTiDBMVCCInfoSig{baseBuiltinFunc: bf, helper: helper.NewHelper(hStore)}
+	sig := &builtinTiDBMVCCInfoSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBMVCCInfoSig struct {
 	baseBuiltinFunc
-	helper *helper.Helper
+	contextopt.KVStorePropReader
+}
+
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinTiDBMVCCInfoSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.KVStorePropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinTiDBMVCCInfoSig) Clone() builtinFunc {
 	newSig := &builtinTiDBMVCCInfoSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.helper = helper.NewHelper(b.helper.Store)
 	return newSig
 }
 
@@ -945,12 +941,20 @@ func (b *builtinTiDBMVCCInfoSig) evalString(ctx EvalContext, row chunk.Row) (str
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-
 	encodedKey, err := hex.DecodeString(s)
 	if err != nil {
 		return "", false, err
 	}
-	resp, err := b.helper.GetMvccByEncodedKey(encodedKey)
+	store, err := b.GetKVStore(ctx)
+	if err != nil {
+		return "", isNull, err
+	}
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return "", isNull, errors.New("storage is not a helper.Storage")
+	}
+	h := helper.NewHelper(hStore)
+	resp, err := h.GetMvccByEncodedKey(encodedKey)
 	if err != nil {
 		return "", false, err
 	}
@@ -972,7 +976,7 @@ func (c *tidbEncodeRecordKeyClass) getFunction(ctx BuildContext, args []Expressi
 	evalTps := make([]types.EvalType, 0, len(args))
 	evalTps = append(evalTps, types.ETString, types.ETString)
 	for _, arg := range args[2:] {
-		evalTps = append(evalTps, arg.GetType().EvalType())
+		evalTps = append(evalTps, arg.GetType(ctx.GetEvalCtx()).EvalType())
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, evalTps...)
 	if err != nil {
@@ -1025,7 +1029,7 @@ func (c *tidbEncodeIndexKeyClass) getFunction(ctx BuildContext, args []Expressio
 	evalTps := make([]types.EvalType, 0, len(args))
 	evalTps = append(evalTps, types.ETString, types.ETString, types.ETString)
 	for _, arg := range args[3:] {
-		evalTps = append(evalTps, arg.GetType().EvalType())
+		evalTps = append(evalTps, arg.GetType(ctx.GetEvalCtx()).EvalType())
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, evalTps...)
 	if err != nil {
@@ -1084,13 +1088,13 @@ func (c *tidbDecodeKeyFunctionClass) getFunction(ctx BuildContext, args []Expres
 }
 
 // DecodeKeyFromString is used to decode key by expressions
-var DecodeKeyFromString func(types.Context, infoschema.InfoSchemaMetaVersion, string) string
+var DecodeKeyFromString func(types.Context, infoschema.MetaOnlyInfoSchema, string) string
 
 // EncodeRecordKeyFromRow is used to encode record key by expressions.
-var EncodeRecordKeyFromRow func(ctx EvalContext, isVer infoschema.InfoSchemaMetaVersion, args []Expression, row chunk.Row) ([]byte, bool, error)
+var EncodeRecordKeyFromRow func(ctx EvalContext, isVer infoschema.MetaOnlyInfoSchema, args []Expression, row chunk.Row) ([]byte, bool, error)
 
 // EncodeIndexKeyFromRow is used to encode index key by expressions.
-var EncodeIndexKeyFromRow func(ctx EvalContext, isVer infoschema.InfoSchemaMetaVersion, args []Expression, row chunk.Row) ([]byte, bool, error)
+var EncodeIndexKeyFromRow func(ctx EvalContext, isVer infoschema.MetaOnlyInfoSchema, args []Expression, row chunk.Row) ([]byte, bool, error)
 
 type builtinTiDBDecodeKeySig struct {
 	baseBuiltinFunc
@@ -1125,14 +1129,6 @@ func (b *builtinTiDBDecodeKeySig) evalString(ctx EvalContext, row chunk.Row) (st
 	return s, false, nil
 }
 
-// TiDBDecodeKeyFunctionKeyType is used to identify the decoder function in context.
-type TiDBDecodeKeyFunctionKeyType int
-
-// String() implements Stringer.
-func (k TiDBDecodeKeyFunctionKeyType) String() string {
-	return "tidb_decode_key"
-}
-
 type tidbDecodeSQLDigestsFunctionClass struct {
 	baseFunctionClass
 }
@@ -1142,7 +1138,7 @@ func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx BuildContext, args [
 		return nil, err
 	}
 
-	if !ctx.RequestVerification("", "", "", mysql.ProcessPriv) {
+	if !ctx.GetEvalCtx().RequestVerification("", "", "", mysql.ProcessPriv) {
 		return nil, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 
@@ -1525,7 +1521,7 @@ func (c *setValFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 	sig := &builtinSetValSig{baseBuiltinFunc: bf}
-	bf.tp.SetFlen(args[1].GetType().GetFlen())
+	bf.tp.SetFlen(args[1].GetType(ctx.GetEvalCtx()).GetFlen())
 	return sig, nil
 }
 
@@ -1537,7 +1533,7 @@ type builtinSetValSig struct {
 
 func (b *builtinSetValSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
 	return b.SequenceOperatorPropReader.RequiredOptionalEvalProps() |
-		b.SequenceOperatorPropReader.RequiredOptionalEvalProps()
+		b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinSetValSig) Clone() builtinFunc {
@@ -1597,7 +1593,7 @@ func (c *formatBytesFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	sig := &builtinFormatBytesSig{bf}
@@ -1636,7 +1632,7 @@ func (c *formatNanoTimeFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	sig := &builtinFormatNanoTimeSig{bf}

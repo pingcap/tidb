@@ -242,7 +242,7 @@ t	CREATE TABLE `t` (
   `e` varchar(20) DEFAULT 'cUrrent_tImestamp',
   `f` datetime(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),
   `g` timestamp(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),
-  `h` date DEFAULT CURRENT_DATE
+  `h` date DEFAULT (CURRENT_DATE)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 create table t (a int, b int) shard_row_id_bits = 4 pre_split_regions=3;
@@ -357,7 +357,7 @@ create table default_sequence(a int default nextval(seq));
 show create table default_sequence;
 Table	Create Table
 default_sequence	CREATE TABLE `default_sequence` (
-  `a` int(11) DEFAULT nextval(`executor__show`.`seq`)
+  `a` int(11) DEFAULT (nextval(`executor__show`.`seq`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 set @@foreign_key_checks=0;
 DROP TABLE IF EXISTS parent, child;
@@ -396,6 +396,8 @@ t2	CREATE TABLE `t2` (
   KEY `fk` (`b`),
   CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`t1` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop database if exists test1;
+drop database if exists test2;
 drop table if exists t;
 create table t(a int, b char(10) as ('a'));
 show create table t;
@@ -530,7 +532,7 @@ create table t(a bit default (rand()));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` bit(1) DEFAULT rand()
+  `a` bit(1) DEFAULT (rand())
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
 create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0xff));
@@ -726,6 +728,7 @@ json_pretty
 json_quote
 json_remove
 json_replace
+json_schema_valid
 json_search
 json_set
 json_storage_free
@@ -982,11 +985,11 @@ Database (test_$%)
 TEST_$1
 test_$2
 SHOW COLLATION LIKE 'UTF8MB4_BI%';
-Collation	Charset	Id	Default	Compiled	Sortlen
-utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+Collation	Charset	Id	Default	Compiled	Sortlen	Pad_attribute
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
 SHOW COLLATION LIKE 'utf8mb4_bi%';
-Collation	Charset	Id	Default	Compiled	Sortlen
-utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+Collation	Charset	Id	Default	Compiled	Sortlen	Pad_attribute
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
 drop user if exists 'show';
 drop database if exists AAAA;
 drop database if exists BBBB;
@@ -1050,81 +1053,81 @@ current_value
 SET GLOBAL authentication_ldap_simple_bind_root_pwd = default;
 SET GLOBAL authentication_ldap_sasl_bind_root_pwd = default;
 show collation;
-Collation	Charset	Id	Default	Compiled	Sortlen
-ascii_bin	ascii	65	Yes	Yes	1
-binary	binary	63	Yes	Yes	1
-gbk_bin	gbk	87		Yes	1
-gbk_chinese_ci	gbk	28	Yes	Yes	1
-latin1_bin	latin1	47	Yes	Yes	1
-utf8_bin	utf8	83	Yes	Yes	1
-utf8_general_ci	utf8	33		Yes	1
-utf8_unicode_ci	utf8	192		Yes	1
-utf8mb4_0900_ai_ci	utf8mb4	255		Yes	1
-utf8mb4_0900_bin	utf8mb4	309		Yes	1
-utf8mb4_bin	utf8mb4	46	Yes	Yes	1
-utf8mb4_general_ci	utf8mb4	45		Yes	1
-utf8mb4_unicode_ci	utf8mb4	224		Yes	1
+Collation	Charset	Id	Default	Compiled	Sortlen	Pad_attribute
+ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
+binary	binary	63	Yes	Yes	1	NO PAD
+gbk_bin	gbk	87		Yes	1	PAD SPACE
+gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
+latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
+utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
+utf8_general_ci	utf8	33		Yes	1	PAD SPACE
+utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
+utf8mb4_0900_ai_ci	utf8mb4	255		Yes	0	NO PAD
+utf8mb4_0900_bin	utf8mb4	309		Yes	1	NO PAD
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
+utf8mb4_general_ci	utf8mb4	45		Yes	1	PAD SPACE
+utf8mb4_unicode_ci	utf8mb4	224		Yes	8	PAD SPACE
 select * from information_schema.COLLATIONS;
-COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
-ascii_bin	ascii	65	Yes	Yes	1
-binary	binary	63	Yes	Yes	1
-gbk_bin	gbk	87		Yes	1
-gbk_chinese_ci	gbk	28	Yes	Yes	1
-latin1_bin	latin1	47	Yes	Yes	1
-utf8_bin	utf8	83	Yes	Yes	1
-utf8_general_ci	utf8	33		Yes	1
-utf8_unicode_ci	utf8	192		Yes	1
-utf8mb4_0900_ai_ci	utf8mb4	255		Yes	1
-utf8mb4_0900_bin	utf8mb4	309		Yes	1
-utf8mb4_bin	utf8mb4	46	Yes	Yes	1
-utf8mb4_general_ci	utf8mb4	45		Yes	1
-utf8mb4_unicode_ci	utf8mb4	224		Yes	1
+COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN	PAD_ATTRIBUTE
+ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
+binary	binary	63	Yes	Yes	1	NO PAD
+gbk_bin	gbk	87		Yes	1	PAD SPACE
+gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
+latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
+utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
+utf8_general_ci	utf8	33		Yes	1	PAD SPACE
+utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
+utf8mb4_0900_ai_ci	utf8mb4	255		Yes	0	NO PAD
+utf8mb4_0900_bin	utf8mb4	309		Yes	1	NO PAD
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
+utf8mb4_general_ci	utf8mb4	45		Yes	1	PAD SPACE
+utf8mb4_unicode_ci	utf8mb4	224		Yes	8	PAD SPACE
 show character set like '%utf8mb4%';
 Charset	Description	Default collation	Maxlen
 utf8mb4	UTF-8 Unicode	utf8mb4_bin	4
 select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
-COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
-utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN	PAD_ATTRIBUTE
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
 set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci';
 show variables like 'default_collation_for_utf8mb4';
 Variable_name	Value
 default_collation_for_utf8mb4	utf8mb4_0900_ai_ci
 show collation;
-Collation	Charset	Id	Default	Compiled	Sortlen
-ascii_bin	ascii	65	Yes	Yes	1
-binary	binary	63	Yes	Yes	1
-gbk_bin	gbk	87		Yes	1
-gbk_chinese_ci	gbk	28	Yes	Yes	1
-latin1_bin	latin1	47	Yes	Yes	1
-utf8_bin	utf8	83	Yes	Yes	1
-utf8_general_ci	utf8	33		Yes	1
-utf8_unicode_ci	utf8	192		Yes	1
-utf8mb4_0900_ai_ci	utf8mb4	255	Yes	Yes	1
-utf8mb4_0900_bin	utf8mb4	309		Yes	1
-utf8mb4_bin	utf8mb4	46		Yes	1
-utf8mb4_general_ci	utf8mb4	45		Yes	1
-utf8mb4_unicode_ci	utf8mb4	224		Yes	1
+Collation	Charset	Id	Default	Compiled	Sortlen	Pad_attribute
+ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
+binary	binary	63	Yes	Yes	1	NO PAD
+gbk_bin	gbk	87		Yes	1	PAD SPACE
+gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
+latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
+utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
+utf8_general_ci	utf8	33		Yes	1	PAD SPACE
+utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
+utf8mb4_0900_ai_ci	utf8mb4	255	Yes	Yes	0	NO PAD
+utf8mb4_0900_bin	utf8mb4	309		Yes	1	NO PAD
+utf8mb4_bin	utf8mb4	46		Yes	1	PAD SPACE
+utf8mb4_general_ci	utf8mb4	45		Yes	1	PAD SPACE
+utf8mb4_unicode_ci	utf8mb4	224		Yes	8	PAD SPACE
 select * from information_schema.COLLATIONS;
-COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
-ascii_bin	ascii	65	Yes	Yes	1
-binary	binary	63	Yes	Yes	1
-gbk_bin	gbk	87		Yes	1
-gbk_chinese_ci	gbk	28	Yes	Yes	1
-latin1_bin	latin1	47	Yes	Yes	1
-utf8_bin	utf8	83	Yes	Yes	1
-utf8_general_ci	utf8	33		Yes	1
-utf8_unicode_ci	utf8	192		Yes	1
-utf8mb4_0900_ai_ci	utf8mb4	255		Yes	1
-utf8mb4_0900_bin	utf8mb4	309		Yes	1
-utf8mb4_bin	utf8mb4	46	Yes	Yes	1
-utf8mb4_general_ci	utf8mb4	45		Yes	1
-utf8mb4_unicode_ci	utf8mb4	224		Yes	1
+COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN	PAD_ATTRIBUTE
+ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
+binary	binary	63	Yes	Yes	1	NO PAD
+gbk_bin	gbk	87		Yes	1	PAD SPACE
+gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
+latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
+utf8_bin	utf8	83	Yes	Yes	1	PAD SPACE
+utf8_general_ci	utf8	33		Yes	1	PAD SPACE
+utf8_unicode_ci	utf8	192		Yes	8	PAD SPACE
+utf8mb4_0900_ai_ci	utf8mb4	255		Yes	0	NO PAD
+utf8mb4_0900_bin	utf8mb4	309		Yes	1	NO PAD
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
+utf8mb4_general_ci	utf8mb4	45		Yes	1	PAD SPACE
+utf8mb4_unicode_ci	utf8mb4	224		Yes	8	PAD SPACE
 show character set like '%utf8mb4%';
 Charset	Description	Default collation	Maxlen
 utf8mb4	UTF-8 Unicode	utf8mb4_0900_ai_ci	4
 select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
-COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
-utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN	PAD_ATTRIBUTE
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1	PAD SPACE
 set @@session.default_collation_for_utf8mb4=default;
 DROP TABLE IF EXISTS `t`;
 CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=4;

@@ -116,7 +116,7 @@ func VectorizedExecute(ctx EvalContext, exprs []Expression, iterator *chunk.Iter
 }
 
 func evalOneVec(ctx EvalContext, expr Expression, input *chunk.Chunk, output *chunk.Chunk, colIdx int) error {
-	ft := expr.GetType()
+	ft := expr.GetType(ctx)
 	result := output.Column(colIdx)
 	switch ft.EvalType() {
 	case types.ETInt:
@@ -218,7 +218,7 @@ func evalOneVec(ctx EvalContext, expr Expression, input *chunk.Chunk, output *ch
 }
 
 func evalOneColumn(ctx EvalContext, expr Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk, colID int) (err error) {
-	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
+	switch fieldType, evalType := expr.GetType(ctx), expr.GetType(ctx).EvalType(); evalType {
 	case types.ETInt:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
 			err = executeToInt(ctx, expr, fieldType, row, output, colID)
@@ -252,7 +252,7 @@ func evalOneColumn(ctx EvalContext, expr Expression, iterator *chunk.Iterator4Ch
 }
 
 func evalOneCell(ctx EvalContext, expr Expression, row chunk.Row, output *chunk.Chunk, colID int) (err error) {
-	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
+	switch fieldType, evalType := expr.GetType(ctx), expr.GetType(ctx).EvalType(); evalType {
 	case types.ETInt:
 		err = executeToInt(ctx, expr, fieldType, row, output, colID)
 	case types.ETReal:
@@ -472,7 +472,7 @@ func rowBasedFilter(ctx EvalContext, filters []Expression, iterator *chunk.Itera
 	)
 	for _, filter := range filters {
 		isIntType := true
-		if filter.GetType().EvalType() != types.ETInt {
+		if filter.GetType(ctx).EvalType() != types.ETInt {
 			isIntType = false
 		}
 		for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {

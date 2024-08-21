@@ -383,13 +383,12 @@ func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...CIStr) bo
 // for use of execution phase.
 const ExtraHandleID = -1
 
-// ExtraPidColID is the column ID of column which store the partitionID decoded in global index values.
-const ExtraPidColID = -2
+// Deprecated: Use ExtraPhysTblID instead.
+// const ExtraPidColID = -2
 
 // ExtraPhysTblID is the column ID of column that should be filled in with the physical table id.
 // Primarily used for table partition dynamic prune mode, to return which partition (physical table id) the row came from.
-// Using a dedicated id for this, since in the future ExtraPidColID and ExtraPhysTblID may be used for the same request.
-// Must be after ExtraPidColID!
+// If used with a global index, the partition ID decoded from the key value will be filled in.
 const ExtraPhysTblID = -3
 
 // ExtraRowChecksumID is the column ID of column which holds the row checksum info.
@@ -435,8 +434,8 @@ const (
 // ExtraHandleName is the name of ExtraHandle Column.
 var ExtraHandleName = NewCIStr("_tidb_rowid")
 
-// ExtraPartitionIdName is the name of ExtraPartitionId Column.
-var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
+// Deprecated: Use ExtraPhysTblIdName instead.
+// var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
 // ExtraPhysTblIdName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIdName = NewCIStr("_tidb_tid") //nolint:revive
@@ -541,6 +540,9 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
+
+	// Revision is per table schema's version, it will be increased when the schema changed.
+	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
 }
@@ -920,21 +922,6 @@ func NewExtraHandleColInfo() *ColumnInfo {
 	return colInfo
 }
 
-// NewExtraPartitionIDColInfo mocks a column info for extra partition id column.
-func NewExtraPartitionIDColInfo() *ColumnInfo {
-	colInfo := &ColumnInfo{
-		ID:   ExtraPidColID,
-		Name: ExtraPartitionIdName,
-	}
-	colInfo.SetType(mysql.TypeLonglong)
-	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
-	colInfo.SetFlen(flen)
-	colInfo.SetDecimal(decimal)
-	colInfo.SetCharset(charset.CharsetBin)
-	colInfo.SetCollate(charset.CollationBin)
-	return colInfo
-}
-
 // NewExtraPhysTblIDColInfo mocks a column info for extra partition id column.
 func NewExtraPhysTblIDColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
@@ -1186,6 +1173,13 @@ type ExchangePartitionInfo struct {
 	XXXExchangePartitionFlag bool `json:"exchange_partition_flag"`
 }
 
+// UpdateIndexInfo is to carry the entries in the list of indexes in UPDATE INDEXES
+// during ALTER TABLE t PARTITION BY ... UPDATE INDEXES (idx_a GLOBAL, idx_b LOCAL...)
+type UpdateIndexInfo struct {
+	IndexName string `json:"index_name"`
+	Global    bool   `json:"global"`
+}
+
 // PartitionInfo provides table partition info.
 type PartitionInfo struct {
 	Type    PartitionType `json:"type"`
@@ -1223,6 +1217,8 @@ type PartitionInfo struct {
 	DDLType    PartitionType `json:"ddl_type"`
 	DDLExpr    string        `json:"ddl_expr"`
 	DDLColumns []CIStr       `json:"ddl_columns"`
+	// For ActionAlterTablePartitioning, UPDATE INDEXES
+	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes"`
 }
 
 // Clone clones itself.
@@ -1317,6 +1313,14 @@ func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
 		}
 	}
 	return false
+}
+
+// ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
+func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
+	pi.DDLType = PartitionTypeNone
+	pi.DDLExpr = ""
+	pi.DDLColumns = nil
+	pi.NewTableID = 0
 }
 
 // PartitionState is the state of the partition.
@@ -1692,21 +1696,24 @@ func (fk *FKInfo) Clone() *FKInfo {
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-	ID                 int64          `json:"id"`      // Database ID
-	Name               CIStr          `json:"db_name"` // DB name.
-	Charset            string         `json:"charset"`
-	Collate            string         `json:"collate"`
-	Tables             []*TableInfo   `json:"-"` // Tables in the DB.
-	State              SchemaState    `json:"state"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
+	ID         int64    `json:"id"`      // Database ID
+	Name       CIStr    `json:"db_name"` // DB name.
+	Charset    string   `json:"charset"`
+	Collate    string   `json:"collate"`
+	Deprecated struct { // Tables is not set in infoschema v2, use infoschema SchemaTableInfos() instead.
+		Tables []*TableInfo `json:"-"` // Tables in the DB.
+	}
+	State              SchemaState      `json:"state"`
+	PlacementPolicyRef *PolicyRefInfo   `json:"policy_ref_info"`
+	TableName2ID       map[string]int64 `json:"-"`
 }
 
 // Clone clones DBInfo.
 func (db *DBInfo) Clone() *DBInfo {
 	newInfo := *db
-	newInfo.Tables = make([]*TableInfo, len(db.Tables))
-	for i := range db.Tables {
-		newInfo.Tables[i] = db.Tables[i].Clone()
+	newInfo.Deprecated.Tables = make([]*TableInfo, len(db.Deprecated.Tables))
+	for i := range db.Deprecated.Tables {
+		newInfo.Deprecated.Tables[i] = db.Deprecated.Tables[i].Clone()
 	}
 	return &newInfo
 }
@@ -1714,8 +1721,8 @@ func (db *DBInfo) Clone() *DBInfo {
 // Copy shallow copies DBInfo.
 func (db *DBInfo) Copy() *DBInfo {
 	newInfo := *db
-	newInfo.Tables = make([]*TableInfo, len(db.Tables))
-	copy(newInfo.Tables, db.Tables)
+	newInfo.Deprecated.Tables = make([]*TableInfo, len(db.Deprecated.Tables))
+	copy(newInfo.Deprecated.Tables, db.Deprecated.Tables)
 	return &newInfo
 }
 
@@ -1778,10 +1785,20 @@ type TableItemID struct {
 	IsSyncLoadFailed bool
 }
 
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (t TableItemID) Key() string {
+	return fmt.Sprintf("%d#%d#%t", t.ID, t.TableID, t.IsIndex)
+}
+
 // StatsLoadItem represents the load unit for statistics's memory loading.
 type StatsLoadItem struct {
 	TableItemID
 	FullLoad bool
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (s StatsLoadItem) Key() string {
+	return fmt.Sprintf("%s#%t", s.TableItemID.Key(), s.FullLoad)
 }
 
 // PolicyRefInfo is the struct to refer the placement policy.
@@ -1992,12 +2009,6 @@ func (t RunawayActionType) String() string {
 	default:
 		return "DRYRUN"
 	}
-}
-
-// ResourceGroupRefInfo is the struct to refer the resource group.
-type ResourceGroupRefInfo struct {
-	ID   int64 `json:"id"`
-	Name CIStr `json:"name"`
 }
 
 // ResourceGroupRunawaySettings is the runaway settings of the resource group

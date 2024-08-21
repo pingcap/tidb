@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -61,7 +62,7 @@ func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.deleteSingleTableByChunk(ctx)
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols plannercore.HandleCols, isExtraHandle bool, row []types.Datum) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols util.HandleCols, isExtraHandle bool, row []types.Datum) error {
 	end := len(row)
 	if isExtraHandle {
 		end--
@@ -81,7 +82,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	var (
 		tbl           table.Table
 		isExtrahandle bool
-		handleCols    plannercore.HandleCols
+		handleCols    util.HandleCols
 		rowCount      int
 	)
 	for _, info := range e.tblColPosInfos {
@@ -97,6 +98,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	batchDelete := e.Ctx().GetSessionVars().BatchDelete && !e.Ctx().GetSessionVars().InTxn() &&
 		variable.EnableBatchDML.Load() && batchDMLSize > 0
 	fields := exec.RetTypes(e.Children(0))
+	datumRow := make([]types.Datum, 0, len(fields))
 	chk := exec.TryNewCacheChunk(e.Children(0))
 	columns := e.Children(0).Schema().Columns
 	if len(columns) != len(fields) {
@@ -126,10 +128,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				}
 				rowCount = 0
 			}
-
-			datumRow := make([]types.Datum, 0, len(fields))
 			for i, field := range fields {
-				if columns[i].ID == model.ExtraPidColID || columns[i].ID == model.ExtraPhysTblID {
+				if columns[i].ID == model.ExtraPhysTblID {
 					continue
 				}
 
@@ -142,6 +142,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				return err
 			}
 			rowCount++
+			datumRow = datumRow[:0]
 		}
 		chk = chunk.Renew(chk, e.MaxChunkSize())
 		if txn, _ := e.Ctx().Txn(false); txn != nil {
@@ -155,11 +156,6 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 }
 
 func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
-	txn, err := e.Ctx().Txn(false)
-	if err != nil {
-		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
-	}
-	e.memTracker.Consume(-int64(txn.Size()))
 	e.Ctx().StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
 		// We should return a special error for batch insert.
@@ -170,6 +166,7 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the corresponding rows in joinedRow.
+	var totalMemDelta int64
 	for _, info := range colPosInfos {
 		if unmatchedOuterRow(info, joinedRow) {
 			continue
@@ -194,8 +191,9 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 			memDelta += types.EstimatedMemUsage(joinedRow, 1)
 			memDelta += int64(handle.ExtraMemSize())
 		}
-		e.memTracker.Consume(memDelta)
+		totalMemDelta += memDelta
 	}
+	e.memTracker.Consume(totalMemDelta)
 	return nil
 }
 
@@ -253,7 +251,12 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 }
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
-	err := t.RemoveRecord(ctx.GetTableCtx(), h, data)
+	txn, err := e.Ctx().Txn(true)
+	if err != nil {
+		return err
+	}
+
+	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data)
 	if err != nil {
 		return err
 	}

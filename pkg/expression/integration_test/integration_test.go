@@ -41,6 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -55,6 +57,31 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
+
+func TestVector(t *testing.T) {
+	// Currently we only allow parsing Vector type, but not using it.
+
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	err := tk.ExecToErr("CREATE TABLE c(a VECTOR)")
+	require.ErrorContains(t, err, "vector type is not supported")
+	err = tk.ExecToErr("CREATE TABLE c(a VECTOR(3))")
+	require.ErrorContains(t, err, "vector type is not supported")
+	err = tk.ExecToErr("SELECT CAST('123' AS VECTOR)")
+	require.ErrorContains(t, err, "vector type is not supported")
+
+	tk.MustExec("CREATE TABLE c(pk INT)")
+
+	err = tk.ExecToErr("ALTER TABLE c ADD COLUMN a VECTOR")
+	require.ErrorContains(t, err, "vector type is not supported")
+	err = tk.ExecToErr("ALTER TABLE c MODIFY pk VECTOR")
+	require.ErrorContains(t, err, "vector type is not supported")
+
+	tk.MustExec("DROP TABLE c")
+}
 
 func TestGetLock(t *testing.T) {
 	ctx := context.Background()
@@ -400,6 +427,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
 		sctx := tk.Session()
+		ectx := sctx.GetExprCtx().GetEvalCtx()
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err, "error %v, for expr %s", err, tt.exprStr)
 		require.Len(t, stmts, 1)
@@ -408,7 +436,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		require.NoError(t, err, "error %v, for resolve name, expr %s", err, tt.exprStr)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoError(t, err, "error %v, for build plan, expr %s", err, tt.exprStr)
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {
 			conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
@@ -417,7 +445,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		sort.Slice(afterFunc, func(i, j int) bool {
 			return bytes.Compare(afterFunc[i].HashCode(), afterFunc[j].HashCode()) < 0
 		})
-		require.Equal(t, fmt.Sprintf("%s", afterFunc), tt.result, "wrong result for expr: %s", tt.exprStr)
+		require.Equal(t, expression.StringifyExpressionsWithCtx(ectx, afterFunc), tt.result, "wrong result for expr: %s", tt.exprStr)
 	}
 }
 
@@ -459,7 +487,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a varchar(255), b int, c datetime, primary key (a, b, c));")
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	getTime := func(year, month, day int, timeType byte) types.Time {
 		ret := types.NewTime(types.FromDate(year, month, day, 0, 0, 0, 0), timeType, types.DefaultFsp)
@@ -490,7 +518,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a varchar(255), b int, c datetime, index idx(a, b, c));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	buildIndexKeyFromData := func(tableID, indexID int64, data []types.Datum) string {
 		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, data...)
@@ -529,7 +557,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a int primary key nonclustered, b int, key bk (b));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	buildTableRowKey := func(tableID, rowID int64) string {
 		return hex.EncodeToString(
@@ -548,7 +576,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a int primary key clustered, b int, key bk (b));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	hexKey = buildTableRowKey(tbl.Meta().ID, rowID)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
@@ -560,7 +588,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustExec("create table t (a int primary key clustered, b int, key bk (b)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (1), PARTITION p1 VALUES LESS THAN (2));")
 	dom = domain.GetDomain(tk.Session())
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl.Meta().Partition)
 	hexKey = buildTableRowKey(tbl.Meta().Partition.Definitions[0].ID, rowID)
@@ -647,15 +675,11 @@ func TestShardIndexOnTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
@@ -669,7 +693,7 @@ func TestShardIndexOnTiFlash(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enforce_mpp = 0")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
 	// when we isolated the read engine as 'tiflash' and banned TiDB opening allow-mpp, no suitable plan is generated.
-	_, err := tk.Exec("explain select max(b) from t")
+	_, err = tk.Exec("explain select max(b) from t")
 	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "[planner:1815]Internal : Can't find a proper physical plan for this query")
 }
@@ -687,15 +711,11 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist " +
@@ -842,7 +862,7 @@ func TestEnumIndex(t *testing.T) {
 	ops := []string{"=", "!=", ">", ">=", "<", "<="}
 	testElems := []string{"\"a\"", "\"b\"", "\"c\"", "\"d\"", "\"\"", "1", "2", "3", "4", "0", "-1"}
 	for i := 0; i < nRows; i++ {
-		cond := fmt.Sprintf("e" + ops[rand.Intn(len(ops))] + testElems[rand.Intn(len(testElems))])
+		cond := "e" + ops[rand.Intn(len(ops))] + testElems[rand.Intn(len(testElems))]
 		result := tk.MustQuery("select * from t where " + cond).Sort().Rows()
 		tk.MustQuery("select * from tidx where " + cond).Sort().Check(result)
 	}
@@ -2608,6 +2628,43 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("2000-01-05 00:00:00"))
 	result = tk.MustQuery(`select timestamp(cast(105 as decimal(60, 5)))`)
 	result.Check(testkit.Rows("2000-01-05 00:00:00.00000"))
+
+	// fix issues #52262
+	// date time
+	result = tk.MustQuery(`select distinct -(DATE_ADD(DATE('2017-11-12 08:48:25'), INTERVAL 1 HOUR_MICROSECOND))`)
+	result.Check(testkit.Rows("-20171112000000.100000"))
+	result = tk.MustQuery(`select distinct (DATE_ADD(DATE('2017-11-12 08:48:25'), INTERVAL 1 HOUR_MICROSECOND))`)
+	result.Check(testkit.Rows("2017-11-12 00:00:00.100000"))
+	// duration
+	result = tk.MustQuery(`select distinct -cast(0.1 as time(1))`)
+	result.Check(testkit.Rows("-0.1"))
+	result = tk.MustQuery(`select distinct cast(0.1 as time(1))`)
+	result.Check(testkit.Rows("00:00:00.1"))
+	// date
+	result = tk.MustQuery(`select distinct -(DATE('2017-11-12 08:48:25.123'))`)
+	result.Check(testkit.Rows("-20171112"))
+	result = tk.MustQuery(`select distinct (DATE('2017-11-12 08:48:25.123'))`)
+	result.Check(testkit.Rows("2017-11-12"))
+	// timestamp
+	result = tk.MustQuery(`select distinct (Timestamp('2017-11-12 08:48:25.1'))`)
+	result.Check(testkit.Rows("2017-11-12 08:48:25.1"))
+	result = tk.MustQuery(`select distinct -(Timestamp('2017-11-12 08:48:25.1'))`)
+	result.Check(testkit.Rows("-20171112084825.1"))
+
+	tk.MustExec("create table t2(a DATETIME, b Timestamp, c TIME, d DATE)")
+	tk.MustExec(`insert into t2 values("2000-1-1 08:48:25.123", "2000-1-2 08:48:25.1", "11:11:12.1", "2000-1-3 08:48:25.1")`)
+	tk.MustExec("insert into t2 (select * from t2)")
+
+	result = tk.MustQuery(`select distinct -((a+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
+	result.Check(testkit.Rows("-20000101084825.100000"))
+	result = tk.MustQuery(`select distinct -((b+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
+	result.Check(testkit.Rows("-20000102084825.100000"))
+	result = tk.MustQuery(`select distinct -((c+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
+	result.Check(testkit.Rows("-111112.100000"))
+	result = tk.MustQuery(`select distinct -((d+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
+	result.Check(testkit.Rows("-20000103000000.100000"))
+
+	tk.MustExec("drop table t2")
 }
 
 func TestSetVariables(t *testing.T) {
@@ -2756,72 +2813,6 @@ func TestIssue16205(t *testing.T) {
 	require.NotEqual(t, rows1[0][0].(string), rows2[0][0].(string))
 }
 
-// issues 14448, 19383, 17734
-func TestNoopFunctions(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`) // variable changes in the test will not affect the plan cache
-	tk.MustExec("DROP TABLE IF EXISTS t1")
-	tk.MustExec("CREATE TABLE t1 (a INT NOT NULL PRIMARY KEY)")
-	tk.MustExec("INSERT INTO t1 VALUES (1),(2),(3)")
-
-	message := `.* has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
-	stmts := []string{
-		"SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1",
-		"SELECT * FROM t1 LOCK IN SHARE MODE",
-		"SELECT * FROM t1 GROUP BY a DESC",
-		"SELECT * FROM t1 GROUP BY a ASC",
-	}
-
-	for _, stmt := range stmts {
-		// test on
-		tk.MustExec("SET tidb_enable_noop_functions='ON'")
-		tk.MustExec(stmt)
-		// test warning
-		tk.MustExec("SET tidb_enable_noop_functions='WARN'")
-		tk.MustExec(stmt)
-		warn := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		require.Regexp(t, message, warn[0].Err.Error())
-		// test off
-		tk.MustExec("SET tidb_enable_noop_functions='OFF'")
-		_, err := tk.Exec(stmt)
-		require.Regexp(t, message, err.Error())
-	}
-
-	// These statements return a different error message
-	// to the above. Test for error, not specifically the message.
-	// After they execute, we need to reset the values because
-	// otherwise tidb_enable_noop_functions can't be changed.
-
-	stmts = []string{
-		"START TRANSACTION READ ONLY",
-		"SET TRANSACTION READ ONLY",
-		"SET tx_read_only = 1",
-		"SET transaction_read_only = 1",
-	}
-
-	for _, stmt := range stmts {
-		// test off
-		tk.MustExec("SET tidb_enable_noop_functions='OFF'")
-		_, err := tk.Exec(stmt)
-		require.Error(t, err)
-		// test warning
-		tk.MustExec("SET tidb_enable_noop_functions='WARN'")
-		tk.MustExec(stmt)
-		warn := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		require.Len(t, warn, 1)
-		// test on
-		tk.MustExec("SET tidb_enable_noop_functions='ON'")
-		tk.MustExec(stmt)
-
-		// Reset (required for future loop iterations and future tests)
-		tk.MustExec("SET tx_read_only = 0")
-		tk.MustExec("SET transaction_read_only = 0")
-	}
-}
-
 func TestCrossDCQuery(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -2948,47 +2939,105 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
-func TestTiDBRowChecksumBuiltin(t *testing.T) {
+func calculateChecksum(cols ...any) string {
+	buf := make([]byte, 0, 64)
+	for _, col := range cols {
+		switch x := col.(type) {
+		case int:
+			buf = binary.LittleEndian.AppendUint64(buf, uint64(x))
+		case string:
+			buf = binary.LittleEndian.AppendUint32(buf, uint32(len(x)))
+			buf = append(buf, []byte(x)...)
+		}
+	}
+	checksum := crc32.ChecksumIEEE(buf)
+	return fmt.Sprintf("%d", checksum)
+}
+
+func TestTiDBRowChecksumBuiltinAfterDropColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	checksum := func(cols ...any) uint32 {
-		buf := make([]byte, 0, 64)
-		for _, col := range cols {
-			switch x := col.(type) {
-			case int:
-				buf = binary.LittleEndian.AppendUint64(buf, uint64(x))
-			case string:
-				buf = binary.LittleEndian.AppendUint32(buf, uint32(len(x)))
-				buf = append(buf, []byte(x)...)
-			}
-		}
-		return crc32.ChecksumIEEE(buf)
-	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+	tk.MustExec("insert into t values(1, 1, 1)")
+
+	oldChecksum := tk.MustQuery("select tidb_row_checksum() from t where a = 1").Rows()[0][0].(string)
+
+	tk.MustExec("alter table t drop column b")
+	newChecksum := tk.MustQuery("select tidb_row_checksum() from t where a = 1").Rows()[0][0].(string)
+
+	require.NotEqual(t, oldChecksum, newChecksum)
+}
+
+func TestTiDBRowChecksumBuiltinAfterAddColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+
+	oldChecksum := tk.MustQuery("select tidb_row_checksum() from t where a = 1").Rows()[0][0].(string)
+	expected := calculateChecksum(1, 1)
+	require.Equal(t, expected, oldChecksum)
+
+	tk.MustExec("alter table t add column c int default 1")
+	newChecksum := tk.MustQuery("select tidb_row_checksum() from t where a = 1").Rows()[0][0].(string)
+	expected = calculateChecksum(1, 1, 1)
+	require.Equal(t, expected, newChecksum)
+
+	require.NotEqual(t, oldChecksum, newChecksum)
+}
+
+func TestTiDBRowChecksumBuiltin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, c int)")
 
-	// row with 2 checksums
+	// row with 1 checksum
 	tk.MustExec("insert into t values (1, 10)")
 	tk.MustExec("alter table t change column c c varchar(10)")
-	checksum1 := fmt.Sprintf("%d,%d", checksum(1, 10), checksum(1, "10"))
-	// row with 1 checksum
+	checksum1 := calculateChecksum(1, "10")
+	checksum11 := fmt.Sprintf("%d %v %v", 1, "10", checksum1)
+
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
 	tk.MustExec("insert into t values (2, '20')")
-	checksum2 := fmt.Sprintf("%d", checksum(2, "20"))
+	checksum2 := calculateChecksum(2, "20")
+	checksum22 := fmt.Sprintf("%d %v %v", 2, checksum2, "20")
+
 	// row without checksum
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
 	tk.MustExec("insert into t values (3, '30')")
-	checksum3 := "<nil>"
+	checksum3 := calculateChecksum(3, "30")
+	checksum33 := fmt.Sprintf("%v %d %v", checksum3, 3, "30")
 
 	// fast point-get
 	tk.MustQuery("select tidb_row_checksum() from t where id = 1").Check(testkit.Rows(checksum1))
+	tk.MustQuery("select id, c, tidb_row_checksum() from t where id = 1").Check(testkit.Rows(checksum11))
+
 	tk.MustQuery("select tidb_row_checksum() from t where id = 2").Check(testkit.Rows(checksum2))
+	tk.MustQuery("select id, tidb_row_checksum(), c from t where id = 2").Check(testkit.Rows(checksum22))
+
 	tk.MustQuery("select tidb_row_checksum() from t where id = 3").Check(testkit.Rows(checksum3))
+	tk.MustQuery("select tidb_row_checksum(), id, c from t where id = 3").Check(testkit.Rows(checksum33))
+
 	// fast batch-point-get
 	tk.MustQuery("select tidb_row_checksum() from t where id in (1, 2, 3)").Check(testkit.Rows(checksum1, checksum2, checksum3))
+
+	tk.MustQuery("select id, c, tidb_row_checksum() from t where id in (1, 2, 3)").
+		Check(testkit.Rows(
+			checksum11,
+			fmt.Sprintf("%d %v %v", 2, "20", checksum2),
+			fmt.Sprintf("%d %v %v", 3, "30", checksum3),
+		))
 
 	// non-fast point-get
 	tk.MustGetDBError("select length(tidb_row_checksum()) from t where id = 1", expression.ErrNotSupportedYet)

@@ -45,3 +45,9 @@ show create table t;
 alter table t modify column c varchar(32);
 show create table t;
 drop table t;
+
+# Test Issue 47115.
+drop table if exists t;
+create table t (a int, b int, k varchar(255), primary key (a, b), key k (k));
+insert into t values (1, 1, 'abc                                                                                                                                ');
+drop table t;

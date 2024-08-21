@@ -121,6 +121,21 @@ type StatsAnalyze interface {
 	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
 
+	// StartAnalyzeJob updates the job status to `running` and sets the start time.
+	// There is no guarantee that the job record will actually be updated. If the job fails to start, an error will be logged.
+	// It is OK because this won't affect the analysis job's success.
+	StartAnalyzeJob(job *statistics.AnalyzeJob)
+
+	// UpdateAnalyzeJobProgress updates the current progress of the analyze job.
+	// There is no guarantee that the job record will actually be updated. If the job fails to update, an error will be logged.
+	// It is OK because this won't affect the analysis job's success.
+	UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, rowCount int64)
+
+	// FinishAnalyzeJob updates the job status to `finished`, sets the end time, and updates the job info.
+	// There is no guarantee that the job record will actually be updated. If the job fails to finish, an error will be logged.
+	// It is OK because this won't affect the analysis job's success.
+	FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType)
+
 	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 	DeleteAnalyzeJobs(updateTime time.Time) error
 
@@ -152,7 +167,7 @@ type StatsCache interface {
 	Clear()
 
 	// Update reads stats meta from store and updates the stats map.
-	Update(is infoschema.InfoSchema) error
+	Update(ctx context.Context, is infoschema.InfoSchema) error
 
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
@@ -369,14 +384,34 @@ type NeededItemTask struct {
 	ToTimeout time.Time
 	ResultCh  chan stmtctx.StatsLoadResult
 	Item      model.StatsLoadItem
+	Retry     int
 }
 
 // StatsLoad is used to load stats concurrently
+// TODO(hawkingrei): Our implementation of loading statistics is flawed.
+// Currently, we enqueue tasks that require loading statistics into a channel,
+// from which workers retrieve tasks to process. Then, using the singleflight mechanism,
+// we filter out duplicate tasks. However, the issue with this approach is that it does
+// not filter out all duplicate tasks, but only the duplicates within the number of workers.
+// Such an implementation is not reasonable.
+//
+// We should first filter all tasks through singleflight as shown in the diagram, and then use workers to load stats.
+//
+// ┌─────────▼──────────▼─────────────▼──────────────▼────────────────▼────────────────────┐
+// │                                                                                       │
+// │                                       singleflight                                    │
+// │                                                                                       │
+// └───────────────────────────────────────────────────────────────────────────────────────┘
+//
+//		            │                │
+//	   ┌────────────▼──────┐ ┌───────▼───────────┐
+//	   │                   │ │                   │
+//	   │  syncload worker  │ │  syncload worker  │
+//	   │                   │ │                   │
+//	   └───────────────────┘ └───────────────────┘
 type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-	WorkingColMap  map[model.TableItemID][]chan stmtctx.StatsLoadResult
-	SubCtxs        []sessionctx.Context
 	sync.Mutex
 }
 
@@ -396,21 +431,25 @@ type StatsSyncLoad interface {
 
 	// HandleOneTask will handle one task.
 	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
+}
 
-	// SetSubCtxs sets the sessionctx which is used to run queries background.
-	// TODO: use SessionPool instead.
-	SetSubCtxs(idx int, sctx sessionctx.Context)
+// GlobalStatsInfo represents the contextual information pertaining to global statistics.
+type GlobalStatsInfo struct {
+	HistIDs []int64
+	// When the `isIndex == 0`, HistIDs will be the column IDs.
+	// Otherwise, HistIDs will only contain the index ID.
+	IsIndex      int
+	StatsVersion int
 }
 
 // StatsGlobal is used to manage partition table global stats.
 type StatsGlobal interface {
 	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.
-	MergePartitionStats2GlobalStatsByTableID(sctx sessionctx.Context,
+	MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
+		info *GlobalStatsInfo,
 		physicalID int64,
-		isIndex bool,
-		histIDs []int64,
-	) (globalStats any, err error)
+	) (err error)
 }
 
 // DDL is used to handle ddl events.

@@ -464,19 +464,11 @@ func (s *SyncExecDetails) GetExecDetails() ExecDetails {
 }
 
 // CopTasksDetails returns some useful information of cop-tasks during execution.
-func (s *SyncExecDetails) CopTasksDetails() *CopTasksDetails {
+func (s *SyncExecDetails) CopTasksDetails() CopTasksDetails {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := s.detailsSummary.NumCopTasks
-	d := &CopTasksDetails{
-		NumCopTasks:       n,
-		MaxBackoffTime:    make(map[string]time.Duration),
-		AvgBackoffTime:    make(map[string]time.Duration),
-		P90BackoffTime:    make(map[string]time.Duration),
-		TotBackoffTime:    make(map[string]time.Duration),
-		TotBackoffTimes:   make(map[string]int),
-		MaxBackoffAddress: make(map[string]string),
-	}
+	d := CopTasksDetails{NumCopTasks: n}
 	if n == 0 {
 		return d
 	}
@@ -491,6 +483,14 @@ func (s *SyncExecDetails) CopTasksDetails() *CopTasksDetails {
 	d.MaxWaitTime = s.detailsSummary.WaitTimePercentile.GetMax().D
 	d.MaxWaitAddress = s.detailsSummary.WaitTimePercentile.GetMax().Addr
 
+	if len(s.detailsSummary.BackoffInfo) > 0 {
+		d.MaxBackoffTime = make(map[string]time.Duration)
+		d.AvgBackoffTime = make(map[string]time.Duration)
+		d.P90BackoffTime = make(map[string]time.Duration)
+		d.TotBackoffTime = make(map[string]time.Duration)
+		d.TotBackoffTimes = make(map[string]int)
+		d.MaxBackoffAddress = make(map[string]string)
+	}
 	for backoff, items := range s.detailsSummary.BackoffInfo {
 		if items == nil {
 			continue
@@ -733,6 +733,7 @@ type CopRuntimeStats struct {
 	// executed on each instance.
 	stats      map[string]*basicCopRuntimeStats
 	scanDetail *util.ScanDetail
+	timeDetail *util.TimeDetail
 	// do not use kv.StoreType because it will meet cycle import error
 	storeType string
 	sync.Mutex
@@ -780,7 +781,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 				minLocalStreamMs:          summary.GetTiflashScanContext().GetMinLocalStreamMs(),
 				maxLocalStreamMs:          summary.GetTiflashScanContext().GetMaxLocalStreamMs(),
 				minRemoteStreamMs:         summary.GetTiflashScanContext().GetMinRemoteStreamMs(),
-				maxRemoteStreamMs:         summary.GetTiflashScanContext().GetMaxLocalStreamMs(),
+				maxRemoteStreamMs:         summary.GetTiflashScanContext().GetMaxRemoteStreamMs(),
 				regionsOfInstance:         make(map[string]uint64),
 			}}, threads: int32(summary.GetConcurrency()),
 		totalTasks: 1,
@@ -859,11 +860,20 @@ func (crs *CopRuntimeStats) String() string {
 			buf.WriteString("}")
 		}
 	}
-	if !isTiFlashCop && crs.scanDetail != nil {
-		detail := crs.scanDetail.String()
-		if detail != "" {
-			buf.WriteString(", ")
-			buf.WriteString(detail)
+	if !isTiFlashCop {
+		if crs.scanDetail != nil {
+			detail := crs.scanDetail.String()
+			if detail != "" {
+				buf.WriteString(", ")
+				buf.WriteString(detail)
+			}
+		}
+		if crs.timeDetail != nil {
+			timeDetailStr := crs.timeDetail.String()
+			if timeDetailStr != "" {
+				buf.WriteString(", ")
+				buf.WriteString(timeDetailStr)
+			}
 		}
 	}
 	return buf.String()
@@ -1291,6 +1301,7 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 // RegisterStats register execStat for a executor.
 func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	stats, ok := e.rootStats[planID]
 	if !ok {
 		stats = NewRootRuntimeStats()
@@ -1308,7 +1319,6 @@ func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 	if !found {
 		stats.groupRss = append(stats.groupRss, info.Clone())
 	}
-	e.mu.Unlock()
 }
 
 // GetBasicRuntimeStats gets basicRuntimeStats for a executor.
@@ -1358,6 +1368,7 @@ func (e *RuntimeStatsColl) GetOrCreateCopStats(planID int, storeType string) *Co
 		copStats = &CopRuntimeStats{
 			stats:      make(map[string]*basicCopRuntimeStats),
 			scanDetail: &util.ScanDetail{},
+			timeDetail: &util.TimeDetail{},
 			storeType:  storeType,
 		}
 		e.copStats[planID] = copStats
@@ -1391,6 +1402,14 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, addres
 func (e *RuntimeStatsColl) RecordScanDetail(planID int, storeType string, detail *util.ScanDetail) {
 	copStats := e.GetOrCreateCopStats(planID, storeType)
 	copStats.scanDetail.Merge(detail)
+}
+
+// RecordTimeDetail records a specific cop tasks's time detail.
+func (e *RuntimeStatsColl) RecordTimeDetail(planID int, storeType string, detail *util.TimeDetail) {
+	copStats := e.GetOrCreateCopStats(planID, storeType)
+	if detail != nil {
+		copStats.timeDetail.Merge(detail)
+	}
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.

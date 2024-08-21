@@ -319,6 +319,10 @@ ALTER USER `user1` RESOURCE GROUP `rg1`;
 SELECT CURRENT_RESOURCE_GROUP();
 CURRENT_RESOURCE_GROUP()
 default
+create role role_for_resource_group;
+alter user role_for_resource_group resource group rg1;
+Error 8257 (HY000): Cannot set resource group for a role
+drop role role_for_resource_group;
 SELECT CURRENT_RESOURCE_GROUP();
 CURRENT_RESOURCE_GROUP()
 rg1

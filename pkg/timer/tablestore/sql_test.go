@@ -23,7 +23,6 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -576,6 +575,8 @@ func (p *mockSessionPool) Put(r pools.Resource) {
 	p.Called(r)
 }
 
+func (p *mockSessionPool) Close() {}
+
 type mockSession struct {
 	mock.Mock
 	sessionctx.Context
@@ -596,10 +597,6 @@ func (p *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...a
 
 func (p *mockSession) GetSessionVars() *variable.SessionVars {
 	return p.Context.GetSessionVars()
-}
-
-func (p *mockSession) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	p.Context.SetDiskFullOpt(level)
 }
 
 func (p *mockSession) Close() {

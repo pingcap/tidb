@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -37,7 +38,7 @@ import (
 
 // ceTraceExpr appends an expression and related information into CE trace
 func ceTraceExpr(sctx context.PlanContext, tableID int64, tp string, expr expression.Expression, rowCount float64) {
-	exprStr, err := exprToString(sctx.GetExprCtx(), expr)
+	exprStr, err := exprToString(sctx.GetExprCtx().GetEvalCtx(), expr)
 	if err != nil {
 		logutil.BgLogger().Debug("Failed to trace CE of an expression", zap.String("category", "OptimizerTrace"),
 			zap.Any("expression", expr))
@@ -95,7 +96,7 @@ func exprToString(ctx expression.EvalContext, e expression.Expression) (string, 
 		buffer.WriteString(")")
 		return buffer.String(), nil
 	case *expression.Column:
-		return expr.String(), nil
+		return expr.StringWithCtx(ctx, perrors.RedactLogDisable), nil
 	case *expression.CorrelatedColumn:
 		return "", errors.New("tracing for correlated columns not supported now")
 	case *expression.Constant:

@@ -75,8 +75,8 @@ const (
 	DefTableColumnCountLimit = 1017
 	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
-	// DefStatsLoadConcurrencyLimit is limit of the concurrency of stats-load
-	DefStatsLoadConcurrencyLimit = 1
+	// DefStatsLoadConcurrencyLimit is limit of the concurrency of stats-load. When it is set to 0, it will be set by syncload.GetSyncLoadConcurrencyByCPU.
+	DefStatsLoadConcurrencyLimit = 0
 	// DefMaxOfStatsLoadConcurrencyLimit is maximum limitation of the concurrency of stats-load
 	DefMaxOfStatsLoadConcurrencyLimit = 128
 	// DefStatsLoadQueueSizeLimit is limit of the size of stats-load request queue
@@ -97,6 +97,9 @@ const (
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
 	EnvVarKeyspaceName = "KEYSPACE_NAME"
+	// MaxTokenLimit is the max token limit value.
+	MaxTokenLimit  = 1024 * 1024
+	DefSchemaLease = 45 * time.Second
 )
 
 // Valid config maps
@@ -709,22 +712,21 @@ type Performance struct {
 	TCPNoDelay          bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	DistinctAggPushDown bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
-	// Whether enable projection push down for coprocessors (both tikv & tiflash), default false.
-	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
-	MaxTxnTTL          uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	MaxTxnTTL           uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
 	MemProfileInterval string `toml:"-" json:"-"`
 
 	// Deprecated: this config will not have any effect
-	IndexUsageSyncLease               string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease               string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                              int    `toml:"gogc" json:"gogc"`
-	EnforceMPP                        bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	StatsLoadConcurrency              uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
-	StatsLoadQueueSize                uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
-	AnalyzePartitionConcurrencyQuota  uint   `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
-	PlanReplayerDumpWorkerConcurrency uint   `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
-	EnableStatsCacheMemQuota          bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	IndexUsageSyncLease  string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease  string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                 int    `toml:"gogc" json:"gogc"`
+	EnforceMPP           bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency int    `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize   uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
+	// Deprecated: this config has been deprecated. It has no effect.
+	AnalyzePartitionConcurrencyQuota  uint `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
+	PlanReplayerDumpWorkerConcurrency uint `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
+	EnableStatsCacheMemQuota          bool `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -749,6 +751,12 @@ type Performance struct {
 	// If ForceInitStats is false, tidb can provide service before init stats is finished. Note that during the period
 	// of init stats the optimizer may make bad decisions due to pseudo stats.
 	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
+
+	// ConcurrentlyInitStats indicates whether to use concurrency to init stats.
+	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
+
+	// Deprecated: this config will not have any effect
+	ProjectionPushDown bool `toml:"projection-push-down" json:"projection-push-down"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -906,7 +914,7 @@ var defaultConf = Config{
 	Path:                         "/tmp/tidb",
 	RunDDL:                       true,
 	SplitTable:                   true,
-	Lease:                        "45s",
+	Lease:                        DefSchemaLease.String(),
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	TempDir:                      DefTempDir,
@@ -1001,13 +1009,13 @@ var defaultConf = Config{
 		TxnEntrySizeLimit:                 DefTxnEntrySizeLimit,
 		TxnTotalSizeLimit:                 DefTxnTotalSizeLimit,
 		DistinctAggPushDown:               false,
-		ProjectionPushDown:                false,
+		ProjectionPushDown:                true,
 		CommitterConcurrency:              defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:                         defTiKVCfg.MaxTxnTTL, // 1hour
 		GOGC:                              100,
 		EnforceMPP:                        false,
 		PlanReplayerGCLease:               "10m",
-		StatsLoadConcurrency:              5,
+		StatsLoadConcurrency:              0, // 0 is auto mode.
 		StatsLoadQueueSize:                1000,
 		AnalyzePartitionConcurrencyQuota:  16,
 		PlanReplayerDumpWorkerConcurrency: 1,
@@ -1016,6 +1024,7 @@ var defaultConf = Config{
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
+		ConcurrentlyInitStats:             true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -1271,6 +1280,8 @@ func (c *Config) Load(confFile string) error {
 	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
+	} else if c.TokenLimit > MaxTokenLimit {
+		c.TokenLimit = MaxTokenLimit
 	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.

@@ -12,10 +12,10 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"google.golang.org/grpc/codes"
@@ -81,6 +81,10 @@ func (c constantRegions) Stores(ctx context.Context) ([]streamhelper.Store, erro
 // If the arguments is `0`, this would remove the service safe point.
 func (c constantRegions) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
 	return 0, status.Error(codes.Unimplemented, "Unsupported operation")
+}
+
+func (c constantRegions) UnblockGC(ctx context.Context) error {
+	return status.Error(codes.Unimplemented, "Unsupported operation")
 }
 
 // TODO: It should be able to synchoronize the current TS with the PD.

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -61,7 +62,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 	p, err := builder.Build(context.TODO(), stmt)
 	require.NoError(t, err)
-	logicalP, err := core.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(core.LogicalPlan))
+	logicalP, err := core.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(base.LogicalPlan))
 	require.NoError(t, err)
 
 	ds, ok := logicalP.(*core.DataSource)
@@ -69,8 +70,8 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 		p := logicalP.Children()[0]
 		ds, ok = p.(*core.DataSource)
 	}
-	cnfs := ds.GetAllConds()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	cnfs := ds.AllConds
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(
 		tbl.Meta(),

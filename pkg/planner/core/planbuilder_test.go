@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -205,30 +206,30 @@ func TestDeepClone(t *testing.T) {
 	byItems := []*util.ByItems{{Expr: expr}}
 	sort1 := &PhysicalSort{ByItems: byItems}
 	sort2 := &PhysicalSort{ByItems: byItems}
-	checkDeepClone := func(p1, p2 PhysicalPlan) error {
+	checkDeepClone := func(p1, p2 base.PhysicalPlan) error {
 		whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context"}
-		return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), whiteList, nil)
+		return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), nil, whiteList, nil)
 	}
 	err := checkDeepClone(sort1, sort2)
 	require.Error(t, err)
-	require.Regexp(t, "invalid slice pointers, path PhysicalSort.ByItems", err.Error())
+	require.Equal(t, "same slice pointers, path *PhysicalSort.ByItems", err.Error())
 
 	byItems2 := []*util.ByItems{{Expr: expr}}
 	sort2.ByItems = byItems2
 	err = checkDeepClone(sort1, sort2)
 	require.Error(t, err)
-	require.Regexp(t, "same pointer, path PhysicalSort.ByItems.*Expression", err.Error())
+	require.Equal(t, "same pointer, path *PhysicalSort.ByItems[0].Expr", err.Error())
 
 	expr2 := &expression.Column{RetType: tp}
 	byItems2[0].Expr = expr2
 	err = checkDeepClone(sort1, sort2)
 	require.Error(t, err)
-	require.Regexp(t, "same pointer, path PhysicalSort.ByItems.*Expression.FieldType", err.Error())
+	require.Equal(t, "same pointer, path *PhysicalSort.ByItems[0].Expr.RetType", err.Error())
 
 	expr2.RetType = types.NewFieldType(mysql.TypeString)
 	err = checkDeepClone(sort1, sort2)
 	require.Error(t, err)
-	require.Regexp(t, "different values, path PhysicalSort.ByItems.*Expression.FieldType.uint8", err.Error())
+	require.Equal(t, "different values, path *PhysicalSort.ByItems[0].Expr.RetType.tp", err.Error())
 
 	expr2.RetType = types.NewFieldType(mysql.TypeLonglong)
 	require.NoError(t, checkDeepClone(sort1, sort2))
@@ -251,11 +252,11 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	// table reader
 	tableReader := &PhysicalTableReader{
 		tablePlan:  tableScan,
-		TablePlans: []PhysicalPlan{tableScan},
+		TablePlans: []base.PhysicalPlan{tableScan},
 		StoreType:  kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
-	clonedPlan, err := tableReader.Clone()
+	clonedPlan, err := tableReader.Clone(ctx)
 	require.NoError(t, err)
 	newTableReader, ok := clonedPlan.(*PhysicalTableReader)
 	require.True(t, ok)
@@ -287,7 +288,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	// table reader
 	tableReader := &PhysicalTableReader{
 		tablePlan:  tableScan,
-		TablePlans: []PhysicalPlan{tableScan},
+		TablePlans: []base.PhysicalPlan{tableScan},
 		StoreType:  kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
@@ -307,7 +308,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	// index reader
 	indexReader := &PhysicalIndexReader{
 		indexPlan:     indexScan,
-		IndexPlans:    []PhysicalPlan{indexScan},
+		IndexPlans:    []base.PhysicalPlan{indexScan},
 		OutputColumns: []*expression.Column{col, col},
 	}
 	indexReader = indexReader.Init(ctx, 0)
@@ -315,9 +316,9 @@ func TestPhysicalPlanClone(t *testing.T) {
 
 	// index lookup
 	indexLookup := &PhysicalIndexLookUpReader{
-		IndexPlans:     []PhysicalPlan{indexReader},
+		IndexPlans:     []base.PhysicalPlan{indexReader},
 		indexPlan:      indexScan,
-		TablePlans:     []PhysicalPlan{tableReader},
+		TablePlans:     []base.PhysicalPlan{tableReader},
 		tablePlan:      tableScan,
 		ExtraHandleCol: col,
 		PushedLimit:    &PushedDownLimit{1, 2},
@@ -366,10 +367,12 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(streamAgg))
 
 	// hash agg
-	hashAgg := &PhysicalHashAgg{basePhysicalAgg{
-		AggFuncs:     aggDescs,
-		GroupByItems: []expression.Expression{col, cst},
-	}}
+	hashAgg := &PhysicalHashAgg{
+		basePhysicalAgg: basePhysicalAgg{
+			AggFuncs:     aggDescs,
+			GroupByItems: []expression.Expression{col, cst},
+		},
+	}
 	hashAgg = hashAgg.initForHash(ctx, stats, 0)
 	hashAgg.SetSchema(schema)
 	require.NoError(t, checkPhysicalPlanClone(hashAgg))
@@ -399,22 +402,36 @@ func valueInterface(v reflect.Value, safe bool) any
 func typeName(t reflect.Type) string {
 	path := t.String()
 	tmp := strings.Split(path, ".")
-	return tmp[len(tmp)-1]
+	baseName := tmp[len(tmp)-1]
+	if strings.HasPrefix(path, "*") { // is a pointer
+		baseName = "*" + baseName
+	}
+	return baseName
 }
 
-func checkPhysicalPlanClone(p PhysicalPlan) error {
-	cloned, err := p.Clone()
+func checkPhysicalPlanClone(p base.PhysicalPlan) error {
+	cloned, err := p.Clone(p.SCtx())
 	if err != nil {
 		return err
 	}
 	whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context", "*types.FieldType"}
-	return checkDeepClonedCore(reflect.ValueOf(p), reflect.ValueOf(cloned), typeName(reflect.TypeOf(p)), whiteList, nil)
+	return checkDeepClonedCore(reflect.ValueOf(p), reflect.ValueOf(cloned), typeName(reflect.TypeOf(p)), nil, whiteList, nil)
 }
 
 // checkDeepClonedCore is used to check if v2 is deep cloned from v1.
 // It's modified from reflect.deepValueEqual. We cannot use reflect.DeepEqual here since they have different
 // logic, for example, if two pointers point the same address, they will pass the DeepEqual check while failing in the DeepClone check.
-func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, visited map[visit]bool) error {
+func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, whiteTypeList []string, visited map[visit]bool) error {
+	skipPath := false
+	for _, p := range whitePathList {
+		if strings.HasSuffix(path, p) {
+			skipPath = true
+		}
+	}
+	if skipPath {
+		return nil
+	}
+
 	if !v1.IsValid() || !v2.IsValid() {
 		if v1.IsValid() != v2.IsValid() {
 			return errors.Errorf("invalid")
@@ -452,7 +469,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 	switch v1.Kind() {
 	case reflect.Array:
 		for i := 0; i < v1.Len(); i++ {
-			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whiteList, visited); err != nil {
+			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
 		}
@@ -470,10 +487,10 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 			return errors.Errorf("different slices nil %v, %v, path %v", v1.IsNil(), v2.IsNil(), path)
 		}
 		if v1.Pointer() == v2.Pointer() {
-			return errors.Errorf("invalid slice pointers, path %v", path)
+			return errors.Errorf("same slice pointers, path %v", path)
 		}
 		for i := 0; i < v1.Len(); i++ {
-			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whiteList, visited); err != nil {
+			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
 		}
@@ -484,7 +501,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 		if v1.IsNil() != v2.IsNil() {
 			return errors.Errorf("invalid interfaces, path %v", path)
 		}
-		return checkDeepClonedCore(v1.Elem(), v2.Elem(), path, whiteList, visited)
+		return checkDeepClonedCore(v1.Elem(), v2.Elem(), path, whitePathList, whiteTypeList, visited)
 	case reflect.Ptr:
 		if v1.IsNil() && v2.IsNil() {
 			return nil
@@ -492,7 +509,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 		if v1.Pointer() == v2.Pointer() {
 			typeName := v1.Type().String()
 			inWhiteList := false
-			for _, whiteName := range whiteList {
+			for _, whiteName := range whiteTypeList {
 				if whiteName == typeName {
 					inWhiteList = true
 					break
@@ -503,22 +520,23 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 			}
 			return errors.Errorf("same pointer, path %v", path)
 		}
-		return checkDeepClonedCore(v1.Elem(), v2.Elem(), path, whiteList, visited)
+		return checkDeepClonedCore(v1.Elem(), v2.Elem(), path, whitePathList, whiteTypeList, visited)
 	case reflect.Struct:
 		for i, n := 0, v1.NumField(); i < n; i++ {
-			if err := checkDeepClonedCore(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, typeName(v1.Field(i).Type())), whiteList, visited); err != nil {
+			fieldName := v1.Type().Field(i).Name
+			if err := checkDeepClonedCore(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, fieldName), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
 		}
 	case reflect.Map:
-		if (v1.IsNil() && v2.IsNil()) || (v1.Len() == 0 && v2.Len() == 0) {
+		if v1.IsNil() && v2.IsNil() {
 			return nil
 		}
 		if v1.IsNil() != v2.IsNil() || v1.Len() != v2.Len() {
 			return errors.Errorf("different maps nil: %v, %v, len: %v, %v, path: %v", v1.IsNil(), v2.IsNil(), v1.Len(), v2.Len(), path)
 		}
 		if v1.Pointer() == v2.Pointer() {
-			return errors.Errorf("invalid map pointers, path %v", path)
+			return errors.Errorf("same map pointers, path %v", path)
 		}
 		if len(v1.MapKeys()) != len(v2.MapKeys()) {
 			return errors.Errorf("invalid map")
@@ -527,9 +545,10 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 			val1 := v1.MapIndex(k)
 			val2 := v2.MapIndex(k)
 			if !val1.IsValid() || !val2.IsValid() {
-				if err := checkDeepClonedCore(val1, val2, fmt.Sprintf("%v[%v]", path, typeName(k.Type())), whiteList, visited); err != nil {
-					return err
-				}
+				return errors.Errorf("invalid map value at %v", fmt.Sprintf("%v[%v]", path, typeName(k.Type())))
+			}
+			if err := checkDeepClonedCore(val1, val2, fmt.Sprintf("%v[%v]", path, typeName(k.Type())), whitePathList, whiteTypeList, visited); err != nil {
+				return err
 			}
 		}
 	case reflect.Func:
@@ -686,22 +705,17 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 		Columns: columns,
 	}
 
-	// Test case 1: DefaultChoice.
-	cols, _, err := pb.getFullAnalyzeColumnsInfo(tableName, model.DefaultChoice, nil, nil, nil, false, false)
-	require.NoError(t, err)
-	require.Equal(t, columns, cols)
-
-	// Test case 2: AllColumns.
-	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.AllColumns, nil, nil, nil, false, false)
+	// Test case 1: AllColumns.
+	cols, _, err := pb.getFullAnalyzeColumnsInfo(tableName, model.AllColumns, nil, nil, nil, false, false)
 	require.NoError(t, err)
 	require.Equal(t, columns, cols)
 
 	mustAnalyzedCols := &calcOnceMap{data: make(map[int64]struct{})}
 
 	// TODO(hi-rustin): Find a better way to mock SQL execution.
-	// Test case 3: PredicateColumns.
+	// Test case 2: PredicateColumns(default)
 
-	// Test case 4: ColumnList.
+	// Test case 3: ColumnList.
 	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
 	mustAnalyzedCols.data[3] = struct{}{}
 	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)

@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testfailpoint",
+    srcs = ["failpoint.go"],
+    importpath = "github.com/pingcap/tidb/pkg/testkit/testfailpoint",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -44,7 +45,7 @@ import (
 )
 
 type benchHelper struct {
-	ctx   BuildContext
+	ctx   *mock.Context
 	exprs []Expression
 
 	inputTypes  []*types.FieldType
@@ -149,7 +150,7 @@ func (h *benchHelper) init() {
 
 	h.outputTypes = make([]*types.FieldType, 0, len(h.exprs))
 	for i := 0; i < len(h.exprs); i++ {
-		h.outputTypes = append(h.outputTypes, h.exprs[i].GetType())
+		h.outputTypes = append(h.outputTypes, h.exprs[i].GetType(h.ctx))
 	}
 
 	h.outputChunk = chunk.NewChunkWithCapacity(h.outputTypes, numRows)
@@ -160,10 +161,11 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 	h.init()
 	inputIter := chunk.NewIterator4Chunk(h.inputChunk)
 
+	evalCtx := h.ctx.GetEvalCtx()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		h.outputChunk.Reset()
-		if err := VectorizedExecute(h.ctx, h.exprs, inputIter, h.outputChunk); err != nil {
+		if err := VectorizedExecute(evalCtx, h.exprs, inputIter, h.outputChunk); err != nil {
 			panic("errors happened during \"VectorizedExecute\"")
 		}
 	}
@@ -1292,7 +1294,7 @@ func genVecExprBenchCase(ctx BuildContext, funcName string, testCase vecExprBenc
 		panic(err)
 	}
 
-	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType().EvalType())}, testCase.chunkSize, testCase.chunkSize)
+	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType(ctx.GetEvalCtx()).EvalType())}, testCase.chunkSize, testCase.chunkSize)
 	return expr, fts, input, output
 }
 
@@ -1312,7 +1314,7 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 			require.NoErrorf(t, evalOneColumn(ctx, expr, it, output2, 0), "func: %v, case: %+v", funcName, testCase)
 
 			c1, c2 := output.Column(0), output2.Column(0)
-			switch expr.GetType().EvalType() {
+			switch expr.GetType(ctx).EvalType() {
 			case types.ETInt:
 				for i := 0; i < input.NumRows(); i++ {
 					require.Equal(t, c1.IsNull(i), c2.IsNull(i), commentf(i))
@@ -1370,11 +1372,11 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 // benchmarkVectorizedEvalOneVec is used to get the effect of
 // using the vectorized expression evaluations during projection
 func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases) {
-	ctx := mock.NewContext()
+	ctx := createContext(b)
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, _, input, output := genVecExprBenchCase(ctx, funcName, testCase)
-			exprName := expr.String()
+			exprName := expr.StringWithCtx(ctx, perrors.RedactLogDisable)
 			if sf, ok := expr.(*ScalarFunction); ok {
 				exprName = fmt.Sprintf("%v", reflect.TypeOf(sf.Function))
 				tmp := strings.Split(exprName, ".")
@@ -1435,11 +1437,11 @@ func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecE
 		tp := eType2FieldType(testCase.retEvalType)
 		switch testCase.retEvalType {
 		case types.ETInt:
-			fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETDecimal:
-			fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETReal:
-			fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETDatetime, types.ETTimestamp:
 			fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		case types.ETDuration:

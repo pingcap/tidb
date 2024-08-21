@@ -535,6 +535,7 @@ func checkVecEval(t *testing.T, eType types.EvalType, sel []int, result *chunk.C
 }
 
 func vecEvalType(ctx EvalContext, f builtinFunc, eType types.EvalType, input *chunk.Chunk, result *chunk.Column) error {
+	ctx = wrapEvalAssert(ctx, f)
 	switch eType {
 	case types.ETInt:
 		return f.vecEvalInt(ctx, input, result)
@@ -582,8 +583,9 @@ func TestDoubleRow2Vec(t *testing.T) {
 func TestDoubleVec2Row(t *testing.T) {
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETDuration, types.ETString, types.ETDatetime, types.ETJson}
 	for _, eType := range eTypes {
-		ctx := mock.NewContext()
-		rowDouble, input, result, err := genMockRowDouble(ctx, eType, true)
+		mockCtx := mock.NewContext()
+		rowDouble, input, result, err := genMockRowDouble(mockCtx, eType, true)
+		ctx := wrapEvalAssert(mockCtx, rowDouble)
 		result.Reset(eType)
 		require.NoError(t, err)
 		it := chunk.NewIterator4Chunk(input)

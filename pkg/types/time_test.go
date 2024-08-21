@@ -61,7 +61,7 @@ func TestTimeEncoding(t *testing.T) {
 
 func TestDateTime(t *testing.T) {
 	var warnings []error
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.NewFuncWarnHandlerForTest(func(err error) {
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.NewFuncWarnAppenderForTest(func(err error) {
 		warnings = append(warnings, err)
 	}))
 	table := []struct {
@@ -2214,7 +2214,7 @@ func TestDurationConvertToYearFromNow(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		ctx := types.NewContext(types.StrictFlags.WithCastTimeToYearThroughConcat(c.throughStr), c.sysTZ, contextutil.NewFuncWarnHandlerForTest(func(_ error) {
+		ctx := types.NewContext(types.StrictFlags.WithCastTimeToYearThroughConcat(c.throughStr), c.sysTZ, contextutil.NewFuncWarnAppenderForTest(func(_ error) {
 			require.Fail(t, "shouldn't append warninng")
 		}))
 		now, err := time.Parse(time.RFC3339, c.nowLit)

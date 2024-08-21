@@ -30,11 +30,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -54,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
@@ -730,7 +733,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
 	planInfo, err := plancodec.DecodePlan(tk.Session().GetSessionVars().StmtCtx.GetEncodedPlan())
 	require.NoError(t, err)
-	require.Regexp(t, "TableReader.*cop_task: {num: .*, rpc_num: .*, rpc_time: .*", planInfo)
+	require.Regexp(t, "TableReader.*cop_task: {num: .*num_rpc:.*, total_time:.*", planInfo)
 
 	// Killed because of max execution time, reset Killed to 0.
 	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
@@ -781,22 +784,39 @@ func TestShutDown(t *testing.T) {
 	cc = &clientConn{server: srv}
 	cc.SetCtx(tc)
 
-	// test in txn
-	srv.clients[dom.NextConnID()] = cc
-	cc.getCtx().GetSessionVars().SetInTxn(true)
+	waitMap := [][]bool{
+		// Reading, Not Reading
+		{false, true}, // Not InTxn
+		{true, true},  // InTxn
+	}
+	for idx, waitMap := range waitMap {
+		inTxn := idx > 0
+		for idx, shouldWait := range waitMap {
+			reading := idx == 0
+			if inTxn {
+				cc.getCtx().GetSessionVars().SetInTxn(true)
+			} else {
+				cc.getCtx().GetSessionVars().SetInTxn(false)
+			}
+			if reading {
+				cc.CompareAndSwapStatus(cc.getStatus(), connStatusReading)
+			} else {
+				cc.CompareAndSwapStatus(cc.getStatus(), connStatusDispatching)
+			}
 
-	waitTime := 100 * time.Millisecond
-	begin := time.Now()
-	srv.DrainClients(waitTime, waitTime)
-	require.Greater(t, time.Since(begin), waitTime)
+			srv.clients[dom.NextConnID()] = cc
 
-	// test not in txn
-	srv.clients[dom.NextConnID()] = cc
-	cc.getCtx().GetSessionVars().SetInTxn(false)
+			waitTime := 100 * time.Millisecond
+			begin := time.Now()
+			srv.DrainClients(waitTime, waitTime)
 
-	begin = time.Now()
-	srv.DrainClients(waitTime, waitTime)
-	require.Less(t, time.Since(begin), waitTime)
+			if shouldWait {
+				require.Greater(t, time.Since(begin), waitTime)
+			} else {
+				require.Less(t, time.Since(begin), waitTime)
+			}
+		}
+	}
 }
 
 type snapshotCache interface {
@@ -835,7 +855,7 @@ func TestPrefetchPointKeys4Update(t *testing.T) {
 	require.True(t, txn.Valid())
 	snap := txn.GetSnapshot()
 	//nolint:forcetypeassert
-	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
+	require.Equal(t, 6, snap.(snapshotCache).SnapCacheHitCount())
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 2", "2 2 4", "3 3 4"))
 
@@ -885,7 +905,7 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 	require.True(t, txn.Valid())
 	snap := txn.GetSnapshot()
 	//nolint:forcetypeassert
-	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
+	require.Equal(t, 6, snap.(snapshotCache).SnapCacheHitCount())
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("4 4 4", "5 5 5", "6 6 6"))
 
@@ -1008,7 +1028,7 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	dml := "insert into t values"
@@ -2084,4 +2104,90 @@ func TestCloseConn(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestConnAddMetrics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	re := require.New(t)
+	tk := testkit.NewTestKit(t, store)
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+	}
+	tk.MustExec("use test")
+	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+
+	// default
+	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	counter := metrics.QueryTotalCounter
+	v := promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "default"))
+	require.Equal(t, 1.0, v)
+
+	// rg1
+	cc.getCtx().GetSessionVars().ResourceGroupName = "test_rg1"
+	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "default")), 1.0)
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "test_rg1")), 1.0)
+	/// inc the counter again
+	cc.addMetrics(mysql.ComQuery, time.Now(), nil)
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "OK", "test_rg1")), 2.0)
+
+	// rg2
+	cc.getCtx().GetSessionVars().ResourceGroupName = "test_rg2"
+	// error
+	cc.addMetrics(mysql.ComQuery, time.Now(), errors.New("unknown error"))
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("Query", "Error", "test_rg2")), 1.0)
+	// ok
+	cc.addMetrics(mysql.ComStmtExecute, time.Now(), nil)
+	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("StmtExecute", "OK", "test_rg2")), 1.0)
+}
+
+func TestIssue54335(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	// There is no underlying netCon, use failpoint to avoid panic
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/FakeClientConn", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeClientConn"))
+	}()
+	tk := testkit.NewTestKit(t, store)
+
+	connID := uint64(1)
+	tk.Session().SetConnectionID(connID)
+	tc := &TiDBContext{
+		Session: tk.Session(),
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc := &clientConn{
+		connectionID: connID,
+		server: &Server{
+			capability: defaultCapability,
+		},
+		alloc:      arena.NewAllocator(32 * 1024),
+		chunkAlloc: chunk.NewAllocator(),
+	}
+	cc.SetCtx(tc)
+	srv := &Server{
+		clients: map[uint64]*clientConn{
+			connID: cc,
+		},
+		dom: dom,
+	}
+	handle := dom.ExpensiveQueryHandle().SetSessionManager(srv)
+	go handle.Run()
+
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE testTable2 (id bigint,  age int)")
+	str := fmt.Sprintf("insert into testTable2 values(%d, %d)", 1, 1)
+	tk.MustExec(str)
+	for i := 0; i < 14; i++ {
+		tk.MustExec("insert into testTable2 select * from testTable2")
+	}
+
+	times := 100
+	for ; times > 0; times-- {
+		// Test with -race
+		_ = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(1)*/  * FROM testTable2;")
+	}
 }

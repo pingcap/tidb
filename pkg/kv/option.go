@@ -112,6 +112,8 @@ const (
 	TiKVClientReadTimeout
 	// SizeLimits sets the size limits of membuf
 	SizeLimits
+	// SessionID marks the connection id, for logging and tracing.
+	SessionID
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option

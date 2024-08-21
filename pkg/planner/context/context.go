@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
@@ -35,7 +36,9 @@ type PlanContext interface {
 	// GetRestrictedSQLExecutor gets the RestrictedSQLExecutor.
 	GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor
 	// GetExprCtx gets the expression context.
-	GetExprCtx() exprctx.BuildContext
+	GetExprCtx() exprctx.ExprContext
+	// GetNullRejectCheckExprCtx gets the expression context with null rejected check.
+	GetNullRejectCheckExprCtx() exprctx.ExprContext
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 	// GetSessionVars gets the session variables.
@@ -43,9 +46,9 @@ type PlanContext interface {
 	// GetDomainInfoSchema returns the latest information schema in domain
 	// Different with `domain.InfoSchema()`, the information schema returned by this method
 	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// GetInfoSchema returns the current infoschema
-	GetInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetInfoSchema() infoschema.MetaOnlyInfoSchema
 	// UpdateColStatsUsage updates the column stats usage.
 	UpdateColStatsUsage(predicateColumns []model.TableItemID)
 	// GetClient gets a kv.Client.
@@ -63,6 +66,10 @@ type PlanContext interface {
 	HasDirtyContent(tid int64) bool
 	// AdviseTxnWarmup advises the txn to warm up.
 	AdviseTxnWarmup() error
+	// GetRangerCtx returns the context used in `ranger` functions
+	GetRangerCtx() *rangerctx.RangerContext
+	// GetBuildPBCtx returns the context used in `ToPB` method.
+	GetBuildPBCtx() *BuildPBContext
 }
 
 // EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
@@ -72,3 +79,41 @@ type EmptyPlanContextExtended struct{}
 
 // AdviseTxnWarmup advises the txn to warm up.
 func (EmptyPlanContextExtended) AdviseTxnWarmup() error { return nil }
+
+// BuildPBContext is used to build the `*tipb.Executor` according to the plan.
+type BuildPBContext struct {
+	ExprCtx exprctx.BuildContext
+	Client  kv.Client
+
+	TiFlashFastScan                    bool
+	TiFlashFineGrainedShuffleBatchSize uint64
+
+	// the following fields are used to build `expression.PushDownContext`.
+	// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
+	// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
+	GroupConcatMaxLen uint64
+	InExplainStmt     bool
+	WarnHandler       contextutil.WarnAppender
+	ExtraWarnghandler contextutil.WarnAppender
+}
+
+// GetExprCtx returns the expression context.
+func (b *BuildPBContext) GetExprCtx() exprctx.BuildContext {
+	return b.ExprCtx
+}
+
+// GetClient returns the kv client.
+func (b *BuildPBContext) GetClient() kv.Client {
+	return b.Client
+}
+
+// Detach detaches this context from the session context.
+//
+// NOTE: Though this session context can be used parallelly with this context after calling
+// it, the `StatementContext` cannot. The session context should create a new `StatementContext`
+// before executing another statement.
+func (b *BuildPBContext) Detach(staticExprCtx exprctx.BuildContext) *BuildPBContext {
+	newCtx := *b
+	newCtx.ExprCtx = staticExprCtx
+	return &newCtx
+}

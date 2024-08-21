@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	util2 "github.com/pingcap/tidb/pkg/util"
@@ -770,6 +771,16 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
 		}
+
+		if info.CursorTracker != nil {
+			info.CursorTracker.RangeCursor(func(c cursor.Handle) bool {
+				startTS := c.GetState().StartTS
+				if startTS > startTSLowerLimit && startTS < minStartTS {
+					minStartTS = startTS
+				}
+				return true
+			})
+		}
 	}
 
 	for _, innerTS := range innerSessionStartTSList {
@@ -1155,14 +1166,20 @@ func SetTiFlashPlacementRule(ctx context.Context, rule pdhttp.Rule) error {
 	return is.tiflashReplicaManager.SetPlacementRule(ctx, &rule)
 }
 
-// DeleteTiFlashPlacementRule is to delete placement rule for certain group.
-func DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string) error {
+// DeleteTiFlashPlacementRules is a helper function to delete TiFlash placement rules of given physical table IDs.
+func DeleteTiFlashPlacementRules(ctx context.Context, physicalTableIDs []int64) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("DeleteTiFlashPlacementRule", zap.String("ruleID", ruleID))
-	return is.tiflashReplicaManager.DeletePlacementRule(ctx, group, ruleID)
+	logutil.BgLogger().Info("DeleteTiFlashPlacementRules", zap.Int64s("physicalTableIDs", physicalTableIDs))
+	rules := make([]*pdhttp.Rule, 0, len(physicalTableIDs))
+	for _, id := range physicalTableIDs {
+		// make a rule with count 0 to delete the rule
+		rule := MakeNewRule(id, 0, nil)
+		rules = append(rules, &rule)
+	}
+	return is.tiflashReplicaManager.SetPlacementRuleBatch(ctx, rules)
 }
 
 // GetTiFlashGroupRules to get all placement rule in a certain group.
@@ -1243,16 +1260,18 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 }
 
 // StoreInternalSession is the entry function for store an internal session to SessionManager.
-func StoreInternalSession(se any) {
+// return whether the session is stored successfully.
+func StoreInternalSession(se any) bool {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return
+		return false
 	}
 	sm := is.GetSessionManager()
 	if sm == nil {
-		return
+		return false
 	}
 	sm.StoreInternalSession(se)
+	return true
 }
 
 // DeleteInternalSession is the entry function for delete an internal session from SessionManager.

@@ -1142,21 +1142,21 @@ select /*+ set_var(tidb_opt_projection_push_down=0) */ @@tidb_opt_projection_pus
 0
 select @@tidb_opt_projection_push_down;
 @@tidb_opt_projection_push_down
-0
+1
 set @@tidb_opt_projection_push_down=default;
 select @@tidb_opt_projection_push_down;
 @@tidb_opt_projection_push_down
-0
+1
 select /*+ set_var(tidb_opt_projection_push_down=1) */ @@tidb_opt_projection_push_down;
 @@tidb_opt_projection_push_down
 1
 select @@tidb_opt_projection_push_down;
 @@tidb_opt_projection_push_down
-0
+1
 set @@tidb_opt_projection_push_down=default;
 select @@tidb_opt_projection_push_down;
 @@tidb_opt_projection_push_down
-0
+1
 select /*+ set_var(tidb_enable_vectorized_expression=0) */ @@tidb_enable_vectorized_expression;
 @@tidb_enable_vectorized_expression
 0

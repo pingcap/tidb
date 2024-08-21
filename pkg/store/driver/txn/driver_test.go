@@ -76,4 +76,11 @@ func TestWriteConflictPrettyFormat(t *testing.T) {
 		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
 		"key=????, reason=Optimistic " + kv.TxnRetryableMark
 	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
+
+	errors.RedactLogEnabled.Store(errors.RedactLogMarker)
+	defer func() { errors.RedactLogEnabled.Store(original) }()
+	expectedStr = "[kv:9007]Write conflict, " +
+		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
+		"key=‹›‹{metaKey=true, key=DB:56, field=TID:108}, originalKey=6d44423a3536000000fc00000000000000685449443a31303800fe, primary=›‹›‹{metaKey=true, key=DB:56, field=TID:108}, originalPrimaryKey=6d44423a3536000000fc00000000000000685449443a31303800fe›, reason=Optimistic " + kv.TxnRetryableMark
+	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
 }

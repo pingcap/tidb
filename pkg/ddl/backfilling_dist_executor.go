@@ -19,17 +19,18 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -44,6 +45,7 @@ type BackfillTaskMeta struct {
 	EleTypeKey []byte `json:"ele_type_key"`
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
+	EstimateRowSize int    `json:"estimate_row_size"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
@@ -58,8 +60,14 @@ type BackfillSubTaskMeta struct {
 	RangeSplitKeys [][]byte `json:"range_split_keys,omitempty"`
 	DataFiles      []string `json:"data-files,omitempty"`
 	StatFiles      []string `json:"stat-files,omitempty"`
+	TS             uint64   `json:"ts,omitempty"`
 	// Each group of MetaGroups represents a different index kvs meta.
 	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty"`
+	// EleIDs stands for the index/column IDs to backfill with distributed framework.
+	// After the subtask is finished, EleIDs should have the same length as
+	// MetaGroups, and they are in the same order.
+	EleIDs []int64 `json:"ele_ids,omitempty"`
+
 	// Only used for adding one single index.
 	// Keep this for compatibility with v7.5.
 	external.SortedKVMeta `json:",inline"`
@@ -90,7 +98,9 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 	jobMeta := &s.taskMeta.Job
 	ddlObj := s.d
 
-	_, tblIface, err := ddlObj.getTableByTxn((*asAutoIDRequirement)(ddlObj.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
+	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
+	// we should move this operation out of GetStepExecutor, and put into Init.
+	_, tblIface, err := ddlObj.getTableByTxn(ddlObj.ddlCtx.getAutoIDRequirement(), jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}
@@ -100,27 +110,29 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 	for _, eid := range eleIDs {
 		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
 		if indexInfo == nil {
-			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
-				zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eid))
+			logutil.DDLIngestLogger().Warn("index info not found",
+				zap.Int64("table ID", tbl.Meta().ID),
+				zap.Int64("index ID", eid))
 			return nil, errors.Errorf("index info not found: %d", eid)
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
 	cloudStorageURI := s.taskMeta.CloudStorageURI
+	estRowSize := s.taskMeta.EstimateRowSize
 
 	switch stage {
 	case proto.BackfillStepReadIndex:
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI)
+		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, indexInfos[0], tbl, s.getBackendCtx, cloudStorageURI)
+		return newCloudImportExecutor(jobMeta, indexInfos, tbl, s.getBackendCtx, cloudStorageURI)
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
@@ -129,28 +141,41 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 
 func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 	job := &s.taskMeta.Job
-	unique, err := decodeIndexUniqueness(job)
+	hasUnique, err := hasUniqueIndex(job)
 	if err != nil {
 		return nil, err
 	}
 	ddlObj := s.d
 	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 
-	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+	return ingest.LitBackCtxMgr.Register(
+		s.BaseTaskExecutor.Ctx(),
+		job.ID, hasUnique,
+		ddlObj.etcdCli,
+		discovery,
+		job.ReorgMeta.ResourceGroupName,
+		job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())),
+	)
 }
 
-func decodeIndexUniqueness(job *model.Job) (bool, error) {
-	unique := make([]bool, 1)
-	err := job.DecodeArgs(&unique[0])
-	if err != nil {
-		err = job.DecodeArgs(&unique)
+func hasUniqueIndex(job *model.Job) (bool, error) {
+	var unique bool
+	err := job.DecodeArgs(&unique)
+	if err == nil {
+		return unique, nil
 	}
+
+	var uniques []bool
+	err = job.DecodeArgs(&uniques)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	// We only support adding multiple unique indexes or multiple non-unique indexes,
-	// we use the first index uniqueness here.
-	return unique[0], nil
+	for _, b := range uniques {
+		if b {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 type backfillDistExecutor struct {
@@ -189,7 +214,7 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
 	switch task.Step {
 	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
 		return s.newBackfillSubtaskExecutor(task.Step)

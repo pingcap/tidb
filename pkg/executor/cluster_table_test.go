@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/contextimpl"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -312,9 +311,7 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 		},
 	}
 
-	sqlExec, err := contextimpl.NewSQLExecutor(tk.Session())
-	require.NoError(t, err)
-	err = r.RetrieveLocal(context.Background(), sqlExec)
+	err := r.RetrieveLocal(context.Background(), tk.Session().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
 	require.Equal(t, insertNormalized, r.SQLDigestsMap[insertDigest.String()])
 	require.Equal(t, "", r.SQLDigestsMap[updateDigest.String()])

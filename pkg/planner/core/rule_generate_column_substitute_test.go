@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +46,7 @@ import (
 //	.          .     33:   tk.MustExec("drop table if exists tai")
 //	.   512.19kB     34:   tk.MustExec("create table tai(a varchar(256), b varchar(256), c int as (a+1), d int as (b+1))")
 //	.          .     35:   is := domain.GetDomain(tk.Session()).InfoSchema()
-//	.          .     36:   _, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tai"))
+//	.          .     36:   _, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tai"))
 //	.          .     37:   require.NoError(b, err)
 //	.          .     38:   condition := "(tai.a='%s' AND tai.b='%s') OR" +
 //	.          .     39:           "(tai.a='%s' AND tai.b='%s') OR" +
@@ -134,7 +136,7 @@ import (
 //	.          .     33:   tk.MustExec("drop table if exists tai")
 //	.          .     34:   tk.MustExec("create table tai(a varchar(256), b varchar(256), c int as (a+1), d int as (b+1))")
 //	.          .     35:   is := domain.GetDomain(tk.Session()).InfoSchema()
-//	.          .     36:   _, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tai"))
+//	.          .     36:   _, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tai"))
 //	.          .     37:   require.NoError(b, err)
 //	.          .     38:   condition := "(tai.a='%s' AND tai.b='%s') OR" +
 //	.          .     39:           "(tai.a='%s' AND tai.b='%s') OR" +
@@ -209,7 +211,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	tk.MustExec("drop table if exists tai")
 	tk.MustExec("create table tai(a varchar(256), b varchar(256), c int as (a+1), d int as (b+1))")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	_, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tai"))
+	_, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tai"))
 	require.NoError(b, err)
 	condition := "(tai.a='%s' AND tai.b='%s') OR" +
 		"(tai.a='%s' AND tai.b='%s') OR" +
@@ -265,7 +267,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	require.NoError(b, err, sql)
 	p, err := core.BuildLogicalPlanForTest(ctx, s.GetSCtx(), stmt, s.GetIS())
 	require.NoError(b, err)
-	selection := p.(core.LogicalPlan).Children()[0]
+	selection := p.(base.LogicalPlan).Children()[0]
 	m := make(core.ExprColumnMap, len(selection.Schema().Columns))
 	for _, col := range selection.Schema().Columns {
 		if col.VirtualExpr != nil {
@@ -275,7 +277,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	b.ResetTimer()
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		core.SubstituteExpression(selection.(*core.LogicalSelection).Conditions[0], selection, m, selection.Schema(), nil)
+		core.SubstituteExpression(selection.(*logicalop.LogicalSelection).Conditions[0], selection, m, selection.Schema(), nil)
 	}
 	b.StopTimer()
 }

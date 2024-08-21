@@ -19,7 +19,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
@@ -59,4 +62,32 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+func TestSchemaCacheSizeVar(t *testing.T) {
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	size, isNull, err := m.GetSchemaCacheSize()
+	require.NoError(t, err)
+	require.Equal(t, size, uint64(0))
+	require.Equal(t, isNull, true)
+	require.NoError(t, txn.Rollback())
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMeta(txn)
+	size, isNull, err = m.GetSchemaCacheSize()
+	require.NoError(t, err)
+	require.Equal(t, size, uint64(variable.DefTiDBSchemaCacheSize))
+	require.Equal(t, isNull, false)
+	require.NoError(t, txn.Rollback())
 }

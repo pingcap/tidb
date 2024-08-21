@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -59,7 +60,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 					assertAction: "TableDual_4's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
 				},
 				{
-					assertAction: "Join_7's columns[Column#28,test.t.a] have been pruned",
+					assertAction: "Join_7's columns[Column#27] have been pruned",
 				},
 			},
 		},
@@ -420,7 +421,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		for _, f := range tc.flags {
 			flag = flag | f
 		}
-		_, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
+		_, err = logicalOptimize(ctx, flag, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		trace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Logical
 		require.NotNil(t, trace, comment)

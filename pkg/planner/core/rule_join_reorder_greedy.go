@@ -20,6 +20,7 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
 type joinReorderGreedySolver struct {
@@ -42,7 +43,7 @@ type joinReorderGreedySolver struct {
 //
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
-func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
+func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer *joinReorderTrace) (base.LogicalPlan, error) {
 	var err error
 	s.curJoinGroup, err = s.generateJoinOrderNode(joinNodePlans, tracer)
 	if err != nil {
@@ -52,7 +53,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 	if s.leadingJoinGroup != nil {
 		// We have a leading hint to let some tables join first. The result is stored in the s.leadingJoinGroup.
 		// We generate jrNode separately for it.
-		leadingJoinNodes, err = s.generateJoinOrderNode([]LogicalPlan{s.leadingJoinGroup}, tracer)
+		leadingJoinNodes, err = s.generateJoinOrderNode([]base.LogicalPlan{s.leadingJoinGroup}, tracer)
 		if err != nil {
 			return nil, err
 		}
@@ -70,7 +71,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 		leadingJoinNodes := append(leadingJoinNodes, s.curJoinGroup...)
 		s.curJoinGroup = leadingJoinNodes
 	}
-	var cartesianGroup []LogicalPlan
+	var cartesianGroup []base.LogicalPlan
 	for len(s.curJoinGroup) > 0 {
 		newNode, err := s.constructConnectedJoinTree(tracer)
 		if err != nil {
@@ -98,13 +99,13 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 		bestCost := math.MaxFloat64
 		bestIdx := -1
 		var finalRemainOthers []expression.Expression
-		var bestJoin LogicalPlan
+		var bestJoin base.LogicalPlan
 		for i, node := range s.curJoinGroup {
 			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p)
 			if newJoin == nil {
 				continue
 			}
-			_, err := newJoin.recursiveDeriveStats(nil)
+			_, err := newJoin.RecursiveDeriveStats(nil)
 			if err != nil {
 				return nil, err
 			}
@@ -131,7 +132,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	return curJoinTree, nil
 }
 
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan LogicalPlan) (LogicalPlan, []expression.Expression) {
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan) (base.LogicalPlan, []expression.Expression) {
 	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
 	if len(usedEdges) == 0 {
 		return nil, nil

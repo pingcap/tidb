@@ -19,11 +19,17 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"net"
+	"net/http"
+	"net/http/pprof"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -35,10 +41,13 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -61,7 +70,11 @@ type TestKit struct {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
-	require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
+	if _, ok := t.(*testing.B); !ok {
+		// Don't check `intest.InTest` for benchmark. We should allow to run benchmarks without `intest` tag, because some assert may have significant performance
+		// impact.
+		require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
+	}
 	testenv.SetGOMAXPROCSForTest()
 	tk := &TestKit{
 		require: require.New(t),
@@ -105,6 +118,15 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Sessi
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = NewSession(tk.t, tk.store)
+	if intest.InTest {
+		seed := uint64(time.Now().UnixNano())
+		tk.t.Logf("RefreshSession rand seed: %d", seed)
+		rng := rand.New(rand.NewSource(int64(seed)))
+		if rng.Intn(10) < 3 { // 70% chance to run infoschema v2
+			tk.MustExec("set @@global.tidb_schema_cache_size = 0")
+		}
+	}
+
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
@@ -151,7 +173,43 @@ func (tk *TestKit) MustQuery(sql string, args ...any) *Result {
 			tk.alloc.Reset()
 		}
 	}()
-	return tk.MustQueryWithContext(context.Background(), sql, args...)
+	rs1 := tk.MustQueryWithContext(context.Background(), sql, args...)
+	if !strings.Contains(sql, "information_schema") ||
+		strings.Contains(sql, "trace") ||
+		strings.Contains(sql, "statements_summary") ||
+		strings.Contains(sql, "slow_query") ||
+		strings.Contains(sql, "cluster_config") ||
+		strings.Contains(sql, "CLUSTER_") ||
+		strings.Contains(sql, "STATEMENTS_SUMMARY_EVICTED") ||
+		strings.Contains(sql, "TIDB_TRX") {
+		return rs1
+	}
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/skipExtractor", "return(true)")
+	if err != nil {
+		panic(err)
+	}
+	rs2 := tk.MustQueryWithContext(context.Background(), sql, args...)
+	err = failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/skipExtractor")
+	if err != nil {
+		panic(err)
+	}
+	rs1Row := make([][]string, 0, len(rs1.rows))
+	for _, row := range rs1.rows {
+		rs1SubRow := make([]string, 0, len(row))
+		for _, col := range row {
+			rs1SubRow = append(rs1SubRow, strings.Clone(col))
+		}
+		rs1Row = append(rs1Row, rs1SubRow)
+	}
+	slices.SortFunc(rs1.rows, func(a, b []string) int {
+		return slices.Compare(a, b)
+	})
+	slices.SortFunc(rs2.rows, func(a, b []string) int {
+		return slices.Compare(a, b)
+	})
+	rs2.Check(rs1.Rows())
+	rs1.rows = rs1Row
+	return rs1
 }
 
 // EventuallyMustQueryAndCheck query the statements and assert that
@@ -465,7 +523,7 @@ func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
 // MustContainErrMsg executes a sql statement and assert its error message containing errStr.
 func (tk *TestKit) MustContainErrMsg(sql string, errStr any) {
 	err := tk.ExecToErr(sql)
-	tk.require.Error(err)
+	tk.require.Error(err, "sql: %s", sql)
 	tk.require.Contains(err.Error(), errStr)
 }
 
@@ -687,10 +745,33 @@ func buildRowsRecordSet(ctx context.Context, rs sqlexec.RecordSet) sqlexec.Recor
 	}
 }
 
-// EnableFailPoint enables fail-point, and disable it when test finished.
-func EnableFailPoint(t testing.TB, name, expr string) {
-	require.NoError(t, failpoint.Enable(name, expr))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable(name))
+// MockTiDBStatusPort mock the TiDB server status port to have metrics.
+func MockTiDBStatusPort(ctx context.Context, b *testing.B, port string) *util.WaitGroupWrapper {
+	var wg util.WaitGroupWrapper
+	err := metricsutil.RegisterMetrics()
+	terror.MustNil(err)
+	router := mux.NewRouter()
+	router.Handle("/metrics", promhttp.Handler())
+	serverMux := http.NewServeMux()
+	serverMux.Handle("/", router)
+	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
+	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	statusListener, err := net.Listen("tcp", "0.0.0.0:"+port)
+	require.NoError(b, err)
+	statusServer := &http.Server{Handler: serverMux}
+	wg.RunWithLog(func() {
+		if err := statusServer.Serve(statusListener); err != nil {
+			b.Logf("status server serve failed: %v", err)
+		}
 	})
+	wg.RunWithLog(func() {
+		<-ctx.Done()
+		_ = statusServer.Close()
+	})
+
+	return &wg
 }

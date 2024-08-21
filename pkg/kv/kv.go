@@ -222,6 +222,8 @@ type Transaction interface {
 	Mem() uint64
 	// SetMemoryFootprintChangeHook sets the hook that will be called when the memory footprint changes.
 	SetMemoryFootprintChangeHook(func(uint64))
+	// MemHookSet returns whether the memory footprint change hook is set.
+	MemHookSet() bool
 	// Len returns the number of entries in the DB.
 	Len() int
 	// Commit commits the transaction operations to KV store.
@@ -381,8 +383,8 @@ func NewPartitionedKeyRanges(ranges [][]KeyRange) *KeyRanges {
 	return NewPartitionedKeyRangesWithHints(ranges, nil)
 }
 
-// NewNonParitionedKeyRanges constructs a new RequestRange for a non partitioned table.
-func NewNonParitionedKeyRanges(ranges []KeyRange) *KeyRanges {
+// NewNonPartitionedKeyRanges constructs a new RequestRange for a non-partitioned table.
+func NewNonPartitionedKeyRanges(ranges []KeyRange) *KeyRanges {
 	return NewNonParitionedKeyRangesWithHint(ranges, nil)
 }
 

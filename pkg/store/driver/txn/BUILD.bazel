@@ -25,6 +25,7 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",

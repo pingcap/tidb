@@ -5,8 +5,8 @@ create table tp(a datetime, b int) partition by range columns (a) (partition p0 
 create table t(a datetime, b int) partition by range columns (a) (partition p0 values less than("2012-12-10 00:00:00"), partition p1 values less than("2022-12-30 00:00:00"), partition p2 values less than("2025-12-12 00:00:00"));
 insert into tp values("2015-09-09 00:00:00", 1), ("2020-08-08 19:00:01", 2), ("2024-01-01 01:01:01", 3);
 insert into t values("2015-09-09 00:00:00", 1), ("2020-08-08 19:00:01", 2), ("2024-01-01 01:01:01", 3);
-analyze table tp;
-analyze table t;
+analyze table tp all columns;
+analyze table t all columns;
 explain format='brief' select * from tp where a != '2024-01-01 01:01:01';
 --sorted_result
 select * from tp where a != '2024-01-01 01:01:01';
@@ -26,8 +26,8 @@ create table tp(a datetime, b int) partition by range(weekday(a)) (partition p0 
 create table t(a datetime, b int);
 insert into tp values("2020-08-17 00:00:00", 1), ("2020-08-18 00:00:00", 2), ("2020-08-19 00:00:00", 4), ("2020-08-20 00:00:00", 5), ("2020-08-21 00:00:00", 6), ("2020-08-22 00:00:00", 0);
 insert into t values("2020-08-17 00:00:00", 1), ("2020-08-18 00:00:00", 2), ("2020-08-19 00:00:00", 4), ("2020-08-20 00:00:00", 5), ("2020-08-21 00:00:00", 6), ("2020-08-22 00:00:00", 0);
-analyze table tp;
-analyze table t;
+analyze table tp all columns;
+analyze table t all columns;
 explain format='brief' select * from tp where a = '2020-08-17 00:00:00';
 --sorted_result
 select * from tp where a = '2020-08-17 00:00:00';
@@ -52,8 +52,8 @@ create table tp(a timestamp, b int) partition by range(floor(unix_timestamp(a)))
 create table t(a timestamp, b int);
 insert into tp values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3);
 insert into t values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3);
-analyze table tp;
-analyze table t;
+analyze table tp all columns;
+analyze table t all columns;
 explain select * from tp where a > '2020-09-11 00:00:00';
 --sorted_result
 select * from tp where a > '2020-09-11 00:00:00';
@@ -73,8 +73,8 @@ create table tp(a timestamp, b int) partition by range(unix_timestamp(a)) (parti
 create table t(a timestamp, b int);
 insert into tp values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3);
 insert into t values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3);
-analyze table tp;
-analyze table t;
+analyze table tp all columns;
+analyze table t all columns;
 explain select * from tp where a > '2020-09-11 00:00:00';
 --sorted_result
 select * from tp where a > '2020-09-11 00:00:00';
@@ -94,8 +94,8 @@ create table tp(a datetime, b int) partition by range columns(a) (partition p0 v
 create table t(a datetime, b int);
 insert into tp values('2020-01-01 12:00:00', 1), ('2020-08-22 10:00:00', 2), ('2020-09-09 11:00:00', 3), ('2020-10-01 00:00:00', 4);
 insert into t values('2020-01-01 12:00:00', 1), ('2020-08-22 10:00:00', 2), ('2020-09-09 11:00:00', 3), ('2020-10-01 00:00:00', 4);
-analyze table tp;
-analyze table t;
+analyze table tp all columns;
+analyze table t all columns;
 explain select * from tp where a < '2020-09-01 00:00:00';
 --sorted_result
 select * from tp where a < '2020-09-01 00:00:00';
@@ -115,8 +115,8 @@ create table tp(a varchar(255), b int) partition by range columns(a) (partition 
 create table t(a varchar(255), b int);
 insert into tp values('aaa', 1), ('bbbb', 2), ('ccc', 3), ('dfg', 4), ('kkkk', 5), ('10', 6);
 insert into t values('aaa', 1), ('bbbb', 2), ('ccc', 3), ('dfg', 4), ('kkkk', 5), ('10', 6);
-analyze table tp;
-analyze table t;
+analyze table tp all columns;
+analyze table t all columns;
 explain select * from tp where a < '10';
 --sorted_result
 select * from tp where a < '10';
@@ -143,9 +143,9 @@ insert into trange values(1, NULL), (1, NULL), (1, 1), (2, 1), (3, 2), (4, 3), (
 insert into thash values(1, NULL), (1, NULL), (1, 1), (2, 1), (3, 2), (4, 3), (5, 5), (6, 7), (7, 7), (7, 7), (10, NULL), (NULL, NULL), (NULL, 1);
 insert into t values(1, NULL), (1, NULL), (1, 1), (2, 1), (3, 2), (4, 3), (5, 5), (6, 7), (7, 7), (7, 7), (10, NULL), (NULL, NULL), (NULL, 1);
 set session tidb_partition_prune_mode='dynamic';
-analyze table trange;
-analyze table thash;
-analyze table t;
+analyze table trange all columns;
+analyze table thash all columns;
+analyze table t all columns;
 --sorted_result
 SELECT * from t where a = 2;
 explain format='brief' select * from trange where a = 2;

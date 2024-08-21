@@ -20,6 +20,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/implementation"
 	"github.com/pingcap/tidb/pkg/planner/memo"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
@@ -38,7 +39,7 @@ type Enforcer interface {
 // GetEnforcerRules gets all candidate enforcer rules based
 // on required physical property.
 func GetEnforcerRules(g *memo.Group, prop *property.PhysicalProperty) (enforcers []Enforcer) {
-	if g.EngineType != memo.EngineTiDB {
+	if g.EngineType != pattern.EngineTiDB {
 		return
 	}
 	if !prop.IsSortItemEmpty() {

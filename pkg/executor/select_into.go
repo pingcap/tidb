@@ -149,7 +149,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				s.lineBuf = append(s.lineBuf, nullTerm...)
 				continue
 			}
-			et := col.GetType().EvalType()
+			et := col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).EvalType()
 			if (encloseFlag && !encloseOpt) ||
 				(encloseFlag && encloseOpt && s.considerEncloseOpt(et)) {
 				s.lineBuf = append(s.lineBuf, encloseByte)
@@ -158,11 +158,11 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				s.enclosed = false
 			}
 			s.fieldBuf = s.fieldBuf[:0]
-			switch col.GetType().GetType() {
+			switch col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).GetType() {
 			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeYear:
 				s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
 			case mysql.TypeLonglong:
-				if mysql.HasUnsignedFlag(col.GetType().GetFlag()) {
+				if mysql.HasUnsignedFlag(col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).GetFlag()) {
 					s.fieldBuf = strconv.AppendUint(s.fieldBuf, row.GetUint64(j), 10)
 				} else {
 					s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
@@ -182,7 +182,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 				s.fieldBuf = append(s.fieldBuf, row.GetTime(j).String()...)
 			case mysql.TypeDuration:
-				s.fieldBuf = append(s.fieldBuf, row.GetDuration(j, col.GetType().GetDecimal()).String()...)
+				s.fieldBuf = append(s.fieldBuf, row.GetDuration(j, col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).GetDecimal()).String()...)
 			case mysql.TypeEnum:
 				s.fieldBuf = append(s.fieldBuf, row.GetEnum(j).String()...)
 			case mysql.TypeSet:
@@ -191,7 +191,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				s.fieldBuf = append(s.fieldBuf, row.GetJSON(j).String()...)
 			}
 
-			switch col.GetType().EvalType() {
+			switch col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).EvalType() {
 			case types.ETString, types.ETJson:
 				s.lineBuf = append(s.lineBuf, s.escapeField(s.fieldBuf)...)
 			default:

@@ -24,21 +24,22 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -157,12 +158,13 @@ func TestVerifyChecksum(t *testing.T) {
 
 func TestGetTargetNodeCpuCnt(t *testing.T) {
 	_, tm, ctx := testutil.InitTableTest(t)
-	require.False(t, variable.EnableDistTask.Load())
+	old := variable.EnableDistTask.Load()
 
+	variable.EnableDistTask.Store(false)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-		variable.EnableDistTask.Store(false)
+		variable.EnableDistTask.Store(old)
 	})
 	require.NoError(t, tm.InitMeta(ctx, "tidb1", ""))
 
@@ -206,7 +208,7 @@ func TestPostProcess(t *testing.T) {
 	require.NoError(t, err)
 	dbInfo, ok := do.InfoSchema().SchemaByName(model.NewCIStr("db"))
 	require.True(t, ok)
-	table, err := do.InfoSchema().TableByName(model.NewCIStr("db"), model.NewCIStr("tb"))
+	table, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("db"), model.NewCIStr("tb"))
 	require.NoError(t, err)
 	plan := &importer.Plan{
 		DBID:             dbInfo.ID,
@@ -227,7 +229,7 @@ func TestPostProcess(t *testing.T) {
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger))
 	// rebase success
 	tk.MustExec("create table db.tb2(id int auto_increment primary key)")
-	table, err = do.InfoSchema().TableByName(model.NewCIStr("db"), model.NewCIStr("tb2"))
+	table, err = do.InfoSchema().TableByName(context.Background(), model.NewCIStr("db"), model.NewCIStr("tb2"))
 	require.NoError(t, err)
 	plan.TableInfo, plan.DesiredTableInfo = table.Meta(), table.Meta()
 	integration.BeforeTestExternal(t)
@@ -258,9 +260,9 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	require.NoError(t, err)
 	dbInfo, ok := do.InfoSchema().SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
-	table, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
+	table, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(tableName))
 	require.NoError(t, err)
-	var selectPlan plannercore.PhysicalPlan
+	var selectPlan base.PhysicalPlan
 	if path == "" {
 		selectPlan = &plannercore.PhysicalSelection{}
 	}

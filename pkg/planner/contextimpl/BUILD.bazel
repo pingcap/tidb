@@ -10,5 +10,6 @@ go_library(
         "//pkg/planner/context",
         "//pkg/sessionctx",
         "//pkg/sessiontxn",
+        "//pkg/util/intest",
     ],
 )

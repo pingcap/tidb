@@ -20,12 +20,21 @@ import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
+// SQLExecutor provides a subset of methods in RestrictedSQLExecutor.
+var _ SQLExecutor = sqlexec.RestrictedSQLExecutor(nil)
+
 // SQLExecutor is the interface for SQL executing in expression.
-// We do not `sqlexec.SQLExecutor` here to avoid to introduce too many dependencies in `sessionctx.Context`
+// We do not `sqlexec.SQLExecutor` to limit expression to use specified methods only.
 type SQLExecutor interface {
-	ExecRestrictedSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, []*ast.ResultField, error)
+	ExecRestrictedSQL(
+		ctx context.Context,
+		opts []sqlexec.OptionFuncAlias,
+		sql string,
+		args ...any,
+	) ([]chunk.Row, []*ast.ResultField, error)
 }
 
 // SQLExecutorPropProvider provides the SQLExecutor

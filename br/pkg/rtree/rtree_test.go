@@ -220,3 +220,58 @@ func TestRangeTreeMerge(t *testing.T) {
 		}
 	}
 }
+
+func buildProgressRange(startKey, endKey string) *rtree.ProgressRange {
+	pr := &rtree.ProgressRange{
+		Res: rtree.NewRangeTree(),
+		Origin: rtree.Range{
+			StartKey: []byte(startKey),
+			EndKey:   []byte(endKey),
+		},
+	}
+	return pr
+}
+
+func TestProgressRangeTree(t *testing.T) {
+	prTree := rtree.NewProgressRangeTree()
+
+	require.NoError(t, prTree.Insert(buildProgressRange("aa", "cc")))
+	require.Error(t, prTree.Insert(buildProgressRange("bb", "cc")))
+	require.Error(t, prTree.Insert(buildProgressRange("bb", "dd")))
+	require.NoError(t, prTree.Insert(buildProgressRange("cc", "dd")))
+	require.NoError(t, prTree.Insert(buildProgressRange("ee", "ff")))
+
+	prIter := prTree.Iter()
+	ranges := prIter.GetIncompleteRanges()
+	require.Equal(t, rtree.Range{StartKey: []byte("aa"), EndKey: []byte("cc")}, ranges[0])
+	require.Equal(t, rtree.Range{StartKey: []byte("cc"), EndKey: []byte("dd")}, ranges[1])
+	require.Equal(t, rtree.Range{StartKey: []byte("ee"), EndKey: []byte("ff")}, ranges[2])
+
+	pr, err := prTree.FindContained([]byte("aaa"), []byte("b"))
+	require.NoError(t, err)
+	pr.Res.Put([]byte("aaa"), []byte("b"), nil)
+
+	pr, err = prTree.FindContained([]byte("cc"), []byte("dd"))
+	require.NoError(t, err)
+	pr.Res.Put([]byte("cc"), []byte("dd"), nil)
+
+	ranges = prIter.GetIncompleteRanges()
+	require.Equal(t, rtree.Range{StartKey: []byte("aa"), EndKey: []byte("aaa")}, ranges[0])
+	require.Equal(t, rtree.Range{StartKey: []byte("b"), EndKey: []byte("cc")}, ranges[1])
+	require.Equal(t, rtree.Range{StartKey: []byte("ee"), EndKey: []byte("ff")}, ranges[2])
+
+	pr, err = prTree.FindContained([]byte("aa"), []byte("aaa"))
+	require.NoError(t, err)
+	pr.Res.Put([]byte("aa"), []byte("aaa"), nil)
+
+	pr, err = prTree.FindContained([]byte("b"), []byte("cc"))
+	require.NoError(t, err)
+	pr.Res.Put([]byte("b"), []byte("cc"), nil)
+
+	pr, err = prTree.FindContained([]byte("ee"), []byte("ff"))
+	require.NoError(t, err)
+	pr.Res.Put([]byte("ee"), []byte("ff"), nil)
+
+	ranges = prIter.GetIncompleteRanges()
+	require.Equal(t, 0, len(ranges))
+}

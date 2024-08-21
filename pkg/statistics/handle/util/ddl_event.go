@@ -17,8 +17,12 @@ package util
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -33,18 +37,34 @@ type DDLEvent struct {
 	oldTableInfo *model.TableInfo
 	oldPartInfo  *model.PartitionInfo
 	columnInfos  []*model.ColumnInfo
+	// schemaID is the ID of the schema that the table belongs to.
+	// Used to filter out the system or memory tables.
+	schemaID int64
 	// This value is used to store the table ID during a transition.
 	// It applies when a table structure is being changed from partitioned to non-partitioned, or vice versa.
 	oldTableID int64
 	tp         model.ActionType
 }
 
+// IsMemOrSysDB checks whether the table is in the memory or system database.
+func (e *DDLEvent) IsMemOrSysDB(sctx sessionctx.Context) (bool, error) {
+	intest.Assert(e.schemaID != 0, "schemaID should not be 0, please set it when creating the event")
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	schema, ok := is.SchemaByID(e.schemaID)
+	if !ok {
+		return false, fmt.Errorf("schema not found for table %s", e.tableInfo.Name)
+	}
+	return util.IsMemOrSysDB(schema.Name.L), nil
+}
+
 // NewCreateTableEvent creates a new ddl event that creates a table.
 func NewCreateTableEvent(
+	schemaID int64,
 	newTableInfo *model.TableInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:        model.ActionCreateTable,
+		schemaID:  schemaID,
 		tableInfo: newTableInfo,
 	}
 }
@@ -56,11 +76,13 @@ func (e *DDLEvent) GetCreateTableInfo() (newTableInfo *model.TableInfo) {
 
 // NewTruncateTableEvent creates a new ddl event that truncates a table.
 func NewTruncateTableEvent(
+	schemaID int64,
 	newTableInfo *model.TableInfo,
 	droppedTableInfo *model.TableInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:           model.ActionTruncateTable,
+		schemaID:     schemaID,
 		tableInfo:    newTableInfo,
 		oldTableInfo: droppedTableInfo,
 	}
@@ -73,10 +95,12 @@ func (e *DDLEvent) GetTruncateTableInfo() (newTableInfo *model.TableInfo, droppe
 
 // NewDropTableEvent creates a new ddl event that drops a table.
 func NewDropTableEvent(
+	schemaID int64,
 	droppedTableInfo *model.TableInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:           model.ActionDropTable,
+		schemaID:     schemaID,
 		oldTableInfo: droppedTableInfo,
 	}
 }
@@ -89,11 +113,13 @@ func (e *DDLEvent) GetDropTableInfo() (newTableInfo *model.TableInfo) {
 // NewAddColumnEvent creates a new ddl event that
 // adds a column.
 func NewAddColumnEvent(
+	schemaID int64,
 	newTableInfo *model.TableInfo,
 	newColumnInfo []*model.ColumnInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionAddColumn,
+		schemaID:    schemaID,
 		tableInfo:   newTableInfo,
 		columnInfos: newColumnInfo,
 	}
@@ -107,11 +133,13 @@ func (e *DDLEvent) GetAddColumnInfo() (newTableInfo *model.TableInfo, newColumnI
 // NewModifyColumnEvent creates a new ddl event that
 // modifies a column.
 func NewModifyColumnEvent(
+	schemaID int64,
 	newTableInfo *model.TableInfo,
 	modifiedColumnInfo []*model.ColumnInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionModifyColumn,
+		schemaID:    schemaID,
 		tableInfo:   newTableInfo,
 		columnInfos: modifiedColumnInfo,
 	}
@@ -124,11 +152,13 @@ func (e *DDLEvent) GetModifyColumnInfo() (newTableInfo *model.TableInfo, modifie
 
 // NewAddPartitionEvent creates a new ddl event that adds partitions.
 func NewAddPartitionEvent(
+	schemaID int64,
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:        model.ActionAddTablePartition,
+		schemaID:  schemaID,
 		tableInfo: globalTableInfo,
 		partInfo:  addedPartInfo,
 	}
@@ -141,11 +171,13 @@ func (e *DDLEvent) GetAddPartitionInfo() (globalTableInfo *model.TableInfo, adde
 
 // NewDropPartitionEvent creates a new ddl event that drops partitions.
 func NewDropPartitionEvent(
+	schemaID int64,
 	globalTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionDropTablePartition,
+		schemaID:    schemaID,
 		tableInfo:   globalTableInfo,
 		oldPartInfo: droppedPartInfo,
 	}
@@ -159,6 +191,7 @@ func (e *DDLEvent) GetDropPartitionInfo() (globalTableInfo *model.TableInfo, dro
 // NewExchangePartitionEvent creates a new ddl event that exchanges a partition.
 // Please make sure pass the information before the exchange.
 func NewExchangePartitionEvent(
+	schemaID int64,
 	globalTableInfo *model.TableInfo,
 	originalPartInfo *model.PartitionInfo,
 	originalTableInfo *model.TableInfo,
@@ -181,13 +214,14 @@ func NewExchangePartitionEvent(
 	}
 	return &DDLEvent{
 		tp:           model.ActionExchangeTablePartition,
+		schemaID:     schemaID,
 		tableInfo:    globalTableInfo,
 		partInfo:     originalPartInfo,
 		oldTableInfo: originalTableInfo,
 	}
 }
 
-// GetExchangePartitionInfo gets the table info of the table that is exchanged a partition.\
+// GetExchangePartitionInfo gets the table info of the table that is exchanged a partition.
 // Note: All information pertains to the state before the exchange.
 func (e *DDLEvent) GetExchangePartitionInfo() (
 	globalTableInfo *model.TableInfo,
@@ -200,12 +234,14 @@ func (e *DDLEvent) GetExchangePartitionInfo() (
 // NewReorganizePartitionEvent creates a new ddl event that reorganizes partitions.
 // We also use it for increasing or decreasing the number of hash partitions.
 func NewReorganizePartitionEvent(
+	schemaID int64,
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionReorganizePartition,
+		schemaID:    schemaID,
 		tableInfo:   globalTableInfo,
 		partInfo:    addedPartInfo,
 		oldPartInfo: droppedPartInfo,
@@ -223,12 +259,14 @@ func (e *DDLEvent) GetReorganizePartitionInfo() (
 
 // NewTruncatePartitionEvent creates a new ddl event that truncates partitions.
 func NewTruncatePartitionEvent(
+	schemaID int64,
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionTruncateTablePartition,
+		schemaID:    schemaID,
 		tableInfo:   globalTableInfo,
 		partInfo:    addedPartInfo,
 		oldPartInfo: droppedPartInfo,
@@ -247,12 +285,14 @@ func (e *DDLEvent) GetTruncatePartitionInfo() (
 // NewAddPartitioningEvent creates a new ddl event that converts a single table to a partitioned table.
 // For example, `alter table t partition by range (c1) (partition p1 values less than (10))`.
 func NewAddPartitioningEvent(
+	schemaID int64,
 	oldSingleTableID int64,
 	newGlobalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:         model.ActionAlterTablePartitioning,
+		schemaID:   schemaID,
 		oldTableID: oldSingleTableID,
 		tableInfo:  newGlobalTableInfo,
 		partInfo:   addedPartInfo,
@@ -271,12 +311,14 @@ func (e *DDLEvent) GetAddPartitioningInfo() (
 // NewRemovePartitioningEvent creates a new ddl event that converts a partitioned table to a single table.
 // For example, `alter table t remove partitioning`.
 func NewRemovePartitioningEvent(
+	schemaID int64,
 	oldPartitionedTableID int64,
 	newSingleTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionRemovePartitioning,
+		schemaID:    schemaID,
 		oldTableID:  oldPartitionedTableID,
 		tableInfo:   newSingleTableInfo,
 		oldPartInfo: droppedPartInfo,
@@ -307,6 +349,9 @@ func (e *DDLEvent) GetType() model.ActionType {
 // String implements fmt.Stringer interface.
 func (e *DDLEvent) String() string {
 	ret := fmt.Sprintf("(Event Type: %s", e.tp)
+	if e.schemaID != 0 {
+		ret += fmt.Sprintf(", Schema ID: %d", e.schemaID)
+	}
 	if e.tableInfo != nil {
 		ret += fmt.Sprintf(", Table ID: %d, Table Name: %s", e.tableInfo.ID, e.tableInfo.Name)
 	}

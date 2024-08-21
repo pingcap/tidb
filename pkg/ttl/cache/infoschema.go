@@ -49,13 +49,14 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 	}
 
 	newTables := make(map[int64]*PhysicalTable, len(isc.Tables))
-	for _, dbName := range is.AllSchemaNames() {
-		for _, tbl := range is.SchemaTables(dbName) {
-			tblInfo := tbl.Meta()
+
+	ch := is.ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	for _, v := range ch {
+		for _, tblInfo := range v.TableInfos {
 			if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable || tblInfo.State != model.StatePublic {
 				continue
 			}
-
+			dbName := v.DBName
 			logger := logutil.BgLogger().
 				With(zap.String("schema", dbName.L),
 					zap.Int64("tableID", tblInfo.ID), zap.String("tableName", tblInfo.Name.L))

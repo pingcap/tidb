@@ -218,8 +218,9 @@ func TestInferCollation(t *testing.T) {
 		},
 	}
 
+	ctx := createContext(t)
 	for i, test := range tests {
-		ec := inferCollation(test.exprs...)
+		ec := inferCollation(ctx, test.exprs...)
 		if test.err {
 			require.Nil(t, ec, i)
 		} else {

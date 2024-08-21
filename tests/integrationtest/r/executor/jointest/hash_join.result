@@ -215,8 +215,7 @@ a	b	a
 2	NULL	NULL
 drop table if exists t,s;
 create table t(a int primary key auto_increment, b time);
-create table s(a int, b time);
-alter table s add index idx(a,b);
+create table s(a int, b time, index idx(a, b));
 set @@tidb_index_join_batch_size=4;
 set @@tidb_init_chunk_size=1;
 set @@tidb_max_chunk_size=32;
@@ -231,8 +230,8 @@ insert into t select 0, b + 1 from t;
 insert into t select 0, b + 1 from t;
 insert into t select 0, b + 1 from t;
 insert into s select a, b - 1 from t;
-analyze table t;
-analyze table s;
+analyze table t all columns;
+analyze table s all columns;
 desc format = 'brief' select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:count(1)->Column#6
@@ -253,13 +252,13 @@ count(*)
 desc format = 'brief' select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:count(1)->Column#6
-└─IndexMergeJoin	64.00	root		inner join, inner:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
-  ├─TableReader(Build)	64.00	root		data:Selection
-  │ └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.t.b))
-  │   └─TableFullScan	64.00	cop[tikv]	table:t	keep order:false
-  └─IndexReader(Probe)	64.00	root		index:Selection
-    └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.s.a)), not(isnull(executor__jointest__hash_join.s.b))
-      └─IndexRangeScan	64.00	cop[tikv]	table:s, index:idx(a, b)	range: decided by [eq(executor__jointest__hash_join.s.a, executor__jointest__hash_join.t.a) lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)], keep order:true
+└─MergeJoin	64.00	root		inner join, left key:executor__jointest__hash_join.t.a, right key:executor__jointest__hash_join.s.a, other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
+  ├─IndexReader(Build)	64.00	root		index:Selection
+  │ └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.s.b))
+  │   └─IndexFullScan	64.00	cop[tikv]	table:s, index:idx(a, b)	keep order:true
+  └─TableReader(Probe)	64.00	root		data:Selection
+    └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.t.b))
+      └─TableFullScan	64.00	cop[tikv]	table:t	keep order:true
 select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 count(*)
 64

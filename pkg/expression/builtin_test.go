@@ -52,6 +52,7 @@ func evalBuiltinFuncConcurrent(f builtinFunc, ctx EvalContext, row chunk.Row) (d
 }
 
 func evalBuiltinFunc(f builtinFunc, ctx EvalContext, row chunk.Row) (d types.Datum, err error) {
+	ctx = wrapEvalAssert(ctx, f)
 	var (
 		res    any
 		isNull bool
@@ -79,11 +80,11 @@ func evalBuiltinFunc(f builtinFunc, ctx EvalContext, row chunk.Row) (d types.Dat
 		res, isNull, err = f.evalString(ctx, row)
 	}
 
-	if isNull || err != nil {
+	d.SetValue(res, f.getRetTp())
+	if isNull {
 		d.SetNull()
 		return d, err
 	}
-	d.SetValue(res, f.getRetTp())
 	return
 }
 

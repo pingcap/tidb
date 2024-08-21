@@ -118,7 +118,7 @@ func TestString(t *testing.T) {
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
 		"1 Get_commit_ts_time: 1 Get_latest_ts_time: 1 Commit_backoff_time: 1 " +
 		"Prewrite_Backoff_types: [backoff1 backoff2] Commit_Backoff_types: [commit1 commit2] Slowest_prewrite_rpc_detail: {total:1.000s, region_id: 1000, " +
-		"store: tikv-1:20160, tikv_wall_time: 500ms, scan_detail: {total_process_keys: 10, total_keys: 100, " +
+		"store: tikv-1:20160, time_detail: {tikv_wall_time: 500ms}, scan_detail: {total_process_keys: 10, total_keys: 100, " +
 		"rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, block: {cache_hit_count: 1, read_count: 1, " +
 		"read_byte: 100 Bytes, read_time: 20ms}}}, write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, " +
 		"persist_log: {total: 30µs, write_leader_wait: 40µs, sync_log: 45µs, write_memtable: 50µs}, " +
@@ -311,7 +311,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		Commit: commitDetail,
 	}
 	expect := "commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, prewrite type: [backoff1 backoff2]}, " +
-		"slowest_prewrite_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, tikv_wall_time: 500ms, " +
+		"slowest_prewrite_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, time_detail: {tikv_wall_time: 500ms}, " +
 		"scan_detail: {total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, " +
 		"block: {cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, " +
 		"write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, " +
@@ -382,7 +382,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		LockKeys: lockDetail,
 	}
 	expect = "lock_keys: {time:1s, region:2, keys:10, resolve_lock:2s, backoff: {time: 3s, type: [backoff4 backoff5]}, " +
-		"slowest_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, tikv_wall_time: 500ms, scan_detail: " +
+		"slowest_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, time_detail: {tikv_wall_time: 500ms}, scan_detail: " +
 		"{total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, block: " +
 		"{cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, write_detail: " +
 		"{store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, sync_log: 45µs, write_memtable: 50µs}, " +
@@ -478,15 +478,27 @@ func TestCopRuntimeStats2(t *testing.T) {
 		RocksdbBlockReadCount:     20,
 		RocksdbBlockReadByte:      100,
 	}
+	timeDetail := &util.TimeDetail{
+		ProcessTime:      10 * time.Millisecond,
+		SuspendTime:      20 * time.Millisecond,
+		WaitTime:         30 * time.Millisecond,
+		KvReadWallTime:   5 * time.Millisecond,
+		TotalRPCWallTime: 50 * time.Millisecond,
+	}
 	stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
 	for i := 0; i < 1005; i++ {
 		stats.RecordOneCopTask(tableScanID, "tikv", "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
 		stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
+		stats.RecordTimeDetail(tableScanID, "tikv", timeDetail)
 	}
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tikv")
 	expected := "tikv_task:{proc max:0s, min:0s, avg: 2ns, p80:2ns, p95:2ns, iters:2010, tasks:1005}, " +
-		"scan_detail: {total_process_keys: 10060, total_process_keys_size: 10060, total_keys: 15090, rocksdb: {delete_skipped_count: 5030, key_skipped_count: 1006, block: {cache_hit_count: 10060, read_count: 20120, read_byte: 98.2 KB}}}"
+		"scan_detail: {total_process_keys: 10060, total_process_keys_size: 10060, total_keys: 15090, " +
+		"rocksdb: {delete_skipped_count: 5030, key_skipped_count: 1006, " +
+		"block: {cache_hit_count: 10060, read_count: 20120, read_byte: 98.2 KB}}}, " +
+		"time_detail: {total_process_time: 10.1s, total_suspend_time: 20.1s, total_wait_time: 30.2s, " +
+		"total_kv_read_wall_time: 5.03s, tikv_wall_time: 50.3s}"
 	require.Equal(t, expected, cop.String())
 	require.Equal(t, expected, cop.String())
 }

@@ -16,18 +16,25 @@ package meta_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -230,7 +237,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("t"),
 		DBID: dbInfo.ID,
 	}
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo)
+	err = m.CreateTableOrView(1, tbInfo)
 	require.NoError(t, err)
 
 	n, err = m.GetAutoIDAccessors(1, 1).RowID().Inc(10)
@@ -241,7 +248,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo)
+	err = m.CreateTableOrView(1, tbInfo)
 	require.NotNil(t, err)
 	require.True(t, meta.ErrTableExists.Equal(err))
 
@@ -268,7 +275,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("bb"),
 		DBID: dbInfo.ID,
 	}
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo2)
+	err = m.CreateTableOrView(1, tbInfo2)
 	require.NoError(t, err)
 
 	tblName := &model.TableNameInfo{ID: tbInfo.ID, Name: tbInfo.Name}
@@ -302,7 +309,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.DropTableOrView(1, dbInfo.Name.L, tbInfo2.ID, tbInfo2.Name.L)
+	err = m.DropTableOrView(1, tbInfo2.ID)
 	require.NoError(t, err)
 	err = m.GetAutoIDAccessors(1, tbInfo2.ID).Del()
 	require.NoError(t, err)
@@ -334,7 +341,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("t_rename"),
 	}
 	// Create table.
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo100)
+	err = m.CreateTableOrView(1, tbInfo100)
 	require.NoError(t, err)
 	// Update auto ID.
 	currentDBID := int64(1)
@@ -360,7 +367,7 @@ func TestMeta(t *testing.T) {
 		ID:   3,
 		Name: model.NewCIStr("tbl3"),
 	}
-	err = m.CreateTableAndSetAutoID(1, dbInfo.Name.L, tbInfo3, 123, 0)
+	err = m.CreateTableAndSetAutoID(1, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
 	require.NoError(t, err)
 	id, err := m.GetAutoIDAccessors(1, tbInfo3.ID).RowID().Get()
 	require.NoError(t, err)
@@ -370,9 +377,9 @@ func TestMeta(t *testing.T) {
 	require.Equal(t, []byte(strconv.FormatInt(1234, 10)), val)
 	require.Equal(t, []byte{0x6d, 0x44, 0x42, 0x3a, 0x31, 0x0, 0x0, 0x0, 0x0, 0xfb, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x33, 0x0, 0x0, 0x0, 0xfc}, key)
 
-	err = m.DropDatabase(1, dbInfo.Name.L)
+	err = m.DropDatabase(1)
 	require.NoError(t, err)
-	err = m.DropDatabase(currentDBID, dbInfo.Name.L)
+	err = m.DropDatabase(currentDBID)
 	require.NoError(t, err)
 
 	dbs, err = m.ListDatabases()
@@ -648,83 +655,204 @@ func TestCreateMySQLDatabase(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestName(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+func TestIsTableInfoMustLoad(t *testing.T) {
+	tableInfo := &model.TableInfo{
+		TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"},
+	}
+	b, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
+	require.True(t, meta.IsTableInfoMustLoad(b))
 
-	txn, err := store.Begin()
+	tableInfo = &model.TableInfo{
+		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		PlacementPolicyRef: &model.PolicyRefInfo{ID: 1},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		Partition: &model.PartitionInfo{Expr: "a"},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		Lock: &model.TableLockInfo{State: model.TableLockStatePreLock},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		ForeignKeys: []*model.FKInfo{{ID: 1}},
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		TempTableType: model.TempTableGlobal,
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		ID: 123,
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+}
+
+func TestIsTableInfoMustLoadSubStringsOrder(t *testing.T) {
+	// The order matter!
+	// IsTableInfoMustLoad relies on the order of the json marshal result,
+	// or the internal of the json marshal in other words.
+	// This test cover the invariance, if Go std library changes, we can catch it.
+	tableInfo := &model.TableInfo{}
+	b, err := json.Marshal(tableInfo)
+	require.NoError(t, err)
+	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"revision":0}`
+	require.Equal(t, string(b), expect)
+}
+
+func TestTableNameExtract(t *testing.T) {
+	var tbl model.TableInfo
+	tbl.Name = model.NewCIStr(`a`)
+	b, err := json.Marshal(tbl)
 	require.NoError(t, err)
 
-	// TestTableNameKey
-	m := meta.NewMeta(txn)
-	key := m.TableNameKey("db", "tb")
-	require.Equal(t, string(key), "Names:db\x00tb")
+	nameLRegex := regexp.MustCompile(meta.NameExtractRegexp)
+	nameLMatch := nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, "a", nameLMatch[1])
 
-	// TestCheckTableNameExists
-	err = m.CheckTableNameExists(m.TableNameKey("db", "tb"))
-	require.True(t, meta.ErrTableNotExists.Equal(err))
-	// TestCheckTableNameNotExists
-	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb"))
+	tbl.Name = model.NewCIStr(`"a"`)
+	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
+	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, `"a"`, meta.Unescape(nameLMatch[1]))
 
-	// TestCreateTable
-	err = m.CreateTableName("db", "tb", 1)
+	tbl.Name = model.NewCIStr(`""a"`)
+	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("db", "tb"))
-	require.NoError(t, err)
-	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb"))
-	require.True(t, meta.ErrTableExists.Equal(err))
-	err = m.CreateTableName("db", "t", 2)
-	require.NoError(t, err)
+	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, `""a"`, meta.Unescape(nameLMatch[1]))
 
-	err = m.CreateTableName("db", "tb", 3)
-	require.True(t, meta.ErrTableExists.Equal(err))
+	tbl.Name = model.NewCIStr(`"\"a"`)
+	b, err = json.Marshal(tbl)
+	require.NoError(t, err)
+	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, `"\"a"`, meta.Unescape(nameLMatch[1]))
 
-	err = m.CreateTableName("d", "btb", 3)
+	tbl.Name = model.NewCIStr(`"\"啊"`)
+	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("d", "btb"))
-	require.NoError(t, err)
+	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
+	require.Len(t, nameLMatch, 2)
+	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
+}
 
-	// TestDropTableName
-	err = m.DropTableName("db1", "b")
-	require.True(t, meta.ErrTableNotExists.Equal(err))
-	err = m.DropTableName("db", "tb")
-	require.NoError(t, err)
+var benchCases = [][2]string{
+	{"narrow", `CREATE TABLE t (c INT PRIMARY KEY);`},
+	{"wide", `
+CREATE TABLE t (
+	c BIGINT PRIMARY KEY AUTO_RANDOM,
+	c2 TINYINT,
+	c3 BLOB,
+	c4 VARCHAR(255) DEFAULT 'ohsdfihusdfihusdfiuh',
+	c5 FLOAT,
+	c6 BIGINT UNSIGNED,
+	c7 DECIMAL(10, 2),
+	c8 CHAR(10),
+	c9 TEXT,
+	c10 DATE,
+	c11 TIME,
+	c12 TIMESTAMP,
+	c13 DATETIME,
+	INDEX idx(c2),
+	INDEX idx2(c4, c5),
+	INDEX idx3(c6, c2),
+    UNIQUE INDEX idx4(c12),
+    INDEX idx5((c + c2))
+);`},
+}
 
-	// TestDropDatabaseName
-	err = m.DropDatabaseName("xx")
-	require.NoError(t, err)
-	err = m.DropDatabaseName("d")
-	require.NoError(t, err)
-	err = m.CheckTableNameNotExists(m.TableNameKey("d", "btb"))
-	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("db", "t"))
-	require.NoError(t, err)
+func BenchmarkIsTableInfoMustLoad(b *testing.B) {
+	for _, benchCase := range benchCases {
+		b.Run(benchCase[0], func(b *testing.B) {
+			benchIsTableInfoMustLoad(b, benchCase[1])
+		})
+	}
+}
 
-	// TestClearAllTableNames
-	err = m.ClearAllTableNames()
-	require.NoError(t, err)
-	err = m.CheckTableNameNotExists(m.TableNameKey("db1", "t"))
-	require.NoError(t, err)
+func getTableInfoJSON(b *testing.B, sql string) []byte {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(b, err)
+	se := mock.NewContext()
+	tblInfo, err := ddl.MockTableInfo(se, stmt.(*ast.CreateTableStmt), 1)
+	require.NoError(b, err)
+	data, err := json.Marshal(tblInfo)
+	require.NoError(b, err)
 
-	// TestDDLV2Initialized
-	v, err := m.GetDDLV2Initialized()
-	require.NoError(t, err)
-	require.Equal(t, v, false)
-	err = m.SetDDLV2Initialized(true)
-	require.NoError(t, err)
-	v, err = m.GetDDLV2Initialized()
-	require.NoError(t, err)
-	require.Equal(t, v, true)
-	err = m.SetDDLV2Initialized(false)
-	require.NoError(t, err)
-	v, err = m.GetDDLV2Initialized()
-	require.NoError(t, err)
-	require.Equal(t, v, false)
+	return data
+}
 
-	err = txn.Rollback()
-	require.NoError(t, err)
+func benchIsTableInfoMustLoad(b *testing.B, sql string) {
+	data := getTableInfoJSON(b, sql)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		got := meta.IsTableInfoMustLoad(data)
+		intest.Assert(!got)
+	}
+}
+
+func BenchmarkTableNameInfo(b *testing.B) {
+	for _, benchCase := range benchCases {
+		b.Run(benchCase[0]+"-json", func(b *testing.B) {
+			benchJSONTableNameInfo(b, benchCase[1])
+		})
+		b.Run(benchCase[0]+"-fastjson", func(b *testing.B) {
+			benchFastJSONTableNameInfo(b, benchCase[1])
+		})
+	}
+}
+
+func benchJSONTableNameInfo(b *testing.B, sql string) {
+	data := getTableInfoJSON(b, sql)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tbInfo := &model.TableNameInfo{}
+		err := json.Unmarshal(data, tbInfo)
+		intest.Assert(tbInfo.ID == 1)
+		intest.Assert(tbInfo.Name.L == "t")
+		intest.AssertNoError(err)
+	}
+}
+
+func benchFastJSONTableNameInfo(b *testing.B, sql string) {
+	data := getTableInfoJSON(b, sql)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tbInfo, err := meta.FastUnmarshalTableNameInfo(data)
+		intest.AssertNoError(err)
+		intest.Assert(tbInfo.ID == 1)
+		intest.Assert(tbInfo.Name.L == "t")
+	}
 }

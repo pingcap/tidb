@@ -17,10 +17,10 @@ package importer
 import (
 	"context"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"go.uber.org/zap"
 )
 
@@ -44,9 +44,8 @@ func ProcessChunk(
 	hasAutoIncrementAutoID := common.TableHasAutoRowID(tableImporter.tableInfo.Core) &&
 		tableImporter.tableInfo.Core.AutoRandomBits == 0 && tableImporter.tableInfo.Core.ShardRowIDBits == 0 &&
 		tableImporter.tableInfo.Core.Partition == nil
-	dataWriterCfg := &backend.LocalWriterConfig{
-		IsKVSorted: hasAutoIncrementAutoID,
-	}
+	dataWriterCfg := &backend.LocalWriterConfig{}
+	dataWriterCfg.Local.IsKVSorted = hasAutoIncrementAutoID
 	dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
 	if err != nil {
 		return err

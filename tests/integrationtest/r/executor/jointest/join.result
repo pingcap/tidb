@@ -220,7 +220,7 @@ insert into t1 values(1, 100), (2, 100), (3, 100), (4, 100), (5, 100);
 insert into t2 select a*100, b*100 from t1;
 explain format = 'brief' select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;
 id	estRows	task	access object	operator info
-MergeJoin	10000.00	root		left outer join, left key:executor__jointest__join.t1.a, right key:executor__jointest__join.t2.a, left cond:[ne(executor__jointest__join.t1.a, 3)]
+MergeJoin	10000.00	root		left outer join, left key:executor__jointest__join.t1.a, right key:executor__jointest__join.t2.a, left cond:ne(executor__jointest__join.t1.a, 3)
 ├─TableReader(Build)	6666.67	root		data:TableRangeScan
 │ └─TableRangeScan	6666.67	cop[tikv]	table:t2	range:[-inf,3), (3,+inf], keep order:true, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -1363,7 +1363,7 @@ create table t(id int primary key);
 create table s(id int);
 insert into t values(1), (2);
 insert into s values(2), (2);
-select *, (select count(id) from s where id = t.id) from t;
+select *, (select count(id) from s where id = t.id) from t order by id;
 id	(select count(id) from s where id = t.id)
 1	0
 2	2

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/trace"
+	"sync"
 	"time"
 
 	gzap "github.com/grpc-ecosystem/go-grpc-middleware/logging/zap"
@@ -31,6 +32,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/net/http/httpproxy"
 )
 
 const (
@@ -222,9 +224,11 @@ func Logger(ctx context.Context) *zap.Logger {
 	return log.L()
 }
 
-// BgLogger is alias of `logutil.BgLogger()`
+// BgLogger is alias of `logutil.BgLogger()`. It's initialized in tidb-server's
+// main function. Don't use it in `init` or equivalent functions otherwise it
+// will print to stdout.
 func BgLogger() *zap.Logger {
-	return log.L()
+	return log.L().With()
 }
 
 // LoggerWithTraceInfo attaches fields from trace info to logger
@@ -366,5 +370,51 @@ func Eventf(ctx context.Context, format string, args ...any) {
 func SetTag(ctx context.Context, key string, value any) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span.SetTag(key, value)
+	}
+}
+
+// LogEnvVariables logs related environment variables.
+func LogEnvVariables() {
+	// log http proxy settings, it will be used in gRPC connection by default
+	fields := proxyFields()
+	if len(fields) > 0 {
+		log.Info("using proxy config", fields...)
+	}
+}
+
+func proxyFields() []zap.Field {
+	proxyCfg := httpproxy.FromEnvironment()
+	fields := make([]zap.Field, 0, 3)
+	if proxyCfg.HTTPProxy != "" {
+		fields = append(fields, zap.String("http_proxy", proxyCfg.HTTPProxy))
+	}
+	if proxyCfg.HTTPSProxy != "" {
+		fields = append(fields, zap.String("https_proxy", proxyCfg.HTTPSProxy))
+	}
+	if proxyCfg.NoProxy != "" {
+		fields = append(fields, zap.String("no_proxy", proxyCfg.NoProxy))
+	}
+	return fields
+}
+
+// SampleLoggerFactory returns a factory function that creates a sample logger.
+// the logger is used to sample the log to avoid too many logs, it will only log
+// the first 'first' log entries with the same level and message in 'tick' time.
+// NOTE: Because we need to record the log count with the same level and message
+// in this specific logger, the returned factory function will only create one logger.
+// this logger support at most 4096 types of logs with the same level and message.
+func SampleLoggerFactory(tick time.Duration, first int, fields ...zap.Field) func() *zap.Logger {
+	var (
+		once   sync.Once
+		logger *zap.Logger
+	)
+	return func() *zap.Logger {
+		once.Do(func() {
+			sampleCore := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+				return zapcore.NewSamplerWithOptions(core, tick, first, 0)
+			})
+			logger = BgLogger().With(fields...).With(zap.String("sampled", "")).WithOptions(sampleCore)
+		})
+		return logger
 	}
 }

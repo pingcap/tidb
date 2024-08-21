@@ -129,11 +129,11 @@ func TestCursorWithParams(t *testing.T) {
 		0x0, 0x1, 0x3, 0x0, 0x3, 0x0,
 		0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0,
 	)))
-	rows := c.Context().stmts[stmt1.ID()].GetResultSet().GetRowContainerReader()
-	require.Equal(t, int64(1), rows.Current().GetInt64(0))
-	require.Equal(t, int64(2), rows.Current().GetInt64(1))
-	rows.Next()
-	require.Equal(t, rows.End(), rows.Current())
+	rows := c.Context().stmts[stmt1.ID()].GetResultSet().GetRowIterator()
+	require.Equal(t, int64(1), rows.Current(context.Background()).GetInt64(0))
+	require.Equal(t, int64(2), rows.Current(context.Background()).GetInt64(1))
+	rows.Next(context.Background())
+	require.Equal(t, rows.End(), rows.Current(context.Background()))
 
 	// `execute stmt2 using 1` with cursor
 	require.NoError(t, c.Dispatch(ctx, append(
@@ -142,13 +142,13 @@ func TestCursorWithParams(t *testing.T) {
 		0x0, 0x1, 0x3, 0x0,
 		0x1, 0x0, 0x0, 0x0,
 	)))
-	rows = c.Context().stmts[stmt2.ID()].GetResultSet().GetRowContainerReader()
-	require.Equal(t, int64(1), rows.Current().GetInt64(0))
-	require.Equal(t, int64(1), rows.Current().GetInt64(1))
-	require.Equal(t, int64(1), rows.Next().GetInt64(0))
-	require.Equal(t, int64(2), rows.Current().GetInt64(1))
-	rows.Next()
-	require.Equal(t, rows.End(), rows.Current())
+	rows = c.Context().stmts[stmt2.ID()].GetResultSet().GetRowIterator()
+	require.Equal(t, int64(1), rows.Current(context.Background()).GetInt64(0))
+	require.Equal(t, int64(1), rows.Current(context.Background()).GetInt64(1))
+	require.Equal(t, int64(1), rows.Next(context.Background()).GetInt64(0))
+	require.Equal(t, int64(2), rows.Current(context.Background()).GetInt64(1))
+	rows.Next(context.Background())
+	require.Equal(t, rows.End(), rows.Current(context.Background()))
 
 	// fetch stmt2 with fetch size 256
 	require.NoError(t, c.Dispatch(ctx, append(
@@ -357,8 +357,8 @@ func TestCursorFetchReset(t *testing.T) {
 	require.NoError(t, c.flush(context.Background()))
 	require.Equal(t, expected, out.Bytes())
 	// reset the statement
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
+	require.NoError(t, c.Dispatch(ctx, appendUint32(
+		[]byte{mysql.ComStmtReset}, uint32(stmt.ID()),
 	)))
 	// the following fetch will fail
 	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
@@ -446,9 +446,9 @@ func TestCursorFetchSendLongDataReset(t *testing.T) {
 	// send a parameter to the server
 	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, appendUint64([]byte{}, 1)))
 	// reset the statement
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
-	)))
+	require.NoError(t, c.Dispatch(ctx, appendUint32(
+		[]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
+	))
 	// execute directly will fail
 	require.Error(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),

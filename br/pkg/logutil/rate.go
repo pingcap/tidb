@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )

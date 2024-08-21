@@ -23,13 +23,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	llog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -57,8 +57,6 @@ var (
 	// so cannot be run again.
 	ErrNonIdempotentSubtask = errors.New("subtask in running state and is not idempotent")
 
-	// TestSyncChan is used to sync the test.
-	TestSyncChan = make(chan struct{})
 	// MockTiDBDown is used to mock TiDB node down, return true if it's chosen.
 	MockTiDBDown func(execID string, task *proto.TaskBase) bool
 )
@@ -130,14 +128,6 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 		if err != nil {
 			e.logger.Error("get subtasks failed", zap.Error(err))
 			continue
-		}
-		if ctx.Err() != nil {
-			// workaround for https://github.com/pingcap/tidb/issues/50089
-			// timeline to trigger this:
-			// 	- this routine runs GetSubtasksByExecIDAndStepAndStates
-			// 	- outer runSubtask finishes and cancel check-context
-			// 	- GetSubtasksByExecIDAndStepAndStates returns with no err and no result
-			return
 		}
 		if len(subtasks) == 0 {
 			e.logger.Info("subtask is scheduled away, cancel running")
@@ -309,11 +299,12 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		stepLogger.End(zap.InfoLevel, resErr)
 	}()
 
-	stepExecutor, err := e.GetStepExecutor(task, resource)
+	stepExecutor, err := e.GetStepExecutor(task)
 	if err != nil {
 		e.onError(err)
 		return e.getError()
 	}
+	execute.SetFrameworkInfo(stepExecutor, resource)
 
 	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
 		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
@@ -483,10 +474,7 @@ func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 		return
 	}
 
-	failpoint.Inject("syncAfterSubtaskFinish", func() {
-		TestSyncChan <- struct{}{}
-		<-TestSyncChan
-	})
+	failpoint.InjectCall("syncAfterSubtaskFinish")
 }
 
 // GetTaskBase implements TaskExecutor.GetTaskBase.

@@ -90,6 +90,11 @@ type OptBinary struct {
 	Charset  string
 }
 
+// OptVectorType represents the element type of the vector.
+type VectorElementType struct {
+	Tp byte // Only FLOAT and DOUBLE is accepted.
+}
+
 // FuncNode represents function call expression node.
 type FuncNode interface {
 	ExprNode

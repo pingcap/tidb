@@ -360,10 +360,18 @@ func (l StringerFunc) String() string {
 	return l()
 }
 
-// MemoizeStr returns memoized version of stringFunc.
+// MemoizeStr returns memoized version of stringFunc. When the result of l is not
+// "", it will be cached and returned directly next time.
+//
+// MemoizeStr is not concurrency safe.
 func MemoizeStr(l func() string) fmt.Stringer {
+	var result string
 	return StringerFunc(func() string {
-		return l()
+		if result != "" {
+			return result
+		}
+		result = l()
+		return result
 	})
 }
 

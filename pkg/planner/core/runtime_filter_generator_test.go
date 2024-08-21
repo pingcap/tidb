@@ -15,6 +15,7 @@
 package core_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -45,23 +46,23 @@ func TestRuntimeFilterGenerator(t *testing.T) {
 	tk.MustExec("insert into t2 values (1,2, \"{}\")")
 	tk.MustExec("create table t1_tikv (k1 int)")
 	tk.MustExec("insert into t1_tikv values (1)")
-	tk.MustExec("analyze table t1, t2")
+	tk.MustExec("analyze table t1, t2 all columns")
 	tk.MustExec("INSERT INTO mysql.opt_rule_blacklist VALUES(\"join_reorder\");")
 	tk.MustExec("admin reload opt_rule_blacklist;")
 	// set tiflash replica
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		tableName := tblInfo.Name.L
-		if tableName == "t1" || tableName == "t2" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+	tblInfo, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	// runtime filter test case

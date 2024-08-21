@@ -51,7 +51,7 @@ func ParseSimpleExpr(ctx BuildContext, exprStr string, opts ...BuildOption) (Exp
 		stmts, warns, err = parser.New().ParseSQL(exprStr)
 	}
 	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+		ctx.GetEvalCtx().AppendWarning(util.SyntaxWarn(warn))
 	}
 
 	if err != nil {

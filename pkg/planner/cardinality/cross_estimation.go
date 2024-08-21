@@ -139,24 +139,24 @@ func crossEstimateRowCount(sctx context.PlanContext,
 	if col == nil || len(path.AccessConds) > 0 {
 		return 0, false, corr
 	}
-	colID := col.UniqueID
+	colUniqueID := col.UniqueID
 	if corr < 0 {
 		desc = !desc
 	}
-	accessConds, remained := ranger.DetachCondsForColumn(sctx, conds, col)
+	accessConds, remained := ranger.DetachCondsForColumn(sctx.GetRangerCtx(), conds, col)
 	if len(accessConds) == 0 {
 		return 0, false, corr
 	}
-	ranges, accessConds, _, err := ranger.BuildColumnRange(accessConds, sctx, col.RetType, types.UnspecifiedLength, sctx.GetSessionVars().RangeMaxSize)
+	ranges, accessConds, _, err := ranger.BuildColumnRange(accessConds, sctx.GetRangerCtx(), col.RetType, types.UnspecifiedLength, sctx.GetSessionVars().RangeMaxSize)
 	if len(ranges) == 0 || len(accessConds) == 0 || err != nil {
 		return 0, err == nil, corr
 	}
 	idxID := int64(-1)
-	idxIDs, idxExists := dsStatsInfo.HistColl.ColID2IdxIDs[colID]
+	idxIDs, idxExists := dsStatsInfo.HistColl.ColUniqueID2IdxIDs[colUniqueID]
 	if idxExists && len(idxIDs) > 0 {
 		idxID = idxIDs[0]
 	}
-	rangeCounts, ok := getColumnRangeCounts(sctx, colID, ranges, dsTableStats.HistColl, idxID)
+	rangeCounts, ok := getColumnRangeCounts(sctx, colUniqueID, ranges, dsTableStats.HistColl, idxID)
 	if !ok {
 		return 0, false, corr
 	}
@@ -168,7 +168,7 @@ func crossEstimateRowCount(sctx context.PlanContext,
 	if idxExists {
 		rangeCount, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges)
 	} else {
-		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colID, convertedRanges)
+		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges)
 	}
 	if err != nil {
 		return 0, false, corr
@@ -188,13 +188,13 @@ func getColumnRangeCounts(sctx context.PlanContext, colID int64, ranges []*range
 	rangeCounts := make([]float64, len(ranges))
 	for i, ran := range ranges {
 		if idxID >= 0 {
-			idxHist := histColl.Indices[idxID]
+			idxHist := histColl.GetIdx(idxID)
 			if statistics.IndexStatsIsInvalid(sctx, idxHist, histColl, idxID) {
 				return nil, false
 			}
 			count, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
 		} else {
-			colHist := histColl.Columns[colID]
+			colHist := histColl.GetCol(colID)
 			if statistics.ColumnStatsIsInvalid(colHist, sctx, histColl, colID) {
 				return nil, false
 			}
@@ -295,8 +295,8 @@ func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.T
 			continue
 		}
 		colSet.Insert(col.UniqueID)
-		hist, ok := histColl.Columns[col.ID]
-		if !ok {
+		hist := histColl.GetCol(col.ID)
+		if hist == nil {
 			continue
 		}
 		curCorr := hist.Correlation

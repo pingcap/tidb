@@ -337,12 +337,12 @@ func (c *anyValueFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, argTp)
 	if err != nil {
 		return nil, err
 	}
-	ft := args[0].GetType().Clone()
+	ft := args[0].GetType(ctx.GetEvalCtx()).Clone()
 	ft.AddFlag(bf.tp.GetFlag())
 	*bf.tp = *ft
 	var sig builtinFunc
@@ -588,7 +588,7 @@ func (c *inetNtoaFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(93)
@@ -624,7 +624,7 @@ func (b *builtinInetNtoaSig) evalString(ctx EvalContext, row chunk.Row) (string,
 	binary.BigEndian.PutUint32(ip, uint32(val))
 	ipv4 := ip.To4()
 	if ipv4 == nil {
-		// Not a vaild ipv4 address.
+		// Not a valid ipv4 address.
 		return "", true, nil
 	}
 
@@ -716,7 +716,7 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(117)
@@ -1145,12 +1145,12 @@ func (c *nameConstFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	argTp := args[1].GetType().EvalType()
+	argTp := args[1].GetType(ctx.GetEvalCtx()).EvalType()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETString, argTp)
 	if err != nil {
 		return nil, err
 	}
-	*bf.tp = *args[1].GetType()
+	*bf.tp = *args[1].GetType(ctx.GetEvalCtx())
 	var sig builtinFunc
 	switch argTp {
 	case types.ETDecimal:
@@ -1331,7 +1331,7 @@ func (c *uuidFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(36)
@@ -1499,7 +1499,7 @@ func (c *binToUUIDFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(32)

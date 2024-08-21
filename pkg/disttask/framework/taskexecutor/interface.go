@@ -118,7 +118,7 @@ type Extension interface {
 	// Note:
 	// 1. summary is the summary manager of all subtask of the same type now.
 	// 2. should not retry the error from it.
-	GetStepExecutor(task *proto.Task, resource *proto.StepResource) (execute.StepExecutor, error)
+	GetStepExecutor(task *proto.Task) (execute.StepExecutor, error)
 	// IsRetryableError returns whether the error is transient.
 	// When error is transient, the framework won't mark subtasks as failed,
 	// then the TaskExecutor can load the subtask again and redo it.
@@ -128,6 +128,7 @@ type Extension interface {
 // EmptyStepExecutor is an empty Executor.
 // it can be used for the task that does not need to split into subtasks.
 type EmptyStepExecutor struct {
+	execute.StepExecFrameworkInfo
 }
 
 var _ execute.StepExecutor = &EmptyStepExecutor{}

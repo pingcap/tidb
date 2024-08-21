@@ -168,8 +168,8 @@ func TestModelBasic(t *testing.T) {
 		Name:    NewCIStr("test"),
 		Charset: "utf8",
 		Collate: "utf8_bin",
-		Tables:  []*TableInfo{table},
 	}
+	dbInfo.Deprecated.Tables = []*TableInfo{table}
 
 	n := dbInfo.Clone()
 	require.Equal(t, dbInfo, n)
@@ -817,4 +817,17 @@ func TestTTLJobInterval(t *testing.T) {
 	interval, err = ttlInfo.GetJobInterval()
 	require.NoError(t, err)
 	require.Equal(t, time.Hour*200, interval)
+}
+
+func TestClearReorgIntermediateInfo(t *testing.T) {
+	ptInfo := &PartitionInfo{}
+	ptInfo.DDLType = PartitionTypeHash
+	ptInfo.DDLExpr = "Test DDL Expr"
+	ptInfo.NewTableID = 1111
+
+	ptInfo.ClearReorgIntermediateInfo()
+	require.Equal(t, PartitionTypeNone, ptInfo.DDLType)
+	require.Equal(t, "", ptInfo.DDLExpr)
+	require.Equal(t, true, ptInfo.DDLColumns == nil)
+	require.Equal(t, int64(0), ptInfo.NewTableID)
 }

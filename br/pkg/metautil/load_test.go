@@ -55,9 +55,9 @@ func TestLoadBackupMeta(t *testing.T) {
 	mockDB := model.DBInfo{
 		ID:   1,
 		Name: dbName,
-		Tables: []*model.TableInfo{
-			mockTbl,
-		},
+	}
+	mockDB.Deprecated.Tables = []*model.TableInfo{
+		mockTbl,
 	}
 	dbBytes, err := json.Marshal(mockDB)
 	require.NoError(t, err)
@@ -140,9 +140,9 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 	mockDB := model.DBInfo{
 		ID:   1,
 		Name: dbName,
-		Tables: []*model.TableInfo{
-			mockTbl,
-		},
+	}
+	mockDB.Deprecated.Tables = []*model.TableInfo{
+		mockTbl,
 	}
 	dbBytes, err := json.Marshal(mockDB)
 	require.NoError(t, err)
@@ -249,9 +249,9 @@ func buildBenchmarkBackupmeta(b *testing.B, dbName string, tableCount, fileCount
 		mockDB := model.DBInfo{
 			ID:   1,
 			Name: model.NewCIStr(dbName),
-			Tables: []*model.TableInfo{
-				mockTbl,
-			},
+		}
+		mockDB.Deprecated.Tables = []*model.TableInfo{
+			mockTbl,
 		}
 		dbBytes, err := json.Marshal(mockDB)
 		require.NoError(b, err)

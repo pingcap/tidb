@@ -19,14 +19,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 )
 
 func TestMultiValuedIndexOnlineDDL(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -45,20 +45,17 @@ func TestMultiValuedIndexOnlineDDL(t *testing.T) {
 	internalTK := testkit.NewTestKit(t, store)
 	internalTK.MustExec("use test")
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	n := 100
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		internalTK.MustExec(fmt.Sprintf("insert into t values (%d, '[%d, %d, %d]')", n, n, n+1, n+2))
 		internalTK.MustExec(fmt.Sprintf("delete from t where pk = %d", n-4))
 		internalTK.MustExec(fmt.Sprintf("update t set a = '[%d, %d, %d]' where pk = %d", n-3, n-2, n+1000, n-3))
 		n++
-	}
-	o := dom.DDL().GetHook()
-	dom.DDL().SetHook(hook)
+	})
 
 	tk.MustExec("alter table t add index idx((cast(a as signed array)))")
 	tk.MustExec("admin check table t")
-	dom.DDL().SetHook(o)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (pk int primary key, a json);")

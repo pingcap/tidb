@@ -17,6 +17,7 @@ package redact
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var (
@@ -49,7 +51,11 @@ func String(mode string, input string) string {
 		return b.String()
 	case "OFF":
 		return input
+	case "ON":
+		return ""
 	default:
+		// should never happen
+		intest.Assert(false, "invalid redact mode")
 		return ""
 	}
 }
@@ -171,4 +177,49 @@ func DeRedact(remove bool, input io.Reader, output io.Writer, sep string) error 
 	}
 
 	return nil
+}
+
+// InitRedact inits the enableRedactLog
+func InitRedact(redactLog bool) {
+	mode := errors.RedactLogDisable
+	if redactLog {
+		mode = errors.RedactLogEnable
+	}
+	errors.RedactLogEnabled.Store(mode)
+}
+
+// NeedRedact returns whether to redact log
+func NeedRedact() bool {
+	mode := errors.RedactLogEnabled.Load()
+	return mode != errors.RedactLogDisable && mode != ""
+}
+
+// Value receives string argument and return omitted information if redact log enabled
+func Value(arg string) string {
+	if NeedRedact() {
+		return "?"
+	}
+	return arg
+}
+
+// Key receives a key return omitted information if redact log enabled
+func Key(key []byte) string {
+	if NeedRedact() {
+		return "?"
+	}
+	return strings.ToUpper(hex.EncodeToString(key))
+}
+
+// WriteRedact is to write string with redact into `strings.Builder`
+func WriteRedact(build *strings.Builder, v string, redact string) {
+	if redact == errors.RedactLogMarker {
+		build.WriteString("‹")
+		build.WriteString(v)
+		build.WriteString("›")
+		return
+	} else if redact == errors.RedactLogEnable {
+		build.WriteString("?")
+		return
+	}
+	build.WriteString(v)
 }

@@ -98,9 +98,6 @@ func TestScalarFunction(t *testing.T) {
 	}
 
 	sf := newFunctionWithMockCtx(ast.LT, a, NewOne())
-	res, err := sf.MarshalJSON()
-	require.NoError(t, err)
-	require.EqualValues(t, []byte{0x22, 0x6c, 0x74, 0x28, 0x43, 0x6f, 0x6c, 0x75, 0x6d, 0x6e, 0x23, 0x31, 0x2c, 0x20, 0x31, 0x29, 0x22}, res)
 	require.False(t, sf.IsCorrelated())
 	require.Equal(t, ConstNone, sf.ConstLevel())
 	require.True(t, sf.Decorrelate(nil).Equal(ctx, sf))
@@ -130,7 +127,9 @@ func TestIssue23309(t *testing.T) {
 	v, err := sf.GetArgs()[1].Eval(mock.NewContext(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, v.IsNull())
-	require.False(t, mysql.HasNotNullFlag(sf.GetArgs()[1].GetType().GetFlag()))
+
+	ctx := createContext(t)
+	require.False(t, mysql.HasNotNullFlag(sf.GetArgs()[1].GetType(ctx).GetFlag()))
 }
 
 func TestScalarFuncs2Exprs(t *testing.T) {

@@ -16,17 +16,13 @@ package aggregation
 
 import (
 	"bytes"
-	"context"
-	"fmt"
 	"math"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -63,15 +59,15 @@ func NewAggFuncDescForWindowFunc(ctx expression.BuildContext, desc *WindowFuncDe
 	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{desc.Name, desc.Args, desc.RetTp}, HasDistinct: hasDistinct}, nil
 }
 
-// String implements the fmt.Stringer interface.
-func (a *AggFuncDesc) String() string {
+// StringWithCtx returns the string representation within given ctx.
+func (a *AggFuncDesc) StringWithCtx(ctx expression.ParamValues, redact string) string {
 	buffer := bytes.NewBufferString(a.Name)
 	buffer.WriteString("(")
 	if a.HasDistinct {
 		buffer.WriteString("distinct ")
 	}
 	for i, arg := range a.Args {
-		buffer.WriteString(arg.String())
+		buffer.WriteString(arg.StringWithCtx(ctx, redact))
 		if i+1 != len(a.Args) {
 			buffer.WriteString(", ")
 		}
@@ -80,7 +76,7 @@ func (a *AggFuncDesc) String() string {
 		buffer.WriteString(" order by ")
 	}
 	for i, arg := range a.OrderByItems {
-		buffer.WriteString(arg.String())
+		buffer.WriteString(arg.StringWithCtx(ctx, redact))
 		if i+1 != len(a.OrderByItems) {
 			buffer.WriteString(", ")
 		}
@@ -218,7 +214,7 @@ func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx expression.BuildContext, sche
 }
 
 // GetAggFunc gets an evaluator according to the aggregation function signature.
-func (a *AggFuncDesc) GetAggFunc(ctx expression.BuildContext) Aggregation {
+func (a *AggFuncDesc) GetAggFunc(ctx expression.AggFuncBuildContext) Aggregation {
 	aggFunc := aggFunction{AggFuncDesc: a}
 	switch a.Name {
 	case ast.AggFuncSum:
@@ -228,22 +224,11 @@ func (a *AggFuncDesc) GetAggFunc(ctx expression.BuildContext) Aggregation {
 	case ast.AggFuncAvg:
 		return &avgFunction{aggFunction: aggFunc}
 	case ast.AggFuncGroupConcat:
-		var s string
-		var err error
-		var maxLen uint64
-		s, err = ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.GroupConcatMaxLen)
-		if err != nil {
-			panic(fmt.Sprintf("Error happened when GetAggFunc: no system variable named '%s'", variable.GroupConcatMaxLen))
-		}
-		maxLen, err = strconv.ParseUint(s, 10, 64)
-		if err != nil {
-			panic(fmt.Sprintf("Error happened when GetAggFunc: illegal value for system variable named '%s'", variable.GroupConcatMaxLen))
-		}
-		return &concatFunction{aggFunction: aggFunc, maxLen: maxLen}
+		return &concatFunction{aggFunction: aggFunc, maxLen: ctx.GetGroupConcatMaxLen()}
 	case ast.AggFuncMax:
-		return &maxMinFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[0].GetType().GetCollate())}
+		return &maxMinFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[0].GetType(ctx.GetEvalCtx()).GetCollate())}
 	case ast.AggFuncMin:
-		return &maxMinFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType().GetCollate())}
+		return &maxMinFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType(ctx.GetEvalCtx()).GetCollate())}
 	case ast.AggFuncFirstRow:
 		return &firstRowFunction{aggFunction: aggFunc}
 	case ast.AggFuncBitOr:

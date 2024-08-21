@@ -467,6 +467,19 @@ func TestSetPwd(t *testing.T) {
 	tk.MustExec(setPwdSQL)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("pwd")))
+
+	// Test running SET PASSWORD FOR without sufficient privileges.
+	// Create user u1 with super privilege.
+	tk.MustExec("create user 'u1'")
+	tk.MustExec("grant super on *.* to u1")
+	// Create user u2 with create user privilege.
+	tk.MustExec("create user 'u2'")
+	tk.MustExec("grant create user on *.* to u2")
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
+	// Should have the correct error message saying u2 does not have enough privileges.
+	tk2.MustContainErrMsg("set password for 'u1'='randompassword'", "[executor:1044]Access denied for user 'u2'")
 }
 
 func TestFlushPrivilegesPanic(t *testing.T) {
@@ -556,9 +569,9 @@ func TestDropStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -568,7 +581,7 @@ func TestDropStats(t *testing.T) {
 	require.False(t, statsTbl.Pseudo)
 
 	testKit.MustExec("drop stats t")
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo)
 
@@ -578,7 +591,7 @@ func TestDropStats(t *testing.T) {
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t")
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo)
 	h.SetLease(0)
@@ -588,15 +601,15 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t1 (c1 int, c2 int)")
-	testKit.MustExec("create table t2 (c1 int, c2 int)")
+	testKit.MustExec("create table t1 (c1 int, c2 int, index idx(c1, c2))")
+	testKit.MustExec("create table t2 (c1 int, c2 int, index idx(c1, c2))")
 
 	is := dom.InfoSchema()
-	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
 
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tableInfo2 := tbl2.Meta()
 
@@ -609,7 +622,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	require.False(t, statsTbl2.Pseudo)
 
 	testKit.MustExec("drop stats t1, t2")
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	require.True(t, statsTbl1.Pseudo)
 	statsTbl2 = h.GetTableStats(tableInfo2)
@@ -623,7 +636,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t1, t2")
-	require.Nil(t, h.Update(is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	require.True(t, statsTbl1.Pseudo)
 	statsTbl2 = h.GetTableStats(tableInfo2)
