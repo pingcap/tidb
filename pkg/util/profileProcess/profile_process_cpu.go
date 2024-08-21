@@ -33,7 +33,6 @@ import (
 
 var (
 	profiler *ProcessCPUProfiler
-	updater  ProcessCPUTimeUpdater
 )
 
 // ProcessCPUTimeUpdater Introduce this interface due to the dependency cycle
@@ -43,8 +42,7 @@ type ProcessCPUTimeUpdater interface {
 
 // SetupProcessProfiling sets up the process cpu profile worker.
 func SetupProcessProfiling(ud ProcessCPUTimeUpdater) {
-	profiler = NewProcessCPUProfiler()
-	updater = ud
+	profiler = NewProcessCPUProfiler(ud)
 	profiler.Start()
 }
 
@@ -77,74 +75,75 @@ type ProcessCPUProfiler struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
+	updater    ProcessCPUTimeUpdater
 	started    bool
 	registered bool
 }
 
 // NewProcessCPUProfiler create a ProcessCPUProfiler.
-func NewProcessCPUProfiler() *ProcessCPUProfiler {
-	return &ProcessCPUProfiler{}
+func NewProcessCPUProfiler(ud ProcessCPUTimeUpdater) *ProcessCPUProfiler {
+	return &ProcessCPUProfiler{updater: ud}
 }
 
 // Start uses to start to run SQLCPUCollector.
 // This will register a consumer into globalCPUProfiler, then SQLCPUCollector will receive cpu profile data per seconds.
 // WARN: this function is not thread-safe.
-func (sp *ProcessCPUProfiler) Start() {
-	if sp.started {
+func (pp *ProcessCPUProfiler) Start() {
+	if pp.started {
 		return
 	}
-	sp.started = true
-	sp.ctx, sp.cancel = context.WithCancel(context.Background())
-	sp.wg.Add(1)
-	go sp.collectSQLCPULoop()
+	pp.started = true
+	pp.ctx, pp.cancel = context.WithCancel(context.Background())
+	pp.wg.Add(1)
+	go pp.collectSQLCPULoop()
 	logutil.BgLogger().Info("ProcessCPUProfiler sql cpu collector started")
 }
 
 // Stop uses to stop the SQLCPUCollector.
 // WARN: this function is not thread-safe.
-func (sp *ProcessCPUProfiler) Stop() {
-	if !sp.started {
+func (pp *ProcessCPUProfiler) Stop() {
+	if !pp.started {
 		return
 	}
-	sp.started = false
-	if sp.cancel != nil {
-		sp.cancel()
+	pp.started = false
+	if pp.cancel != nil {
+		pp.cancel()
 	}
 
-	sp.wg.Wait()
+	pp.wg.Wait()
 	logutil.BgLogger().Info("ProcessCPUProfiler sql cpu collector stopped")
 }
 
 var defCollectTickerInterval = time.Second
 
-func (sp *ProcessCPUProfiler) collectSQLCPULoop() {
+func (pp *ProcessCPUProfiler) collectSQLCPULoop() {
 	profileConsumer := make(cpuprofile.ProfileConsumer, 1)
 	ticker := time.NewTicker(defCollectTickerInterval)
 	defer func() {
-		sp.wg.Done()
-		sp.doUnregister(profileConsumer)
+		pp.wg.Done()
+		pp.doUnregister(profileConsumer)
 		ticker.Stop()
 	}()
 	defer util.Recover("profileProcessCpu", "startAnalyzeProfileWorker", nil, false)
 
 	for {
 		if topsqlstate.TopSQLEnabled() {
-			sp.doRegister(profileConsumer)
+			pp.doRegister(profileConsumer)
 		} else {
-			sp.doUnregister(profileConsumer)
+			pp.doUnregister(profileConsumer)
 		}
 
 		select {
-		case <-sp.ctx.Done():
+		case <-pp.ctx.Done():
 			return
 		case <-ticker.C:
 		case data := <-profileConsumer:
-			sp.handleProfileData(data)
+			pp.handleProfileData(data)
 		}
 	}
 }
 
-func (sp *ProcessCPUProfiler) handleProfileData(data *cpuprofile.ProfileData) {
+func (pp *ProcessCPUProfiler) handleProfileData(data *cpuprofile.ProfileData) {
 	if data.Error != nil {
 		return
 	}
@@ -155,22 +154,22 @@ func (sp *ProcessCPUProfiler) handleProfileData(data *cpuprofile.ProfileData) {
 		logutil.BgLogger().Error("parse profile error", zap.Error(err))
 		return
 	}
-	sp.parseCPUProfile(p)
+	pp.parseCPUProfile(p)
 }
 
-func (sp *ProcessCPUProfiler) doRegister(profileConsumer cpuprofile.ProfileConsumer) {
-	if sp.registered {
+func (pp *ProcessCPUProfiler) doRegister(profileConsumer cpuprofile.ProfileConsumer) {
+	if pp.registered {
 		return
 	}
-	sp.registered = true
+	pp.registered = true
 	cpuprofile.Register(profileConsumer)
 }
 
-func (sp *ProcessCPUProfiler) doUnregister(profileConsumer cpuprofile.ProfileConsumer) {
-	if !sp.registered {
+func (pp *ProcessCPUProfiler) doUnregister(profileConsumer cpuprofile.ProfileConsumer) {
+	if !pp.registered {
 		return
 	}
-	sp.registered = false
+	pp.registered = false
 	cpuprofile.Unregister(profileConsumer)
 }
 
@@ -178,7 +177,7 @@ func (sp *ProcessCPUProfiler) doUnregister(profileConsumer cpuprofile.ProfileCon
 // Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
 // Since `SQLCPUCollector` only care about the cpu time that consume by (sql_global_uid), the other sample data
 // without those label will be ignore.
-func (_ *ProcessCPUProfiler) parseCPUProfile(p *profile.Profile) {
+func (pp *ProcessCPUProfiler) parseCPUProfile(p *profile.Profile) {
 	sqlMap := make(map[uint64]sqlCPUTimeRecord)
 	idx := len(p.SampleType) - 1
 	// Reverse traverse sample data, since only the latest sqlID for each connection is usable
@@ -205,6 +204,6 @@ func (_ *ProcessCPUProfiler) parseCPUProfile(p *profile.Profile) {
 		}
 	}
 	for key, val := range sqlMap {
-		updater.UpdateProcessCPUTime(key, val.sqlGlobalUID, time.Duration(val.total))
+		pp.updater.UpdateProcessCPUTime(key, val.sqlGlobalUID, time.Duration(val.total))
 	}
 }
