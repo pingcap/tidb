@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "cascades",
     srcs = [
+        "canonical.go",
         "enforcer_rules.go",
         "implementation_rules.go",
         "optimize.go",
@@ -40,6 +41,7 @@ go_test(
     name = "cascades_test",
     timeout = "short",
     srcs = [
+        "canonical_test.go",
         "enforcer_rules_test.go",
         "main_test.go",
         "optimize_test.go",
@@ -49,7 +51,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cascades"],
     flaky = True,
-    shard_count = 25,
+    shard_count = 26,
     deps = [
         "//pkg/domain",
         "//pkg/expression",
