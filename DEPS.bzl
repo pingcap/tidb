@@ -2903,9 +2903,8 @@ def go_deps():
         name = "com_github_petermattis_goid",
         build_file_proto_mode = "disable",
         importpath = "github.com/petermattis/goid",
-<<<<<<< HEAD
-        sum = "h1:rUMC+oZ89Om6l9wvUNjzI0ZrKrSnXzV+opsgAohYUNc=",
-        version = "v0.0.0-20170504144140-0ded85884ba5",
+        sum = "h1:Dx7Ovyv/SFnMFw3fD4oEoeorXc6saIiQ23LrGLth0Gw=",
+        version = "v0.0.0-20240813172612-4fcff4a6cae7",
     )
     go_repository(
         name = "com_github_phayes_checkstyle",
@@ -2913,16 +2912,6 @@ def go_deps():
         importpath = "github.com/phayes/checkstyle",
         sum = "h1:CdDQnGF8Nq9ocOS/xlSptM1N3BbrA6/kmaep5ggwaIA=",
         version = "v0.0.0-20170904204023-bfd46e6a821d",
-=======
-        sha256 = "3f47ab8e5713c36ec5b4295956a5ef012a192bc19198ae1b6591408c061e97ab",
-        strip_prefix = "github.com/petermattis/goid@v0.0.0-20240813172612-4fcff4a6cae7",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20240813172612-4fcff4a6cae7.zip",
-            "http://ats.apps.svc/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20240813172612-4fcff4a6cae7.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20240813172612-4fcff4a6cae7.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20240813172612-4fcff4a6cae7.zip",
-        ],
->>>>>>> 6d403d4a4e1 (*: fix flaky deadlock with go1.23 (#55479))
     )
     go_repository(
         name = "com_github_phayes_freeport",
@@ -3257,19 +3246,8 @@ def go_deps():
         name = "com_github_sasha_s_go_deadlock",
         build_file_proto_mode = "disable",
         importpath = "github.com/sasha-s/go-deadlock",
-<<<<<<< HEAD
-        sum = "h1:yVBZEAirqhDYAc7xftf/swe8eHcg63jqfwdqN8KSoR8=",
-        version = "v0.0.0-20161201235124-341000892f3d",
-=======
-        sha256 = "b927f67dd9a6dc183bac7249c019775e689aee67dc52bfa53354137139d722a1",
-        strip_prefix = "github.com/sasha-s/go-deadlock@v0.3.5",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.5.zip",
-            "http://ats.apps.svc/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.5.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.5.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.5.zip",
-        ],
->>>>>>> 6d403d4a4e1 (*: fix flaky deadlock with go1.23 (#55479))
+        sum = "h1:tNCOEEDG6tBqrNDOX35j/7hL5FcFViG6awUGROb2NsU=",
+        version = "v0.3.5",
     )
     go_repository(
         name = "com_github_sashamelentyev_interfacebloat",
