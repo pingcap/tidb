@@ -92,6 +92,12 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 	tracer.EnterPhase(metrics.PhaseOther)
 
 	leftRows := t.rows
+	defer func() {
+		if len(leftRows) > 0 {
+			t.statistics.IncErrorRows(len(leftRows))
+		}
+	}()
+
 	se := newTableSession(rawSe, t.tbl, t.expire)
 	for len(leftRows) > 0 {
 		maxBatch := variable.TTLDeleteBatchSize.Load()
@@ -208,6 +214,18 @@ func (b *ttlDelRetryBuffer) DoRetry(do func(*ttlDeleteTask) [][]types.Datum) tim
 	return b.retryInterval
 }
 
+// Drain drains a retry buffer.
+func (b *ttlDelRetryBuffer) Drain() {
+	for ele := b.list.Front(); ele != nil; ele = ele.Next() {
+		if item, ok := ele.Value.(*ttlDelRetryItem); ok {
+			item.task.statistics.IncErrorRows(len(item.task.rows))
+		} else {
+			logutil.BgLogger().Error(fmt.Sprintf("invalid retry buffer item type: %T", ele))
+		}
+	}
+	b.list = list.New()
+}
+
 func (b *ttlDelRetryBuffer) recordRetryItem(task *ttlDeleteTask, retryRows [][]types.Datum, retryCnt int) bool {
 	if len(retryRows) == 0 {
 		return false
@@ -277,6 +295,8 @@ func (w *ttlDeleteWorker) loop() error {
 	timer := time.NewTimer(w.retryBuffer.retryInterval)
 	defer timer.Stop()
 
+	// drain retry buffer to make sure the statistics are correct
+	defer w.retryBuffer.Drain()
 	for w.Status() == workerStatusRunning {
 		tracer.EnterPhase(metrics.PhaseIdle)
 		select {
