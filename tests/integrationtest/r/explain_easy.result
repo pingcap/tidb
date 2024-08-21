@@ -739,8 +739,8 @@ insert into t values (1),(2),(2),(2),(9),(9),(9),(10);
 analyze table t all columns with 1 buckets;
 explain format = 'brief' select * from t where a >= 3 and a <= 8;
 id	estRows	task	access object	operator info
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		ge(explain_easy.t.a, 3), le(explain_easy.t.a, 8)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		ge(explain_easy.t.a, 3), le(explain_easy.t.a, 8)
   └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
 drop table t;
 create table t(a int, b int, index idx_ab(a, b));
