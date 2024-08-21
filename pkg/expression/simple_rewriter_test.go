@@ -124,6 +124,26 @@ func TestFindFieldName(t *testing.T) {
 			astCol:   &ast.ColumnName{Schema: model.NewCIStr(""), Table: model.NewCIStr(""), Name: model.NewCIStr("col")},
 			expected: 1,
 		},
+		{
+			name: "Non-unique match with a redundant",
+			names: types.NameSlice{
+				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
+				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+			},
+			astCol: &ast.ColumnName{Schema: model.NewCIStr("db"), Table: model.NewCIStr("tbl"), Name: model.NewCIStr("col")},
+			err:    errNonUniq.GenWithStackByArgs("db.tbl.col", "field list"),
+		},
+		{
+			name: "Match with multiple redundant",
+			names: types.NameSlice{
+				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
+				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
+				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
+			},
+			astCol:   &ast.ColumnName{Schema: model.NewCIStr("db"), Table: model.NewCIStr("tbl"), Name: model.NewCIStr("col")},
+			expected: 0,
+		},
 	}
 
 	for _, tt := range tests {

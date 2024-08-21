@@ -65,7 +65,6 @@ func ParseSimpleExpr(ctx BuildContext, exprStr string, opts ...BuildOption) (Exp
 func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 	dbName, tblName, colName := astCol.Schema.L, astCol.Table.L, astCol.Name.L
 	idx := -1
-	hasRedundant := false
 
 	for i, name := range names {
 		// Early continue if not usable or column name doesn't match
@@ -76,13 +75,17 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 		// Check database and table name match
 		if (dbName == "" || dbName == name.DBName.L) &&
 			(tblName == "" || tblName == name.TblName.L) {
-			if idx != -1 && !hasRedundant && !name.Redundant {
+			if idx != -1 {
+				// Do not allow multiple non-redundant columns with the same name.
+				if names[idx].Redundant || name.Redundant {
+					if !name.Redundant {
+						idx = i
+					}
+					continue
+				}
 				return -1, errNonUniq.GenWithStackByArgs(astCol.String(), "field list")
 			}
-			if idx == -1 || !name.Redundant {
-				idx = i
-			}
-			hasRedundant = hasRedundant || name.Redundant
+			idx = i
 		}
 	}
 
