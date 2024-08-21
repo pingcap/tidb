@@ -334,7 +334,7 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		return nil, err
 	}
 
-	if err := ds.generateIndexMergePath(); err != nil {
+	if err := generateIndexMergePath(ds); err != nil {
 		return nil, err
 	}
 
