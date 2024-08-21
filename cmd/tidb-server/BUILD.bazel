@@ -47,6 +47,7 @@ go_library(
         "//pkg/util/memory",
         "//pkg/util/metricsutil",
         "//pkg/util/printer",
+        "//pkg/util/profileProcess",
         "//pkg/util/redact",
         "//pkg/util/sem",
         "//pkg/util/servicescope",
