@@ -89,6 +89,22 @@ func TestFindFieldName(t *testing.T) {
 			expected: 0,
 		},
 		{
+			name: "Match with empty schema, non-empty table",
+			names: types.NameSlice{
+				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+			},
+			astCol:   &ast.ColumnName{Schema: model.NewCIStr(""), Table: model.NewCIStr("tbl"), Name: model.NewCIStr("col")},
+			expected: 0,
+		},
+		{
+			name: "Match with non-empty schema, empty table",
+			names: types.NameSlice{
+				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+			},
+			astCol:   &ast.ColumnName{Schema: model.NewCIStr("db"), Table: model.NewCIStr(""), Name: model.NewCIStr("col")},
+			expected: 0,
+		},
+		{
 			name: "No match",
 			names: types.NameSlice{
 				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col1")},
