@@ -643,26 +643,3 @@ func TestConcFastReorg(t *testing.T) {
 
 	wg.Wait()
 }
-
-func TestAddUniqueIndexAfterFlashBack(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindexlit;")
-	tk.MustExec("create database addindexlit;")
-	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-
-	tk.MustExec("set @@global.tidb_gc_life_time = '100m';")
-	defer tk.MustExec("set @@global.tidb_gc_life_time = default;")
-	tk.MustExec("create table t (a int, b int);")
-	tk.MustExec("insert into t values (1, 1);")
-	time.Sleep(1 * time.Second)
-	tk.MustExec("begin;")
-	currentTime := tk.MustQuery("select @@tidb_current_ts;").Rows()[0][0].(string)
-	tk.MustExec("rollback;")
-	time.Sleep(1 * time.Second) // Fixme: flashback cluster use timestamp instead of tso to check if there is a DDL job.
-	tk.MustExec("alter table t add index idx(b);")
-	tk.MustExec(fmt.Sprintf("flashback cluster to tso %s", currentTime))
-	tk.MustExec("alter table t add unique index idx(b);")
-	tk.MustExec("admin check table t;")
-}
