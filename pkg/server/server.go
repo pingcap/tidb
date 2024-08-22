@@ -1023,6 +1023,10 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 		logger.Info("timeout waiting all sessions quit")
 	}
 
+	// wait for another 5 seconds to make sure all async-commit transactions are done.
+	time.Sleep(5 * time.Second)
+
+	logger.Info("kill all connections")
 	s.KillAllConnections()
 
 	select {
