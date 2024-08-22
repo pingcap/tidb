@@ -48,7 +48,7 @@ func TestStringLen(t *testing.T) {
 
 type SX interface {
 	Hash64(h Hasher)
-	Equal(SX, Equaler) bool
+	Equal(SX) bool
 }
 
 type SA struct {
@@ -61,9 +61,9 @@ func (sa *SA) Hash64(h Hasher) {
 	h.HashString(sa.b)
 }
 
-func (sa *SA) Equal(sx SX, h Equaler) bool {
+func (sa *SA) Equal(sx SX) bool {
 	if sa2, ok := sx.(*SA); ok {
-		return h.EqualInt(sa.a, sa2.a) && h.EqualString(sa.b, sa2.b)
+		return sa.a == sa2.a && sa.b == sa2.b
 	}
 	return false
 }
@@ -78,9 +78,9 @@ func (sb *SB) Hash64(h Hasher) {
 	h.HashString(sb.b)
 }
 
-func (sb *SB) Equal(sx SX, h Equaler) bool {
+func (sb *SB) Equal(sx SX) bool {
 	if sb2, ok := sx.(*SB); ok {
-		return h.EqualInt(sb.a, sb2.a) && h.EqualString(sb.b, sb2.b)
+		return sb.a == sb2.a && sb.b == sb2.b
 	}
 	return false
 }
@@ -107,7 +107,7 @@ func TestStructType(t *testing.T) {
 	// that elegant, we resort to Equal function to compare the two structs completely once two obj has the
 	// same hash.
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
-	require.Equal(t, a.Equal(&b, hasher1), false)
+	require.Equal(t, a.Equal(&b), false)
 }
 
 func TestHash64a(t *testing.T) {

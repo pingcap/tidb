@@ -30,11 +30,6 @@ const (
 	prime64 = 1099511628211
 )
 
-type HashEqualer interface {
-	Hasher
-	Equaler
-}
-
 type Hasher interface {
 	HashBool(val bool)
 	HashInt(val int)
@@ -49,18 +44,6 @@ type Hasher interface {
 	Sum64() uint64
 }
 
-type Equaler interface {
-	EqualBool(l, r bool) bool
-	EqualInt(l, r int) bool
-	EqualInt64(l, r int64) bool
-	EqualUint64(l, r uint64) bool
-	EqualFloat64(l, r float64) bool
-	EqualRune(l, r rune) bool
-	EqualString(l, r string) bool
-	EqualByte(l, r byte) bool
-	EqualBytes(l, r []byte) bool
-}
-
 type Hash64a uint64
 
 // Hasher is a helper struct that's used for computing **fnv-1a** hash values and tell
@@ -72,7 +55,7 @@ type hasher struct {
 }
 
 // NewHashEqualer creates a new HashEqualer.
-func NewHashEqualer() HashEqualer {
+func NewHashEqualer() Hasher {
 	return &hasher{
 		hash64a: offset64,
 	}
@@ -239,7 +222,7 @@ func (h *hasher) EqualBytes(l, r []byte) bool {
 //     d Pointer
 // }
 // so we can implement the hash and equal functions like this:
-// func (h *Hasher) Hash64(val MyStruct) {
+// func (val *MyStruct) Hash64(h Hasher) {
 //     h.HashInt(val.a)
 //     h.HashString(val.b)
 // 	   // for c here, it calls for the hash function of OtherStruct implementor.
@@ -248,7 +231,7 @@ func (h *hasher) EqualBytes(l, r []byte) bool {
 //     h.HashUint64(uint64(val.d))
 // }
 //
-// func (h *Hasher) Equal(val1, val2 MyStruct) bool {
-//     return h.EqualInt(val1.a, val2.a) && h.EqualString(val1.b, val2.b) && val1.c.Equal(val2.c) && val1.d == val2.d
+// func (val1 *MyStruct) Equal(val1 *MyStruct) bool {
+//     return val1.a == val2.a && val1.b == val2.b && val1.c.Equal(val2.c) && val1.d == val2.d
 // }
 // ------------------------------------------------------------------------------------------
