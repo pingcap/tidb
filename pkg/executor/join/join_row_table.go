@@ -68,9 +68,9 @@ func init() {
 
 // initializeBitMasks encapsulates the bit-shifting logic to set the bitMaskInUint32 array based on endianness
 // The parameter isLittleEndian indicates the system's endianness
-// - If the system is little-endian, the bit mask for each byte starts from the most significant bit (bit 7) and decrements sequentially
-// - If the system is big-endian, the bit masks are set sequentially from the highest bit (bit 31) to the lowest bit (bit 0),
-//   ensuring that atomic operations can be performed correctly on different endian systems
+//   - If the system is little-endian, the bit mask for each byte starts from the most significant bit (bit 7) and decrements sequentially
+//   - If the system is big-endian, the bit masks are set sequentially from the highest bit (bit 31) to the lowest bit (bit 0),
+//     ensuring that atomic operations can be performed correctly on different endian systems
 func initializeBitMasks(isLittleEndian bool) {
 	for i := 0; i < 32; i++ {
 		if isLittleEndian {
@@ -82,6 +82,7 @@ func initializeBitMasks(isLittleEndian bool) {
 		}
 	}
 }
+
 //go:linkname heapObjectsCanMove runtime.heapObjectsCanMove
 func heapObjectsCanMove() bool
 
