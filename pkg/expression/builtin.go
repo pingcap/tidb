@@ -734,7 +734,7 @@ var funcs = map[string]functionClass{
 	ast.Lower:           &lowerFunctionClass{baseFunctionClass{ast.Lower, 1, 1}},
 	ast.Lpad:            &lpadFunctionClass{baseFunctionClass{ast.Lpad, 3, 3}},
 	ast.LTrim:           &lTrimFunctionClass{baseFunctionClass{ast.LTrim, 1, 1}},
-	ast.Mid:             &substringFunctionClass{baseFunctionClass{ast.Mid, 3, 3}},
+	ast.Mid:             &substringFunctionClass{baseFunctionClass{ast.Mid, 2, 3}},
 	ast.MakeSet:         &makeSetFunctionClass{baseFunctionClass{ast.MakeSet, 2, -1}},
 	ast.Oct:             &octFunctionClass{baseFunctionClass{ast.Oct, 1, 1}},
 	ast.OctetLength:     &lengthFunctionClass{baseFunctionClass{ast.OctetLength, 1, 1}},
