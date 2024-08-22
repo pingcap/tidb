@@ -62,7 +62,6 @@ var AllowCartesianProduct = atomic.NewBool(true)
 // IsReadOnly check whether the ast.Node is a read only statement.
 var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
-<<<<<<< HEAD
 const (
 	flagGcSubstitute uint64 = 1 << iota
 	flagPrunColumns
@@ -115,37 +114,8 @@ var optRuleList = []logicalOptRule{
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&pushDownSequenceSolver{},
 	&resolveExpand{},
-=======
-const initialMaxCores uint64 = 10000
-
-var optRuleList = []base.LogicalOptRule{
-	&GcSubstituter{},
-	&ColumnPruner{},
-	&ResultReorder{},
-	&rule.BuildKeySolver{},
-	&DecorrelateSolver{},
-	&SemiJoinRewriter{},
-	&AggregationEliminator{},
-	&SkewDistinctAggRewriter{},
-	&ProjectionEliminator{},
-	&MaxMinEliminator{},
-	&rule.ConstantPropagationSolver{},
-	&ConvertOuterToInnerJoin{},
-	&PPDSolver{},
-	&OuterJoinEliminator{},
-	&PartitionProcessor{},
-	&CollectPredicateColumnsPoint{},
-	&AggregationPushDownSolver{},
-	&DeriveTopNFromWindow{},
-	&PredicateSimplification{},
-	&PushDownTopNOptimizer{},
-	&SyncWaitStatsLoadPoint{},
-	&JoinReOrderSolver{},
-	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
-	&PushDownSequenceSolver{},
-	&ResolveExpand{},
->>>>>>> 38f9d702ff6 (planner: use logical cores as default fine grained stream count (#55544))
 }
+const initialMaxCores uint64 = 10000
 
 // Interaction Rule List
 /* The interaction rule will be trigger when it satisfies following conditions:
@@ -840,13 +810,7 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysical
 	h.plans = append(h.plans, p)
 }
 
-<<<<<<< HEAD
-// calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers, and divide by 2
-// return false, 0 if any err happens
-func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx sessionctx.Context, serversInfo []infoschema.ServerInfo) (bool, uint64) {
-=======
-func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
->>>>>>> 38f9d702ff6 (planner: use logical cores as default fine grained stream count (#55544))
+func getTiFlashServerMinLogicalCores(ctx context.Context, sctx sessionctx.Context, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
 		if err == nil {
@@ -874,7 +838,7 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 
 // calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers
 // return false, 0 if any err happens
-func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx sessionctx.Context, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	valid, minLogicalCores := getTiFlashServerMinLogicalCores(ctx, sctx, serversInfo)
 	if !valid {
 		return false, 0
