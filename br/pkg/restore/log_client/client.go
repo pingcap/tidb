@@ -223,6 +223,8 @@ func (rc *LogClient) RestoreCompactedSsts(
 	ctx context.Context,
 	regionCompactedMap map[uint64]*CompactedItem,
 	importModeSwitcher *restore.ImportModeSwitcher,
+	checkpoints map[int64]struct{},
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
 	onProgress func(),
 ) error {
 	// need to enter import mode before restore SST files
@@ -236,6 +238,10 @@ func (rc *LogClient) RestoreCompactedSsts(
 	// select split keys every `CompactedSSTSplitBatchSize` regions
 	cnt := 0
 	for regionId, CompactedItems := range regionCompactedMap {
+		if _, exists := checkpoints[int64(regionId)]; exists {
+			// already restored
+			continue
+		}
 		cnt += 1
 		if cnt >= CompactedSSTSplitBatchSize {
 			var regionSplitKey []byte
@@ -268,7 +274,7 @@ func (rc *LogClient) RestoreCompactedSsts(
 
 		if len(splitRanges) > 0 {
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-				// TODO unify the onProcess and updateCh
+
 				err := rc.restorer.SplitRanges(eCtx, splitRanges, onProgress)
 				if err != nil {
 					return errors.Trace(err)
@@ -281,6 +287,13 @@ func (rc *LogClient) RestoreCompactedSsts(
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 				return rc.restorer.RestoreFiles(eCtx, CompactedItems.files, onProgress)
 			})
+		}
+
+		// append region ranges to checkpoint
+		// no need to record the value here
+		if err := checkpoint.AppendRangesForRestore(eCtx, checkpointRunner,
+			int64(regionId), ""); err != nil {
+			return errors.Trace(err)
 		}
 	}
 
@@ -353,6 +366,11 @@ func (rc *LogClient) CleanUpKVFiles(
 
 func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context, taskName string) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
 	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.storage, rc.cipher, taskName)
+	return runner, errors.Trace(err)
+}
+
+func (rc *LogClient) StartCheckpointRunnerForCompactedSSTRestore(ctx context.Context, taskName string) (*checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType], error) {
+	runner, err := checkpoint.StartCheckpointRunnerForRestore(ctx, rc.storage, rc.cipher, taskName)
 	return runner, errors.Trace(err)
 }
 
@@ -437,6 +455,30 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(ctx context.Context, ta
 	}
 
 	return gcRatio, nil
+}
+
+func (rc *LogClient) InitCheckpointMetadataForSstRestore(ctx context.Context, taskName string) (map[int64]struct{}, error) {
+	// if the checkpoint metadata exists in the external storage, the restore is not
+	// for the first time.
+	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, rc.storage, taskName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	checkpointSetWithRegionID := make(map[int64]struct{})
+	if exists {
+		// load the checkpoint since this is not the first time to restore
+		_, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(regionID int64, rangeKey checkpoint.RestoreValueType) {
+			_, exists := checkpointSetWithRegionID[regionID]
+			if !exists {
+				checkpointSetWithRegionID[regionID] = struct{}{}
+			}
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return checkpointSetWithRegionID, nil
 }
 
 func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, error) {
