@@ -1413,6 +1413,23 @@ var defaultSysVars = []*SysVar{
 			}
 			return err
 		},
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			// Check if auto-analyze and auto-analyze priority queue are enabled
+			enableAutoAnalyze := RunAutoAnalyze.Load()
+			enableAutoAnalyzePriorityQueue := EnableAutoAnalyzePriorityQueue.Load()
+
+			// Validate that both required settings are enabled
+			if !enableAutoAnalyze || !enableAutoAnalyzePriorityQueue {
+				return originalValue, errors.Errorf(
+					"cannot set %s: requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue to be true. Current values: tidb_enable_auto_analyze=%v, tidb_enable_auto_analyze_priority_queue=%v",
+					TiDBAutoAnalyzeConcurrency,
+					enableAutoAnalyze,
+					enableAutoAnalyzePriorityQueue,
+				)
+			}
+
+			return normalizedValue, nil
+		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBEnableMDL, Value: BoolToOnOff(DefTiDBEnableMDL), Type: TypeBool, SetGlobal: func(_ context.Context, vars *SessionVars, val string) error {
 		if EnableMDL.Load() != TiDBOptOn(val) {
