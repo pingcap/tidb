@@ -15,7 +15,6 @@
 package cascades
 
 import (
-	"bytes"
 	"math"
 )
 
@@ -147,66 +146,6 @@ func (h *hasher) HashBytes(val []byte) {
 	for _, c := range val {
 		h.HashByte(c)
 	}
-}
-
-// ------------------------------ Equal functions ----------------------------------------
-// The equal functions are used to compare the equivalence of two primitive types. The
-// implementation is straightforward and simple.
-//
-// For composed and complex user defined structure or types, the implementor should implement
-// the equal functions for them. The equal functions should be implemented in a way that
-// the hash functions are implemented.
-//
-// Equal functions is called from the hash collision detection algorithm to determine whether
-// two expressions/operators are equivalent. For primitive types, we can directly compare them.
-// while for composed and complex user defined structure or types, we should compare them field
-// by field and recursively call down of them if it's embedded.
-// ---------------------------------------------------------------------------------------
-
-// EqualBool compares two Boolean values.
-func (h *hasher) EqualBool(l, r bool) bool {
-	return l == r
-}
-
-// EqualInt compares two integer values.
-func (h *hasher) EqualInt(l, r int) bool {
-	return l == r
-}
-
-// EqualInt64 compares two int64 values.
-func (h *hasher) EqualInt64(l, r int64) bool {
-	return l == r
-}
-
-// EqualUint64 compares two uint64 values.
-func (h *hasher) EqualUint64(l, r uint64) bool {
-	return l == r
-}
-
-// EqualFloat64 compares two uint64 values.
-func (h *hasher) EqualFloat64(l, r float64) bool {
-	// Compare bit representations so that NaN == NaN and 0 != -0.
-	return math.Float64bits(l) == math.Float64bits(r)
-}
-
-// EqualRune compares two rune values.
-func (h *hasher) EqualRune(l, r rune) bool {
-	return l == r
-}
-
-// EqualString compares two string values.
-func (h *hasher) EqualString(l, r string) bool {
-	return l == r
-}
-
-// EqualByte compares two byte values.
-func (h *hasher) EqualByte(l, r byte) bool {
-	return l == r
-}
-
-// EqualBytes compares two byte slice values.
-func (h *hasher) EqualBytes(l, r []byte) bool {
-	return bytes.Equal(l, r)
 }
 
 // ------------------------------ Object Implementation -------------------------------------
