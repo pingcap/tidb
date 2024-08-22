@@ -4,7 +4,7 @@ go_library(
     name = "cascades",
     srcs = [
         "enforcer_rules.go",
-        "hash_equal.go",
+        "hash_equaler.go",
         "implementation_rules.go",
         "optimize.go",
         "stringer.go",
@@ -42,7 +42,7 @@ go_test(
     timeout = "short",
     srcs = [
         "enforcer_rules_test.go",
-        "hash_equal_test.go",
+        "hash_equaler_test.go",
         "main_test.go",
         "optimize_test.go",
         "stringer_test.go",
