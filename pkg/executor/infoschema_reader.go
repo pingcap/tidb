@@ -718,7 +718,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 
 	// Special optimize for queries on infoschema v2 like:
 	//     select count(table_schema) from INFORMATION_SCHEMA.TABLES
-	//     select count(*) from INFORMATION_SCHEMA.TABLES  (TODO!!!)
+	//     select count(*) from INFORMATION_SCHEMA.TABLES
 	//     select table_schema, table_name from INFORMATION_SCHEMA.TABLES
 	// column pruning in general is not supported here.
 	if onlySchemaOrTableColumns(e.columns) {
