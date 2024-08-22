@@ -28,10 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
-=======
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -366,19 +362,11 @@ func TestAutoUpdate(t *testing.T) {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t (a varchar(20))")
 
-<<<<<<< HEAD
-		autoanalyze.AutoAnalyzeMinCnt = 0
-		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
-		defer func() {
-			autoanalyze.AutoAnalyzeMinCnt = 1000
-			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
-=======
 		statistics.AutoAnalyzeMinCnt = 0
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
 		defer func() {
 			statistics.AutoAnalyzeMinCnt = 1000
 			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.5")
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 		}()
 
 		do := dom
@@ -479,19 +467,11 @@ func TestAutoUpdatePartition(t *testing.T) {
 		testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
 		testKit.MustExec("analyze table t")
 
-<<<<<<< HEAD
-		autoanalyze.AutoAnalyzeMinCnt = 0
-		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
-		defer func() {
-			autoanalyze.AutoAnalyzeMinCnt = 1000
-			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
-=======
 		statistics.AutoAnalyzeMinCnt = 0
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
 		defer func() {
 			statistics.AutoAnalyzeMinCnt = 1000
 			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.5")
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 		}()
 
 		do := dom
@@ -532,11 +512,7 @@ func TestIssue25700(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` ( `ldecimal` decimal(32,4) DEFAULT NULL, `rdecimal` decimal(32,4) DEFAULT NULL, `gen_col` decimal(36,4) GENERATED ALWAYS AS (`ldecimal` + `rdecimal`) VIRTUAL, `col_timestamp` timestamp(3) NULL DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustExec("analyze table t")
-<<<<<<< HEAD
-	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) VALUES (2265.2200, 9843.4100, '1999-12-31 16:00:00')" + strings.Repeat(", (2265.2200, 9843.4100, '1999-12-31 16:00:00')", int(autoanalyze.AutoAnalyzeMinCnt)))
-=======
 	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) VALUES (2265.2200, 9843.4100, '1999-12-31 16:00:00')" + strings.Repeat(", (2265.2200, 9843.4100, '1999-12-31 16:00:00')", int(statistics.AutoAnalyzeMinCnt)))
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
@@ -826,19 +802,11 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		testKit.MustExec("set @@tidb_analyze_version = 2")
 		testKit.MustExec("analyze table t")
 
-<<<<<<< HEAD
-		autoanalyze.AutoAnalyzeMinCnt = 0
-		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.1")
-		defer func() {
-			autoanalyze.AutoAnalyzeMinCnt = 1000
-			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
-=======
 		statistics.AutoAnalyzeMinCnt = 0
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.1")
 		defer func() {
 			statistics.AutoAnalyzeMinCnt = 1000
 			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.5")
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 		}()
 
 		require.NoError(t, h.Update(is))
@@ -880,15 +848,9 @@ func TestAutoAnalyzeRatio(t *testing.T) {
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-<<<<<<< HEAD
-	autoanalyze.AutoAnalyzeMinCnt = 0
-	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = 1000
-=======
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -1114,15 +1076,9 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-<<<<<<< HEAD
-	autoanalyze.AutoAnalyzeMinCnt = 0
-	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = 1000
-=======
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -1320,17 +1276,6 @@ func TestNotDumpSysTable(t *testing.T) {
 func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-<<<<<<< HEAD
-	oriMinCnt := autoanalyze.AutoAnalyzeMinCnt
-	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
-	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = oriMinCnt
-		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
-		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
-	}()
-	autoanalyze.AutoAnalyzeMinCnt = 0
-=======
 	oriMinCnt := statistics.AutoAnalyzeMinCnt
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
@@ -1340,7 +1285,6 @@ func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
 	statistics.AutoAnalyzeMinCnt = 0
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	tk.MustExec("set global tidb_analyze_version = 2")

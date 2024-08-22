@@ -26,10 +26,6 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
-<<<<<<< HEAD
-        "//pkg/statistics/handle/autoanalyze",
-=======
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
         "//pkg/testkit",
         "//pkg/util/dbterror/exeerrors",
         "@com_github_pingcap_errors//:errors",

@@ -13,11 +13,7 @@ go_test(
         "//pkg/config",
         "//pkg/executor",
         "//pkg/sessionctx/variable",
-<<<<<<< HEAD
-        "//pkg/statistics/handle/autoanalyze",
-=======
         "//pkg/statistics",
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
         "//pkg/testkit",
         "//pkg/util",
         "//pkg/util/memory",

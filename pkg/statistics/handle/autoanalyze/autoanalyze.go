@@ -277,37 +277,11 @@ func RandomPickOneTableAndTryAutoAnalyze(
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
 var AutoAnalyzeMinCnt int64 = 1000
 
-<<<<<<< HEAD
 func autoAnalyzeTable(sctx sessionctx.Context,
 	statsHandle statsutil.StatsHandle,
 	tblInfo *model.TableInfo, statsTbl *statistics.Table,
 	ratio float64, sql string, params ...interface{}) bool {
 	if statsTbl.Pseudo || statsTbl.RealtimeCount < AutoAnalyzeMinCnt {
-=======
-	for _, def := range defs {
-		partitionStats[def.ID] = statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, def.ID)
-	}
-
-	return partitionStats
-}
-
-// Determine whether the table and index require analysis.
-func tryAutoAnalyzeTable(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sysproctrack.Tracker,
-	tblInfo *model.TableInfo,
-	statsTbl *statistics.Table,
-	ratio float64,
-	sql string,
-	params ...any,
-) bool {
-	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze
-	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
-	// 2. If the table is too small, we don't want to waste time to analyze it.
-	//    Leave the opportunity to other bigger tables.
-	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount < statistics.AutoAnalyzeMinCnt {
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 		return false
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
@@ -400,17 +374,8 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 	partitionNames := make([]interface{}, 0, len(partitionDefs))
 	for _, def := range partitionDefs {
-<<<<<<< HEAD
 		partitionStatsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
-=======
-		partitionStats := partitionStats[def.ID]
-		// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
-		//	  Pseudo statistics can be created by the optimizer, so we need to double check it.
-		// 2. If the table is too small, we don't want to waste time to analyze it.
-		//    Leave the opportunity to other bigger tables.
-		if partitionStats == nil || partitionStats.Pseudo || partitionStats.RealtimeCount < statistics.AutoAnalyzeMinCnt {
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 			continue
 		}
 		if needAnalyze, reason := NeedAnalyzeTable(partitionStatsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {

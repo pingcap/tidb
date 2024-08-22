@@ -40,11 +40,6 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
-<<<<<<< HEAD
-=======
-        "//pkg/statistics/handle/util",
-        "//pkg/statistics/handle/util/test",
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
         "//pkg/testkit",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",

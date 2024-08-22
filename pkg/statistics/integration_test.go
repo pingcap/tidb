@@ -26,10 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
-=======
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -310,15 +306,9 @@ func TestOutdatedStatsCheck(t *testing.T) {
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-<<<<<<< HEAD
-	autoanalyze.AutoAnalyzeMinCnt = 0
-	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = 1000
-=======
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
->>>>>>> 7e73ddc91b5 (statistics: add metrics for unneeded analyze table (#54822))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
