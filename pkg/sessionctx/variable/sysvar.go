@@ -1398,16 +1398,37 @@ var defaultSysVars = []*SysVar{
 			return err
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeConcurrency, Value: strconv.Itoa(DefTiDBAutoAnalyzeConcurrency), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+	{
+		Scope: ScopeGlobal, Name: TiDBAutoAnalyzeConcurrency,
+		Value:    strconv.Itoa(DefTiDBAutoAnalyzeConcurrency),
+		Type:     TypeInt,
+		MinValue: 0, MaxValue: math.MaxInt32,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return string(AutoAnlayzeConcurrency.Load()), nil
+			return strconv.FormatInt(int64(AutoAnalyzeConcurrency.Load()), 10), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			num, err := strconv.ParseInt(val, 10, 64)
 			if err == nil {
-				AutoAnlayzeConcurrency.Store(int32(num))
+				AutoAnalyzeConcurrency.Store(int32(num))
 			}
 			return err
+		},
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			// Check if auto-analyze and auto-analyze priority queue are enabled
+			enableAutoAnalyze := RunAutoAnalyze.Load()
+			enableAutoAnalyzePriorityQueue := EnableAutoAnalyzePriorityQueue.Load()
+
+			// Validate that both required settings are enabled
+			if !enableAutoAnalyze || !enableAutoAnalyzePriorityQueue {
+				return originalValue, errors.Errorf(
+					"cannot set %s: requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue to be true. Current values: tidb_enable_auto_analyze=%v, tidb_enable_auto_analyze_priority_queue=%v",
+					TiDBAutoAnalyzeConcurrency,
+					enableAutoAnalyze,
+					enableAutoAnalyzePriorityQueue,
+				)
+			}
+
+			return normalizedValue, nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBEnableMDL, Value: BoolToOnOff(DefTiDBEnableMDL), Type: TypeBool, SetGlobal: func(_ context.Context, vars *SessionVars, val string) error {
