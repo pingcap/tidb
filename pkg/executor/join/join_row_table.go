@@ -51,22 +51,21 @@ func init() {
 	// 0x70 0x00 0x00 0x00
 	// when interprete the 32 bit as uint32
 	// in big endian system, it is 0x70000000
-	// in small endian system, it is 0x00000070
+	// in little endian system, it is 0x00000070
 	// useFlagMask and bitMaskInUint32 is used to hide these difference in big endian/small endian system
 	// and init function is used to init usedFlagMask and bitMaskInUint32 based on endianness of current env
 	endiannessTest := uint32(1) << 7
 	low8Value := *(*uint8)(unsafe.Pointer(&endiannessTest))
 	if uint32(low8Value) == endiannessTest {
 		// Little-endian system: the lowest byte (at the lowest address) stores the least significant byte (LSB) of the integer
-		usedFlagMask = uint32(1) << 7
 		initializeBitMasks(true)
 	} else {
-		// Big-endian system: the highest byte (at the lowest address) stores the most significant byte (MSB) of the integer
-		usedFlagMask = uint32(1) << 31
+		// Big-endian system: the lowest byte (at the lowest address) stores the most significant byte (MSB) of the integer
 		initializeBitMasks(false)
 	}
-	}
+	usedFlagMask = bitMaskInUint32[0]
 }
+
 // initializeBitMasks encapsulates the bit-shifting logic to set the bitMaskInUint32 array based on endianness
 // The parameter isLittleEndian indicates the system's endianness
 // - If the system is little-endian, the bit mask for each byte starts from the most significant bit (bit 7) and decrements sequentially
