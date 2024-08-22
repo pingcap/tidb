@@ -15,6 +15,7 @@
 package join
 
 import (
+	"math/bits"
 	"unsafe"
 )
 
@@ -43,7 +44,7 @@ type tagPtrHelper struct {
 
 func (th *tagPtrHelper) init(taggedBits uint8) {
 	hashValueTaggedMask := uint64(1<<taggedBits) - 1
-	hashValueTaggedOffset := uint64(64 - taggedBits)
+	hashValueTaggedOffset := 64 - taggedBits
 	th.taggedMask = hashValueTaggedMask << hashValueTaggedOffset
 }
 
@@ -70,15 +71,6 @@ func getTaggedBitsFromUintptr(ptr uintptr) uint8 {
 	if sizeOfUintptr != 8 {
 		return 0
 	}
-	taggedBits := maxTaggedBits
-	taggedMask := maxTaggedMask
-	pValue := uint64(ptr)
-	for taggedBits > 0 {
-		if pValue & ^taggedMask == 0 {
-			return uint8(taggedBits)
-		}
-		taggedBits--
-		taggedMask = (taggedMask << 1) + 1
-	}
-	return 0
+	// count leading zeros to determine the number of tagged bits
+	return uint8(min(int8(bits.LeadingZeros64(uint64(ptr))) , maxTaggedBits))
 }
