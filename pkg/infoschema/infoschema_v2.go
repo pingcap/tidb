@@ -658,6 +658,9 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 	if !ok {
 		return
 	}
+	if !visit(TableItem{DBName: pivot.dbName, TableName: pivot.tableName}) {
+		return
+	}
 	is.byName.Descend(pivot, func(item tableItem) bool {
 		if pivot.dbName == item.dbName && pivot.tableName == item.tableName {
 			return true // skip MVCC version
