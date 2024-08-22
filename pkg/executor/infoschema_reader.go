@@ -101,6 +101,13 @@ type memtableRetriever struct {
 	memTracker  *memory.Tracker
 }
 
+func (e *memtableRetriever) Close() error {
+	for _, row := range e.rows {
+		types.DestroyDatums(row)
+	}
+	return nil
+}
+
 // retrieve implements the infoschemaRetriever interface
 func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.table.Name.O == infoschema.TableClusterInfo && !hasPriv(sctx, mysql.ProcessPriv) {
@@ -283,7 +290,7 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 		if sv.HasGlobalScope() {
 			defVal = variable.GlobalSystemVariableInitialValue(sv.Name, defVal)
 		}
-		row := types.MakeDatums(
+		row := types.MakeDatumsFromPool(
 			sv.Name,           // VARIABLE_NAME
 			sv.Scope.String(), // VARIABLE_SCOPE
 			defVal,            // DEFAULT_VALUE
@@ -329,7 +336,7 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 		if attribute = chunkRow.GetString(2); attribute == "" {
 			attribute = nil
 		}
-		row := types.MakeDatums(user, host, attribute)
+		row := types.MakeDatumsFromPool(user, host, attribute)
 		rows = append(rows, row)
 	}
 
@@ -369,7 +376,7 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context) error {
 		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
 			continue
 		}
-		record := types.MakeDatums(
+		record := types.MakeDatumsFromPool(
 			infoschema.CatalogVal, // CATALOG_NAME
 			schema.Name.O,         // SCHEMA_NAME
 			charset,               // DEFAULT_CHARACTER_SET_NAME
@@ -415,7 +422,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(
 	if table.PKIsHandle && ex.HasPrimaryKey() {
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				record := types.MakeDatums(
+				record := types.MakeDatumsFromPool(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.O,              // TABLE_SCHEMA
 					table.Name.O,          // TABLE_NAME
@@ -472,7 +479,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(
 				expression = tblCol.GeneratedExprString
 			}
 
-			record := types.MakeDatums(
+			record := types.MakeDatumsFromPool(
 				infoschema.CatalogVal, // TABLE_CATALOG
 				schema.O,              // TABLE_SCHEMA
 				table.Name.O,          // TABLE_NAME
@@ -531,7 +538,7 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 			if model.ReferOptionType(fk.OnDelete) != 0 {
 				deleteRule = model.ReferOptionType(fk.OnDelete).String()
 			}
-			record := types.MakeDatums(
+			record := types.MakeDatumsFromPool(
 				infoschema.CatalogVal, // CONSTRAINT_CATALOG
 				schema.O,              // CONSTRAINT_SCHEMA
 				fk.Name.O,             // CONSTRAINT_NAME
@@ -628,7 +635,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			rowCount, avgRowLength, dataLength, indexLength = cache.TableRowStatsCache.EstimateDataLength(table)
 		}
 
-		record := types.MakeDatums(
+		record := types.MakeDatumsFromPool(
 			infoschema.CatalogVal, // TABLE_CATALOG
 			schema.O,              // TABLE_SCHEMA
 			table.Name.O,          // TABLE_NAME
@@ -657,7 +664,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 		)
 		rows = append(rows, record)
 	} else {
-		record := types.MakeDatums(
+		record := types.MakeDatumsFromPool(
 			infoschema.CatalogVal, // TABLE_CATALOG
 			schema.O,              // TABLE_SCHEMA
 			table.Name.O,          // TABLE_NAME
@@ -749,7 +756,7 @@ func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sct
 					if ok && !ex.HasConstraint(constraint.Name.L) {
 						continue
 					}
-					record := types.MakeDatums(
+					record := types.MakeDatumsFromPool(
 						infoschema.CatalogVal, // CONSTRAINT_CATALOG
 						schema.O,              // CONSTRAINT_SCHEMA
 						constraint.Name.O,     // CONSTRAINT_NAME
@@ -793,7 +800,7 @@ func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context,
 				if ok && !ex.HasConstraint(constraint.Name.L) {
 					continue
 				}
-				record := types.MakeDatums(
+				record := types.MakeDatumsFromPool(
 					infoschema.CatalogVal, // CONSTRAINT_CATALOG
 					schema.O,              // CONSTRAINT_SCHEMA
 					constraint.Name.O,     // CONSTRAINT_NAME
@@ -1026,7 +1033,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 		if colType == mysql.TypeVarString {
 			colType = mysql.TypeVarchar
 		}
-		record := types.MakeDatums(
+		record := types.MakeDatumsFromPool(
 			infoschema.CatalogVal, // TABLE_CATALOG
 			schema.O,              // TABLE_SCHEMA
 			tbl.Name.O,            // TABLE_NAME
@@ -1113,7 +1120,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			if len(ex.ColPredicates["partition_name"]) > 0 {
 				continue
 			}
-			record := types.MakeDatums(
+			record := types.MakeDatumsFromPool(
 				infoschema.CatalogVal, // TABLE_CATALOG
 				schema.O,              // TABLE_SCHEMA
 				table.Name.O,          // TABLE_NAME
@@ -1206,7 +1213,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				if pi.PlacementPolicyRef != nil {
 					policyName = pi.PlacementPolicyRef.Name.O
 				}
-				record := types.MakeDatums(
+				record := types.MakeDatumsFromPool(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.O,              // TABLE_SCHEMA
 					table.Name.O,          // TABLE_NAME
@@ -1286,7 +1293,7 @@ func (*memtableRetriever) setDataFromIndex(
 				break
 			}
 		}
-		record := types.MakeDatums(
+		record := types.MakeDatumsFromPool(
 			schema.O,     // TABLE_SCHEMA
 			tb.Name.O,    // TABLE_NAME
 			0,            // NON_UNIQUE
@@ -1332,7 +1339,7 @@ func (*memtableRetriever) setDataFromIndex(
 			if idxInfo.Invisible {
 				visible = "NO"
 			}
-			record := types.MakeDatums(
+			record := types.MakeDatumsFromPool(
 				schema.O,        // TABLE_SCHEMA
 				tb.Name.O,       // TABLE_NAME
 				nonUniq,         // NON_UNIQUE
@@ -1383,7 +1390,7 @@ func (e *memtableRetriever) setDataFromViews(ctx context.Context, sctx sessionct
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
-		record := types.MakeDatums(
+		record := types.MakeDatumsFromPool(
 			infoschema.CatalogVal,           // TABLE_CATALOG
 			schema.O,                        // TABLE_SCHEMA
 			table.Name.O,                    // TABLE_NAME
@@ -1556,7 +1563,7 @@ func (e *DDLJobsReaderExec) Close() error {
 func (e *memtableRetriever) setDataFromEngines() {
 	var rows [][]types.Datum
 	rows = append(rows,
-		types.MakeDatums(
+		types.MakeDatumsFromPool(
 			"InnoDB",  // Engine
 			"DEFAULT", // Support
 			"Supports transactions, row-level locking, and foreign keys", // Comment
@@ -1573,7 +1580,7 @@ func (e *memtableRetriever) setDataFromCharacterSets() {
 	var rows = make([][]types.Datum, 0, len(charsets))
 	for _, charset := range charsets {
 		rows = append(rows,
-			types.MakeDatums(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen),
+			types.MakeDatumsFromPool(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen),
 		)
 	}
 	e.rows = rows
@@ -1588,7 +1595,7 @@ func (e *memtableRetriever) setDataFromCollations() {
 			isDefault = "Yes"
 		}
 		rows = append(rows,
-			types.MakeDatums(collation.Name, collation.CharsetName, collation.ID,
+			types.MakeDatumsFromPool(collation.Name, collation.CharsetName, collation.ID,
 				isDefault, "Yes", collation.Sortlen, collation.PadAttribute),
 		)
 	}
@@ -1600,7 +1607,7 @@ func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
 	var rows = make([][]types.Datum, 0, len(collations))
 	for _, collation := range collations {
 		rows = append(rows,
-			types.MakeDatums(collation.Name, collation.CharsetName),
+			types.MakeDatumsFromPool(collation.Name, collation.CharsetName),
 		)
 	}
 	e.rows = rows
@@ -1625,7 +1632,7 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 		if server.ServerType == kv.TiFlash.Name() && server.EngineRole == placement.EngineRoleLabelWrite {
 			serverType = infoschema.TiFlashWrite
 		}
-		row := types.MakeDatums(
+		row := types.MakeDatumsFromPool(
 			serverType,
 			server.Address,
 			server.StatusAddr,
@@ -1708,7 +1715,7 @@ func (e *memtableRetriever) setDataForProcessList(ctx sessionctx.Context) {
 		}
 
 		rows := pi.ToRow(ctx.GetSessionVars().StmtCtx.TimeZone())
-		record := types.MakeDatums(rows...)
+		record := types.MakeDatumsFromPool(rows...)
 		records = append(records, record)
 	}
 	e.rows = records
@@ -1729,7 +1736,7 @@ func (e *memtableRetriever) setDataForMetricTables() {
 	rows := make([][]types.Datum, 0, len(tables))
 	for _, name := range tables {
 		schema := infoschema.MetricTableMap[name]
-		record := types.MakeDatums(
+		record := types.MakeDatumsFromPool(
 			name,                             // METRICS_NAME
 			schema.PromQL,                    // PROMQL
 			strings.Join(schema.Labels, ","), // LABELS
@@ -1746,7 +1753,7 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, ex *plann
 	if table.PKIsHandle && ex.HasPrimaryKey() {
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				record := types.MakeDatums(
+				record := types.MakeDatumsFromPool(
 					infoschema.CatalogVal,        // CONSTRAINT_CATALOG
 					schema.O,                     // CONSTRAINT_SCHEMA
 					infoschema.PrimaryConstraint, // CONSTRAINT_NAME
@@ -1792,7 +1799,7 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, ex *plann
 			if col.Hidden {
 				continue
 			}
-			record := types.MakeDatums(
+			record := types.MakeDatumsFromPool(
 				infoschema.CatalogVal, // CONSTRAINT_CATALOG
 				schema.O,              // CONSTRAINT_SCHEMA
 				idxName,               // CONSTRAINT_NAME
@@ -1820,7 +1827,7 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, ex *plann
 				fkRefCol = fk.RefCols[i].O
 			}
 			col := nameToCol[key.L]
-			record := types.MakeDatums(
+			record := types.MakeDatumsFromPool(
 				infoschema.CatalogVal, // CONSTRAINT_CATALOG
 				schema.O,              // CONSTRAINT_SCHEMA
 				fk.Name.O,             // CONSTRAINT_NAME
@@ -2077,7 +2084,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 
 		if tbl.PKIsHandle {
 			if ex.HasPrimaryKey() {
-				record := types.MakeDatums(
+				record := types.MakeDatumsFromPool(
 					infoschema.CatalogVal,     // CONSTRAINT_CATALOG
 					schema.O,                  // CONSTRAINT_SCHEMA
 					mysql.PrimaryKeyName,      // CONSTRAINT_NAME
@@ -2107,7 +2114,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 			if !ex.HasConstraint(filterName) {
 				continue
 			}
-			record := types.MakeDatums(
+			record := types.MakeDatumsFromPool(
 				infoschema.CatalogVal, // CONSTRAINT_CATALOG
 				schema.O,              // CONSTRAINT_SCHEMA
 				cname,                 // CONSTRAINT_NAME
@@ -2122,7 +2129,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 			if !ex.HasConstraint(fk.Name.L) {
 				continue
 			}
-			record := types.MakeDatums(
+			record := types.MakeDatumsFromPool(
 				infoschema.CatalogVal,     // CONSTRAINT_CATALOG
 				schema.O,                  // CONSTRAINT_SCHEMA
 				fk.Name.O,                 // CONSTRAINT_NAME
@@ -2280,7 +2287,7 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx context.Con
 				peerCount += cnt
 			}
 
-			record := types.MakeDatums(
+			record := types.MakeDatumsFromPool(
 				tbl.db,              // TABLE_SCHEMA
 				tbl.Name.O,          // TABLE_NAME
 				tableID,             // TABLE_ID
@@ -2364,7 +2371,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 			progressDouble = progress
 			estimatedRowCntStr = int64(estimatedRowCnt)
 		}
-		row := types.MakeDatums(
+		row := types.MakeDatumsFromPool(
 			dbName,             // TABLE_SCHEMA
 			tableName,          // TABLE_NAME
 			partitionName,      // PARTITION_NAME
@@ -2466,7 +2473,7 @@ func (e *memtableRetriever) setDataForAnalyzeStatus(ctx context.Context, sctx se
 // setDataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
 func (e *memtableRetriever) setDataForPseudoProfiling(sctx sessionctx.Context) {
 	if v, ok := sctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
-		row := types.MakeDatums(
+		row := types.MakeDatumsFromPool(
 			0,                      // QUERY_ID
 			0,                      // SEQ
 			"",                     // STATE
@@ -2497,7 +2504,7 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error 
 	}
 	rows := make([][]types.Datum, 0, len(serversInfo))
 	for _, info := range serversInfo {
-		row := types.MakeDatums(
+		row := types.MakeDatumsFromPool(
 			info.ID,              // DDL_ID
 			info.IP,              // IP
 			int(info.Port),       // PORT
@@ -2542,7 +2549,7 @@ func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessi
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
-		record := types.MakeDatums(
+		record := types.MakeDatumsFromPool(
 			infoschema.CatalogVal,     // TABLE_CATALOG
 			schema.O,                  // SEQUENCE_SCHEMA
 			table.Name.O,              // SEQUENCE_NAME
@@ -2593,7 +2600,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 			}
 			progressString := types.TruncateFloatToString(progress, 2)
 			progress, _ = strconv.ParseFloat(progressString, 64)
-			record := types.MakeDatums(
+			record := types.MakeDatumsFromPool(
 				schema.DBName.O,                 // TABLE_SCHEMA
 				tbl.Name.O,                      // TABLE_NAME
 				tbl.ID,                          // TABLE_ID
@@ -2624,7 +2631,7 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 		for code, summary := range errno.GlobalStats() {
 			firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
 			lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
-			row := types.MakeDatums(
+			row := types.MakeDatumsFromPool(
 				int(code),                    // ERROR_NUMBER
 				errno.MySQLErrName[code].Raw, // ERROR_MESSAGE
 				summary.ErrorCount,           // ERROR_COUNT
@@ -2643,7 +2650,7 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 				}
 				firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
 				lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
-				row := types.MakeDatums(
+				row := types.MakeDatumsFromPool(
 					user,                         // USER
 					int(code),                    // ERROR_NUMBER
 					errno.MySQLErrName[code].Raw, // ERROR_MESSAGE
@@ -2663,7 +2670,7 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 			for code, summary := range agg {
 				firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
 				lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
-				row := types.MakeDatums(
+				row := types.MakeDatumsFromPool(
 					host,                         // HOST
 					int(code),                    // ERROR_NUMBER
 					errno.MySQLErrName[code].Raw, // ERROR_MESSAGE
@@ -3488,7 +3495,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx context.Context, sctx sessi
 		}
 		kr := strings.Join(ranges, ", ")
 
-		row := types.MakeDatums(
+		row := types.MakeDatumsFromPool(
 			rule.ID,
 			rule.RuleType,
 			labels,
@@ -3518,7 +3525,7 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context
 			followerCnt = 2
 		}
 
-		row := types.MakeDatums(
+		row := types.MakeDatumsFromPool(
 			policy.ID,
 			infoschema.CatalogVal, // CATALOG
 			policy.Name.O,         // Policy Name
@@ -3548,7 +3555,7 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 	rows := make([][]types.Datum, 0, len(watches))
 	for _, watch := range watches {
 		action := watch.Action
-		row := types.MakeDatums(
+		row := types.MakeDatumsFromPool(
 			watch.ID,
 			watch.ResourceGroupName,
 			watch.StartTime.UTC().Format(time.DateTime),
@@ -3622,7 +3629,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			if group.RUSettings.RU.Settings.BurstLimit < 0 {
 				burstable = burstableStr
 			}
-			row := types.MakeDatums(
+			row := types.MakeDatumsFromPool(
 				group.Name,
 				fillrate,
 				priority,
@@ -3639,7 +3646,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			rows = append(rows, row)
 		default:
 			//mode = "UNKNOWN_MODE"
-			row := types.MakeDatums(
+			row := types.MakeDatumsFromPool(
 				group.Name,
 				nil,
 				nil,
@@ -3657,7 +3664,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 func (e *memtableRetriever) setDataFromKeywords() error {
 	rows := make([][]types.Datum, 0, len(parser.Keywords))
 	for _, kw := range parser.Keywords {
-		row := types.MakeDatums(kw.Word, kw.Reserved)
+		row := types.MakeDatumsFromPool(kw.Word, kw.Reserved)
 		rows = append(rows, row)
 	}
 	e.rows = rows

@@ -2256,6 +2256,21 @@ func MakeDatums(args ...any) []Datum {
 	return datums
 }
 
+// MakeDatumsFromPool creates datum slice from interfaces and slice create from the pool.
+func MakeDatumsFromPool(args ...any) []Datum {
+	datums := allocDatum(len(args))
+	for _, v := range args {
+		datums = append(datums, NewDatum(v))
+	}
+	return datums
+}
+
+// DestroyDatums destroys datum slice.
+func DestroyDatums(datums []Datum) {
+	clear(datums)
+	deallocateSelSlice(datums)
+}
+
 // MinNotNullDatum returns a datum represents minimum not null value.
 func MinNotNullDatum() Datum {
 	return Datum{k: KindMinNotNull}
