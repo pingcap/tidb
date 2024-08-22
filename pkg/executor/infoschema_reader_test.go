@@ -493,7 +493,6 @@ func TestTablesTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	// prepare data
 	type tableMeta struct {
 		schema string
 		table  string
@@ -502,6 +501,8 @@ func TestTablesTable(t *testing.T) {
 	toString := func(tm *tableMeta) string {
 		return fmt.Sprintf("%s %s %s", tm.schema, tm.table, tm.id)
 	}
+
+	// prepare data
 	tableMetas := []*tableMeta{}
 	schemaNames := []string{"db1", "db2"}
 	tableNames := []string{"t1", "t2"}
