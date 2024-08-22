@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
@@ -52,6 +51,7 @@ type BackendCtxMgr interface {
 		pdSvcDiscovery pd.ServiceDiscovery,
 		resourceGroupName string,
 		importConc int,
+		initTS uint64,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
 	// EncodeJobSortPath encodes the job ID to the local disk sort path.
@@ -118,6 +118,7 @@ func (m *litBackendCtxMgr) Register(
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
 	concurrency int,
+	initTS uint64,
 ) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if exist {
@@ -154,13 +155,7 @@ func (m *litBackendCtxMgr) Register(
 		return nil, err
 	}
 
-	physical, logical, err := bd.GetTS(ctx)
-	if err != nil {
-		return nil, err
-	}
-	curTS := oracle.ComposeTS(physical, logical)
-
-	bcCtx := newBackendContext(ctx, jobID, bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient, curTS)
+	bcCtx := newBackendContext(ctx, jobID, bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient, initTS)
 	m.backends.m[jobID] = bcCtx
 	m.memRoot.Consume(structSizeBackendCtx)
 	m.backends.mu.Unlock()
