@@ -525,6 +525,9 @@ func (e *ShowExec) fetchShowInfoByName(ctx context.Context, name string) ([]*sho
 		}
 		return nil, errors.Trace(err)
 	}
+	if tb.Meta().TempTableType == model.TempTableLocal {
+		return nil, nil
+	}
 	return []*showInfo{{Name: tb.Meta().Name, TableType: e.getTableType(tb.Meta())}}, nil
 }
 

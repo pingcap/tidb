@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime"
 	"slices"
 	"strconv"
 	"time"
@@ -69,35 +68,7 @@ var AllowCartesianProduct = atomic.NewBool(true)
 // IsReadOnly check whether the ast.Node is a read only statement.
 var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
-// Note: The order of flags is same as the order of optRule in the list.
-// Do not mess up the order.
-const (
-	flagGcSubstitute uint64 = 1 << iota
-	flagPrunColumns
-	flagStabilizeResults
-	flagBuildKeyInfo
-	flagDecorrelate
-	flagSemiJoinRewrite
-	flagEliminateAgg
-	flagSkewDistinctAgg
-	flagEliminateProjection
-	flagMaxMinEliminate
-	flagConstantPropagation
-	flagConvertOuterToInnerJoin
-	flagPredicatePushDown
-	flagEliminateOuterJoin
-	flagPartitionProcessor
-	flagCollectPredicateColumnsPoint
-	flagPushDownAgg
-	flagDeriveTopNFromWindow
-	flagPredicateSimplification
-	flagPushDownTopN
-	flagSyncWaitStatsLoadPoint
-	flagJoinReOrder
-	flagPrunColumnsAgain
-	flagPushDownSequence
-	flagResolveExpand
-)
+const initialMaxCores uint64 = 10000
 
 var optRuleList = []base.LogicalOptRule{
 	&GcSubstituter{},
@@ -311,21 +282,21 @@ func doOptimize(
 }
 
 func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
-	// If there is something after flagPrunColumns, do flagPrunColumnsAgain.
-	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
-		flag |= flagPrunColumnsAgain
+	// If there is something after flagPrunColumns, do FlagPruneColumnsAgain.
+	if flag&rule.FlagPruneColumns > 0 && flag-rule.FlagPruneColumns > rule.FlagPruneColumns {
+		flag |= rule.FlagPruneColumnsAgain
 	}
 	if checkStableResultMode(logic.SCtx()) {
-		flag |= flagStabilizeResults
+		flag |= rule.FlagStabilizeResults
 	}
 	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
-		flag &= ^flagJoinReOrder
+		flag &= ^rule.FlagJoinReOrder
 	}
-	flag |= flagCollectPredicateColumnsPoint
-	flag |= flagSyncWaitStatsLoadPoint
+	flag |= rule.FlagCollectPredicateColumnsPoint
+	flag |= rule.FlagSyncWaitStatsLoadPoint
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
-		flag |= flagPartitionProcessor // apply partition pruning under static mode
+		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
 	}
 	return flag
 }
@@ -652,9 +623,7 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *physicalop.B
 	h.plans = append(h.plans, p)
 }
 
-// calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers, and divide by 2
-// return false, 0 if any err happens
-func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
 		if err == nil {
@@ -667,7 +636,6 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx b
 	if err != nil {
 		return false, 0
 	}
-	var initialMaxCores uint64 = 10000
 	var minLogicalCores = initialMaxCores // set to a large enough value here
 	for _, row := range rows {
 		if row[4].GetString() == "cpu-logical-cores" {
@@ -678,14 +646,19 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx b
 		}
 	}
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
-	if minLogicalCores > 1 && minLogicalCores != initialMaxCores {
-		if runtime.GOARCH == "amd64" {
-			// In most x86-64 platforms, `Thread(s) per core` is 2
-			return true, minLogicalCores / 2
-		}
-		// ARM cpus don't implement Hyper-threading.
+	return true, minLogicalCores
+}
+
+// calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers
+// return false, 0 if any err happens
+func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+	valid, minLogicalCores := getTiFlashServerMinLogicalCores(ctx, sctx, serversInfo)
+	if !valid {
+		return false, 0
+	}
+	if minLogicalCores != initialMaxCores {
+		// use logical core number as the stream count, the same as TiFlash's default max_threads: https://github.com/pingcap/tiflash/blob/v7.5.0/dbms/src/Interpreters/SettingsCommon.h#L166
 		return true, minLogicalCores
-		// Other platforms are too rare to consider
 	}
 
 	return false, 0

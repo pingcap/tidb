@@ -16,6 +16,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -32,7 +33,7 @@ func findCTEs(
 	visited *intset.FastIntSet,
 	isRootTree bool,
 ) {
-	if cteReader, ok := p.(*LogicalCTE); ok {
+	if cteReader, ok := p.(*logicalop.LogicalCTE); ok {
 		cte := cteReader.Cte
 		if !isRootTree {
 			// Set it to false since it's referenced by other CTEs.
