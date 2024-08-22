@@ -797,13 +797,7 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysical
 	h.plans = append(h.plans, p)
 }
 
-<<<<<<< HEAD
-// calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers, and divide by 2
-// return false, 0 if any err happens
-func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
-=======
-func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
->>>>>>> 38f9d702ff6 (planner: use logical cores as default fine grained stream count (#55544))
+func getTiFlashServerMinLogicalCores(ctx context.Context, sctx PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
 		if err == nil {
@@ -831,7 +825,7 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 
 // calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers
 // return false, 0 if any err happens
-func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	valid, minLogicalCores := getTiFlashServerMinLogicalCores(ctx, sctx, serversInfo)
 	if !valid {
 		return false, 0
