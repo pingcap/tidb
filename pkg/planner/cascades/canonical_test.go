@@ -25,14 +25,14 @@ type TmpStr struct {
 	str2 string
 }
 
-func (ts *TmpStr) Hash64(h *Hasher) {
+func (ts *TmpStr) Hash64(h Hasher) {
 	h.HashString(ts.str1)
 	h.HashString(ts.str2)
 }
 
 func TestStringLen(t *testing.T) {
-	hasher1 := NewHasher()
-	hasher2 := NewHasher()
+	hasher1 := NewHashEqualer()
+	hasher2 := NewHashEqualer()
 	a := TmpStr{
 		str1: "abc",
 		str2: "def",
@@ -43,12 +43,12 @@ func TestStringLen(t *testing.T) {
 	}
 	a.Hash64(hasher1)
 	b.Hash64(hasher2)
-	require.NotEqual(t, hasher1.hash64a, hasher2.hash64a)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 }
 
 type SX interface {
-	Hash64(h *Hasher)
-	Equal(SX) bool
+	Hash64(h Hasher)
+	Equal(SX, Equaler) bool
 }
 
 type SA struct {
@@ -56,14 +56,14 @@ type SA struct {
 	b string
 }
 
-func (sa *SA) Hash64(h *Hasher) {
+func (sa *SA) Hash64(h Hasher) {
 	h.HashInt(sa.a)
 	h.HashString(sa.b)
 }
 
-func (sa *SA) Equal(sx SX) bool {
+func (sa *SA) Equal(sx SX, h Equaler) bool {
 	if sa2, ok := sx.(*SA); ok {
-		return sa.a == sa2.a && sa.b == sa2.b
+		return h.EqualInt(sa.a, sa2.a) && h.EqualString(sa.b, sa2.b)
 	}
 	return false
 }
@@ -73,21 +73,21 @@ type SB struct {
 	b string
 }
 
-func (sb *SB) Hash64(h *Hasher) {
+func (sb *SB) Hash64(h Hasher) {
 	h.HashInt(sb.a)
 	h.HashString(sb.b)
 }
 
-func (sb *SB) Equal(sx SX) bool {
+func (sb *SB) Equal(sx SX, h Equaler) bool {
 	if sb2, ok := sx.(*SB); ok {
-		return sb.a == sb2.a && sb.b == sb2.b
+		return h.EqualInt(sb.a, sb2.a) && h.EqualString(sb.b, sb2.b)
 	}
 	return false
 }
 
 func TestStructType(t *testing.T) {
-	hasher1 := NewHasher()
-	hasher2 := NewHasher()
+	hasher1 := NewHashEqualer()
+	hasher2 := NewHashEqualer()
 	a := SA{
 		a: 1,
 		b: "abc",
@@ -106,44 +106,44 @@ func TestStructType(t *testing.T) {
 	// have to hash the golang struct type, because the dynamic runtime type pointer from reflecting is not
 	// that elegant, we resort to Equal function to compare the two structs completely once two obj has the
 	// same hash.
-	require.Equal(t, hasher1.hash64a, hasher2.hash64a)
-	require.Equal(t, a.Equal(&b), false)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.Equal(t, a.Equal(&b, hasher1), false)
 }
 
 func TestHash64a(t *testing.T) {
-	hasher1 := NewHasher()
-	hasher2 := NewHasher()
+	hasher1 := NewHashEqualer()
+	hasher2 := NewHashEqualer()
 	hasher1.HashBool(true)
 	hasher2.HashBool(true)
-	require.Equal(t, hasher1.hash64a, hasher2.hash64a)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	hasher1.HashBool(false)
 	hasher2.HashBool(false)
-	require.Equal(t, hasher1.hash64a, hasher2.hash64a)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	hasher1.HashInt(199)
 	hasher2.HashInt(199)
-	require.Equal(t, hasher1.hash64a, hasher2.hash64a)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	hasher1.HashInt64(13534523462346)
 	hasher2.HashInt64(13534523462346)
-	require.Equal(t, hasher1.hash64a, hasher2.hash64a)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	hasher1.HashUint64(13534523462346)
 	hasher2.HashUint64(13534523462346)
-	require.Equal(t, hasher1.hash64a, hasher2.hash64a)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	hasher1.HashString("hello")
 	hasher2.HashString("hello")
-	require.Equal(t, hasher1.hash64a, hasher2.hash64a)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	hasher1.HashBytes([]byte("world"))
 	hasher2.HashBytes([]byte("world"))
-	require.Equal(t, hasher1.hash64a, hasher2.hash64a)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	hasher1.HashRune('我')
 	hasher1.HashRune('是')
 	hasher1.HashRune('谁')
 	hasher2.HashRune('我')
 	hasher2.HashRune('是')
 	hasher2.HashRune('谁')
-	require.Equal(t, hasher1.hash64a, hasher2.hash64a)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	hasher1.Reset()
 	hasher2.Reset()
 	hasher1.HashString("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 	hasher2.HashString("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-	require.Equal(t, hasher1.hash64a, hasher2.hash64a)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 }

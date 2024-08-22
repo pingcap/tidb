@@ -30,26 +30,61 @@ const (
 	prime64 = 1099511628211
 )
 
+type HashEqualer interface {
+	Hasher
+	Equaler
+}
+
+type Hasher interface {
+	HashBool(val bool)
+	HashInt(val int)
+	HashInt64(val int64)
+	HashUint64(val uint64)
+	HashFloat64(val float64)
+	HashRune(val rune)
+	HashString(val string)
+	HashByte(val byte)
+	HashBytes(val []byte)
+	Reset()
+	Sum64() uint64
+}
+
+type Equaler interface {
+	EqualBool(l, r bool) bool
+	EqualInt(l, r int) bool
+	EqualInt64(l, r int64) bool
+	EqualUint64(l, r uint64) bool
+	EqualFloat64(l, r float64) bool
+	EqualRune(l, r rune) bool
+	EqualString(l, r string) bool
+	EqualByte(l, r byte) bool
+	EqualBytes(l, r []byte) bool
+}
+
 type Hash64a uint64
 
 // Hasher is a helper struct that's used for computing **fnv-1a** hash values and tell
 // the equivalence on expression/operators. To use, first call the init method, then
 // a series of hash methods. The final value is stored in the hash64a field.
-type Hasher struct {
+type hasher struct {
 	// hash stores the hash value as it is incrementally computed.
 	hash64a Hash64a
 }
 
-// NewHasher creates a new Hasher.
-func NewHasher() *Hasher {
-	return &Hasher{
+// NewHashEqualer creates a new HashEqualer.
+func NewHashEqualer() HashEqualer {
+	return &hasher{
 		hash64a: offset64,
 	}
 }
 
 // Reset resets the Hasher to its initial state, reusing the internal bytes slice.
-func (h *Hasher) Reset() {
+func (h *hasher) Reset() {
 	h.hash64a = offset64
+}
+
+func (h *hasher) Sum64() uint64 {
+	return uint64(h.hash64a)
 }
 
 // ------------------------------ Hash functions ----------------------------------------
@@ -69,7 +104,7 @@ func (h *Hasher) Reset() {
 // ---------------------------------------------------------------------------------------
 
 // HashBool hashes a Boolean value.
-func (h *Hasher) HashBool(val bool) {
+func (h *hasher) HashBool(val bool) {
 	i := 0
 	if val {
 		i = 1
@@ -79,38 +114,38 @@ func (h *Hasher) HashBool(val bool) {
 }
 
 // HashInt hashes an integer value.
-func (h *Hasher) HashInt(val int) {
+func (h *hasher) HashInt(val int) {
 	h.hash64a ^= Hash64a(val)
 	h.hash64a *= prime64
 }
 
 // HashInt64 hashes an int64 value.
-func (h *Hasher) HashInt64(val int64) {
+func (h *hasher) HashInt64(val int64) {
 	h.hash64a ^= Hash64a(val)
 	h.hash64a *= prime64
 }
 
 // HashUint64 hashes a uint64 value.
-func (h *Hasher) HashUint64(val uint64) {
+func (h *hasher) HashUint64(val uint64) {
 	h.hash64a ^= Hash64a(val)
 	h.hash64a *= prime64
 }
 
 // HashFloat64 hashes a float64 value.
-func (h *Hasher) HashFloat64(val float64) {
+func (h *hasher) HashFloat64(val float64) {
 	h.hash64a ^= Hash64a(math.Float64bits(val))
 	h.hash64a *= prime64
 }
 
 // HashRune hashes a rune value.
-func (h *Hasher) HashRune(val rune) {
+func (h *hasher) HashRune(val rune) {
 	h.hash64a ^= Hash64a(val)
 	h.hash64a *= prime64
 }
 
 // HashString hashes a string value.
 // eg: "我是谁" is with 3 rune inside, each rune of them takes up 3-4 bytes.
-func (h *Hasher) HashString(val string) {
+func (h *hasher) HashString(val string) {
 	h.HashInt(len(val))
 	for _, c := range val {
 		h.HashRune(c)
@@ -119,12 +154,12 @@ func (h *Hasher) HashString(val string) {
 
 // HashByte hashes a byte value.
 // a byte can be treated as a simple rune as well.
-func (h *Hasher) HashByte(val byte) {
+func (h *hasher) HashByte(val byte) {
 	h.HashRune(rune(val))
 }
 
 // HashBytes hashes a byte slice value.
-func (h *Hasher) HashBytes(val []byte) {
+func (h *hasher) HashBytes(val []byte) {
 	h.HashInt(len(val))
 	for _, c := range val {
 		h.HashByte(c)
@@ -146,48 +181,48 @@ func (h *Hasher) HashBytes(val []byte) {
 // ---------------------------------------------------------------------------------------
 
 // EqualBool compares two Boolean values.
-func (h *Hasher) EqualBool(l, r bool) bool {
+func (h *hasher) EqualBool(l, r bool) bool {
 	return l == r
 }
 
 // EqualInt compares two integer values.
-func (h *Hasher) EqualInt(l, r int) bool {
+func (h *hasher) EqualInt(l, r int) bool {
 	return l == r
 }
 
 // EqualInt64 compares two int64 values.
-func (h *Hasher) EqualInt64(l, r int64) bool {
+func (h *hasher) EqualInt64(l, r int64) bool {
 	return l == r
 }
 
 // EqualUint64 compares two uint64 values.
-func (h *Hasher) EqualUint64(l, r uint64) bool {
+func (h *hasher) EqualUint64(l, r uint64) bool {
 	return l == r
 }
 
 // EqualFloat64 compares two uint64 values.
-func (h *Hasher) EqualFloat64(l, r float64) bool {
+func (h *hasher) EqualFloat64(l, r float64) bool {
 	// Compare bit representations so that NaN == NaN and 0 != -0.
 	return math.Float64bits(l) == math.Float64bits(r)
 }
 
 // EqualRune compares two rune values.
-func (h *Hasher) EqualRune(l, r rune) bool {
+func (h *hasher) EqualRune(l, r rune) bool {
 	return l == r
 }
 
 // EqualString compares two string values.
-func (h *Hasher) EqualString(l, r string) bool {
+func (h *hasher) EqualString(l, r string) bool {
 	return l == r
 }
 
 // EqualByte compares two byte values.
-func (h *Hasher) EqualByte(l, r byte) bool {
+func (h *hasher) EqualByte(l, r byte) bool {
 	return l == r
 }
 
 // EqualBytes compares two byte slice values.
-func (h *Hasher) EqualBytes(l, r []byte) bool {
+func (h *hasher) EqualBytes(l, r []byte) bool {
 	return bytes.Equal(l, r)
 }
 
