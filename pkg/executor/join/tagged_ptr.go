@@ -72,5 +72,5 @@ func getTaggedBitsFromUintptr(ptr uintptr) uint8 {
 		return 0
 	}
 	// count leading zeros to determine the number of tagged bits
-	return uint8(min(int8(bits.LeadingZeros64(uint64(ptr))) , maxTaggedBits))
+	return uint8(min(int8(bits.LeadingZeros64(uint64(ptr))), maxTaggedBits))
 }
