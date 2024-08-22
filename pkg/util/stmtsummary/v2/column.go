@@ -397,10 +397,10 @@ var columnFactoryMap = map[string]columnFactory{
 		return avgInt(int64(record.SumWriteSQLRespTotal), record.CommitCount)
 	},
 	AvgTidbCPUTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumTidbCPU), record.CommitCount)
+		return avgInt(int64(record.SumTidbCPU), record.ExecCount)
 	},
 	AvgTikvCPUTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumTikvCPU), record.CommitCount)
+		return avgInt(int64(record.SumTikvCPU), record.ExecCount)
 	},
 	MaxResultRowsStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxResultRows
