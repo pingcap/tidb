@@ -53,6 +53,8 @@ type MockDataSourceParameters struct {
 	// Sometimes, user wants to manually provide test data
 	// and he can save provided test data at here.
 	Datums [][]any
+
+	HasSel bool
 }
 
 // MockDataSource mocks data source
@@ -285,6 +287,18 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 			}
 		}
 	}
+
+	if opt.HasSel {
+		for _, chk := range m.GenData {
+			rowNum := chk.NumRows()
+			sel := make([]int, 0, rowNum/2)
+			for i := mathrand.Int31n(2); int(i) < rowNum; i += 2 {
+				sel = append(sel, int(i))
+			}
+			chk.SetSel(sel)
+		}
+	}
+
 	return m
 }
 

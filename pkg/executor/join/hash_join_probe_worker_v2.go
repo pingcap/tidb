@@ -122,15 +122,19 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 	return w.probeAndSendResult(joinResult)
 }
 
+func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
+	t := time.Since(start)
+	atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
+	atomic.AddInt64(&w.HashJoinCtx.stats.fetchAndProbe, int64(t))
+	setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
+}
+
 func (w *ProbeWorkerV2) runJoinWorker() {
 	probeTime := int64(0)
 	if w.HashJoinCtx.stats != nil {
 		start := time.Now()
 		defer func() {
-			t := time.Since(start)
-			atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
-			atomic.AddInt64(&w.HashJoinCtx.stats.fetchAndProbe, int64(t))
-			setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
+			w.updateProbeStatistic(start, probeTime)
 		}()
 	}
 
@@ -149,8 +153,8 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 			info = fmt.Sprintf("%s [%d %d]", info, partID, rowNum)
 		}
 
-		log.Info(fmt.Sprintf("xzxdebug worker %d, totalOutputRowNum: %d", w.WorkerID, w.totalOutputRowNum))
-		w.totalOutputRowNum = 0
+		// log.Info(fmt.Sprintf("xzxdebug worker %d, totalOutputRowNum: %d", w.WorkerID, w.totalOutputRowNum))
+		// w.totalOutputRowNum = 0
 	}()
 
 	// Read and filter probeSideResult, and join the probeSideResult with the build side rows.
@@ -225,26 +229,22 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 
 func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) error {
 	probeTime := int64(0)
-	// TODO refine the statistic
-	// if w.HashJoinCtx.stats != nil {
-	// 	start := time.Now()
-	// 	defer func() {
-	// 		t := time.Since(start)
-	// 		atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
-	// 		atomic.AddInt64(&w.HashJoinCtx.stats.fetchAndProbe, int64(t))
-	// 		setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
-	// 	}()
-	// }
+	if w.HashJoinCtx.stats != nil {
+		start := time.Now()
+		defer func() {
+			w.updateProbeStatistic(start, probeTime)
+		}()
+	}
 
 	ok, joinResult := w.getNewJoinResult()
 	if !ok {
 		return nil
 	}
 
-	defer func() {
-		log.Info(fmt.Sprintf("xzxdebug worker %d, output: %d", w.WorkerID, w.totalOutputRowNum))
-		w.totalOutputRowNum = 0
-	}()
+	// defer func() {
+	// 	log.Info(fmt.Sprintf("xzxdebug worker %d, output: %d", w.WorkerID, w.totalOutputRowNum))
+	// 	w.totalOutputRowNum = 0
+	// }()
 
 	chunkNum := inDisk.NumChunks()
 

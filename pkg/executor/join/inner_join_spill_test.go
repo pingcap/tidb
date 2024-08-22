@@ -15,11 +15,9 @@
 package join
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -31,21 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
-
-// TODO delete it
-// left table:
-//   col0: int (other cond)
-//   col1: int (join key)
-//   col2: int (dropped)
-//   col3: varchar (join key)
-//   col4: int
-
-// right table:
-//   col0: int (join key)
-//   col1: int (dropped)
-//   col2: varchar (join key)
-//   col3: int (right cond)
-//   col4: int (other cond)
 
 var leftCols = []*expression.Column{
 	{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -201,18 +184,6 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 	}
 }
 
-// TODO delete it
-func printResult(expectedResult []chunk.Row, retTypes []*types.FieldType) {
-	result := ""
-	for i, row := range expectedResult {
-		if i > 1000 {
-			break
-		}
-		result = fmt.Sprintf("%s\n[%d %s]", result, i, row.ToString(retTypes))
-	}
-	log.Info(result)
-}
-
 func getReturnTypes(joinType logicalop.JoinType, param spillTestParam) []*types.FieldType {
 	resultTypes := make([]*types.FieldType, 0, len(param.leftUsed)+len(param.rightUsed))
 	for _, colIndex := range param.leftUsed {
@@ -232,7 +203,7 @@ func getReturnTypes(joinType logicalop.JoinType, param spillTestParam) []*types.
 
 // Case 1: Trigger spill during the building of row table and spill partial partitions
 // Case 2: Trigger spill during the building of row table and spill all partitions
-// Case 3: Trigger spill before creating hash table when row table has been built and spill partial partitions
+// Case 3: Trigger spill between creating hash table and row table has been built, then spill partial partitions
 // Case 4: Trigger re-spill
 // Case 5: Trigger re-spill and exceed max spill round
 func testSpill(t *testing.T, ctx *mock.Context, joinType logicalop.JoinType, leftDataSource *testutil.MockDataSource, rightDataSource *testutil.MockDataSource, param spillTestParam) {
@@ -276,7 +247,7 @@ func TestInnerJoinSpillBasic(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
-	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, false)
 
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp.AddFlag(mysql.NotNullFlag)
@@ -323,7 +294,7 @@ func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
-	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, false)
 
 	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp := types.NewFieldType(mysql.TypeLonglong)
@@ -368,15 +339,12 @@ func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
 	}
 }
 
-// TODO add with selection
-// TODO add random fail tests
-
 // Hash join executor may be repeatedly closed and opened
 func TestInnerJoinUnderApplyExec(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
-	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, false)
 
 	info := &hashJoinInfo{
 		ctx:              ctx,

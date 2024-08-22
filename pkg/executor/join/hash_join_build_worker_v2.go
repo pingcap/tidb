@@ -117,18 +117,20 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableImpl(typeCtx types.Cont
 	return nil
 }
 
+func (w *BuildWorkerV2) updatePartitionData(cost int64) {
+	atomic.AddInt64(&w.HashJoinCtx.stats.partitionData, cost)
+	setMaxValue(&w.HashJoinCtx.stats.maxPartitionData, cost)
+}
+
 func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup) {
 	cost := int64(0)
 	defer func() {
 		if w.HashJoinCtx.stats != nil {
-			atomic.AddInt64(&w.HashJoinCtx.stats.partitionData, cost)
-			setMaxValue(&w.HashJoinCtx.stats.maxPartitionData, cost)
+			w.updatePartitionData(cost)
 		}
 	}()
 	partitionNumber := w.HashJoinCtx.partitionNumber
 	hashJoinCtx := w.HashJoinCtx
-
-	// TODO add random failpoint to slow worker here, 20-40ms, enable it at any case.
 
 	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
@@ -187,14 +189,12 @@ func (w *BuildWorkerV2) restoreAndPrebuildImpl(i int, inDisk *chunk.DataInDiskBy
 }
 
 func (w *BuildWorkerV2) restoreAndPrebuild(inDisk *chunk.DataInDiskByChunks, syncCh chan struct{}, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup) {
-	// TODO add statistic
 	cost := int64(0)
-	// defer func() {
-	// 	if w.HashJoinCtx.stats != nil {
-	// 		atomic.AddInt64(&w.HashJoinCtx.stats.partitionData, cost)
-	// 		setMaxValue(&w.HashJoinCtx.stats.maxPartitionData, cost)
-	// 	}
-	// }()
+	defer func() {
+		if w.HashJoinCtx.stats != nil {
+			w.updatePartitionData(cost)
+		}
+	}()
 
 	partitionNumber := w.HashJoinCtx.partitionNumber
 	hashJoinCtx := w.HashJoinCtx

@@ -72,6 +72,8 @@ type hashJoinSpillHelper struct {
 
 	spilledPartitions []bool
 
+	validJoinKeysBuffer [][]byte
+
 	// This variable will be set to false before restoring
 	spillTriggered bool
 
@@ -96,6 +98,7 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	helper.spilledPartitions = make([]bool, partitionNum)
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
+	helper.validJoinKeysBuffer = make([][]byte, hashJoinExec.Concurrency)
 
 	helper.probeSpilledRowIdx = make([]int, 0, len(helper.probeFieldTypes)-1)
 	for i := 1; i < len(helper.probeFieldTypes); i++ {
@@ -231,8 +234,6 @@ func (h *hashJoinSpillHelper) discardInDisks(inDisks [][]*chunk.DataInDiskByChun
 	return nil
 }
 
-// TODO write a specific test for this function
-// TODO refine this function
 func (h *hashJoinSpillHelper) choosePartitionsToSpill() ([]int, int64) {
 	partitionNum := h.hashJoinExec.partitionNumber
 	partitionsMemoryUsage := make([]int64, partitionNum)
@@ -339,13 +340,15 @@ func (h *hashJoinSpillHelper) spillSegmentsToDisk(workerID int, partID int, segm
 }
 
 func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.DataInDiskByChunks, segments []*rowTableSegment) error {
-	// TODO we can validJoinKeys buffer into hashJoinSpillHelper so that we can avoid repeated allocation
-	validJoinKeys := make([]byte, 0, maxRowTableSegmentSize)
+	if cap(h.validJoinKeysBuffer[workerID]) == 0 {
+		h.validJoinKeysBuffer[workerID] = make([]byte, 0, maxRowTableSegmentSize)
+	}
+	h.validJoinKeysBuffer[workerID] = h.validJoinKeysBuffer[workerID][:0]
 	h.tmpSpillBuildSideChunks[workerID].Reset()
 
 	// Get row bytes from segment and spill them
 	for _, seg := range segments {
-		validJoinKeys = h.generateSpilledValidJoinKey(seg, validJoinKeys)
+		h.validJoinKeysBuffer[workerID] = h.generateSpilledValidJoinKey(seg, h.validJoinKeysBuffer[workerID])
 		rows := seg.getRowsBytesForSpill()
 
 		for i, row := range rows {
@@ -358,7 +361,7 @@ func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.
 			}
 
 			h.tmpSpillBuildSideChunks[workerID].AppendInt64(0, int64(seg.hashValues[i]))
-			h.tmpSpillBuildSideChunks[workerID].AppendBytes(1, validJoinKeys[i:i+1])
+			h.tmpSpillBuildSideChunks[workerID].AppendBytes(1, h.validJoinKeysBuffer[workerID][i:i+1])
 			h.tmpSpillBuildSideChunks[workerID].AppendBytes(2, row)
 		}
 	}

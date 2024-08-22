@@ -23,10 +23,10 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -42,13 +42,13 @@ type hashJoinInfo struct {
 	rightAsBuildSide      bool
 	buildKeys             []*expression.Column
 	probeKeys             []*expression.Column
-	conditions            expression.CNFExprs // TODO do we need it?
+	conditions            expression.CNFExprs
 	lUsed                 []int
 	rUsed                 []int
 	otherCondition        expression.CNFExprs
 	lUsedInOtherCondition []int
 	rUsedInOtherCondition []int
-	equalConditions       []*expression.ScalarFunction // TODO do we need it?
+	equalConditions       []*expression.ScalarFunction
 }
 
 func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
@@ -232,90 +232,14 @@ func buildJoinKeyStringDatums(num int) []any {
 	return datums
 }
 
-// TODO delete it
-func buildLeftSrc(opt testutil.MockDataSourceParameters) *testutil.MockDataSource {
-	baseExec := exec.NewBaseExecutor(opt.Ctx, opt.DataSchema, 0)
-	m := &testutil.MockDataSource{
-		BaseExecutor: baseExec,
-		ChunkPtr:     0,
-		P:            opt,
-		GenData:      nil,
-		Chunks:       nil,
-	}
-	rTypes := exec.RetTypes(m)
-	colData := make([][]any, len(rTypes))
-	for i := 0; i < len(rTypes); i++ {
-		colData[i] = m.GenColDatums(i)
-	}
-
-	m.GenData = make([]*chunk.Chunk, (m.P.Rows+m.MaxChunkSize()-1)/m.MaxChunkSize())
-	for i := range m.GenData {
-		m.GenData[i] = chunk.NewChunkWithCapacity(exec.RetTypes(m), m.MaxChunkSize())
-	}
-
-	for i := 0; i < m.P.Rows; i++ {
-		idx := i / m.MaxChunkSize()
-		retTypes := exec.RetTypes(m)
-		for colIdx := 0; colIdx < len(rTypes); colIdx++ {
-			switch retTypes[colIdx].GetType() {
-			case mysql.TypeLong, mysql.TypeLonglong:
-				m.GenData[idx].AppendInt64(colIdx, int64(i))
-			case mysql.TypeVarString:
-				m.GenData[idx].AppendString(colIdx, strconv.Itoa(i))
-			default:
-				panic("not implement")
-			}
-		}
-	}
-	return m
-}
-
-// TODO delete it
-func buildRightSrc(opt testutil.MockDataSourceParameters) *testutil.MockDataSource {
-	baseExec := exec.NewBaseExecutor(opt.Ctx, opt.DataSchema, 0)
-	m := &testutil.MockDataSource{
-		BaseExecutor: baseExec,
-		ChunkPtr:     0,
-		P:            opt,
-		GenData:      nil,
-		Chunks:       nil,
-	}
-	rTypes := exec.RetTypes(m)
-	colData := make([][]any, len(rTypes))
-	for i := 0; i < len(rTypes); i++ {
-		colData[i] = m.GenColDatums(i)
-	}
-
-	m.GenData = make([]*chunk.Chunk, (m.P.Rows+m.MaxChunkSize()-1)/m.MaxChunkSize())
-	for i := range m.GenData {
-		m.GenData[i] = chunk.NewChunkWithCapacity(exec.RetTypes(m), m.MaxChunkSize())
-	}
-
-	for i := 0; i < m.P.Rows; i++ {
-		idx := i / m.MaxChunkSize()
-		retTypes := exec.RetTypes(m)
-		for colIdx := 0; colIdx < len(rTypes); colIdx++ {
-			switch retTypes[colIdx].GetType() {
-			case mysql.TypeLong, mysql.TypeLonglong:
-				m.GenData[idx].AppendInt64(colIdx, int64(i))
-			case mysql.TypeVarString:
-				m.GenData[idx].AppendString(colIdx, strconv.Itoa(i))
-			default:
-				panic("not implement")
-			}
-		}
-	}
-	return m
-}
-
-func buildLeftAndRightDataSource(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column) (*testutil.MockDataSource, *testutil.MockDataSource) {
+func buildLeftAndRightDataSource(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column, hasSel bool) (*testutil.MockDataSource, *testutil.MockDataSource) {
 	leftSchema := expression.NewSchema(leftCols...)
 	rightSchema := expression.NewSchema(rightCols...)
 
 	joinKeyIntDatums := buildJoinKeyIntDatums(20000)
 	joinKeyStringDatums := buildJoinKeyStringDatums(2)
-	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{0, -1, 0, -1, 0}, Datums: [][]any{nil, joinKeyIntDatums, nil, joinKeyStringDatums, nil}}
-	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{-1, 0, -1, 0, 0}, Datums: [][]any{joinKeyIntDatums, nil, joinKeyStringDatums, nil, nil}}
+	leftMockSrcParm := testutil.MockDataSourceParameters{DataSchema: leftSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{0, -1, 0, -1, 0}, Datums: [][]any{nil, joinKeyIntDatums, nil, joinKeyStringDatums, nil}, HasSel: hasSel}
+	rightMockSrcParm := testutil.MockDataSourceParameters{DataSchema: rightSchema, Ctx: ctx, Rows: 50000, Ndvs: []int{-1, 0, -1, 0, 0}, Datums: [][]any{joinKeyIntDatums, nil, joinKeyStringDatums, nil, nil}, HasSel: hasSel}
 	return testutil.BuildMockDataSource(leftMockSrcParm), testutil.BuildMockDataSource(rightMockSrcParm)
 }
 
@@ -330,21 +254,18 @@ func buildSchema(schemaTypes []*types.FieldType) *expression.Schema {
 }
 
 func executeHashJoinExec(t *testing.T, hashJoinExec *HashJoinV2Exec) []*chunk.Chunk {
+	log.Info("---------xzxdebug start to execute join exec---------")
 	tmpCtx := context.Background()
 	err := hashJoinExec.Open(tmpCtx)
 	require.NoError(t, err)
 	results := make([]*chunk.Chunk, 0)
 	chk := exec.NewFirstChunk(hashJoinExec)
-	totalNum := 0
 	for {
 		err = hashJoinExec.Next(tmpCtx, chk)
 		require.NoError(t, err)
 		if chk.NumRows() == 0 {
 			break
 		}
-		totalNum += chk.NumRows()
-		// log.Info(fmt.Sprintf("xzxdebug totalNum %d", totalNum))
-		// time.Sleep(5 * time.Millisecond)
 		results = append(results, chk)
 		chk = exec.NewFirstChunk(hashJoinExec)
 	}

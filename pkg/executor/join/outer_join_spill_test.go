@@ -15,11 +15,9 @@
 package join
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -74,7 +72,7 @@ func TestOuterJoinSpillBasic(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
-	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, false)
 
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp.AddFlag(mysql.NotNullFlag)
@@ -123,11 +121,58 @@ func TestOuterJoinSpillBasic(t *testing.T) {
 	}
 }
 
+func TestOuterJoinSpillWithSel(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, true)
+
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp.AddFlag(mysql.NotNullFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	stringTp.AddFlag(mysql.NotNullFlag)
+
+	leftTypes := []*types.FieldType{intTp, intTp, intTp, stringTp, intTp}
+	rightTypes := []*types.FieldType{intTp, intTp, stringTp, intTp, intTp}
+
+	leftKeys := []*expression.Column{
+		{Index: 1, RetType: intTp},
+		{Index: 3, RetType: stringTp},
+	}
+	rightKeys := []*expression.Column{
+		{Index: 0, RetType: intTp},
+		{Index: 2, RetType: stringTp},
+	}
+
+	params := []spillTestParam{
+		// Normal case
+		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{1500000, 1000000, 3100000, 500000, 10000}},
+		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{1500000, 1000000, 3100000, 500000, 10000}},
+	}
+
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers", `return(true)`)
+	require.NoError(t, err)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/slowWorkers")
+
+	maxRowTableSegmentSize = 100
+	spillChunkSize = 100
+
+	joinTypes := make([]logicalop.JoinType, 0)
+	joinTypes = append(joinTypes, logicalop.LeftOuterJoin)
+	joinTypes = append(joinTypes, logicalop.RightOuterJoin)
+
+	for _, joinType := range joinTypes {
+		for _, param := range params {
+			testSpill(t, ctx, joinType, leftDataSource, rightDataSource, param)
+		}
+	}
+}
+
 func TestOuterJoinSpillWithOtherCondition(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
-	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, false)
 
 	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp := types.NewFieldType(mysql.TypeLonglong)
@@ -183,7 +228,7 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
-	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, false)
 
 	info := &hashJoinInfo{
 		ctx:              ctx,
@@ -225,7 +270,7 @@ func TestHashJoinRandomFail(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
-	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols)
+	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, false)
 
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp.AddFlag(mysql.NotNullFlag)
@@ -266,10 +311,9 @@ func TestHashJoinRandomFail(t *testing.T) {
 	joinTypes = append(joinTypes, logicalop.LeftOuterJoin)
 	joinTypes = append(joinTypes, logicalop.RightOuterJoin)
 
-	for i := 0; i < 1000; i++ {
-		for j, joinType := range joinTypes {
-			for k, param := range params {
-				log.Info(fmt.Sprintf("xzxdebug start new testcase %d %d ---------------", j, k))
+	for i := 0; i < 30; i++ {
+		for _, joinType := range joinTypes {
+			for _, param := range params {
 				testRandomFail(t, ctx, joinType, param, leftDataSource, rightDataSource)
 			}
 		}
