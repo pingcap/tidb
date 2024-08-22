@@ -706,6 +706,7 @@ func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
 
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
+	checker := privilege.GetPrivilegeManager(sctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
 	if !ok {
 		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTablesExtractor", e.extractor)
@@ -739,6 +740,9 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					return true
 				}
 				if !ex.HasTableSchema(t.DBName.L) {
+					return true
+				}
+				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, t.DBName.L, t.TableName.L, "", mysql.SelectPriv) {
 					return true
 				}
 
@@ -783,7 +787,6 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		return errors.Trace(err)
 	}
 	useStatsCache := e.updateStatsCacheIfNeed()
-	checker := privilege.GetPrivilegeManager(sctx)
 	loc := sctx.GetSessionVars().TimeZone
 	if loc == nil {
 		loc = time.Local
