@@ -387,7 +387,7 @@ func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*Pro
 }
 
 func (rangeTree *ProgressRangeTree) GetIncompleteRanges() []Range {
-	incompleteRanges := make([]Range, 0, 8*rangeTree.incompleteItemCount)
+	incompleteRanges := make([]Range, 0, 2*(rangeTree.Len()+1))
 	rangeTree.Ascend(func(item *ProgressRange) bool {
 		// NOTE: maybe there is a late response whose range overlaps with an existing item, which
 		// may cause the complete range tree to become incomplete. Therefore, `item.Complete` is
