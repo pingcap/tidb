@@ -204,7 +204,7 @@ func checkBatchCopTaskBalance(storeTasks map[uint64]*batchCopTask, balanceContin
 // balanceBatchCopTaskWithContinuity try to balance `continuous regions` between TiFlash Stores.
 // In fact, not absolutely continuous is required, regions' range are closed to store in a TiFlash segment is enough for internal read optimization.
 //
-// First, the caller should guarantee the candidateRegionInfos is ordered for each partition.
+// First, the caller should guarantee the candidateRegionInfos is ordered.
 // Second, build a storeID2RegionIndex data structure to fastly locate regions of a store (avoid scanning candidateRegionInfos repeatedly).
 // Third, each store will take balanceContinuousRegionCount from the sorted candidateRegionInfos. These regions are stored very close to each other in TiFlash.
 // Fourth, if the region count is not balance between TiFlash, it may fallback to the original balance logic.
