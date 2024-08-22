@@ -735,10 +735,10 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				*slot = true
 			}
 			v2.IterateAllTableItems(func(t infoschema.TableItem) bool {
-				if ex.Filter("table_name", t.TableName.L) {
+				if !ex.HasTableName(t.TableName.L) {
 					return true
 				}
-				if ex.Filter("table_schema", t.DBName.L) {
+				if !ex.HasTableSchema(t.DBName.L) {
 					return true
 				}
 
