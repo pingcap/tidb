@@ -37,8 +37,8 @@ import (
 const (
 	DefNumHistoryJobs   = 10
 	batchNumHistoryJobs = 128
-	// GetDDLHistoryCountMax is the max count for getting the ddl history once.
-	GetDDLHistoryCountMax = 1024
+	// DefNumGetDDLHistoryJobs is the max count for getting the ddl history once.
+	DefNumGetDDLHistoryJobs = 1024
 )
 
 // AddHistoryDDLJob record the history job.
@@ -154,9 +154,9 @@ func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job
 	var err error
 
 	if startJobID == 0 {
-		// if 'start_job_id' == 0 and 'limit' == 0(default value), get the 1024 ddl history job by defaultly.
+		// if 'start_job_id' == 0 and 'limit' == 0(default value), get the last 1024 ddl history job by defaultly.
 		if limit == 0 {
-			limit = GetDDLHistoryCountMax
+			limit = DefNumGetDDLHistoryJobs
 		}
 		iter, err = m.GetLastHistoryDDLJobsIterator()
 	} else {

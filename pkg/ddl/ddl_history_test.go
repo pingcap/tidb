@@ -33,6 +33,10 @@ import (
 )
 
 func TestDDLHistoryBasic(t *testing.T) {
+	var (
+		DDLHistoryJobCount = 0
+	)
+
 	store := testkit.CreateMockStore(t)
 	rs := pools.NewResourcePool(func() (pools.Resource, error) {
 		newTk := testkit.NewTestKit(t, store)
@@ -78,8 +82,9 @@ func TestDDLHistoryBasic(t *testing.T) {
 
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-		_, err := ddl.GetAllHistoryDDLJobs(m)
+		jobs, err := ddl.GetAllHistoryDDLJobs(m)
 		require.NoError(t, err)
+		DDLHistoryJobCount = len(jobs)
 		return nil
 	})
 
@@ -92,6 +97,23 @@ func TestDDLHistoryBasic(t *testing.T) {
 		require.Equal(t, 2, len(jobs))
 		require.Equal(t, int64(2), jobs[0].ID)
 		require.Equal(t, int64(1), jobs[1].ID)
+		return nil
+	})
+
+	require.NoError(t, err)
+
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		jobs, err := ddl.ScanHistoryDDLJobs(m, 0, 0)
+		require.NoError(t, err)
+		if DDLHistoryJobCount <= ddl.DefNumGetDDLHistoryJobs {
+			require.Equal(t, DDLHistoryJobCount, len(jobs))
+		} else {
+			require.Equal(t, ddl.DefNumGetDDLHistoryJobs, len(jobs))
+		}
+		require.True(t, len(jobs) > 2)
+		require.Equal(t, int64(2), jobs[DDLHistoryJobCount-2].ID)
+		require.Equal(t, int64(1), jobs[DDLHistoryJobCount-1].ID)
 		return nil
 	})
 

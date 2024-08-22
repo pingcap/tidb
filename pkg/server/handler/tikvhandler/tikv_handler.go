@@ -1147,9 +1147,9 @@ func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			handler.WriteError(w, err)
 			return
 		}
-		if limitID < 1 || limitID > ddl.GetDDLHistoryCountMax {
+		if limitID < 1 || limitID > ddl.DefNumGetDDLHistoryJobs {
 			handler.WriteError(w,
-				errors.Errorf("ddl history limit must be greater than 0 and less than or equal to %v", ddl.GetDDLHistoryCountMax))
+				errors.Errorf("ddl history limit must be greater than 0 and less than or equal to %v", ddl.DefNumGetDDLHistoryJobs))
 			return
 		}
 	}
