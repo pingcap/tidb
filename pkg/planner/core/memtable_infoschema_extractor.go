@@ -75,7 +75,10 @@ const (
 type InfoSchemaBaseExtractor struct {
 	extractHelper
 	// SkipRequest means the where clause always false, we don't need to request any component
-	SkipRequest   bool
+	SkipRequest bool
+	// ColPredicates records the columns that can be extracted from the predicates.
+	// For example, `select * from information_schema.SCHEMATA where schema_name='mysql' or schema_name='INFORMATION_SCHEMA'`
+	// {"schema_name": ["mysql", "INFORMATION_SCHEMA"]}
 	ColPredicates map[string]set.StringSet
 	// columns occurs in predicate will be extracted.
 	colNames []columnName
