@@ -46,6 +46,70 @@ func TestStringLen(t *testing.T) {
 	require.NotEqual(t, hasher1.hash64a, hasher2.hash64a)
 }
 
+type SX interface {
+	Hash64(h *Hasher)
+	Equal(SX) bool
+}
+
+type SA struct {
+	a int
+	b string
+}
+
+func (sa *SA) Hash64(h *Hasher) {
+	h.HashInt(sa.a)
+	h.HashString(sa.b)
+}
+
+func (sa *SA) Equal(sx SX) bool {
+	if sa2, ok := sx.(*SA); ok {
+		return sa.a == sa2.a && sa.b == sa2.b
+	}
+	return false
+}
+
+type SB struct {
+	a int
+	b string
+}
+
+func (sb *SB) Hash64(h *Hasher) {
+	h.HashInt(sb.a)
+	h.HashString(sb.b)
+}
+
+func (sb *SB) Equal(sx SX) bool {
+	if sb2, ok := sx.(*SB); ok {
+		return sb.a == sb2.a && sb.b == sb2.b
+	}
+	return false
+}
+
+func TestStructType(t *testing.T) {
+	hasher1 := NewHasher()
+	hasher2 := NewHasher()
+	a := SA{
+		a: 1,
+		b: "abc",
+	}
+	b := SB{
+		a: 1,
+		b: "abc",
+	}
+	a.Hash64(hasher1)
+	b.Hash64(hasher2)
+	// As you see from the above, the two structs are different types, but they have the same fields.
+	// For the Hash64 function, it will hash the fields of the struct, so the hash result should be the same.
+	// From theoretical point of view, the hash result should NOT be the same because of different types.
+	//
+	// While the Equal function is used to compare the two structs, so the result should be false. We don't
+	// have to hash the golang struct type, because the dynamic runtime type pointer from reflecting is not
+	// that elegant, we resort to Equal function to compare the two structs completely once two obj has the
+	// same hash.
+	require.Equal(t, hasher1.hash64a, hasher2.hash64a)
+	require.Equal(t, a.Equal(&b), false)
+}
+
 func TestHash64a(t *testing.T) {
 	hasher1 := NewHasher()
 	hasher2 := NewHasher()
