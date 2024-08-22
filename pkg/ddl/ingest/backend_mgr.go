@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
@@ -153,7 +154,13 @@ func (m *litBackendCtxMgr) Register(
 		return nil, err
 	}
 
-	bcCtx := newBackendContext(ctx, jobID, bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
+	physical, logical, err := bd.GetTS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	curTS := oracle.ComposeTS(physical, logical)
+
+	bcCtx := newBackendContext(ctx, jobID, bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient, curTS)
 	m.backends.m[jobID] = bcCtx
 	m.memRoot.Consume(structSizeBackendCtx)
 	m.backends.mu.Unlock()
@@ -205,6 +212,7 @@ func newBackendContext(
 	memRoot MemRoot,
 	diskRoot DiskRoot,
 	etcdClient *clientv3.Client,
+	initTS uint64,
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
 		engines:        make(map[int64]*engineInfo, 10),
@@ -217,6 +225,7 @@ func newBackendContext(
 		sysVars:        vars,
 		updateInterval: checkpointUpdateInterval,
 		etcdClient:     etcdClient,
+		initTS:         initTS,
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
 	return bCtx
