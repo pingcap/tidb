@@ -2195,11 +2195,11 @@ func (e *tableStorageStatsRetriever) initialize(ctx context.Context, sctx sessio
 	schemas := e.extractor.TableSchema
 	tables := e.extractor.TableName
 
-	// If not specify the table_schema, return an error to avoid traverse all schemas and their tables.
-	if len(schemas) == 0 {
-		return errors.Errorf("Please add where clause to filter the column TABLE_SCHEMA. " +
-			"For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')")
-	}
+	// // If not specify the table_schema, return an error to avoid traverse all schemas and their tables.
+	// if len(schemas) == 0 {
+	// 	return errors.Errorf("Please add where clause to filter the column TABLE_SCHEMA. " +
+	// 		"For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')")
+	// }
 
 	// Filter the sys or memory schema.
 	for schema := range schemas {
