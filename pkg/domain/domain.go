@@ -2391,9 +2391,11 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 		statsOwner = owner.NewOwnerManager(context.Background(), do.etcdClient, prompt, id, ownerKey)
 	}
 	// TODO: Need to do something when err is not nil.
-	err := statsOwner.CampaignOwner()
-	if err != nil {
-		logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
+	if ownerKey == handle.StatsOwnerKey && config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
+		err := statsOwner.CampaignOwner()
+		if err != nil {
+			logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
+		}
 	}
 	return statsOwner
 }
