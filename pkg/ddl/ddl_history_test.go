@@ -97,3 +97,14 @@ func TestDDLHistoryBasic(t *testing.T) {
 
 	require.NoError(t, err)
 }
+
+func TestScanHistoryDDLJobsWithErrorLimit(t *testing.T) {
+	var (
+		m                = &meta.Meta{}
+		startJobID int64 = 10
+		limit            = 0
+	)
+
+	_, err := ddl.ScanHistoryDDLJobs(m, startJobID, limit)
+	require.ErrorContains(t, err, "when 'start_job_id' is specified, it must work with a 'limit'")
+}
