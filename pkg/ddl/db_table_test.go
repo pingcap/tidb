@@ -555,6 +555,12 @@ func TestLockTables(t *testing.T) {
 	// Test lock 1 table.
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(t, tk, "test", "t1", model.TableLockWrite)
+	// still locked after truncate.
+	tk.MustExec("truncate table t1")
+	checkTableLock(t, tk, "test", "t1", model.TableLockWrite)
+	// should unlock the new table id.
+	tk.MustExec("unlock tables")
+	checkTableLock(t, tk, "test", "t1", model.TableLockNone)
 	tk.MustExec("lock tables t1 read")
 	checkTableLock(t, tk, "test", "t1", model.TableLockRead)
 	tk.MustExec("lock tables t1 write")

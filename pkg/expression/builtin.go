@@ -154,6 +154,8 @@ func newReturnFieldTypeForBaseBuiltinFunc(funcName string, retType types.EvalTyp
 		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDurationWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
 	case types.ETJson:
 		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxBlobWidth).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
+	case types.ETVectorFloat32:
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeTiDBVectorFloat32).SetFlag(mysql.BinaryFlag).SetFlen(types.UnspecifiedLength).BuildP()
 	}
 	if mysql.HasBinaryFlag(fieldType.GetFlag()) && fieldType.GetType() != mysql.TypeJSON {
 		fieldType.SetCharset(charset.CharsetBin)
@@ -202,6 +204,10 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 			args[i] = WrapWithCastAsDuration(ctx, args[i])
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
+		case types.ETVectorFloat32:
+			args[i] = WrapWithCastAsVectorFloat32(ctx, args[i])
+		default:
+			return baseBuiltinFunc{}, errors.Errorf("%s is not supported", argTps[i])
 		}
 	}
 
@@ -330,6 +336,10 @@ func (*baseBuiltinFunc) vecEvalJSON(EvalContext, *chunk.Chunk, *chunk.Column) er
 	return errors.Errorf("baseBuiltinFunc.vecEvalJSON() should never be called, please contact the TiDB team for help")
 }
 
+func (*baseBuiltinFunc) vecEvalVectorFloat32(EvalContext, *chunk.Chunk, *chunk.Column) error {
+	return errors.Errorf("baseBuiltinFunc.vecEvalVectorFloat32() should never be called, please contact the TiDB team for help")
+}
+
 func (*baseBuiltinFunc) evalInt(EvalContext, chunk.Row) (int64, bool, error) {
 	return 0, false, errors.Errorf("baseBuiltinFunc.evalInt() should never be called, please contact the TiDB team for help")
 }
@@ -356,6 +366,10 @@ func (*baseBuiltinFunc) evalDuration(EvalContext, chunk.Row) (types.Duration, bo
 
 func (*baseBuiltinFunc) evalJSON(EvalContext, chunk.Row) (types.BinaryJSON, bool, error) {
 	return types.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
+}
+
+func (*baseBuiltinFunc) evalVectorFloat32(EvalContext, chunk.Row) (types.VectorFloat32, bool, error) {
+	return types.ZeroVectorFloat32, false, errors.Errorf("baseBuiltinFunc.evalVectorFloat32() should never be called, please contact the TiDB team for help")
 }
 
 func (*baseBuiltinFunc) vectorized() bool {
@@ -478,6 +492,9 @@ type vecBuiltinFunc interface {
 
 	// vecEvalJSON evaluates this builtin function in a vectorized manner.
 	vecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
+
+	// vecEvalVectorFloat32 evaluates this builtin function in a vectorized manner.
+	vecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 }
 
 // builtinFunc stands for a particular function signature.
@@ -499,6 +516,7 @@ type builtinFunc interface {
 	evalDuration(ctx EvalContext, row chunk.Row) (val types.Duration, isNull bool, err error)
 	// evalJSON evaluates JSON representation of builtinFunc by given row.
 	evalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
+	evalVectorFloat32(ctx EvalContext, row chunk.Row) (val types.VectorFloat32, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// equal check if this function equals to another function.
@@ -734,7 +752,7 @@ var funcs = map[string]functionClass{
 	ast.Lower:           &lowerFunctionClass{baseFunctionClass{ast.Lower, 1, 1}},
 	ast.Lpad:            &lpadFunctionClass{baseFunctionClass{ast.Lpad, 3, 3}},
 	ast.LTrim:           &lTrimFunctionClass{baseFunctionClass{ast.LTrim, 1, 1}},
-	ast.Mid:             &substringFunctionClass{baseFunctionClass{ast.Mid, 3, 3}},
+	ast.Mid:             &substringFunctionClass{baseFunctionClass{ast.Mid, 2, 3}},
 	ast.MakeSet:         &makeSetFunctionClass{baseFunctionClass{ast.MakeSet, 2, -1}},
 	ast.Oct:             &octFunctionClass{baseFunctionClass{ast.Oct, 1, 1}},
 	ast.OctetLength:     &lengthFunctionClass{baseFunctionClass{ast.OctetLength, 1, 1}},
@@ -911,6 +929,16 @@ var funcs = map[string]functionClass{
 	ast.JSONDepth:         &jsonDepthFunctionClass{baseFunctionClass{ast.JSONDepth, 1, 1}},
 	ast.JSONKeys:          &jsonKeysFunctionClass{baseFunctionClass{ast.JSONKeys, 1, 2}},
 	ast.JSONLength:        &jsonLengthFunctionClass{baseFunctionClass{ast.JSONLength, 1, 2}},
+
+	// vector functions (TiDB extension)
+	ast.VecDims:                 &vecDimsFunctionClass{baseFunctionClass{ast.VecDims, 1, 1}},
+	ast.VecL1Distance:           &vecL1DistanceFunctionClass{baseFunctionClass{ast.VecL1Distance, 2, 2}},
+	ast.VecL2Distance:           &vecL2DistanceFunctionClass{baseFunctionClass{ast.VecL2Distance, 2, 2}},
+	ast.VecNegativeInnerProduct: &vecNegativeInnerProductFunctionClass{baseFunctionClass{ast.VecNegativeInnerProduct, 2, 2}},
+	ast.VecCosineDistance:       &vecCosineDistanceFunctionClass{baseFunctionClass{ast.VecCosineDistance, 2, 2}},
+	ast.VecL2Norm:               &vecL2NormFunctionClass{baseFunctionClass{ast.VecL2Norm, 1, 1}},
+	ast.VecFromText:             &vecFromTextFunctionClass{baseFunctionClass{ast.VecFromText, 1, 1}},
+	ast.VecAsText:               &vecAsTextFunctionClass{baseFunctionClass{ast.VecAsText, 1, 1}},
 
 	// TiDB internal function.
 	ast.TiDBDecodeKey: &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},

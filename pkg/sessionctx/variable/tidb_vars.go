@@ -1023,6 +1023,7 @@ const (
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
 	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
+	// In test, we disable it by default. See GlobalSystemVariableInitialValue for details.
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
 	// TiDBEnableAutoAnalyzePriorityQueue determines whether TiDB executes automatic analysis with priority queue.
 	TiDBEnableAutoAnalyzePriorityQueue = "tidb_enable_auto_analyze_priority_queue"
@@ -1597,7 +1598,7 @@ var (
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize     = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
-	AutoAnlayzeConcurrency            = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
+	AutoAnalyzeConcurrency            = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning

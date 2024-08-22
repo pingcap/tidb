@@ -91,7 +91,7 @@ go_test(
     ],
     embed = [":infoschema"],
     flaky = True,
-    shard_count = 22,
+    shard_count = 23,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/domain",
