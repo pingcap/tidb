@@ -336,3 +336,347 @@ INSERT INTO `t_dnmxh` VALUES (104,571000,NULL),(104,572000,44.37),(104,573000,59
 WITH cte_0 AS (select distinct ref_0.wkey as c0, ref_0.pkey as c1, ref_0.c_xhsndb as c2 from t_dnmxh as ref_0 where (1 <= ( select ref_1.pkey not in ( select ref_5.wkey as c0 from t_dnmxh as ref_5 where (ref_5.wkey < ( select ref_6.pkey as c0 from t_cqmg3b as ref_6 where 88 between 96 and 76)) ) as c0 from (t_cqmg3b as ref_1 left outer join t_dnmxh as ref_2 on (ref_1.wkey = ref_2.wkey )) where ref_0.c_xhsndb is NULL union select 33 <= 91 as c0 from t_cqmg3b as ref_8 ))), cte_1 AS (select ref_9.wkey as c0, ref_9.pkey as c1, ref_9.c_anpf_c as c2, ref_9.c_b_fp_c as c3, ref_9.c_ndccfb as c4, ref_9.c_8rswc as c5 from t_cqmg3b as ref_9) select count(1) from cte_0 as ref_10 where case when 56 < 50 then case when 100 in ( select distinct ref_11.c4 as c0 from cte_1 as ref_11 where (ref_11.c4 > ( select ref_13.pkey as c0 from t_dnmxh as ref_13 where (ref_13.wkey > ( select distinct ref_11.c1 as c0 from cte_0 as ref_14)) )) or (1 = 1)) then null else null end else '7mxv6' end not like 'ki4%vc';
 #case
 with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 as (select 3) select * from cte2 union all select * from cte2) order by 1;
+
+# case: test CTE with complicated Apply and other operators
+drop table if exists tt, tt1, tt2, tt3, tt4, tt5;
+create table tt(c1 int, c2 int);
+create table tt1(c1 int, c2 int);
+create table tt2(c1 int, c2 int);
+create table tt3(c1 int, c2 int);
+create table tt4(c1 int, c2 int);
+create table tt5(c1 int, c2 int);
+insert into tt values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
+insert into tt1 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
+insert into tt2 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
+insert into tt3 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
+insert into tt4 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
+insert into tt5 values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);
+
+## sub case-1: CTE with Apply
+explain with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) order by 1;
+
+with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) order by 1;
+
+## sub case-2: CTE with Apply and Union
+explain with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) 
+select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
+select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
+
+with recursive cte1 as (select c1 from tt union select c1 from cte1 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte1.c1)) 
+select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
+select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
+
+## sub case-3: nested CTE with Apply and union
+explain with cte1 as (with recursive cte2 as (select c1 from tt union all select c1 from cte2 where exists(select /*+ no_decorrelate() */ c1 from tt1 where tt1.c1 = cte2.c1) limit 300)
+select c1 from tt union select c1 from cte2 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte2.c1)) 
+select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
+select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
+
+with cte1 as (with recursive cte2 as (select c1 from tt union all select c1 from cte2 where exists(select /*+ no_decorrelate() */ c1 from tt1 where tt1.c1 = cte2.c1) limit 300)
+select c1 from tt union select c1 from cte2 where exists (select /*+ no_decorrelate() */ c1 from tt1 where tt1.c2 = cte2.c1)) 
+select c1 from tt2 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt2.c1) union select c1 from tt3 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt3.c1) union
+select c1 from tt4 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt4.c1) union select c1 from tt5 where exists (select /*+ no_decorrelate() */ * from cte1 where cte1.c1 = tt5.c1) order by 1;
+
+## sub case-4: simplified user query
+drop table if exists table_a, table_b, table_c, table_d, table_e;
+CREATE TABLE `table_a` (
+  `col_1` varchar(40) DEFAULT NULL,
+  `col_2` varchar(40) DEFAULT NULL,
+  `col_3` varchar(500) DEFAULT NULL,
+  `col_4` varchar(500) DEFAULT NULL,
+  `col_5` varchar(500) DEFAULT NULL,
+  `col_6` varchar(500) DEFAULT NULL,
+  `col_7` decimal(38,6) DEFAULT NULL,
+  `col_8` decimal(38,6) DEFAULT NULL,
+  `col_9` decimal(38,6) DEFAULT NULL,
+  `col_10` decimal(38,6) DEFAULT NULL,
+  `col_11` decimal(38,6) DEFAULT NULL,
+  `col_12` decimal(38,6) DEFAULT NULL,
+  `col_13` decimal(38,6) DEFAULT NULL,
+  `col_14` decimal(38,6) DEFAULT NULL,
+  `col_15` decimal(38,6) DEFAULT NULL,
+  `col_16` decimal(38,6) DEFAULT NULL,
+  `col_17` decimal(38,6) DEFAULT NULL,
+  `col_18` decimal(38,6) DEFAULT NULL,
+  `col_19` varchar(40) DEFAULT NULL,
+  `col_20` varchar(100) DEFAULT NULL,
+  `col_21` varchar(100) DEFAULT NULL,
+  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+  KEY `index_col_1` (`col_1`),
+  KEY `index_col_2_3` (`col_2`,`col_3`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+
+CREATE TABLE `table_b` (
+  `col_1` varchar(8) NOT NULL,
+  `col_2` varchar(100) NOT NULL,
+  `col_3` varchar(200) DEFAULT NULL,
+  `col_4` varchar(10) NOT NULL,
+  `col_5` decimal(38,6) DEFAULT NULL,
+  `col_6` decimal(38,6) DEFAULT NULL,
+  `col_7` decimal(38,6) DEFAULT NULL,
+  `col_8` decimal(38,6) DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  KEY `index_col_1_2` (`col_1`,`col_2`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `table_c` (
+  `col_1` varchar(50) DEFAULT NULL,
+  `col_2` varchar(50) DEFAULT NULL,
+  `col_3` varchar(30) DEFAULT NULL,
+  `col_4` varchar(100) DEFAULT NULL,
+  `col_5` varchar(50) DEFAULT NULL,
+  `col_6` varchar(100) DEFAULT NULL,
+  `col_7` decimal(38,6) DEFAULT NULL,
+  `col_8` decimal(38,6) DEFAULT NULL,
+  `col_9` decimal(38,6) DEFAULT NULL,
+  `col_10` decimal(38,6) DEFAULT NULL,
+  `col_11` decimal(38,6) DEFAULT NULL,
+  `col_12` decimal(38,6) DEFAULT NULL,
+  `col_13` decimal(38,6) DEFAULT NULL,
+  `col_14` decimal(38,6) DEFAULT NULL,
+  `col_15` decimal(38,6) DEFAULT NULL,
+  `col_16` decimal(38,6) DEFAULT NULL,
+  `col_17` varchar(50) DEFAULT NULL,
+  `col_18` varchar(50) DEFAULT NULL,
+  `col_19` varchar(50) DEFAULT NULL,
+  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+  KEY `index_col_1_3` (`col_1`,`col_3`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `table_d` (
+  `col_1` decimal(10,0) DEFAULT NULL,
+  `col_2` varchar(1) DEFAULT NULL,
+  `col_3` date NOT NULL,
+  `col_4` varchar(13) DEFAULT NULL,
+  `col_5` varchar(6) DEFAULT NULL,
+  `col_6` varchar(255) DEFAULT NULL,
+  `col_7` decimal(10,0) DEFAULT NULL,
+  `col_8` varchar(12) DEFAULT NULL,
+  `col_9` decimal(10,0) DEFAULT NULL,
+  `col_10` varchar(17) DEFAULT NULL,
+  `col_11` decimal(10,0) DEFAULT NULL,
+  `col_12` varchar(7) DEFAULT NULL,
+  `col_13` date DEFAULT NULL,
+  `col_14` date DEFAULT NULL,
+  `col_15` date DEFAULT NULL,
+  `col_16` date DEFAULT NULL,
+  `col_17` date DEFAULT NULL,
+  `col_18` date DEFAULT NULL,
+  `col_19` date DEFAULT NULL,
+  `col_20` varchar(1) DEFAULT NULL,
+  `col_21` varchar(1) DEFAULT NULL,
+  `col_22` decimal(1,0) DEFAULT NULL,
+  `col_23` varchar(1) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `table_e` (
+  `col_1` varchar(8) NOT NULL,
+  `col_2` varchar(100) NOT NULL,
+  `col_3` varchar(100) DEFAULT NULL,
+  `col_4` varchar(100) NOT NULL,
+  `col_5` varchar(100) DEFAULT NULL,
+  `col_6` varchar(100) DEFAULT NULL,
+  `col_7` decimal(38,12) DEFAULT NULL,
+  `col_8` varchar(100) DEFAULT NULL,
+  `col_9` varchar(100) DEFAULT NULL,
+  `col_10` varchar(100) DEFAULT NULL,
+  `col_11` varchar(100) DEFAULT NULL,
+  `col_12` varchar(8) DEFAULT NULL,
+  `col_13` decimal(38,12) DEFAULT NULL,
+  `col_14` varchar(100) DEFAULT NULL,
+  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+  `col_15` varchar(500) DEFAULT NULL,
+  PRIMARY KEY (`col_2`, `col_1`, `col_4`),
+  KEY `index_col_5_6` (`col_5`, `col_6`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+INSERT INTO `table_a`
+(`col_1`, `col_2`, `col_3`, `col_4`, `col_5`, `col_6`, `col_7`,
+ `col_8`, `col_9`, `col_10`, `col_11`, `col_12`, `col_13`,
+ `col_14`, `col_15`, `col_16`, `col_17`, `col_18`, `col_19`,
+ `col_20`, `col_21`, `created_at`)
+VALUES
+('20230628', '20230628', 'Portfolio A', 'Product B', 'Direct', 'USD',
+ 200000, 150000, 50000, 100000,
+ 50000, 10000, 5000, 1.2, 0.1,
+ 0.15, 0.08, 0.02, '2023-06-28',
+ '2023-06-28', '2025-06-28', CURRENT_TIMESTAMP);
+
+ INSERT INTO `table_b`
+(`col_1`, `col_2`, `col_3`, `col_4`, `col_5`, `col_6`, `col_7`, `col_8`, `created_at`)
+VALUES
+('20240628', 'DR201800093', 'Product A', '申购', 1000, 100000, 95000, 1.1, CURRENT_TIMESTAMP);
+
+INSERT INTO `table_c`
+(`col_1`, `col_2`, `col_3`, `col_4`, `col_5`, `col_6`, `col_7`,
+ `col_8`, `col_9`, `col_10`, `col_11`, `col_12`, `col_13`,
+ `col_14`, `col_15`, `col_16`, `col_17`, `col_18`, `col_19`, `created_at`)
+VALUES
+('20230628', 'Dept A', 'DR201800093', 'Product A', '孵化', 'Strategy 1',
+ 100000, 100000, 120000, 100, 1.2,
+ 0.2, 0.15, 0.1, 0.05, 0.08,
+ '2023-06-28', '2025-06-28', '2Y', CURRENT_TIMESTAMP);
+
+INSERT INTO `table_d`
+(`col_1`, `col_2`, `col_3`, `col_4`, `col_5`, `col_6`, `col_7`,
+ `col_8`, `col_9`, `col_10`, `col_11`, `col_12`, `col_13`, `col_14`,
+ `col_15`, `col_16`, `col_17`, `col_18`, `col_19`, `col_20`, `col_21`,
+ `col_22`, `col_23`)
+VALUES
+('20240628', '1', '2024-06-28', 'Friday', '28', 'End of Month', 202406,
+ 'June', 20242, 'Q2', 2024, '2024', '2024-06-27', '2024-05-28',
+ '2024-03-28', '2023-06-28', '2024-06-27', '2024-06-27', '2024-06-27',
+ '1', '1', '1', '1');
+
+ INSERT INTO `table_e`
+(`col_1`, `col_2`, `col_3`, `col_4`, `col_5`, `col_6`, `col_7`,
+ `col_8`, `col_9`, `col_10`, `col_11`, `col_12`, `col_13`, `col_14`,
+ `created_at`, `col_15`)
+VALUES
+('20230628', 'CFETS_MID', 'Mid', 'USD/CNY', 'USD', 'CNY',
+ 7.0, 'Source A', 'Unit A', 'Region A', '2023-06-28 15:00:00', '20230627',
+ 6.9, 'user_001', CURRENT_TIMESTAMP, 'Exchange rate on 2023-06-28');
+
+desc WITH date_table AS (
+  SELECT
+        d.col_1 AS date,
+        (SELECT MAX(col_1)
+            FROM table_c a
+           WHERE col_1 <=
+                 CONCAT(YEAR(DATE_SUB(d.col_1, INTERVAL 1 YEAR)),
+                        '1231')
+             AND EXISTS (SELECT 1
+                    FROM table_d d
+                   WHERE a.col_1 = d.col_1
+                     AND d.col_2 = 1)) AS date1,
+        (SELECT MAX(col_1)
+            FROM table_a a
+           WHERE col_1 <= CONCAT(YEAR(DATE_SUB(d.col_1, INTERVAL 1 YEAR)),
+                                '1231')
+             AND EXISTS (SELECT 1
+                    FROM table_d d
+                   WHERE a.col_1 = d.col_1
+                     AND d.col_2 = 1)) AS date2,
+        (SELECT MAX(col_1)
+            FROM table_c
+           WHERE col_1 <= d.col_1) AS date3,
+        (SELECT MAX(col_1)
+            FROM table_a
+           WHERE col_1 <= d.col_1) AS date4
+    FROM table_d d
+   WHERE d.col_1 = '20240628'
+),
+rm_am_champs_ex_risk_portfolio_seed_money_1 AS (
+  SELECT b.col_2
+    FROM table_a b
+    LEFT JOIN table_e rb
+      ON rb.col_1 = b.col_19
+     AND b.col_6 = rb.col_3
+   WHERE b.col_2 = (SELECT date4 FROM date_table)
+),
+
+rm_am_champs_ex_risk_portfolio_seed_money_2 AS (
+  SELECT b.col_2
+  FROM table_a b
+  LEFT JOIN table_e rb
+      ON rb.col_1 = b.col_19
+     AND b.col_6 = rb.col_3
+),
+
+product_base AS (
+  SELECT DISTINCT t.col_3, col_4, 'ML' AS is_do
+    FROM table_c t
+),
+
+product_detail AS (
+  SELECT t.col_4,
+        "3集合" AS nature_investment
+    FROM product_base t
+    LEFT JOIN date_table dt
+      ON 1 = 1
+    LEFT JOIN table_c a
+      ON t.col_4 = a.col_4
+     AND a.col_1 = dt.date3
+)
+
+SELECT col_4
+  FROM (
+        SELECT col_4
+          FROM product_detail
+        UNION ALL
+        SELECT col_4
+          FROM product_detail
+) a;
+
+WITH date_table AS (
+  SELECT
+        d.col_1 AS date,
+        (SELECT MAX(col_1)
+            FROM table_c a
+           WHERE col_1 <=
+                 CONCAT(YEAR(DATE_SUB(d.col_1, INTERVAL 1 YEAR)),
+                        '1231')
+             AND EXISTS (SELECT 1
+                    FROM table_d d
+                   WHERE a.col_1 = d.col_1
+                     AND d.col_2 = 1)) AS date1,
+        (SELECT MAX(col_1)
+            FROM table_a a
+           WHERE col_1 <= CONCAT(YEAR(DATE_SUB(d.col_1, INTERVAL 1 YEAR)),
+                                '1231')
+             AND EXISTS (SELECT 1
+                    FROM table_d d
+                   WHERE a.col_1 = d.col_1
+                     AND d.col_2 = 1)) AS date2,
+        (SELECT MAX(col_1)
+            FROM table_c
+           WHERE col_1 <= d.col_1) AS date3,
+        (SELECT MAX(col_1)
+            FROM table_a
+           WHERE col_1 <= d.col_1) AS date4
+    FROM table_d d
+   WHERE d.col_1 = '20240628'
+),
+rm_am_champs_ex_risk_portfolio_seed_money_1 AS (
+  SELECT b.col_2
+    FROM table_a b
+    LEFT JOIN table_e rb
+      ON rb.col_1 = b.col_19
+     AND b.col_6 = rb.col_3
+   WHERE b.col_2 = (SELECT date4 FROM date_table)
+),
+
+rm_am_champs_ex_risk_portfolio_seed_money_2 AS (
+  SELECT b.col_2
+  FROM table_a b
+  LEFT JOIN table_e rb
+      ON rb.col_1 = b.col_19
+     AND b.col_6 = rb.col_3
+),
+
+product_base AS (
+  SELECT DISTINCT t.col_3, col_4, 'ML' AS is_do
+    FROM table_c t
+),
+
+product_detail AS (
+  SELECT t.col_4,
+        "3集合" AS nature_investment
+    FROM product_base t
+    LEFT JOIN date_table dt
+      ON 1 = 1
+    LEFT JOIN table_c a
+      ON t.col_4 = a.col_4
+     AND a.col_1 = dt.date3
+)
+
+SELECT col_4
+  FROM (
+        SELECT col_4
+          FROM product_detail
+        UNION ALL
+        SELECT col_4
+          FROM product_detail
+) a;
+
