@@ -928,12 +928,12 @@ func (e *IndexMergeReaderExecutor) Close() error {
 	}
 	if e.indexUsageReporter != nil {
 		for _, p := range e.partialPlans {
-			is, ok := p[0].(*plannercore.PhysicalIndexScan)
-			if !ok {
-				continue
+			switch p := p[0].(type) {
+			case *plannercore.PhysicalTableScan:
+				e.indexUsageReporter.ReportCopIndexUsageForHandle(e.table, p.ID())
+			case *plannercore.PhysicalIndexScan:
+				e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, p.Index.ID, p.ID())
 			}
-
-			e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, is.Index.ID, is.ID())
 		}
 	}
 	if e.finished == nil {
