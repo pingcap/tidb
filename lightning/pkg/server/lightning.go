@@ -20,11 +20,9 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
-	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -359,10 +357,7 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	}
 
 	// taskID is uint64, So using hashed uuid
-	uid := uuid.New().String()
-	sha256 := sha256.Sum256([]byte(uid))
-	taskCfg.TaskID = int64(binary.BigEndian.Uint64(sha256[:]))
-
+	taskCfg.TaskID = 1
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
 	})
