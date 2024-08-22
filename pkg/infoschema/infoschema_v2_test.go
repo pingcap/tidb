@@ -342,9 +342,8 @@ func updateTableSpecialAttribute(t *testing.T, dbInfo *model.DBInfo, tblInfo *mo
 		require.Equal(t, 1, len(tblInfoRes))
 		require.Equal(t, 1, len(tblInfoRes[0].TableInfos))
 		return tblInfoRes[0].TableInfos[0]
-	} else {
-		require.Equal(t, 0, len(tblInfoRes))
 	}
+	require.Equal(t, 0, len(tblInfoRes))
 	return nil
 }
 
