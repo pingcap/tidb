@@ -1398,9 +1398,13 @@ var defaultSysVars = []*SysVar{
 			return err
 		},
 	},
-	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeConcurrency, Value: strconv.Itoa(DefTiDBAutoAnalyzeConcurrency), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+	{
+		Scope: ScopeGlobal, Name: TiDBAutoAnalyzeConcurrency,
+		Value:    strconv.Itoa(DefTiDBAutoAnalyzeConcurrency),
+		Type:     TypeInt,
+		MinValue: 0, MaxValue: math.MaxInt32,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return string(AutoAnalyzeConcurrency.Load()), nil
+			return strconv.FormatInt(int64(AutoAnalyzeConcurrency.Load()), 10), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			num, err := strconv.ParseInt(val, 10, 64)
