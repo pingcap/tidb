@@ -57,78 +57,32 @@ func init() {
 	endiannessTest := uint32(1) << 7
 	low8Value := *(*uint8)(unsafe.Pointer(&endiannessTest))
 	if uint32(low8Value) == endiannessTest {
-		// small endian
+		// Little-endian system: the lowest byte (at the lowest address) stores the least significant byte (LSB) of the integer
 		usedFlagMask = uint32(1) << 7
-		bitMaskInUint32[0] = uint32(1) << 7
-		bitMaskInUint32[1] = uint32(1) << 6
-		bitMaskInUint32[2] = uint32(1) << 5
-		bitMaskInUint32[3] = uint32(1) << 4
-		bitMaskInUint32[4] = uint32(1) << 3
-		bitMaskInUint32[5] = uint32(1) << 2
-		bitMaskInUint32[6] = uint32(1) << 1
-		bitMaskInUint32[7] = uint32(1) << 0
-		bitMaskInUint32[8] = uint32(1) << (7 + 8)
-		bitMaskInUint32[9] = uint32(1) << (6 + 8)
-		bitMaskInUint32[10] = uint32(1) << (5 + 8)
-		bitMaskInUint32[11] = uint32(1) << (4 + 8)
-		bitMaskInUint32[12] = uint32(1) << (3 + 8)
-		bitMaskInUint32[13] = uint32(1) << (2 + 8)
-		bitMaskInUint32[14] = uint32(1) << (1 + 8)
-		bitMaskInUint32[15] = uint32(1) << (0 + 8)
-		bitMaskInUint32[16] = uint32(1) << (7 + 16)
-		bitMaskInUint32[17] = uint32(1) << (6 + 16)
-		bitMaskInUint32[18] = uint32(1) << (5 + 16)
-		bitMaskInUint32[19] = uint32(1) << (4 + 16)
-		bitMaskInUint32[20] = uint32(1) << (3 + 16)
-		bitMaskInUint32[21] = uint32(1) << (2 + 16)
-		bitMaskInUint32[22] = uint32(1) << (1 + 16)
-		bitMaskInUint32[23] = uint32(1) << (0 + 16)
-		bitMaskInUint32[24] = uint32(1) << (7 + 24)
-		bitMaskInUint32[25] = uint32(1) << (6 + 24)
-		bitMaskInUint32[26] = uint32(1) << (5 + 24)
-		bitMaskInUint32[27] = uint32(1) << (4 + 24)
-		bitMaskInUint32[28] = uint32(1) << (3 + 24)
-		bitMaskInUint32[29] = uint32(1) << (2 + 24)
-		bitMaskInUint32[30] = uint32(1) << (1 + 24)
-		bitMaskInUint32[31] = uint32(1) << (0 + 24)
+		initializeBitMasks(true)
 	} else {
-		// big endian
+		// Big-endian system: the highest byte (at the lowest address) stores the most significant byte (MSB) of the integer
 		usedFlagMask = uint32(1) << 31
-		bitMaskInUint32[0] = uint32(1) << 31
-		bitMaskInUint32[1] = uint32(1) << 30
-		bitMaskInUint32[2] = uint32(1) << 29
-		bitMaskInUint32[3] = uint32(1) << 28
-		bitMaskInUint32[4] = uint32(1) << 27
-		bitMaskInUint32[5] = uint32(1) << 26
-		bitMaskInUint32[6] = uint32(1) << 25
-		bitMaskInUint32[7] = uint32(1) << 24
-		bitMaskInUint32[8] = uint32(1) << 23
-		bitMaskInUint32[9] = uint32(1) << 22
-		bitMaskInUint32[10] = uint32(1) << 21
-		bitMaskInUint32[11] = uint32(1) << 20
-		bitMaskInUint32[12] = uint32(1) << 19
-		bitMaskInUint32[13] = uint32(1) << 18
-		bitMaskInUint32[14] = uint32(1) << 17
-		bitMaskInUint32[15] = uint32(1) << 16
-		bitMaskInUint32[16] = uint32(1) << 15
-		bitMaskInUint32[17] = uint32(1) << 14
-		bitMaskInUint32[18] = uint32(1) << 13
-		bitMaskInUint32[19] = uint32(1) << 12
-		bitMaskInUint32[20] = uint32(1) << 11
-		bitMaskInUint32[21] = uint32(1) << 10
-		bitMaskInUint32[22] = uint32(1) << 9
-		bitMaskInUint32[23] = uint32(1) << 8
-		bitMaskInUint32[24] = uint32(1) << 7
-		bitMaskInUint32[25] = uint32(1) << 6
-		bitMaskInUint32[26] = uint32(1) << 5
-		bitMaskInUint32[27] = uint32(1) << 4
-		bitMaskInUint32[28] = uint32(1) << 3
-		bitMaskInUint32[29] = uint32(1) << 2
-		bitMaskInUint32[30] = uint32(1) << 1
-		bitMaskInUint32[31] = uint32(1) << 0
+		initializeBitMasks(false)
+	}
 	}
 }
-
+// initializeBitMasks encapsulates the bit-shifting logic to set the bitMaskInUint32 array based on endianness
+// The parameter isLittleEndian indicates the system's endianness
+// - If the system is little-endian, the bit mask for each byte starts from the most significant bit (bit 7) and decrements sequentially
+// - If the system is big-endian, the bit masks are set sequentially from the highest bit (bit 31) to the lowest bit (bit 0),
+//   ensuring that atomic operations can be performed correctly on different endian systems
+func initializeBitMasks(isLittleEndian bool) {
+	for i := 0; i < 32; i++ {
+		if isLittleEndian {
+			// On little-endian systems, bit masks are arranged in order from high to low within each byte
+			bitMaskInUint32[i] = uint32(1) << (7 - (i % 8) + (i/8)*8)
+		} else {
+			// On big-endian systems, bit masks are arranged from the highest bit (bit 31) to the lowest bit (bit 0)
+			bitMaskInUint32[i] = uint32(1) << (31 - i)
+		}
+	}
+}
 //go:linkname heapObjectsCanMove runtime.heapObjectsCanMove
 func heapObjectsCanMove() bool
 
