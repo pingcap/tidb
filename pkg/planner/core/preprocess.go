@@ -1472,7 +1472,11 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxBitDisplayWidth)
 		}
 	case mysql.TypeTiDBVectorFloat32:
-		return errors.Errorf("vector type is not supported")
+		if tp.GetFlen() != types.UnspecifiedLength {
+			if err := types.CheckVectorDimValid(tp.GetFlen()); err != nil {
+				return err
+			}
+		}
 	default:
 		// TODO: Add more types.
 	}
@@ -1757,10 +1761,6 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.GetDecimal(), "CAST", types.MaxFsp)
 			return
 		}
-	}
-	if node.Tp.GetType() == mysql.TypeTiDBVectorFloat32 {
-		p.err = errors.Errorf("vector type is not supported")
-		return
 	}
 }
 
