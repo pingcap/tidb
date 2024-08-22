@@ -17,6 +17,7 @@ package logicalop
 import (
 	"unsafe"
 
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -41,9 +42,9 @@ type LogicalShow struct {
 type ShowContents struct {
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName            string
-	Table             *ast.TableName  // Used for showing columns.
-	Partition         model.CIStr     // Use for showing partition
-	Column            *ast.ColumnName // Used for `desc table column`.
+	Table             *ddlmodel.TableNameW // Used for showing columns.
+	Partition         model.CIStr          // Use for showing partition
+	Column            *ast.ColumnName      // Used for `desc table column`.
 	IndexName         model.CIStr
 	ResourceGroupName string               // Used for showing resource group
 	Flag              int                  // Some flag parsed from sql, such as FULL.

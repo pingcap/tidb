@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -81,7 +82,8 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	defer func() {
 		sessVars.ReadStaleness = originalReadStaleness
 	}()
-	err := core.Preprocess(ctx, se, stmt)
+	nodeW := ddlmodel.NewNodeW(stmt)
+	err := core.Preprocess(ctx, se, nodeW)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +91,7 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 		return nil, err
 	}
 
-	tableName, selectSQL, shardColumnInfo, tableSources, err := buildSelectSQL(stmt, se)
+	tableName, selectSQL, shardColumnInfo, tableSources, err := buildSelectSQL(stmt, nodeW.GetResolveContext(), se)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +115,8 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 		return nil, err
 	}
 
-	splitStmts, err := runJobs(ctx, jobs, stmt, tableName, se, stmt.DMLStmt.WhereExpr())
+	tnW := nodeW.GetResolveContext().Get(tableName)
+	splitStmts, err := runJobs(ctx, jobs, stmt, tnW, se, stmt.DMLStmt.WhereExpr())
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +258,7 @@ func checkReadClauses(limit *ast.Limit, order *ast.OrderByClause) error {
 
 // single-threaded worker. work on the key range [start, end]
 func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
-	tableName *ast.TableName, se sessiontypes.Session, originalCondition ast.ExprNode) ([]string, error) {
+	tableName *ddlmodel.TableNameW, se sessiontypes.Session, originalCondition ast.ExprNode) ([]string, error) {
 	// prepare for the construction of statement
 	var shardColumnRefer *ast.ResultField
 	var shardColumnType types.FieldType
@@ -530,8 +533,7 @@ func appendNewJob(jobs []job, id int, start types.Datum, end types.Datum, size i
 	return jobs
 }
 
-func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session) (
-	*ast.TableName, string, *model.ColumnInfo, []*ast.TableSource, error) {
+func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, resolveCtx *ddlmodel.ResolveContext, se sessiontypes.Session) (*ast.TableName, string, *model.ColumnInfo, []*ast.TableSource, error) {
 	// only use the first table
 	join, ok := stmt.DMLStmt.TableRefsJoin()
 	if !ok {
@@ -571,8 +573,9 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session) 
 		sb.WriteString("TRUE")
 	}
 	// assure NULL values are placed first
+	tnW := resolveCtx.Get(tableName)
 	selectSQL := fmt.Sprintf("SELECT `%s` FROM `%s`.`%s` WHERE %s ORDER BY IF(ISNULL(`%s`),0,1),`%s`",
-		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
+		stmt.ShardColumn.Name.O, tnW.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
 	return tableName, selectSQL, shardColumnInfo, tableSources, nil
 }
 

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -94,7 +95,7 @@ type ShowExec struct {
 
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName            model.CIStr
-	Table             *ast.TableName       // Used for showing columns.
+	Table             *ddlmodel.TableNameW // Used for showing columns.
 	Partition         model.CIStr          // Used for showing partition
 	Column            *ast.ColumnName      // Used for `desc table column`.
 	IndexName         model.CIStr          // Used for show table regions.

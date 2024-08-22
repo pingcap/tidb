@@ -15,6 +15,7 @@
 package core
 
 import (
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
@@ -22,8 +23,9 @@ import (
 type Trace struct {
 	baseSchemaProducer
 
-	StmtNode ast.StmtNode
-	Format   string
+	StmtNode   ast.StmtNode
+	ResolveCtx *ddlmodel.ResolveContext
+	Format     string
 
 	// OptimizerTrace indicates `trace plan target = 'xxx' <statement>` case
 	OptimizerTrace       bool

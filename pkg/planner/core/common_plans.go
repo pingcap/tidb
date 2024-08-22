@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -96,7 +97,7 @@ type CheckTable struct {
 type RecoverIndex struct {
 	baseSchemaProducer
 
-	Table     *ast.TableName
+	Table     *ddlmodel.TableNameW
 	IndexName string
 }
 
@@ -104,7 +105,7 @@ type RecoverIndex struct {
 type CleanupIndex struct {
 	baseSchemaProducer
 
-	Table     *ast.TableName
+	Table     *ddlmodel.TableNameW
 	IndexName string
 }
 
@@ -122,7 +123,7 @@ type CheckIndexRange struct {
 type ChecksumTable struct {
 	baseSchemaProducer
 
-	Tables []*ast.TableName
+	Tables []*ddlmodel.TableNameW
 }
 
 // CancelDDLJobs represents a cancel DDL jobs plan.
@@ -300,6 +301,8 @@ type Simple struct {
 
 	// StaleTxnStartTS is the StartTS that is used to build a staleness transaction by 'START TRANSACTION READ ONLY' statement.
 	StaleTxnStartTS uint64
+
+	ResolveCtx *ddlmodel.ResolveContext
 }
 
 // MemoryUsage return the memory usage of Simple
@@ -577,7 +580,7 @@ type LoadData struct {
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
 	Format      *string
-	Table       *ast.TableName
+	Table       *ddlmodel.TableNameW
 	Charset     *string
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
@@ -602,7 +605,7 @@ type LoadDataOpt struct {
 type ImportInto struct {
 	baseSchemaProducer
 
-	Table              *ast.TableName
+	Table              *ddlmodel.TableNameW
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	Path               string

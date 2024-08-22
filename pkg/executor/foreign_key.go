@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -757,11 +758,12 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (base.Plan, er
 		return nil, errors.Errorf("generate foreign key cascade ast failed, %v", fkc.tp)
 	}
 	sctx := fkc.b.ctx
-	err := plannercore.Preprocess(ctx, sctx, stmtNode)
+	nodeW := ddlmodel.NewNodeW(stmtNode)
+	err := plannercore.Preprocess(ctx, sctx, nodeW)
 	if err != nil {
 		return nil, err
 	}
-	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx.GetPlanCtx(), stmtNode, fkc.b.is)
+	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx.GetPlanCtx(), nodeW, fkc.b.is)
 	if err != nil {
 		return nil, err
 	}

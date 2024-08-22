@@ -30,6 +30,7 @@ import (
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -58,7 +59,8 @@ type TraceExec struct {
 	// exhausted being true means there is no more result.
 	exhausted bool
 	// stmtNode is the real query ast tree and it is used for building real query's plan.
-	stmtNode ast.StmtNode
+	stmtNode   ast.StmtNode
+	resolveCtx *ddlmodel.ResolveContext
 
 	builder *executorBuilder
 	format  string
@@ -109,7 +111,8 @@ func (e *TraceExec) nextOptimizerCEPlanTrace(ctx context.Context, se sessionctx.
 		stmtCtx.EnableOptimizerCETrace = origin
 	}()
 
-	_, _, err := core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
+	nodeW := ddlmodel.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
+	_, _, err := core.OptimizeAstNode(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return err
 	}
@@ -137,7 +140,8 @@ func (e *TraceExec) nextOptimizerDebugPlanTrace(ctx context.Context, se sessionc
 		stmtCtx.EnableOptimizerDebugTrace = origin
 	}()
 
-	_, _, err := core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
+	nodeW := ddlmodel.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
+	_, _, err := core.OptimizeAstNode(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return err
 	}
@@ -183,7 +187,8 @@ func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Co
 	defer func() {
 		stmtCtx.EnableOptimizeTrace = origin
 	}()
-	_, _, err = core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
+	nodeW := ddlmodel.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
+	_, _, err = core.OptimizeAstNode(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return err
 	}

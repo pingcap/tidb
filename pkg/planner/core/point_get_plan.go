@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -880,7 +881,7 @@ type PointPlanVal struct {
 }
 
 // TryFastPlan tries to use the PointGetPlan for the query.
-func TryFastPlan(ctx base.PlanContext, node ast.Node) (p base.Plan) {
+func TryFastPlan(ctx base.PlanContext, node *ddlmodel.NodeW) (p base.Plan) {
 	if checkStableResultMode(ctx) {
 		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
 		return nil
@@ -888,7 +889,7 @@ func TryFastPlan(ctx base.PlanContext, node ast.Node) (p base.Plan) {
 
 	ctx.GetSessionVars().PlanID.Store(0)
 	ctx.GetSessionVars().PlanColumnID.Store(0)
-	switch x := node.(type) {
+	switch x := node.Node.(type) {
 	case *ast.SelectStmt:
 		if x.SelectIntoOpt != nil {
 			return nil
@@ -908,7 +909,7 @@ func TryFastPlan(ctx base.PlanContext, node ast.Node) (p base.Plan) {
 		}()
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
-		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
+		if fp := tryWhereIn2BatchPointGet(ctx, x, node.GetResolveContext()); fp != nil {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return
 			}
@@ -919,7 +920,7 @@ func TryFastPlan(ctx base.PlanContext, node ast.Node) (p base.Plan) {
 			p = fp
 			return
 		}
-		if fp := tryPointGetPlan(ctx, x, isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
+		if fp := tryPointGetPlan(ctx, x, node.GetResolveContext(), isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return nil
 			}
@@ -938,9 +939,9 @@ func TryFastPlan(ctx base.PlanContext, node ast.Node) (p base.Plan) {
 			return
 		}
 	case *ast.UpdateStmt:
-		return tryUpdatePointPlan(ctx, x)
+		return tryUpdatePointPlan(ctx, x, node.GetResolveContext())
 	case *ast.DeleteStmt:
-		return tryDeletePointPlan(ctx, x)
+		return tryDeletePointPlan(ctx, x, node.GetResolveContext())
 	}
 	return nil
 }
@@ -1206,7 +1207,7 @@ func newBatchPointGetPlan(
 	return p.Init(ctx, statsInfo, schema, names, 0)
 }
 
-func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt) *BatchPointGetPlan {
+func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *ddlmodel.ResolveContext) *BatchPointGetPlan {
 	if selStmt.OrderBy != nil || selStmt.GroupBy != nil ||
 		selStmt.Limit != nil || selStmt.Having != nil || selStmt.Distinct ||
 		len(selStmt.WindowSpecs) > 0 {
@@ -1223,7 +1224,8 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt) *Ba
 	if tblName == nil {
 		return nil
 	}
-	tbl := tblName.TableInfo
+	tnW := resolveCtx.Get(tblName)
+	tbl := tnW.TableInfo
 	if tbl == nil {
 		return nil
 	}
@@ -1307,7 +1309,7 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt) *Ba
 // 2. It must be a single table select.
 // 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
-func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
+func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *ddlmodel.ResolveContext, check bool) *PointGetPlan {
 	if selStmt.Having != nil || selStmt.OrderBy != nil {
 		return nil
 	} else if selStmt.Limit != nil {
@@ -1320,7 +1322,8 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, check bool) 
 	if tblName == nil {
 		return nil
 	}
-	tbl := tblName.TableInfo
+	tnW := resolveCtx.Get(tblName)
+	tbl := tnW.TableInfo
 	if tbl == nil {
 		return nil
 	}
@@ -1374,10 +1377,10 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, check bool) 
 		return nil
 	}
 
-	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, isTableDual, check)
+	return checkTblIndexForPointPlan(ctx, tnW, schema, names, pairs, isTableDual, check)
 }
 
-func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *ast.TableName, schema *expression.Schema,
+func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *ddlmodel.TableNameW, schema *expression.Schema,
 	names []*types.FieldName, pairs []nameValuePair, isTableDual, check bool) *PointGetPlan {
 	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && ctx.GetSessionVars().ConnectionID > 0
@@ -1894,7 +1897,7 @@ func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
 	return false
 }
 
-func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt) base.Plan {
+func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolveCtx *ddlmodel.ResolveContext) base.Plan {
 	// Avoid using the point_get when assignment_list contains the sub-query in the UPDATE.
 	if checkIfAssignmentListHasSubQuery(updateStmt.List) {
 		return nil
@@ -1907,7 +1910,7 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt) base.P
 		OrderBy: updateStmt.Order,
 		Limit:   updateStmt.Limit,
 	}
-	pointGet := tryPointGetPlan(ctx, selStmt, true)
+	pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true)
 	if pointGet != nil {
 		if pointGet.IsTableDual {
 			return PhysicalTableDual{
@@ -1919,7 +1922,7 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt) base.P
 		}
 		return buildPointUpdatePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo, updateStmt)
 	}
-	batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt)
+	batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx)
 	if batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
@@ -2022,7 +2025,7 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 	return orderedList, allAssignmentsAreConstant
 }
 
-func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt) base.Plan {
+func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCtx *ddlmodel.ResolveContext) base.Plan {
 	if delStmt.IsMultiTable {
 		return nil
 	}
@@ -2033,7 +2036,7 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt) base.Plan
 		OrderBy: delStmt.Order,
 		Limit:   delStmt.Limit,
 	}
-	if pointGet := tryPointGetPlan(ctx, selStmt, true); pointGet != nil {
+	if pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true); pointGet != nil {
 		if pointGet.IsTableDual {
 			return PhysicalTableDual{
 				names: pointGet.outputNames,
@@ -2044,7 +2047,7 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt) base.Plan
 		}
 		return buildPointDeletePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo)
 	}
-	if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt); batchPointGet != nil {
+	if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx); batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}

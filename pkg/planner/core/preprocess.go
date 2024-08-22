@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -122,7 +123,7 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 
 // Preprocess resolves table names of the node, and checks some statements' validation.
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
-func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
+func Preprocess(ctx context.Context, sctx sessionctx.Context, node *ddlmodel.NodeW, preprocessOpt ...PreprocessOpt) error {
 	defer tracing.StartRegion(ctx, "planner.Preprocess").End()
 	v := preprocessor{
 		ctx:                ctx,
@@ -130,6 +131,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, pre
 		tableAliasInJoin:   make([]map[string]any, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
+		resolveCtx:         node.GetResolveContext(),
 	}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
@@ -236,6 +238,8 @@ type preprocessor struct {
 	// values that may be returned
 	*PreprocessorReturn
 	err error
+
+	resolveCtx *ddlmodel.ResolveContext
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -559,8 +563,11 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 		}
 		tableInfo := tbl.Meta()
 		dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), tableInfo)
-		tn.TableInfo = tableInfo
-		tn.DBInfo = dbInfo
+		p.resolveCtx.Add(tn, &ddlmodel.TableNameW{
+			TableName: tn,
+			DBInfo:    dbInfo,
+			TableInfo: tableInfo,
+		})
 	}
 
 	originSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()), false)
@@ -1625,8 +1632,11 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 	}
-	tn.TableInfo = tableInfo
-	tn.DBInfo = dbInfo
+	p.resolveCtx.Add(tn, &ddlmodel.TableNameW{
+		TableName: tn,
+		DBInfo:    dbInfo,
+		TableInfo: tableInfo,
+	})
 }
 
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
