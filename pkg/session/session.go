@@ -619,7 +619,7 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 	if infoSchema, ok := s.sessionVars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok &&
 		infoSchema != nil && (tablecodec.IsRecordKey(key) || tablecodec.IsIndexKey(key)) {
 		tableOrPartitionID := tablecodec.DecodeTableID(key)
-		tbl, ok := infoSchema.TableByID(tableOrPartitionID)
+		tbl, ok := infoSchema.TableByID(ctx, tableOrPartitionID)
 		if !ok {
 			tbl, _, _ = infoSchema.FindTableByPartitionID(tableOrPartitionID)
 		}
@@ -885,7 +885,7 @@ func addTableNameInTableIDField(tableIDField any, is infoschema.InfoSchema) (enh
 		return "", false
 	}
 	var tableName string
-	tbl, ok := is.TableByID(tableID)
+	tbl, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
 		tableName = "unknown"
 	} else {
@@ -1163,12 +1163,7 @@ func sqlForLog(sql string) string {
 	return executor.QueryReplacer.Replace(sql)
 }
 
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
-}
-
-func (s *session) sysSessionPool() sessionPool {
+func (s *session) sysSessionPool() util.SessionPool {
 	return domain.GetDomain(s).SysSessionPool()
 }
 
@@ -1437,6 +1432,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		RefCountOfStmtCtx:     &s.sessionVars.RefCountOfStmtCtx,
 		MemTracker:            s.sessionVars.MemTracker,
 		DiskTracker:           s.sessionVars.DiskTracker,
+		RunawayChecker:        s.sessionVars.StmtCtx.RunawayChecker,
 		StatsInfo:             plannercore.GetStatsInfo,
 		OOMAlarmVariablesInfo: s.getOomAlarmVariablesInfo(),
 		TableIDs:              s.sessionVars.StmtCtx.TableIDs,
@@ -2383,6 +2379,10 @@ func (rs *execStmtResult) Close() error {
 }
 
 func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
+	// If `TryDetach` is called, the connection must have set `mysql.ServerStatusCursorExists`, or
+	// the `StatementContext` will be re-used and cause data race.
+	intest.Assert(rs.se.GetSessionVars().HasStatusFlag(mysql.ServerStatusCursorExists))
+
 	if !rs.sql.IsReadOnly(rs.se.GetSessionVars()) {
 		return nil, false, nil
 	}
@@ -3221,12 +3221,7 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 		targetTables = BackfillTables
 	}
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		var t *meta.Meta
-		if variable.EnableFastCreateTable.Load() {
-			t = meta.NewMeta(txn, meta.WithUpdateTableName())
-		} else {
-			t = meta.NewMeta(txn)
-		}
+		t := meta.NewMeta(txn)
 		tableVer, err := t.CheckDDLTableVersion()
 		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
@@ -3261,7 +3256,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = tbl.id
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, "", tblInfo)
+		err = t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3272,12 +3267,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 // InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
 func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		var t *meta.Meta
-		if variable.EnableFastCreateTable.Load() {
-			t = meta.NewMeta(txn, meta.WithUpdateTableName())
-		} else {
-			t = meta.NewMeta(txn)
-		}
+		t := meta.NewMeta(txn)
 		ver, err := t.CheckDDLTableVersion()
 		if err != nil || ver >= meta.MDLTableVersion {
 			return errors.Trace(err)
@@ -3299,7 +3289,7 @@ func InitMDLTable(store kv.Storage) error {
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = ddl.MDLTableID
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, "", tblInfo)
+		err = t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3470,7 +3460,6 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		},
 	)
 
-	analyzeConcurrencyQuota := int(config.GetGlobalConfig().Performance.AnalyzePartitionConcurrencyQuota)
 	concurrency := config.GetGlobalConfig().Performance.StatsLoadConcurrency
 	if concurrency == 0 {
 		// if concurrency is 0, we will set the concurrency of sync load by CPU.
@@ -3620,8 +3609,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	}
 
 	// init the instance plan cache
-	// TODO: introduce 2 new variable to control these 2 mem limits.
-	dom.InitInstancePlanCache(1000000, 1000000)
+	dom.InitInstancePlanCache()
 
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze
@@ -3639,15 +3627,6 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	}
 	dom.StartTTLJobManager()
 
-	analyzeCtxs, err := createSessions(store, analyzeConcurrencyQuota)
-	if err != nil {
-		return nil, err
-	}
-	subCtxs2 := make([]sessionctx.Context, analyzeConcurrencyQuota)
-	for i := 0; i < analyzeConcurrencyQuota; i++ {
-		subCtxs2[i] = analyzeCtxs[i]
-	}
-	dom.SetupAnalyzeExec(subCtxs2)
 	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
@@ -4168,7 +4147,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				tableName = tblInfo.Meta().Name.String()
 				partitionName = partInfo.Name.String()
 			} else {
-				tblInfo, _ := is.TableByID(physicalTableID)
+				tblInfo, _ := is.TableByID(s.currentCtx, physicalTableID)
 				tableName = tblInfo.Meta().Name.String()
 			}
 			bundle, ok := is.PlacementBundleByPhysicalTableID(physicalTableID)

@@ -44,7 +44,7 @@ type readIndexExecutor struct {
 	job     *model.Job
 	indexes []*model.IndexInfo
 	ptbl    table.PhysicalTable
-	jc      *JobContext
+	jc      *ReorgContext
 
 	avgRowSize      int
 	cloudStorageURI string
@@ -65,7 +65,7 @@ func newReadIndexExecutor(
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
-	jc *JobContext,
+	jc *ReorgContext,
 	bcGetter func() (ingest.BackendCtx, error),
 	cloudStorageURI string,
 	avgRowSize int,
@@ -191,7 +191,7 @@ func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 	}
 	if parTbl, ok := r.ptbl.(table.PartitionedTable); ok {
 		pid := sm.PhysicalTableID
-		start, end, err = getTableRange(r.jc, r.d.ddlCtx, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
+		start, end, err = getTableRange(r.jc, r.d.store, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
 		if err != nil {
 			logutil.DDLLogger().Error("get table range error",
 				zap.Error(err))

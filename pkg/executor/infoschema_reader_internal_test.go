@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -71,12 +72,9 @@ func TestSetDataFromCheckConstraints(t *testing.T) {
 		},
 	}
 	mockIs := infoschema.MockInfoSchema(tblInfos)
-	mt := memtableRetriever{is: mockIs}
+	mt := memtableRetriever{is: mockIs, extractor: &plannercore.InfoSchemaCheckConstraintsExtractor{}}
 	sctx := defaultCtx()
-	dbs := []model.CIStr{
-		model.NewCIStr("test"),
-	}
-	err := mt.setDataFromCheckConstraints(context.Background(), sctx, dbs)
+	err := mt.setDataFromCheckConstraints(context.Background(), sctx)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(mt.rows))    // 1 row
@@ -136,10 +134,8 @@ func TestSetDataFromTiDBCheckConstraints(t *testing.T) {
 	}
 	mockIs := infoschema.MockInfoSchema(tblInfos)
 	mt.is = mockIs
-	dbs := []model.CIStr{
-		model.NewCIStr("test"),
-	}
-	err := mt.setDataFromTiDBCheckConstraints(context.Background(), sctx, dbs)
+	mt.extractor = &plannercore.InfoSchemaTiDBCheckConstraintsExtractor{}
+	err := mt.setDataFromTiDBCheckConstraints(context.Background(), sctx)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(mt.rows))    // 1 row

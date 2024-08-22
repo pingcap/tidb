@@ -121,6 +121,21 @@ type StatsAnalyze interface {
 	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
 
+	// StartAnalyzeJob updates the job status to `running` and sets the start time.
+	// There is no guarantee that the job record will actually be updated. If the job fails to start, an error will be logged.
+	// It is OK because this won't affect the analysis job's success.
+	StartAnalyzeJob(job *statistics.AnalyzeJob)
+
+	// UpdateAnalyzeJobProgress updates the current progress of the analyze job.
+	// There is no guarantee that the job record will actually be updated. If the job fails to update, an error will be logged.
+	// It is OK because this won't affect the analysis job's success.
+	UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, rowCount int64)
+
+	// FinishAnalyzeJob updates the job status to `finished`, sets the end time, and updates the job info.
+	// There is no guarantee that the job record will actually be updated. If the job fails to finish, an error will be logged.
+	// It is OK because this won't affect the analysis job's success.
+	FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType)
+
 	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 	DeleteAnalyzeJobs(updateTime time.Time) error
 

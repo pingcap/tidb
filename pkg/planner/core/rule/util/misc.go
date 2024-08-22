@@ -14,7 +14,9 @@
 
 package util
 
-import "github.com/pingcap/tidb/pkg/expression"
+import (
+	"github.com/pingcap/tidb/pkg/expression"
+)
 
 // ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
 func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) {
@@ -39,3 +41,6 @@ func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expr
 		origin.RetType, origin.InOperand = retType, inOperand
 	}
 }
+
+// SetPredicatePushDownFlag is a hook for other packages to set rule flag.
+var SetPredicatePushDownFlag func(uint64) uint64

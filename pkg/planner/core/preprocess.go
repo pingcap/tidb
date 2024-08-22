@@ -315,7 +315,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.CreateBindingStmt:
 		p.stmtTp = TypeCreate
 		if node.OriginNode != nil {
-			// if node.PlanDigest is not empty, this binding will be created from history, the node.OriginNode and node.HintedNode should be nil
+			// if node.PlanDigests is not empty, this binding will be created from history, the node.OriginNode and node.HintedNode should be nil
 			EraseLastSemicolon(node.OriginNode)
 			EraseLastSemicolon(node.HintedNode)
 			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
@@ -1139,6 +1139,14 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 	noopFuncsMode := p.sctx.GetSessionVars().NoopFuncsMode
 	if noopFuncsMode == variable.OnInt {
+		// Set `ForShareLockEnabledByNoop` properly before returning.
+		// When `tidb_enable_shared_lock_promotion` is enabled, the `for share` statements would be
+		// executed as `for update` statements despite setting of noop functions.
+		if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
+			stmt.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
+			!p.sctx.GetSessionVars().SharedLockPromotion {
+			p.sctx.GetSessionVars().StmtCtx.ForShareLockEnabledByNoop = true
+		}
 		return
 	}
 	if stmt.SelectStmtOpts != nil && stmt.SelectStmtOpts.CalcFoundRows {
@@ -1150,7 +1158,12 @@ func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 		// NoopFuncsMode is Warn, append an error
 		p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
-	if stmt.LockInfo != nil && stmt.LockInfo.LockType == ast.SelectLockForShare {
+
+	// When `tidb_enable_shared_lock_promotion` is enabled, the `for share` statements would be
+	// executed as `for update` statements.
+	if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
+		stmt.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
+		!p.sctx.GetSessionVars().SharedLockPromotion {
 		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 		if noopFuncsMode == variable.OffInt {
 			p.err = err
@@ -1158,6 +1171,7 @@ func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 		}
 		// NoopFuncsMode is Warn, append an error
 		p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		p.sctx.GetSessionVars().StmtCtx.ForShareLockEnabledByNoop = true
 	}
 }
 
@@ -1458,7 +1472,11 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxBitDisplayWidth)
 		}
 	case mysql.TypeTiDBVectorFloat32:
-		return errors.Errorf("vector type is not supported")
+		if tp.GetFlen() != types.UnspecifiedLength {
+			if err := types.CheckVectorDimValid(tp.GetFlen()); err != nil {
+				return err
+			}
+		}
 	default:
 		// TODO: Add more types.
 	}
@@ -1744,10 +1762,6 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			return
 		}
 	}
-	if node.Tp.GetType() == mysql.TypeTiDBVectorFloat32 {
-		p.err = errors.Errorf("vector type is not supported")
-		return
-	}
 }
 
 func (p *preprocessor) updateStateFromStaleReadProcessor() error {
@@ -1872,20 +1886,20 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)
 		}
 		// Check the table change, if adding new public index or modify a column, we need to handle them.
-		if !sctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if tbl.Meta().Revision != tableInfo.Revision && !sctx.GetSessionVars().IsPessimisticReadConsistency() {
 			var copyTableInfo *model.TableInfo
+
+			infoIndices := make(map[string]int64, len(tableInfo.Indices))
+			for _, idx := range tableInfo.Indices {
+				infoIndices[idx.Name.L] = idx.ID
+			}
+
 			for i, idx := range tbl.Meta().Indices {
 				if idx.State != model.StatePublic {
 					continue
 				}
-				found := false
-				for _, idxx := range tableInfo.Indices {
-					if idx.Name.L == idxx.Name.L && idx.ID == idxx.ID {
-						found = true
-						break
-					}
-				}
-				if !found {
+				id, found := infoIndices[idx.Name.L]
+				if !found || id != idx.ID {
 					if copyTableInfo == nil {
 						copyTableInfo = tbl.Meta().Clone()
 					}
@@ -1899,19 +1913,19 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 				}
 			}
 			// Check the column change.
+			infoColumns := make(map[string]int64, len(tableInfo.Columns))
+			for _, col := range tableInfo.Columns {
+				infoColumns[col.Name.L] = col.ID
+			}
 			for _, col := range tbl.Meta().Columns {
 				if col.State != model.StatePublic {
 					continue
 				}
-				found := false
-				for _, coll := range tableInfo.Columns {
-					if col.Name.L == coll.Name.L && col.ID != coll.ID {
-						logutil.BgLogger().Info("public column changed", zap.String("column", col.Name.L), zap.String("old_col", coll.Name.L), zap.Int64("new id", col.ID), zap.Int64("old id", coll.ID))
-						found = true
-						break
-					}
-				}
-				if found {
+				colid, found := infoColumns[col.Name.L]
+				if found && colid != col.ID {
+					logutil.BgLogger().Info("public column changed",
+						zap.String("column", col.Name.L), zap.String("old_col", col.Name.L),
+						zap.Int64("new id", col.ID), zap.Int64("old id", col.ID))
 					if !skipLock {
 						sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
 					}

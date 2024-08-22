@@ -168,7 +168,7 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `TxnStart` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `RESOURCE_GROUP` varchar(32) NOT NULL DEFAULT '',\n" +
 			"  `SESSION_ALIAS` varchar(64) NOT NULL DEFAULT '',\n" +
-			"  `CURRENT_AFFECTED_ROWS` bigint(21) unsigned DEFAULT NULL\n" +
+			"  `ROWS_AFFECTED` bigint(21) unsigned DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table information_schema.cluster_log").Check(
 		testkit.Rows("" +
@@ -613,7 +613,7 @@ func TestReloadDropDatabase(t *testing.T) {
 	is = domain.GetDomain(tk.Session()).InfoSchema()
 	_, err = is.TableByName(context.Background(), model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
 	require.True(t, terror.ErrorEqual(infoschema.ErrTableNotExists, err))
-	_, ok := is.TableByID(t2.Meta().ID)
+	_, ok := is.TableByID(context.Background(), t2.Meta().ID)
 	require.False(t, ok)
 }
 

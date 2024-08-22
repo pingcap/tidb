@@ -25,13 +25,14 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
 // returns true if every expression is a single column.
-func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
+func canProjectionBeEliminatedLoose(p *logicalop.LogicalProjection) bool {
 	// project for expand will assign a new col id for col ref, because these column should be
 	// data cloned in the execution time and may be filled with null value at the same time.
 	// so it's not a REAL column reference. Detect the column ref in projection here and do
@@ -143,32 +144,32 @@ func eliminatePhysicalProjection(p base.PhysicalPlan) base.PhysicalPlan {
 // The projection eliminate in logical optimize will optimize the projection under the projection, window, agg
 // The projection eliminate in post optimize will optimize other projection
 
-// For update stmt
+// ProjectionEliminator is for update stmt
 // The projection eliminate in logical optimize has been forbidden.
 // The projection eliminate in post optimize will optimize the projection under the projection, window, agg (the condition is same as logical optimize)
-type projectionEliminator struct {
+type ProjectionEliminator struct {
 }
 
-// optimize implements the logicalOptRule interface.
-func (pe *projectionEliminator) optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements the logicalOptRule interface.
+func (pe *ProjectionEliminator) Optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false, opt)
 	return root, planChanged, nil
 }
 
 // eliminate eliminates the redundant projection in a logical plan.
-func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string]*expression.Column, canEliminate bool, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string]*expression.Column, canEliminate bool, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// LogicalCTE's logical optimization is independent.
-	if _, ok := p.(*LogicalCTE); ok {
+	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p
 	}
-	proj, isProj := p.(*LogicalProjection)
+	proj, isProj := p.(*logicalop.LogicalProjection)
 	childFlag := canEliminate
-	if _, isUnion := p.(*LogicalUnionAll); isUnion {
+	if _, isUnion := p.(*logicalop.LogicalUnionAll); isUnion {
 		childFlag = false
-	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
+	} else if _, isAgg := p.(*logicalop.LogicalAggregation); isAgg || isProj {
 		childFlag = true
-	} else if _, isWindow := p.(*LogicalWindow); isWindow {
+	} else if _, isWindow := p.(*logicalop.LogicalWindow); isWindow {
 		childFlag = true
 	}
 	for i, child := range p.Children() {
@@ -177,10 +178,10 @@ func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 
 	// replace logical plan schema
 	switch x := p.(type) {
-	case *LogicalJoin:
-		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
-	case *LogicalApply:
-		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
+	case *logicalop.LogicalJoin:
+		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
+	case *logicalop.LogicalApply:
+		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
 	default:
 		for _, dst := range p.Schema().Columns {
 			ruleutil.ResolveColumnAndReplace(dst, replace)
@@ -191,7 +192,7 @@ func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 
 	// eliminate duplicate projection: projection with child projection
 	if isProj {
-		if child, ok := p.Children()[0].(*LogicalProjection); ok && !expression.ExprsHasSideEffects(child.Exprs) {
+		if child, ok := p.Children()[0].(*logicalop.LogicalProjection); ok && !expression.ExprsHasSideEffects(child.Exprs) {
 			ctx := p.SCtx()
 			for i := range proj.Exprs {
 				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
@@ -217,7 +218,7 @@ func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 }
 
 // ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.
-func ReplaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection, schema *expression.Schema) expression.Expression {
+func ReplaceColumnOfExpr(expr expression.Expression, proj *logicalop.LogicalProjection, schema *expression.Schema) expression.Expression {
 	switch v := expr.(type) {
 	case *expression.Column:
 		idx := schema.ColumnIndex(v)
@@ -232,11 +233,12 @@ func ReplaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection, sc
 	return expr
 }
 
-func (*projectionEliminator) name() string {
+// Name implements the logicalOptRule.<1st> interface.
+func (*ProjectionEliminator) Name() string {
 	return "projection_eliminate"
 }
 
-func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendDupProjEliminateTraceStep(parent, child *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	ectx := parent.SCtx().GetExprCtx().GetEvalCtx()
 	action := func() string {
 		buffer := bytes.NewBufferString(
@@ -256,7 +258,7 @@ func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *opti
 	opt.AppendStepToCurrent(child.ID(), child.TP(), reason, action)
 }
 
-func appendProjEliminateTraceStep(proj *LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendProjEliminateTraceStep(proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%v_%v's Exprs are all Columns", proj.TP(), proj.ID())
 	}

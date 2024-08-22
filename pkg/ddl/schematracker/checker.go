@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -38,8 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/table"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 )
 
 var (
@@ -490,11 +488,6 @@ func (d *Checker) Start(ctxPool *pools.ResourcePool) error {
 	return d.realDDL.Start(ctxPool)
 }
 
-// GetLease implements the DDL interface.
-func (d *Checker) GetLease() time.Duration {
-	return d.realDDL.GetLease()
-}
-
 // Stats implements the DDL interface.
 func (d *Checker) Stats(vars *variable.SessionVars) (map[string]any, error) {
 	return d.realDDL.Stats(vars)
@@ -516,12 +509,12 @@ func (d *Checker) RegisterStatsHandle(h *handle.Handle) {
 }
 
 // SchemaSyncer implements the DDL interface.
-func (d *Checker) SchemaSyncer() syncer.SchemaSyncer {
+func (d *Checker) SchemaSyncer() schemaver.Syncer {
 	return d.realDDL.SchemaSyncer()
 }
 
 // StateSyncer implements the DDL interface.
-func (d *Checker) StateSyncer() syncer.StateSyncer {
+func (d *Checker) StateSyncer() serverstate.Syncer {
 	return d.realDDL.StateSyncer()
 }
 
@@ -533,26 +526,6 @@ func (d *Checker) OwnerManager() owner.Manager {
 // GetID implements the DDL interface.
 func (d *Checker) GetID() string {
 	return d.realDDL.GetID()
-}
-
-// GetTableMaxHandle implements the DDL interface.
-func (d *Checker) GetTableMaxHandle(ctx *ddl.JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error) {
-	return d.realDDL.GetTableMaxHandle(ctx, startTS, tbl)
-}
-
-// SetBinlogClient implements the DDL interface.
-func (d *Checker) SetBinlogClient(client *pumpcli.PumpsClient) {
-	d.realDDL.SetBinlogClient(client)
-}
-
-// GetHook implements the DDL interface.
-func (d *Checker) GetHook() ddl.Callback {
-	return d.realDDL.GetHook()
-}
-
-// SetHook implements the DDL interface.
-func (d *Checker) SetHook(h ddl.Callback) {
-	d.realDDL.SetHook(h)
 }
 
 // DoDDLJob implements the DDL interface.

@@ -4,7 +4,7 @@ drop table if exists t;
 CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
   `b` int(11) DEFAULT NULL,
-  UNIQUE KEY `idx1` (`b`),
+  UNIQUE KEY `idx1` (`b`) global,
   KEY `idx` (`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 5;

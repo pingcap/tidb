@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -120,8 +122,8 @@ func (tk *TestKit) RefreshSession() {
 		seed := uint64(time.Now().UnixNano())
 		tk.t.Logf("RefreshSession rand seed: %d", seed)
 		rng := rand.New(rand.NewSource(int64(seed)))
-		if rng.Intn(10) >= 3 { // 70% chance to run infoschema v2
-			tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
+		if rng.Intn(10) < 3 { // 70% chance to run infoschema v2
+			tk.MustExec("set @@global.tidb_schema_cache_size = 0")
 		}
 	}
 
@@ -171,7 +173,43 @@ func (tk *TestKit) MustQuery(sql string, args ...any) *Result {
 			tk.alloc.Reset()
 		}
 	}()
-	return tk.MustQueryWithContext(context.Background(), sql, args...)
+	rs1 := tk.MustQueryWithContext(context.Background(), sql, args...)
+	if !strings.Contains(sql, "information_schema") ||
+		strings.Contains(sql, "trace") ||
+		strings.Contains(sql, "statements_summary") ||
+		strings.Contains(sql, "slow_query") ||
+		strings.Contains(sql, "cluster_config") ||
+		strings.Contains(sql, "CLUSTER_") ||
+		strings.Contains(sql, "STATEMENTS_SUMMARY_EVICTED") ||
+		strings.Contains(sql, "TIDB_TRX") {
+		return rs1
+	}
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/skipExtractor", "return(true)")
+	if err != nil {
+		panic(err)
+	}
+	rs2 := tk.MustQueryWithContext(context.Background(), sql, args...)
+	err = failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/skipExtractor")
+	if err != nil {
+		panic(err)
+	}
+	rs1Row := make([][]string, 0, len(rs1.rows))
+	for _, row := range rs1.rows {
+		rs1SubRow := make([]string, 0, len(row))
+		for _, col := range row {
+			rs1SubRow = append(rs1SubRow, strings.Clone(col))
+		}
+		rs1Row = append(rs1Row, rs1SubRow)
+	}
+	slices.SortFunc(rs1.rows, func(a, b []string) int {
+		return slices.Compare(a, b)
+	})
+	slices.SortFunc(rs2.rows, func(a, b []string) int {
+		return slices.Compare(a, b)
+	})
+	rs2.Check(rs1.Rows())
+	rs1.rows = rs1Row
+	return rs1
 }
 
 // EventuallyMustQueryAndCheck query the statements and assert that
@@ -188,6 +226,12 @@ func (tk *TestKit) EventuallyMustQueryAndCheck(sql string, args []any,
 		res := tk.MustQueryWithContext(context.Background(), sql, args...)
 		return res.Equal(expected)
 	}, waitFor, tick)
+}
+
+// MustQueryToErr query the sql statement and must return Error.
+func (tk *TestKit) MustQueryToErr(sql string, args ...any) {
+	err := tk.QueryToErr(sql, args...)
+	tk.require.Error(err)
 }
 
 // MustQueryWithContext query the statements and returns result rows.
@@ -485,7 +529,7 @@ func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
 // MustContainErrMsg executes a sql statement and assert its error message containing errStr.
 func (tk *TestKit) MustContainErrMsg(sql string, errStr any) {
 	err := tk.ExecToErr(sql)
-	tk.require.Error(err)
+	tk.require.Error(err, "sql: %s", sql)
 	tk.require.Contains(err.Error(), errStr)
 }
 

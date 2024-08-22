@@ -735,7 +735,7 @@ func (b *builtinBenchmarkSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 			}
 		}
 	default: // Should never go into here.
-		return 0, true, errors.Errorf("EvalType %v not implemented for builtin BENCHMARK()", evalType)
+		return 0, true, errors.Errorf("%s is not supported for BENCHMARK()", evalType)
 	}
 
 	// Return value of BENCHMARK() is always 0.

@@ -42,8 +42,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// initStatsStep is the step to load stats by paging.
-const initStatsStep = int64(500)
+const (
+	// initStatsStep is the step to load stats by paging.
+	initStatsStep = int64(500)
+	// initStatsPercentageInterval is the interval to print the percentage of loading stats.
+	initStatsPercentageInterval = float64(33)
+)
 
 var maxTidRecord MaxTidRecord
 
@@ -379,7 +383,7 @@ func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache 
 	tid := int64(0)
 	ls := initstats.NewRangeWorker("histogram", func(task initstats.Task) error {
 		return h.initStatsHistogramsByPaging(is, cache, task, totalMemory)
-	}, uint64(maxTid), uint64(initStatsStep))
+	}, uint64(maxTid), uint64(initStatsStep), initStatsPercentageInterval)
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -498,7 +502,7 @@ func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache, totalMemo
 			return nil
 		}
 		return h.initStatsTopNByPaging(cache, task, totalMemory)
-	}, uint64(maxTid), uint64(initStatsStep))
+	}, uint64(maxTid), uint64(initStatsStep), initStatsPercentageInterval)
 	ls.LoadStats()
 	for tid <= maxTid {
 		if isFullCache(cache, totalMemory) {
@@ -703,7 +707,7 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalM
 			return nil
 		}
 		return h.initStatsBucketsByPaging(cache, task)
-	}, uint64(maxTid), uint64(initStatsStep))
+	}, uint64(maxTid), uint64(initStatsStep), initStatsPercentageInterval)
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -775,6 +779,7 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("complete to load the meta")
+	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		err = h.initStatsHistogramsConcurrency(is, cache, totalMemory)
 	} else {
@@ -789,6 +794,7 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	} else {
 		err = h.initStatsTopN(cache, totalMemory)
 	}
+	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
 	statslogutil.StatsLogger().Info("complete to load the topn")
 	if err != nil {
 		return err

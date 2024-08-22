@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"testing"
 
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -87,4 +88,38 @@ func TestInDecimal(t *testing.T) {
 	for i := 0; i < 1024; i++ {
 		require.Equal(t, int64(1), result.GetInt64(0))
 	}
+}
+
+func TestGetParamVec(t *testing.T) {
+	ctx := createContext(t)
+	params := []types.Datum{
+		types.NewIntDatum(123),
+		types.NewStringDatum("abc"),
+	}
+	ctx.GetSessionVars().PlanCacheParams.Append(params...)
+	ft := eType2FieldType(types.ETInt)
+	col := &Column{RetType: ft, Index: 0}
+	fn, err := funcs[ast.GetParam].getFunction(ctx, []Expression{col})
+	require.NoError(t, err)
+
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 3)
+	for i := range params {
+		input.Column(0).AppendInt64(int64(i))
+	}
+	result := chunk.NewColumn(ft, 3)
+	require.NoError(t, vecEvalType(ctx, fn, types.ETString, input, result))
+	require.Equal(t, len(params), result.Rows())
+	for i := 0; i < result.Rows(); i++ {
+		require.False(t, result.IsNull(i))
+		val := result.GetString(i)
+		str, err := params[i].ToString()
+		require.NoError(t, err)
+		require.Equal(t, str, val)
+	}
+
+	input = chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 3)
+	input.Column(0).AppendInt64(1)
+	input.Column(0).AppendInt64(2)
+	input.Column(0).AppendInt64(int64(len(params)))
+	require.Equal(t, exprctx.ErrParamIndexExceedParamCounts, vecEvalType(ctx, fn, types.ETString, input, result))
 }

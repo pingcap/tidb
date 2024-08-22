@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -697,8 +698,8 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 			panic("not support")
 		}
 	}
-	joinTypes := []plannercore.JoinType{plannercore.RightOuterJoin, plannercore.LeftOuterJoin,
-		plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin}
+	joinTypes := []logicalop.JoinType{logicalop.RightOuterJoin, logicalop.LeftOuterJoin,
+		logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin}
 	for _, joinType := range joinTypes {
 		ctx := defaultCtx()
 		required := make([]int, 100)
@@ -720,8 +721,8 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 	}
 }
 
-func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
-	if joinType == plannercore.RightOuterJoin {
+func buildMergeJoinExec(ctx sessionctx.Context, joinType logicalop.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
+	if joinType == logicalop.RightOuterJoin {
 		innerSrc, outerSrc = outerSrc, innerSrc
 	}
 

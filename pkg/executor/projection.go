@@ -95,7 +95,7 @@ type ProjectionExec struct {
 	parentReqRows int64
 
 	memTracker *memory.Tracker
-	wg         sync.WaitGroup
+	wg         *sync.WaitGroup
 
 	calculateNoDelay bool
 	prepared         bool
@@ -136,6 +136,8 @@ func (e *ProjectionExec) open(_ context.Context) error {
 		e.childResult = exec.TryNewCacheChunk(e.Children(0))
 		e.memTracker.Consume(e.childResult.MemoryUsage())
 	}
+
+	e.wg = &sync.WaitGroup{}
 
 	return nil
 }

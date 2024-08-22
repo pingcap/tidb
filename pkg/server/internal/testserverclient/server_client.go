@@ -39,8 +39,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -50,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	dto "github.com/prometheus/client_model/go"
@@ -2930,7 +2929,7 @@ type expectQuery struct {
 	rows []string
 }
 
-func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain) {
+func (cli *TestServerClient) RunTestIssue53634(t *testing.T) {
 	cli.RunTests(t, func(config *mysql.Config) {
 		config.MaxAllowedPacket = 1024
 	}, func(dbt *testkit.DBTestKit) {
@@ -2962,11 +2961,11 @@ func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain)
 		sqls[4] = sqlWithErr{nil, "commit"}
 		dropColumnSQL := "alter table stock drop column cct_1"
 		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
-		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, dropColumnSQL, sqls, query)
+		runTestInSchemaState(t, conn, cli, model.StateWriteReorganization, true, dropColumnSQL, sqls, query)
 	})
 }
 
-func (cli *TestServerClient) RunTestIssue54254(t *testing.T, dom *domain.Domain) {
+func (cli *TestServerClient) RunTestIssue54254(t *testing.T) {
 	cli.RunTests(t, func(config *mysql.Config) {
 		config.MaxAllowedPacket = 1024
 	}, func(dbt *testkit.DBTestKit) {
@@ -2995,7 +2994,7 @@ func (cli *TestServerClient) RunTestIssue54254(t *testing.T, dom *domain.Domain)
 		sqls[4] = sqlWithErr{nil, "commit"}
 		addColumnSQL := "alter table stock add column cct_1 int"
 		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
-		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, addColumnSQL, sqls, query)
+		runTestInSchemaState(t, conn, cli, model.StateWriteReorganization, true, addColumnSQL, sqls, query)
 	})
 }
 
@@ -3003,7 +3002,6 @@ func runTestInSchemaState(
 	t *testing.T,
 	conn *sql.Conn,
 	cli *TestServerClient,
-	dom *domain.Domain,
 	state model.SchemaState,
 	isOnJobUpdated bool,
 	dropColumnSQL string,
@@ -3013,7 +3011,6 @@ func runTestInSchemaState(
 	ctx := context.Background()
 	MustExec(ctx, t, conn, "use test_db_state")
 
-	callback := &callback.TestDDLCallback{Do: dom}
 	prevState := model.StateNone
 	var checkErr error
 	dbt := cli.getNewDB(t, func(config *mysql.Config) {
@@ -3078,13 +3075,12 @@ func runTestInSchemaState(
 		}
 	}
 	if isOnJobUpdated {
-		callback.OnJobUpdatedExported.Store(&cbFunc1)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cbFunc1)
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	} else {
-		callback.OnJobRunBeforeExported = cbFunc1
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", cbFunc1)
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	}
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	d.SetHook(callback)
 	MustExec(ctx, t, conn, dropColumnSQL)
 	require.NoError(t, checkErr)
 
@@ -3099,7 +3095,6 @@ func runTestInSchemaState(
 			cli.CheckRows(t, rs, expectQuery.rows[0])
 		}
 	}
-	d.SetHook(originalCallback)
 }
 
 func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {

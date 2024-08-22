@@ -25,12 +25,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -237,7 +239,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("t"),
 		DBID: dbInfo.ID,
 	}
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo)
+	err = m.CreateTableOrView(1, tbInfo)
 	require.NoError(t, err)
 
 	n, err = m.GetAutoIDAccessors(1, 1).RowID().Inc(10)
@@ -248,7 +250,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo)
+	err = m.CreateTableOrView(1, tbInfo)
 	require.NotNil(t, err)
 	require.True(t, meta.ErrTableExists.Equal(err))
 
@@ -275,7 +277,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("bb"),
 		DBID: dbInfo.ID,
 	}
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo2)
+	err = m.CreateTableOrView(1, tbInfo2)
 	require.NoError(t, err)
 
 	tblName := &model.TableNameInfo{ID: tbInfo.ID, Name: tbInfo.Name}
@@ -309,7 +311,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.DropTableOrView(1, dbInfo.Name.L, tbInfo2.ID, tbInfo2.Name.L)
+	err = m.DropTableOrView(1, tbInfo2.ID)
 	require.NoError(t, err)
 	err = m.GetAutoIDAccessors(1, tbInfo2.ID).Del()
 	require.NoError(t, err)
@@ -341,7 +343,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("t_rename"),
 	}
 	// Create table.
-	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo100)
+	err = m.CreateTableOrView(1, tbInfo100)
 	require.NoError(t, err)
 	// Update auto ID.
 	currentDBID := int64(1)
@@ -367,7 +369,7 @@ func TestMeta(t *testing.T) {
 		ID:   3,
 		Name: model.NewCIStr("tbl3"),
 	}
-	err = m.CreateTableAndSetAutoID(1, dbInfo.Name.L, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
+	err = m.CreateTableAndSetAutoID(1, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
 	require.NoError(t, err)
 	id, err := m.GetAutoIDAccessors(1, tbInfo3.ID).RowID().Get()
 	require.NoError(t, err)
@@ -377,9 +379,9 @@ func TestMeta(t *testing.T) {
 	require.Equal(t, []byte(strconv.FormatInt(1234, 10)), val)
 	require.Equal(t, []byte{0x6d, 0x44, 0x42, 0x3a, 0x31, 0x0, 0x0, 0x0, 0x0, 0xfb, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x33, 0x0, 0x0, 0x0, 0xfc}, key)
 
-	err = m.DropDatabase(1, dbInfo.Name.L)
+	err = m.DropDatabase(1)
 	require.NoError(t, err)
-	err = m.DropDatabase(currentDBID, dbInfo.Name.L)
+	err = m.DropDatabase(currentDBID)
 	require.NoError(t, err)
 
 	dbs, err = m.ListDatabases()
@@ -655,111 +657,6 @@ func TestCreateMySQLDatabase(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestName(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-
-	// TestDatabaseNameKey
-	m := meta.NewMeta(txn)
-	key := m.DatabaseNameKey("db")
-	require.Equal(t, string(key), "DBNames:db")
-
-	// TestCheckDatabaseNameExists
-	err = m.CheckDatabaseNameExists(m.DatabaseNameKey("db"))
-	require.True(t, meta.ErrDBNotExists.Equal(err))
-	// TestCheckDatabaseNameNotExists
-	err = m.CheckDatabaseNameNotExists(m.DatabaseNameKey("db"))
-	require.NoError(t, err)
-	// TestCreateDatabase
-	err = m.CreateDatabaseName("db", 1)
-	require.NoError(t, err)
-	err = m.CheckDatabaseNameExists(m.DatabaseNameKey("db"))
-	require.NoError(t, err)
-	err = m.CheckDatabaseNameNotExists(m.DatabaseNameKey("db"))
-	require.True(t, meta.ErrDBExists.Equal(err))
-
-	// TestTableNameKey
-	key = m.TableNameKey("db", "tb")
-	require.Equal(t, string(key), "Names:db\x00tb")
-
-	// TestCheckTableNameExists
-	err = m.CheckTableNameExists(m.TableNameKey("db", "tb"))
-	require.True(t, meta.ErrTableNotExists.Equal(err))
-	// TestCheckTableNameNotExists
-	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb"))
-	require.NoError(t, err)
-
-	// TestCreateTable
-	err = m.CreateTableName("db", "tb", 1)
-	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("db", "tb"))
-	require.NoError(t, err)
-	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb"))
-	require.True(t, meta.ErrTableExists.Equal(err))
-	err = m.CreateTableName("db", "t", 2)
-	require.NoError(t, err)
-
-	err = m.CreateTableName("db", "tb", 3)
-	require.True(t, meta.ErrTableExists.Equal(err))
-
-	err = m.CreateDatabaseName("d", 4)
-	require.NoError(t, err)
-	err = m.CreateTableName("d", "btb", 3)
-	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("d", "btb"))
-	require.NoError(t, err)
-
-	// TestDropTableName
-	err = m.DropTableName("db1", "b")
-	require.True(t, meta.ErrTableNotExists.Equal(err))
-	err = m.DropTableName("db", "tb")
-	require.NoError(t, err)
-
-	// TestDropDatabaseName
-	err = m.DropDatabaseName("xx")
-	require.True(t, meta.ErrDBNotExists.Equal(err))
-	err = m.DropDatabaseName("d")
-	require.NoError(t, err)
-	err = m.CheckTableNameNotExists(m.TableNameKey("d", "btb"))
-	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("db", "t"))
-	require.NoError(t, err)
-
-	// TestClearAllTableNames
-	err = m.ClearAllTableNames()
-	require.NoError(t, err)
-	err = m.CheckTableNameNotExists(m.TableNameKey("db1", "t"))
-	require.NoError(t, err)
-
-	// TestClearAllDatabaseNames
-	err = m.ClearAllDatabaseNames()
-	require.NoError(t, err)
-
-	// TestFastCreateTableInitialized
-	v, err := m.GetFastCreateTableInitialized()
-	require.NoError(t, err)
-	require.Equal(t, v, false)
-	err = m.SetFastCreateTableInitialized(true)
-	require.NoError(t, err)
-	v, err = m.GetFastCreateTableInitialized()
-	require.NoError(t, err)
-	require.Equal(t, v, true)
-	err = m.SetFastCreateTableInitialized(false)
-	require.NoError(t, err)
-	v, err = m.GetFastCreateTableInitialized()
-	require.NoError(t, err)
-	require.Equal(t, v, false)
-
-	err = txn.Rollback()
-	require.NoError(t, err)
-}
-
 func TestIsTableInfoMustLoad(t *testing.T) {
 	tableInfo := &model.TableInfo{
 		TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"},
@@ -870,10 +767,9 @@ func TestTableNameExtract(t *testing.T) {
 	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
 }
 
-func BenchmarkIsTableInfoMustLoad(b *testing.B) {
-	benchCases := [][2]string{
-		{"narrow", `CREATE TABLE t (c INT PRIMARY KEY);`},
-		{"wide", `
+var benchCases = [][2]string{
+	{"narrow", `CREATE TABLE t (c INT PRIMARY KEY);`},
+	{"wide", `
 CREATE TABLE t (
 	c BIGINT PRIMARY KEY AUTO_RANDOM,
 	c2 TINYINT,
@@ -894,8 +790,9 @@ CREATE TABLE t (
     UNIQUE INDEX idx4(c12),
     INDEX idx5((c + c2))
 );`},
-	}
+}
 
+func BenchmarkIsTableInfoMustLoad(b *testing.B) {
 	for _, benchCase := range benchCases {
 		b.Run(benchCase[0], func(b *testing.B) {
 			benchIsTableInfoMustLoad(b, benchCase[1])
@@ -903,7 +800,7 @@ CREATE TABLE t (
 	}
 }
 
-func benchIsTableInfoMustLoad(b *testing.B, sql string) {
+func getTableInfoJSON(b *testing.B, sql string) []byte {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(b, err)
@@ -913,9 +810,147 @@ func benchIsTableInfoMustLoad(b *testing.B, sql string) {
 	data, err := json.Marshal(tblInfo)
 	require.NoError(b, err)
 
+	return data
+}
+
+func benchIsTableInfoMustLoad(b *testing.B, sql string) {
+	data := getTableInfoJSON(b, sql)
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		got := meta.IsTableInfoMustLoad(data)
 		intest.Assert(!got)
 	}
+}
+
+func BenchmarkTableNameInfo(b *testing.B) {
+	for _, benchCase := range benchCases {
+		b.Run(benchCase[0]+"-json", func(b *testing.B) {
+			benchJSONTableNameInfo(b, benchCase[1])
+		})
+		b.Run(benchCase[0]+"-fastjson", func(b *testing.B) {
+			benchFastJSONTableNameInfo(b, benchCase[1])
+		})
+	}
+}
+
+func benchJSONTableNameInfo(b *testing.B, sql string) {
+	data := getTableInfoJSON(b, sql)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tbInfo := &model.TableNameInfo{}
+		err := json.Unmarshal(data, tbInfo)
+		intest.Assert(tbInfo.ID == 1)
+		intest.Assert(tbInfo.Name.L == "t")
+		intest.AssertNoError(err)
+	}
+}
+
+func benchFastJSONTableNameInfo(b *testing.B, sql string) {
+	data := getTableInfoJSON(b, sql)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tbInfo, err := meta.FastUnmarshalTableNameInfo(data)
+		intest.AssertNoError(err)
+		intest.Assert(tbInfo.ID == 1)
+		intest.Assert(tbInfo.Name.L == "t")
+	}
+}
+
+func TestSpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	// create database
+	dbInfo := &model.DBInfo{
+		ID:    10001,
+		Name:  model.NewCIStr("sc"),
+		State: model.StatePublic,
+	}
+
+	// create table with special attributes
+	tblInfo := &model.TableInfo{
+		ID:    10002,
+		Name:  model.NewCIStr("cs"),
+		State: model.StatePublic,
+		Partition: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{
+				{ID: 11, Name: model.NewCIStr("p1")},
+				{ID: 22, Name: model.NewCIStr("p2")},
+			},
+			Enable: true,
+		},
+		ForeignKeys: []*model.FKInfo{{
+			ID:       1,
+			Name:     model.NewCIStr("fk"),
+			RefTable: model.NewCIStr("t"),
+			RefCols:  []model.CIStr{model.NewCIStr("a")},
+			Cols:     []model.CIStr{model.NewCIStr("t_a")},
+		}},
+		TiFlashReplica: &model.TiFlashReplicaInfo{
+			Count:          0,
+			LocationLabels: []string{"a,b,c"},
+			Available:      true,
+		},
+		Lock: &model.TableLockInfo{
+			Tp:    model.TableLockRead,
+			State: model.TableLockStatePreLock,
+			TS:    0,
+		},
+		PlacementPolicyRef: &model.PolicyRefInfo{
+			ID:   1,
+			Name: model.NewCIStr("r1"),
+		},
+		TTLInfo: &model.TTLInfo{
+			IntervalExprStr:  "1",
+			IntervalTimeUnit: int(ast.TimeUnitDay),
+			Enable:           true,
+			JobInterval:      "1h",
+		},
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		require.NoError(t, err)
+		err = meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	// bootstrap
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+
+	// verify partition info correctness
+	tblInfoRes := dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.Partition, tblInfoRes[0].TableInfos[0].Partition)
+	// foreign key info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.ForeignKeysAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.ForeignKeys, tblInfoRes[0].TableInfos[0].ForeignKeys)
+	// tiflash replica info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.TiFlashReplica, tblInfoRes[0].TableInfos[0].TiFlashReplica)
+	// lock info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TableLockAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.Lock, tblInfoRes[0].TableInfos[0].Lock)
+	// placement policy
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PlacementPolicyAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.PlacementPolicyRef, tblInfoRes[0].TableInfos[0].PlacementPolicyRef)
+	// ttl info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.TTLInfo, tblInfoRes[0].TableInfos[0].TTLInfo)
 }

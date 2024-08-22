@@ -17,28 +17,20 @@ package ddl_test
 import (
 	"cmp"
 	"context"
-	"flag"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
@@ -73,7 +65,7 @@ func TestGetDDLJobs(t *testing.T) {
 		currJobs2 = currJobs2[:0]
 		err = ddl.IterAllDDLJobs(sess, txn, func(jobs []*model.Job) (b bool, e error) {
 			for _, job := range jobs {
-				if !job.NotStarted() {
+				if job.Started() {
 					return true, nil
 				}
 				currJobs2 = append(currJobs2, job)
@@ -203,7 +195,7 @@ func TestCreateViewConcurrently(t *testing.T) {
 }
 
 func TestCreateDropCreateTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -216,10 +208,9 @@ func TestCreateDropCreateTable(t *testing.T) {
 	var fpErr error
 	var createTable bool
 
-	originHook := dom.DDL().GetHook()
-	onJobUpdated := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.Type == model.ActionDropTable && job.SchemaState == model.StateWriteOnly && !createTable {
-			fpErr = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
+			fpErr = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
 			wg.Add(1)
 			go func() {
 				_, createErr = tk1.Exec("create table t (b int);")
@@ -227,17 +218,14 @@ func TestCreateDropCreateTable(t *testing.T) {
 			}()
 			createTable = true
 		}
-	}
-	hook := &callback.TestDDLCallback{}
-	hook.OnJobUpdatedExported.Store(&onJobUpdated)
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("drop table t;")
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 
 	wg.Wait()
 	require.NoError(t, createErr)
 	require.NoError(t, fpErr)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockOwnerCheckAllVersionSlow"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockOwnerCheckAllVersionSlow"))
 
 	rs := tk.MustQuery("admin show ddl jobs 3;").Rows()
 	create1JobID := rs[0][0].(string)
@@ -265,382 +253,57 @@ func TestCreateDropCreateTable(t *testing.T) {
 	require.Less(t, dropTS, create1TS, "second create should finish after drop")
 }
 
-func TestBuildQueryStringFromJobs(t *testing.T) {
-	testCases := []struct {
-		name     string
-		jobs     []*model.Job
-		expected string
-	}{
-		{
-			name:     "Empty jobs",
-			jobs:     []*model.Job{},
-			expected: "",
-		},
-		{
-			name:     "Single create table job",
-			jobs:     []*model.Job{{Query: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255));"}},
-			expected: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255));",
-		},
-		{
-			name: "Multiple create table jobs with trailing semicolons",
-			jobs: []*model.Job{
-				{Query: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255));"},
-				{Query: "CREATE TABLE products (id INT PRIMARY KEY, description TEXT);"},
-			},
-			expected: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255)); CREATE TABLE products (id INT PRIMARY KEY, description TEXT);",
-		},
-		{
-			name: "Multiple create table jobs with and without trailing semicolons",
-			jobs: []*model.Job{
-				{Query: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255))"},
-				{Query: "CREATE TABLE products (id INT PRIMARY KEY, description TEXT);"},
-				{Query: "   CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product_id INT) "},
-			},
-			expected: "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255)); CREATE TABLE products (id INT PRIMARY KEY, description TEXT); CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product_id INT);",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			actual := ddl.BuildQueryStringFromJobs(tc.jobs)
-			require.Equal(t, tc.expected, actual, "Query strings do not match")
-		})
-	}
-}
-
-func TestBatchCreateTableWithJobs(t *testing.T) {
-	job1 := &model.Job{
-		SchemaID:   1,
-		Type:       model.ActionCreateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{&model.TableInfo{Name: model.CIStr{O: "t1", L: "t1"}}, false},
-		Query:      "create table db1.t1 (c1 int, c2 int)",
-	}
-	job2 := &model.Job{
-		SchemaID:   1,
-		Type:       model.ActionCreateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{&model.TableInfo{Name: model.CIStr{O: "t2", L: "t2"}}, &model.TableInfo{}},
-		Query:      "create table db1.t2 (c1 int, c2 int);",
-	}
-	job, err := ddl.BatchCreateTableWithJobs([]*model.Job{job1, job2})
-	require.NoError(t, err)
-	require.Equal(t, "create table db1.t1 (c1 int, c2 int); create table db1.t2 (c1 int, c2 int);", job.Query)
-}
-
-func getGlobalID(ctx context.Context, t *testing.T, store kv.Storage) int64 {
-	res := int64(0)
-	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		id, err := m.GetGlobalID()
-		require.NoError(t, err)
-		res = id
-		return nil
-	}))
-	return res
-}
-
-func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
-	// disable DDL to avoid it interfere the test
+func TestHandleLockTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	dom := domain.GetDomain(tk.Session())
-	dom.DDL().OwnerManager().CampaignCancel()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	se := tk.Session().(sessionctx.Context)
+	require.False(t, se.HasLockedTables())
 
-	// avoid outer retry
-	bak := kv.MaxRetryCnt
-	kv.MaxRetryCnt = 1
-	t.Cleanup(func() {
-		kv.MaxRetryCnt = bak
+	checkTableLocked := func(tblID int64, tp model.TableLockType) {
+		locked, lockType := se.CheckTableLocked(tblID)
+		require.True(t, locked)
+		require.Equal(t, tp, lockType)
+	}
+	jobW := ddl.NewJobWrapper(&model.Job{Type: model.ActionTruncateTable, TableID: 1, Args: []any{int64(2)}}, false)
+
+	t.Run("target table not locked", func(t *testing.T) {
+		se.ReleaseAllTableLocks()
+		ddl.HandleLockTablesOnSuccessSubmit(tk.Session(), jobW)
+		require.False(t, se.HasLockedTables())
+		ddl.HandleLockTablesOnFinish(se, jobW, errors.New("test error"))
+		require.False(t, se.HasLockedTables())
+
+		ddl.HandleLockTablesOnSuccessSubmit(tk.Session(), jobW)
+		require.False(t, se.HasLockedTables())
+		ddl.HandleLockTablesOnFinish(se, jobW, nil)
+		require.False(t, se.HasLockedTables())
 	})
 
-	jobs := []*ddl.JobWrapper{{
-		Job: &model.Job{
-			Type:       model.ActionCreateTable,
-			SchemaName: "test",
-			TableName:  "t1",
-			Args:       []any{&model.TableInfo{}},
-		},
-	}}
-	initialGID := getGlobalID(ctx, t, store)
-	threads, iterations := 10, 500
-	var wg util.WaitGroupWrapper
-	for i := 0; i < threads; i++ {
-		wg.Run(func() {
-			kit := testkit.NewTestKit(t, store)
-			ddlSe := sess.NewSession(kit.Session())
-			for j := 0; j < iterations; j++ {
-				require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
-			}
-		})
-	}
-	wg.Wait()
+	t.Run("ddl success", func(t *testing.T) {
+		se.ReleaseAllTableLocks()
+		require.False(t, se.HasLockedTables())
+		se.AddTableLock([]model.TableLockTpInfo{{SchemaID: 1, TableID: 1, Tp: model.TableLockRead}})
+		ddl.HandleLockTablesOnSuccessSubmit(tk.Session(), jobW)
+		require.Len(t, se.GetAllTableLocks(), 2)
+		checkTableLocked(1, model.TableLockRead)
+		checkTableLocked(2, model.TableLockRead)
 
-	jobCount := threads * iterations
-	gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
-	require.NoError(t, err)
-	require.Len(t, gotJobs, jobCount)
-	currGID := getGlobalID(ctx, t, store)
-	require.Greater(t, currGID-initialGID, int64(jobCount))
-	uniqueJobIDs := make(map[int64]struct{}, jobCount)
-	for _, j := range gotJobs {
-		require.Greater(t, j.ID, initialGID)
-		uniqueJobIDs[j.ID] = struct{}{}
-	}
-	require.Len(t, uniqueJobIDs, jobCount)
-}
-
-type idAllocationCase struct {
-	jobW            *ddl.JobWrapper
-	requiredIDCount int
-}
-
-func TestCombinedIDAllocation(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
-	// disable DDL to avoid it interfere the test
-	tk := testkit.NewTestKit(t, store)
-	dom := domain.GetDomain(tk.Session())
-	dom.DDL().OwnerManager().CampaignCancel()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-
-	// avoid outer retry
-	bak := kv.MaxRetryCnt
-	kv.MaxRetryCnt = 1
-	t.Cleanup(func() {
-		kv.MaxRetryCnt = bak
+		ddl.HandleLockTablesOnFinish(se, jobW, nil)
+		require.Len(t, se.GetAllTableLocks(), 1)
+		checkTableLocked(2, model.TableLockRead)
 	})
 
-	genTblInfo := func(partitionCnt int) *model.TableInfo {
-		info := &model.TableInfo{Partition: &model.PartitionInfo{}}
-		for i := 0; i < partitionCnt; i++ {
-			info.Partition.Enable = true
-			info.Partition.Definitions = append(info.Partition.Definitions, model.PartitionDefinition{})
-		}
-		return info
-	}
+	t.Run("ddl fail", func(t *testing.T) {
+		se.ReleaseAllTableLocks()
+		require.False(t, se.HasLockedTables())
+		se.AddTableLock([]model.TableLockTpInfo{{SchemaID: 1, TableID: 1, Tp: model.TableLockRead}})
+		ddl.HandleLockTablesOnSuccessSubmit(tk.Session(), jobW)
+		require.Len(t, se.GetAllTableLocks(), 2)
+		checkTableLocked(1, model.TableLockRead)
+		checkTableLocked(2, model.TableLockRead)
 
-	genCreateTblJob := func(tp model.ActionType, partitionCnt int) *model.Job {
-		return &model.Job{
-			Type: tp,
-			Args: []any{genTblInfo(partitionCnt)},
-		}
-	}
-
-	genCreateTblsJob := func(partitionCounts ...int) *model.Job {
-		infos := make([]*model.TableInfo, 0, len(partitionCounts))
-		for _, c := range partitionCounts {
-			infos = append(infos, genTblInfo(c))
-		}
-		return &model.Job{
-			Type: model.ActionCreateTables,
-			Args: []any{infos},
-		}
-	}
-
-	genCreateDBJob := func() *model.Job {
-		info := &model.DBInfo{}
-		return &model.Job{
-			Type: model.ActionCreateSchema,
-			Args: []any{info},
-		}
-	}
-
-	cases := []idAllocationCase{
-		{
-			jobW:            ddl.NewJobWrapper(genCreateTblsJob(1, 2, 0), false),
-			requiredIDCount: 1 + 3 + 1 + 2,
-		},
-		{
-			jobW:            ddl.NewJobWrapper(genCreateTblsJob(3, 4), true),
-			requiredIDCount: 1,
-		},
-		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateTable, 3), false),
-			requiredIDCount: 1 + 1 + 3,
-		},
-		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateTable, 0), false),
-			requiredIDCount: 1 + 1,
-		},
-		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateTable, 8), true),
-			requiredIDCount: 1,
-		},
-		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateSequence, 0), false),
-			requiredIDCount: 2,
-		},
-		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateSequence, 0), true),
-			requiredIDCount: 1,
-		},
-		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateView, 0), false),
-			requiredIDCount: 2,
-		},
-		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateView, 0), true),
-			requiredIDCount: 1,
-		},
-		{
-			jobW:            ddl.NewJobWrapper(genCreateDBJob(), false),
-			requiredIDCount: 2,
-		},
-		{
-			jobW:            ddl.NewJobWrapper(genCreateDBJob(), true),
-			requiredIDCount: 1,
-		},
-	}
-
-	t.Run("process one by one", func(t *testing.T) {
-		tk.MustExec("delete from mysql.tidb_ddl_job")
-		for _, c := range cases {
-			currentGlobalID := getGlobalID(ctx, t, store)
-			require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
-			require.Equal(t, currentGlobalID+int64(c.requiredIDCount), getGlobalID(ctx, t, store))
-		}
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
-		require.NoError(t, err)
-		require.Len(t, gotJobs, len(cases))
+		ddl.HandleLockTablesOnFinish(se, jobW, errors.New("test error"))
+		require.Len(t, se.GetAllTableLocks(), 1)
+		checkTableLocked(1, model.TableLockRead)
 	})
-
-	t.Run("process together", func(t *testing.T) {
-		tk.MustExec("delete from mysql.tidb_ddl_job")
-
-		totalRequiredCnt := 0
-		jobWs := make([]*ddl.JobWrapper, 0, len(cases))
-		for _, c := range cases {
-			totalRequiredCnt += c.requiredIDCount
-			jobWs = append(jobWs, c.jobW)
-		}
-		currentGlobalID := getGlobalID(ctx, t, store)
-		require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), jobWs))
-		require.Equal(t, currentGlobalID+int64(totalRequiredCnt), getGlobalID(ctx, t, store))
-
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
-		require.NoError(t, err)
-		require.Len(t, gotJobs, len(cases))
-	})
-
-	t.Run("process IDAllocated = false", func(t *testing.T) {
-		tk.MustExec("delete from mysql.tidb_ddl_job")
-
-		initialGlobalID := getGlobalID(ctx, t, store)
-		allocIDCaseCount, allocatedIDCount := 0, 0
-		for _, c := range cases {
-			if !c.jobW.IDAllocated {
-				allocIDCaseCount++
-				allocatedIDCount += c.requiredIDCount
-				require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
-			}
-		}
-		require.EqualValues(t, 6, allocIDCaseCount)
-		uniqueIDs := make(map[int64]struct{}, len(cases))
-		checkTableInfo := func(info *model.TableInfo) {
-			uniqueIDs[info.ID] = struct{}{}
-			require.Greater(t, info.ID, initialGlobalID)
-			if pInfo := info.GetPartitionInfo(); pInfo != nil {
-				for _, def := range pInfo.Definitions {
-					uniqueIDs[def.ID] = struct{}{}
-					require.Greater(t, def.ID, initialGlobalID)
-				}
-			}
-		}
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
-		require.NoError(t, err)
-		require.Len(t, gotJobs, allocIDCaseCount)
-		for _, j := range gotJobs {
-			uniqueIDs[j.ID] = struct{}{}
-			require.Greater(t, j.ID, initialGlobalID)
-			switch j.Type {
-			case model.ActionCreateTable, model.ActionCreateView, model.ActionCreateSequence:
-				require.Greater(t, j.TableID, initialGlobalID)
-				info := &model.TableInfo{}
-				require.NoError(t, j.DecodeArgs(info))
-				require.Equal(t, j.TableID, info.ID)
-				checkTableInfo(info)
-			case model.ActionCreateTables:
-				var infos []*model.TableInfo
-				require.NoError(t, j.DecodeArgs(&infos))
-				for _, info := range infos {
-					checkTableInfo(info)
-				}
-			case model.ActionCreateSchema:
-				require.Greater(t, j.SchemaID, initialGlobalID)
-				info := &model.DBInfo{}
-				require.NoError(t, j.DecodeArgs(info))
-				uniqueIDs[info.ID] = struct{}{}
-				require.Equal(t, j.SchemaID, info.ID)
-			}
-		}
-		require.Len(t, uniqueIDs, allocatedIDCount)
-	})
-}
-
-var (
-	threadVar             = flag.Int("threads", 100, "number of threads")
-	iterationPerThreadVar = flag.Int("iterations", 30000, "number of iterations per thread")
-	payloadSizeVar        = flag.Int("payload-size", 1024, "size of payload in bytes")
-)
-
-func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
-	t.Skip("it's for offline test only, skip it in CI")
-	thread, iterationPerThread, payloadSize := *threadVar, *iterationPerThreadVar, *payloadSizeVar
-	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
-	// disable DDL to avoid it interfere the test
-	tk := testkit.NewTestKit(t, store)
-	dom := domain.GetDomain(tk.Session())
-	dom.DDL().OwnerManager().CampaignCancel()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-
-	payload := strings.Repeat("a", payloadSize)
-	jobs := []*ddl.JobWrapper{{
-		Job: &model.Job{
-			Type:       model.ActionCreateTable,
-			SchemaName: "test",
-			TableName:  "t1",
-			Args:       []any{&model.TableInfo{Comment: payload}},
-		},
-	}}
-	counters := make([]atomic.Int64, thread+1)
-	var wg util.WaitGroupWrapper
-	for i := 0; i < thread; i++ {
-		index := i
-		wg.Run(func() {
-			kit := testkit.NewTestKit(t, store)
-			ddlSe := sess.NewSession(kit.Session())
-			for i := 0; i < iterationPerThread; i++ {
-				require.NoError(t, ddl.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobs))
-
-				counters[0].Add(1)
-				counters[index+1].Add(1)
-			}
-		})
-	}
-	go func() {
-		getCounts := func() []int64 {
-			res := make([]int64, len(counters))
-			for i := range counters {
-				res[i] = counters[i].Load()
-			}
-			return res
-		}
-		lastCnt := getCounts()
-		for {
-			time.Sleep(5 * time.Second)
-			currCnt := getCounts()
-			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("QPS - total:%.0f", float64(currCnt[0]-lastCnt[0])/5))
-			for i := 1; i < min(len(counters), 10); i++ {
-				sb.WriteString(fmt.Sprintf(", thread-%d: %.0f", i, float64(currCnt[i]-lastCnt[i])/5))
-			}
-			if len(counters) > 10 {
-				sb.WriteString("...")
-			}
-			lastCnt = currCnt
-			fmt.Println(sb.String())
-		}
-	}()
-	wg.Wait()
 }

@@ -23,17 +23,17 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
 
 func TestPauseOnWriteConflict(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -44,16 +44,11 @@ func TestPauseOnWriteConflict(t *testing.T) {
 
 	var pauseErr error
 	var pauseRS []sqlexec.RecordSet
-	hook := &callback.TestDDLCallback{Do: dom}
-	d := dom.DDL()
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
-
 	var adminMutex sync.RWMutex
 
 	jobID := atomic.NewInt64(0)
 	// Test when pause cannot be retried and adding index succeeds.
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		adminMutex.Lock()
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
 			job.SchemaState == model.StateWriteReorganization {
@@ -69,14 +64,13 @@ func TestPauseOnWriteConflict(t *testing.T) {
 			pauseRS, pauseErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 		adminMutex.Unlock()
-	}
-	d.SetHook(hook.Clone())
+	})
 	tk1.MustExec("alter table t add index (id)")
 	require.EqualError(t, pauseErr, "mock failed admin command on ddl jobs")
 
 	var cancelRS []sqlexec.RecordSet
 	var cancelErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		adminMutex.Lock()
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
 			job.SchemaState == model.StateWriteReorganization {
@@ -89,8 +83,7 @@ func TestPauseOnWriteConflict(t *testing.T) {
 			cancelRS, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 		adminMutex.Unlock()
-	}
-	d.SetHook(hook.Clone())
+	})
 
 	tk1.MustGetErrCode("alter table t add index (id)", errno.ErrCancelledDDLJob)
 	require.NoError(t, pauseErr)
@@ -102,7 +95,7 @@ func TestPauseOnWriteConflict(t *testing.T) {
 }
 
 func TestPauseFailedOnCommit(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -110,18 +103,13 @@ func TestPauseFailedOnCommit(t *testing.T) {
 	tk1.MustExec("use test")
 	tk1.MustExec("create table t(id int)")
 
-	d := dom.DDL()
-
 	jobID := atomic.NewInt64(0)
 	var pauseErr error
 	var jobErrs []error
 	var adminMutex sync.RWMutex
 
-	hook := &callback.TestDDLCallback{Do: dom}
-	originalHook := d.GetHook()
-	defer d.SetHook(originalHook)
 	// Test when pause cannot be retried and adding index succeeds.
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		adminMutex.Lock()
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning &&
 			job.SchemaState == model.StateWriteReorganization {
@@ -134,8 +122,7 @@ func TestPauseFailedOnCommit(t *testing.T) {
 			jobErrs, pauseErr = ddl.PauseJobs(tk2.Session(), []int64{jobID.Load()})
 		}
 		adminMutex.Unlock()
-	}
-	d.SetHook(hook.Clone())
+	})
 
 	tk1.MustExec("alter table t add index (id)")
 	require.EqualError(t, pauseErr, "mock commit failed on admin command on ddl jobs")

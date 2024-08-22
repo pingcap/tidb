@@ -17,6 +17,7 @@ package statistics
 import (
 	"cmp"
 	"fmt"
+	stdmaps "maps"
 	"slices"
 	"strings"
 
@@ -169,10 +170,10 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
-	mm.colInfoMap = maps.Clone(m.colInfoMap)
-	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
-	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
-	mm.idxInfoMap = maps.Clone(m.idxInfoMap)
+	mm.colInfoMap = stdmaps.Clone(m.colInfoMap)
+	mm.colAnalyzed = stdmaps.Clone(m.colAnalyzed)
+	mm.idxAnalyzed = stdmaps.Clone(m.idxAnalyzed)
+	mm.idxInfoMap = stdmaps.Clone(m.idxInfoMap)
 	return mm
 }
 

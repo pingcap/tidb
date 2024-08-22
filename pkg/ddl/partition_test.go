@@ -20,12 +20,12 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -177,14 +177,12 @@ func TestReorganizePartitionRollback(t *testing.T) {
 	defer close(wait)
 	ddlDone := make(chan error)
 	defer close(ddlDone)
-	hook := &callback.TestDDLCallback{Do: do}
-	hook.OnJobRunAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization {
 			<-wait
 			<-wait
 		}
-	}
-	do.DDL().SetHook(hook)
+	})
 
 	go func() {
 		tk2 := testkit.NewTestKit(t, store)

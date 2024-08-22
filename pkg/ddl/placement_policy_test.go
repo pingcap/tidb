@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	mysql "github.com/pingcap/tidb/pkg/errno"
@@ -180,15 +179,14 @@ func TestPlacementPolicy(t *testing.T) {
 }
 
 func testPlacementPolicy(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	var policyID int64
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if policyID != 0 {
 			return
 		}
@@ -197,9 +195,7 @@ func testPlacementPolicy(t *testing.T) {
 			policyID = job.SchemaID
 			return
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	dom.DDL().SetHook(hook)
+	})
 
 	tk.MustExec("create placement policy x " +
 		"LEARNERS=1 " +

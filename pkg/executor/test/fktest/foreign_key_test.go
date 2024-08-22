@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -2473,4 +2474,22 @@ func TestForeignKeyAndLockView(t *testing.T) {
 	tk.MustQuery("select CURRENT_SQL_DIGEST from information_schema.tidb_trx where state='LockWaiting' and db='test'").Check(testkit.Rows(digest.String()))
 	tk.MustGetErrMsg("update t1 set id=2", "[executor:1213]Deadlock found when trying to get lock; try restarting transaction")
 	wg.Wait()
+}
+
+func TestFKBuild(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("renametable")`)
+
+	tk.MustExec("rename table t1 to t3;")
+	tk.MustExec("insert into test.t3 values (1)")
+	tk.MustExec("insert into test.t2 values (1)")
+	tk.MustExec("delete from test.t3")
+	tk.MustQuery("select * from test.t2").Check(testkit.Rows())
 }

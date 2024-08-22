@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -421,7 +421,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 }
 
 func TestTransactionWithWriteOnlyColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -436,9 +436,8 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 		},
 	}
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -456,8 +455,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 				}
 			}
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	done := make(chan error, 1)
 	// test transaction on add column.
 	go backgroundExec(store, "test", "alter table t1 add column c int not null", done)
@@ -477,7 +475,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 
 // For issue #31735.
 func TestAddGeneratedColumnAndInsert(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -487,13 +485,11 @@ func TestAddGeneratedColumnAndInsert(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	d := dom.DDL()
-	hook := &callback.TestDDLCallback{Do: dom}
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
 	var checkErr error
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -517,9 +513,7 @@ func TestAddGeneratedColumnAndInsert(t *testing.T) {
 				times++
 			}
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(hook)
+	})
 
 	tk.MustExec("alter table t1 add column gc int as ((a+1))")
 	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("4 5", "10 11"))
@@ -527,16 +521,15 @@ func TestAddGeneratedColumnAndInsert(t *testing.T) {
 }
 
 func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	hook := &callback.TestDDLCallback{}
 	var checkErr error
 	assertChangingColName := "_col$_c2_0"
 	assertChangingIdxName := "_idx$_idx_0"
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			var (
 				_newCol                *model.ColumnInfo
@@ -559,10 +552,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 				checkErr = errors.New("changing index name is incorrect")
 			}
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d := dom.DDL()
-	d.SetHook(hook)
+	})
 
 	tk.MustExec("create table if not exists t(c1 varchar(256), c2 bigint, `_col$_c2` varchar(10), unique _idx$_idx(c1), unique idx(c2));")
 	tk.MustExec("alter table test.t change column c2 cC2 tinyint after `_col$_c2`")
@@ -593,7 +583,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	assertChangingColName2 := "_col$__col$__col$_c1_0_1"
 	query1 := "alter table t modify column _col$_c1 tinyint"
 	query2 := "alter table t modify column _col$__col$_c1_0 tinyint"
-	onJobUpdatedExportedFunc2 := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if (job.Query == query1 || job.Query == query2) && job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			var (
 				_newCol                *model.ColumnInfo
@@ -616,9 +606,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 				checkErr = errors.New("changing column name is incorrect")
 			}
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
-	d.SetHook(hook)
+	})
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table if not exists t(c1 bigint, _col$_c1 bigint, _col$__col$_c1_0 bigint, _col$__col$__col$_c1_0_0 bigint)")

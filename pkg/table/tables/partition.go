@@ -16,7 +16,7 @@ package tables
 
 import (
 	"bytes"
-	"context"
+	stdctx "context"
 	stderr "errors"
 	"fmt"
 	"hash/crc32"
@@ -1491,6 +1491,11 @@ func (t *partitionedTable) locateHashPartition(ctx expression.EvalContext, partE
 
 // GetPartition returns a Table, which is actually a partition.
 func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
+	return t.getPartition(pid)
+}
+
+// getPartition returns a Table, which is actually a partition.
+func (t *partitionedTable) getPartition(pid int64) *partition {
 	// Attention, can't simply use `return t.partitions[pid]` here.
 	// Because A nil of type *partition is a kind of `table.PhysicalTable`
 	part, ok := t.partitions[pid]
@@ -1563,24 +1568,31 @@ func (t *partitionTableWithGivenSets) GetPartitionByRow(ctx expression.EvalConte
 
 // checkConstraintForExchangePartition is only used for ExchangePartition by partitionTable during write only state.
 // It check if rowData inserted or updated violate checkConstraints of non-partitionTable.
-func checkConstraintForExchangePartition(sctx table.MutateContext, row []types.Datum, partID, ntID int64) error {
-	type InfoSchema interface {
-		TableByID(id int64) (val table.Table, ok bool)
+func checkConstraintForExchangePartition(ctx table.MutateContext, row []types.Datum, partID, ntID int64) error {
+	support, ok := ctx.GetExchangePartitionDMLSupport()
+	if !ok {
+		return errors.New("ctx does not support operations when exchanging a partition")
 	}
-	is, ok := sctx.GetDomainInfoSchema().(InfoSchema)
+
+	type InfoSchema interface {
+		TableByID(ctx stdctx.Context, id int64) (val table.Table, ok bool)
+	}
+
+	is, ok := support.GetInfoSchemaToCheckExchangeConstraint().(InfoSchema)
 	if !ok {
 		return errors.Errorf("exchange partition process assert inforSchema failed")
 	}
-	nt, tableFound := is.TableByID(ntID)
+	gCtx := stdctx.Background()
+	nt, tableFound := is.TableByID(gCtx, ntID)
 	if !tableFound {
 		// Now partID is nt tableID.
-		nt, tableFound = is.TableByID(partID)
+		nt, tableFound = is.TableByID(gCtx, partID)
 		if !tableFound {
 			return errors.Errorf("exchange partition process table by id failed")
 		}
 	}
 
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	if err := table.CheckRowConstraintWithDatum(evalCtx, nt.WritableConstraint(), row); err != nil {
 		// TODO: make error include ExchangePartition info.
 		return err
@@ -1589,11 +1601,12 @@ func checkConstraintForExchangePartition(sctx table.MutateContext, row []types.D
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
-func (t *partitionedTable) AddRecord(ctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
-	return partitionedTableAddRecord(ctx, t, r, nil, opts)
+func (t *partitionedTable) AddRecord(ctx table.MutateContext, txn kv.Transaction, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return partitionedTableAddRecord(ctx, txn, t, r, nil, opts)
 }
 
-func partitionedTableAddRecord(ctx table.MutateContext, t *partitionedTable, r []types.Datum, partitionSelection map[int64]struct{}, opts []table.AddRecordOption) (recordID kv.Handle, err error) {
+func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *partitionedTable, r []types.Datum, partitionSelection map[int64]struct{}, opts []table.AddRecordOption) (recordID kv.Handle, err error) {
+	opt := table.NewAddRecordOpt(opts...)
 	pid, err := t.locatePartition(ctx.GetExprCtx().GetEvalCtx(), r)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1615,8 +1628,8 @@ func partitionedTableAddRecord(ctx table.MutateContext, t *partitionedTable, r [
 			return nil, errors.WithStack(err)
 		}
 	}
-	tbl := t.GetPartition(pid)
-	recordID, err = tbl.AddRecord(ctx, r, opts...)
+	tbl := t.getPartition(pid)
+	recordID, err = tbl.addRecord(ctx, txn, r, opt)
 	if err != nil {
 		return
 	}
@@ -1629,8 +1642,8 @@ func partitionedTableAddRecord(ctx table.MutateContext, t *partitionedTable, r [
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		tbl = t.GetPartition(pid)
-		recordID, err = tbl.AddRecord(ctx, r, opts...)
+		tbl = t.getPartition(pid)
+		recordID, err = tbl.addRecord(ctx, txn, r, opt)
 		if err != nil {
 			return
 		}
@@ -1658,8 +1671,8 @@ func NewPartitionTableWithGivenSets(tbl table.PartitionedTable, partitions map[i
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
-func (t *partitionTableWithGivenSets) AddRecord(ctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
-	return partitionedTableAddRecord(ctx, t.partitionedTable, r, t.givenSetPartitions, opts)
+func (t *partitionTableWithGivenSets) AddRecord(ctx table.MutateContext, txn kv.Transaction, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	return partitionedTableAddRecord(ctx, txn, t.partitionedTable, r, t.givenSetPartitions, opts)
 }
 
 func (t *partitionTableWithGivenSets) GetAllPartitionIDs() []int64 {
@@ -1671,7 +1684,7 @@ func (t *partitionTableWithGivenSets) GetAllPartitionIDs() []int64 {
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
+func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
 	ectx := ctx.GetExprCtx()
 	pid, err := t.locatePartition(ectx.GetEvalCtx(), r)
 	if err != nil {
@@ -1679,7 +1692,7 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r 
 	}
 
 	tbl := t.GetPartition(pid)
-	err = tbl.RemoveRecord(ctx, h, r)
+	err = tbl.RemoveRecord(ctx, txn, h, r)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1690,7 +1703,7 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r 
 			return errors.Trace(err)
 		}
 		tbl = t.GetPartition(pid)
-		err = tbl.RemoveRecord(ctx, h, r)
+		err = tbl.RemoveRecord(ctx, txn, h, r)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1712,15 +1725,16 @@ func (t *partitionedTable) GetAllPartitionIDs() []int64 {
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func (t *partitionedTable) UpdateRecord(ctx context.Context, sctx table.MutateContext, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
-	return partitionedTableUpdateRecord(ctx, sctx, t, h, currData, newData, touched, nil)
+func (t *partitionedTable) UpdateRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, currData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
+	return partitionedTableUpdateRecord(ctx, txn, t, h, currData, newData, touched, nil, opts...)
 }
 
-func (t *partitionTableWithGivenSets) UpdateRecord(ctx context.Context, sctx table.MutateContext, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
-	return partitionedTableUpdateRecord(ctx, sctx, t.partitionedTable, h, currData, newData, touched, t.givenSetPartitions)
+func (t *partitionTableWithGivenSets) UpdateRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, currData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
+	return partitionedTableUpdateRecord(ctx, txn, t.partitionedTable, h, currData, newData, touched, t.givenSetPartitions, opts...)
 }
 
-func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext, t *partitionedTable, h kv.Handle, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}) error {
+func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t *partitionedTable, h kv.Handle, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}, opts ...table.UpdateRecordOption) error {
+	opt := table.NewUpdateRecordOpt(opts...)
 	ectx := ctx.GetExprCtx()
 	from, err := t.locatePartition(ectx.GetEvalCtx(), currData)
 	if err != nil {
@@ -1751,10 +1765,6 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		}
 	}
 
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
@@ -1762,12 +1772,12 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
 	if from != to {
-		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
+		err = t.GetPartition(from).RemoveRecord(ctx, txn, h, currData)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		_, err = t.GetPartition(to).AddRecord(ctx, newData)
+		_, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1789,7 +1799,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		}
 		if newTo == newFrom && newTo != 0 {
 			// Update needs to be done in StateDeleteOnly as well
-			err = t.GetPartition(newTo).UpdateRecord(gctx, ctx, h, currData, newData, touched)
+			err = t.getPartition(newTo).updateRecord(ctx, txn, h, currData, newData, touched, opt)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1798,14 +1808,14 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		}
 
 		if newFrom != 0 {
-			err = t.GetPartition(newFrom).RemoveRecord(ctx, h, currData)
+			err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
 			// TODO: Can this happen? When the data is not yet backfilled?
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 		if newTo != 0 && t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
-			_, err = t.GetPartition(newTo).AddRecord(ctx, newData)
+			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1813,8 +1823,8 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		memBuffer.Release(sh)
 		return nil
 	}
-	tbl := t.GetPartition(to)
-	err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+	tbl := t.getPartition(to)
+	err = tbl.updateRecord(ctx, txn, h, currData, newData, touched, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1830,11 +1840,11 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 			return errors.Trace(err)
 		}
 		if newTo == newFrom {
-			tbl = t.GetPartition(newTo)
+			tbl = t.getPartition(newTo)
 			if t.Meta().Partition.DDLState == model.StateDeleteOnly {
-				err = tbl.RemoveRecord(ctx, h, currData)
+				err = tbl.RemoveRecord(ctx, txn, h, currData)
 			} else {
-				err = tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+				err = tbl.updateRecord(ctx, txn, h, currData, newData, touched, opt)
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -1842,14 +1852,14 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 			memBuffer.Release(sh)
 			return nil
 		}
-		tbl = t.GetPartition(newFrom)
-		err = tbl.RemoveRecord(ctx, h, currData)
+		tbl = t.getPartition(newFrom)
+		err = tbl.RemoveRecord(ctx, txn, h, currData)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
-			tbl = t.GetPartition(newTo)
-			_, err = tbl.AddRecord(ctx, newData)
+			tbl = t.getPartition(newTo)
+			_, err = tbl.addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 			if err != nil {
 				return errors.Trace(err)
 			}

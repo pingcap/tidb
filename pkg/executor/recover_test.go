@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
@@ -657,15 +658,24 @@ func TestFlashbackSchemaWithManyTables(t *testing.T) {
 	// Set GC enable.
 	require.NoError(t, gcutil.EnableGC(tk.Session()))
 
-	for i := 0; i < 700; i++ {
-		tk.MustExec(fmt.Sprintf("create table t%d (a int)", i))
+	var wg util.WaitGroupWrapper
+	for i := 0; i < 10; i++ {
+		idx := i
+		wg.Run(func() {
+			tkit := testkit.NewTestKit(t, store)
+			tkit.MustExec("use many_tables")
+			for j := 0; j < 70; j++ {
+				tkit.MustExec(fmt.Sprintf("create table t_%d_%d (a int)", idx, j))
+			}
+		})
 	}
+	wg.Wait()
 
 	tk.MustExec("drop database many_tables")
 
 	tk.MustExec("flashback database many_tables")
 
-	tk.MustQuery("select count(*) from many_tables.t0").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from many_tables.t_0_0").Check(testkit.Rows("0"))
 }
 
 // MockGC is used to make GC work in the test environment.

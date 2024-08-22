@@ -440,7 +440,7 @@ func (do *Domain) handleRemoveStaleRunawayWatch(record *resourcegroup.Quarantine
 	return err
 }
 
-func execRestrictedSQL(sessPool *sessionPool, sql string, params []any) ([]chunk.Row, error) {
+func execRestrictedSQL(sessPool util.SessionPool, sql string, params []any) ([]chunk.Row, error) {
 	se, err := sessPool.Get()
 	defer func() {
 		sessPool.Put(se)
@@ -484,11 +484,11 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 type runawaySyncer struct {
 	newWatchReader      *SystemTableReader
 	deletionWatchReader *SystemTableReader
-	sysSessionPool      *sessionPool
+	sysSessionPool      util.SessionPool
 	mu                  sync.Mutex
 }
 
-func newRunawaySyncer(sysSessionPool *sessionPool) *runawaySyncer {
+func newRunawaySyncer(sysSessionPool util.SessionPool) *runawaySyncer {
 	return &runawaySyncer{
 		sysSessionPool: sysSessionPool,
 		newWatchReader: &SystemTableReader{

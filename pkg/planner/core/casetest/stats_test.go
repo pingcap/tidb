@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -67,23 +68,23 @@ func TestGroupNDVs(t *testing.T) {
 		lp := p.(base.LogicalPlan)
 		_, err = core.RecursiveDeriveStats4Test(lp)
 		require.NoError(t, err, comment)
-		var agg *core.LogicalAggregation
-		var join *core.LogicalJoin
+		var agg *logicalop.LogicalAggregation
+		var join *logicalop.LogicalJoin
 		stack := make([]base.LogicalPlan, 0, 2)
 		traversed := false
 		for !traversed {
 			switch v := lp.(type) {
-			case *core.LogicalAggregation:
+			case *logicalop.LogicalAggregation:
 				agg = v
 				lp = lp.Children()[0]
-			case *core.LogicalJoin:
+			case *logicalop.LogicalJoin:
 				join = v
 				lp = v.Children()[0]
 				stack = append(stack, v.Children()[1])
-			case *core.LogicalApply:
+			case *logicalop.LogicalApply:
 				lp = lp.Children()[0]
 				stack = append(stack, v.Children()[1])
-			case *core.LogicalUnionAll:
+			case *logicalop.LogicalUnionAll:
 				lp = lp.Children()[0]
 				for i := 1; i < len(v.Children()); i++ {
 					stack = append(stack, v.Children()[i])

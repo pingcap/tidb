@@ -291,7 +291,7 @@ func initEncodeCommitWorkers(e *LoadDataWorker) (*encodeWorker, *commitWorker, e
 	if err2 != nil {
 		return nil, nil, err2
 	}
-	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.Ctx())
+	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.Ctx().GetPlanCtx())
 	if err2 != nil {
 		return nil, nil, err2
 	}
@@ -647,6 +647,11 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 	case ast.OnDuplicateKeyHandlingIgnore:
 		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, false)
 	case ast.OnDuplicateKeyHandlingError:
+		txn, err := w.Ctx().Txn(true)
+		if err != nil {
+			return err
+		}
+		dupKeyCheck := optimizeDupKeyCheckForNormalInsert(w.Ctx().GetSessionVars(), txn)
 		for i, row := range rows[0:cnt] {
 			sizeHintStep := int(w.Ctx().GetSessionVars().ShardAllocateStep)
 			if sizeHintStep > 0 && i%sizeHintStep == 0 {
@@ -655,9 +660,9 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 				if sizeHint > remain {
 					sizeHint = remain
 				}
-				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint)
+				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint, dupKeyCheck)
 			} else {
-				err = w.addRecord(ctx, row)
+				err = w.addRecord(ctx, row, dupKeyCheck)
 			}
 			if err != nil {
 				return err
@@ -670,11 +675,11 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 	}
 }
 
-func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum) error {
+func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
 	if row == nil {
 		return nil
 	}
-	return w.addRecord(ctx, row)
+	return w.addRecord(ctx, row, dupKeyCheck)
 }
 
 // GetInfilePath get infile path.

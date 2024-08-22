@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -380,7 +381,7 @@ func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 	if ok {
 		res.Database = db.Name.O
 	}
-	tmp, ok := is.TableByID(tblInfo.ID)
+	tmp, ok := is.TableByID(context.Background(), tblInfo.ID)
 	if !ok {
 		res.err = "partition table not found:" + strconv.FormatInt(tblInfo.ID, 10)
 		return res

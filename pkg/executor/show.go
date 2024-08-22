@@ -494,6 +494,70 @@ func (*ShowExec) fetchShowOpenTables() error {
 	return nil
 }
 
+// showInfo represents the result of `SHOW TABLES`.
+type showInfo struct {
+	Name model.CIStr
+	// only used for show full tables
+	TableType string
+}
+
+// getTableType returns the type of the table.
+func (e *ShowExec) getTableType(tb *model.TableInfo) string {
+	switch {
+	case tb.IsView():
+		return "VIEW"
+	case tb.IsSequence():
+		return "SEQUENCE"
+	case util.IsSystemView(e.DBName.L):
+		return "SYSTEM VIEW"
+	default:
+		return "BASE TABLE"
+	}
+}
+
+// fetchShowInfoByName fetches the show info for `SHOW <FULL> TABLES like 'xxx'`
+func (e *ShowExec) fetchShowInfoByName(ctx context.Context, name string) ([]*showInfo, error) {
+	tb, err := e.is.TableByName(ctx, e.DBName, model.NewCIStr(name))
+	if err != nil {
+		// do nothing if table not exists
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil, nil
+		}
+		return nil, errors.Trace(err)
+	}
+	if tb.Meta().TempTableType == model.TempTableLocal {
+		return nil, nil
+	}
+	return []*showInfo{{Name: tb.Meta().Name, TableType: e.getTableType(tb.Meta())}}, nil
+}
+
+// fetchShowSimpleTables fetches the table info for `SHOW TABLE`.
+func (e *ShowExec) fetchShowSimpleTables(ctx context.Context) ([]*showInfo, error) {
+	tb, err := e.is.SchemaSimpleTableInfos(ctx, e.DBName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	showInfos := make([]*showInfo, 0, len(tb))
+	for _, v := range tb {
+		// TODO: consider add type info to TableNameInfo
+		showInfos = append(showInfos, &showInfo{Name: v.Name})
+	}
+	return showInfos, nil
+}
+
+// fetchShowFullTables fetches the table info for `SHOW FULL TABLES`.
+func (e *ShowExec) fetchShowFullTables(ctx context.Context) ([]*showInfo, error) {
+	tb, err := e.is.SchemaTableInfos(ctx, e.DBName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	showInfos := make([]*showInfo, 0, len(tb))
+	for _, v := range tb {
+		showInfos = append(showInfos, &showInfo{Name: v.Name, TableType: e.getTableType(v)})
+	}
+	return showInfos, nil
+}
+
 func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	if checker != nil && e.Ctx().GetSessionVars().User != nil {
@@ -504,12 +568,11 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 	if !e.is.SchemaExists(e.DBName) {
 		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
-	// sort for tables
-	schemaTables, err := e.is.SchemaTableInfos(ctx, e.DBName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tableNames := make([]string, 0, len(schemaTables))
+	var (
+		tableNames = make([]string, 0)
+		showInfos  []*showInfo
+		err        error
+	)
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	var (
 		tableTypes        = make(map[string]string)
@@ -521,7 +584,18 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 		fieldFilter = e.Extractor.Field()
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
-	for _, v := range schemaTables {
+
+	if fieldFilter != "" {
+		showInfos, err = e.fetchShowInfoByName(ctx, fieldFilter)
+	} else if e.Full {
+		showInfos, err = e.fetchShowFullTables(ctx)
+	} else {
+		showInfos, err = e.fetchShowSimpleTables(ctx)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, v := range showInfos {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Name.O, "", mysql.AllPrivMask) {
@@ -532,14 +606,8 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 			continue
 		}
 		tableNames = append(tableNames, v.Name.O)
-		if v.IsView() {
-			tableTypes[v.Name.O] = "VIEW"
-		} else if v.IsSequence() {
-			tableTypes[v.Name.O] = "SEQUENCE"
-		} else if util.IsSystemView(e.DBName.L) {
-			tableTypes[v.Name.O] = "SYSTEM VIEW"
-		} else {
-			tableTypes[v.Name.O] = "BASE TABLE"
+		if e.Full {
+			tableTypes[v.Name.O] = v.TableType
 		}
 	}
 	slices.Sort(tableNames)
@@ -615,6 +683,11 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 
 func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// we will fill the column type information later, so clone a new table here.
+	tb, err = table.TableFromMeta(tb.Allocators(e.Ctx().GetTableCtx()), tb.Meta().Clone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1169,6 +1242,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			} else {
 				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
 			}
+		}
+		if idxInfo.Global {
+			buf.WriteString(" /*T![global_index] GLOBAL */")
 		}
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
@@ -1951,7 +2027,7 @@ func (e *ShowExec) getTable() (table.Table, error) {
 	if e.Table == nil {
 		return nil, errors.New("table not found")
 	}
-	tb, ok := e.is.TableByID(e.Table.TableInfo.ID)
+	tb, ok := e.is.TableByID(context.Background(), e.Table.TableInfo.ID)
 	if !ok {
 		return nil, errors.Errorf("table %s not found", e.Table.Name)
 	}
@@ -2007,6 +2083,8 @@ func (e *ShowExec) appendRow(row []any) {
 			e.result.AppendTime(i, x)
 		case types.BinaryJSON:
 			e.result.AppendJSON(i, x)
+		case types.VectorFloat32:
+			e.result.AppendVectorFloat32(i, x)
 		case types.Duration:
 			e.result.AppendDuration(i, x)
 		case types.Enum:
@@ -2250,7 +2328,8 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	return nil
 }
 
-func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
+// FillOneImportJobInfo is exported for testing.
+func FillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
 	result.AppendString(1, info.Parameters.FileLocation)
@@ -2291,7 +2370,7 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 		}
 		importedRowCount = int64(rows)
 	}
-	fillOneImportJobInfo(info, result, importedRowCount)
+	FillOneImportJobInfo(info, result, importedRowCount)
 	return nil
 }
 

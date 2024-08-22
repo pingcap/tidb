@@ -52,7 +52,7 @@ func AutoAnalyze(
 	params ...any,
 ) {
 	startTime := time.Now()
-	_, _, err := execAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
+	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -72,7 +72,8 @@ func AutoAnalyze(
 	}
 }
 
-func execAnalyzeStmt(
+// RunAnalyzeStmt executes the analyze statement.
+func RunAnalyzeStmt(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,

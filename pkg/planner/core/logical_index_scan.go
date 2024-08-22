@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -98,7 +99,7 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*exp
 		if path.IsTablePath() {
 			continue
 		}
-		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
+		if uniqueKey, newKey := ruleutil.CheckIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
 		} else if uniqueKey != nil {
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
