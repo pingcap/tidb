@@ -356,17 +356,10 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	hashSender1.children = []PhysicalPlan{tableScan1}
 	hashSender1.HashCols = partitionCols
 	tableScan1.Schema().Columns = append(tableScan1.Schema().Columns, col0)
-<<<<<<< HEAD
 	handleFineGrainedShuffle(nil, sctx, tableReader)
-	require.Equal(t, uint64(8), hashJoin.TiFlashFineGrainedShuffleStreamCount)
-	require.Equal(t, uint64(8), recv1.TiFlashFineGrainedShuffleStreamCount)
-	require.Equal(t, uint64(8), hashSender1.TiFlashFineGrainedShuffleStreamCount)
-=======
-	handleFineGrainedShuffle(nil, sctx.GetPlanCtx(), tableReader)
 	require.Equal(t, uint64(16), hashJoin.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(16), recv1.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(16), hashSender1.TiFlashFineGrainedShuffleStreamCount)
->>>>>>> 38f9d702ff6 (planner: use logical cores as default fine grained stream count (#55544))
 	require.Equal(t, uint64(0), recv.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(0), hashSender.TiFlashFineGrainedShuffleStreamCount)
 	clear(plans)
