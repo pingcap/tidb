@@ -934,12 +934,12 @@ func (hg *Histogram) OutOfRangeRowCount(
 	upperBound := float64(0)
 	if histNDV > 0 {
 		upperBound = hg.NotNullCount() / float64(histNDV)
-	}
-	// minReturn attempts to provide a reasonable estimate when other factors limit our ability to estimate
-	// accurate histogram ranges - for example, index histograms are converted to strings and only the first
-	// 8 bytes are returned for strings. Long index keys can result in difficulty differentiating ranges.
-	if allowUseModifyCount && modifyCount > 0 && histNDV > 0 {
-		minReturn = min(upperBound, float64(modifyCount))
+		// minReturn attempts to provide a reasonable estimate when other factors limit our ability to estimate
+		// accurate histogram ranges - for example, index histograms are converted to strings and only the first
+		// 8 bytes are returned for strings. Long index keys can result in difficulty differentiating ranges.
+		if allowUseModifyCount && modifyCount > 0 {
+			minReturn = min(upperBound, float64(modifyCount))
+		}
 	}
 	if hg.Len() == 0 {
 		return minReturn
@@ -948,14 +948,12 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
 	// Here we calculate the length of common prefix.
 	commonPrefix := 0
-	stringType := false
 	if hg.GetLower(0).Kind() == types.KindBytes || hg.GetLower(0).Kind() == types.KindString {
 		// Calculate the common prefix length among the lower and upper bound of histogram and the range we want to estimate.
 		commonPrefix = commonPrefixLength(hg.GetLower(0).GetBytes(),
 			hg.GetUpper(hg.Len()-1).GetBytes(),
 			lDatum.GetBytes(),
 			rDatum.GetBytes())
-		stringType = true
 	}
 
 	// Convert the range we want to estimate to scalar value(float64)
@@ -997,7 +995,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	var leftPercent, rightPercent, rowCount, sampleOutOfRange float64
+	var leftPercent, rightPercent, rowCount float64
 	if debugTrace {
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx,
@@ -1046,15 +1044,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	rowCount = totalPercent * hg.NotNullCount()
 
-	// Calculate any out-of-range portion attributed to sampling of the original histogram buckets.
-	// This calculation is only logical for high NDV numeric values with few gaps
-	if !stringType && float64(histNDV) > histWidth && totalPercent > 0 {
-		sampleOutOfRange = (float64(histNDV) - histWidth) * totalPercent
-		// To avoid risk of error - cap the sample error at 10% of the total number of rows as a reasonable estimate.
-		sampleOutOfRange = min(sampleOutOfRange, hg.NotNullCount()*0.1)
-		rowCount += sampleOutOfRange
-	}
-
 	if !allowUseModifyCount {
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
@@ -1064,7 +1053,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	returnCount := rowCount
 	if totalPercent > 0 {
-		returnCount = max(sampleOutOfRange, upperBound)
+		returnCount = max(float64(modifyCount)*totalPercent, upperBound)
 	}
 	if increaseFactor > 1 {
 		returnCount = max(returnCount, float64(modifyCount))
