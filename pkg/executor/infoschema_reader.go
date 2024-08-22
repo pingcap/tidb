@@ -690,11 +690,12 @@ func (e *memtableRetriever) setDataFromOneTable(
 }
 
 func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
-	if len(columns) <= 2 {
+	if len(columns) <= 3 {
 		for _, colInfo := range columns {
 			switch colInfo.Name.L {
 			case "table_schema":
 			case "table_name":
+			case "table_catalog":
 			default:
 				return false
 			}
@@ -747,31 +748,31 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				}
 
 				record := types.MakeDatums(
-					nil,           // TABLE_CATALOG
-					t.DBName.O,    // TABLE_SCHEMA
-					t.TableName.O, // TABLE_NAME
-					nil,           // TABLE_TYPE
-					nil,           // ENGINE
-					nil,           // VERSION
-					nil,           // ROW_FORMAT
-					nil,           // TABLE_ROWS
-					nil,           // AVG_ROW_LENGTH
-					nil,           // DATA_LENGTH
-					nil,           // MAX_DATA_LENGTH
-					nil,           // INDEX_LENGTH
-					nil,           // DATA_FREE
-					nil,           // AUTO_INCREMENT
-					nil,           // CREATE_TIME
-					nil,           // UPDATE_TIME
-					nil,           // CHECK_TIME
-					nil,           // TABLE_COLLATION
-					nil,           // CHECKSUM
-					nil,           // CREATE_OPTIONS
-					nil,           // TABLE_COMMENT
-					nil,           // TIDB_TABLE_ID
-					nil,           // TIDB_ROW_ID_SHARDING_INFO
-					nil,           // TIDB_PK_TYPE
-					nil,           // TIDB_PLACEMENT_POLICY_NAME
+					infoschema.CatalogVal, // TABLE_CATALOG
+					t.DBName.O,            // TABLE_SCHEMA
+					t.TableName.O,         // TABLE_NAME
+					nil,                   // TABLE_TYPE
+					nil,                   // ENGINE
+					nil,                   // VERSION
+					nil,                   // ROW_FORMAT
+					nil,                   // TABLE_ROWS
+					nil,                   // AVG_ROW_LENGTH
+					nil,                   // DATA_LENGTH
+					nil,                   // MAX_DATA_LENGTH
+					nil,                   // INDEX_LENGTH
+					nil,                   // DATA_FREE
+					nil,                   // AUTO_INCREMENT
+					nil,                   // CREATE_TIME
+					nil,                   // UPDATE_TIME
+					nil,                   // CHECK_TIME
+					nil,                   // TABLE_COLLATION
+					nil,                   // CHECKSUM
+					nil,                   // CREATE_OPTIONS
+					nil,                   // TABLE_COMMENT
+					nil,                   // TIDB_TABLE_ID
+					nil,                   // TIDB_ROW_ID_SHARDING_INFO
+					nil,                   // TIDB_PK_TYPE
+					nil,                   // TIDB_PLACEMENT_POLICY_NAME
 				)
 				rows = append(rows, record)
 				return true

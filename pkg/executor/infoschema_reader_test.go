@@ -909,12 +909,13 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 		{"select table_schema from information_schema.tables", true},
 		{"select count(table_schema) from information_schema.tables", true},
 		{"select count(table_name) from information_schema.tables", true},
-		{"select count(table_catalog) from information_schema.tables", false},
-		// TODO: {"select count(1) from information_schema.tables", true},
-		// TODO: {"select count(*) from information_schema.tables", true},
-		// TODO: {"select count(1) from (select table_name from information_schema.tables) t", true},
+		{"select count(table_rows) from information_schema.tables", false},
+		{"select count(1) from information_schema.tables", true},
+		{"select count(*) from information_schema.tables", true},
+		{"select count(1) from (select table_name from information_schema.tables) t", true},
 		{"select * from information_schema.tables", false},
-		{"select table_name, table_catalog from information_schema.tables", false},
+		{"select table_name, table_catalog from information_schema.tables", true},
+		{"select table_name, table_rows from information_schema.tables", false},
 	} {
 		var covered bool
 		ctx := context.WithValue(context.Background(), "cover-check", &covered)
