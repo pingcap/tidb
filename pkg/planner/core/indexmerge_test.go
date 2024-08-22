@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -58,7 +59,7 @@ func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 			if j > 0 {
 				idxMergeDisgest += ","
 			}
-			idxMergeDisgest += path.TableFilters[j].String()
+			idxMergeDisgest += path.TableFilters[j].StringWithCtx(errors.RedactLogDisable)
 		}
 		idxMergeDisgest += "]}"
 	}

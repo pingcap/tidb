@@ -497,7 +497,7 @@ func (*partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.Fi
 			})
 			continue
 		}
-		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.String()))
+		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.StringWithCtx(errors.RedactLogDisable)))
 	}
 	return names, nil
 }

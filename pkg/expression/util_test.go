@@ -519,8 +519,8 @@ func (m *MockExpr) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *
 func (m *MockExpr) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-
 func (m *MockExpr) String() string               { return "" }
+func (m *MockExpr) StringWithCtx(string) string  { return "" }
 func (m *MockExpr) MarshalJSON() ([]byte, error) { return nil, nil }
 func (m *MockExpr) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return types.NewDatum(m.i), m.err

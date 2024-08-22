@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -220,7 +221,7 @@ func (rf *RuntimeFilter) ToPB(ctx PlanContext, client kv.Client) (*tipb.RuntimeF
 	for _, srcExpr := range rf.srcExprList {
 		srcExprPB := pc.ExprToPB(srcExpr)
 		if srcExprPB == nil {
-			return nil, plannererrors.ErrInternal.GenWithStack("failed to transform src expr %s to pb in runtime filter", srcExpr.String())
+			return nil, plannererrors.ErrInternal.GenWithStack("failed to transform src expr %s to pb in runtime filter", srcExpr.StringWithCtx(errors.RedactLogDisable))
 		}
 		srcExprListPB = append(srcExprListPB, srcExprPB)
 	}
@@ -228,7 +229,7 @@ func (rf *RuntimeFilter) ToPB(ctx PlanContext, client kv.Client) (*tipb.RuntimeF
 	for _, targetExpr := range rf.targetExprList {
 		targetExprPB := pc.ExprToPB(targetExpr)
 		if targetExprPB == nil {
-			return nil, plannererrors.ErrInternal.GenWithStack("failed to transform target expr %s to pb in runtime filter", targetExpr.String())
+			return nil, plannererrors.ErrInternal.GenWithStack("failed to transform target expr %s to pb in runtime filter", targetExpr.StringWithCtx(errors.RedactLogDisable))
 		}
 		targetExprListPB = append(targetExprListPB, targetExprPB)
 	}

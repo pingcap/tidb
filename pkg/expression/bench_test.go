@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -1375,7 +1376,7 @@ func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases)
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, _, input, output := genVecExprBenchCase(ctx, funcName, testCase)
-			exprName := expr.String()
+			exprName := expr.StringWithCtx(perrors.RedactLogDisable)
 			if sf, ok := expr.(*ScalarFunction); ok {
 				exprName = fmt.Sprintf("%v", reflect.TypeOf(sf.Function))
 				tmp := strings.Split(exprName, ".")

@@ -1812,7 +1812,7 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 		// so we trim the \" prefix and suffix here.
 		strs[i] = strings.TrimSuffix(
 			strings.TrimPrefix(
-				strconv.Quote(cond.String()),
+				strconv.Quote(cond.StringWithCtx(errors.RedactLogDisable)),
 				quote),
 			quote)
 	}

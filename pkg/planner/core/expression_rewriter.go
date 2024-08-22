@@ -1867,7 +1867,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 					if c.GetType().EvalType() == types.ETInt {
 						continue // no need to refine it
 					}
-					er.sctx.SetSkipPlanCache(errors.NewNoStackErrorf("'%v' may be converted to INT", c.String()))
+					er.sctx.SetSkipPlanCache(errors.NewNoStackErrorf("'%v' may be converted to INT", c.StringWithCtx(errors.RedactLogDisable)))
 					if err := expression.RemoveMutableConst(er.sctx, []expression.Expression{c}); err != nil {
 						er.err = err
 						return

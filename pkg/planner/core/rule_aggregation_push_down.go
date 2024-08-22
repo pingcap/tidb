@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -690,7 +691,7 @@ func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, ag
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(aggFunc.String())
+			buffer.WriteString(aggFunc.StringWithCtx(errors.RedactLogDisable))
 		}
 		buffer.WriteString("] are decomposable with join")
 		return buffer.String()
@@ -715,7 +716,7 @@ func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *Logical
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(aggFunc.String())
+			buffer.WriteString(aggFunc.StringWithCtx(errors.RedactLogDisable))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
@@ -733,7 +734,7 @@ func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalA
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(aggFunc.String())
+			buffer.WriteString(aggFunc.StringWithCtx(errors.RedactLogDisable))
 		}
 		fmt.Fprintf(buffer, "] are decomposable with %v_%v", union.TP(), union.ID())
 		return buffer.String()
