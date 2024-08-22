@@ -18,9 +18,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,12 +37,9 @@ func TestFailBeforeDecodeArgs(t *testing.T) {
 	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
 	tableID = int64(tableIDi)
 
-	d := dom.DDL()
-	tc := &callback.TestDDLCallback{Do: dom}
-
 	first := true
 	stateCnt := 0
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		// It can be other schema states except failed schema state.
 		// This schema state can only appear once.
 		if job.SchemaState == model.StateWriteOnly {
@@ -55,8 +52,7 @@ func TestFailBeforeDecodeArgs(t *testing.T) {
 				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/errorBeforeDecodeArgs"))
 			}
 		}
-	}
-	d.SetHook(tc)
+	})
 	defaultValue := int64(3)
 	jobID := testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c3", "", defaultValue, dom)
 	// Make sure the schema state only appears once.

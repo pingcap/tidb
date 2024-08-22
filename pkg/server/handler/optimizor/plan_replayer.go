@@ -17,6 +17,7 @@ package optimizor
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -306,7 +307,7 @@ func loadSchemaMeta(z *zip.Reader, is infoschema.InfoSchema) (map[int64]*tblInfo
 				s := strings.Split(row, ";")
 				databaseName := s[0]
 				tableName := s[1]
-				t, err := is.TableByName(model.NewCIStr(databaseName), model.NewCIStr(tableName))
+				t, err := is.TableByName(context.Background(), model.NewCIStr(databaseName), model.NewCIStr(tableName))
 				if err != nil {
 					return nil, err
 				}

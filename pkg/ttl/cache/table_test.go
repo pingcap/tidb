@@ -94,7 +94,7 @@ func TestNewTTLTable(t *testing.T) {
 
 	for _, c := range cases {
 		is := do.InfoSchema()
-		tbl, err := is.TableByName(model.NewCIStr(c.db), model.NewCIStr(c.tbl))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr(c.db), model.NewCIStr(c.tbl))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		var physicalTbls []*cache.PhysicalTable
@@ -169,7 +169,7 @@ func TestTableEvalTTLExpireTime(t *testing.T) {
 	tk.MustExec("set @@time_zone='Asia/Tokyo'")
 
 	tk.MustExec("create table test.t(a int, t datetime) ttl = `t` + interval 1 month")
-	tb, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
 	ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo, model.NewCIStr(""))
@@ -193,7 +193,7 @@ func TestTableEvalTTLExpireTime(t *testing.T) {
 
 	// should support a string format interval
 	tk.MustExec("create table test.t2(a int, t datetime) ttl = `t` + interval '1:3' hour_minute")
-	tb2, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tb2, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tblInfo2 := tb2.Meta()
 	ttlTbl2, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo2, model.NewCIStr(""))

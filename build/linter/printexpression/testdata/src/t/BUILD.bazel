@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "t",
+    srcs = ["test_file.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/printexpression/testdata/src/t",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/expression"],
+)

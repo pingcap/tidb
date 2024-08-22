@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -54,6 +55,7 @@ type Builder struct {
 	factory func() (pools.Resource, error)
 	bundleInfoBuilder
 	infoData *Data
+	store    kv.Storage
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -544,9 +546,9 @@ func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
 	b.infoSchema.delSchema(di)
 
 	// Copy the sortedTables that contain the table we are going to drop.
-	tableIDs := make([]int64, 0, len(di.Tables))
-	bucketIdxMap := make(map[int]struct{}, len(di.Tables))
-	for _, tbl := range di.Tables {
+	tableIDs := make([]int64, 0, len(di.Deprecated.Tables))
+	bucketIdxMap := make(map[int]struct{}, len(di.Deprecated.Tables))
+	for _, tbl := range di.Deprecated.Tables {
 		bucketIdxMap[tableBucketIdx(tbl.ID)] = struct{}{}
 		// TODO: If the table ID doesn't exist.
 		tableIDs = appendAffectedIDs(tableIDs, tbl)
@@ -681,7 +683,7 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 
 	allocs = b.buildAllocsForCreateTable(tp, dbInfo, tblInfo, allocs)
 
-	tbl, err := b.tableFromMeta(allocs, tblInfo)
+	tbl, err := tableFromMeta(allocs, b.factory, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -703,9 +705,9 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 		b.addTemporaryTable(tableID)
 	}
 
-	newTbl, ok := b.infoSchema.TableByID(tableID)
+	newTbl, ok := b.infoSchema.TableByID(context.Background(), tableID)
 	if ok {
-		dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
+		dbInfo.Deprecated.Tables = append(dbInfo.Deprecated.Tables, newTbl.Meta())
 	}
 	return affected, nil
 }
@@ -766,17 +768,19 @@ func (b *Builder) applyDropTable(diff *model.SchemaDiff, dbInfo *model.DBInfo, t
 }
 
 func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64) {
-	for i, tblInfo := range dbInfo.Tables {
+	tables := dbInfo.Deprecated.Tables
+	for i, tblInfo := range tables {
 		if tblInfo.ID == tableID {
-			if i == len(dbInfo.Tables)-1 {
-				dbInfo.Tables = dbInfo.Tables[:i]
+			if i == len(tables)-1 {
+				tables = tables[:i]
 			} else {
-				dbInfo.Tables = append(dbInfo.Tables[:i], dbInfo.Tables[i+1:]...)
+				tables = append(tables[:i], tables[i+1:]...)
 			}
 			b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 			break
 		}
 	}
+	dbInfo.Deprecated.Tables = tables
 }
 
 // Build builds and returns the built infoschema.
@@ -791,12 +795,12 @@ func (b *Builder) Build(schemaTS uint64) InfoSchema {
 }
 
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
-func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) {
+func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	// Do not mix infoschema v1 and infoschema v2 building, this can simplify the logic.
 	// If we want to build infoschema v2, but the old infoschema is v1, just return error to trigger a full load.
 	isV2, _ := IsV2(oldSchema)
 	if b.enableV2 != isV2 {
-		return nil, errors.Errorf("builder's (v2=%v) infoschema mismatch, return error to trigger full reload", b.enableV2)
+		return errors.Errorf("builder's (v2=%v) infoschema mismatch, return error to trigger full reload", b.enableV2)
 	}
 
 	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {
@@ -805,21 +809,16 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 	oldIS := oldSchema.base()
 	b.initBundleInfoBuilder()
 	b.infoSchema.schemaMetaVersion = oldIS.schemaMetaVersion
-	b.copySchemasMap(oldIS)
-	b.copyBundlesMap(oldIS)
-	b.copyPoliciesMap(oldIS)
-	b.copyResourceGroupMap(oldIS)
-	b.copyTemporaryTableIDsMap(oldIS)
-	b.copyReferredForeignKeyMap(oldIS)
+	b.infoSchema.schemaMap = maps.Clone(oldIS.schemaMap)
+	b.infoSchema.schemaID2Name = maps.Clone(oldIS.schemaID2Name)
+	b.infoSchema.ruleBundleMap = maps.Clone(oldIS.ruleBundleMap)
+	b.infoSchema.policyMap = oldIS.ClonePlacementPolicies()
+	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
+	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
+	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
-	return b, nil
-}
-
-func (b *Builder) copySchemasMap(oldIS *infoSchema) {
-	for _, v := range oldIS.schemaMap {
-		b.infoSchema.addSchema(v)
-	}
+	return nil
 }
 
 // getSchemaAndCopyIfNecessary creates a new schemaTables instance when a table in the database has changed.
@@ -832,10 +831,7 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 		oldSchemaTables := b.infoSchema.schemaMap[dbName]
 		newSchemaTables := &schemaTables{
 			dbInfo: oldSchemaTables.dbInfo.Copy(),
-			tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
-		}
-		for k, v := range oldSchemaTables.tables {
-			newSchemaTables.tables[k] = v
+			tables: maps.Clone(oldSchemaTables.tables),
 		}
 		b.infoSchema.addSchema(newSchemaTables)
 		return newSchemaTables.dbInfo
@@ -864,39 +860,59 @@ func (b *Builder) sortAllTablesByID() {
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*Builder, error) {
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) error {
 	info := b.infoSchema
 	info.schemaMetaVersion = schemaVersion
 
+	if b.enableV2 {
+		// We must not clear the historial versions like b.infoData = NewData(), because losing
+		// the historial versions would cause applyDiff get db not exist error and fail, then
+		// infoschema reloading retries with full load every time.
+		// See https://github.com/pingcap/tidb/issues/53442
+		//
+		// We must reset it, otherwise the stale tables remain and cause bugs later.
+		// For example, schema version 59:
+		//         107: t1
+		//         112: t2 (partitions p0=113, p1=114, p2=115)
+		// operation: alter table t2 exchange partition p0 with table t1
+		// schema version 60 if we do not reset:
+		//         107: t1   <- stale
+		//         112: t2 (partition p0=107, p1=114, p2=115)
+		//         113: t1
+		// See https://github.com/pingcap/tidb/issues/54796
+		b.infoData.resetBeforeFullLoad(schemaVersion)
+	}
+
 	b.initBundleInfoBuilder()
 
-	b.initMisc(dbInfos, policies, resourceGroups)
-
 	for _, di := range dbInfos {
-		err := b.createSchemaTablesForDB(di, b.tableFromMeta, schemaVersion)
+		err := b.createSchemaTablesForDB(di, tableFromMeta, schemaVersion)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 
+	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
+	b.initMisc(dbInfos, policies, resourceGroups)
+
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	b.sortAllTablesByID()
 
-	return b, nil
+	return nil
 }
 
-func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+func tableFromMeta(alloc autoid.Allocators, factory func() (pools.Resource, error), tblInfo *model.TableInfo) (table.Table, error) {
 	ret, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if t, ok := ret.(table.CachedTable); ok {
 		var tmp pools.Resource
-		tmp, err = b.factory()
+		tmp, err = factory()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -909,26 +925,43 @@ func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInf
 	return ret, nil
 }
 
-type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
+type tableFromMetaFunc func(alloc autoid.Allocators, factory func() (pools.Resource, error), tblInfo *model.TableInfo) (table.Table, error)
 
 func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc, schemaVersion int64) error {
 	schTbls := &schemaTables{
 		dbInfo: di,
-		tables: make(map[string]table.Table, len(di.Tables)),
+		tables: make(map[string]table.Table, len(di.Deprecated.Tables)),
 	}
-	for _, t := range di.Tables {
+	for _, t := range di.Deprecated.Tables {
 		allocs := autoid.NewAllocatorsFromTblInfo(b.Requirement, di.ID, t)
 		var tbl table.Table
-		tbl, err := tableFromMeta(allocs, t)
+		tbl, err := tableFromMeta(allocs, b.factory, t)
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
 
 		schTbls.tables[t.Name.L] = tbl
 		b.addTable(schemaVersion, di, t, tbl)
+		if len(di.TableName2ID) > 0 {
+			delete(di.TableName2ID, t.Name.L)
+		}
 
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
 			b.addTemporaryTable(tblInfo.ID)
+		}
+	}
+	// Add the rest name to ID mappings.
+	if b.enableV2 {
+		for name, id := range di.TableName2ID {
+			item := tableItem{
+				dbName:        di.Name,
+				dbID:          di.ID,
+				tableName:     model.NewCIStr(name),
+				tableID:       id,
+				schemaVersion: schemaVersion,
+			}
+			b.infoData.byID.Set(item)
+			b.infoData.byName.Set(item)
 		}
 	}
 	b.addDB(schemaVersion, di, schTbls)
@@ -938,7 +971,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTables) {
 	if b.enableV2 {
-		if isSpecialDB(di.Name.L) {
+		if IsSpecialDB(di.Name.L) {
 			b.infoData.addSpecialDB(di, schTbls)
 		} else {
 			b.infoData.addDB(schemaVersion, di)
@@ -951,9 +984,9 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
 	if b.enableV2 {
 		b.infoData.add(tableItem{
-			dbName:        di.Name.L,
+			dbName:        di.Name,
 			dbID:          di.ID,
-			tableName:     tblInfo.Name.L,
+			tableName:     tblInfo.Name,
 			tableID:       tblInfo.ID,
 			schemaVersion: schemaVersion,
 		}, tbl)
@@ -976,20 +1009,24 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) *Builder {
+func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data, useV2 bool) *Builder {
 	builder := &Builder{
 		Requirement:  r,
-		infoschemaV2: NewInfoSchemaV2(r, infoData),
+		infoschemaV2: NewInfoSchemaV2(r, factory, infoData),
 		dirtyDB:      make(map[string]bool),
 		factory:      factory,
 		infoData:     infoData,
+		enableV2:     useV2,
 	}
 	schemaCacheSize := variable.SchemaCacheSize.Load()
-	if schemaCacheSize > 0 {
-		infoData.tableCache.SetCapacity(uint64(schemaCacheSize))
-		builder.enableV2 = true
-	}
+	infoData.tableCache.SetCapacity(schemaCacheSize)
 	return builder
+}
+
+// WithStore attaches the given store to builder.
+func (b *Builder) WithStore(s kv.Storage) *Builder {
+	b.store = s
+	return b
 }
 
 func tableBucketIdx(tableID int64) int {

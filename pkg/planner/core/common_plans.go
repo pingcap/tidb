@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -261,13 +262,21 @@ const (
 )
 
 // SQLBindPlan represents a plan for SQL bind.
+// One SQLBindPlan can be either global or session, and can only contain one type of operation, but can contain multiple
+// operations of that type.
 type SQLBindPlan struct {
 	baseSchemaProducer
 
-	SQLBindOp    SQLBindOpType
+	IsGlobal  bool
+	SQLBindOp SQLBindOpType
+	Details   []*SQLBindOpDetail
+}
+
+// SQLBindOpDetail represents the detail of an operation on a single binding.
+// Different SQLBindOpType use different fields in this struct.
+type SQLBindOpDetail struct {
 	NormdOrigSQL string
 	BindSQL      string
-	IsGlobal     bool
 	BindStmt     ast.StmtNode
 	Db           string
 	Charset      string
@@ -307,7 +316,7 @@ func (s *Simple) MemoryUsage() (sum int64) {
 //
 //	Used for simple statements executing in coprocessor.
 type PhysicalSimpleWrapper struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 	Inner Simple
 }
 
@@ -317,16 +326,23 @@ func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
+	sum = p.BasePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
 	return
 }
 
 // InsertGeneratedColumns is for completing generated columns in Insert.
 // We resolve generation expressions in plan, and eval those in executor.
 type InsertGeneratedColumns struct {
-	Columns      []*ast.ColumnName
 	Exprs        []expression.Expression
 	OnDuplicates []*expression.Assignment
+}
+
+// Copy clones InsertGeneratedColumns.
+func (i InsertGeneratedColumns) Copy() InsertGeneratedColumns {
+	return InsertGeneratedColumns{
+		Exprs:        util.CloneExpressions(i.Exprs),
+		OnDuplicates: util.CloneAssignments(i.OnDuplicates),
+	}
 }
 
 // MemoryUsage return the memory usage of InsertGeneratedColumns
@@ -334,7 +350,7 @@ func (i *InsertGeneratedColumns) MemoryUsage() (sum int64) {
 	if i == nil {
 		return
 	}
-	sum = size.SizeOfSlice*3 + int64(cap(i.Columns)+cap(i.OnDuplicates))*size.SizeOfPointer + int64(cap(i.Exprs))*size.SizeOfInterface
+	sum = size.SizeOfSlice*3 + int64(cap(i.OnDuplicates))*size.SizeOfPointer + int64(cap(i.Exprs))*size.SizeOfInterface
 
 	for _, expr := range i.Exprs {
 		sum += expr.MemoryUsage()
@@ -349,21 +365,22 @@ func (i *InsertGeneratedColumns) MemoryUsage() (sum int64) {
 type Insert struct {
 	baseSchemaProducer
 
-	Table         table.Table
-	tableSchema   *expression.Schema
-	tableColNames types.NameSlice
-	Columns       []*ast.ColumnName
+	Table         table.Table        `plan-cache-clone:"shallow"`
+	tableSchema   *expression.Schema `plan-cache-clone:"shallow"`
+	tableColNames types.NameSlice    `plan-cache-clone:"shallow"`
+	Columns       []*ast.ColumnName  `plan-cache-clone:"shallow"`
 	Lists         [][]expression.Expression
 
 	OnDuplicate        []*expression.Assignment
-	Schema4OnDuplicate *expression.Schema
-	names4OnDuplicate  types.NameSlice
+	Schema4OnDuplicate *expression.Schema `plan-cache-clone:"shallow"`
+	names4OnDuplicate  types.NameSlice    `plan-cache-clone:"shallow"`
 
 	GenCols InsertGeneratedColumns
 
 	SelectPlan base.PhysicalPlan
 
 	IsReplace bool
+	IgnoreErr bool
 
 	// NeedFillDefaultValue is true when expr in value list reference other column.
 	NeedFillDefaultValue bool
@@ -372,8 +389,8 @@ type Insert struct {
 
 	RowLen int
 
-	FKChecks   []*FKCheck
-	FKCascades []*FKCascade
+	FKChecks   []*FKCheck   `plan-cache-clone:"must-nil"`
+	FKCascades []*FKCascade `plan-cache-clone:"must-nil"`
 }
 
 // MemoryUsage return the memory usage of Insert
@@ -425,20 +442,25 @@ type Update struct {
 
 	AllAssignmentsAreConstant bool
 
+	IgnoreError bool
+
 	VirtualAssignmentsOffset int
 
 	SelectPlan base.PhysicalPlan
 
-	TblColPosInfos TblColPosInfoSlice
+	// TblColPosInfos is for multi-table update statement.
+	// It records the column position of each related table.
+	TblColPosInfos TblColPosInfoSlice `plan-cache-clone:"shallow"`
 
 	// Used when partition sets are given.
 	// e.g. update t partition(p0) set a = 1;
-	PartitionedTable []table.PartitionedTable
+	PartitionedTable []table.PartitionedTable `plan-cache-clone:"must-nil"`
 
-	tblID2Table map[int64]table.Table
+	// tblID2Table stores related tables' info of this Update statement.
+	tblID2Table map[int64]table.Table `plan-cache-clone:"shallow"`
 
-	FKChecks   map[int64][]*FKCheck
-	FKCascades map[int64][]*FKCascade
+	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
+	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
 }
 
 // MemoryUsage return the memory usage of Update
@@ -477,10 +499,10 @@ type Delete struct {
 
 	SelectPlan base.PhysicalPlan
 
-	TblColPosInfos TblColPosInfoSlice
+	TblColPosInfos TblColPosInfoSlice `plan-cache-clone:"shallow"`
 
-	FKChecks   map[int64][]*FKCheck
-	FKCascades map[int64][]*FKCascade
+	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
+	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
 }
 
 // MemoryUsage return the memory usage of Delete
@@ -857,7 +879,7 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 
-	if e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+	if e.Analyze && e.Format == types.ExplainFormatTrueCardCost {
 		// true_card_cost mode is used to calibrate the cost model.
 		pp, ok := e.TargetPlan.(base.PhysicalPlan)
 		if ok {
@@ -1087,21 +1109,21 @@ func (e *Explain) prepareOperatorInfo(p base.Plan, taskType, id string) {
 	var row []string
 	if e.Analyze || e.RuntimeStatsColl != nil {
 		row = []string{id, estRows}
-		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost || strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
+		if e.Format == types.ExplainFormatVerbose || e.Format == types.ExplainFormatTrueCardCost || e.Format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
 		}
-		if strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost || strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
+		if e.Format == types.ExplainFormatTrueCardCost || e.Format == types.ExplainFormatCostTrace {
 			row = append(row, costFormula)
 		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.SCtx(), p, e.RuntimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
-		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost ||
-			strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
+		if e.Format == types.ExplainFormatVerbose || e.Format == types.ExplainFormatTrueCardCost ||
+			e.Format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
 		}
-		if strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
+		if e.Format == types.ExplainFormatCostTrace {
 			row = append(row, costFormula)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)

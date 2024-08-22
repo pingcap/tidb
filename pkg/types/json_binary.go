@@ -514,7 +514,7 @@ func ParseBinaryJSONFromString(s string) (bj BinaryJSON, err error) {
 		err = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
 		return
 	}
-	if err = bj.UnmarshalJSON(data); err != nil && !ErrJSONObjectKeyTooLong.Equal(err) {
+	if err = bj.UnmarshalJSON(data); err != nil && !ErrJSONObjectKeyTooLong.Equal(err) && !ErrJSONDocumentTooDeep.Equal(err) {
 		err = ErrInvalidJSONText.GenWithStackByArgs(err)
 	}
 	return

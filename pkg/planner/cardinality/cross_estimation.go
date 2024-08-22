@@ -188,13 +188,13 @@ func getColumnRangeCounts(sctx context.PlanContext, colID int64, ranges []*range
 	rangeCounts := make([]float64, len(ranges))
 	for i, ran := range ranges {
 		if idxID >= 0 {
-			idxHist := histColl.Indices[idxID]
+			idxHist := histColl.GetIdx(idxID)
 			if statistics.IndexStatsIsInvalid(sctx, idxHist, histColl, idxID) {
 				return nil, false
 			}
 			count, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
 		} else {
-			colHist := histColl.Columns[colID]
+			colHist := histColl.GetCol(colID)
 			if statistics.ColumnStatsIsInvalid(colHist, sctx, histColl, colID) {
 				return nil, false
 			}
@@ -295,8 +295,8 @@ func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.T
 			continue
 		}
 		colSet.Insert(col.UniqueID)
-		hist, ok := histColl.Columns[col.ID]
-		if !ok {
+		hist := histColl.GetCol(col.ID)
+		if hist == nil {
 			continue
 		}
 		curCorr := hist.Correlation

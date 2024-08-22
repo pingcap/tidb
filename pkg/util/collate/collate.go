@@ -72,6 +72,8 @@ type Collator interface {
 	KeyWithoutTrimRightSpace(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
 	Pattern() WildcardPattern
+	// Clone returns a copy of the collator.
+	Clone() Collator
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.
@@ -382,6 +384,18 @@ func CollationToProto(c string) int32 {
 		zap.String("default collation", mysql.DefaultCollationName),
 	)
 	return v
+}
+
+// CanUseRawMemAsKey returns true if current collator can use the original raw memory as the key
+// only return true for binCollator and derivedBinCollator
+func CanUseRawMemAsKey(c Collator) bool {
+	if _, ok := c.(*binCollator); ok {
+		return true
+	}
+	if _, ok := c.(*derivedBinCollator); ok {
+		return true
+	}
+	return false
 }
 
 // ProtoToCollation converts collation from int32(used by protocol) to string.

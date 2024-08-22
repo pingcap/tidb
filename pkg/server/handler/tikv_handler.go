@@ -190,7 +190,7 @@ func (t *TikvHandlerTool) GetTable(dbName, tableName string) (table.PhysicalTabl
 		return nil, errors.Trace(err)
 	}
 	tableName, partitionName := ExtractTableAndPartitionName(tableName)
-	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

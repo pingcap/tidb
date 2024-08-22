@@ -53,7 +53,7 @@ go_test(
     embed = [":table"],
     flaky = True,
     race = "on",
-    shard_count = 9,
+    shard_count = 10,
     deps = [
         "//pkg/errctx",
         "//pkg/errno",

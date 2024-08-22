@@ -312,11 +312,12 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	default:
 	}
 
+	store := tidbCfg.Store
 	failpoint.Inject("modifyStore", func(v failpoint.Value) {
-		tidbCfg.Store = v.(string)
+		store = v.(string)
 	})
-	if tidbCfg.Store != "tikv" {
-		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
+	if store != "tikv" {
+		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, store)
 		return nil
 	}
 
@@ -752,6 +753,10 @@ func (gs *tidbGlue) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Sess
 	return fn(glueSession)
 }
 
+func (*tidbGlue) GetClient() glue.GlueClient {
+	return glue.ClientSql
+}
+
 type tidbGlueSession struct {
 	// the session context of the brie task's subtask, such as `CREATE TABLE`.
 	se sessionctx.Context
@@ -780,13 +785,13 @@ func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInf
 }
 
 // CreateTable implements glue.Session
-func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return BRIECreateTable(gs.se, dbName, table, "", cs...)
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
 func (gs *tidbGlueSession) CreateTables(_ context.Context,
-	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return BRIECreateTables(gs.se, tables, "", cs...)
 }
 
@@ -795,7 +800,7 @@ func (gs *tidbGlueSession) CreatePlacementPolicy(_ context.Context, policy *mode
 	originQueryString := gs.se.Value(sessionctx.QueryString)
 	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
 	gs.se.SetValue(sessionctx.QueryString, ConstructResultOfShowCreatePlacementPolicy(policy))
-	d := domain.GetDomain(gs.se).DDL()
+	d := domain.GetDomain(gs.se).DDLExecutor()
 	// the default behaviour is ignoring duplicated policy during restore.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }

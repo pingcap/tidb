@@ -78,8 +78,8 @@ func TestGroupStringer(t *testing.T) {
 		group.BuildKeyInfo()
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Result = ToString(group)
+			output[i].Result = ToString(ctx.GetEvalCtx(), group)
 		})
-		require.Equalf(t, output[i].Result, ToString(group), "case:%v, sql:%s", i, sql)
+		require.Equalf(t, output[i].Result, ToString(ctx.GetEvalCtx(), group), "case:%v, sql:%s", i, sql)
 	}
 }

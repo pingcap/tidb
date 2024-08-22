@@ -424,9 +424,10 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					IndexEncode: func(_ *consistency.RecordData) kv.Key {
 						return indexKeys[i]
 					},
-					Tbl:  e.tblInfo,
-					Idx:  e.idxInfo,
-					Sctx: e.Ctx(),
+					Tbl:             e.tblInfo,
+					Idx:             e.idxInfo,
+					EnableRedactLog: e.Ctx().GetSessionVars().EnableRedactLog,
+					Storage:         e.Ctx().GetStore(),
 				}).ReportLookupInconsistent(ctx,
 					1, 0,
 					e.handles[i:i+1],

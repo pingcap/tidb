@@ -20,6 +20,8 @@ go_library(
         "//pkg/planner/context",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/rule/util",
         "//pkg/planner/implementation",
         "//pkg/planner/memo",
         "//pkg/planner/pattern",
@@ -30,6 +32,7 @@ go_library(
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/ranger",
         "//pkg/util/set",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 
@@ -55,6 +58,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/memo",
         "//pkg/planner/pattern",
         "//pkg/planner/property",

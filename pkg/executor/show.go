@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -214,7 +215,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowStatus:
 		return e.fetchShowStatus()
 	case ast.ShowTables:
-		return e.fetchShowTables()
+		return e.fetchShowTables(ctx)
 	case ast.ShowOpenTables:
 		return e.fetchShowOpenTables()
 	case ast.ShowTableStatus:
@@ -232,25 +233,25 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowEvents:
 		// empty result
 	case ast.ShowStatsExtended:
-		return e.fetchShowStatsExtended()
+		return e.fetchShowStatsExtended(ctx)
 	case ast.ShowStatsMeta:
-		return e.fetchShowStatsMeta()
+		return e.fetchShowStatsMeta(ctx)
 	case ast.ShowStatsHistograms:
-		return e.fetchShowStatsHistogram()
+		return e.fetchShowStatsHistogram(ctx)
 	case ast.ShowStatsBuckets:
-		return e.fetchShowStatsBuckets()
+		return e.fetchShowStatsBuckets(ctx)
 	case ast.ShowStatsTopN:
-		return e.fetchShowStatsTopN()
+		return e.fetchShowStatsTopN(ctx)
 	case ast.ShowStatsHealthy:
-		e.fetchShowStatsHealthy()
+		e.fetchShowStatsHealthy(ctx)
 		return nil
 	case ast.ShowStatsLocked:
-		return e.fetchShowStatsLocked()
+		return e.fetchShowStatsLocked(ctx)
 	case ast.ShowHistogramsInFlight:
 		e.fetchShowHistogramsInFlight()
 		return nil
 	case ast.ShowColumnStatsUsage:
-		return e.fetchShowColumnStatsUsage()
+		return e.fetchShowColumnStatsUsage(ctx)
 	case ast.ShowPlugins:
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
@@ -493,7 +494,71 @@ func (*ShowExec) fetchShowOpenTables() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowTables() error {
+// showInfo represents the result of `SHOW TABLES`.
+type showInfo struct {
+	Name model.CIStr
+	// only used for show full tables
+	TableType string
+}
+
+// getTableType returns the type of the table.
+func (e *ShowExec) getTableType(tb *model.TableInfo) string {
+	switch {
+	case tb.IsView():
+		return "VIEW"
+	case tb.IsSequence():
+		return "SEQUENCE"
+	case util.IsSystemView(e.DBName.L):
+		return "SYSTEM VIEW"
+	default:
+		return "BASE TABLE"
+	}
+}
+
+// fetchShowInfoByName fetches the show info for `SHOW <FULL> TABLES like 'xxx'`
+func (e *ShowExec) fetchShowInfoByName(ctx context.Context, name string) ([]*showInfo, error) {
+	tb, err := e.is.TableByName(ctx, e.DBName, model.NewCIStr(name))
+	if err != nil {
+		// do nothing if table not exists
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil, nil
+		}
+		return nil, errors.Trace(err)
+	}
+	if tb.Meta().TempTableType == model.TempTableLocal {
+		return nil, nil
+	}
+	return []*showInfo{{Name: tb.Meta().Name, TableType: e.getTableType(tb.Meta())}}, nil
+}
+
+// fetchShowSimpleTables fetches the table info for `SHOW TABLE`.
+func (e *ShowExec) fetchShowSimpleTables(ctx context.Context) ([]*showInfo, error) {
+	tb, err := e.is.SchemaSimpleTableInfos(ctx, e.DBName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	showInfos := make([]*showInfo, 0, len(tb))
+	for _, v := range tb {
+		// TODO: consider add type info to TableNameInfo
+		showInfos = append(showInfos, &showInfo{Name: v.Name})
+	}
+	return showInfos, nil
+}
+
+// fetchShowFullTables fetches the table info for `SHOW FULL TABLES`.
+func (e *ShowExec) fetchShowFullTables(ctx context.Context) ([]*showInfo, error) {
+	tb, err := e.is.SchemaTableInfos(ctx, e.DBName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	showInfos := make([]*showInfo, 0, len(tb))
+	for _, v := range tb {
+		showInfos = append(showInfos, &showInfo{Name: v.Name, TableType: e.getTableType(v)})
+	}
+	return showInfos, nil
+}
+
+func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	if checker != nil && e.Ctx().GetSessionVars().User != nil {
 		if !checker.DBIsVisible(e.Ctx().GetSessionVars().ActiveRoles, e.DBName.O) {
@@ -503,9 +568,11 @@ func (e *ShowExec) fetchShowTables() error {
 	if !e.is.SchemaExists(e.DBName) {
 		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
-	// sort for tables
-	schemaTables := e.is.SchemaTables(e.DBName)
-	tableNames := make([]string, 0, len(schemaTables))
+	var (
+		tableNames = make([]string, 0)
+		showInfos  []*showInfo
+		err        error
+	)
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	var (
 		tableTypes        = make(map[string]string)
@@ -517,25 +584,30 @@ func (e *ShowExec) fetchShowTables() error {
 		fieldFilter = e.Extractor.Field()
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
-	for _, v := range schemaTables {
+
+	if fieldFilter != "" {
+		showInfos, err = e.fetchShowInfoByName(ctx, fieldFilter)
+	} else if e.Full {
+		showInfos, err = e.fetchShowFullTables(ctx)
+	} else {
+		showInfos, err = e.fetchShowSimpleTables(ctx)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, v := range showInfos {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
-		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Name.O, "", mysql.AllPrivMask) {
 			continue
-		} else if fieldFilter != "" && v.Meta().Name.L != fieldFilter {
+		} else if fieldFilter != "" && v.Name.L != fieldFilter {
 			continue
-		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Meta().Name.L) {
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name.L) {
 			continue
 		}
-		tableNames = append(tableNames, v.Meta().Name.O)
-		if v.Meta().IsView() {
-			tableTypes[v.Meta().Name.O] = "VIEW"
-		} else if v.Meta().IsSequence() {
-			tableTypes[v.Meta().Name.O] = "SEQUENCE"
-		} else if util.IsSystemView(e.DBName.L) {
-			tableTypes[v.Meta().Name.O] = "SYSTEM VIEW"
-		} else {
-			tableTypes[v.Meta().Name.O] = "BASE TABLE"
+		tableNames = append(tableNames, v.Name.O)
+		if e.Full {
+			tableTypes[v.Name.O] = v.TableType
 		}
 	}
 	slices.Sort(tableNames)
@@ -611,6 +683,11 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 
 func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// we will fill the column type information later, so clone a new table here.
+	tb, err = table.TableFromMeta(tb.Allocators(e.Ctx().GetTableCtx()), tb.Meta().Clone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -721,9 +798,9 @@ func (e *ShowExec) fetchShowIndex() error {
 				break
 			}
 		}
-		colStats, ok := statsTbl.Columns[pkCol.ID]
+		colStats := statsTbl.GetCol(pkCol.ID)
 		var ndv int64
-		if ok {
+		if colStats != nil {
 			ndv = colStats.NDV
 		}
 		e.appendRow([]any{
@@ -783,9 +860,9 @@ func (e *ShowExec) fetchShowIndex() error {
 				expression = tblCol.GeneratedExprString
 			}
 
-			colStats, ok := statsTbl.Columns[tblCol.ID]
+			colStats := statsTbl.GetCol(tblCol.ID)
 			var ndv int64
-			if ok {
+			if colStats != nil {
 				ndv = colStats.NDV
 			}
 
@@ -1166,6 +1243,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
 			}
 		}
+		if idxInfo.Global {
+			buf.WriteString(" /*T![global_index] GLOBAL */")
+		}
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
 		}
@@ -1211,7 +1291,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		buf.WriteString(",\n")
 	}
 	for i, constrInfo := range publicConstraints {
-		fmt.Fprintf(buf, "CONSTRAINT %s CHECK ((%s))", stringutil.Escape(constrInfo.Name.O, sqlMode), constrInfo.ExprString)
+		fmt.Fprintf(buf, "  CONSTRAINT %s CHECK ((%s))", stringutil.Escape(constrInfo.Name.O, sqlMode), constrInfo.ExprString)
 		if !constrInfo.Enforced {
 			buf.WriteString(" /*!80016 NOT ENFORCED */")
 		}
@@ -1625,7 +1705,8 @@ func (e *ShowExec) fetchShowCollation() error {
 			v.ID,
 			isDefault,
 			"Yes",
-			1,
+			v.Sortlen,
+			v.PadAttribute,
 		})
 	}
 	return nil
@@ -1887,7 +1968,11 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 			sqlErr := terror.ToSQLError(x)
 			e.appendRow([]any{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
-			e.appendRow([]any{w.Level, int64(mysql.ErrUnknown), warn.Error()})
+			var err string
+			if warn != nil {
+				err = warn.Error()
+			}
+			e.appendRow([]any{w.Level, int64(mysql.ErrUnknown), err})
 		}
 	}
 	return nil
@@ -1942,7 +2027,7 @@ func (e *ShowExec) getTable() (table.Table, error) {
 	if e.Table == nil {
 		return nil, errors.New("table not found")
 	}
-	tb, ok := e.is.TableByID(e.Table.TableInfo.ID)
+	tb, ok := e.is.TableByID(context.Background(), e.Table.TableInfo.ID)
 	if !ok {
 		return nil, errors.Errorf("table %s not found", e.Table.Name)
 	}
@@ -2241,7 +2326,8 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	return nil
 }
 
-func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
+// FillOneImportJobInfo is exported for testing.
+func FillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
 	result.AppendString(1, info.Parameters.FileLocation)
@@ -2282,7 +2368,7 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 		}
 		importedRowCount = int64(rows)
 	}
-	fillOneImportJobInfo(info, result, importedRowCount)
+	FillOneImportJobInfo(info, result, importedRowCount)
 	return nil
 }
 
@@ -2372,5 +2458,17 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 		return err
 	}
 	defer b.ReleaseSysSession(ctx, sysCtx)
+
+	if err = loadSnapshotInfoSchemaIfNeeded(sysCtx, sctx.GetSessionVars().SnapshotTS); err != nil {
+		return err
+	}
+	// `fn` may use KV transaction, so initialize the txn here
+	if err = sessiontxn.NewTxn(ctx, sysCtx); err != nil {
+		return err
+	}
+	defer sysCtx.RollbackTxn(ctx)
+	if err = ResetContextOfStmt(sysCtx, &ast.SelectStmt{}); err != nil {
+		return err
+	}
 	return fn(sysCtx)
 }

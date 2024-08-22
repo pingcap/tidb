@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -369,16 +370,11 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	// Create virtual `tiflash` replica info.
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	rows := tk.MustQuery("explain select * from t").Rows()
@@ -487,7 +483,7 @@ func TestCopPaging(t *testing.T) {
 	for i := 0; i < 1024; i++ {
 		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
 	}
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 
 	// limit 960 should go paging
 	for i := 0; i < 10; i++ {
@@ -684,28 +680,28 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 
 func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
 	window := &core.PhysicalWindow{}
-	newPlan, err := window.Clone()
+	newPlan, err := window.Clone(nil)
 	require.NoError(t, err)
 	newWindow, ok := newPlan.(*core.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 
 	window.TiFlashFineGrainedShuffleStreamCount = 8
-	newPlan, err = window.Clone()
+	newPlan, err = window.Clone(nil)
 	require.NoError(t, err)
 	newWindow, ok = newPlan.(*core.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 
 	sort := &core.PhysicalSort{}
-	newPlan, err = sort.Clone()
+	newPlan, err = sort.Clone(nil)
 	require.NoError(t, err)
 	newSort, ok := newPlan.(*core.PhysicalSort)
 	require.Equal(t, ok, true)
 	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
 
 	sort.TiFlashFineGrainedShuffleStreamCount = 8
-	newPlan, err = sort.Clone()
+	newPlan, err = sort.Clone(nil)
 	require.NoError(t, err)
 	newSort, ok = newPlan.(*core.PhysicalSort)
 	require.Equal(t, ok, true)

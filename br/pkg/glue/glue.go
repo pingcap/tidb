@@ -13,6 +13,13 @@ import (
 	pd "github.com/tikv/pd/client"
 )
 
+type GlueClient int
+
+const (
+	ClientCLP GlueClient = iota
+	ClientSql
+)
+
 // Glue is an abstraction of TiDB function calls used in BR.
 type Glue interface {
 	GetDomain(store kv.Storage) (*domain.Domain, error)
@@ -36,6 +43,9 @@ type Glue interface {
 	// we can close domain as soon as possible.
 	// and we must reuse the exists session and don't close it in SQL backup job.
 	UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se Session) error) error
+
+	// GetClient returns the client type of the glue
+	GetClient() GlueClient
 }
 
 // Session is an abstraction of the session.Session interface.
@@ -44,7 +54,7 @@ type Session interface {
 	ExecuteInternal(ctx context.Context, sql string, args ...any) error
 	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
 	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo,
-		cs ...ddl.CreateTableWithInfoConfigurier) error
+		cs ...ddl.CreateTableOption) error
 	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
 	Close()
 	GetGlobalVariable(name string) (string, error)
@@ -54,7 +64,7 @@ type Session interface {
 // BatchCreateTableSession is an interface to batch create table parallelly
 type BatchCreateTableSession interface {
 	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo,
-		cs ...ddl.CreateTableWithInfoConfigurier) error
+		cs ...ddl.CreateTableOption) error
 }
 
 // Progress is an interface recording the current execution progress.

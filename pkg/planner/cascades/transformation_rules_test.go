@@ -60,9 +60,9 @@ func testGroupToString(t *testing.T, input []string, output []struct {
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Result = ToString(group)
+			output[i].Result = ToString(ctx, group)
 		})
-		require.Equalf(t, output[i].Result, ToString(group), "case:%v, sql:%s", i, sql)
+		require.Equalf(t, output[i].Result, ToString(ctx, group), "case:%v, sql:%s", i, sql)
 	}
 }
 
@@ -115,9 +115,9 @@ func TestAggPushDownGather(t *testing.T) {
 		group.BuildKeyInfo()
 		testdata.OnRecord(func() {
 			output[i].SQL = sql
-			output[i].Result = ToString(group)
+			output[i].Result = ToString(ctx, group)
 		})
-		require.Equalf(t, output[i].Result, ToString(group), "case:%v, sql:%s", i, sql)
+		require.Equalf(t, output[i].Result, ToString(ctx, group), "case:%v, sql:%s", i, sql)
 	}
 }
 

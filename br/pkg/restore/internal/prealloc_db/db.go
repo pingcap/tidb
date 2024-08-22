@@ -280,26 +280,29 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 	return nil
 }
 
-func (db *DB) tableIDAllocFilter() ddl.AllocTableIDIf {
-	return func(ti *model.TableInfo) bool {
-		if db.preallocedIDs == nil {
-			return true
-		}
-		prealloced := db.preallocedIDs.PreallocedFor(ti)
-		if prealloced {
-			log.Info("reusing table ID", zap.Stringer("table", ti.Name))
-		}
-		return !prealloced
+func (db *DB) canReuseTableID(ti *model.TableInfo) bool {
+	if db.preallocedIDs == nil {
+		return false
 	}
+	prealloced := db.preallocedIDs.PreallocedFor(ti)
+	if prealloced {
+		log.Info("reusing table ID", zap.Stringer("table", ti.Name))
+	}
+	return prealloced
 }
 
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
-		m := map[string][]*model.TableInfo{}
+		idReusableTbls := map[string][]*model.TableInfo{}
+		idNonReusableTbls := map[string][]*model.TableInfo{}
 		for _, table := range tables {
-			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)
+			if db.canReuseTableID(table.Info) {
+				idReusableTbls[table.DB.Name.L] = append(idReusableTbls[table.DB.Name.L], table.Info)
+			} else {
+				idNonReusableTbls[table.DB.Name.L] = append(idNonReusableTbls[table.DB.Name.L], table.Info)
+			}
 			if !supportPolicy {
 				log.Info("set placementPolicyRef to nil when target tidb not support policy",
 					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
@@ -314,8 +317,15 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 				ttlInfo.Enable = false
 			}
 		}
-		if err := batchSession.CreateTables(ctx, m, db.tableIDAllocFilter()); err != nil {
-			return err
+		if len(idReusableTbls) > 0 {
+			if err := batchSession.CreateTables(ctx, idReusableTbls, ddl.WithIDAllocated(true)); err != nil {
+				return err
+			}
+		}
+		if len(idNonReusableTbls) > 0 {
+			if err := batchSession.CreateTables(ctx, idNonReusableTbls); err != nil {
+				return err
+			}
 		}
 
 		for _, table := range tables {
@@ -345,7 +355,8 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		ttlInfo.Enable = false
 	}
 
-	err := db.se.CreateTable(ctx, table.DB.Name, table.Info, db.tableIDAllocFilter())
+	reuseID := db.canReuseTableID(table.Info)
+	err := db.se.CreateTable(ctx, table.DB.Name, table.Info, ddl.WithIDAllocated(reuseID))
 	if err != nil {
 		log.Error("create table failed",
 			zap.Stringer("db", table.DB.Name),

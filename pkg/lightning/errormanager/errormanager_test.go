@@ -231,7 +231,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -258,16 +258,15 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		types.NewIntDatum(4),
 		types.NewStringDatum("5.csv"),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data4)
+	_, err = encoder.AddRecord(data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data5)
+	_, err = encoder.AddRecord(data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 
@@ -421,7 +420,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -448,16 +447,15 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		types.NewIntDatum(4),
 		types.NewStringDatum("5.csv"),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data4)
+	_, err = encoder.AddRecord(data4)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data5)
+	_, err = encoder.AddRecord(data5)
 	require.NoError(t, err)
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 

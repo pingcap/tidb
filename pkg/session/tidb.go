@@ -25,12 +25,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -54,6 +56,9 @@ type domainMap struct {
 	domains map[string]*domain.Domain
 }
 
+// Get or create the domain for store.
+// TODO decouple domain create from it, it's more clear to create domain explicitly
+// before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
@@ -85,11 +90,11 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		sysFactory := createSessionWithDomainFunc(store)
 		d = domain.NewDomain(store, ddlLease, statisticLease, planReplayerGCLease, factory)
 
-		var ddlInjector func(ddl.DDL) *schematracker.Checker
+		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
 			ddlInjector = injector.Injector
 		}
-		err1 = d.Init(ddlLease, sysFactory, ddlInjector)
+		err1 = d.Init(sysFactory, ddlInjector)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
@@ -123,12 +128,11 @@ var (
 	storeBootstrapped     = make(map[string]bool)
 	storeBootstrappedLock sync.Mutex
 
-	// schemaLease is the time for re-updating remote schema.
-	// In online DDL, we must wait 2 * SchemaLease time to guarantee
-	// all servers get the neweset schema.
-	// Default schema lease time is 1 second, you can change it with a proper time,
-	// but you must know that too little may cause badly performance degradation.
-	// For production, you should set a big schema lease, like 300s+.
+	// schemaLease is lease of info schema, we use this to check whether info schema
+	// is valid in SchemaChecker. we also use half of it as info schema reload interval.
+	// Default info schema lease 45s which is init at main, we set it to 1 second
+	// here for tests. you can change it with a proper time, but you must know that
+	// too little may cause badly performance degradation.
 	schemaLease = int64(1 * time.Second)
 
 	// statsLease is the time for reload stats table.
@@ -224,6 +228,9 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	failpoint.Inject("finishStmtError", func() {
+		failpoint.Return(errors.New("occur an error after finishStmt"))
+	})
 	sessVars := se.sessionVars
 	if !sql.IsReadOnly(sessVars) {
 		// All the history should be added here.

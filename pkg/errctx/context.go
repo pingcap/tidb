@@ -94,6 +94,9 @@ func (ctx *Context) AppendWarning(err error) {
 // It also allows using `errors.ErrorGroup`, in this case, it'll handle each error in order, and return the first error
 // it founds.
 func (ctx *Context) HandleError(err error) error {
+	if err == nil {
+		return nil
+	}
 	// The function of handling `errors.ErrorGroup` is placed in `HandleError` but not in `HandleErrorWithAlias`, because
 	// it's hard to give a proper error and warn alias for an error group.
 	if errs, ok := err.(errors.ErrorGroup); ok {

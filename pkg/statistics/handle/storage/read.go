@@ -276,7 +276,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 	histVer := row.GetUint64(4)
 	nullCount := row.GetInt64(5)
 	statsVer := row.GetInt64(7)
-	idx := table.Indices[histID]
+	idx := table.GetIdx(histID)
 	flag := row.GetInt64(8)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 
@@ -357,7 +357,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 		if tracker != nil {
 			tracker.Consume(idx.MemoryUsage().TotalMemoryUsage())
 		}
-		table.Indices[histID] = idx
+		table.SetIdx(histID, idx)
 	} else {
 		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
 	}
@@ -373,7 +373,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	col := table.Columns[histID]
+	col := table.GetCol(histID)
 	flag := row.GetInt64(8)
 
 	for _, colInfo := range tableInfo.Columns {
@@ -474,7 +474,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 		if tracker != nil {
 			tracker.Consume(col.MemoryUsage().TotalMemoryUsage())
 		}
-		table.Columns[col.ID] = col
+		table.SetCol(col.ID, col)
 	} else {
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
 		// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
@@ -492,12 +492,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if table == nil || snapshot > 0 {
-		histColl := statistics.HistColl{
-			PhysicalID:     tableID,
-			HavePhysicalID: true,
-			Columns:        make(map[int64]*statistics.Column, 4),
-			Indices:        make(map[int64]*statistics.Index, 4),
-		}
+		histColl := *statistics.NewHistColl(tableID, true, 0, 0, 4, 4)
 		table = &statistics.Table{
 			HistColl:              histColl,
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
@@ -673,7 +668,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 			tbl.StatsVer = int(statsVer)
 		}
 	}
-	tbl.Columns[col.ID] = colHist
+	tbl.SetCol(col.ID, colHist)
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 	if col.IsSyncLoadFailed {
@@ -730,7 +725,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 	if idxHist.StatsVer != statistics.Version0 {
 		tbl.StatsVer = int(idxHist.StatsVer)
 	}
-	tbl.Indices[idx.ID] = idxHist
+	tbl.SetIdx(idx.ID, idxHist)
 	tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	if idx.IsSyncLoadFailed {

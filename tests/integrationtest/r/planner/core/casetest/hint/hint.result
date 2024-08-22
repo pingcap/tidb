@@ -1670,14 +1670,16 @@ Sort	12487.50	root		planner__core__casetest__hint__hint.t.a
       └─TableRowIDScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 desc format = 'brief' select /*+ INL_MERGE_JOIN(t2)*/ t1.a, t2.a from t t1, t t2 ,t t3 where t1.a = t2.a and t3.a=t2.a;
 id	estRows	task	access object	operator info
-HashJoin	15625.00	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.a)]
-├─IndexReader(Build)	10000.00	root		index:IndexFullScan
-│ └─IndexFullScan	10000.00	cop[tikv]	table:t3, index:b(b)	keep order:false, stats:pseudo
-└─IndexMergeJoin(Probe)	12500.00	root		inner join, inner:TableReader, outer key:planner__core__casetest__hint__hint.t.a, inner key:planner__core__casetest__hint__hint.t.a
-  ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
-  │ └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:b(b)	keep order:false, stats:pseudo
-  └─TableReader(Probe)	10000.00	root		data:TableRangeScan
-    └─TableRangeScan	10000.00	cop[tikv]	table:t2	range: decided by [planner__core__casetest__hint__hint.t.a], keep order:true, stats:pseudo
+MergeJoin	15625.00	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:planner__core__casetest__hint__hint.t.a
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:true, stats:pseudo
+└─MergeJoin(Probe)	12500.00	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:planner__core__casetest__hint__hint.t.a
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+Level	Code	Message
+Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 desc format = 'brief' select * from t t1, (select /*+ HASH_AGG() */ b, max(a) from t t2 group by b) t2 where t1.b = t2.b order by t1.b;
 id	estRows	task	access object	operator info
 Sort	9990.00	root		planner__core__casetest__hint__hint.t.b

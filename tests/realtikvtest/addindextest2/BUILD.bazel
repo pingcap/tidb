@@ -11,7 +11,6 @@ go_test(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
-        "//pkg/ddl/util/callback",
         "//pkg/disttask/framework/scheduler",
         "//pkg/kv",
         "//pkg/lightning/backend/external",
@@ -20,6 +19,7 @@ go_test(
         "//pkg/store/helper",
         "//pkg/tablecodec",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/types",
         "//tests/realtikvtest",
         "@com_github_fsouza_fake_gcs_server//fakestorage",

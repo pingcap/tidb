@@ -175,22 +175,22 @@ func TestDataForTableStatsField(t *testing.T) {
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 18 54 6"))
 	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("4 18 72 8"))
 	tk.MustExec("delete from t where c >= 3")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 18 36 4"))
 	tk.MustExec("delete from t where c=3")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 18 36 4"))
 
@@ -200,7 +200,7 @@ func TestDataForTableStatsField(t *testing.T) {
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 18 54 6"))
 }
@@ -231,7 +231,7 @@ func TestPartitionsTable(t *testing.T) {
 				"[0 0 0 0]\n" +
 				"[0 0 0 0"))
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
-		require.NoError(t, h.Update(is))
+		require.NoError(t, h.Update(context.Background(), is))
 		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
 			testkit.Rows("" +
 				"1 18 18 2]\n" +
@@ -245,7 +245,7 @@ func TestPartitionsTable(t *testing.T) {
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec(`insert into test_partitions_1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_1';").Check(
 		testkit.Rows("<nil> 3 18 54 6"))
 
@@ -309,7 +309,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	tk.MustExec("insert into analyze_test values (1,2),(3,4)")
 
 	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check([][]any{})
-	tk.MustExec("analyze table analyze_test")
+	tk.MustExec("analyze table analyze_test all columns")
 	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check(testkit.Rows("analyze_test"))
 
 	// test the privilege of new user for information_schema.analyze_status
@@ -326,7 +326,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	// test the privilege of user with privilege of test.t1 for information_schema.analyze_status
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
-	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t1 all columns")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t1, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"")) // 1 note.
 	require.NoError(t, dom.StatsHandle().LoadNeededHistograms())
 	tk.MustExec("CREATE ROLE r_t1 ;")
@@ -489,6 +489,124 @@ func TestTiFlashSystemTableWithTiFlashV640(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
+func TestColumnTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tbl1(col_1 int primary key, col_2 int, col_4 int);")
+	tk.MustExec("create table tbl2(col_1 int primary key, col_2 int, col_3 int);")
+	tk.MustExec("create view view1 as select min(col_1), col_2, max(col_4) as max4 from tbl1 group by col_2;")
+
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = 'test';").Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_1",
+			"test|tbl1|col_2",
+			"test|tbl1|col_4",
+			"test|tbl2|col_1",
+			"test|tbl2|col_2",
+			"test|tbl2|col_3",
+			"test|view1|min(col_1)",
+			"test|view1|col_2",
+			"test|view1|max4"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_NAME = 'view1' or TABLE_NAME = 'tbl1'`).Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_1",
+			"test|tbl1|col_2",
+			"test|tbl1|col_4",
+			"test|view1|min(col_1)",
+			"test|view1|col_2",
+			"test|view1|max4"))
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where COLUMN_NAME = \"col_2\";").Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_2",
+			"test|tbl2|col_2",
+			"test|view1|col_2"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'tbl2';`).Check(
+		testkit.RowsWithSep("|",
+			"test|tbl2|col_1",
+			"test|tbl2|col_2",
+			"test|tbl2|col_3"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_SCHEMA = 'test' and COLUMN_NAME = 'col_4'`).Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_4"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_NAME = 'view1' and COLUMN_NAME like 'm%%';`).Check(
+		testkit.RowsWithSep("|",
+			"test|view1|min(col_1)",
+			"test|view1|max4"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'tbl1' and COLUMN_NAME = 'col_2';`).Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_2"))
+	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
+		testkit.RowsWithSep("|", "4923"))
+}
+
+func TestIndexUsageTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table idt1(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_3(col_1, col_2));")
+	tk.MustExec("create table idt2(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_4(col_2, col_1));")
+
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_1",
+			"test|idt1|idx_2",
+			"test|idt1|idx_3",
+			"test|idt2|idx_1",
+			"test|idt2|idx_2",
+			"test|idt2|idx_4"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1'`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_1",
+			"test|idt1|idx_2",
+			"test|idt1|idx_3"))
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3'").Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_3"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt1';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_1",
+			"test|idt1|idx_2",
+			"test|idt1|idx_3"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and INDEX_NAME = 'idx_2';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_2",
+			"test|idt2|idx_2"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_NAME = 'idt1' and INDEX_NAME = 'idx_1';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_1"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt2' and INDEX_NAME = 'idx_4';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt2|idx_4"))
+	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage;`).Check(
+		testkit.RowsWithSep("|", "72"))
+
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_NAME = 'idt3';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where INDEX_NAME = 'IDX_5';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt0';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test1' and INDEX_NAME = 'idx_2';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_NAME = 'idt2' and INDEX_NAME = 'idx_3';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt1' and INDEX_NAME = 'idx_4';`).Check(testkit.Rows())
+}
+
 // https://github.com/pingcap/tidb/issues/32459.
 func TestJoinSystemTableContainsView(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -500,7 +618,7 @@ func TestJoinSystemTableContainsView(t *testing.T) {
 	// This is used by grafana when TiDB is specified as the data source.
 	// See https://github.com/grafana/grafana/blob/e86b6662a187c77656f72bef3b0022bf5ced8b98/public/app/plugins/datasource/mysql/meta_query.ts#L31
 	for i := 0; i < 10; i++ {
-		tk.MustQuery(`
+		tk.MustQueryWithContext(context.Background(), `
 SELECT
     table_name as table_name,
     ( SELECT
@@ -626,4 +744,153 @@ func TestReferencedTableSchemaWithForeignKey(t *testing.T) {
 	FROM information_schema.key_column_usage
 	WHERE table_name = 't2' AND table_schema = 'test2';`).Check(testkit.Rows(
 		"id id t1 test2 test"))
+}
+
+func TestSameTableNameInTwoSchemas(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test1;")
+	tk.MustExec("create database test2;")
+	tk.MustExec("create table test1.t (a int);")
+	tk.MustExec("create table test2.t (a int);")
+
+	rs := tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't' and table_schema = 'test1';").Rows()
+	t1ID, err := strconv.Atoi(rs[0][0].(string))
+	require.NoError(t, err)
+	rs = tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't' and table_schema = 'test2';").Rows()
+	t2ID, err := strconv.Atoi(rs[0][0].(string))
+	require.NoError(t, err)
+
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where tidb_table_id = %d;", t1ID)).
+		Check(testkit.Rows(fmt.Sprintf("test1 t %d", t1ID)))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where tidb_table_id = %d;", t2ID)).
+		Check(testkit.Rows(fmt.Sprintf("test2 t %d", t2ID)))
+
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_name = 't' and tidb_table_id = %d;", t1ID)).
+		Check(testkit.Rows(fmt.Sprintf("test1 t %d", t1ID)))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'test1' and tidb_table_id = %d;", t1ID)).
+		Check(testkit.Rows(fmt.Sprintf("test1 t %d", t1ID)))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_name = 'unknown' and tidb_table_id = %d;", t1ID)).
+		Check(testkit.Rows())
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'unknown' and tidb_table_id = %d;", t1ID)).
+		Check(testkit.Rows())
+}
+
+func TestInfoSchemaConditionWorks(t *testing.T) {
+	// this test creates table in different schema with different index name, and check
+	// the condition in the following columns whether work as expected.
+	//
+	// - "table_schema"
+	// - "constraint_schema"
+	// - "table_name"
+	// - "constraint_name"
+	// - "partition_name"
+	// - "schema_name"
+	// - "index_name"
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	for db := 0; db < 2; db++ {
+		for table := 0; table < 2; table++ {
+			tk.MustExec(fmt.Sprintf("create database if not exists Db%d;", db))
+			tk.MustExec(fmt.Sprintf(`create table Db%d.Table%d (id int primary key, data0 varchar(255), data1 varchar(255))
+				partition by range (id) (
+					partition p0 values less than (10),
+					partition p1 values less than (20)
+				);`, db, table))
+			for index := 0; index < 2; index++ {
+				tk.MustExec(fmt.Sprintf("create unique index Idx%d on Db%d.Table%d (id, data%d);", index, db, table, index))
+			}
+		}
+	}
+
+	testColumns := map[string]string{
+		"table_schema":      "db",
+		"constraint_schema": "db",
+		"table_name":        "table",
+		"constraint_name":   "idx",
+		"partition_name":    "p",
+		"schema_name":       "db",
+		"index_name":        "idx",
+	}
+	testTables := []string{}
+	for _, row := range tk.MustQuery("show tables in information_schema").Rows() {
+		tableName := row[0].(string)
+		// exclude some tables which cannot run without TiKV.
+		if strings.HasPrefix(tableName, "CLUSTER_") ||
+			strings.HasPrefix(tableName, "INSPECTION_") ||
+			strings.HasPrefix(tableName, "METRICS_") ||
+			strings.HasPrefix(tableName, "TIFLASH_") ||
+			strings.HasPrefix(tableName, "TIKV_") ||
+			strings.HasPrefix(tableName, "USER_") ||
+			tableName == "TABLE_STORAGE_STATS" ||
+			strings.Contains(tableName, "REGION") {
+			continue
+		}
+		testTables = append(testTables, row[0].(string))
+	}
+	for _, table := range testTables {
+		rs, err := tk.Exec(fmt.Sprintf("select * from information_schema.%s", table))
+		require.NoError(t, err)
+		cols := rs.Fields()
+
+		chk := rs.NewChunk(nil)
+		rowCount := 0
+		for {
+			err := rs.Next(context.Background(), chk)
+			require.NoError(t, err)
+			if chk.NumRows() == 0 {
+				break
+			}
+			rowCount += chk.NumRows()
+		}
+		if rowCount == 0 {
+			// TODO: find a way to test the table without any rows by adding some rows to them.
+			continue
+		}
+		for i := 0; i < len(cols); i++ {
+			colName := cols[i].Column.Name.L
+			if valPrefix, ok := testColumns[colName]; ok {
+				for j := 0; j < 2; j++ {
+					sql := fmt.Sprintf("select * from information_schema.%s where %s = '%s%d';",
+						table, colName, valPrefix, j)
+					rows := tk.MustQuery(sql).Rows()
+					rowCountWithCondition := len(rows)
+					require.Less(t, rowCountWithCondition, rowCount, "%s has no effect on %s. SQL: %s", colName, table, sql)
+
+					// check the condition works as expected
+					for _, row := range rows {
+						require.Equal(t, fmt.Sprintf("%s%d", valPrefix, j), strings.ToLower(row[i].(string)),
+							"%s has no effect on %s. SQL: %s", colName, table, sql)
+					}
+				}
+			}
+		}
+	}
+
+	// Test the PRIMARY constraint filter
+	rows := tk.MustQuery("select constraint_name, table_schema from information_schema.table_constraints where constraint_name = 'PRIMARY' and table_schema = 'db0';").Rows()
+	require.Equal(t, 2, len(rows))
+	for _, row := range rows {
+		require.Equal(t, "PRIMARY", row[0].(string))
+		require.Equal(t, "Db0", row[1].(string))
+	}
+	rows = tk.MustQuery("select constraint_name, table_schema from information_schema.key_column_usage where constraint_name = 'PRIMARY' and table_schema = 'db1';").Rows()
+	require.Equal(t, 2, len(rows))
+	for _, row := range rows {
+		require.Equal(t, "PRIMARY", row[0].(string))
+		require.Equal(t, "Db1", row[1].(string))
+	}
+
+	// Test the `partition_name` filter
+	tk.MustExec("create database if not exists db_no_partition;")
+	tk.MustExec("create table db_no_partition.t_no_partition (id int primary key, data0 varchar(255), data1 varchar(255));")
+	tk.MustExec(`create table db_no_partition.t_partition (id int primary key, data0 varchar(255), data1 varchar(255))
+		partition by range (id) (
+			partition p0 values less than (10),
+			partition p1 values less than (20)
+		);`)
+	rows = tk.MustQuery("select * from information_schema.partitions where table_schema = 'db_no_partition' and partition_name is NULL;").Rows()
+	require.Equal(t, 1, len(rows))
+	rows = tk.MustQuery("select * from information_schema.partitions where table_schema = 'db_no_partition' and (partition_name is NULL or partition_name = 'p0');").Rows()
+	require.Equal(t, 2, len(rows))
 }

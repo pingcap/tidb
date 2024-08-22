@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
@@ -241,6 +242,10 @@ func (manager *brContextManager) waitPlacementSchedule(ctx context.Context, tabl
 	}
 	log.Info("start waiting placement schedule")
 	ticker := time.NewTicker(time.Second * 10)
+	failpoint.Inject("wait-placement-schedule-quicker-ticker", func() {
+		ticker.Stop()
+		ticker = time.NewTicker(time.Millisecond * 500)
+	})
 	defer ticker.Stop()
 	for {
 		select {

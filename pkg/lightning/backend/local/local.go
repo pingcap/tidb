@@ -408,7 +408,12 @@ type BackendConfig struct {
 	CheckpointEnabled      bool
 	// memory table size of pebble. since pebble can have multiple mem tables, the max memory used is
 	// MemTableSize * MemTableStopWritesThreshold, see pebble.Options for more details.
-	MemTableSize            int
+	MemTableSize int
+	// LocalWriterMemCacheSize is the memory threshold for one local writer of
+	// engines. If the KV payload size exceeds LocalWriterMemCacheSize, local writer
+	// will flush them into the engine.
+	//
+	// It has lower priority than LocalWriterConfig.Local.MemCacheSize.
 	LocalWriterMemCacheSize int64
 	// whether check TiKV capacity before write & ingest.
 	ShouldCheckTiKV    bool
@@ -1229,7 +1234,7 @@ func (local *Backend) executeJob(
 		for _, peer := range job.region.Region.GetPeers() {
 			store, err := local.pdHTTPCli.GetStore(ctx, peer.StoreId)
 			if err != nil {
-				log.FromContext(ctx).Error("failed to get StoreInfo from pd http api", zap.Error(err))
+				log.FromContext(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
 				continue
 			}
 			err = checkDiskAvail(ctx, store)
@@ -1627,18 +1632,25 @@ func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common
 }
 
 func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec tikvclient.Codec, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
+	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
+	// this can help save about 3% of CPU.
+	var preAllocWriteBatch []common.KvPair
+	if !cfg.Local.IsKVSorted {
+		preAllocWriteBatch = make([]common.KvPair, units.MiB)
+		// we want to keep the cacheSize as the whole limit of this local writer, but the
+		// main memory usage comes from two member: kvBuffer and writeBatch, so we split
+		// ~10% to writeBatch for !IsKVSorted, which means we estimate the average length
+		// of KV pairs are 9 times than the size of common.KvPair (9*72B = 648B).
+		cacheSize = cacheSize * 9 / 10
+	}
 	w := &Writer{
 		engine:             engine,
 		memtableSizeLimit:  cacheSize,
 		kvBuffer:           kvBuffer,
-		isKVSorted:         cfg.IsKVSorted,
+		isKVSorted:         cfg.Local.IsKVSorted,
 		isWriteBatchSorted: true,
 		tikvCodec:          tikvCodec,
-	}
-	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
-	// this can help save about 3% of CPU.
-	if !w.isKVSorted {
-		w.writeBatch = make([]common.KvPair, units.MiB)
+		writeBatch:         preAllocWriteBatch,
 	}
 	engine.localWriters.Store(w, nil)
 	return w, nil

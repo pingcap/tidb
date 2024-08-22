@@ -4,6 +4,7 @@ go_test(
     name = "commontest_test",
     timeout = "short",
     srcs = [
+        "cursor_test.go",
         "main_test.go",
         "tidb_test.go",
     ],

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/stretchr/testify/require"
@@ -76,16 +77,16 @@ func (p mockLogicalPlan4Test) Init(ctx base.PlanContext) *mockLogicalPlan4Test {
 func (p *mockLogicalPlan4Test) getPhysicalPlan1(prop *property.PhysicalProperty) base.PhysicalPlan {
 	physicalPlan1 := mockPhysicalPlan4Test{planType: 1}.Init(p.SCtx())
 	physicalPlan1.SetStats(&property.StatsInfo{RowCount: 1})
-	physicalPlan1.childrenReqProps = make([]*property.PhysicalProperty, 1)
-	physicalPlan1.childrenReqProps[0] = prop.CloneEssentialFields()
+	physicalPlan1.SetChildrenReqProps(make([]*property.PhysicalProperty, 1))
+	physicalPlan1.SetXthChildReqProps(0, prop.CloneEssentialFields())
 	return physicalPlan1
 }
 
 func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty) base.PhysicalPlan {
 	physicalPlan2 := mockPhysicalPlan4Test{planType: 2}.Init(p.SCtx())
 	physicalPlan2.SetStats(&property.StatsInfo{RowCount: 1})
-	physicalPlan2.childrenReqProps = make([]*property.PhysicalProperty, 1)
-	physicalPlan2.childrenReqProps[0] = property.NewPhysicalProperty(prop.TaskTp, nil, false, prop.ExpectedCnt, false)
+	physicalPlan2.SetChildrenReqProps(make([]*property.PhysicalProperty, 1))
+	physicalPlan2.SetXthChildReqProps(0, property.NewPhysicalProperty(prop.TaskTp, nil, false, prop.ExpectedCnt, false))
 	return physicalPlan2
 }
 
@@ -115,14 +116,14 @@ func (p *mockLogicalPlan4Test) ExhaustPhysicalPlans(prop *property.PhysicalPrope
 }
 
 type mockPhysicalPlan4Test struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 	// 1 or 2 for physicalPlan1 or physicalPlan2.
 	// See the comment of mockLogicalPlan4Test.
 	planType int
 }
 
 func (p mockPhysicalPlan4Test) Init(ctx base.PlanContext) *mockPhysicalPlan4Test {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, "mockPlan", &p, 0)
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, "mockPlan", &p, 0)
 	return &p
 }
 

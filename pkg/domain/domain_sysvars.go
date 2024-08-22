@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	pd "github.com/tikv/pd/client"
 )
@@ -40,6 +42,8 @@ func (do *Domain) initDomainSysVars() {
 	setGlobalResourceControlFunc := do.setGlobalResourceControl
 	variable.SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
 	variable.SetLowResolutionTSOUpdateInterval = do.setLowResolutionTSOUpdateInterval
+
+	variable.ChangeSchemaCacheSize = do.changeSchemaCacheSize
 }
 
 // setStatsCacheCapacity sets statsCache cap
@@ -114,4 +118,16 @@ func (do *Domain) setExternalTimestamp(ctx context.Context, ts uint64) error {
 
 func (do *Domain) getExternalTimestamp(ctx context.Context) (uint64, error) {
 	return do.store.GetOracle().GetExternalTimestamp(ctx)
+}
+
+func (do *Domain) changeSchemaCacheSize(ctx context.Context, size uint64) error {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnDDL), do.store, true, func(_ context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return t.SetSchemaCacheSize(size)
+	})
+	if err != nil {
+		return err
+	}
+	do.infoCache.Data.SetCacheCapacity(size)
+	return nil
 }

@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"context"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
@@ -276,6 +276,7 @@ func SetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error
 			OldTableID:  recoverTabsInfo[i].TableInfo.ID,
 		}
 	}
+	diff.ReadTableFromMeta = true
 	return nil
 }
 
@@ -312,8 +313,8 @@ func SetSchemaDiffForMultiInfos(diff *model.SchemaDiff, multiInfos ...schemaIDAn
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
-func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
-	schemaVersion, err := d.setSchemaVersion(job, d.store)
+func updateSchemaVersion(jobCtx *jobContext, t *meta.Meta, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
+	schemaVersion, err := jobCtx.setSchemaVersion(job)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -360,7 +361,7 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 	return schemaVersion, errors.Trace(err)
 }
 
-func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSchemaVersion int64, timeStart time.Time) error {
+func waitVersionSynced(jobCtx *jobContext, job *model.Job, latestSchemaVersion int64) (err error) {
 	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
@@ -369,9 +370,12 @@ func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSche
 			mockDDLErrOnce = -1
 		}
 	})
-
-	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err := d.schemaSyncer.OwnerCheckAllVersions(ctx, job.ID, latestSchemaVersion)
+	timeStart := time.Now()
+	defer func() {
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+	}()
+	// WaitVersionSynced returns only when all TiDB schemas are synced(exclude the isolated TiDB).
+	err = jobCtx.schemaVerSyncer.WaitVersionSynced(jobCtx.ctx, job.ID, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion),
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
@@ -384,19 +388,19 @@ func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSche
 	return nil
 }
 
-// waitSchemaSynced handles the following situation:
-// If the job enters a new state, and the worker crashs when it's in the process of waiting for 2 * lease time,
-// Then the worker restarts quickly, we may run the job immediately again,
-// but in this case we don't wait enough 2 * lease time to let other servers update the schema.
-// So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
-// in a cluster, or to wait for 2 * lease time.
-func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job, waitTime time.Duration) error {
+// waitVersionSyncedWithoutMDL handles the following situation:
+// If the job enters a new state, and the worker crash when it's in the process of
+// version sync, then the worker restarts quickly, we may run the job immediately again,
+// but schema version might not sync.
+// So here we get the latest schema version to make sure all servers' schema version
+// update to the latest schema version in a cluster.
+func waitVersionSyncedWithoutMDL(jobCtx *jobContext, job *model.Job) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
 
-	ver, _ := d.store.CurrentVersion(kv.GlobalTxnScope)
-	snapshot := d.store.GetSnapshot(ver)
+	ver, _ := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
+	snapshot := jobCtx.store.GetSnapshot(ver)
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
@@ -413,5 +417,5 @@ func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job, waitTime t
 		}
 	})
 
-	return waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)
+	return updateGlobalVersionAndWaitSynced(jobCtx, latestSchemaVersion, job)
 }

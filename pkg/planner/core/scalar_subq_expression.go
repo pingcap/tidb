@@ -256,21 +256,6 @@ func (s *ScalarSubQueryExpr) String() string {
 	return builder.String()
 }
 
-// MarshalJSON implements the goJSON.Marshaler interface.
-func (s *ScalarSubQueryExpr) MarshalJSON() ([]byte, error) {
-	if s.evalErr != nil {
-		return nil, s.evalErr
-	}
-	if s.evaled {
-		return s.Constant.MarshalJSON()
-	}
-	err := s.selfEvaluate()
-	if err != nil {
-		return nil, err
-	}
-	return s.Constant.MarshalJSON()
-}
-
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (*ScalarSubQueryExpr) VecEvalInt(_ expression.EvalContext, _ *chunk.Chunk, _ *chunk.Column) error {
 	return errors.Errorf("ScalarSubQueryExpr doesn't implement the vec eval yet")

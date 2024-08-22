@@ -205,16 +205,18 @@ func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 	lfu.wait()
 	v, ok := lfu.Get(rand.Int63n(50))
 	require.True(t, ok)
-	for _, c := range v.Columns {
+	v.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
 		require.Equal(t, c.GetEvictedStatus(), statistics.AllEvicted)
-	}
-	for _, i := range v.Indices {
+		return false
+	})
+	v.ForEachIndexImmutable(func(_ int64, i *statistics.Index) bool {
 		require.Equal(t, i.GetEvictedStatus(), statistics.AllEvicted)
-	}
+		return false
+	})
 }
 
 func checkTable(t *testing.T, tbl *statistics.Table) {
-	for _, column := range tbl.Columns {
+	tbl.ForEachColumnImmutable(func(_ int64, column *statistics.Column) bool {
 		if column.GetEvictedStatus() == statistics.AllEvicted {
 			require.Nil(t, column.TopN)
 			require.Equal(t, 0, cap(column.Histogram.Buckets))
@@ -222,8 +224,9 @@ func checkTable(t *testing.T, tbl *statistics.Table) {
 			require.NotNil(t, column.TopN)
 			require.Greater(t, cap(column.Histogram.Buckets), 0)
 		}
-	}
-	for _, idx := range tbl.Indices {
+		return false
+	})
+	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		if idx.GetEvictedStatus() == statistics.AllEvicted {
 			require.Nil(t, idx.TopN)
 			require.Equal(t, 0, cap(idx.Histogram.Buckets))
@@ -231,7 +234,8 @@ func checkTable(t *testing.T, tbl *statistics.Table) {
 			require.NotNil(t, idx.TopN)
 			require.Greater(t, cap(idx.Histogram.Buckets), 0)
 		}
-	}
+		return false
+	})
 }
 
 func TestLFUReject(t *testing.T) {
@@ -254,12 +258,14 @@ func TestLFUReject(t *testing.T) {
 	require.Len(t, lfu.Values(), 2)
 	v, ok := lfu.Get(2)
 	require.True(t, ok)
-	for _, c := range v.Columns {
+	v.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
 		require.Equal(t, statistics.AllEvicted, c.GetEvictedStatus())
-	}
-	for _, i := range v.Indices {
+		return false
+	})
+	v.ForEachIndexImmutable(func(_ int64, i *statistics.Index) bool {
 		require.Equal(t, statistics.AllEvicted, i.GetEvictedStatus())
-	}
+		return false
+	})
 }
 
 func TestMemoryControl(t *testing.T) {
@@ -294,4 +300,16 @@ func TestMemoryControl(t *testing.T) {
 	lfu.SetCapacity(0)
 	lfu.wait()
 	require.Equal(t, int64(10)*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
+}
+
+func TestMemoryControlWithUpdate(t *testing.T) {
+	capacity := int64(100)
+	lfu, err := NewLFU(capacity)
+	require.NoError(t, err)
+	for i := 0; i < 100; i++ {
+		t1 := testutil.NewMockStatisticsTable(i, 1, true, false, false)
+		lfu.Put(1, t1)
+	}
+	time.Sleep(1 * time.Second)
+	require.Equal(t, int64(0), lfu.Cost())
 }

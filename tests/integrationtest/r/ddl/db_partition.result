@@ -73,7 +73,7 @@ partition p7bB values less than ("bB"),
 partition p8bb values less than ("bb"),
 partition pMax values less than (MAXVALUE));
 insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba");
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a = "AA" collate utf8mb4_general_ci;
 id	estRows	task	access object	operator info
 TableReader	16.00	root	partition:all	data:Selection
@@ -174,7 +174,7 @@ partition p4 values less than ("B"),
 partition p5 values less than ("bb"),
 partition pMax values less than (MAXVALUE));
 insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba"),("ä"),("ÄÄÄ");
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a = "aa" collate utf8mb4_general_ci;
 id	estRows	task	access object	operator info
 TableReader	4.00	root	partition:p2	data:Selection
@@ -588,7 +588,7 @@ PARTITION BY LIST COLUMNS(`a`)
  PARTITION `p1` VALUES IN ('1',NULL,DEFAULT),
  PARTITION `p2` VALUES IN ('2','7','10'))
 insert into t values (1, "1"), (2, "2"), (3,'3'), (null, null), (4, "4"), (11, "11");
-analyze table t;
+analyze table t all columns;
 select * from t partition(p0);
 b	a
 4	4
@@ -2021,7 +2021,7 @@ create table t (a char(10) collate utf8mb4_general_ci) partition by list columns
 Error 1495 (HY000): Multiple definition of same constant in list partitioning
 create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));
 insert into t11(a) values ('A'), ('c'), ('C'), ('d'), ('B');
-analyze table t11;
+analyze table t11 all columns;
 select * from t11 order by a;
 a
 A
@@ -3224,6 +3224,10 @@ create table pt15 (id int not null, unique index uk_id (id)) partition by hash(i
 create table nt15 (id int not null, index uk_id (id));
 alter table pt15 exchange partition p0 with table nt15;
 Error 1736 (HY000): Tables have different definitions
+create table pt15b (id int not null, a int, unique index uk_id (a) global) partition by hash(id) partitions 1;
+create table nt15b (id int not null, a int, unique index uk_id (a));
+alter table pt15b exchange partition p0 with table nt15b;
+Error 1731 (HY000): Non matching attribute 'global index: uk_id' between partition and table
 ## auto_increment
 create table pt16 (id int not null primary key auto_increment) partition by hash(id) partitions 1;
 create table nt16 (id int not null primary key);
@@ -3304,10 +3308,51 @@ create temporary table nt34 (id int);
 alter table pt34 exchange partition p0 with table nt34;
 Error 1733 (HY000): Table to exchange with partition is temporary: 'nt34'
 ## global index
-create table pt35 (a int, b int, unique index(b)) partition by hash(a) partitions 1;
+create table pt35 (a int, b int, unique index(b) global) partition by hash(a) partitions 1;
 create table nt35 (a int, b int, unique index(b));
 alter table pt35 exchange partition p0 with table nt35;
 Error 1731 (HY000): Non matching attribute 'global index: b' between partition and table
 drop database partition_exchange;
 use ddl__db_partition;
 set tidb_enable_global_index=default;
+# 53385
+drop table if exists t,t1;
+create table t (id int not null, store_id int not null )  partition by range (store_id) (partition p0 values less than (6), partition p1 values less than (11), partition p2 values less than (16), partition p3 values less than (21));
+create table t1(id int not null, store_id int not null);
+insert into t values (1, 1);
+insert into t values (2, 17);
+insert into t1 values (0, 18);
+alter table t exchange partition p3 with table t1;
+alter table t remove partitioning;
+select * from t;
+id	store_id
+0	18
+1	1
+select *,_tidb_rowid from t;
+id	store_id	_tidb_rowid
+0	18	30257
+1	1	30001
+drop table t, t1;
+create table t (id int not null, store_id int not null )  partition by range (store_id) (partition p0 values less than (6), partition p1 values less than (11), partition p2 values less than (16), partition p3 values less than (21));
+create table t1(id int not null, store_id int not null);
+insert into t values (1, 1);
+insert into t values (2, 17);
+insert into t1 values (0, 18);
+alter table t exchange partition p3 with table t1;
+select *, _tidb_rowid from t;
+id	store_id	_tidb_rowid
+0	18	1
+1	1	1
+select *, _tidb_rowid from t1;
+id	store_id	_tidb_rowid
+2	17	2
+alter table t reorganize partition p0, p1, p2, p3 into (partition pMax values less than (maxvalue));
+select * from t;
+id	store_id
+0	18
+1	1
+select *,_tidb_rowid from t;
+id	store_id	_tidb_rowid
+0	18	30257
+1	1	30001
+drop table t, t1;

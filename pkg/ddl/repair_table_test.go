@@ -20,13 +20,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +39,7 @@ func TestRepairTable(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable"))
 	}()
 
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, repairTableLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, repairTableLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -101,9 +101,8 @@ func TestRepairTable(t *testing.T) {
 	// Repaired tableInfo has been filtered by `domain.InfoSchema()`, so get it in repairInfo.
 	originTableInfo, _ := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	var repairErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type != model.ActionRepairTable {
 			return
 		}
@@ -123,10 +122,7 @@ func TestRepairTable(t *testing.T) {
 		if repairErr != nil && terror.ErrorEqual(repairErr, infoschema.ErrTableNotExists) {
 			repairErr = nil
 		}
-	}
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originalHook)
-	dom.DDL().SetHook(hook)
+	})
 
 	// Exec the repair statement to override the tableInfo.
 	tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key nonclustered auto_increment, b varchar(5), c int);")

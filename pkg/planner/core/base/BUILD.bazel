@@ -6,6 +6,7 @@ go_library(
         "doc.go",
         "misc_base.go",
         "plan_base.go",
+        "rule_base.go",
         "task_base.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/base",

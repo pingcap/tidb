@@ -22,7 +22,7 @@ go_test(
     ],
     embed = [":vecgroupchecker"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//pkg/config",
         "//pkg/expression",

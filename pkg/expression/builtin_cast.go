@@ -29,6 +29,7 @@ import (
 	"strings"
 	gotime "time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -815,7 +816,7 @@ func (b *builtinCastIntAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (res 
 	}
 	if mysql.HasIsBooleanFlag(b.args[0].GetType(ctx).GetFlag()) {
 		res = types.CreateBinaryJSON(val != 0)
-	} else if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
+	} else if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) || b.args[0].GetType(ctx).GetType() == mysql.TypeYear {
 		res = types.CreateBinaryJSON(uint64(val))
 	} else {
 		res = types.CreateBinaryJSON(val)
@@ -1011,7 +1012,7 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 	if !b.inUnion || val >= 0 {
 		err = res.FromFloat64(val)
 		if types.ErrOverflow.Equal(err) {
-			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
+			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable))
 			err = ec.HandleErrorWithAlias(err, err, warnErr)
 		} else if types.ErrTruncated.Equal(err) {
 			// This behavior is consistent with MySQL.

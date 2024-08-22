@@ -175,7 +175,17 @@ func (d *DBStore) adjust(
 	}
 
 	if d.Security == nil {
-		d.Security = s
+		d.Security = &Security{
+			CAPath:                   s.CAPath,
+			CertPath:                 s.CertPath,
+			KeyPath:                  s.KeyPath,
+			CABytes:                  s.CABytes,
+			CertBytes:                s.CertBytes,
+			KeyBytes:                 s.KeyBytes,
+			RedactInfoLog:            s.RedactInfoLog,
+			TLSConfig:                s.TLSConfig,
+			AllowFallbackToPlaintext: s.AllowFallbackToPlaintext,
+		}
 	}
 
 	switch d.TLS {
@@ -202,9 +212,9 @@ func (d *DBStore) adjust(
 		d.Security.TLSConfig = nil
 		d.Security.CAPath = ""
 		d.Security.CertPath = ""
-		d.Security.KeyPath = ""
 		d.Security.CABytes = nil
 		d.Security.CertBytes = nil
+		d.Security.KeyPath = ""
 		d.Security.KeyBytes = nil
 	default:
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
@@ -1622,14 +1632,4 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		return err
 	}
 	return cfg.Conflict.adjust(&cfg.TikvImporter)
-}
-
-// AdjustForDDL acts like Adjust, but DDL will not use some functionalities so
-// those members are skipped in adjusting.
-func (cfg *Config) AdjustForDDL() error {
-	if err := cfg.TikvImporter.adjust(); err != nil {
-		return err
-	}
-	cfg.App.adjust(&cfg.TikvImporter)
-	return nil
 }

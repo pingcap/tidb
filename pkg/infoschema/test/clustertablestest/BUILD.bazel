@@ -18,6 +18,7 @@ go_test(
         "//pkg/infoschema",
         "//pkg/infoschema/internal",
         "//pkg/kv",
+        "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/parser",
         "//pkg/parser/auth",

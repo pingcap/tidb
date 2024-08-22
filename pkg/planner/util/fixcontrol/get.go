@@ -11,6 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
+// 	NOTE: For assigning new fix control numbers - use the issue number associated with the fix.
+//
 
 package fixcontrol
 
@@ -48,12 +51,16 @@ const (
 	Fix45798 uint64 = 45798
 	// Fix46177 controls whether to explore enforced plans for DataSource if it has already found an unenforced plan.
 	Fix46177 uint64 = 46177
+	// Fix47400 controls whether to allow a rowEst below 1
+	Fix47400 uint64 = 47400
 	// Fix49736 controls whether to force the optimizer to use plan cache even if there is risky optimization.
 	// This fix-control is test-only.
 	Fix49736 uint64 = 49736
 	// Fix52869 controls whether to disable the limitation that index merge path won't be generated automatically when
 	// there exist other single-index access paths that do range scan.
 	Fix52869 uint64 = 52869
+	// Fix54337 controls whether to apply or not range intersection for index access.
+	Fix54337 uint64 = 54337
 )
 
 // GetStr fetches the given key from the fix control map as a string type.

@@ -138,10 +138,6 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 		*physTblIDColIdx = numIdxCols
 		lastCol = pb.Columns[numIdxCols-1]
 	}
-	if lastCol.GetColumnId() == model.ExtraPidColID {
-		numIdxCols--
-		lastCol = pb.Columns[numIdxCols-1]
-	}
 
 	hdlStatus := tablecodec.HandleDefault
 	if len(primaryColIds) == 0 {
@@ -566,7 +562,7 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 	case tipb.ExecType_TypeExpand:
 		return b.buildExpand(exec.Expand)
 	default:
-		return nil, errors.Errorf(ErrExecutorNotSupportedMsg + exec.Tp.String())
+		return nil, errors.New(ErrExecutorNotSupportedMsg + exec.Tp.String())
 	}
 }
 
@@ -628,7 +624,7 @@ func (h *MPPTaskHandler) HandleEstablishConn(_ context.Context, req *mpp.Establi
 			return tunnel, nil
 		}
 		if err.Code == MPPErrMPPGatherIDMismatch {
-			return nil, errors.Errorf(err.Msg)
+			return nil, errors.New(err.Msg)
 		}
 		time.Sleep(time.Second)
 	}

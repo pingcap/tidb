@@ -36,3 +36,8 @@ func EnableCall(t testing.TB, name string, fn any) {
 		require.NoError(t, failpoint.Disable(name))
 	})
 }
+
+// Disable disables fail-point.
+func Disable(t testing.TB, name string) {
+	require.NoError(t, failpoint.Disable(name))
+}

@@ -1097,11 +1097,24 @@ const (
 	// version 198
 	//   add column `owner_id` for `mysql.tidb_mdl_info` table
 	version198 = 198
+
+	// ...
+	// [version199, version208] is the version range reserved for patches of 8.1.x
+	// ...
+
+	// version 209
+	//   sets `tidb_resource_control_strict_mode` to off when a cluster upgrades from some version lower than v8.2.
+	version209 = 209
+	// version210 indicates that if TiDB is upgraded from a lower version(lower than 8.3.0), the tidb_analyze_column_options will be set to ALL.
+	version210 = 210
+
+	// version211 add column `summary` to `mysql.tidb_background_subtask_history`.
+	version211 = 211
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version198
+var currentBootstrapVersion int64 = version211
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1265,6 +1278,9 @@ var (
 		upgradeToVer196,
 		upgradeToVer197,
 		upgradeToVer198,
+		upgradeToVer209,
+		upgradeToVer210,
+		upgradeToVer211,
 	}
 )
 
@@ -1406,6 +1422,8 @@ func upgrade(s sessiontypes.Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
+	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
+	// but during upgrade we disable it.
 	if isNull {
 		upgradeToVer99Before(s)
 	}
@@ -2369,19 +2387,7 @@ func upgradeToVer80(s sessiontypes.Session, ver int64) {
 	}
 	// Check if tidb_analyze_version exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion, 1)
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeVersion, 1)
 }
 
 // For users that upgrade TiDB from a pre-4.0 version, we want to disable index merge by default.
@@ -2392,19 +2398,7 @@ func upgradeToVer81(s sessiontypes.Session, ver int64) {
 	}
 	// Check if tidb_enable_index_merge exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_enable_index_merge | off".
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableIndexMerge)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableIndexMerge, variable.Off)
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableIndexMerge, variable.Off)
 }
 
 func upgradeToVer82(s sessiontypes.Session, ver int64) {
@@ -2539,19 +2533,7 @@ func upgradeToVer97(s sessiontypes.Session, ver int64) {
 	}
 	// Check if tidb_opt_range_max_size exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_opt_range_max_size | 0" since this is the old behavior before we introduce this variable.
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptRangeMaxSize)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptRangeMaxSize, 0)
+	initGlobalVariableIfNotExists(s, variable.TiDBOptRangeMaxSize, 0)
 }
 
 func upgradeToVer98(s sessiontypes.Session, ver int64) {
@@ -2620,19 +2602,7 @@ func upgradeToVer105(s sessiontypes.Session, ver int64) {
 	if ver >= version105 {
 		return
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBCostModelVersion)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBCostModelVersion, "1")
+	initGlobalVariableIfNotExists(s, variable.TiDBCostModelVersion, "1")
 }
 
 func upgradeToVer106(s sessiontypes.Session, ver int64) {
@@ -2724,20 +2694,7 @@ func upgradeToVer135(s sessiontypes.Session, ver int64) {
 	if ver >= version135 {
 		return
 	}
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint, false)
+	initGlobalVariableIfNotExists(s, variable.TiDBOptAdvancedJoinHint, false)
 }
 
 func upgradeToVer136(s sessiontypes.Session, ver int64) {
@@ -2801,19 +2758,7 @@ func upgradeToVer142(s sessiontypes.Session, ver int64) {
 	if ver >= version142 {
 		return
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache, variable.Off)
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableNonPreparedPlanCache, variable.Off)
 }
 
 func upgradeToVer143(s sessiontypes.Session, ver int64) {
@@ -2828,19 +2773,8 @@ func upgradeToVer144(s sessiontypes.Session, ver int64) {
 	if ver >= version144 {
 		return
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
 
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
+	initGlobalVariableIfNotExists(s, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
 }
 
 func upgradeToVer146(s sessiontypes.Session, ver int64) {
@@ -3115,6 +3049,52 @@ func upgradeToVer198(s sessiontypes.Session, ver int64) {
 	}
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mdl_info ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT '';", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer209(s sessiontypes.Session, ver int64) {
+	if ver >= version209 {
+		return
+	}
+
+	initGlobalVariableIfNotExists(s, variable.TiDBResourceControlStrictMode, variable.Off)
+}
+
+func upgradeToVer210(s sessiontypes.Session, ver int64) {
+	if ver >= version210 {
+		return
+	}
+
+	// Check if tidb_analyze_column_options exists in mysql.GLOBAL_VARIABLES.
+	// If not, set tidb_analyze_column_options to ALL since this is the old behavior before we introduce this variable.
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeColumnOptions, model.AllColumns.String())
+
+	// Check if tidb_opt_projection_push_down exists in mysql.GLOBAL_VARIABLES.
+	// If not, set tidb_opt_projection_push_down to Off since this is the old behavior before we introduce this variable.
+	initGlobalVariableIfNotExists(s, variable.TiDBOptProjectionPushDown, variable.Off)
+}
+
+func upgradeToVer211(s sessiontypes.Session, ver int64) {
+	if ver >= version211 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
+}
+
+// initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
+func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, name)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, name, val)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
@@ -3395,14 +3375,16 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 
 	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	for _, dbName := range is.AllSchemaNames() {
-		for _, t := range is.SchemaTables(dbName) {
-			pi := t.Meta().GetPartitionInfo()
+	dbs := is.ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	for _, db := range dbs {
+		for _, t := range db.TableInfos {
+			pi := t.GetPartitionInfo()
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue
 			}
-
-			pe := t.(partitionExpr).PartitionExpr()
+			tbl, ok := is.TableByID(s.currentCtx, t.ID)
+			intest.Assert(ok, "table not found in infoschema")
+			pe := tbl.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {
 				if err := cp.RebuildPartitionValueMapAndSorted(p, pi.Definitions); err != nil {
 					logutil.BgLogger().Warn("build list column partition value map and sorted failed")

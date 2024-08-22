@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var (
@@ -50,7 +51,11 @@ func String(mode string, input string) string {
 		return b.String()
 	case "OFF":
 		return input
+	case "ON":
+		return ""
 	default:
+		// should never happen
+		intest.Assert(false, "invalid redact mode")
 		return ""
 	}
 }
@@ -203,4 +208,18 @@ func Key(key []byte) string {
 		return "?"
 	}
 	return strings.ToUpper(hex.EncodeToString(key))
+}
+
+// WriteRedact is to write string with redact into `strings.Builder`
+func WriteRedact(build *strings.Builder, v string, redact string) {
+	if redact == errors.RedactLogMarker {
+		build.WriteString("‹")
+		build.WriteString(v)
+		build.WriteString("›")
+		return
+	} else if redact == errors.RedactLogEnable {
+		build.WriteString("?")
+		return
+	}
+	build.WriteString(v)
 }

@@ -39,3 +39,8 @@ alter table t1 add column(c tinyint default '11abc');
 alter table t1 add column(c datetime default '11abc');
 --error 1067
 alter table t1 add column d date default '2024-10';
+
+# TestIssue53779
+drop table if exists t;
+create table t(a decimal(0,0), b decimal(0));
+show create table t;

@@ -55,6 +55,7 @@ import (
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -281,13 +282,13 @@ type ShowNextRowIDExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowNextRowIDExec) Next(_ context.Context, req *chunk.Chunk) error {
+func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.done {
 		return nil
 	}
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
-	tbl, err := is.TableByName(e.tblName.Schema, e.tblName.Name)
+	tbl, err := is.TableByName(ctx, e.tblName.Schema, e.tblName.Name)
 	if err != nil {
 		return err
 	}
@@ -824,7 +825,7 @@ func getSchemaName(is infoschema.InfoSchema, id int64) string {
 
 func getTableName(is infoschema.InfoSchema, id int64) string {
 	var tableName string
-	table, ok := is.TableByID(id)
+	table, ok := is.TableByID(context.Background(), id)
 	if ok {
 		tableName = table.Meta().Name.O
 		return tableName
@@ -1150,8 +1151,8 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	// If there's no handle or it's not a `SELECT FOR UPDATE` statement.
-	if len(e.tblID2Handle) == 0 || (!plannercore.IsSelectForUpdateLockType(e.Lock.LockType)) {
+	// If there's no handle or it's not a `SELECT FOR UPDATE` or `SELECT FOR SHARE` statement.
+	if len(e.tblID2Handle) == 0 || (!logicalop.IsSupportedSelectLockType(e.Lock.LockType)) {
 		return nil
 	}
 
@@ -1184,7 +1185,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	lockWaitTime := e.Ctx().GetSessionVars().LockWaitTimeout
-	if e.Lock.LockType == ast.SelectLockForUpdateNoWait {
+	if e.Lock.LockType == ast.SelectLockForUpdateNoWait || e.Lock.LockType == ast.SelectLockForShareNoWait {
 		lockWaitTime = tikvstore.LockNoWait
 	} else if e.Lock.LockType == ast.SelectLockForUpdateWaitN {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
@@ -1526,9 +1527,24 @@ func (e *TableDualExec) Next(_ context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+type selectionExecutorContext struct {
+	stmtMemTracker             *memory.Tracker
+	evalCtx                    expression.EvalContext
+	enableVectorizedExpression bool
+}
+
+func newSelectionExecutorContext(sctx sessionctx.Context) selectionExecutorContext {
+	return selectionExecutorContext{
+		stmtMemTracker:             sctx.GetSessionVars().StmtCtx.MemTracker,
+		evalCtx:                    sctx.GetExprCtx().GetEvalCtx(),
+		enableVectorizedExpression: sctx.GetSessionVars().EnableVectorizedExpression,
+	}
+}
+
 // SelectionExec represents a filter executor.
 type SelectionExec struct {
-	exec.BaseExecutor
+	selectionExecutorContext
+	exec.BaseExecutorV2
 
 	batched     bool
 	filters     []expression.Expression
@@ -1542,7 +1558,7 @@ type SelectionExec struct {
 
 // Open implements the Executor Open interface.
 func (e *SelectionExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := e.BaseExecutorV2.Open(ctx); err != nil {
 		return err
 	}
 	failpoint.Inject("mockSelectionExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
@@ -1559,7 +1575,7 @@ func (e *SelectionExec) open(context.Context) error {
 	} else {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker.AttachTo(e.stmtMemTracker)
 	e.childResult = exec.TryNewCacheChunk(e.Children(0))
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 	e.batched = expression.Vectorizable(e.filters)
@@ -1578,7 +1594,7 @@ func (e *SelectionExec) Close() error {
 		e.childResult = nil
 	}
 	e.selected = nil
-	return e.BaseExecutor.Close()
+	return e.BaseExecutorV2.Close()
 }
 
 // Next implements the Executor Next interface.
@@ -1611,7 +1627,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.childResult.NumRows() == 0 {
 			return nil
 		}
-		e.selected, err = expression.VectorizedFilter(e.Ctx().GetExprCtx().GetEvalCtx(), e.Ctx().GetSessionVars().EnableVectorizedExpression, e.filters, e.inputIter, e.selected)
+		e.selected, err = expression.VectorizedFilter(e.evalCtx, e.enableVectorizedExpression, e.filters, e.inputIter, e.selected)
 		if err != nil {
 			return err
 		}
@@ -1623,10 +1639,10 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // For sql with "SETVAR" in filter and "GETVAR" in projection, for example: "SELECT @a FROM t WHERE (@a := 2) > 0",
 // we have to set batch size to 1 to do the evaluation of filter and projection.
 func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) error {
-	exprCtx := e.Ctx().GetExprCtx()
+	evalCtx := e.evalCtx
 	for {
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			selected, _, err := expression.EvalBool(exprCtx.GetEvalCtx(), e.filters, e.inputRow)
+			selected, _, err := expression.EvalBool(evalCtx, e.filters, e.inputRow)
 			if err != nil {
 				return err
 			}
@@ -1784,9 +1800,32 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc.SetTimeZone(vars.Location())
 	sc.TaskID = stmtctx.AllocateTaskID()
-	sc.CTEStorageMap = map[int]*CTEStorages{}
+	if sc.CTEStorageMap == nil {
+		sc.CTEStorageMap = map[int]*CTEStorages{}
+	} else {
+		clear(sc.CTEStorageMap.(map[int]*CTEStorages))
+	}
+	if sc.LockTableIDs == nil {
+		sc.LockTableIDs = make(map[int64]struct{})
+	} else {
+		clear(sc.LockTableIDs)
+	}
+	if sc.TableStats == nil {
+		sc.TableStats = make(map[int64]any)
+	} else {
+		clear(sc.TableStats)
+	}
+	if sc.MDLRelatedTableIDs == nil {
+		sc.MDLRelatedTableIDs = make(map[int64]struct{})
+	} else {
+		clear(sc.MDLRelatedTableIDs)
+	}
+	if sc.TblInfo2UnionScan == nil {
+		sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+	} else {
+		clear(sc.TblInfo2UnionScan)
+	}
 	sc.IsStaleness = false
-	sc.LockTableIDs = make(map[int64]struct{})
 	sc.EnableOptimizeTrace = false
 	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
@@ -1818,8 +1857,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Killer = &vars.SQLKiller
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID = vars.ConnectionID
-	vars.StmtCtx.TableStats = make(map[int64]any)
-	sc.MDLRelatedTableIDs = make(map[int64]struct{})
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
@@ -2052,7 +2089,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.SetForcePlanCache(fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false))
 	sc.SetAlwaysWarnSkipCache(sc.InExplainStmt && sc.ExplainFormat == "plan_cache")
-	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
@@ -2160,6 +2196,15 @@ func (e *FastCheckTableExec) Open(ctx context.Context) error {
 
 type checkIndexTask struct {
 	indexOffset int
+	err         *atomic.Pointer[error]
+}
+
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (c checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+	return "fast_check_table", "RecoverArgs", func() {
+		err := errors.Errorf("checkIndexTask panicked, indexOffset: %d", c.indexOffset)
+		c.err.CompareAndSwap(nil, &err)
+	}, false
 }
 
 type checkIndexWorker struct {
@@ -2473,9 +2518,10 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 					}
 					return k
 				},
-				Tbl:  w.table.Meta(),
-				Idx:  idxInfo,
-				Sctx: w.sctx,
+				Tbl:             w.table.Meta(),
+				Idx:             idxInfo,
+				EnableRedactLog: w.sctx.GetSessionVars().EnableRedactLog,
+				Storage:         w.sctx.GetStore(),
 			}
 		}
 
@@ -2582,7 +2628,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	e.wg.Add(len(e.indexInfos))
 	for i := range e.indexInfos {
-		workerPool.AddTask(checkIndexTask{indexOffset: i})
+		workerPool.AddTask(checkIndexTask{indexOffset: i, err: e.err})
 	}
 
 	e.wg.Wait()

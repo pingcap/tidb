@@ -376,9 +376,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				IndexEncode: func(*consistency.RecordData) kv.Key {
 					return e.idxKey
 				},
-				Tbl:  e.tblInfo,
-				Idx:  e.idxInfo,
-				Sctx: e.Ctx(),
+				Tbl:             e.tblInfo,
+				Idx:             e.idxInfo,
+				EnableRedactLog: e.Ctx().GetSessionVars().EnableRedactLog,
+				Storage:         e.Ctx().GetStore(),
 			}).ReportLookupInconsistent(ctx,
 				1, 0,
 				[]kv.Handle{e.handle},
@@ -658,7 +659,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 
 	var partName string
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	tblInfo, _ := is.TableByID((e.tblInfo.ID))
+	tblInfo, _ := is.TableByID(context.Background(), e.tblInfo.ID)
 	tblName := tblInfo.Meta().Name.String()
 	tblID := GetPhysID(tblInfo.Meta(), e.partitionDefIdx)
 	if tblID != tblInfo.Meta().ID {

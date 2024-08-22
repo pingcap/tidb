@@ -537,14 +537,14 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 		return false
 	}
 	if !item.IsIndex && colHist != nil {
-		c, ok := tbl.Columns[item.ID]
+		c := tbl.GetCol(item.ID)
 		// - If the stats is fully loaded,
 		// - If the stats is meta-loaded and we also just need the meta.
-		if ok && (c.IsFullLoad() || !fullLoaded) {
+		if c != nil && (c.IsFullLoad() || !fullLoaded) {
 			return false
 		}
 		tbl = tbl.Copy()
-		tbl.Columns[item.ID] = colHist
+		tbl.SetCol(item.ID, colHist)
 		// If the column is analyzed we refresh the map for the possible change.
 		if colHist.StatsAvailable() {
 			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, true)
@@ -554,14 +554,14 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 			tbl.StatsVer = statistics.Version0
 		}
 	} else if item.IsIndex && idxHist != nil {
-		index, ok := tbl.Indices[item.ID]
+		index := tbl.GetIdx(item.ID)
 		// - If the stats is fully loaded,
 		// - If the stats is meta-loaded and we also just need the meta.
-		if ok && (index.IsFullLoad() || !fullLoaded) {
+		if index != nil && (index.IsFullLoad() || !fullLoaded) {
 			return true
 		}
 		tbl = tbl.Copy()
-		tbl.Indices[item.ID] = idxHist
+		tbl.SetIdx(item.ID, idxHist)
 		// If the index is analyzed we refresh the map for the possible change.
 		if idxHist.IsAnalyzed() {
 			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, idxHist.Info, true)
