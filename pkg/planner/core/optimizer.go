@@ -64,7 +64,6 @@ var AllowCartesianProduct = atomic.NewBool(true)
 // IsReadOnly check whether the ast.Node is a read only statement.
 var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
-<<<<<<< HEAD
 // Note: The order of flags is same as the order of optRule in the list.
 // Do not mess up the order.
 const (
@@ -119,37 +118,8 @@ var optRuleList = []logicalOptRule{
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&pushDownSequenceSolver{},
 	&resolveExpand{},
-=======
-const initialMaxCores uint64 = 10000
-
-var optRuleList = []base.LogicalOptRule{
-	&GcSubstituter{},
-	&ColumnPruner{},
-	&ResultReorder{},
-	&rule.BuildKeySolver{},
-	&DecorrelateSolver{},
-	&SemiJoinRewriter{},
-	&AggregationEliminator{},
-	&SkewDistinctAggRewriter{},
-	&ProjectionEliminator{},
-	&MaxMinEliminator{},
-	&rule.ConstantPropagationSolver{},
-	&ConvertOuterToInnerJoin{},
-	&PPDSolver{},
-	&OuterJoinEliminator{},
-	&PartitionProcessor{},
-	&CollectPredicateColumnsPoint{},
-	&AggregationPushDownSolver{},
-	&DeriveTopNFromWindow{},
-	&PredicateSimplification{},
-	&PushDownTopNOptimizer{},
-	&SyncWaitStatsLoadPoint{},
-	&JoinReOrderSolver{},
-	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
-	&PushDownSequenceSolver{},
-	&ResolveExpand{},
->>>>>>> 38f9d702ff6 (planner: use logical cores as default fine grained stream count (#55544))
 }
+const initialMaxCores uint64 = 10000
 
 // Interaction Rule List
 /* The interaction rule will be trigger when it satisfies following conditions:
