@@ -1044,7 +1044,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
-	rowCount = totalPercent * float64(modifyCount)
+	rowCount = totalPercent * hg.NotNullCount()
 
 	// Calculate any out-of-range portion attributed to sampling of the original histogram buckets.
 	// This calculation is only logical for high NDV numeric values with few gaps
@@ -1062,9 +1062,12 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return min(rowCount, upperBound)
 	}
 
-	returnCount := float64(modifyCount)
+	returnCount := rowCount
 	if totalPercent > 0 {
-		returnCount = max(returnCount, max(sampleOutOfRange, upperBound))
+		returnCount = max(sampleOutOfRange, upperBound)
+	}
+	if increaseFactor > 1 {
+		returnCount = max(returnCount, float64(modifyCount))
 	}
 
 	return min(rowCount, returnCount)
