@@ -2083,6 +2083,8 @@ func (e *ShowExec) appendRow(row []any) {
 			e.result.AppendTime(i, x)
 		case types.BinaryJSON:
 			e.result.AppendJSON(i, x)
+		case types.VectorFloat32:
+			e.result.AppendVectorFloat32(i, x)
 		case types.Duration:
 			e.result.AppendDuration(i, x)
 		case types.Enum:

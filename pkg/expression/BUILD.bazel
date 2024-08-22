@@ -43,6 +43,7 @@ go_library(
         "builtin_time.go",
         "builtin_time_vec.go",
         "builtin_time_vec_generated.go",
+        "builtin_vec.go",
         "builtin_vectorized.go",
         "chunk_executor.go",
         "collation.go",

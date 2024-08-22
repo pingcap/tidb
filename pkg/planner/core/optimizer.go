@@ -1198,7 +1198,7 @@ func existsOverlongType(schema *expression.Schema) bool {
 	for _, column := range schema.Columns {
 		switch column.RetType.GetType() {
 		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-			mysql.TypeBlob, mysql.TypeJSON:
+			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
 			return true
 		case mysql.TypeVarString, mysql.TypeVarchar:
 			// if the column is varchar and the length of
