@@ -224,7 +224,7 @@ func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hash
 	return rowTables, nil
 }
 
-func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spillHelper *hashJoinSpillHelper, memoryTracker *memory.Tracker) (int, error) {
+func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spillHelper *hashJoinSpillHelper) (int, error) {
 	rowTables := make([]*rowTable, partitionNumber)
 	for i := 0; i < partitionNumber; i++ {
 		rowTables[i] = newRowTable()
@@ -875,7 +875,7 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) (bool, err
 
 	e.startBuildWorkers(buildTaskCh, wg)
 
-	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(int(e.partitionNumber), e.spillHelper, e.memTracker)
+	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(int(e.partitionNumber), e.spillHelper)
 	if err != nil {
 		return false, err
 	}
