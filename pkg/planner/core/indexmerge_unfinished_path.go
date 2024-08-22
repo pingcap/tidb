@@ -142,7 +142,8 @@ func initUnfinishedPathsFromExpr(
 			// generateNormalIndexPartialPaths4DNF is introduced for handle a slice of DNF items and a slice of
 			// candidate AccessPaths before, now we reuse it to handle single filter and single candidate AccessPath,
 			// so we need to wrap them in a slice here.
-			paths, needSelection, usedMap := ds.generateNormalIndexPartialPaths4DNF(
+			paths, needSelection, usedMap := generateNormalIndexPartialPaths4DNF(
+				ds,
 				[]expression.Expression{expr},
 				[]*util.AccessPath{path},
 			)
@@ -370,7 +371,8 @@ func buildIntoAccessPath(
 				// case 2: non-mv index
 				var usedMap []bool
 				// Reuse the previous implementation. The same usage as in initUnfinishedPathsFromExpr().
-				paths, needSelection, usedMap = ds.generateNormalIndexPartialPaths4DNF(
+				paths, needSelection, usedMap = generateNormalIndexPartialPaths4DNF(
+					ds,
 					[]expression.Expression{
 						expression.ComposeCNFCondition(
 							ds.SCtx().GetExprCtx(),
