@@ -119,6 +119,7 @@ var optRuleList = []logicalOptRule{
 	&pushDownSequenceSolver{},
 	&resolveExpand{},
 }
+
 const initialMaxCores uint64 = 10000
 
 // Interaction Rule List
