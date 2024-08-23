@@ -870,8 +870,6 @@ func TestSetVar(t *testing.T) {
 	require.Equal(t, uint64(2), tk.Session().GetSessionVars().CDCWriteSource)
 	tk.MustExec("set @@session.tidb_cdc_write_source = 0")
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
-<<<<<<< HEAD
-=======
 
 	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob"))
 	tk.MustExec("set @@session.tidb_analyze_skip_column_types = 'json, text, blob'")
@@ -900,7 +898,6 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_skip_missing_partition_stats").Check(testkit.Rows("0"))
 	tk.MustExec("set session tidb_skip_missing_partition_stats = 1")
 	tk.MustQuery("select @@session.tidb_skip_missing_partition_stats").Check(testkit.Rows("1"))
->>>>>>> a492a371a74 (statistics: merge global stats even if some partition stats are missing (#41176))
 }
 
 func TestGetSetNoopVars(t *testing.T) {

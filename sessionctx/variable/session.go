@@ -1334,40 +1334,11 @@ type SessionVars struct {
 
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
-<<<<<<< HEAD
-=======
-
-	// FastCheckTable is used to control whether fast check table is enabled.
-	FastCheckTable bool
-
-	// HypoIndexes are for the Index Advisor.
-	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
-
-	// TiFlashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
-	TiFlashReplicaRead tiflash.ReplicaRead
-
-	// HypoTiFlashReplicas are for the Index Advisor.
-	HypoTiFlashReplicas map[string]map[string]struct{} // dbName -> tblName -> whether to have replicas
-
-	// Runtime Filter Group
-	// Runtime filter type: only support IN or MIN_MAX now.
-	// Runtime filter type can take multiple values at the same time.
-	runtimeFilterTypes []RuntimeFilterType
-	// Runtime filter mode: only support OFF, LOCAL now
-	runtimeFilterMode RuntimeFilterMode
-
-	// Whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
-	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
-	LockUnchangedKeys bool
-
-	// AnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
-	AnalyzeSkipColumnTypes map[string]struct{}
 
 	// SkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
 	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
 	// When set to false, give up merging partition stats to global stats.
 	SkipMissingPartitionStats bool
->>>>>>> a492a371a74 (statistics: merge global stats even if some partition stats are missing (#41176))
 }
 
 var (
