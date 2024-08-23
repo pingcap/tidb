@@ -9,7 +9,12 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 50,
+=======
+    race = "on",
+    shard_count = 49,
+>>>>>>> b02581a7a47 (*: fix data race in the EnableAnalyzeSnapshot (#55596))
     deps = [
         "//pkg/config",
         "//pkg/domain",
