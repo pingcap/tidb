@@ -57,7 +57,7 @@ type MaxTidRecord struct {
 	tid atomic.Int64
 }
 
-func (h *Handle) initStatsMeta4Chunk(ctx context.Context, is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var physicalID, maxPhysicalID int64
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
@@ -110,7 +110,7 @@ func (h *Handle) initStatsMeta(ctx context.Context, is infoschema.InfoSchema) (s
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsMeta4Chunk(ctx, is, tables, iter)
+		h.initStatsMeta4Chunk(tables, iter)
 	}
 	return tables, nil
 }
@@ -259,7 +259,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	}
 }
 
-func (h *Handle) initStatsHistogramsLite(ctx context.Context, is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.StatsCache) error {
 	sql := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
@@ -736,7 +736,7 @@ func (h *Handle) InitStatsLite(ctx context.Context, is infoschema.InfoSchema) (e
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("complete to load the meta in the lite mode")
-	err = h.initStatsHistogramsLite(ctx, is, cache)
+	err = h.initStatsHistogramsLite(ctx, cache)
 	if err != nil {
 		cache.Close()
 		return errors.Trace(err)
