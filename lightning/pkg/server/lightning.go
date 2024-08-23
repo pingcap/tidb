@@ -320,6 +320,10 @@ func (l *Lightning) RunServer() error {
 //   - WithCheckpointStorage: caller has opened an external storage for lightning and want to save checkpoint
 //     in it. Otherwise, lightning will save checkpoint by the Checkpoint.DSN in config
 func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.Config, opts ...Option) error {
+	var mu sync.Mutex
+
+	defer mu.Unlock()
+
 	o := &options{
 		promFactory:  l.promFactory,
 		promRegistry: l.promRegistry,
@@ -356,8 +360,10 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 		return err
 	}
 
-	// taskID is uint64, So using hashed uuid
-	taskCfg.TaskID = 1
+	mu.Lock()
+	taskCfg.TaskID = time.Now().UnixNano()
+	mu.Unlock()
+
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
 	})
