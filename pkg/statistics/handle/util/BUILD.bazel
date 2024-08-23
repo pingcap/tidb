@@ -28,7 +28,6 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/sqlexec",
         "//pkg/util/sqlexec/mock",
-        "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tiancaiamao_gp//:gp",

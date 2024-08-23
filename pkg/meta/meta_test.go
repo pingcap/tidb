@@ -765,10 +765,9 @@ func TestTableNameExtract(t *testing.T) {
 	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
 }
 
-func BenchmarkIsTableInfoMustLoad(b *testing.B) {
-	benchCases := [][2]string{
-		{"narrow", `CREATE TABLE t (c INT PRIMARY KEY);`},
-		{"wide", `
+var benchCases = [][2]string{
+	{"narrow", `CREATE TABLE t (c INT PRIMARY KEY);`},
+	{"wide", `
 CREATE TABLE t (
 	c BIGINT PRIMARY KEY AUTO_RANDOM,
 	c2 TINYINT,
@@ -789,8 +788,9 @@ CREATE TABLE t (
     UNIQUE INDEX idx4(c12),
     INDEX idx5((c + c2))
 );`},
-	}
+}
 
+func BenchmarkIsTableInfoMustLoad(b *testing.B) {
 	for _, benchCase := range benchCases {
 		b.Run(benchCase[0], func(b *testing.B) {
 			benchIsTableInfoMustLoad(b, benchCase[1])
@@ -798,7 +798,7 @@ CREATE TABLE t (
 	}
 }
 
-func benchIsTableInfoMustLoad(b *testing.B, sql string) {
+func getTableInfoJSON(b *testing.B, sql string) []byte {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(b, err)
@@ -808,9 +808,51 @@ func benchIsTableInfoMustLoad(b *testing.B, sql string) {
 	data, err := json.Marshal(tblInfo)
 	require.NoError(b, err)
 
+	return data
+}
+
+func benchIsTableInfoMustLoad(b *testing.B, sql string) {
+	data := getTableInfoJSON(b, sql)
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		got := meta.IsTableInfoMustLoad(data)
 		intest.Assert(!got)
+	}
+}
+
+func BenchmarkTableNameInfo(b *testing.B) {
+	for _, benchCase := range benchCases {
+		b.Run(benchCase[0]+"-json", func(b *testing.B) {
+			benchJSONTableNameInfo(b, benchCase[1])
+		})
+		b.Run(benchCase[0]+"-fastjson", func(b *testing.B) {
+			benchFastJSONTableNameInfo(b, benchCase[1])
+		})
+	}
+}
+
+func benchJSONTableNameInfo(b *testing.B, sql string) {
+	data := getTableInfoJSON(b, sql)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tbInfo := &model.TableNameInfo{}
+		err := json.Unmarshal(data, tbInfo)
+		intest.Assert(tbInfo.ID == 1)
+		intest.Assert(tbInfo.Name.L == "t")
+		intest.AssertNoError(err)
+	}
+}
+
+func benchFastJSONTableNameInfo(b *testing.B, sql string) {
+	data := getTableInfoJSON(b, sql)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tbInfo, err := meta.FastUnmarshalTableNameInfo(data)
+		intest.AssertNoError(err)
+		intest.Assert(tbInfo.ID == 1)
+		intest.Assert(tbInfo.Name.L == "t")
 	}
 }

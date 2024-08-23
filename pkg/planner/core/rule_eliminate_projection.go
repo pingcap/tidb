@@ -144,32 +144,32 @@ func eliminatePhysicalProjection(p base.PhysicalPlan) base.PhysicalPlan {
 // The projection eliminate in logical optimize will optimize the projection under the projection, window, agg
 // The projection eliminate in post optimize will optimize other projection
 
-// For update stmt
+// ProjectionEliminator is for update stmt
 // The projection eliminate in logical optimize has been forbidden.
 // The projection eliminate in post optimize will optimize the projection under the projection, window, agg (the condition is same as logical optimize)
-type projectionEliminator struct {
+type ProjectionEliminator struct {
 }
 
-// optimize implements the logicalOptRule interface.
-func (pe *projectionEliminator) optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements the logicalOptRule interface.
+func (pe *ProjectionEliminator) Optimize(_ context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false, opt)
 	return root, planChanged, nil
 }
 
 // eliminate eliminates the redundant projection in a logical plan.
-func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string]*expression.Column, canEliminate bool, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string]*expression.Column, canEliminate bool, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// LogicalCTE's logical optimization is independent.
-	if _, ok := p.(*LogicalCTE); ok {
+	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p
 	}
 	proj, isProj := p.(*logicalop.LogicalProjection)
 	childFlag := canEliminate
-	if _, isUnion := p.(*LogicalUnionAll); isUnion {
+	if _, isUnion := p.(*logicalop.LogicalUnionAll); isUnion {
 		childFlag = false
-	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
+	} else if _, isAgg := p.(*logicalop.LogicalAggregation); isAgg || isProj {
 		childFlag = true
-	} else if _, isWindow := p.(*LogicalWindow); isWindow {
+	} else if _, isWindow := p.(*logicalop.LogicalWindow); isWindow {
 		childFlag = true
 	}
 	for i, child := range p.Children() {
@@ -178,10 +178,10 @@ func (pe *projectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 
 	// replace logical plan schema
 	switch x := p.(type) {
-	case *LogicalJoin:
-		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
-	case *LogicalApply:
-		x.SetSchema(buildLogicalJoinSchema(x.JoinType, x))
+	case *logicalop.LogicalJoin:
+		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
+	case *logicalop.LogicalApply:
+		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
 	default:
 		for _, dst := range p.Schema().Columns {
 			ruleutil.ResolveColumnAndReplace(dst, replace)
@@ -233,7 +233,8 @@ func ReplaceColumnOfExpr(expr expression.Expression, proj *logicalop.LogicalProj
 	return expr
 }
 
-func (*projectionEliminator) name() string {
+// Name implements the logicalOptRule.<1st> interface.
+func (*ProjectionEliminator) Name() string {
 	return "projection_eliminate"
 }
 

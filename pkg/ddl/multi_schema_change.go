@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
 		// Handle the rolling back job.
 		if job.IsRollingback() {
@@ -35,7 +35,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					continue
 				}
 				proxyJob := sub.ToProxyJob(job, i)
-				ver, _, err = w.runOneJobStep(d, t, &proxyJob)
+				ver, _, err = w.runOneJobStep(jobCtx, t, &proxyJob)
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
 					return ver, err
@@ -58,7 +58,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				continue
 			}
 			proxyJob := sub.ToProxyJob(job, i)
-			ver, _, err = w.runOneJobStep(d, t, &proxyJob)
+			ver, _, err = w.runOneJobStep(jobCtx, t, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
@@ -84,7 +84,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
-			proxyJobVer, _, err := w.runOneJobStep(d, t, &proxyJob)
+			proxyJobVer, _, err := w.runOneJobStep(jobCtx, t, &proxyJob)
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
@@ -104,7 +104,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				// if we fail on "add column c int", the allocator is rebased to 100
 				// which cannot be rollback, but it's table-info.AutoIncID is rollback by below call.
 				// TODO we should also change schema diff of 'ver' if len(actionTypes) > 1.
-				return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+				return updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 			}
 			actionTypes = append(actionTypes, sub.Type)
 		}
@@ -133,7 +133,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			continue
 		}
 		proxyJob := sub.ToProxyJob(job, i)
-		ver, _, err = w.runOneJobStep(d, t, &proxyJob)
+		ver, _, err = w.runOneJobStep(jobCtx, t, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
 	}
@@ -349,7 +349,6 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	var indexPartSpecifications [][]*ast.IndexPartSpecification
 	var indexOption []*ast.IndexOption
 	var hiddenCols [][]*model.ColumnInfo
-	var global []bool
 
 	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs))
 	for _, subJob := range info.SubJobs {
@@ -359,13 +358,12 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 			indexPartSpecifications = append(indexPartSpecifications, subJob.Args[2].([]*ast.IndexPartSpecification))
 			indexOption = append(indexOption, subJob.Args[3].(*ast.IndexOption))
 			hiddenCols = append(hiddenCols, subJob.Args[4].([]*model.ColumnInfo))
-			global = append(global, subJob.Args[5].(bool))
 		} else {
 			newSubJobs = append(newSubJobs, subJob)
 		}
 	}
 
-	mergedSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
+	mergedSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols}
 	// place the merged add index job at the end of the sub-jobs.
 	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs

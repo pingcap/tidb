@@ -28,7 +28,8 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
-type gcSubstituter struct {
+// GcSubstituter is used to substitute the expression to indexed virtual generated column in where, group by, order by, and field clause.
+type GcSubstituter struct {
 }
 
 // ExprColumnMap is used to store all expressions of indexed generated columns in a table,
@@ -36,12 +37,13 @@ type gcSubstituter struct {
 // thus we can substitute the expression in a query to an indexed generated column.
 type ExprColumnMap map[expression.Expression]*expression.Column
 
+// Optimize implements base.LogicalOptRule.<0th> interface.
 // optimize try to replace the expression to indexed virtual generate column in where, group by, order by, and field clause
 // so that we can use the index on expression.
 // For example: select a+1 from t order by a+1, with a virtual generate column c as (a+1) and
 // an index on c. We need to replace a+1 with c so that we can use the index on c.
 // See also https://dev.mysql.com/doc/refman/8.0/en/generated-column-index-optimizations.html
-func (gc *gcSubstituter) optimize(ctx context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (gc *GcSubstituter) Optimize(ctx context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	exprToColumn := make(ExprColumnMap)
 	collectGenerateColumn(lp, exprToColumn)
@@ -55,7 +57,7 @@ func (gc *gcSubstituter) optimize(ctx context.Context, lp base.LogicalPlan, opt 
 // For the sake of simplicity, we don't collect the stored generate column because we can't get their expressions directly.
 // TODO: support stored generate column.
 func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
-	if _, ok := lp.(*LogicalCTE); ok {
+	if _, ok := lp.(*logicalop.LogicalCTE); ok {
 		return
 	}
 	for _, child := range lp.Children() {
@@ -180,11 +182,11 @@ func substituteExpression(cond expression.Expression, lp base.LogicalPlan, exprT
 	return changed
 }
 
-func (gc *gcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, exprToColumn ExprColumnMap, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, exprToColumn ExprColumnMap, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	var tp types.EvalType
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	switch x := lp.(type) {
-	case *LogicalSelection:
+	case *logicalop.LogicalSelection:
 		for _, cond := range x.Conditions {
 			substituteExpression(cond, lp, exprToColumn, x.Schema(), opt)
 		}
@@ -202,7 +204,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 				tryToSubstituteExpr(&x.ByItems[i].Expr, lp, candidateExpr, tp, x.Schema(), column, opt)
 			}
 		}
-	case *LogicalAggregation:
+	case *logicalop.LogicalAggregation:
 		for _, aggFunc := range x.AggFuncs {
 			for i := 0; i < len(aggFunc.Args); i++ {
 				tp = aggFunc.Args[i].GetType(ectx).EvalType()
@@ -232,6 +234,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 	return lp
 }
 
-func (*gcSubstituter) name() string {
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*GcSubstituter) Name() string {
 	return "generate_column_substitute"
 }

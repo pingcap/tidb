@@ -84,7 +84,8 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_hit(t, pc, 1, 0) // access 1-3 to refresh their last_used
 	_hit(t, pc, 2, 0)
 	_hit(t, pc, 3, 0)
-	require.Equal(t, pc.Evict(), true)
+	_, numEvicted := pc.Evict()
+	require.Equal(t, numEvicted > 0, true)
 	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, pc, 1, 0) // access 1-3 to refresh their last_used
 	_hit(t, pc, 2, 0)
@@ -97,7 +98,8 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_put(pc, 1, 100, 0)
 	_put(pc, 2, 100, 0)
 	_put(pc, 3, 100, 0)
-	require.Equal(t, pc.Evict(), false)
+	_, numEvicted = pc.Evict()
+	require.Equal(t, numEvicted > 0, false)
 	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, pc, 1, 0)
 	_hit(t, pc, 2, 0)
@@ -113,7 +115,8 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	numHeads := 0
 	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
 	require.Equal(t, numHeads, 3)
-	require.Equal(t, pc.Evict(), true)
+	_, numEvicted = pc.Evict()
+	require.Equal(t, numEvicted > 0, true)
 	require.Equal(t, pc.MemUsage(), int64(0))
 	numHeads = 0
 	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
@@ -174,7 +177,8 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 	_hit(t, pc, 1, 1) // refresh 1-3's last_used
 	_hit(t, pc, 1, 2)
 	_hit(t, pc, 1, 3)
-	require.True(t, pc.Evict())
+	_, numEvicted := pc.Evict()
+	require.True(t, numEvicted > 0)
 	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, pc, 1, 1)
 	_hit(t, pc, 1, 2)

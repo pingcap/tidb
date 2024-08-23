@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -422,7 +421,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 }
 
 func TestTransactionWithWriteOnlyColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -437,9 +436,8 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 		},
 	}
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -457,8 +455,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 				}
 			}
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	done := make(chan error, 1)
 	// test transaction on add column.
 	go backgroundExec(store, "test", "alter table t1 add column c int not null", done)

@@ -811,6 +811,16 @@ type Assignment struct {
 	LazyErr error
 }
 
+// Clone clones the Assignment.
+func (a *Assignment) Clone() *Assignment {
+	return &Assignment{
+		Col:     a.Col.Clone().(*Column),
+		ColName: a.ColName,
+		Expr:    a.Expr.Clone(),
+		LazyErr: a.LazyErr,
+	}
+}
+
 // MemoryUsage return the memory usage of Assignment
 func (a *Assignment) MemoryUsage() (sum int64) {
 	if a == nil {

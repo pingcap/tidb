@@ -28,12 +28,14 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // PlanCacheKeyTestIssue43667 is only for test.
@@ -47,6 +49,9 @@ type PlanCacheKeyTestIssue47133 struct{}
 
 // PlanCacheKeyTestClone is only for test.
 type PlanCacheKeyTestClone struct{}
+
+// PlanCacheKeyEnableInstancePlanCache is only for test.
+type PlanCacheKeyEnableInstancePlanCache struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
@@ -101,7 +106,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
 	for i := 0; i < len(stmt.dbName); i++ {
-		tbl, ok := is.TableByID(stmt.tbls[i].Meta().ID)
+		tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
 		if !ok {
 			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
 			if err != nil {
@@ -226,8 +231,16 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, paramTypes)
 }
 
+func instancePlanCacheEnabled(ctx context.Context) bool {
+	if intest.InTest && ctx.Value(PlanCacheKeyEnableInstancePlanCache{}) != nil {
+		return true
+	}
+	enableInstancePlanCache := variable.EnableInstancePlanCache.Load()
+	return enableInstancePlanCache
+}
+
 func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string, paramTypes []*types.FieldType) (cachedVal *PlanCacheValue, hit bool) {
-	if sctx.GetSessionVars().EnableInstancePlanCache {
+	if instancePlanCacheEnabled(ctx) {
 		if v, hit := domain.GetDomain(sctx).GetInstancePlanCache().Get(cacheKey, paramTypes); hit {
 			cachedVal = v.(*PlanCacheValue)
 			return cachedVal.CloneForInstancePlanCache(ctx, sctx.GetPlanCtx()) // clone the value to solve concurrency problem
@@ -296,7 +309,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-		if sessVars.EnableInstancePlanCache {
+		if instancePlanCacheEnabled(ctx) {
 			domain.GetDomain(sctx).GetInstancePlanCache().Put(cacheKey, cached, paramTypes)
 		} else {
 			sctx.GetSessionPlanCache().Put(cacheKey, cached, paramTypes)

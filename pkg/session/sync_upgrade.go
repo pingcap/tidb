@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	dist_store "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -47,10 +47,10 @@ func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 	ctx, cancelFunc := context.WithTimeout(context.Background(), timeout)
 	defer cancelFunc()
 	dom := domain.GetDomain(s)
-	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
+	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, serverstate.NewStateInfo(serverstate.StateUpgrading))
 	logger := logutil.BgLogger().With(zap.String("category", "upgrading"))
 	if err != nil {
-		logger.Error("update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
+		logger.Error("update global state failed", zap.String("state", serverstate.StateUpgrading), zap.Error(err))
 		return err
 	}
 
@@ -74,7 +74,7 @@ func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 		time.Sleep(interval)
 	}
 
-	logger.Info("update global state to upgrading", zap.String("state", syncer.StateUpgrading))
+	logger.Info("update global state to upgrading", zap.String("state", serverstate.StateUpgrading))
 	return nil
 }
 
@@ -85,7 +85,7 @@ func SyncNormalRunning(s sessionctx.Context) error {
 		if val.(bool) {
 			dom := domain.GetDomain(s)
 			//nolint: errcheck
-			dom.DDL().StateSyncer().UpdateGlobalState(bgCtx, syncer.NewStateInfo(syncer.StateNormalRunning))
+			dom.DDL().StateSyncer().UpdateGlobalState(bgCtx, serverstate.NewStateInfo(serverstate.StateNormalRunning))
 			failpoint.Return(nil)
 		}
 	})
@@ -110,7 +110,7 @@ func SyncNormalRunning(s sessionctx.Context) error {
 	ctx, cancelFunc := context.WithTimeout(bgCtx, 3*time.Second)
 	defer cancelFunc()
 	dom := domain.GetDomain(s)
-	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
+	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, serverstate.NewStateInfo(serverstate.StateNormalRunning))
 	if err != nil {
 		logger.Error("update global state to normal failed", zap.Error(err))
 		return err
@@ -129,7 +129,7 @@ func IsUpgradingClusterState(s sessionctx.Context) (bool, error) {
 		return false, err
 	}
 
-	return stateInfo.State == syncer.StateUpgrading, nil
+	return stateInfo.State == serverstate.StateUpgrading, nil
 }
 
 func printClusterState(s sessiontypes.Session, ver int64) {

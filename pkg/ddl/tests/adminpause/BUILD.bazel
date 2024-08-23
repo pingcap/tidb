@@ -34,7 +34,6 @@ go_test(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/testutil",
-        "//pkg/ddl/util/callback",
         "//pkg/domain",
         "//pkg/errno",
         "//pkg/parser/model",

@@ -2099,7 +2099,7 @@ func TestDropGlobalIndex(t *testing.T) {
 partition p0 values less than (4),
 partition p1 values less than (7),
 partition p2 values less than (10))`)
-	tk.MustExec("alter table p add unique idx(id)")
+	tk.MustExec("alter table p add unique idx(id) global")
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/checkDropGlobalIndex", `return(true)`)
 	tk.MustExec("alter table p drop index idx")
@@ -2243,10 +2243,6 @@ func TestIssue26251(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk1.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk1.MustExec("use test")
 	tk1.MustExec("create table tp (id int primary key) partition by range (id) (partition p0 values less than (100));")
 	tk1.MustExec("create table tn (id int primary key);")
@@ -2416,7 +2412,7 @@ func TestGlobalIndexWithSelectLock(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("set tidb_enable_global_index = true")
 	tk1.MustExec("use test")
-	tk1.MustExec("create table t(a int, b int, unique index(b), primary key(a)) partition by hash(a) partitions 5;")
+	tk1.MustExec("create table t(a int, b int, unique index(b) global, primary key(a)) partition by hash(a) partitions 5;")
 	tk1.MustExec("insert into t values (1,1),(2,2),(3,3),(4,4),(5,5);")
 	tk1.MustExec("begin")
 	tk1.MustExec("select * from t use index(b) where b = 2 order by b limit 1 for update;")

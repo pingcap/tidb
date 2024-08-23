@@ -418,7 +418,7 @@ func TestUpdateSubqueryCapture(t *testing.T) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
-	bindSQL := "UPDATE /*+ hash_join(@`upd_1` `test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), no_order_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
+	bindSQL := "UPDATE /*+ hash_join(`test`.`t2`@`sel_2`), hash_join(`test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), no_order_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	originSQL := "UPDATE `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	require.Equal(t, bindSQL, rows[0][1])
 	tk.MustExec(originSQL)

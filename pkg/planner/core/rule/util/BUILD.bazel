@@ -2,8 +2,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "util",
-    srcs = ["misc.go"],
+    srcs = [
+        "build_key_info_misc.go",
+        "misc.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/rule/util",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/expression"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core/base",
+    ],
 )

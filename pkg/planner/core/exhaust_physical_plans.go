@@ -15,12 +15,10 @@
 package core
 
 import (
-	"bytes"
 	"fmt"
 	"math"
 	"slices"
 	"strings"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -31,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -40,20 +37,17 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
-func exhaustPhysicalPlans4LogicalUnionScan(p *LogicalUnionScan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalUnionScan)
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `UnionScan` is not supported now.")
@@ -84,7 +78,7 @@ func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Colu
 	return maxLen
 }
 
-func moveEqualToOtherConditions(p *LogicalJoin, offsets []int) []expression.Expression {
+func moveEqualToOtherConditions(p *logicalop.LogicalJoin, offsets []int) []expression.Expression {
 	// Construct used equal condition set based on the equal condition offsets.
 	usedEqConds := set.NewIntSet()
 	for _, eqCondIdx := range offsets {
@@ -120,10 +114,10 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 		if !prop.IsPrefix(lProp) && !prop.IsPrefix(rProp) {
 			return nil, false
 		}
-		if prop.IsPrefix(rProp) && p.JoinType == LeftOuterJoin {
+		if prop.IsPrefix(rProp) && p.JoinType == logicalop.LeftOuterJoin {
 			return nil, false
 		}
-		if prop.IsPrefix(lProp) && p.JoinType == RightOuterJoin {
+		if prop.IsPrefix(lProp) && p.JoinType == logicalop.RightOuterJoin {
 			return nil, false
 		}
 	}
@@ -147,7 +141,7 @@ func checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
 }
 
 // GetMergeJoin convert the logical join to physical merge join based on the physical property.
-func GetMergeJoin(p *LogicalJoin, prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, leftStatsInfo *property.StatsInfo, rightStatsInfo *property.StatsInfo) []base.PhysicalPlan {
+func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, leftStatsInfo *property.StatsInfo, rightStatsInfo *property.StatsInfo) []base.PhysicalPlan {
 	joins := make([]base.PhysicalPlan, 0, len(p.LeftProperties)+1)
 	// The LeftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
@@ -216,7 +210,7 @@ func GetMergeJoin(p *LogicalJoin, prop *property.PhysicalProperty, schema *expre
 				reqProps[0].ExpectedCnt = leftStatsInfo.RowCount * expCntScale
 				reqProps[1].ExpectedCnt = rightStatsInfo.RowCount * expCntScale
 			}
-			mergeJoin.childrenReqProps = reqProps
+			mergeJoin.SetChildrenReqProps(reqProps)
 			_, desc := prop.AllSameOrder()
 			mergeJoin.Desc = desc
 			joins = append(joins, mergeJoin)
@@ -283,7 +277,7 @@ func getNewNullEQByOffsets(oldNullEQ []bool, offsets []int) []bool {
 	return newNullEQ
 }
 
-func getEnforcedMergeJoin(p *LogicalJoin, prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo) []base.PhysicalPlan {
+func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo) []base.PhysicalPlan {
 	// Check whether SMJ can satisfy the required property
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
 	// TODO: support null equal join keys for merge join
@@ -327,10 +321,10 @@ func getEnforcedMergeJoin(p *LogicalJoin, prop *property.PhysicalProperty, schem
 			return nil
 		}
 		// If the output wants the order of the inner side. We should reject it since we might add null-extend rows of that side.
-		if p.JoinType == LeftOuterJoin && hasRightColInProp {
+		if p.JoinType == logicalop.LeftOuterJoin && hasRightColInProp {
 			return nil
 		}
-		if p.JoinType == RightOuterJoin && hasLeftColInProp {
+		if p.JoinType == logicalop.RightOuterJoin && hasLeftColInProp {
 			return nil
 		}
 	}
@@ -362,7 +356,7 @@ func getEnforcedMergeJoin(p *LogicalJoin, prop *property.PhysicalProperty, schem
 	}
 	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin, Desc: desc}.Init(p.SCtx(), statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset())
 	enforcedPhysicalMergeJoin.SetSchema(schema)
-	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
+	enforcedPhysicalMergeJoin.SetChildrenReqProps([]*property.PhysicalProperty{lProp, rProp})
 	enforcedPhysicalMergeJoin.initCompareFuncs()
 	return []base.PhysicalPlan{enforcedPhysicalMergeJoin}
 }
@@ -374,11 +368,11 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 	}
 }
 
-func shouldSkipHashJoin(p *LogicalJoin) bool {
+func shouldSkipHashJoin(p *logicalop.LogicalJoin) bool {
 	return (p.PreferJoinType&h.PreferNoHashJoin) > 0 || (p.SCtx().GetSessionVars().DisableHashJoin)
 }
 
-func getHashJoins(p *LogicalJoin, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
+func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return
 	}
@@ -393,7 +387,7 @@ func getHashJoins(p *LogicalJoin, prop *property.PhysicalProperty) (joins []base
 
 	joins = make([]base.PhysicalPlan, 0, 2)
 	switch p.JoinType {
-	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+	case logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		joins = append(joins, getHashJoin(p, prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
 			// Do not support specifying the build and probe side for semi join.
@@ -401,21 +395,21 @@ func getHashJoins(p *LogicalJoin, prop *property.PhysicalProperty) (joins []base
 			forceLeftToBuild = false
 			forceRightToBuild = false
 		}
-	case LeftOuterJoin:
+	case logicalop.LeftOuterJoin:
 		if !forceLeftToBuild {
 			joins = append(joins, getHashJoin(p, prop, 1, false))
 		}
 		if !forceRightToBuild {
 			joins = append(joins, getHashJoin(p, prop, 1, true))
 		}
-	case RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		if !forceLeftToBuild {
 			joins = append(joins, getHashJoin(p, prop, 0, true))
 		}
 		if !forceRightToBuild {
 			joins = append(joins, getHashJoin(p, prop, 0, false))
 		}
-	case InnerJoin:
+	case logicalop.InnerJoin:
 		if forceLeftToBuild {
 			joins = append(joins, getHashJoin(p, prop, 0, false))
 		} else if forceRightToBuild {
@@ -438,7 +432,7 @@ func getHashJoins(p *LogicalJoin, prop *property.PhysicalProperty) (joins []base
 	return
 }
 
-func getHashJoin(p *LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
+func getHashJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool) *PhysicalHashJoin {
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus}
 	chReqProps[1-innerIdx] = &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus}
@@ -454,7 +448,7 @@ func getHashJoin(p *LogicalJoin, prop *property.PhysicalProperty, innerIdx int, 
 // When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
 // is generated during execution time.
 func constructIndexJoin(
-	p *LogicalJoin,
+	p *logicalop.LogicalJoin,
 	prop *property.PhysicalProperty,
 	outerIdx int,
 	innerTask base.Task,
@@ -569,7 +563,7 @@ func constructIndexJoin(
 }
 
 func constructIndexMergeJoin(
-	p *LogicalJoin,
+	p *logicalop.LogicalJoin,
 	prop *property.PhysicalProperty,
 	outerIdx int,
 	innerTask base.Task,
@@ -677,7 +671,7 @@ func constructIndexMergeJoin(
 }
 
 func constructIndexHashJoin(
-	p *LogicalJoin,
+	p *logicalop.LogicalJoin,
 	prop *property.PhysicalProperty,
 	outerIdx int,
 	innerTask base.Task,
@@ -705,7 +699,7 @@ func constructIndexHashJoin(
 // First of all, we'll check whether the inner child is DataSource.
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
 // or match some part of on index. If so we will choose the best one and construct a index join.
-func getIndexJoinByOuterIdx(p *LogicalJoin, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
+func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
 	outerChild, innerChild := p.Children()[outerIdx], p.Children()[1-outerIdx]
 	all, _ := prop.AllSameOrder()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
@@ -757,7 +751,7 @@ type indexJoinInnerChildWrapper struct {
 	zippedChildren []base.LogicalPlan
 }
 
-func extractIndexJoinInnerChildPattern(p *LogicalJoin, innerChild base.LogicalPlan) *indexJoinInnerChildWrapper {
+func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base.LogicalPlan) *indexJoinInnerChildWrapper {
 	wrapper := &indexJoinInnerChildWrapper{}
 	nextChild := func(pp base.LogicalPlan) base.LogicalPlan {
 		if len(pp.Children()) != 1 {
@@ -771,12 +765,12 @@ childLoop:
 		case *DataSource:
 			wrapper.ds = child
 			break childLoop
-		case *logicalop.LogicalProjection, *LogicalSelection, *LogicalAggregation:
+		case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
 			if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 				return nil
 			}
 			wrapper.zippedChildren = append(wrapper.zippedChildren, child)
-		case *LogicalUnionScan:
+		case *logicalop.LogicalUnionScan:
 			wrapper.hasDitryWrite = true
 			wrapper.zippedChildren = append(wrapper.zippedChildren, child)
 		default:
@@ -789,50 +783,15 @@ childLoop:
 	return wrapper
 }
 
-func getIndexJoinBuildHelper(p *LogicalJoin, ds *DataSource, innerJoinKeys []*expression.Column, checkPathValid func(path *util.AccessPath) bool, outerJoinKeys []*expression.Column) (*indexJoinBuildHelper, []int) {
-	helper := &indexJoinBuildHelper{
-		sctx:                  p.SCtx(),
-		joinOtherConditions:   p.OtherConditions,
-		outerJoinKeys:         outerJoinKeys,
-		innerJoinKeys:         innerJoinKeys,
-		innerPushedConditions: ds.PushedDownConds,
-		innerSchema:           ds.Schema(),
-		innerStats:            ds.StatsInfo(),
-	}
-	for _, path := range ds.PossibleAccessPaths {
-		if checkPathValid(path) {
-			emptyRange, err := helper.analyzeLookUpFilters(path, false)
-			if emptyRange {
-				return nil, nil
-			}
-			if err != nil {
-				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
-			}
-		}
-	}
-	if helper.chosenPath == nil {
-		return nil, nil
-	}
-	keyOff2IdxOff := make([]int, len(innerJoinKeys))
-	for i := range keyOff2IdxOff {
-		keyOff2IdxOff[i] = -1
-	}
-	for idxOff, keyOff := range helper.idxOff2KeyOff {
-		if keyOff != -1 {
-			keyOff2IdxOff[keyOff] = idxOff
-		}
-	}
-	return helper, keyOff2IdxOff
-}
-
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
 // IndexJoin if possible.
 // If the inner side of a index join is a TableScan, only one tuple will be
 // fetched from the inner side for every tuple from the outer side. This will be
 // promised to be no worse than building IndexScan as the inner child.
 func buildIndexJoinInner2TableScan(
-	p *LogicalJoin,
-	prop *property.PhysicalProperty, wrapper *indexJoinInnerChildWrapper, innerJoinKeys, outerJoinKeys []*expression.Column,
+	p *logicalop.LogicalJoin,
+	prop *property.PhysicalProperty, wrapper *indexJoinInnerChildWrapper,
+	innerJoinKeys, outerJoinKeys []*expression.Column,
 	outerIdx int, avgInnerRowCnt float64) (joins []base.PhysicalPlan) {
 	ds := wrapper.ds
 	var tblPath *util.AccessPath
@@ -849,22 +808,22 @@ func buildIndexJoinInner2TableScan(
 	newOuterJoinKeys := make([]*expression.Column, 0)
 	var ranges ranger.MutableRanges = ranger.Ranges{}
 	var innerTask, innerTask2 base.Task
-	var helper *indexJoinBuildHelper
+	var indexJoinResult *indexJoinPathResult
 	if ds.TableInfo.IsCommonHandle {
-		helper, keyOff2IdxOff = getIndexJoinBuildHelper(p, ds, innerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath }, outerJoinKeys)
-		if helper == nil {
+		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+		if indexJoinResult == nil {
 			return nil
 		}
-		rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols)
-		innerTask = constructInnerTableScanTask(p, wrapper, helper.chosenRanges.Range(), outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
+		rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
+		innerTask = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			innerTask2 = constructInnerTableScanTask(p, wrapper, helper.chosenRanges.Range(), outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
-		ranges = helper.chosenRanges
+		ranges = indexJoinResult.chosenRanges
 	} else {
 		pkMatched := false
 		pkCol := ds.getPKIsHandleCol()
@@ -896,22 +855,22 @@ func buildIndexJoinInner2TableScan(
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
-		innerTask = constructInnerTableScanTask(p, wrapper, ranges, outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
+		innerTask = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			innerTask2 = constructInnerTableScanTask(p, wrapper, ranges, outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, ranges, outerJoinKeys, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
 	}
 	var (
 		path       *util.AccessPath
 		lastColMng *ColWithCmpFuncManager
 	)
-	if helper != nil {
-		path = helper.chosenPath
-		lastColMng = helper.lastColManager
+	if indexJoinResult != nil {
+		path = indexJoinResult.chosenPath
+		lastColMng = indexJoinResult.lastColManager
 	}
 	joins = make([]base.PhysicalPlan, 0, 3)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
@@ -930,7 +889,7 @@ func buildIndexJoinInner2TableScan(
 }
 
 func buildIndexJoinInner2IndexScan(
-	p *LogicalJoin,
+	p *logicalop.LogicalJoin,
 	prop *property.PhysicalProperty, wrapper *indexJoinInnerChildWrapper, innerJoinKeys, outerJoinKeys []*expression.Column,
 	outerIdx int, avgInnerRowCnt float64) (joins []base.PhysicalPlan) {
 	ds := wrapper.ds
@@ -948,106 +907,51 @@ func buildIndexJoinInner2IndexScan(
 		}
 		return false
 	}
-	helper, keyOff2IdxOff := getIndexJoinBuildHelper(p, ds, innerJoinKeys, indexValid, outerJoinKeys)
-	if helper == nil {
+	indexJoinResult, keyOff2IdxOff := getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, indexValid)
+	if indexJoinResult == nil {
 		return nil
 	}
 	joins = make([]base.PhysicalPlan, 0, 3)
-	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols)
+	rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
 	maxOneRow := false
-	if helper.chosenPath.Index.Unique && helper.usedColsLen == len(helper.chosenPath.FullIdxCols) {
-		l := len(helper.chosenAccess)
+	if indexJoinResult.chosenPath.Index.Unique && indexJoinResult.usedColsLen == len(indexJoinResult.chosenPath.FullIdxCols) {
+		l := len(indexJoinResult.chosenAccess)
 		if l == 0 {
 			maxOneRow = true
 		} else {
-			sf, ok := helper.chosenAccess[l-1].(*expression.ScalarFunction)
+			sf, ok := indexJoinResult.chosenAccess[l-1].(*expression.ScalarFunction)
 			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
 		}
 	}
-	innerTask := constructInnerIndexScanTask(p, wrapper, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, innerJoinKeys, helper.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
+	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL && innerTask != nil {
-			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
+			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager))
 		}
 	})
 	if innerTask != nil {
-		joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager, true)...)
+		joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager, true)...)
 		// We can reuse the `innerTask` here since index nested loop hash join
 		// do not need the inner child to promise the order.
-		joins = append(joins, constructIndexHashJoin(p, prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+		joins = append(joins, constructIndexHashJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager)...)
 	}
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
 	if !wrapper.hasDitryWrite {
-		innerTask2 := constructInnerIndexScanTask(p, wrapper, helper.chosenPath, helper.chosenRanges.Range(), helper.chosenRemained, innerJoinKeys, helper.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
+		innerTask2 := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
 		if innerTask2 != nil {
-			joins = append(joins, constructIndexMergeJoin(p, prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+			joins = append(joins, constructIndexMergeJoin(p, prop, outerIdx, innerTask2, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager)...)
 		}
 	}
 	return joins
 }
 
-type indexJoinBuildHelper struct {
-	// read-only fields, information of the outer child
-	sctx                  context.PlanContext
-	joinOtherConditions   []expression.Expression
-	outerJoinKeys         []*expression.Column
-	innerJoinKeys         []*expression.Column
-	innerSchema           *expression.Schema
-	innerPushedConditions []expression.Expression
-	innerStats            *property.StatsInfo
-
-	// below is mutable fields
-	usedColsLen    int
-	usedColsNDV    float64
-	chosenAccess   []expression.Expression
-	chosenRemained []expression.Expression
-	idxOff2KeyOff  []int
-	lastColManager *ColWithCmpFuncManager
-	chosenRanges   ranger.MutableRanges
-	chosenPath     *util.AccessPath
-
-	curPossibleUsedKeys []*expression.Column
-	curNotUsedIndexCols []*expression.Column
-	curNotUsedColLens   []int
-	// Store the corresponding innerKeys offset of each column in the current path, reset by "resetContextForIndex()"
-	curIdxOff2KeyOff []int
-}
-
-func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*expression.Column) string {
-	buffer := bytes.NewBufferString("[")
-	isFirst := true
-	for idxOff, keyOff := range ijHelper.idxOff2KeyOff {
-		if keyOff == -1 {
-			continue
-		}
-		if !isFirst {
-			buffer.WriteString(" ")
-		} else {
-			isFirst = false
-		}
-		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], ijHelper.outerJoinKeys[keyOff])
-	}
-	ectx := ijHelper.sctx.GetExprCtx().GetEvalCtx()
-	// It is to build the range info which is used in explain. It is necessary to redact the range info.
-	redact := ectx.GetTiDBRedactLog()
-	for _, access := range ijHelper.chosenAccess {
-		if !isFirst {
-			buffer.WriteString(" ")
-		} else {
-			isFirst = false
-		}
-		fmt.Fprintf(buffer, "%v", access.StringWithCtx(ectx, redact))
-	}
-	buffer.WriteString("]")
-	return buffer.String()
-}
-
 // constructInnerTableScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
 func constructInnerTableScanTask(
-	p *LogicalJoin,
+	p *logicalop.LogicalJoin,
+	prop *property.PhysicalProperty,
 	wrapper *indexJoinInnerChildWrapper,
 	ranges ranger.Ranges,
 	_ []*expression.Column,
@@ -1120,61 +1024,60 @@ func constructInnerTableScanTask(
 	ts.PlanPartInfo = copTask.physPlanPartInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
-	return constructIndexJoinInnerSideTask(p, copTask, ds, nil, wrapper)
+	return constructIndexJoinInnerSideTask(p, prop, copTask, ds, nil, wrapper)
 }
 
-func constructInnerByZippedChildren(zippedChildren []base.LogicalPlan, child base.PhysicalPlan) base.PhysicalPlan {
+func constructInnerByZippedChildren(prop *property.PhysicalProperty, zippedChildren []base.LogicalPlan, child base.PhysicalPlan) base.PhysicalPlan {
 	for i := len(zippedChildren) - 1; i >= 0; i-- {
 		switch x := zippedChildren[i].(type) {
-		case *LogicalUnionScan:
-			child = constructInnerUnionScan(x, child)
+		case *logicalop.LogicalUnionScan:
+			child = constructInnerUnionScan(prop, x, child)
 		case *logicalop.LogicalProjection:
-			child = constructInnerProj(x, child)
-		case *LogicalSelection:
-			child = constructInnerSel(x, child)
-		case *LogicalAggregation:
-			child = constructInnerAgg(x, child)
+			child = constructInnerProj(prop, x, child)
+		case *logicalop.LogicalSelection:
+			child = constructInnerSel(prop, x, child)
+		case *logicalop.LogicalAggregation:
+			child = constructInnerAgg(prop, x, child)
 		}
 	}
 	return child
 }
 
-func constructInnerAgg(logicalAgg *LogicalAggregation, child base.PhysicalPlan) base.PhysicalPlan {
+func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *logicalop.LogicalAggregation, child base.PhysicalPlan) base.PhysicalPlan {
 	if logicalAgg == nil {
 		return child
 	}
-	physicalHashAgg := NewPhysicalHashAgg(logicalAgg, logicalAgg.StatsInfo(), nil)
+	physicalHashAgg := NewPhysicalHashAgg(logicalAgg, logicalAgg.StatsInfo(), prop)
 	physicalHashAgg.SetSchema(logicalAgg.Schema().Clone())
 	physicalHashAgg.SetChildren(child)
 	return physicalHashAgg
 }
 
-func constructInnerSel(sel *LogicalSelection, child base.PhysicalPlan) base.PhysicalPlan {
+func constructInnerSel(prop *property.PhysicalProperty, sel *logicalop.LogicalSelection, child base.PhysicalPlan) base.PhysicalPlan {
 	if sel == nil {
 		return child
 	}
 	physicalSel := PhysicalSelection{
 		Conditions: sel.Conditions,
-	}.Init(sel.SCtx(), sel.StatsInfo(), sel.QueryBlockOffset(), nil)
+	}.Init(sel.SCtx(), sel.StatsInfo(), sel.QueryBlockOffset(), prop)
 	physicalSel.SetChildren(child)
 	return physicalSel
 }
 
-func constructInnerProj(proj *logicalop.LogicalProjection, child base.PhysicalPlan) base.PhysicalPlan {
+func constructInnerProj(prop *property.PhysicalProperty, proj *logicalop.LogicalProjection, child base.PhysicalPlan) base.PhysicalPlan {
 	if proj == nil {
 		return child
 	}
 	physicalProj := PhysicalProjection{
-		Exprs:                proj.Exprs,
-		CalculateNoDelay:     proj.CalculateNoDelay,
-		AvoidColumnEvaluator: proj.AvoidColumnEvaluator,
-	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), nil)
+		Exprs:            proj.Exprs,
+		CalculateNoDelay: proj.CalculateNoDelay,
+	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), prop)
 	physicalProj.SetChildren(child)
 	physicalProj.SetSchema(proj.Schema())
 	return physicalProj
 }
 
-func constructInnerUnionScan(us *LogicalUnionScan, reader base.PhysicalPlan) base.PhysicalPlan {
+func constructInnerUnionScan(prop *property.PhysicalProperty, us *logicalop.LogicalUnionScan, reader base.PhysicalPlan) base.PhysicalPlan {
 	if us == nil {
 		return reader
 	}
@@ -1183,7 +1086,7 @@ func constructInnerUnionScan(us *LogicalUnionScan, reader base.PhysicalPlan) bas
 	physicalUnionScan := PhysicalUnionScan{
 		Conditions: us.Conditions,
 		HandleCols: us.HandleCols,
-	}.Init(us.SCtx(), reader.StatsInfo(), us.QueryBlockOffset(), nil)
+	}.Init(us.SCtx(), reader.StatsInfo(), us.QueryBlockOffset(), prop)
 	physicalUnionScan.SetChildren(reader)
 	return physicalUnionScan
 }
@@ -1239,7 +1142,8 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 
 // constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
 func constructInnerIndexScanTask(
-	p *LogicalJoin,
+	p *logicalop.LogicalJoin,
+	prop *property.PhysicalProperty,
 	wrapper *indexJoinInnerChildWrapper,
 	path *util.AccessPath,
 	ranges ranger.Ranges,
@@ -1335,7 +1239,7 @@ func constructInnerIndexScanTask(
 		cop.commonHandleCols = ds.CommonHandleCols
 	}
 	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.tablePlan != nil)
-	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens)
+	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
 	//
@@ -1421,7 +1325,7 @@ func constructInnerIndexScanTask(
 		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection function", zap.Error(err))
 		return nil
 	}
-	return constructIndexJoinInnerSideTask(p, cop, ds, path, wrapper)
+	return constructIndexJoinInnerSideTask(p, prop, cop, ds, path, wrapper)
 }
 
 // construct the inner join task by inner child plan tree
@@ -1432,11 +1336,11 @@ func constructInnerIndexScanTask(
 //	There are two kinds of agg: stream agg and hash agg. Stream agg depends on some conditions, such as the group by cols
 //
 // Step2: build other inner plan node to task
-func constructIndexJoinInnerSideTask(p *LogicalJoin, dsCopTask *CopTask, ds *DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
-	var la *LogicalAggregation
+func constructIndexJoinInnerSideTask(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, dsCopTask *CopTask, ds *DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
+	var la *logicalop.LogicalAggregation
 	var canPushAggToCop bool
 	if len(wrapper.zippedChildren) > 0 {
-		la, canPushAggToCop = wrapper.zippedChildren[len(wrapper.zippedChildren)-1].(*LogicalAggregation)
+		la, canPushAggToCop = wrapper.zippedChildren[len(wrapper.zippedChildren)-1].(*logicalop.LogicalAggregation)
 		if la != nil && la.HasDistinct() {
 			// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
@@ -1449,7 +1353,7 @@ func constructIndexJoinInnerSideTask(p *LogicalJoin, dsCopTask *CopTask, ds *Dat
 	// If the bottom plan is not aggregation or the aggregation can't be pushed to coprocessor, we will construct a root task directly.
 	if !canPushAggToCop {
 		result := dsCopTask.ConvertToRootTask(ds.SCtx()).(*RootTask)
-		result.SetPlan(constructInnerByZippedChildren(wrapper.zippedChildren, result.GetPlan()))
+		result.SetPlan(constructInnerByZippedChildren(prop, wrapper.zippedChildren, result.GetPlan()))
 		return result
 	}
 
@@ -1477,12 +1381,13 @@ func constructIndexJoinInnerSideTask(p *LogicalJoin, dsCopTask *CopTask, ds *Dat
 		ds.TableInfo.GetPartitionInfo() == nil {
 		if len(path.IdxCols) < len(groupByCols) {
 			preferStream = false
-		}
-		sctx := p.SCtx()
-		for i, groupbyCol := range groupByCols {
-			if path.IdxColLens[i] != types.UnspecifiedLength ||
-				!groupbyCol.EqualByExprAndID(sctx.GetExprCtx().GetEvalCtx(), path.IdxCols[i]) {
-				preferStream = false
+		} else {
+			sctx := p.SCtx()
+			for i, groupbyCol := range groupByCols {
+				if path.IdxColLens[i] != types.UnspecifiedLength ||
+					!groupbyCol.EqualByExprAndID(sctx.GetExprCtx().GetEvalCtx(), path.IdxCols[i]) {
+					preferStream = false
+				}
 			}
 		}
 	} else {
@@ -1500,7 +1405,7 @@ func constructIndexJoinInnerSideTask(p *LogicalJoin, dsCopTask *CopTask, ds *Dat
 		streamAgg := basePhysicalAgg{
 			GroupByItems: newGbyItems,
 			AggFuncs:     newAggFuncs,
-		}.initForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), nil)
+		}.initForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), prop)
 		streamAgg.SetSchema(la.Schema().Clone())
 		// change to keep order for index scan and dsCopTask
 		if dsCopTask.indexPlan != nil {
@@ -1519,7 +1424,7 @@ func constructIndexJoinInnerSideTask(p *LogicalJoin, dsCopTask *CopTask, ds *Dat
 
 	// build hash agg, when the stream agg is illegal such as the order by prop is not matched
 	if aggTask == nil {
-		physicalHashAgg := NewPhysicalHashAgg(la, la.StatsInfo(), nil)
+		physicalHashAgg := NewPhysicalHashAgg(la, la.StatsInfo(), prop)
 		physicalHashAgg.SetSchema(la.Schema().Clone())
 		aggTask = physicalHashAgg.Attach2Task(dsCopTask)
 	}
@@ -1529,573 +1434,8 @@ func constructIndexJoinInnerSideTask(p *LogicalJoin, dsCopTask *CopTask, ds *Dat
 	if !ok {
 		return nil
 	}
-	result.SetPlan(constructInnerByZippedChildren(wrapper.zippedChildren[0:len(wrapper.zippedChildren)-1], result.p))
+	result.SetPlan(constructInnerByZippedChildren(prop, wrapper.zippedChildren[0:len(wrapper.zippedChildren)-1], result.p))
 	return result
-}
-
-var symmetricOp = map[string]string{
-	ast.LT: ast.GT,
-	ast.GE: ast.LE,
-	ast.GT: ast.LT,
-	ast.LE: ast.GE,
-}
-
-// ColWithCmpFuncManager is used in index join to handle the column with compare functions(>=, >, <, <=).
-// It stores the compare functions and build ranges in execution phase.
-type ColWithCmpFuncManager struct {
-	TargetCol         *expression.Column
-	colLength         int
-	OpType            []string
-	opArg             []expression.Expression
-	TmpConstant       []*expression.Constant
-	affectedColSchema *expression.Schema
-	compareFuncs      []chunk.CompareFunc
-}
-
-func (cwc *ColWithCmpFuncManager) appendNewExpr(opName string, arg expression.Expression, affectedCols []*expression.Column) {
-	cwc.OpType = append(cwc.OpType, opName)
-	cwc.opArg = append(cwc.opArg, arg)
-	cwc.TmpConstant = append(cwc.TmpConstant, &expression.Constant{RetType: cwc.TargetCol.RetType})
-	for _, col := range affectedCols {
-		if cwc.affectedColSchema.Contains(col) {
-			continue
-		}
-		cwc.compareFuncs = append(cwc.compareFuncs, chunk.GetCompareFunc(col.RetType))
-		cwc.affectedColSchema.Append(col)
-	}
-}
-
-// CompareRow compares the rows for deduplicate.
-func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
-	for i, col := range cwc.affectedColSchema.Columns {
-		ret := cwc.compareFuncs[i](lhs, col.Index, rhs, col.Index)
-		if ret != 0 {
-			return ret
-		}
-	}
-	return 0
-}
-
-// BuildRangesByRow will build range of the given row. It will eval each function's arg then call BuildRange.
-func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx *rangerctx.RangerContext, row chunk.Row) ([]*ranger.Range, error) {
-	exprs := make([]expression.Expression, len(cwc.OpType))
-	exprCtx := ctx.ExprCtx
-	for i, opType := range cwc.OpType {
-		constantArg, err := cwc.opArg[i].Eval(exprCtx.GetEvalCtx(), row)
-		if err != nil {
-			return nil, err
-		}
-		cwc.TmpConstant[i].Value = constantArg
-		newExpr, err := expression.NewFunction(exprCtx, opType, types.NewFieldType(mysql.TypeTiny), cwc.TargetCol, cwc.TmpConstant[i])
-		if err != nil {
-			return nil, err
-		}
-		exprs = append(exprs, newExpr) // nozero
-	}
-	// We already limit range mem usage when buildTemplateRange for inner table of IndexJoin in optimizer phase, so we
-	// don't need and shouldn't limit range mem usage when we refill inner ranges during the execution phase.
-	ranges, _, _, err := ranger.BuildColumnRange(exprs, ctx, cwc.TargetCol.RetType, cwc.colLength, 0)
-	if err != nil {
-		return nil, err
-	}
-	return ranges, nil
-}
-
-func (cwc *ColWithCmpFuncManager) resolveIndices(schema *expression.Schema) (err error) {
-	for i := range cwc.opArg {
-		cwc.opArg[i], err = cwc.opArg[i].ResolveIndices(schema)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// String implements Stringer interface.
-func (cwc *ColWithCmpFuncManager) String() string {
-	buffer := bytes.NewBufferString("")
-	for i := range cwc.OpType {
-		fmt.Fprintf(buffer, "%v(%v, %v)", cwc.OpType[i], cwc.TargetCol, cwc.opArg[i])
-		if i < len(cwc.OpType)-1 {
-			buffer.WriteString(" ")
-		}
-	}
-	return buffer.String()
-}
-
-const emptyColWithCmpFuncManagerSize = int64(unsafe.Sizeof(ColWithCmpFuncManager{}))
-
-// MemoryUsage return the memory usage of ColWithCmpFuncManager
-func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
-	if cwc == nil {
-		return
-	}
-
-	sum = emptyColWithCmpFuncManagerSize + int64(cap(cwc.compareFuncs))*size.SizeOfFunc
-	if cwc.TargetCol != nil {
-		sum += cwc.TargetCol.MemoryUsage()
-	}
-	if cwc.affectedColSchema != nil {
-		sum += cwc.affectedColSchema.MemoryUsage()
-	}
-
-	for _, str := range cwc.OpType {
-		sum += int64(len(str))
-	}
-	for _, expr := range cwc.opArg {
-		sum += expr.MemoryUsage()
-	}
-	for _, cst := range cwc.TmpConstant {
-		sum += cst.MemoryUsage()
-	}
-	return
-}
-
-// Reset the 'curIdxOff2KeyOff', 'curNotUsedIndexCols' and 'curNotUsedColLens' by innerKeys and idxCols
-/*
-For each idxCols,
-  If column can be found in innerKeys
-	save offset of innerKeys in 'curIdxOff2KeyOff'
-  Else,
-	save -1 in 'curIdxOff2KeyOff'
-*/
-// For example, innerKeys[t1.a, t1.sum_b, t1.c], idxCols [a, b, c]
-// 'curIdxOff2KeyOff' = [0, -1, 2]
-func (ijHelper *indexJoinBuildHelper) resetContextForIndex(idxCols []*expression.Column, colLens []int) {
-	tmpSchema := expression.NewSchema(ijHelper.innerJoinKeys...)
-	ijHelper.curIdxOff2KeyOff = make([]int, len(idxCols))
-	ijHelper.curNotUsedIndexCols = make([]*expression.Column, 0, len(idxCols))
-	ijHelper.curNotUsedColLens = make([]int, 0, len(idxCols))
-	for i, idxCol := range idxCols {
-		ijHelper.curIdxOff2KeyOff[i] = tmpSchema.ColumnIndex(idxCol)
-		if ijHelper.curIdxOff2KeyOff[i] >= 0 {
-			// Don't use the join columns if their collations are unmatched and the new collation is enabled.
-			if collate.NewCollationEnabled() && types.IsString(idxCol.RetType.GetType()) && types.IsString(ijHelper.outerJoinKeys[ijHelper.curIdxOff2KeyOff[i]].RetType.GetType()) {
-				et, err := expression.CheckAndDeriveCollationFromExprs(ijHelper.sctx.GetExprCtx(), "equal", types.ETInt, idxCol, ijHelper.outerJoinKeys[ijHelper.curIdxOff2KeyOff[i]])
-				if err != nil {
-					logutil.BgLogger().Error("Unexpected error happened during constructing index join", zap.Stack("stack"))
-				}
-				if !collate.CompatibleCollate(idxCol.GetStaticType().GetCollate(), et.Collation) {
-					ijHelper.curIdxOff2KeyOff[i] = -1
-				}
-			}
-			continue
-		}
-		ijHelper.curNotUsedIndexCols = append(ijHelper.curNotUsedIndexCols, idxCol)
-		ijHelper.curNotUsedColLens = append(ijHelper.curNotUsedColLens, colLens[i])
-	}
-}
-
-// findUsefulEqAndInFilters analyzes the PushedDownConds held by inner child and split them to three parts.
-// usefulEqOrInFilters is the continuous eq/in conditions on current unused index columns.
-// remainedEqOrIn is part of usefulEqOrInFilters, which needs to be evaluated again in selection.
-// remainingRangeCandidates is the other conditions for future use.
-func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters() (usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates []expression.Expression, emptyRange bool) {
-	// Extract the eq/in functions of possible join key.
-	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
-	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _, emptyRange = ranger.ExtractEqAndInCondition(
-		ijHelper.sctx.GetRangerCtx(),
-		ijHelper.innerPushedConditions,
-		ijHelper.curNotUsedIndexCols,
-		ijHelper.curNotUsedColLens,
-	)
-	return usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, emptyRange
-}
-
-// buildLastColManager analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
-// The returned value is just for outputting explain information
-func (ijHelper *indexJoinBuildHelper) buildLastColManager(nextCol *expression.Column,
-	cwc *ColWithCmpFuncManager) []expression.Expression {
-	var lastColAccesses []expression.Expression
-loopOtherConds:
-	for _, filter := range ijHelper.joinOtherConditions {
-		sf, ok := filter.(*expression.ScalarFunction)
-		if !ok || !(sf.FuncName.L == ast.LE || sf.FuncName.L == ast.LT || sf.FuncName.L == ast.GE || sf.FuncName.L == ast.GT) {
-			continue
-		}
-		var funcName string
-		var anotherArg expression.Expression
-		if lCol, ok := sf.GetArgs()[0].(*expression.Column); ok && lCol.EqualColumn(nextCol) {
-			anotherArg = sf.GetArgs()[1]
-			funcName = sf.FuncName.L
-		} else if rCol, ok := sf.GetArgs()[1].(*expression.Column); ok && rCol.EqualColumn(nextCol) {
-			anotherArg = sf.GetArgs()[0]
-			// The column manager always build expression in the form of col op arg1.
-			// So we need use the symmetric one of the current function.
-			funcName = symmetricOp[sf.FuncName.L]
-		} else {
-			continue
-		}
-		affectedCols := expression.ExtractColumns(anotherArg)
-		if len(affectedCols) == 0 {
-			continue
-		}
-		for _, col := range affectedCols {
-			if ijHelper.innerSchema.Contains(col) {
-				continue loopOtherConds
-			}
-		}
-		lastColAccesses = append(lastColAccesses, sf)
-		cwc.appendNewExpr(funcName, anotherArg, affectedCols)
-	}
-	return lastColAccesses
-}
-
-// removeUselessEqAndInFunc removes the useless eq/in conditions. It's designed for the following case:
-//
-//	t1 join t2 on t1.a=t2.a and t1.c=t2.c where t1.b > t2.b-10 and t1.b < t2.b+10 there's index(a, b, c) on t1.
-//	In this case the curIdxOff2KeyOff is [0 -1 1] and the notKeyEqAndIn is [].
-//	It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
-//	[0 -1 -1].
-//	So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
-func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expression.Column, notKeyEqAndIn []expression.Expression) (usefulEqAndIn, uselessOnes []expression.Expression) {
-	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
-	for idxColPos, notKeyColPos := 0, 0; idxColPos < len(idxCols); idxColPos++ {
-		if ijHelper.curIdxOff2KeyOff[idxColPos] != -1 {
-			ijHelper.curPossibleUsedKeys = append(ijHelper.curPossibleUsedKeys, idxCols[idxColPos])
-			continue
-		}
-		if notKeyColPos < len(notKeyEqAndIn) && ijHelper.curNotUsedIndexCols[notKeyColPos].EqualColumn(idxCols[idxColPos]) {
-			notKeyColPos++
-			continue
-		}
-		for i := idxColPos + 1; i < len(idxCols); i++ {
-			ijHelper.curIdxOff2KeyOff[i] = -1
-		}
-		remained := make([]expression.Expression, 0, len(notKeyEqAndIn)-notKeyColPos)
-		remained = append(remained, notKeyEqAndIn[notKeyColPos:]...)
-		notKeyEqAndIn = notKeyEqAndIn[:notKeyColPos]
-		return notKeyEqAndIn, remained
-	}
-	return notKeyEqAndIn, nil
-}
-
-type mutableIndexJoinRange struct {
-	ranges ranger.Ranges
-
-	buildHelper *indexJoinBuildHelper
-	path        *util.AccessPath
-}
-
-func (mr *mutableIndexJoinRange) Range() ranger.Ranges {
-	return mr.ranges
-}
-
-func (mr *mutableIndexJoinRange) Rebuild() error {
-	empty, err := mr.buildHelper.analyzeLookUpFilters(mr.path, true)
-	if err != nil {
-		return err
-	}
-	if empty { // empty ranges are dangerous for plan-cache, it's better to optimize the whole plan again in this case
-		return errors.New("failed to rebuild range: empty range")
-	}
-	newRanges := mr.buildHelper.chosenRanges.Range()
-	if len(mr.ranges) != len(newRanges) || (len(mr.ranges) > 0 && mr.ranges[0].Width() != newRanges[0].Width()) {
-		// some access conditions cannot be used to calculate the range after parameters change, return an error in this case for safety.
-		return errors.New("failed to rebuild range: range width changed")
-	}
-	mr.ranges = mr.buildHelper.chosenRanges.Range()
-	return nil
-}
-
-func (ijHelper *indexJoinBuildHelper) createMutableIndexJoinRange(relatedExprs []expression.Expression, ranges []*ranger.Range, path *util.AccessPath) ranger.MutableRanges {
-	// if the plan-cache is enabled and these ranges depend on some parameters, we have to rebuild these ranges after changing parameters
-	if expression.MaybeOverOptimized4PlanCache(ijHelper.sctx.GetExprCtx(), relatedExprs) {
-		// assume that path, innerKeys and outerKeys will not be modified in the follow-up process
-		return &mutableIndexJoinRange{
-			ranges: ranges,
-			buildHelper: &indexJoinBuildHelper{
-				sctx:                  ijHelper.sctx,
-				innerSchema:           ijHelper.innerSchema,
-				innerPushedConditions: ijHelper.innerPushedConditions,
-				innerStats:            ijHelper.innerStats,
-				innerJoinKeys:         ijHelper.innerJoinKeys,
-				outerJoinKeys:         ijHelper.outerJoinKeys,
-				joinOtherConditions:   ijHelper.joinOtherConditions},
-			path: path,
-		}
-	}
-	return ranger.Ranges(ranges)
-}
-
-func (ijHelper *indexJoinBuildHelper) updateByTemplateRangeResult(tempRangeRes *templateRangeResult,
-	accesses, remained []expression.Expression) (lastColPos int, newAccesses, newRemained []expression.Expression) {
-	lastColPos = tempRangeRes.keyCntInRange + tempRangeRes.eqAndInCntInRange
-	ijHelper.curPossibleUsedKeys = ijHelper.curPossibleUsedKeys[:tempRangeRes.keyCntInRange]
-	for i := lastColPos; i < len(ijHelper.curIdxOff2KeyOff); i++ {
-		ijHelper.curIdxOff2KeyOff[i] = -1
-	}
-	newAccesses = accesses[:tempRangeRes.eqAndInCntInRange]
-	newRemained = ranger.AppendConditionsIfNotExist(ijHelper.sctx.GetExprCtx().GetEvalCtx(),
-		remained, accesses[tempRangeRes.eqAndInCntInRange:])
-	return
-}
-
-func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath, rebuildMode bool) (emptyRange bool, err error) {
-	if len(path.IdxCols) == 0 {
-		return false, nil
-	}
-	accesses := make([]expression.Expression, 0, len(path.IdxCols))
-	ijHelper.resetContextForIndex(path.IdxCols, path.IdxColLens)
-	notKeyEqAndIn, remained, rangeFilterCandidates, emptyRange := ijHelper.findUsefulEqAndInFilters()
-	if emptyRange {
-		return true, nil
-	}
-	var remainedEqAndIn []expression.Expression
-	notKeyEqAndIn, remainedEqAndIn = ijHelper.removeUselessEqAndInFunc(path.IdxCols, notKeyEqAndIn)
-	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
-	// If no join key is matched while join keys actually are not empty. We don't choose index join for now.
-	if matchedKeyCnt <= 0 && len(ijHelper.innerJoinKeys) > 0 {
-		return false, nil
-	}
-	accesses = append(accesses, notKeyEqAndIn...)
-	remained = ranger.AppendConditionsIfNotExist(ijHelper.sctx.GetExprCtx().GetEvalCtx(), remained, remainedEqAndIn)
-	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
-	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
-	// A more strict check is applied later.
-	if lastColPos <= 0 {
-		return false, nil
-	}
-	rangeMaxSize := ijHelper.sctx.GetSessionVars().RangeMaxSize
-	if rebuildMode {
-		// When rebuilding ranges for plan cache, we don't restrict range mem limit.
-		rangeMaxSize = 0
-	}
-	// If all the index columns are covered by eq/in conditions, we don't need to consider other conditions anymore.
-	if lastColPos == len(path.IdxCols) {
-		// If there's no join key matching index column, then choosing hash join is always a better idea.
-		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1. And t2 has index(a, b).
-		//      If we don't have the following check, TiDB will build index join for this case.
-		if matchedKeyCnt <= 0 {
-			return false, nil
-		}
-		remained = append(remained, rangeFilterCandidates...)
-		tempRangeRes := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false, rangeMaxSize)
-		if tempRangeRes.err != nil || tempRangeRes.emptyRange || tempRangeRes.keyCntInRange <= 0 {
-			return tempRangeRes.emptyRange, tempRangeRes.err
-		}
-		lastColPos, accesses, remained = ijHelper.updateByTemplateRangeResult(tempRangeRes, accesses, remained)
-		mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeRes.ranges, path)
-		ijHelper.updateBestChoice(mutableRange, path, accesses, remained, nil, lastColPos, rebuildMode)
-		return false, nil
-	}
-	lastPossibleCol := path.IdxCols[lastColPos]
-	lastColManager := &ColWithCmpFuncManager{
-		TargetCol:         lastPossibleCol,
-		colLength:         path.IdxColLens[lastColPos],
-		affectedColSchema: expression.NewSchema(),
-	}
-	lastColAccess := ijHelper.buildLastColManager(lastPossibleCol, lastColManager)
-	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters
-	if len(lastColAccess) == 0 {
-		// If there's no join key matching index column, then choosing hash join is always a better idea.
-		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1 and t2.c > 10 and t2.c < 20. And t2 has index(a, b, c).
-		//      If we don't have the following check, TiDB will build index join for this case.
-		if matchedKeyCnt <= 0 {
-			return false, nil
-		}
-		colAccesses, colRemained := ranger.DetachCondsForColumn(ijHelper.sctx.GetRangerCtx(), rangeFilterCandidates, lastPossibleCol)
-		var nextColRange []*ranger.Range
-		var err error
-		if len(colAccesses) > 0 {
-			var colRemained2 []expression.Expression
-			nextColRange, colAccesses, colRemained2, err = ranger.BuildColumnRange(colAccesses, ijHelper.sctx.GetRangerCtx(), lastPossibleCol.RetType, path.IdxColLens[lastColPos], rangeMaxSize)
-			if err != nil {
-				return false, err
-			}
-			if len(colRemained2) > 0 {
-				colRemained = append(colRemained, colRemained2...)
-				nextColRange = nil
-			}
-		}
-		tempRangeRes := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false, rangeMaxSize)
-		if tempRangeRes.err != nil || tempRangeRes.emptyRange || tempRangeRes.keyCntInRange <= 0 {
-			return tempRangeRes.emptyRange, tempRangeRes.err
-		}
-		lastColPos, accesses, remained = ijHelper.updateByTemplateRangeResult(tempRangeRes, accesses, remained)
-		// update accesses and remained by colAccesses and colRemained.
-		remained = append(remained, colRemained...)
-		if tempRangeRes.nextColInRange {
-			if path.IdxColLens[lastColPos] != types.UnspecifiedLength {
-				remained = append(remained, colAccesses...)
-			}
-			accesses = append(accesses, colAccesses...)
-			lastColPos = lastColPos + 1
-		} else {
-			remained = append(remained, colAccesses...)
-		}
-		mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeRes.ranges, path)
-		ijHelper.updateBestChoice(mutableRange, path, accesses, remained, nil, lastColPos, rebuildMode)
-		return false, nil
-	}
-	tempRangeRes := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize)
-	if tempRangeRes.err != nil || tempRangeRes.emptyRange {
-		return tempRangeRes.emptyRange, tempRangeRes.err
-	}
-	lastColPos, accesses, remained = ijHelper.updateByTemplateRangeResult(tempRangeRes, accesses, remained)
-
-	remained = append(remained, rangeFilterCandidates...)
-	if tempRangeRes.extraColInRange {
-		accesses = append(accesses, lastColAccess...)
-		lastColPos = lastColPos + 1
-	} else {
-		if tempRangeRes.keyCntInRange <= 0 {
-			return false, nil
-		}
-		lastColManager = nil
-	}
-	mutableRange := ijHelper.createMutableIndexJoinRange(accesses, tempRangeRes.ranges, path)
-	ijHelper.updateBestChoice(mutableRange, path, accesses, remained, lastColManager, lastColPos, rebuildMode)
-	return false, nil
-}
-
-func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges ranger.MutableRanges, path *util.AccessPath, accesses,
-	remained []expression.Expression, lastColManager *ColWithCmpFuncManager, usedColsLen int, rebuildMode bool) {
-	if rebuildMode { // rebuild the range for plan-cache, update the chosenRanges anyway
-		ijHelper.chosenPath = path
-		ijHelper.chosenRanges = ranges
-		ijHelper.chosenAccess = accesses
-		ijHelper.idxOff2KeyOff = ijHelper.curIdxOff2KeyOff
-		return
-	}
-
-	// Notice that there may be the cases like `t1.a = t2.a and b > 2 and b < 1`, so ranges can be nil though the conditions are valid.
-	// Obviously when the range is nil, we don't need index join.
-	if len(ranges.Range()) == 0 {
-		return
-	}
-	var innerNDV float64
-	if stats := ijHelper.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
-		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], ijHelper.innerSchema, stats)
-	}
-	// We choose the index by the NDV of the used columns, the larger the better.
-	// If NDVs are same, we choose index which uses more columns.
-	// Note that these 2 heuristic rules are too simple to cover all cases,
-	// since the NDV of outer join keys are not considered, and the detached access conditions
-	// may contain expressions like `t1.a > t2.a`. It's pretty hard to evaluate the join selectivity
-	// of these non-column-equal conditions, so I prefer to keep these heuristic rules simple at least for now.
-	if innerNDV < ijHelper.usedColsNDV || (innerNDV == ijHelper.usedColsNDV && usedColsLen <= ijHelper.usedColsLen) {
-		return
-	}
-	ijHelper.chosenPath = path
-	ijHelper.usedColsLen = len(ranges.Range()[0].LowVal)
-	ijHelper.usedColsNDV = innerNDV
-	ijHelper.chosenRanges = ranges
-	ijHelper.chosenAccess = accesses
-	ijHelper.chosenRemained = remained
-	ijHelper.idxOff2KeyOff = ijHelper.curIdxOff2KeyOff
-	ijHelper.lastColManager = lastColManager
-}
-
-type templateRangeResult struct {
-	ranges            ranger.Ranges
-	emptyRange        bool
-	keyCntInRange     int
-	eqAndInCntInRange int
-	nextColInRange    bool
-	extraColInRange   bool
-	err               error
-}
-
-// appendTailTemplateRange appends empty datum for each range in originRanges.
-// rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
-// If the second return value is true, it means that the estimated memory after appending datums to originRanges exceeds
-// rangeMaxSize and the function rejects appending datums to originRanges.
-func appendTailTemplateRange(originRanges ranger.Ranges, rangeMaxSize int64) (ranger.Ranges, bool) {
-	if rangeMaxSize > 0 && originRanges.MemUsage()+(types.EmptyDatumSize*2+16)*int64(len(originRanges)) > rangeMaxSize {
-		return originRanges, true
-	}
-	for _, ran := range originRanges {
-		ran.LowVal = append(ran.LowVal, types.Datum{})
-		ran.HighVal = append(ran.HighVal, types.Datum{})
-		ran.Collators = append(ran.Collators, nil)
-	}
-	return originRanges, false
-}
-
-func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range,
-	haveExtraCol bool, rangeMaxSize int64) (res *templateRangeResult) {
-	res = &templateRangeResult{}
-	ctx := ijHelper.sctx
-	sc := ctx.GetSessionVars().StmtCtx
-	defer func() {
-		if sc.MemTracker != nil && res != nil && len(res.ranges) > 0 {
-			sc.MemTracker.Consume(2 * types.EstimatedMemUsage(res.ranges[0].LowVal, len(res.ranges)))
-		}
-	}()
-	pointLength := matchedKeyCnt + len(eqAndInFuncs)
-	ranges := ranger.Ranges{&ranger.Range{}}
-	for i, j := 0, 0; i+j < pointLength; {
-		if ijHelper.curIdxOff2KeyOff[i+j] != -1 {
-			// This position is occupied by join key.
-			var fallback bool
-			ranges, fallback = appendTailTemplateRange(ranges, rangeMaxSize)
-			if fallback {
-				ctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
-				res.ranges = ranges
-				res.keyCntInRange = i
-				res.eqAndInCntInRange = j
-				return
-			}
-			i++
-		} else {
-			exprs := []expression.Expression{eqAndInFuncs[j]}
-			oneColumnRan, _, remained, err := ranger.BuildColumnRange(exprs, ijHelper.sctx.GetRangerCtx(), ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j], rangeMaxSize)
-			if err != nil {
-				return &templateRangeResult{err: err}
-			}
-			if len(oneColumnRan) == 0 {
-				return &templateRangeResult{emptyRange: true}
-			}
-			if sc.MemTracker != nil {
-				sc.MemTracker.Consume(2 * types.EstimatedMemUsage(oneColumnRan[0].LowVal, len(oneColumnRan)))
-			}
-			if len(remained) > 0 {
-				res.ranges = ranges
-				res.keyCntInRange = i
-				res.eqAndInCntInRange = j
-				return
-			}
-			var fallback bool
-			ranges, fallback = ranger.AppendRanges2PointRanges(ranges, oneColumnRan, rangeMaxSize)
-			if fallback {
-				ctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
-				res.ranges = ranges
-				res.keyCntInRange = i
-				res.eqAndInCntInRange = j
-				return
-			}
-			j++
-		}
-	}
-	if len(nextColRange) > 0 {
-		var fallback bool
-		ranges, fallback = ranger.AppendRanges2PointRanges(ranges, nextColRange, rangeMaxSize)
-		if fallback {
-			ctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
-		}
-		res.ranges = ranges
-		res.keyCntInRange = matchedKeyCnt
-		res.eqAndInCntInRange = len(eqAndInFuncs)
-		res.nextColInRange = !fallback
-		return
-	}
-	if haveExtraCol {
-		var fallback bool
-		ranges, fallback = appendTailTemplateRange(ranges, rangeMaxSize)
-		if fallback {
-			ctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
-		}
-		res.ranges = ranges
-		res.keyCntInRange = matchedKeyCnt
-		res.eqAndInCntInRange = len(eqAndInFuncs)
-		res.extraColInRange = !fallback
-		return
-	}
-	res.ranges = ranges
-	res.keyCntInRange = matchedKeyCnt
-	res.eqAndInCntInRange = len(eqAndInFuncs)
-	return
 }
 
 func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.PhysicalPlan) []base.PhysicalPlan {
@@ -2142,16 +1482,16 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 }
 
 // tryToGetIndexJoin returns all available index join plans, and the second returned value indicates whether this plan is enforced by hints.
-func tryToGetIndexJoin(p *LogicalJoin, prop *property.PhysicalProperty) (indexJoins []base.PhysicalPlan, canForced bool) {
+func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (indexJoins []base.PhysicalPlan, canForced bool) {
 	// supportLeftOuter and supportRightOuter indicates whether this type of join
 	// supports the left side or right side to be the outer side.
 	var supportLeftOuter, supportRightOuter bool
 	switch p.JoinType {
-	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
+	case logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin, logicalop.LeftOuterJoin:
 		supportLeftOuter = true
-	case RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		supportRightOuter = true
-	case InnerJoin:
+	case logicalop.InnerJoin:
 		supportLeftOuter, supportRightOuter = true, true
 	}
 	candidates := make([]base.PhysicalPlan, 0, 2)
@@ -2184,7 +1524,7 @@ func tryToGetIndexJoin(p *LogicalJoin, prop *property.PhysicalProperty) (indexJo
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
 }
 
-func handleFilterIndexJoinHints(p *LogicalJoin, candidates []base.PhysicalPlan) []base.PhysicalPlan {
+func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.PhysicalPlan) []base.PhysicalPlan {
 	if !p.PreferAny(h.PreferNoIndexJoin, h.PreferNoIndexHashJoin, h.PreferNoIndexMergeJoin) {
 		return candidates // no filter index join hints
 	}
@@ -2205,7 +1545,7 @@ func handleFilterIndexJoinHints(p *LogicalJoin, candidates []base.PhysicalPlan) 
 }
 
 // handleForceIndexJoinHints handles the force index join hints and returns all plans that can satisfy the hints.
-func handleForceIndexJoinHints(p *LogicalJoin, prop *property.PhysicalProperty, candidates []base.PhysicalPlan) (indexJoins []base.PhysicalPlan, canForced bool) {
+func handleForceIndexJoinHints(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, candidates []base.PhysicalPlan) (indexJoins []base.PhysicalPlan, canForced bool) {
 	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
 		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
 		return candidates, false // no force index join hints
@@ -2324,7 +1664,7 @@ func calcHashExchangeSizeByChild(p1 base.Plan, p2 base.Plan, mppStoreCnt int) (r
 // It will cost more time to construct `Build` hash table and search `Probe` while using broadcast join.
 // Set a scale factor (`mppStoreCnt^*`) when estimating broadcast join in `isJoinFitMPPBCJ` and `isJoinChildFitMPPBCJ` (based on TPCH benchmark, it has been verified in Q9).
 
-func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
+func isJoinFitMPPBCJ(p *logicalop.LogicalJoin, mppStoreCnt int) bool {
 	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSizeByChild(p.Children()[0], p.Children()[1], mppStoreCnt)
 	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.Children()[0], p.Children()[1], mppStoreCnt)
 	if hasSizeBC && hasSizeHash {
@@ -2333,7 +1673,7 @@ func isJoinFitMPPBCJ(p *LogicalJoin, mppStoreCnt int) bool {
 	return rowBC*float64(mppStoreCnt) <= rowHash
 }
 
-func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) bool {
+func isJoinChildFitMPPBCJ(p *logicalop.LogicalJoin, childIndexToBC int, mppStoreCnt int) bool {
 	rowBC, szBC, hasSizeBC := calcBroadcastExchangeSize(p.Children()[childIndexToBC], mppStoreCnt)
 	rowHash, szHash, hasSizeHash := calcHashExchangeSizeByChild(p.Children()[0], p.Children()[1], mppStoreCnt)
 
@@ -2344,13 +1684,13 @@ func isJoinChildFitMPPBCJ(p *LogicalJoin, childIndexToBC int, mppStoreCnt int) b
 }
 
 // If we can use mpp broadcast join, that's our first choice.
-func preferMppBCJ(p *LogicalJoin) bool {
+func preferMppBCJ(p *logicalop.LogicalJoin) bool {
 	if len(p.EqualConditions) == 0 && p.SCtx().GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
 
-	onlyCheckChild1 := p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin
-	onlyCheckChild0 := p.JoinType == RightOuterJoin
+	onlyCheckChild1 := p.JoinType == logicalop.LeftOuterJoin || p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin
+	onlyCheckChild0 := p.JoinType == logicalop.RightOuterJoin
 
 	if p.SCtx().GetSessionVars().PreferBCJByExchangeDataSize {
 		mppStoreCnt, err := p.SCtx().GetMPPClient().GetMPPStoreCount()
@@ -2382,7 +1722,7 @@ func preferMppBCJ(p *LogicalJoin) bool {
 	return checkChildFitBC(p.Children()[0]) || checkChildFitBC(p.Children()[1])
 }
 
-func canExprsInJoinPushdown(p *LogicalJoin, storeType kv.StoreType) bool {
+func canExprsInJoinPushdown(p *logicalop.LogicalJoin, storeType kv.StoreType) bool {
 	equalExprs := make([]expression.Expression, 0, len(p.EqualConditions))
 	for _, eqCondition := range p.EqualConditions {
 		if eqCondition.FuncName.L == ast.NullEQ {
@@ -2390,7 +1730,7 @@ func canExprsInJoinPushdown(p *LogicalJoin, storeType kv.StoreType) bool {
 		}
 		equalExprs = append(equalExprs, eqCondition)
 	}
-	pushDownCtx := GetPushDownCtx(p.SCtx())
+	pushDownCtx := util.GetPushDownCtx(p.SCtx())
 	if !expression.CanExprsPushDown(pushDownCtx, equalExprs, storeType) {
 		return false
 	}
@@ -2406,7 +1746,7 @@ func canExprsInJoinPushdown(p *LogicalJoin, storeType kv.StoreType) bool {
 	return true
 }
 
-func tryToGetMppHashJoin(p *LogicalJoin, prop *property.PhysicalProperty, useBCJ bool) []base.PhysicalPlan {
+func tryToGetMppHashJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, useBCJ bool) []base.PhysicalPlan {
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
@@ -2419,7 +1759,7 @@ func tryToGetMppHashJoin(p *LogicalJoin, prop *property.PhysicalProperty, useBCJ
 		return nil
 	}
 
-	if p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin && p.JoinType != LeftOuterSemiJoin && p.JoinType != AntiLeftOuterSemiJoin {
+	if p.JoinType != logicalop.InnerJoin && p.JoinType != logicalop.LeftOuterJoin && p.JoinType != logicalop.RightOuterJoin && p.JoinType != logicalop.SemiJoin && p.JoinType != logicalop.AntiSemiJoin && p.JoinType != logicalop.LeftOuterSemiJoin && p.JoinType != logicalop.AntiLeftOuterSemiJoin {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because join type `" + p.JoinType.String() + "` is not supported now.")
 		return nil
 	}
@@ -2434,11 +1774,11 @@ func tryToGetMppHashJoin(p *LogicalJoin, prop *property.PhysicalProperty, useBCJ
 			return nil
 		}
 	}
-	if len(p.LeftConditions) != 0 && p.JoinType != LeftOuterJoin {
+	if len(p.LeftConditions) != 0 && p.JoinType != logicalop.LeftOuterJoin {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.")
 		return nil
 	}
-	if len(p.RightConditions) != 0 && p.JoinType != RightOuterJoin {
+	if len(p.RightConditions) != 0 && p.JoinType != logicalop.RightOuterJoin {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `right join` but has right conditions, which is not supported by mpp now.")
 		return nil
 	}
@@ -2474,12 +1814,12 @@ func tryToGetMppHashJoin(p *LogicalJoin, prop *property.PhysicalProperty, useBCJ
 	}
 	preferredBuildIndex := 0
 	fixedBuildSide := false // Used to indicate whether the build side for the MPP join is fixed or not.
-	if p.JoinType == InnerJoin {
+	if p.JoinType == logicalop.InnerJoin {
 		if p.Children()[0].StatsInfo().Count() > p.Children()[1].StatsInfo().Count() {
 			preferredBuildIndex = 1
 		}
 	} else if p.JoinType.IsSemiJoin() {
-		if !useBCJ && !p.IsNAAJ() && len(p.EqualConditions) > 0 && (p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin) {
+		if !useBCJ && !p.IsNAAJ() && len(p.EqualConditions) > 0 && (p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin) {
 			// TiFlash only supports Non-null_aware non-cross semi/anti_semi join to use both sides as build side
 			preferredBuildIndex = 1
 			// MPPOuterJoinFixedBuildSide default value is false
@@ -2492,7 +1832,7 @@ func tryToGetMppHashJoin(p *LogicalJoin, prop *property.PhysicalProperty, useBCJ
 			fixedBuildSide = true
 		}
 	}
-	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
+	if p.JoinType == logicalop.LeftOuterJoin || p.JoinType == logicalop.RightOuterJoin {
 		// TiFlash does not require that the build side must be the inner table for outer join.
 		// so we can choose the build side based on the row count, except that:
 		// 1. it is a broadcast join(for broadcast join, it makes sense to use the broadcast side as the build side)
@@ -2503,7 +1843,7 @@ func tryToGetMppHashJoin(p *LogicalJoin, prop *property.PhysicalProperty, useBCJ
 				// The hint has higher priority than variable.
 				fixedBuildSide = true
 			}
-			if p.JoinType == LeftOuterJoin {
+			if p.JoinType == logicalop.LeftOuterJoin {
 				preferredBuildIndex = 1
 			}
 		} else if p.Children()[0].StatsInfo().Count() > p.Children()[1].StatsInfo().Count() {
@@ -2559,11 +1899,11 @@ func tryToGetMppHashJoin(p *LogicalJoin, prop *property.PhysicalProperty, useBCJ
 		lPartitionKeys, rPartitionKeys := p.GetPotentialPartitionKeys()
 		if prop.MPPPartitionTp == property.HashType {
 			var matches []int
-			if p.JoinType == InnerJoin {
+			if p.JoinType == logicalop.InnerJoin {
 				if matches = prop.IsSubsetOf(lPartitionKeys); len(matches) == 0 {
 					matches = prop.IsSubsetOf(rPartitionKeys)
 				}
-			} else if p.JoinType == RightOuterJoin {
+			} else if p.JoinType == logicalop.RightOuterJoin {
 				// for right out join, only the right partition keys can possibly matches the prop, because
 				// the left partition keys will generate NULL values randomly
 				// todo maybe we can add a null-sensitive flag in the MPPPartitionColumn to indicate whether the partition column is
@@ -2606,7 +1946,106 @@ func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*
 	return newKeys
 }
 
-func exhaustPhysicalPlans4LogicalExpand(p *LogicalExpand, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+// it can generates hash join, index join and sort merge join.
+// Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
+// If the hint is not matched, it will get other candidates.
+// If the hint is not figured, we will pick all candidates.
+func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalJoin)
+	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
+			indexJoins, _ := tryToGetIndexJoin(p, prop)
+			failpoint.Return(indexJoins, true, nil)
+		}
+	})
+
+	if !isJoinHintSupportedInMPPMode(p.PreferJoinType) {
+		if hasMPPJoinHints(p.PreferJoinType) {
+			// If there are MPP hints but has some conflicts join method hints, all the join hints are invalid.
+			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now")
+			p.PreferJoinType = 0
+		} else {
+			// If there are no MPP hints but has some conflicts join method hints, the MPP mode will be blocked.
+			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.")
+			if prop.IsFlashProp() {
+				return nil, false, nil
+			}
+		}
+	}
+	if prop.MPPPartitionTp == property.BroadcastType {
+		return nil, false, nil
+	}
+	joins := make([]base.PhysicalPlan, 0, 8)
+	canPushToTiFlash := p.CanPushToCop(kv.TiFlash)
+	if p.SCtx().GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
+		if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
+			if shuffleJoins := tryToGetMppHashJoin(p, prop, false); len(shuffleJoins) > 0 {
+				return shuffleJoins, true, nil
+			}
+		}
+		if (p.PreferJoinType & h.PreferBCJoin) > 0 {
+			if bcastJoins := tryToGetMppHashJoin(p, prop, true); len(bcastJoins) > 0 {
+				return bcastJoins, true, nil
+			}
+		}
+		if preferMppBCJ(p) {
+			mppJoins := tryToGetMppHashJoin(p, prop, true)
+			joins = append(joins, mppJoins...)
+		} else {
+			mppJoins := tryToGetMppHashJoin(p, prop, false)
+			joins = append(joins, mppJoins...)
+		}
+	} else {
+		hasMppHints := false
+		var errMsg string
+		if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
+			errMsg = "The join can not push down to the MPP side, the shuffle_join() hint is invalid"
+			hasMppHints = true
+		}
+		if (p.PreferJoinType & h.PreferBCJoin) > 0 {
+			errMsg = "The join can not push down to the MPP side, the broadcast_join() hint is invalid"
+			hasMppHints = true
+		}
+		if hasMppHints {
+			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
+		}
+	}
+	if prop.IsFlashProp() {
+		return joins, true, nil
+	}
+
+	if !p.IsNAAJ() {
+		// naaj refuse merge join and index join.
+		mergeJoins := GetMergeJoin(p, prop, p.Schema(), p.StatsInfo(), p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo())
+		if (p.PreferJoinType&h.PreferMergeJoin) > 0 && len(mergeJoins) > 0 {
+			return mergeJoins, true, nil
+		}
+		joins = append(joins, mergeJoins...)
+
+		indexJoins, forced := tryToGetIndexJoin(p, prop)
+		if forced {
+			return indexJoins, true, nil
+		}
+		joins = append(joins, indexJoins...)
+	}
+
+	hashJoins, forced := getHashJoins(p, prop)
+	if forced && len(hashJoins) > 0 {
+		return hashJoins, true, nil
+	}
+	joins = append(joins, hashJoins...)
+
+	if p.PreferJoinType > 0 {
+		// If we reach here, it means we have a hint that doesn't work.
+		// It might be affected by the required property, so we enforce
+		// this property and try the hint again.
+		return joins, false, nil
+	}
+	return joins, true, nil
+}
+
+func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalExpand)
 	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
 	if !prop.IsSortItemEmpty() {
 		// false, meaning we can add a sort enforcer.
@@ -2671,7 +2110,7 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	newProps := []*property.PhysicalProperty{newProp}
 	// generate a mpp task candidate if mpp mode is allowed
 	ctx := p.SCtx()
-	pushDownCtx := GetPushDownCtx(ctx)
+	pushDownCtx := util.GetPushDownCtx(ctx)
 	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() && p.CanPushToCop(kv.TiFlash) &&
 		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiFlash) {
 		mppProp := newProp.CloneEssentialFields()
@@ -2689,9 +2128,8 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	ret := make([]base.PhysicalPlan, 0, len(newProps))
 	for _, newProp := range newProps {
 		proj := PhysicalProjection{
-			Exprs:                p.Exprs,
-			CalculateNoDelay:     p.CalculateNoDelay,
-			AvoidColumnEvaluator: p.AvoidColumnEvaluator,
+			Exprs:            p.Exprs,
+			CalculateNoDelay: p.CalculateNoDelay,
 		}.Init(ctx, p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), newProp)
 		proj.SetSchema(p.Schema())
 		ret = append(ret, proj)
@@ -2787,26 +2225,29 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 }
 
 // GetHashJoin is public for cascades planner.
-func GetHashJoin(la *LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
+func GetHashJoin(la *logicalop.LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
 	return getHashJoin(&la.LogicalJoin, prop, 1, false)
 }
 
-// ExhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
-func ExhaustPhysicalPlans4LogicalApply(la *LogicalApply, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+// exhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
+func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	la := lp.(*logicalop.LogicalApply)
 	if !prop.AllColsFromSchema(la.Children()[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
 	}
 	if !prop.IsSortItemEmpty() && la.SCtx().GetSessionVars().EnableParallelApply {
-		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Parallel Apply rejects the possible order properties of its outer child currently"))
+		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Parallel Apply rejects the possible order properties of its outer child currently"))
 		return nil, true, nil
 	}
 	disableAggPushDownToCop(la.Children()[0])
 	join := GetHashJoin(la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
-		columns = append(columns, &colColumn.Column)
+		// fix the liner warning.
+		tmp := colColumn
+		columns = append(columns, &tmp.Column)
 	}
 	cacheHitRatio := 0.0
 	if la.StatsInfo().RowCount != 0 {
@@ -2840,12 +2281,12 @@ func disableAggPushDownToCop(p base.LogicalPlan) {
 	for _, child := range p.Children() {
 		disableAggPushDownToCop(child)
 	}
-	if agg, ok := p.(*LogicalAggregation); ok {
+	if agg, ok := p.(*logicalop.LogicalAggregation); ok {
 		agg.NoCopPushDown = true
 	}
 }
 
-func tryToGetMppWindows(lw *LogicalWindow, prop *property.PhysicalProperty) []base.PhysicalPlan {
+func tryToGetMppWindows(lw *logicalop.LogicalWindow, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	if !prop.IsSortItemAllForPartition() {
 		return nil
 	}
@@ -2860,7 +2301,7 @@ func tryToGetMppWindows(lw *LogicalWindow, prop *property.PhysicalProperty) []ba
 		allSupported := true
 		sctx := lw.SCtx()
 		for _, windowFunc := range lw.WindowFuncDescs {
-			if !windowFunc.CanPushDownToTiFlash(GetPushDownCtx(sctx)) {
+			if !windowFunc.CanPushDownToTiFlash(util.GetPushDownCtx(sctx)) {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function `" + windowFunc.Name + "` or its arguments are not supported now.")
 				allSupported = false
@@ -2942,7 +2383,8 @@ func tryToGetMppWindows(lw *LogicalWindow, prop *property.PhysicalProperty) []ba
 	return []base.PhysicalPlan{window}
 }
 
-func exhaustLogicalWindowPhysicalPlans(lw *LogicalWindow, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	lw := lp.(*logicalop.LogicalWindow)
 	windows := make([]base.PhysicalPlan, 0, 2)
 
 	canPushToTiFlash := lw.CanPushToCop(kv.TiFlash)
@@ -3005,7 +2447,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 				// Once aggregation is pushed to cop, the cache data can't be use any more.
 				return false
 			}
-		case *LogicalUnionAll:
+		case *logicalop.LogicalUnionAll:
 			if storeTp != kv.TiFlash {
 				return false
 			}
@@ -3020,7 +2462,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 				return false
 			}
 			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
-		case *LogicalExpand:
+		case *logicalop.LogicalExpand:
 			// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
 			if storeTp != kv.TiFlash {
 				return false
@@ -3028,7 +2470,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
 		case *logicalop.LogicalTableDual:
 			return storeTp == kv.TiFlash && considerDual
-		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalWindow:
+		case *logicalop.LogicalAggregation, *logicalop.LogicalSelection, *logicalop.LogicalJoin, *logicalop.LogicalWindow:
 			if storeTp != kv.TiFlash {
 				return false
 			}
@@ -3038,11 +2480,11 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			return false
 		case *logicalop.LogicalSequence:
 			return storeTp == kv.TiFlash
-		case *LogicalCTE:
+		case *logicalop.LogicalCTE:
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			if c.Cte.recursivePartLogicalPlan != nil || !c.Cte.seedPartLogicalPlan.CanPushToCop(storeTp) {
+			if c.Cte.RecursivePartLogicalPlan != nil || !c.Cte.SeedPartLogicalPlan.CanPushToCop(storeTp) {
 				return false
 			}
 			return true
@@ -3055,7 +2497,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 	return ret
 }
 
-func getEnforcedStreamAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	if prop.IsFlashProp() {
 		return nil
 	}
@@ -3100,21 +2542,8 @@ func getEnforcedStreamAggs(la *LogicalAggregation, prop *property.PhysicalProper
 	return enforcedAggs
 }
 
-func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
-	for _, aggFunc := range la.AggFuncs {
-		if aggFunc.HasDistinct {
-			for _, distinctArg := range aggFunc.Args {
-				if !expression.Contains(la.SCtx().GetExprCtx().GetEvalCtx(), la.GroupByItems, distinctArg) {
-					return false
-				}
-			}
-		}
-	}
-	return true
-}
-
 func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	la := lp.(*LogicalAggregation)
+	la := lp.(*logicalop.LogicalAggregation)
 	// TODO: support CopTiFlash task type in stream agg
 	if prop.IsFlashProp() {
 		return nil
@@ -3192,7 +2621,7 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 }
 
 // TODO: support more operators and distinct later
-func checkCanPushDownToMPP(la *LogicalAggregation) bool {
+func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
 	hasUnsupportedDistinct := false
 	for _, agg := range la.AggFuncs {
 		// MPP does not support distinct except count distinct now
@@ -3218,7 +2647,7 @@ func checkCanPushDownToMPP(la *LogicalAggregation) bool {
 	return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }
 
-func tryToGetMppHashAggs(la *LogicalAggregation, prop *property.PhysicalProperty) (hashAggs []base.PhysicalPlan) {
+func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) (hashAggs []base.PhysicalPlan) {
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
@@ -3366,7 +2795,7 @@ func tryToGetMppHashAggs(la *LogicalAggregation, prop *property.PhysicalProperty
 //
 // That is to say, the non-complete positive judgement of canPushDownToMPP/canPushDownToTiFlash/canPushDownToTiKV is not that for sure here.
 func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	la := lp.(*LogicalAggregation)
+	la := lp.(*logicalop.LogicalAggregation)
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
@@ -3426,14 +2855,41 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	return hashAggs
 }
 
-func exhaustPhysicalPlans4LogicalSelection(p *LogicalSelection, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	la := lp.(*logicalop.LogicalAggregation)
+	if la.PreferAggToCop {
+		if !la.CanPushToCop(kv.TiKV) {
+			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
+				"Optimizer Hint AGG_TO_COP is inapplicable")
+			la.PreferAggToCop = false
+		}
+	}
+	preferHash, preferStream := la.ResetHintIfConflicted()
+	hashAggs := getHashAggs(la, prop)
+	if hashAggs != nil && preferHash {
+		return hashAggs, true, nil
+	}
+	streamAggs := getStreamAggs(la, prop)
+	if streamAggs != nil && preferStream {
+		return streamAggs, true, nil
+	}
+	aggs := append(hashAggs, streamAggs...)
+
+	if streamAggs == nil && preferStream && !prop.IsSortItemEmpty() {
+		la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint STREAM_AGG is inapplicable")
+	}
+	return aggs, !(preferStream || preferHash), nil
+}
+
+func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalSelection)
 	newProps := make([]*property.PhysicalProperty, 0, 2)
 	childProp := prop.CloneEssentialFields()
 	newProps = append(newProps, childProp)
 
 	if prop.TaskTp != property.MppTaskType &&
 		p.SCtx().GetSessionVars().IsMPPAllowed() &&
-		p.canPushDown(kv.TiFlash) {
+		p.CanPushDown(kv.TiFlash) {
 		childPropMpp := prop.CloneEssentialFields()
 		childPropMpp.TaskTp = property.MppTaskType
 		newProps = append(newProps, childPropMpp)
@@ -3480,7 +2936,8 @@ func getLimitPhysicalPlans(p *logicalop.LogicalLimit, prop *property.PhysicalPro
 	return ret, true, nil
 }
 
-func getLockPhysicalPlans(p *LogicalLock, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalLock(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalLock)
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Lock` is not supported now.")
@@ -3495,7 +2952,8 @@ func getLockPhysicalPlans(p *LogicalLock, prop *property.PhysicalProperty) ([]ba
 	return []base.PhysicalPlan{lock}, true, nil
 }
 
-func exhaustUnionAllPhysicalPlans(p *LogicalUnionAll, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalUnionAll)
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
 	if !prop.IsSortItemEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
 		return nil, true, nil
@@ -3539,7 +2997,8 @@ func exhaustUnionAllPhysicalPlans(p *LogicalUnionAll, prop *property.PhysicalPro
 	return []base.PhysicalPlan{ua}, true, nil
 }
 
-func exhaustPartitionUnionAllPhysicalPlans(p *LogicalPartitionUnionAll, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalPartitionUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalPartitionUnionAll)
 	uas, flagHint, err := p.LogicalUnionAll.ExhaustPhysicalPlans(prop)
 	if err != nil {
 		return nil, false, err
@@ -3614,7 +3073,8 @@ func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.P
 	return []base.PhysicalPlan{mor}, true, nil
 }
 
-func exhaustPhysicalPlans4LogicalCTE(p *LogicalCTE, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalCTE)
 	pcte := PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {
 		pcte.storageSender = PhysicalExchangeSender{
@@ -3622,7 +3082,7 @@ func exhaustPhysicalPlans4LogicalCTE(p *LogicalCTE, prop *property.PhysicalPrope
 		}.Init(p.SCtx(), p.StatsInfo())
 	}
 	pcte.SetSchema(p.Schema())
-	pcte.childrenReqProps = []*property.PhysicalProperty{prop.CloneEssentialFields()}
+	pcte.SetChildrenReqProps([]*property.PhysicalProperty{prop.CloneEssentialFields()})
 	return []base.PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
 }
 

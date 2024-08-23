@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -231,7 +232,7 @@ func checkResult(t *testing.T, tk *testkit.TestKit, result ...string) {
 	var rows []string
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
-			rows = append(rows, v.DBName+" "+tblInfo.Name.L)
+			rows = append(rows, v.DBName.L+" "+tblInfo.Name.L)
 		}
 	}
 	slices.SortFunc(rows, strings.Compare)
@@ -277,7 +278,7 @@ func TestUnrelatedDDLTriggerReload(t *testing.T) {
 	is := dom.InfoSchema()
 	ok, v2 := infoschema.IsV2(is)
 	require.True(t, ok)
-	v2.EvictTable("test", "t1")
+	v2.EvictTable(model.NewCIStr("test"), model.NewCIStr("t1"))
 
 	tk.MustExec("create table t2 (id int)")
 
@@ -308,8 +309,26 @@ func TestTrace(t *testing.T) {
 	require.True(t, ok)
 
 	// Evict the table cache and check the trace information can catch this calling.
-	raw.EvictTable("test", "t_trace")
-	tk.MustQuery("trace select * from information_schema.tables").CheckContain("infoschema.loadTableInfo")
+	raw.EvictTable(model.NewCIStr("test"), model.NewCIStr("t_trace"))
+	tk.MustQuery("trace select * from information_schema.tables where table_schema='test' and table_name='t_trace'").CheckContain("infoschema.loadTableInfo")
+}
+
+func TestCachedTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
+	tk.MustExec("create table t_cache (id int key auto_increment)")
+	tk.MustExec("insert into t_cache values (1)")
+	tk.MustExec("alter table t_cache cache")
+	is := dom.InfoSchema()
+	ok, raw := infoschema.IsV2(is)
+	require.True(t, ok)
+
+	// Cover a case that after cached table evict and load, table.Table goes wrong.
+	raw.EvictTable(model.NewCIStr("test"), model.NewCIStr("t_cache"))
+	tk.MustExec("insert into t_cache values (2)") // no panic here
+	tk.MustQuery("select * from t_cache").Check(testkit.Rows("1", "2"))
 }
 
 func BenchmarkTableByName(t *testing.B) {
@@ -427,4 +446,61 @@ func TestIssue54926(t *testing.T) {
 	require.NotNil(t, tk.Session().GetSessionVars().SnapshotInfoschema)
 	require.Equal(t, time2TS, tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
 	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
+}
+
+func TestSchemaSimpleTableInfos(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	tk.MustExec("set @@global.tidb_schema_cache_size = '512MB'")
+
+	tk.MustExec("create database aaa")
+	tk.MustExec("create database zzz")
+	tk.MustExec("drop database zzz")
+
+	tk.MustExec("create database simple")
+	tk.MustExec("use simple")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create table t2 (id int)")
+
+	time1 := time.Now()
+	time.Sleep(50 * time.Millisecond)
+
+	tk.MustExec("rename table simple.t2 to aaa.t2")
+	tk.MustExec("drop database aaa")
+
+	is := tk.Session().GetInfoSchema()
+	// Cover special schema
+	tblInfos, err := is.SchemaSimpleTableInfos(context.Background(), model.NewCIStr("INFORMATION_SCHEMA"))
+	require.NoError(t, err)
+	res := make([]string, 0, len(tblInfos))
+	for _, tbl := range tblInfos {
+		res = append(res, tbl.Name.L)
+	}
+	sort.Strings(res)
+	tk.MustQuery("select lower(table_name) from information_schema.tables where table_schema = 'information_schema'").
+		Sort().Check(testkit.Rows(res...))
+
+	// Cover normal schema
+	tblInfos, err = is.SchemaSimpleTableInfos(context.Background(), model.NewCIStr("simple"))
+	require.NoError(t, err)
+	require.Len(t, tblInfos, 1)
+	require.Equal(t, tblInfos[0].Name.L, "t1")
+
+	// Cover snapshot infoschema
+	tk.MustExec(fmt.Sprintf(`set @@tidb_snapshot="%s"`, time1.Format("2006-1-2 15:04:05.000")))
+	is = tk.Session().GetInfoSchema()
+	tblInfos, err = is.SchemaSimpleTableInfos(context.Background(), model.NewCIStr("simple"))
+	require.NoError(t, err)
+	require.Len(t, tblInfos, 2)
+	require.Equal(t, tblInfos[0].Name.L, "t2")
+	require.Equal(t, tblInfos[1].Name.L, "t1")
 }

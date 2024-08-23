@@ -755,6 +755,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			return nil, nil, nil, nil, true
 		} else {
 			// All Intervals are single points
+
 			accesses[i] = points2EqOrInCond(sctx.ExprCtx, points[i], cols[i])
 			newConditions = append(newConditions, accesses[i])
 			if f, ok := accesses[i].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {

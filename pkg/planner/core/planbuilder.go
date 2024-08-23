@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -168,7 +169,7 @@ type cteInfo struct {
 	// seedStat is shared between logicalCTE and logicalCTETable.
 	seedStat *property.StatsInfo
 	// The LogicalCTEs that reference the same table should share the same CteClass.
-	cteClass *CTEClass
+	cteClass *logicalop.CTEClass
 
 	// isInline will determine whether it can be inlined when **CTE is used**
 	isInline bool
@@ -199,8 +200,8 @@ type PlanBuilder struct {
 	outerNames   [][]*types.FieldName
 	outerCTEs    []*cteInfo
 	// outerBlockExpand register current Expand OP for rollup syntax in every select query block.
-	outerBlockExpand   []*LogicalExpand
-	currentBlockExpand *LogicalExpand
+	outerBlockExpand   []*logicalop.LogicalExpand
+	currentBlockExpand *logicalop.LogicalExpand
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -372,7 +373,7 @@ func GetDBTableInfo(visitInfo []visitInfo) []stmtctx.TableEntry {
 	return tables
 }
 
-// GetOptFlag gets the optFlag of the PlanBuilder.
+// GetOptFlag gets the OptFlag of the PlanBuilder.
 func (b *PlanBuilder) GetOptFlag() uint64 {
 	if b.isSampling {
 		// Disable logical optimization to avoid the optimizer
@@ -490,7 +491,7 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (base.Plan, error) {
-	b.optFlag |= flagPrunColumns
+	b.optFlag |= rule.FlagPruneColumns
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
@@ -731,20 +732,37 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (base.Plan, erro
 	if v.OriginNode != nil {
 		normdOrigSQL, sqlDigestWithDB := norm.NormalizeStmtForBinding(v.OriginNode, norm.WithSpecifiedDB(b.ctx.GetSessionVars().CurrentDB))
 		p = &SQLBindPlan{
-			SQLBindOp:    OpSQLBindDrop,
-			NormdOrigSQL: normdOrigSQL,
-			IsGlobal:     v.GlobalScope,
-			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
-			SQLDigest:    sqlDigestWithDB,
+			IsGlobal:  v.GlobalScope,
+			SQLBindOp: OpSQLBindDrop,
+			Details: []*SQLBindOpDetail{{
+				NormdOrigSQL: normdOrigSQL,
+				Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+				SQLDigest:    sqlDigestWithDB,
+			}},
 		}
 		if v.HintedNode != nil {
-			p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
+			p.Details[0].BindSQL = utilparser.RestoreWithDefaultDB(
+				v.HintedNode,
+				b.ctx.GetSessionVars().CurrentDB,
+				v.HintedNode.Text(),
+			)
 		}
 	} else {
+		sqlDigests, err := collectStrOrUserVarList(b.ctx, v.SQLDigests)
+		if err != nil {
+			return nil, err
+		}
+		if len(sqlDigests) == 0 {
+			return nil, errors.New("sql digest is empty")
+		}
+		details := make([]*SQLBindOpDetail, 0, len(sqlDigests))
+		for _, sqlDigest := range sqlDigests {
+			details = append(details, &SQLBindOpDetail{SQLDigest: sqlDigest})
+		}
 		p = &SQLBindPlan{
 			SQLBindOp: OpSQLBindDropByDigest,
 			IsGlobal:  v.GlobalScope,
-			SQLDigest: v.SQLDigest,
+			Details:   details,
 		}
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
@@ -755,26 +773,33 @@ func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (base.Pla
 	var p *SQLBindPlan
 	if v.OriginNode != nil {
 		p = &SQLBindPlan{
-			SQLBindOp:    OpSetBindingStatus,
-			NormdOrigSQL: parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text()), false),
-			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+			SQLBindOp: OpSetBindingStatus,
+			Details: []*SQLBindOpDetail{{
+				NormdOrigSQL: parser.NormalizeForBinding(
+					utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text()),
+					false,
+				),
+				Db: utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+			}},
 		}
 	} else if v.SQLDigest != "" {
 		p = &SQLBindPlan{
 			SQLBindOp: OpSetBindingStatusByDigest,
-			SQLDigest: v.SQLDigest,
+			Details: []*SQLBindOpDetail{{
+				SQLDigest: v.SQLDigest,
+			}},
 		}
 	} else {
 		return nil, errors.New("sql digest is empty")
 	}
 	switch v.BindingStatusType {
 	case ast.BindingStatusTypeEnabled:
-		p.NewStatus = bindinfo.Enabled
+		p.Details[0].NewStatus = bindinfo.Enabled
 	case ast.BindingStatusTypeDisabled:
-		p.NewStatus = bindinfo.Disabled
+		p.Details[0].NewStatus = bindinfo.Disabled
 	}
 	if v.HintedNode != nil {
-		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
+		p.Details[0].BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
@@ -822,51 +847,127 @@ func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string)
 	return rows, nil
 }
 
-func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (base.Plan, error) {
-	if v.PlanDigest == "" {
-		return nil, errors.New("plan digest is empty")
+func collectStrOrUserVarList(ctx base.PlanContext, list []*ast.StringOrUserVar) ([]string, error) {
+	result := make([]string, 0, len(list))
+	for _, single := range list {
+		var str string
+		if single.UserVar != nil {
+			val, ok := ctx.GetSessionVars().GetUserVarVal(strings.ToLower(single.UserVar.Name))
+			if !ok {
+				return nil, errors.New("can't find specified user variable: " + single.UserVar.Name)
+			}
+			var err error
+			str, err = val.ToString()
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			str = single.StringLit
+		}
+		split := strings.Split(str, ",")
+		for _, single := range split {
+			trimmed := strings.TrimSpace(single)
+			if len(trimmed) > 0 {
+				result = append(result, trimmed)
+			}
+		}
 	}
-	rows, err := fetchRecordFromClusterStmtSummary(b.ctx, v.PlanDigest)
+	return result, nil
+}
+
+// constructSQLBindOPFromPlanDigest tries to construct a SQLBindOpDetail from plan digest by fetching the corresponding
+// record from cluster_statements_summary or cluster_statements_summary_history.
+// If it fails to construct the SQLBindOpDetail for any reason, it will return (nil, error).
+// If the plan digest corresponds to the same SQL digest as another one in handledSQLDigests, it will append a warning
+// then return (nil, nil).
+func constructSQLBindOPFromPlanDigest(
+	ctx base.PlanContext,
+	planDigest string,
+	handledSQLDigests map[string]struct{},
+) (
+	*SQLBindOpDetail,
+	error,
+) {
+	// The warnings will be broken in fetchRecordFromClusterStmtSummary(), so we need to save and restore it to make the
+	// warnings for repeated SQL Digest work.
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+	rows, err := fetchRecordFromClusterStmtSummary(ctx, planDigest)
 	if err != nil {
 		return nil, err
 	}
+	ctx.GetSessionVars().StmtCtx.SetWarnings(warnings)
 	bindableStmt := stmtsummary.GetBindableStmtFromCluster(rows)
 	if bindableStmt == nil {
-		return nil, errors.New("can't find any plans for '" + v.PlanDigest + "'")
+		return nil, errors.New("can't find any plans for '" + planDigest + "'")
 	}
-
 	parser4binding := parser.New()
 	originNode, err := parser4binding.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
-		return nil, errors.Errorf("binding failed: %v", err)
+		return nil, errors.NewNoStackErrorf("binding failed: %v. Plan Digest: %v", err, planDigest)
 	}
-	if complete, reason := hint.CheckBindingFromHistoryComplete(originNode, bindableStmt.PlanHint); !complete {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(reason))
-	}
+	complete, reason := hint.CheckBindingFromHistoryComplete(originNode, bindableStmt.PlanHint)
 	bindSQL := bindinfo.GenerateBindingSQL(originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
 	var hintNode ast.StmtNode
 	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {
-		return nil, errors.Errorf("binding failed: %v", err)
+		return nil, errors.NewNoStackErrorf("binding failed: %v. Plan Digest: %v", err, planDigest)
 	}
-
 	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query)
 	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
 	db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
-
-	p := &SQLBindPlan{
-		SQLBindOp:    OpSQLBindCreate,
+	sqlDigestWithDBStr := sqlDigestWithDB.String()
+	if _, ok := handledSQLDigests[sqlDigestWithDBStr]; ok {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+			planDigest + " is ignored because it corresponds to the same SQL digest as another Plan Digest",
+		))
+		return nil, nil
+	}
+	handledSQLDigests[sqlDigestWithDBStr] = struct{}{}
+	if !complete {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(
+			errors.NewNoStackErrorf("%v. Plan Digest: %v", reason, planDigest),
+		)
+	}
+	op := &SQLBindOpDetail{
 		NormdOrigSQL: normdOrigSQL,
 		BindSQL:      bindSQL,
-		IsGlobal:     v.GlobalScope,
 		BindStmt:     hintNode,
 		Db:           db,
 		Charset:      bindableStmt.Charset,
 		Collation:    bindableStmt.Collation,
 		Source:       bindinfo.History,
-		SQLDigest:    sqlDigestWithDB.String(),
-		PlanDigest:   v.PlanDigest,
+		SQLDigest:    sqlDigestWithDBStr,
+		PlanDigest:   planDigest,
+	}
+	return op, nil
+}
+
+func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt) (base.Plan, error) {
+	planDigests, err := collectStrOrUserVarList(b.ctx, v.PlanDigests)
+	if err != nil {
+		return nil, err
+	}
+	if len(planDigests) == 0 {
+		return nil, errors.New("plan digest is empty")
+	}
+	handledSQLDigests := make(map[string]struct{}, len(planDigests))
+	opDetails := make([]*SQLBindOpDetail, 0, len(planDigests))
+	for _, planDigest := range planDigests {
+		op, err2 := constructSQLBindOPFromPlanDigest(b.ctx, planDigest, handledSQLDigests)
+		if err2 != nil {
+			return nil, err2
+		}
+		if op == nil {
+			continue
+		}
+		opDetails = append(opDetails, op)
+	}
+
+	p := &SQLBindPlan{
+		IsGlobal:  v.GlobalScope,
+		SQLBindOp: OpSQLBindCreate,
+		Details:   opDetails,
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
@@ -892,16 +993,18 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (base.Plan, 
 	db := utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
 	p := &SQLBindPlan{
-		SQLBindOp:    OpSQLBindCreate,
-		NormdOrigSQL: normdOrigSQL,
-		BindSQL:      bindSQL,
-		IsGlobal:     v.GlobalScope,
-		BindStmt:     v.HintedNode,
-		Db:           db,
-		Charset:      charSet,
-		Collation:    collation,
-		Source:       bindinfo.Manual,
-		SQLDigest:    sqlDigestWithDB.String(),
+		IsGlobal:  v.GlobalScope,
+		SQLBindOp: OpSQLBindCreate,
+		Details: []*SQLBindOpDetail{{
+			NormdOrigSQL: normdOrigSQL,
+			BindSQL:      bindSQL,
+			BindStmt:     v.HintedNode,
+			Db:           db,
+			Charset:      charSet,
+			Collation:    collation,
+			Source:       bindinfo.Manual,
+			SQLDigest:    sqlDigestWithDB.String(),
+		}},
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
@@ -1038,7 +1141,7 @@ func getLatestIndexInfo(ctx base.PlanContext, id int64, startVer int64) (map[int
 	}
 	latestIndexes := make(map[int64]*model.IndexInfo)
 
-	latestTbl, latestTblExist := is.TableByID(id)
+	latestTbl, latestTblExist := is.TableByID(context.Background(), id)
 	if latestTblExist {
 		latestTblInfo := latestTbl.Meta()
 		for _, index := range latestTblInfo.Indices {
@@ -1311,7 +1414,7 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 	return paths[:i]
 }
 
-func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
+func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLockInfo) (*logicalop.LogicalLock, error) {
 	var tblID2PhysTblIDCol map[int64]*expression.Column
 	if len(b.partitionedTable) > 0 {
 		tblID2PhysTblIDCol = make(map[int64]*expression.Column)
@@ -1325,7 +1428,7 @@ func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLock
 		// since it would otherwise be lost in the PartitionUnion executor.
 		setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
 	}
-	selectLock := LogicalLock{
+	selectLock := logicalop.LogicalLock{
 		Lock:               lock,
 		TblID2Handle:       b.handleHelper.tailMap(),
 		TblID2PhysTblIDCol: tblID2PhysTblIDCol,
@@ -1717,7 +1820,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStmt) (*CheckTable, error) {
 	tblName := as.Tables[0]
 	tableInfo := as.Tables[0].TableInfo
-	tbl, ok := b.is.TableByID(tableInfo.ID)
+	tbl, ok := b.is.TableByID(ctx, tableInfo.ID)
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.FastGenByArgs(tblName.DBInfo.Name.O, tableInfo.Name.O)
 	}
@@ -2262,7 +2365,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	// Version 2 doesn't support incremental analyze.
 	// And incremental analyze will be deprecated in the future.
 	if as.Incremental {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
 
 	astOpts, err := handleAnalyzeOptionsV2(as.AnalyzeOpts)
@@ -2615,10 +2718,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	}
 	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
 	if !versionIsSame {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version2 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The version 2 would collect all statistics not only the selected indexes"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The version 2 would collect all statistics not only the selected indexes"))
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idxName := range as.IndexNames {
@@ -3311,7 +3414,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		}
 	}
 	if np != p {
-		b.optFlag |= flagEliminateProjection
+		b.optFlag |= rule.FlagEliminateProjection
 		fieldsLen := len(p.Schema().Columns)
 		proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx, 0)
 		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
@@ -3646,7 +3749,6 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 			return igc, err
 		}
 
-		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)
 		if onDups == nil {
 			continue
@@ -3691,7 +3793,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	if err != nil {
 		return nil, err
 	}
-	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
+	tableInPlan, ok := b.is.TableByID(ctx, tableInfo.ID)
 	if !ok {
 		return nil, errors.Errorf("Can't get table %s", tableInfo.Name.O)
 	}
@@ -3702,6 +3804,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		tableSchema:   schema,
 		tableColNames: names,
 		IsReplace:     insert.IsReplace,
+		IgnoreErr:     insert.IgnoreErr,
 	}.Init(b.ctx)
 
 	if tableInfo.GetPartitionInfo() != nil && len(insert.PartitionNames) != 0 {
@@ -3909,7 +4012,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 			RetType: &x.Type,
 		}
 	case *driver.ParamMarkerExpr:
-		outExpr, err = expression.ParamMarkerExpression(b.ctx, x, false)
+		outExpr, err = expression.ParamMarkerExpression(b.ctx.GetExprCtx(), x, false)
 	default:
 		b.curClause = fieldList
 		// subquery in insert values should not reference upper scope
@@ -4174,7 +4277,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.O, p.Table.Name.O, "", deleteErr)
 	}
 	tableInfo := p.Table.TableInfo
-	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
+	tableInPlan, ok := b.is.TableByID(ctx, tableInfo.ID)
 	if !ok {
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.FastGenByArgs(db, tableInfo.Name.O)
@@ -4269,7 +4372,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	// tidb_read_staleness can be used to do stale read too, it's allowed as long as
 	// TableInfo.ID matches with the latest schema.
 	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	tableInPlan, ok := latestIS.TableByID(tableInfo.ID)
+	tableInPlan, ok := latestIS.TableByID(ctx, tableInfo.ID)
 	if !ok {
 		// adaptor.handleNoDelayExecutor has a similar check, but we want to give
 		// a more specific error message here.

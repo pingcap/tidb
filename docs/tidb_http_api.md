@@ -13,7 +13,10 @@
     {
         "connections": 0,
         "git_hash": "f572e33854e1c0f942f031e9656d0004f99995c6",
-        "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
+        "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty",
+        "status":{
+          "init_stats_percentage":100
+        }
     }
     ```
 

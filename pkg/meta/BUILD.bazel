@@ -18,6 +18,7 @@ go_library(
         "//pkg/structure",
         "//pkg/util/dbterror",
         "//pkg/util/hack",
+        "//pkg/util/partialjson",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/resource_manager",

@@ -62,6 +62,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 
 	bak := variable.GetDDLReorgWorkerCounter()
 	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 111")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 111")
 	require.Equal(t, int32(111), variable.GetDDLReorgWorkerCounter())
 	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 20;")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
@@ -80,6 +81,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 	require.Equal(t, 1, task.Concurrency)
 
 	tk.MustExec(fmt.Sprintf("set global tidb_ddl_reorg_worker_cnt = %d", bak))
+	tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt = %d", bak))
 	require.Equal(t, bak, variable.GetDDLReorgWorkerCounter())
 
 	tk.MustExec("create table t1(a bigint auto_random primary key);")

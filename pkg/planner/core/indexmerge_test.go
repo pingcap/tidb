@@ -35,38 +35,38 @@ func getIndexMergePathDigest(ctx expression.EvalContext, paths []*util.AccessPat
 	if len(paths) == startIndex {
 		return "[]"
 	}
-	idxMergeDisgest := "["
+	idxMergeDigest := "["
 	for i := startIndex; i < len(paths); i++ {
 		if i != startIndex {
-			idxMergeDisgest += ","
+			idxMergeDigest += ","
 		}
 		path := paths[i]
-		idxMergeDisgest += "{Idxs:["
+		idxMergeDigest += "{Idxs:["
 		for j := 0; j < len(path.PartialAlternativeIndexPaths); j++ {
 			if j > 0 {
-				idxMergeDisgest += ","
+				idxMergeDigest += ","
 			}
-			idxMergeDisgest += "{"
+			idxMergeDigest += "{"
 			// for every ONE index partial alternatives, output a set.
 			for k, one := range path.PartialAlternativeIndexPaths[j] {
 				if k != 0 {
-					idxMergeDisgest += ","
+					idxMergeDigest += ","
 				}
-				idxMergeDisgest += one.Index.Name.L
+				idxMergeDigest += one.Index.Name.L
 			}
-			idxMergeDisgest += "}"
+			idxMergeDigest += "}"
 		}
-		idxMergeDisgest += "],TbFilters:["
+		idxMergeDigest += "],TbFilters:["
 		for j := 0; j < len(path.TableFilters); j++ {
 			if j > 0 {
-				idxMergeDisgest += ","
+				idxMergeDigest += ","
 			}
-			idxMergeDisgest += path.TableFilters[j].StringWithCtx(ctx, errors.RedactLogDisable)
+			idxMergeDigest += path.TableFilters[j].StringWithCtx(ctx, errors.RedactLogDisable)
 		}
-		idxMergeDisgest += "]}"
+		idxMergeDigest += "]}"
 	}
-	idxMergeDisgest += "]"
-	return idxMergeDisgest
+	idxMergeDigest += "]"
+	return idxMergeDigest
 }
 
 func TestIndexMergePathGeneration(t *testing.T) {

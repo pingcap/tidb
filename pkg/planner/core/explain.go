@@ -23,9 +23,11 @@ import (
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -165,7 +167,9 @@ func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 
 // TP overrides the TP in order to match different range.
 func (p *PhysicalTableScan) TP() string {
-	if p.isChildOfIndexLookUp {
+	if infoschema.IsClusterTableByName(p.DBName.O, p.Table.Name.O) {
+		return plancodec.TypeMemTableScan
+	} else if p.isChildOfIndexLookUp {
 		return plancodec.TypeTableRowIDScan
 	} else if p.isFullScan() {
 		return plancodec.TypeTableFullScan
@@ -185,6 +189,10 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
+	if infoschema.IsClusterTableByName(p.DBName.O, p.Table.Name.O) {
+		return ""
+	}
+
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	var buffer strings.Builder
@@ -783,7 +791,7 @@ func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	return buffer.String()
 }
 
-func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
+func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *logicalop.FrameBound) {
 	if bound.Type == ast.CurrentRow {
 		buffer.WriteString("current row")
 		return

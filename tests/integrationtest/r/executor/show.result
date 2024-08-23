@@ -396,6 +396,8 @@ t2	CREATE TABLE `t2` (
   KEY `fk` (`b`),
   CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`t1` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop database if exists test1;
+drop database if exists test2;
 drop table if exists t;
 create table t(a int, b char(10) as ('a'));
 show create table t;

@@ -640,8 +640,10 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 		log.FromContext(ctx).Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
 		os.Exit(0)
 	})
-	if err := rc.loadDesiredTableInfos(ctx); err != nil {
-		return err
+	if rc.cfg.TikvImporter.AddIndexBySQL {
+		if err := rc.loadDesiredTableInfos(ctx); err != nil {
+			return err
+		}
 	}
 
 	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`

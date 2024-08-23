@@ -28,6 +28,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/external",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",

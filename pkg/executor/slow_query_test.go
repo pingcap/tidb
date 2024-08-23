@@ -59,7 +59,8 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	data := infoschema.NewData()
-	newISBuilder, err := infoschema.NewBuilder(nil, nil, data).InitWithDBInfos(nil, nil, nil, 0)
+	newISBuilder := infoschema.NewBuilder(nil, nil, data, variable.SchemaCacheSize.Load() > 0)
+	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}

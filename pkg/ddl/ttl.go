@@ -34,14 +34,14 @@ import (
 // DefaultTTLJobInterval is the default value for ttl job interval.
 const DefaultTTLJobInterval = "1h"
 
-func onTTLInfoRemove(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onTTLInfoRemove(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	tblInfo.TTLInfo = nil
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -49,7 +49,7 @@ func onTTLInfoRemove(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 	return ver, nil
 }
 
-func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onTTLInfoChange(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// at least one for them is not nil
 	var ttlInfo *model.TTLInfo
 	var ttlInfoEnable *bool
@@ -90,7 +90,7 @@ func onTTLInfoChange(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err er
 		tblInfo.TTLInfo.JobInterval = *ttlInfoJobInterval
 	}
 
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
