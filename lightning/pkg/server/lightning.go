@@ -320,9 +320,6 @@ func (l *Lightning) RunServer() error {
 //   - WithCheckpointStorage: caller has opened an external storage for lightning and want to save checkpoint
 //     in it. Otherwise, lightning will save checkpoint by the Checkpoint.DSN in config
 func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.Config, opts ...Option) error {
-	var mu sync.Mutex
-
-	defer mu.Unlock()
 
 	o := &options{
 		promFactory:  l.promFactory,
@@ -359,6 +356,8 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	if err := taskCfg.Adjust(taskCtx); err != nil {
 		return err
 	}
+
+	var mu sync.Mutex
 
 	mu.Lock()
 	taskCfg.TaskID = time.Now().UnixNano()
