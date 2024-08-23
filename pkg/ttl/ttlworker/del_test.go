@@ -189,14 +189,6 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 	t1 := newMockTTLTbl(t, "t1")
 	s := newMockSession(t)
-<<<<<<< HEAD
-	invokes := 0
-	s.executeSQL = func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
-		invokes++
-		s.sessionInfoSchema = newMockInfoSchema(t1.TableInfo, t2.TableInfo, t3.TableInfo, t4.TableInfo)
-		if strings.Contains(sql, "`t1`") {
-			return nil, nil
-=======
 	var sqls []string
 	var retryErrBatches []int
 	var nonRetryBatches []int
@@ -207,7 +199,6 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 		if !strings.Contains(sql, "`t1`") {
 			require.FailNow(t, "")
->>>>>>> 1bf01f41083 (ttl: fix the issue that TTL job may hang some time when shrink the delete worker count (#55572))
 		}
 
 		defer func() {
@@ -397,17 +388,11 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	pool := newMockSessionPool(t)
 	pool.se = s
 
-<<<<<<< HEAD
-	sqlMap := make(map[string]struct{})
-	s.executeSQL = func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
-		pool.lastSession.sessionInfoSchema = newMockInfoSchema(t1.TableInfo, t2.TableInfo, t3.TableInfo)
-=======
 	sqlMap := make(map[string]int)
 	t3Retried := make(chan struct{})
 	t4Retried := make(chan struct{})
 	s.executeSQL = func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
 		pool.lastSession.sessionInfoSchema = newMockInfoSchema(t1.TableInfo, t2.TableInfo, t3.TableInfo, t4.TableInfo)
->>>>>>> 1bf01f41083 (ttl: fix the issue that TTL job may hang some time when shrink the delete worker count (#55572))
 		if strings.Contains(sql, "`t1`") {
 			// success
 			return nil, nil
