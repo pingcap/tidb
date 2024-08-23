@@ -18,6 +18,7 @@ package mock
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -608,6 +609,11 @@ func (*Context) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector
 
 // GetCursorTracker implements the sessionctx.Context interface
 func (*Context) GetCursorTracker() cursor.Tracker {
+	return nil
+}
+
+// GetCommitWaitGroup implements the sessionctx.Context interface
+func (*Context) GetCommitWaitGroup() *sync.WaitGroup {
 	return nil
 }
 
