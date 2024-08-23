@@ -29,6 +29,7 @@ const (
 	prime64 = 1099511628211
 )
 
+// Hasher is the interface for computing hash values of different types.
 type Hasher interface {
 	HashBool(val bool)
 	HashInt(val int)
@@ -43,6 +44,7 @@ type Hasher interface {
 	Sum64() uint64
 }
 
+// Hash64a is the type for the hash value.
 type Hash64a uint64
 
 // Hasher is a helper struct that's used for computing **fnv-1a** hash values and tell
