@@ -727,6 +727,9 @@ type SessionVarsProvider interface {
 	GetSessionVars() *SessionVars
 }
 
+// SessionVars should implement `SessionVarsProvider`
+var _ SessionVarsProvider = &SessionVars{}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -1655,6 +1658,11 @@ type SessionVars struct {
 	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
 	// `select for update` statements which do acquire pessimsitic locks.
 	SharedLockPromotion bool
+}
+
+// GetSessionVars implements the `SessionVarsProvider` interface.
+func (s *SessionVars) GetSessionVars() *SessionVars {
+	return s
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

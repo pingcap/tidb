@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/manual"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
-	planctximpl "github.com/pingcap/tidb/pkg/planner/contextimpl"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
@@ -285,11 +284,6 @@ func (*transaction) MayFlush() error {
 	return nil
 }
 
-type planCtxImpl struct {
-	*session
-	*planctximpl.PlanCtxExtendedImpl
-}
-
 // session is a trimmed down Session type which only wraps our own trimmed-down
 // transaction type and provides the session variables to the TiDB library
 // optimized for Lightning.
@@ -301,7 +295,6 @@ type session struct {
 	txn     transaction
 	Vars    *variable.SessionVars
 	exprCtx *exprctximpl.SessionExprContext
-	planctx *planCtxImpl
 	tblctx  *tbctximpl.TableContextImpl
 	// currently, we only set `CommonAddRecordCtx`
 	values map[fmt.Stringer]any
@@ -358,10 +351,6 @@ func newSession(options *encode.SessionOptions, logger log.Logger) *session {
 	vars.TxnCtx = nil
 	s.Vars = vars
 	s.exprCtx = exprctximpl.NewSessionExprContext(s)
-	s.planctx = &planCtxImpl{
-		session:             s,
-		PlanCtxExtendedImpl: planctximpl.NewPlanCtxExtendedImpl(s),
-	}
 	s.tblctx = tbctximpl.NewTableContextImpl(s)
 	s.txn.kvPairs = &Pairs{}
 
@@ -376,11 +365,6 @@ func (se *session) Txn(_ bool) (kv.Transaction, error) {
 // GetSessionVars implements the sessionctx.Context interface
 func (se *session) GetSessionVars() *variable.SessionVars {
 	return se.Vars
-}
-
-// GetPlanCtx returns the PlanContext.
-func (se *session) GetPlanCtx() planctx.PlanContext {
-	return se.planctx
 }
 
 // GetExprCtx returns the expression context of the session.
@@ -441,11 +425,6 @@ func (s *Session) Txn() kv.Transaction {
 // GetTableCtx returns the table MutateContext.
 func (s *Session) GetTableCtx() tbctx.MutateContext {
 	return s.sctx.tblctx
-}
-
-// GetPlanCtx returns the context for planner.
-func (s *Session) GetPlanCtx() planctx.PlanContext {
-	return s.sctx.planctx
 }
 
 // TakeKvPairs returns the current Pairs and resets the buffer.
