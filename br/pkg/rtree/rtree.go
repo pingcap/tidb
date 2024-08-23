@@ -8,6 +8,7 @@ import (
 	"github.com/google/btree"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -84,48 +85,45 @@ func (rg *Range) Less(than btree.Item) bool {
 	return bytes.Compare(rg.StartKey, ta.StartKey) < 0
 }
 
-var _ btree.Item = &RangeStats{}
-
 // RangeStats represents a restore merge result.
 type RangeStats struct {
-	*Range
+	Range
 	Size  uint64
 	Count uint64
 }
 
 // Less impls btree.Item.
-func (rg *RangeStats) Less(than btree.Item) bool {
+func (rg *RangeStats) Less(ta *RangeStats) bool {
 	// rg.StartKey < than.StartKey
-	ta := than.(*RangeStats)
 	return bytes.Compare(rg.StartKey, ta.StartKey) < 0
 }
 
 type RangeStatsTree struct {
-	*btree.BTree
+	*btree.BTreeG[*RangeStats]
 }
 
 func NewRangeStatsTree() RangeStatsTree {
 	return RangeStatsTree{
-		BTree: btree.New(32),
+		BTreeG: btree.NewG[*RangeStats](32, (*RangeStats).Less),
 	}
 }
 
 // InsertRange inserts ranges into the range tree.
 // It returns a non-nil range if there are soe overlapped ranges.
-func (rangeTree *RangeStatsTree) InsertRange(rg RangeStats) *RangeStats {
-	out := rangeTree.ReplaceOrInsert(&rg)
-	if out == nil {
-		return nil
-	}
-	return out.(*RangeStats)
+func (rangeTree *RangeStatsTree) InsertRange(rg *Range, rangeSize, rangeCount uint64) *RangeStats {
+	out, _ := rangeTree.ReplaceOrInsert(&RangeStats{
+		Range: *rg,
+		Size:  rangeSize,
+		Count: rangeCount,
+	})
+	return out
 }
 
 // MergedRanges output the sortedRanges having merged according to given `splitSizeBytes` and `splitKeyCount`.
 func (rangeTree *RangeStatsTree) MergedRanges(splitSizeBytes, splitKeyCount uint64) []RangeStats {
 	var mergeTargetIndex int = -1
 	sortedRanges := make([]RangeStats, 0, rangeTree.Len())
-	rangeTree.Ascend(func(item btree.Item) bool {
-		rg := item.(*RangeStats)
+	rangeTree.Ascend(func(rg *RangeStats) bool {
 		if mergeTargetIndex < 0 || !NeedsMerge(&sortedRanges[mergeTargetIndex], rg, splitSizeBytes, splitKeyCount) {
 			// unintialized or the sortedRanges[mergeTargetIndex] does not need to merged
 			mergeTargetIndex += 1

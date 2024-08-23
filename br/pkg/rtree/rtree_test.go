@@ -192,21 +192,17 @@ func TestRangeTreeMerge(t *testing.T) {
 	rangeTree := rtree.NewRangeStatsTree()
 	tablePrefix := tablecodec.GenTableRecordPrefix(1)
 	for i := uint64(0); i < 10000; i += 1 {
-		item := rtree.RangeStats{
-			Range: &rtree.Range{
-				StartKey: encodeTableRecord(tablePrefix, i),
-				EndKey:   encodeTableRecord(tablePrefix, i+1),
-				Files: []*backuppb.File{
-					{
-						Name:       fmt.Sprintf("%20d", i),
-						TotalKvs:   1,
-						TotalBytes: 1,
-					},
+		rangeTree.InsertRange(&rtree.Range{
+			StartKey: encodeTableRecord(tablePrefix, i),
+			EndKey:   encodeTableRecord(tablePrefix, i+1),
+			Files: []*backuppb.File{
+				{
+					Name:       fmt.Sprintf("%20d", i),
+					TotalKvs:   1,
+					TotalBytes: 1,
 				},
 			},
-			Size: i,
-		}
-		rangeTree.InsertRange(item)
+		}, i, 0)
 	}
 	sortedRanges := rangeTree.MergedRanges(10, 10)
 	require.Equal(t, 1000, len(sortedRanges))

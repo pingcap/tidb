@@ -101,12 +101,7 @@ func MergeAndRewriteFileRanges(
 			return nil, nil, errors.Annotatef(berrors.ErrInvalidRange,
 				"unable to rewrite range files %+v", files)
 		}
-		rgstats := rtree.RangeStats{
-			Range: tmpRng,
-			Size:  rangeSize,
-			Count: rangeCount,
-		}
-		if out := rangeTree.InsertRange(rgstats); out != nil {
+		if out := rangeTree.InsertRange(tmpRng, rangeSize, rangeCount); out != nil {
 			return nil, nil, errors.Annotatef(berrors.ErrInvalidRange,
 				"duplicate range %s files %+v", out, files)
 		}

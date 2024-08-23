@@ -159,7 +159,7 @@ func (rc *SnapClient) RestoreTables(
 	log.Info("Merge ranges", zap.Duration("take", time.Since(start)))
 
 	start = time.Now()
-	if err = rc.SplitRanges(ctx, sortedSplitKeys, updateCh, false); err != nil {
+	if err = rc.SplitPoints(ctx, sortedSplitKeys, updateCh, false); err != nil {
 		return errors.Trace(err)
 	}
 	log.Info("Split regions", zap.Duration("take", time.Since(start)))
@@ -177,7 +177,7 @@ func (rc *SnapClient) RestoreTables(
 
 // SplitRanges implements TiKVRestorer. It splits region by
 // data range after rewrite.
-func (rc *SnapClient) SplitRanges(
+func (rc *SnapClient) SplitPoints(
 	ctx context.Context,
 	sortedSplitKeys [][]byte,
 	updateCh glue.Progress,
