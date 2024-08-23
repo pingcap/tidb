@@ -25,10 +25,10 @@ import (
 )
 
 var (
-	reAccessKey        = regexp.MustCompile(`access_key:\"[^\"]*\"`)
-	reSecretAccessKey  = regexp.MustCompile(`secret_access_key:\"[^\"]*\"`)
-	reSharedKey        = regexp.MustCompile(`shared_key:\"[^\"]*\"`)
-	reCredentialsBlob  = regexp.MustCompile(`credentials_blob:\"[^\"]*\"`)
+	reAccessKey       = regexp.MustCompile(`access_key:\"[^\"]*\"`)
+	reSecretAccessKey = regexp.MustCompile(`secret_access_key:\"[^\"]*\"`)
+	reSharedKey       = regexp.MustCompile(`shared_key:\"[^\"]*\"`)
+	reCredentialsBlob = regexp.MustCompile(`credentials_blob:\"[^\"]*\"`)
 )
 
 type EventType int

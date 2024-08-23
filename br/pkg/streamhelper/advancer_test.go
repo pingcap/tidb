@@ -830,10 +830,10 @@ func TestRedactBackend(t *testing.T) {
 	info.Storage = &backuppb.StorageBackend{
 		Backend: &backuppb.StorageBackend_S3{
 			S3: &backuppb.S3{
-				Endpoint: "http://",
-				Bucket:   "test",
-				Prefix:   "test",
-				AccessKey: "12abCD!@#[]{}?/\\",
+				Endpoint:        "http://",
+				Bucket:          "test",
+				Prefix:          "test",
+				AccessKey:       "12abCD!@#[]{}?/\\",
 				SecretAccessKey: "12abCD!@#[]{}?/\\",
 			},
 		},
@@ -845,9 +845,9 @@ func TestRedactBackend(t *testing.T) {
 	info.Storage = &backuppb.StorageBackend{
 		Backend: &backuppb.StorageBackend_Gcs{
 			Gcs: &backuppb.GCS{
-				Endpoint: "http://",
-				Bucket:   "test",
-				Prefix:   "test",
+				Endpoint:        "http://",
+				Bucket:          "test",
+				Prefix:          "test",
 				CredentialsBlob: "12abCD!@#[]{}?/\\",
 			},
 		},
@@ -858,9 +858,9 @@ func TestRedactBackend(t *testing.T) {
 	info.Storage = &backuppb.StorageBackend{
 		Backend: &backuppb.StorageBackend_AzureBlobStorage{
 			AzureBlobStorage: &backuppb.AzureBlobStorage{
-				Endpoint: "http://",
-				Bucket: "test",
-				Prefix:   "test",
+				Endpoint:  "http://",
+				Bucket:    "test",
+				Prefix:    "test",
 				SharedKey: "12abCD!@#[]{}?/\\",
 			},
 		},
