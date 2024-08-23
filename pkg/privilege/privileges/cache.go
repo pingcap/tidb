@@ -1662,6 +1662,7 @@ func (h *Handle) mutexUpdate(ctx sessionctx.Context) error {
 	if h.lastUpdateTime.After(startTime) {
 		return nil
 	}
+	updateTime := time.Now()
 
 	var priv MySQLPrivilege
 	err := priv.LoadAll(ctx)
@@ -1670,6 +1671,6 @@ func (h *Handle) mutexUpdate(ctx sessionctx.Context) error {
 	}
 
 	h.priv.Store(&priv)
-	h.lastUpdateTime = time.Now()
+	h.lastUpdateTime = updateTime
 	return nil
 }
