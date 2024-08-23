@@ -76,7 +76,7 @@ const countRunningTasks = "SELECT count(1) FROM mysql.tidb_ttl_task WHERE status
 
 // waitTaskProcessRowTimeout is the timeout for waiting the task to process all rows after a scan task finished.
 // If not all rows are processed after this timeout, the task will still be marked as finished.
-const waitTaskProcessRowsTimeout = 2 * time.Minute
+const waitTaskProcessRowsTimeout = 5 * time.Minute
 
 var errAlreadyScheduled = errors.New("task is already scheduled")
 var errTooManyRunningTasks = errors.New("there are too many running tasks")
@@ -612,11 +612,30 @@ func (t *runningScanTask) finished(logger *zap.Logger) bool {
 		zap.String("table", t.tbl.Name.O),
 	)
 
-	if t.statistics.TotalRows.Load() <= t.statistics.ErrorRows.Load()+t.statistics.SuccessRows.Load() {
+	totalRows := t.statistics.TotalRows.Load()
+	errRows := t.statistics.ErrorRows.Load()
+	successRows := t.statistics.SuccessRows.Load()
+	processedRows := successRows + errRows
+	if processedRows == totalRows {
 		// All rows are processed.
-		// We use `<=` instead of `==` to make the logic strong to make sure
-		// it also works when statistics are not accurate.
-		logger.Info("mark TTL task finished because all scanned rows are processed")
+		logger.Info(
+			"mark TTL task finished because all scanned rows are processed",
+			zap.Uint64("totalRows", totalRows),
+			zap.Uint64("successRows", successRows),
+			zap.Uint64("errorRows", errRows),
+		)
+		return true
+	}
+
+	if processedRows > totalRows {
+		// All rows are processed but processed rows are more than total rows.
+		// We still think it is finished.
+		logger.Warn(
+			"mark TTL task finished but processed rows are more than total rows",
+			zap.Uint64("totalRows", totalRows),
+			zap.Uint64("successRows", successRows),
+			zap.Uint64("errorRows", errRows),
+		)
 		return true
 	}
 
@@ -624,7 +643,12 @@ func (t *runningScanTask) finished(logger *zap.Logger) bool {
 		// If the scan task is finished and not all rows are processed, we should wait a certain time to report the task.
 		// After a certain time, if the rows are still not processed, we need to mark the task finished anyway to make
 		// sure the TTL job does not hang.
-		logger.Info("mark TTL task finished because timeout for waiting all scanned rows processed after scan task done")
+		logger.Info(
+			"mark TTL task finished because timeout for waiting all scanned rows processed after scan task done",
+			zap.Uint64("totalRows", totalRows),
+			zap.Uint64("successRows", successRows),
+			zap.Uint64("errorRows", errRows),
+		)
 		return true
 	}
 
