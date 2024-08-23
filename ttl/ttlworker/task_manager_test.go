@@ -19,18 +19,12 @@ import (
 	"testing"
 	"time"
 
-<<<<<<< HEAD:ttl/ttlworker/task_manager_test.go
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
-=======
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/ttl/cache"
-	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util/logutil"
->>>>>>> 1bf01f41083 (ttl: fix the issue that TTL job may hang some time when shrink the delete worker count (#55572)):pkg/ttl/ttlworker/task_manager_test.go
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // NewTaskManager is an exported version of newTaskManager for test
@@ -151,8 +145,6 @@ func TestResizeWorkers(t *testing.T) {
 	scanWorker2.checkWorkerStatus(workerStatusStopped, false, nil)
 	assert.NotNil(t, m.runningTasks[0].result)
 }
-<<<<<<< HEAD:ttl/ttlworker/task_manager_test.go
-=======
 
 func TestTaskFinishedCondition(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
@@ -197,37 +189,3 @@ func TestTaskFinishedCondition(t *testing.T) {
 		require.True(t, task.finished(logger))
 	}
 }
-
-type mockKVStore struct {
-	kv.Storage
-}
-
-type mockTiKVStore struct {
-	mockKVStore
-	tikv.Storage
-	regionCache *tikv.RegionCache
-}
-
-func (s *mockTiKVStore) GetRegionCache() *tikv.RegionCache {
-	return s.regionCache
-}
-
-func TestGetMaxRunningTasksLimit(t *testing.T) {
-	variable.TTLRunningTasks.Store(1)
-	require.Equal(t, 1, getMaxRunningTasksLimit(&mockTiKVStore{}))
-
-	variable.TTLRunningTasks.Store(2)
-	require.Equal(t, 2, getMaxRunningTasksLimit(&mockTiKVStore{}))
-
-	variable.TTLRunningTasks.Store(-1)
-	require.Equal(t, variable.MaxConfigurableConcurrency, getMaxRunningTasksLimit(nil))
-	require.Equal(t, variable.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockKVStore{}))
-	require.Equal(t, variable.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockTiKVStore{}))
-
-	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(nil)}
-	s.GetRegionCache().SetRegionCacheStore(1, "", "", tikvrpc.TiKV, 1, nil)
-	s.GetRegionCache().SetRegionCacheStore(2, "", "", tikvrpc.TiKV, 1, nil)
-	s.GetRegionCache().SetRegionCacheStore(3, "", "", tikvrpc.TiFlash, 1, nil)
-	require.Equal(t, 2, getMaxRunningTasksLimit(s))
-}
->>>>>>> 1bf01f41083 (ttl: fix the issue that TTL job may hang some time when shrink the delete worker count (#55572)):pkg/ttl/ttlworker/task_manager_test.go
