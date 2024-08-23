@@ -121,6 +121,11 @@ func (j *NonPartitionedTableAnalysisJob) GetIndicators() Indicators {
 	return j.Indicators
 }
 
+// GetTableID gets the table ID of the job.
+func (j *NonPartitionedTableAnalysisJob) GetTableID() int64 {
+	return j.TableID
+}
+
 // String implements fmt.Stringer interface.
 func (j *NonPartitionedTableAnalysisJob) String() string {
 	return fmt.Sprintf(

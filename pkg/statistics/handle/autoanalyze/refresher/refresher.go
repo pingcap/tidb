@@ -44,7 +44,6 @@ const (
 )
 
 // Refresher provides methods to refresh stats info.
-// NOTE: Refresher is not thread-safe.
 type Refresher struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sysproctrack.Tracker
@@ -54,6 +53,11 @@ type Refresher struct {
 	// Jobs is the priority queue of analysis jobs.
 	// Exported for testing purposes.
 	Jobs *priorityqueue.AnalysisPriorityQueue
+
+	// worker is the worker that runs the analysis jobs.
+	worker *worker
+
+	maxConcurrency int
 }
 
 // NewRefresher creates a new Refresher and starts the goroutine.
@@ -61,13 +65,25 @@ func NewRefresher(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) *Refresher {
+	maxConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
 		Jobs:           priorityqueue.NewAnalysisPriorityQueue(),
+		worker:         newWorker(statsHandle, sysProcTracker, maxConcurrency),
+		maxConcurrency: maxConcurrency,
 	}
 
 	return r
+}
+
+// UpdateConcurrency updates the maximum concurrency for auto-analyze jobs
+func (r *Refresher) UpdateConcurrency() {
+	newConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
+	if newConcurrency != r.maxConcurrency {
+		r.maxConcurrency = newConcurrency
+		r.worker.UpdateConcurrency(newConcurrency)
+	}
 }
 
 // AnalyzeHighestPriorityTables picks tables with the highest priority and analyzes them.
@@ -84,14 +100,23 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	defer r.statsHandle.SPool().Put(se)
 
 	sctx := se.(sessionctx.Context)
-	var wg util.WaitGroupWrapper
-	defer wg.Wait()
-
-	maxConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
+	r.UpdateConcurrency()
+	maxConcurrency := r.maxConcurrency
 	analyzedCount := 0
 
-	for r.Jobs.Len() > 0 && analyzedCount < maxConcurrency {
+	for r.Jobs.Len() > 0 {
+		runningJobs := r.worker.GetRunningJobs()
+		if len(runningJobs) >= maxConcurrency {
+			statslogutil.SingletonStatsSamplerLogger().Info("Maximum concurrency reached, stopping analysis", zap.Int("runningJobs", len(runningJobs)))
+			break
+		}
+
 		job := r.Jobs.Pop()
+		if _, isRunning := runningJobs[job.GetTableID()]; isRunning {
+			statslogutil.StatsLogger().Debug("Job already running, skipping", zap.Int64("tableID", job.GetTableID()))
+			continue
+		}
+
 		if valid, failReason := job.IsValidToAnalyze(sctx); !valid {
 			statslogutil.SingletonStatsSamplerLogger().Info(
 				"Table not ready for analysis",
@@ -102,26 +127,31 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 		}
 
 		statslogutil.StatsLogger().Info("Auto analyze triggered", zap.Stringer("job", job))
-
-		wg.Run(func() {
-			if err := job.Analyze(r.statsHandle, r.sysProcTracker); err != nil {
-				statslogutil.StatsLogger().Error(
-					"Auto analyze job execution failed",
-					zap.Stringer("job", job),
-					zap.Error(err),
-				)
-			}
-		})
-
-		analyzedCount++
+		if r.worker.SubmitJob(job) {
+			analyzedCount++
+			statslogutil.StatsLogger().Debug("Job submitted successfully", zap.Int("analyzedCount", analyzedCount))
+		} else {
+			statslogutil.SingletonStatsSamplerLogger().Warn("Failed to submit job", zap.Stringer("job", job))
+		}
 	}
 
 	if analyzedCount > 0 {
+		statslogutil.SingletonStatsSamplerLogger().Info("Auto analyze jobs submitted successfully", zap.Int("submittedCount", analyzedCount))
 		return true
 	}
 
 	statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
 	return false
+}
+
+// GetRunningJobs returns the currently running jobs.
+func (r *Refresher) GetRunningJobs() map[int64]struct{} {
+	return r.worker.GetRunningJobs()
+}
+
+// Close stops all running jobs and releases resources.
+func (r *Refresher) Close() {
+	r.worker.Stop()
 }
 
 // RebuildTableAnalysisJobQueue rebuilds the priority queue of analysis jobs.

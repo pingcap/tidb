@@ -138,6 +138,12 @@ func (j *DynamicPartitionedTableAnalysisJob) SetWeight(weight float64) {
 	j.Weight = weight
 }
 
+// GetTableID gets the table ID of the job.
+// Because it is partitioned table, so we need to use the global table ID.
+func (j *DynamicPartitionedTableAnalysisJob) GetTableID() int64 {
+	return j.GlobalTableID
+}
+
 // GetWeight gets the weight of the job.
 func (j *DynamicPartitionedTableAnalysisJob) GetWeight() float64 {
 	return j.Weight

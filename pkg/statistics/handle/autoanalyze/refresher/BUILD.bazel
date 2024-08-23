@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "refresher",
-    srcs = ["refresher.go"],
+    srcs = [
+        "refresher.go",
+        "worker.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher",
     visibility = ["//visibility:public"],
     deps = [

@@ -213,4 +213,5 @@ func (h *Handle) Close() {
 	h.Pool.Close()
 	h.StatsCache.Close()
 	h.StatsUsage.Close()
+	h.StatsAnalyze.Close()
 }

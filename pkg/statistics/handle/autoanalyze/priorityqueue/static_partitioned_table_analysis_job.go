@@ -98,6 +98,11 @@ func (j *StaticPartitionedTableAnalysisJob) GetIndicators() Indicators {
 	return j.Indicators
 }
 
+// GetTableID gets the table ID of the job.
+func (j *StaticPartitionedTableAnalysisJob) GetTableID() int64 {
+	return j.StaticPartitionID
+}
+
 // HasNewlyAddedIndex implements AnalysisJob.
 func (j *StaticPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 	return len(j.Indexes) > 0

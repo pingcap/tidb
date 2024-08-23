@@ -53,6 +53,7 @@ type statsAnalyze struct {
 	statsHandle statstypes.StatsHandle
 	// sysProcTracker is used to track sys process like analyze
 	sysProcTracker sysproctrack.Tracker
+	refresher      *refresher.Refresher
 }
 
 // NewStatsAnalyze creates a new StatsAnalyze.
@@ -60,7 +61,12 @@ func NewStatsAnalyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) statstypes.StatsAnalyze {
-	return &statsAnalyze{statsHandle: statsHandle, sysProcTracker: sysProcTracker}
+	r := refresher.NewRefresher(statsHandle, sysProcTracker)
+	return &statsAnalyze{
+		statsHandle:    statsHandle,
+		sysProcTracker: sysProcTracker,
+		refresher:      r,
+	}
 }
 
 // InsertAnalyzeJob inserts the analyze job to the storage.
@@ -269,7 +275,7 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 // It also analyzes newly created tables and newly added indexes.
 func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		analyzed = HandleAutoAnalyze(sctx, sa.statsHandle, sa.sysProcTracker)
+		analyzed = sa.handleAutoAnalyze(sctx)
 		return nil
 	})
 	return
@@ -291,29 +297,14 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
-// HandleAutoAnalyze analyzes the newly created table or index.
-func HandleAutoAnalyze(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sysproctrack.Tracker,
-) (analyzed bool) {
-	defer func() {
-		if r := recover(); r != nil {
-			statslogutil.StatsLogger().Error(
-				"HandleAutoAnalyze panicked",
-				zap.Any("recover", r),
-				zap.Stack("stack"),
-			)
-		}
-	}()
+func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 	if variable.EnableAutoAnalyzePriorityQueue.Load() {
-		r := refresher.NewRefresher(statsHandle, sysProcTracker)
-		err := r.RebuildTableAnalysisJobQueue()
+		err := sa.refresher.RebuildTableAnalysisJobQueue()
 		if err != nil {
 			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
 			return false
 		}
-		return r.AnalyzeHighestPriorityTables()
+		return sa.refresher.AnalyzeHighestPriorityTables()
 	}
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
@@ -327,13 +318,18 @@ func HandleAutoAnalyze(
 
 	return RandomPickOneTableAndTryAutoAnalyze(
 		sctx,
-		statsHandle,
-		sysProcTracker,
+		sa.statsHandle,
+		sa.sysProcTracker,
 		autoAnalyzeRatio,
 		pruneMode,
 		start,
 		end,
 	)
+}
+
+// Close closes the auto-analyze worker.
+func (sa *statsAnalyze) Close() {
+	sa.refresher.Close()
 }
 
 // CheckAutoAnalyzeWindow determine the time window for auto-analysis and verify if the current time falls within this range.
