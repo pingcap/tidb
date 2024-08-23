@@ -9,7 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 11,
+=======
+    shard_count = 9,
+>>>>>>> 599977b1d6a (*: bump client-go to fix correctness issue of membuffer snapshot read (#55547))
     deps = [
         "//pkg/config",
         "//pkg/kv",
