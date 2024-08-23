@@ -339,8 +339,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	if job.start.IsNull() {
 		isNullCondition := &ast.IsNullExpr{
 			Expr: &ast.ColumnNameExpr{
-				Name:  options.stmt.ShardColumn,
-				Refer: options.shardColumnRefer,
+				Name: options.stmt.ShardColumn,
 			},
 			Not: false,
 		}
@@ -355,8 +354,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 			leCondition := &ast.BinaryOperationExpr{
 				Op: opcode.LE,
 				L: &ast.ColumnNameExpr{
-					Name:  options.stmt.ShardColumn,
-					Refer: options.shardColumnRefer,
+					Name: options.stmt.ShardColumn,
 				},
 				R: right,
 			}
@@ -376,8 +374,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 		right.Datum = job.end
 		whereCondition = &ast.BetweenExpr{
 			Expr: &ast.ColumnNameExpr{
-				Name:  options.stmt.ShardColumn,
-				Refer: options.shardColumnRefer,
+				Name: options.stmt.ShardColumn,
 			},
 			Left:  left,
 			Right: right,
