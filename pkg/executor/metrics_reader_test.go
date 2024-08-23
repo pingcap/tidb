@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -65,9 +66,10 @@ func TestStmtLabel(t *testing.T) {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), tk.Session(), stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		nodeW := ddlmodel.NewNodeW(stmtNode)
+		err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
-		_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmtNode, preprocessorReturn.InfoSchema)
+		_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
 		require.Equal(t, tt.label, ast.GetStmtLabel(stmtNode))
 	}

@@ -1323,10 +1323,10 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		return nil
 	}
 	tnW := resolveCtx.Get(tblName)
-	tbl := tnW.TableInfo
-	if tbl == nil {
+	if tnW == nil {
 		return nil
 	}
+	tbl := tnW.TableInfo
 
 	var pkColOffset int
 	for i, col := range tbl.Columns {

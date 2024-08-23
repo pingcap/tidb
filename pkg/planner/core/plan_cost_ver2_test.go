@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -145,7 +146,8 @@ func BenchmarkGetPlanCost(b *testing.B) {
 	sctx := tk.Session()
 	sctx.GetSessionVars().CostModelVersion = 2
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-	plan, _, err := planner.Optimize(context.TODO(), sctx, stmt, is)
+	nodeW := ddlmodel.NewNodeW(stmt)
+	plan, _, err := planner.Optimize(context.TODO(), sctx, nodeW, is)
 	if err != nil {
 		b.Fatal(err)
 	}

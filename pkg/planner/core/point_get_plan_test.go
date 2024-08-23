@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -163,9 +164,10 @@ func TestPointGetId(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
+		nodeW := ddlmodel.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
 		// Test explain format = 'brief' result is useless, plan id will be reset when running `explain`.
 		require.Equal(t, 1, p.ID())

@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -37,7 +38,8 @@ func TestIssue43461(t *testing.T) {
 	stmt, err := parser.New().ParseOneStmt("select * from t use index(b) where b > 1 order by b limit 1", "", "")
 	require.NoError(t, err)
 
-	p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, domain.InfoSchema())
+	nodeW := ddlmodel.NewNodeW(stmt)
+	p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, domain.InfoSchema())
 	require.NoError(t, err)
 	require.NotNil(t, p)
 

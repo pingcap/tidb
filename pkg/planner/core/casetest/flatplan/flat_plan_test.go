@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -83,7 +84,8 @@ func TestFlatPhysicalPlan(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, test)
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
-		p, _, err := planner.Optimize(context.Background(), tk.Session(), stmt, is)
+		nodeW := ddlmodel.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 
 		explained := core.FlattenPhysicalPlan(p, false)
