@@ -5,6 +5,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "main_test.go",
+        "show_bench_test.go",
         "show_test.go",
     ],
     flaky = True,
