@@ -356,11 +356,7 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 		return err
 	}
 
-	var mu sync.Mutex
-
-	mu.Lock()
-	taskCfg.TaskID = time.Now().UnixNano()
-	mu.Unlock()
+	taskCfg.TaskID = int64(uuid.New().ID())
 
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
