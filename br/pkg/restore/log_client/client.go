@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -162,26 +163,20 @@ func (rc *LogClient) Close() {
 }
 
 type CompactedItem struct {
-	files         []sstfiles.SstFilesInfo
-	regionMinKeys [][]byte
+	files        sstfiles.SstFilesInfo
+	regionMinKey []byte
+	regionMaxKey []byte
 }
 
-func (c *CompactedItem) Append(file sstfiles.SstFilesInfo, key []byte) {
-	c.files = append(c.files, file)
-	c.regionMinKeys = append(c.regionMinKeys, key)
-}
-
-func (c *CompactedItem) Size() int {
-	return len(c.files)
-}
+type CompactedItems []CompactedItem
 
 func (rc *LogClient) CollectCompactedSsts(
 	ctx context.Context,
 	rules map[int64]*restoreutils.RewriteRules,
 	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
-) (int, map[uint64]*CompactedItem, error) {
+) (int, map[uint64][]CompactedItem, error) {
 	sstFileCount := 0
-	regionCompactedMap := make(map[uint64]*CompactedItem)
+	regionCompactedMap := make(map[uint64][]CompactedItem)
 	// read unorder files
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
@@ -195,33 +190,36 @@ func (rc *LogClient) CollectCompactedSsts(
 		}
 
 		if _, ok := regionCompactedMap[i.Meta.RegionId]; !ok {
-			c := CompactedItem{
-				files: make([]sstfiles.SstFilesInfo, 0, CompactedSSTSplitBatchSize),
-				// TODO When log backup supports record region range, use it to split ranges.
-				// currently, we use the min key of the record key and rewrite it to split ranges.
-				regionMinKeys: make([][]byte, 0, CompactedSSTSplitBatchSize),
-			}
-			regionCompactedMap[i.Meta.RegionId] = &c
+			regionCompactedMap[i.Meta.RegionId] = make([]CompactedItem, 0, CompactedSSTSplitBatchSize)
 		}
 		// translate min key to raw key
 		_, rawMinKey, err := codec.DecodeBytes(i.Meta.MinKey, nil)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
+		// translate max key to raw key
+		_, rawMaxKey, err := codec.DecodeBytes(i.Meta.MaxKey, nil)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
 		sstFileCount += len(i.SstOutputs)
 
-		regionCompactedMap[i.Meta.RegionId].Append(sstfiles.SstFilesInfo{
-			TableID:      i.Meta.TableId,
-			Files:        i.SstOutputs,
-			RewriteRules: rewriteRules,
-		}, rawMinKey)
+		regionCompactedMap[i.Meta.RegionId] = append(regionCompactedMap[i.Meta.RegionId], CompactedItem{
+			files: sstfiles.SstFilesInfo{
+				TableID:      i.Meta.TableId,
+				Files:        i.SstOutputs,
+				RewriteRules: rewriteRules,
+			},
+			regionMinKey: rawMinKey,
+			regionMaxKey: rawMaxKey,
+		})
 	}
 	return sstFileCount, regionCompactedMap, nil
 }
 
 func (rc *LogClient) RestoreCompactedSsts(
 	ctx context.Context,
-	regionCompactedMap map[uint64]*CompactedItem,
+	regionCompactedMap map[uint64][]CompactedItem,
 	importModeSwitcher *restore.ImportModeSwitcher,
 	checkpoints map[int64]struct{},
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
@@ -242,50 +240,83 @@ func (rc *LogClient) RestoreCompactedSsts(
 			// already restored
 			continue
 		}
-		cnt += 1
-		if cnt >= CompactedSSTSplitBatchSize {
-			var regionSplitKey []byte
-			var splitKeyIndex int
-			for i, minKey := range CompactedItems.regionMinKeys {
-				if len(regionSplitKey) == 0 || bytes.Compare(minKey, regionSplitKey) < 0 {
-					regionSplitKey = minKey
-					splitKeyIndex = i
+		items := CompactedItems
+		// collect split keys every 1/4 files
+		// the default file size is 128MB, so we split region every 512MB
+		splitCount := len(items) / 4
+
+		if splitCount == 0 {
+			cnt += 1
+			if cnt >= CompactedSSTSplitBatchSize {
+				var regionSplitKey []byte
+				var splitKeyIndex int
+				for i, t := range items {
+					if len(regionSplitKey) == 0 || bytes.Compare(t.regionMinKey, regionSplitKey) < 0 {
+						regionSplitKey = t.regionMinKey
+						splitKeyIndex = i
+					}
 				}
+				log.Info("find min split key for region",
+					zap.Uint64("region_id", regionId),
+					zap.Int("split_key_index", splitKeyIndex),
+					logutil.Key("split_key", regionSplitKey))
+
+				// build split ranges
+				tmpRng := rtree.Range{
+					StartKey: []byte(items[splitKeyIndex].regionMinKey),
+					EndKey:   []byte(items[splitKeyIndex].regionMinKey),
+				}
+				// only one range in the region should split
+				rg, err := restoreutils.RewriteRange(&tmpRng, items[splitKeyIndex].files.RewriteRules)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				splitRanges = append(splitRanges, *rg)
+				cnt = 0
 			}
+		} else {
+			sort.Slice(items, func(i, j int) bool {
+				return bytes.Compare(items[i].regionMinKey, items[j].regionMinKey) < 0
+			})
 			log.Info("find min split key for region",
 				zap.Uint64("region_id", regionId),
-				logutil.Key("split_key", regionSplitKey),
-				zap.Int("index", splitKeyIndex))
-
-			// build split ranges
-			tmpRng := rtree.Range{
-				StartKey: []byte(regionSplitKey),
-				// ignored this field, because we use start key to split region.
-				EndKey: []byte(regionSplitKey),
+				zap.Int("split_count", splitCount))
+			for i := 0; i < splitCount; i++ {
+				// build split ranges
+				tmpRng := rtree.Range{
+					StartKey: []byte(items[i].regionMinKey),
+					EndKey:   []byte(items[i].regionMinKey),
+				}
+				// only one range in the region should split
+				rg, err := restoreutils.RewriteRange(&tmpRng, items[i].files.RewriteRules)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				splitRanges = append(splitRanges, *rg)
 			}
-			// only one range in the region should split
-			rg, err := restoreutils.RewriteRange(&tmpRng, CompactedItems.files[splitKeyIndex].RewriteRules)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			splitRanges = append(splitRanges, *rg)
-			cnt = 0
 		}
 
 		if len(splitRanges) > 0 {
+			files := make([]sstfiles.SstFilesInfo, 0, len(items))
+			for _, i := range items {
+				files = append(files, i.files)
+			}
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-
 				err := rc.restorer.SplitRanges(eCtx, splitRanges, onProgress)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				return rc.restorer.RestoreFiles(eCtx, CompactedItems.files, onProgress)
+				return rc.restorer.RestoreFiles(eCtx, files, onProgress)
 			})
 			// reset for next batch
 			splitRanges = nil
 		} else {
+			files := make([]sstfiles.SstFilesInfo, 0, len(items))
+			for _, i := range items {
+				files = append(files, i.files)
+			}
 			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-				return rc.restorer.RestoreFiles(eCtx, CompactedItems.files, onProgress)
+				return rc.restorer.RestoreFiles(eCtx, files, onProgress)
 			})
 		}
 
@@ -418,7 +449,7 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	if err != nil {
 		log.Fatal("failed to init snap file importer", zap.Error(err))
 	}
-	rc.restorer = sstfiles.NewSimpleFileRestorer(true, snapFileImporter, metaClient, rc.workerPool)
+	rc.restorer = sstfiles.NewSimpleFileRestorer(false, snapFileImporter, metaClient, rc.workerPool)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForLogRestore(ctx context.Context, taskName string, gcRatio string) (string, error) {
