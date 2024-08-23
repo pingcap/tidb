@@ -61,6 +61,7 @@ func NewStatsAnalyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) statstypes.StatsAnalyze {
+	// TODO: only create the refresher when auto-analyze and priority queue are enabled.
 	r := refresher.NewRefresher(statsHandle, sysProcTracker)
 	return &statsAnalyze{
 		statsHandle:    statsHandle,

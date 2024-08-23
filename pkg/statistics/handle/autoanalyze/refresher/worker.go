@@ -67,6 +67,8 @@ func (w *worker) UpdateConcurrency(newConcurrency int) {
 
 	// Move existing jobs to the new channel
 	close(w.jobChan)
+
+	// TODO: consider the case that the concurrency is reduced.
 	for job := range w.jobChan {
 		newJobChan <- job
 	}
