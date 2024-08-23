@@ -586,7 +586,7 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 // index join path for each access path. It returns the best index join path result and the mapping.
 func getBestIndexJoinPathResult(
 	join *logicalop.LogicalJoin,
-	innerChild *DataSource,
+	innerChild *logicalop.DataSource,
 	innerJoinKeys, outerJoinKeys []*expression.Column,
 	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
 	indexJoinInfo := &indexJoinPathInfo{

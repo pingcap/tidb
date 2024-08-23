@@ -5,11 +5,13 @@ go_library(
     srcs = [
         "build_key_info_misc.go",
         "misc.go",
+        "predicate_simplification_misc.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/rule/util",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
+        "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/core/base",

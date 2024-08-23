@@ -198,7 +198,7 @@ func NewRulePushSelDownTableScan() Transformation {
 // the key ranges of the `ts` operator.
 func (*PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
-	ts := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTableScan)
+	ts := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalTableScan)
 	if ts.HandleCols == nil {
 		return nil, false, false, nil
 	}
@@ -206,7 +206,7 @@ func (*PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 	if accesses == nil {
 		return nil, false, false, nil
 	}
-	newTblScan := plannercore.LogicalTableScan{
+	newTblScan := logicalop.LogicalTableScan{
 		Source:      ts.Source,
 		HandleCols:  ts.HandleCols,
 		AccessConds: ts.AccessConds.Shallow(),
@@ -251,7 +251,7 @@ func NewRulePushSelDownIndexScan() Transformation {
 //		 or just keep the two GroupExprs unchanged.
 func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
-	is := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalIndexScan)
+	is := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalIndexScan)
 	if len(is.IdxCols) == 0 {
 		return nil, false, false, nil
 	}
@@ -283,7 +283,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		}
 	}
 	// TODO: `res` still has some unused fields: EqOrInCount, IsDNFCond.
-	newIs := plannercore.LogicalIndexScan{
+	newIs := logicalop.LogicalIndexScan{
 		Source:         is.Source,
 		IsDoubleRead:   is.IsDoubleRead,
 		EqCondCount:    res.EqCondCount,
@@ -332,7 +332,7 @@ func NewRulePushSelDownTiKVSingleGather() Transformation {
 // 2. `remainedSel -> newTg -> pushedSel -> any`
 func (*PushSelDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*logicalop.LogicalSelection)
-	sg := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
+	sg := old.Children[0].GetExpr().ExprNode.(*logicalop.TiKVSingleGather)
 	childGroup := old.Children[0].Children[0].Group
 	var pushed, remained []expression.Expression
 	sctx := sg.SCtx()
@@ -378,7 +378,7 @@ func NewRuleEnumeratePaths() Transformation {
 
 // OnTransform implements Transformation interface.
 func (*EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	ds := old.GetExpr().ExprNode.(*plannercore.DataSource)
+	ds := old.GetExpr().ExprNode.(*logicalop.DataSource)
 	gathers := ds.Convert2Gathers()
 	for _, gather := range gathers {
 		expr := memo.Convert2GroupExpr(gather)
@@ -437,7 +437,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*logicalop.LogicalAggregation)
 	aggSchema := old.GetExpr().Group.Prop.Schema
-	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
+	gather := old.Children[0].GetExpr().ExprNode.(*logicalop.TiKVSingleGather)
 	childGroup := old.Children[0].GetExpr().Children[0]
 	// The old Aggregation should stay unchanged for other transformation.
 	// So we build a new LogicalAggregation for the partialAgg.
@@ -1416,7 +1416,7 @@ func (r *PushTopNDownTiKVSingleGather) Match(expr *memo.ExprIter) bool {
 func (r *PushTopNDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*logicalop.LogicalTopN)
 	topNSchema := old.Children[0].Group.Prop.Schema
-	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
+	gather := old.Children[0].GetExpr().ExprNode.(*logicalop.TiKVSingleGather)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
 	particalTopN := logicalop.LogicalTopN{
@@ -1853,7 +1853,7 @@ func (r *PushLimitDownTiKVSingleGather) Match(expr *memo.ExprIter) bool {
 func (r *PushLimitDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
 	limitSchema := old.Children[0].Group.Prop.Schema
-	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
+	gather := old.Children[0].GetExpr().ExprNode.(*logicalop.TiKVSingleGather)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
 	particalLimit := logicalop.LogicalLimit{

@@ -1,0 +1,122 @@
+package util
+
+import (
+	"slices"
+
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+)
+
+type predicateType = byte
+
+const (
+	inListPredicate predicateType = iota
+	notEqualPredicate
+	otherPredicate
+)
+
+// ApplyPredicateSimplification consolidates different predcicates on a column and its equivalence classes.
+func ApplyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+	if len(predicates) <= 1 {
+		return predicates
+	}
+	specialCase := false
+	removeValues := make([]int, 0, len(predicates))
+	for i := range predicates {
+		for j := i + 1; j < len(predicates); j++ {
+			ithPredicate := predicates[i]
+			jthPredicate := predicates[j]
+			iCol, iType := findPredicateType(ithPredicate)
+			jCol, jType := findPredicateType(jthPredicate)
+			if iCol == jCol {
+				if iType == notEqualPredicate && jType == inListPredicate {
+					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					if !specialCase {
+						removeValues = append(removeValues, i)
+					}
+				} else if iType == inListPredicate && jType == notEqualPredicate {
+					predicates[i], specialCase = updateInPredicate(sctx, ithPredicate, jthPredicate)
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
+					if !specialCase {
+						removeValues = append(removeValues, j)
+					}
+				}
+			}
+		}
+	}
+	newValues := make([]expression.Expression, 0, len(predicates))
+	for i, value := range predicates {
+		if !(slices.Contains(removeValues, i)) {
+			newValues = append(newValues, value)
+		}
+	}
+	return newValues
+}
+
+// updateInPredicate applies intersection of an in list with <> value. It returns updated In list and a flag for
+// a special case if an element in the inlist is not removed to keep the list not empty.
+func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
+	_, inPredicateType := findPredicateType(inPredicate)
+	_, notEQPredicateType := findPredicateType(notEQPredicate)
+	if inPredicateType != inListPredicate || notEQPredicateType != notEqualPredicate {
+		return inPredicate, true
+	}
+	v := inPredicate.(*expression.ScalarFunction)
+	notEQValue := notEQPredicate.(*expression.ScalarFunction).GetArgs()[1].(*expression.Constant)
+	// do not simplify != NULL since it is always false.
+	if notEQValue.Value.IsNull() {
+		return inPredicate, true
+	}
+	newValues := make([]expression.Expression, 0, len(v.GetArgs()))
+	var lastValue *expression.Constant
+	for _, element := range v.GetArgs() {
+		value, valueOK := element.(*expression.Constant)
+		redundantValue := valueOK && value.Equal(ctx.GetExprCtx().GetEvalCtx(), notEQValue)
+		if !redundantValue {
+			newValues = append(newValues, element)
+		}
+		if valueOK {
+			lastValue = value
+		}
+	}
+	// Special case if all IN list values are prunned. Ideally, this is False condition
+	// which can be optimized with LogicalDual. But, this is already done. TODO: the false
+	// optimization and its propagation through query tree will be added part of predicate simplification.
+	specialCase := false
+	if len(newValues) < 2 {
+		newValues = append(newValues, lastValue)
+		specialCase = true
+	}
+	newPred := expression.NewFunctionInternal(ctx.GetExprCtx(), v.FuncName.L, v.RetType, newValues...)
+	return newPred, specialCase
+}
+
+func findPredicateType(expr expression.Expression) (*expression.Column, predicateType) {
+	switch v := expr.(type) {
+	case *expression.ScalarFunction:
+		args := v.GetArgs()
+		col, colOk := args[0].(*expression.Column)
+		if !colOk {
+			return nil, otherPredicate
+		}
+		if v.FuncName.L == ast.NE {
+			if _, ok := args[1].(*expression.Constant); !ok {
+				return nil, otherPredicate
+			}
+			return col, notEqualPredicate
+		}
+		if v.FuncName.L == ast.In {
+			for _, value := range args[1:] {
+				if _, ok := value.(*expression.Constant); !ok {
+					return nil, otherPredicate
+				}
+			}
+			return col, inListPredicate
+		}
+	default:
+		return nil, otherPredicate
+	}
+	return nil, otherPredicate
+}

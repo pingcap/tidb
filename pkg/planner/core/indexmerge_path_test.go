@@ -17,6 +17,7 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"math/rand"
 	"strings"
 	"testing"
@@ -65,10 +66,10 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	logicalP, err := core.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(base.LogicalPlan))
 	require.NoError(t, err)
 
-	ds, ok := logicalP.(*core.DataSource)
+	ds, ok := logicalP.(*logicalop.DataSource)
 	for !ok {
 		p := logicalP.Children()[0]
-		ds, ok = p.(*core.DataSource)
+		ds, ok = p.(*logicalop.DataSource)
 	}
 	cnfs := ds.AllConds
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))

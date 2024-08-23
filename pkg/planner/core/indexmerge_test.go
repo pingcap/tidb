@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -100,10 +101,10 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		lp := p.(base.LogicalPlan)
-		var ds *DataSource
+		var ds *logicalop.DataSource
 		for ds == nil {
 			switch v := lp.(type) {
-			case *DataSource:
+			case *logicalop.DataSource:
 				ds = v
 			default:
 				lp = lp.Children()[0]

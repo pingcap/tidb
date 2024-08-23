@@ -15,6 +15,7 @@
 package implementation
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -64,7 +65,7 @@ type TableReaderImpl struct {
 }
 
 // NewTableReaderImpl creates a new table reader Implementation.
-func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *plannercore.DataSource) *TableReaderImpl {
+func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *logicalop.DataSource) *TableReaderImpl {
 	base := baseImpl{plan: reader}
 	impl := &TableReaderImpl{
 		baseImpl:    base,
@@ -164,7 +165,7 @@ func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 }
 
 // NewIndexReaderImpl creates a new IndexReader Implementation.
-func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, source *plannercore.DataSource) *IndexReaderImpl {
+func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, source *logicalop.DataSource) *IndexReaderImpl {
 	return &IndexReaderImpl{
 		baseImpl:    baseImpl{plan: reader},
 		tblInfo:     source.TableInfo,

@@ -34,6 +34,7 @@ func init() {
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CanPushToCopImpl = canPushToCopImpl
 	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
+	utilfuncp.FindBestTask4LogicalDS = findBestTask4LogicalDS
 	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE
 	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
 	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
@@ -63,7 +64,11 @@ func init() {
 	utilfuncp.AppendCandidate4PhysicalOptimizeOp = appendCandidate4PhysicalOptimizeOp
 
 	utilfuncp.PushDownTopNForBaseLogicalPlan = pushDownTopNForBaseLogicalPlan
+	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
 	utilfuncp.AttachPlan2Task = attachPlan2Task
+	utilfuncp.DeriveStats4DS = deriveStats4DS
+	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
+	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
 	utilfuncp.WindowIsTopN = windowIsTopN
 	utilfuncp.DoOptimize = doOptimize
 
