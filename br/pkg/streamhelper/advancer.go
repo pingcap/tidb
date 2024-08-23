@@ -438,7 +438,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		if err != nil {
 			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
 		}
-		log.Info("added event", zap.Stringer("task", e.Info),
+		log.Info("added event", zap.Stringer("task", TaskInfoRedacted{e.Info}),
 			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)), zap.Uint64("current-checkpoint", p))
 	case EventDel:
 		utils.LogBackupTaskCountDec()
