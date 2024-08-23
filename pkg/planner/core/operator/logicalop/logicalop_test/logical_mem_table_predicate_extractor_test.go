@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -48,7 +49,8 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 
 	ctx := context.Background()
 	builder, _ := plannercore.NewPlanBuilder().Init(se.GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
-	plan, err := builder.Build(ctx, stmt)
+	nodeW := ddlmodel.NewNodeW(stmt)
+	plan, err := builder.Build(ctx, nodeW)
 	require.NoError(t, err)
 
 	logicalPlan, err := plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
@@ -1800,7 +1802,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		tk.MustExec(setStmt)
 		stmt, err := parser.ParseOneStmt(exec, "", "")
 		require.NoError(t, err)
-		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), stmt.(*ast.ExecuteStmt), dom.InfoSchema())
+		nodeW := ddlmodel.NewNodeW(stmt)
+		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
@@ -1817,7 +1820,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			BinaryArgs: params,
 			PrepStmt:   prepStmt,
 		}
-		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), execStmt, dom.InfoSchema())
+		nodeW := ddlmodel.NewNodeW(execStmt)
+		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)

@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -107,7 +108,8 @@ func TestGroupFingerPrint(t *testing.T) {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
 	}()
-	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
+	nodeW := ddlmodel.NewNodeW(stmt1)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 	require.NoError(t, err)
 	logic1, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
@@ -240,7 +242,8 @@ func TestBuildKeyInfo(t *testing.T) {
 	// case 1: primary key has constant constraint
 	stmt1, err := p.ParseOneStmt("select a from t where a = 10", "", "")
 	require.NoError(t, err)
-	p1, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
+	nodeW1 := ddlmodel.NewNodeW(stmt1)
+	p1, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW1, is)
 	require.NoError(t, err)
 	logic1, ok := p1.(base.LogicalPlan)
 	require.True(t, ok)
@@ -252,7 +255,8 @@ func TestBuildKeyInfo(t *testing.T) {
 	// case 2: group by column is key
 	stmt2, err := p.ParseOneStmt("select b, sum(a) from t group by b", "", "")
 	require.NoError(t, err)
-	p2, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt2, is)
+	nodeW2 := ddlmodel.NewNodeW(stmt2)
+	p2, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW2, is)
 	require.NoError(t, err)
 	logic2, ok := p2.(base.LogicalPlan)
 	require.True(t, ok)

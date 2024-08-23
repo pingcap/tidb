@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -82,7 +83,8 @@ func TestFetchShowBRIE(t *testing.T) {
 	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 	stmt, err := p.ParseOneStmt("show backups", "", "")
 	require.NoError(t, err)
-	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
+	nodeW := ddlmodel.NewNodeW(stmt)
+	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, nodeW, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
 	require.NoError(t, err)
 	schema := plan.Schema()
 
@@ -161,7 +163,8 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	require.NoError(t, err)
 	stmt, err := p.ParseOneStmt("BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 IGNORE_STATS = 1 COMPRESSION_LEVEL = 4 COMPRESSION_TYPE = 'lz4' ENCRYPTION_METHOD = 'aes256-ctr' ENCRYPTION_KEYFILE = '/tmp/keyfile'", "", "")
 	require.NoError(t, err)
-	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
+	nodeW := ddlmodel.NewNodeW(stmt)
+	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, nodeW, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
 	require.NoError(t, err)
 	s, ok := stmt.(*ast.BRIEStmt)
 	require.True(t, ok)
@@ -196,7 +199,8 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 
 	stmt, err = p.ParseOneStmt("RESTORE TABLE `a` FROM 'noop://' CHECKSUM_CONCURRENCY = 4 WAIT_TIFLASH_READY = 1 WITH_SYS_TABLE = 1 LOAD_STATS = 1", "", "")
 	require.NoError(t, err)
-	plan, err = core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
+	nodeW = ddlmodel.NewNodeW(stmt)
+	plan, err = core.BuildLogicalPlanForTest(ctx, sctx, nodeW, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
 	require.NoError(t, err)
 	s, ok = stmt.(*ast.BRIEStmt)
 	require.True(t, ok)

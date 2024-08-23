@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -46,7 +47,8 @@ func testGroupToString(t *testing.T, input []string, output []struct {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 
-		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+		nodeW := ddlmodel.NewNodeW(stmt)
+		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 		require.NoError(t, err)
 
 		logic, ok := plan.(base.LogicalPlan)
@@ -98,7 +100,8 @@ func TestAggPushDownGather(t *testing.T) {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 
-		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+		nodeW := ddlmodel.NewNodeW(stmt)
+		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 		require.NoError(t, err)
 
 		logic, ok := plan.(base.LogicalPlan)

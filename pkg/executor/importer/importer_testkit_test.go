@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -267,8 +268,11 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 		selectPlan = &plannercore.PhysicalSelection{}
 	}
 	plan, err := importer.NewImportPlan(ctx, tk.Session(), &plannercore.ImportInto{
-		Path:       path,
-		Table:      &ast.TableName{Name: table.Meta().Name, DBInfo: dbInfo},
+		Path: path,
+		Table: &ddlmodel.TableNameW{
+			TableName: &ast.TableName{Name: table.Meta().Name},
+			DBInfo:    dbInfo,
+		},
 		Options:    opts,
 		SelectPlan: selectPlan,
 	}, table)

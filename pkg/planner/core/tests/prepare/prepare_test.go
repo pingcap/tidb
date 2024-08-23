@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -397,7 +398,8 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 		require.NoError(t, err)
 		is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
 		builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
-		p, err := builder.Build(ctx, stmt)
+		nodeW := ddlmodel.NewNodeW(stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err)
 		execPlan, ok := p.(*core.Execute)
 		require.True(t, ok)
