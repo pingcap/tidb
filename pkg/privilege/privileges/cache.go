@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
 )
 
@@ -1633,12 +1634,14 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
-	priv atomic.Pointer[MySQLPrivilege]
+	priv           atomic.Pointer[MySQLPrivilege]
+	mu             syncutil.Mutex
+	lastUpdateTime time.Time
 }
 
 // NewHandle returns a Handle.
 func NewHandle() *Handle {
-	return &Handle{}
+	return &Handle{lastUpdateTime: time.Now()}
 }
 
 // Get the MySQLPrivilege for read.
@@ -1648,6 +1651,18 @@ func (h *Handle) Get() *MySQLPrivilege {
 
 // Update loads all the privilege info from kv storage.
 func (h *Handle) Update(ctx sessionctx.Context) error {
+	return h.mutexUpdate(ctx)
+}
+
+// mutexUpdate loads all the privilege info from kv storage.
+func (h *Handle) mutexUpdate(ctx sessionctx.Context) error {
+	startTime := time.Now()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.lastUpdateTime.After(startTime) {
+		return nil
+	}
+
 	var priv MySQLPrivilege
 	err := priv.LoadAll(ctx)
 	if err != nil {
@@ -1655,5 +1670,6 @@ func (h *Handle) Update(ctx sessionctx.Context) error {
 	}
 
 	h.priv.Store(&priv)
+	h.lastUpdateTime = time.Now()
 	return nil
 }
