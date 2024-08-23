@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/hint"

@@ -15,12 +15,12 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"math"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
 

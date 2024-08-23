@@ -17,7 +17,6 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"math/rand"
 	"strings"
 	"testing"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
