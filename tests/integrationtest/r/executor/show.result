@@ -877,6 +877,14 @@ uuid
 uuid_short
 uuid_to_bin
 validate_password_strength
+vec_as_text
+vec_cosine_distance
+vec_dims
+vec_from_text
+vec_l1_distance
+vec_l2_distance
+vec_l2_norm
+vec_negative_inner_product
 version
 vitess_hash
 week

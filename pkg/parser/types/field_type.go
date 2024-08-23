@@ -342,6 +342,8 @@ func (ft *FieldType) EvalType() EvalType {
 		return ETDuration
 	case mysql.TypeJSON:
 		return ETJson
+	case mysql.TypeTiDBVectorFloat32:
+		return ETVectorFloat32
 	case mysql.TypeEnum, mysql.TypeSet:
 		if ft.flag&mysql.EnumSetAsIntFlag > 0 {
 			return ETInt

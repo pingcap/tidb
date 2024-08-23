@@ -160,6 +160,64 @@ func TestCombinedIDAllocation(t *testing.T) {
 		}
 	}
 
+	genRGroupJob := func() *model.Job {
+		info := &model.ResourceGroupInfo{}
+		return &model.Job{
+			Type: model.ActionCreateResourceGroup,
+			Args: []any{info},
+		}
+	}
+
+	genAlterTblPartitioningJob := func(partCnt int) *model.Job {
+		info := &model.PartitionInfo{
+			Definitions: make([]model.PartitionDefinition, partCnt),
+		}
+		return &model.Job{
+			Type: model.ActionAlterTablePartitioning,
+			Args: []any{[]string{}, info},
+		}
+	}
+
+	genTruncPartitionJob := func(partCnt int) *model.Job {
+		oldIDs := make([]int64, partCnt)
+		return &model.Job{
+			Type: model.ActionTruncateTablePartition,
+			Args: []any{oldIDs, []int64{}},
+		}
+	}
+
+	genAddPartitionJob := func(partCnt int) *model.Job {
+		info := &model.PartitionInfo{
+			Definitions: make([]model.PartitionDefinition, partCnt),
+		}
+		return &model.Job{
+			Type: model.ActionAddTablePartition,
+			Args: []any{info},
+		}
+	}
+
+	genReorgOrRemovePartitionJob := func(remove bool, partCnt int) *model.Job {
+		info := &model.PartitionInfo{
+			Definitions: make([]model.PartitionDefinition, partCnt),
+		}
+		tp := model.ActionReorganizePartition
+		if remove {
+			tp = model.ActionRemovePartitioning
+			require.Equal(t, 1, partCnt)
+		}
+		return &model.Job{
+			Type: tp,
+			Args: []any{[]string{}, info},
+		}
+	}
+
+	genTruncTblJob := func(partCnt int) *model.Job {
+		return &model.Job{
+			Type: model.ActionTruncateTable,
+			Args: []any{int64(0), false, []int64{}, partCnt},
+		}
+	}
+
 	cases := []idAllocationCase{
 		{
 			jobW:            ddl.NewJobWrapper(genCreateTblsJob(1, 2, 0), false),
@@ -205,15 +263,71 @@ func TestCombinedIDAllocation(t *testing.T) {
 			jobW:            ddl.NewJobWrapper(genCreateDBJob(), true),
 			requiredIDCount: 1,
 		},
+		{
+			jobW:            ddl.NewJobWrapper(genRGroupJob(), false),
+			requiredIDCount: 2,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genRGroupJob(), true),
+			requiredIDCount: 1,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genAlterTblPartitioningJob(9), false),
+			requiredIDCount: 11,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genAlterTblPartitioningJob(4), true),
+			requiredIDCount: 1,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genTruncPartitionJob(33), false),
+			requiredIDCount: 34,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genTruncPartitionJob(2), true),
+			requiredIDCount: 1,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genAddPartitionJob(15), false),
+			requiredIDCount: 16,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genAddPartitionJob(33), true),
+			requiredIDCount: 1,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genReorgOrRemovePartitionJob(false, 12), false),
+			requiredIDCount: 13,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genReorgOrRemovePartitionJob(false, 12), true),
+			requiredIDCount: 1,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genReorgOrRemovePartitionJob(true, 1), false),
+			requiredIDCount: 2,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genReorgOrRemovePartitionJob(true, 1), true),
+			requiredIDCount: 1,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genTruncTblJob(17), false),
+			requiredIDCount: 19,
+		},
+		{
+			jobW:            ddl.NewJobWrapper(genTruncTblJob(6), true),
+			requiredIDCount: 1,
+		},
 	}
 
 	submitter := ddl.NewJobSubmitterForTest()
 	t.Run("process one by one", func(t *testing.T) {
 		tk.MustExec("delete from mysql.tidb_ddl_job")
-		for _, c := range cases {
+		for i, c := range cases {
 			currentGlobalID := getGlobalID(ctx, t, store)
 			require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
-			require.Equal(t, currentGlobalID+int64(c.requiredIDCount), getGlobalID(ctx, t, store))
+			require.Equal(t, currentGlobalID+int64(c.requiredIDCount), getGlobalID(ctx, t, store), fmt.Sprintf("case-%d", i))
 		}
 		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
 		require.NoError(t, err)
@@ -250,24 +364,30 @@ func TestCombinedIDAllocation(t *testing.T) {
 				require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
 			}
 		}
-		require.EqualValues(t, 6, allocIDCaseCount)
+		require.EqualValues(t, 13, allocIDCaseCount)
 		uniqueIDs := make(map[int64]struct{}, len(cases))
+		checkID := func(id int64) {
+			uniqueIDs[id] = struct{}{}
+			require.Greater(t, id, initialGlobalID)
+		}
+		checkPartitionInfo := func(info *model.PartitionInfo) {
+			for _, def := range info.Definitions {
+				uniqueIDs[def.ID] = struct{}{}
+				require.Greater(t, def.ID, initialGlobalID)
+			}
+		}
 		checkTableInfo := func(info *model.TableInfo) {
 			uniqueIDs[info.ID] = struct{}{}
 			require.Greater(t, info.ID, initialGlobalID)
 			if pInfo := info.GetPartitionInfo(); pInfo != nil {
-				for _, def := range pInfo.Definitions {
-					uniqueIDs[def.ID] = struct{}{}
-					require.Greater(t, def.ID, initialGlobalID)
-				}
+				checkPartitionInfo(pInfo)
 			}
 		}
 		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, allocIDCaseCount)
 		for _, j := range gotJobs {
-			uniqueIDs[j.ID] = struct{}{}
-			require.Greater(t, j.ID, initialGlobalID)
+			checkID(j.ID)
 			switch j.Type {
 			case model.ActionCreateTable, model.ActionCreateView, model.ActionCreateSequence:
 				require.Greater(t, j.TableID, initialGlobalID)
@@ -287,6 +407,48 @@ func TestCombinedIDAllocation(t *testing.T) {
 				require.NoError(t, j.DecodeArgs(info))
 				uniqueIDs[info.ID] = struct{}{}
 				require.Equal(t, j.SchemaID, info.ID)
+			case model.ActionCreateResourceGroup:
+				info := &model.ResourceGroupInfo{}
+				require.NoError(t, j.DecodeArgs(info))
+				checkID(info.ID)
+			case model.ActionAlterTablePartitioning:
+				var partNames []string
+				info := &model.PartitionInfo{}
+				require.NoError(t, j.DecodeArgs(&partNames, info))
+				checkPartitionInfo(info)
+				checkID(info.NewTableID)
+			case model.ActionTruncateTablePartition:
+				var oldIDs, newIDs []int64
+				require.NoError(t, j.DecodeArgs(&oldIDs, &newIDs))
+				for _, id := range newIDs {
+					checkID(id)
+				}
+			case model.ActionAddTablePartition:
+				info := &model.PartitionInfo{}
+				require.NoError(t, j.DecodeArgs(info))
+				checkPartitionInfo(info)
+			case model.ActionReorganizePartition:
+				var oldNames []string
+				info := &model.PartitionInfo{}
+				require.NoError(t, j.DecodeArgs(&oldNames, info))
+				checkPartitionInfo(info)
+			case model.ActionRemovePartitioning:
+				var oldNames []string
+				info := &model.PartitionInfo{}
+				require.NoError(t, j.DecodeArgs(&oldNames, info))
+				checkPartitionInfo(info)
+				checkID(info.NewTableID)
+			case model.ActionTruncateTable:
+				var (
+					newTblID int64
+					fkCheck  bool
+					partIDs  []int64
+				)
+				require.NoError(t, j.DecodeArgs(&newTblID, &fkCheck, &partIDs))
+				checkID(newTblID)
+				for _, id := range partIDs {
+					checkID(id)
+				}
 			}
 		}
 		require.Len(t, uniqueIDs, allocatedIDCount)
