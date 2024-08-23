@@ -1877,7 +1877,7 @@ func (s *SessionVars) AllocNewPlanID() int {
 	return int(s.PlanID.Add(1))
 }
 
-// AllocNewSQLID alloc new ID
+// AllocNewSQLID alloc new ID, will restart from 0 when exceeds uint64 max limit
 func (s *SessionVars) AllocNewSQLID() uint64 {
 	return s.SQLID.Add(1)
 }

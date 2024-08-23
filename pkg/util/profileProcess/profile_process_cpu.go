@@ -65,8 +65,8 @@ const (
 
 // sqlCPUTimeRecord represents a single record of how much cpu time a sql consumes in one second.
 type sqlCPUTimeRecord struct {
-	sqlGlobalUID uint64
-	total        int64
+	sqlID uint64
+	total int64
 }
 
 // ProcessCPUProfiler uses to consume cpu profile from globalCPUProfiler, then parse the Process CPU usage from the cpu profile data.
@@ -176,7 +176,7 @@ func (pp *ProcessCPUProfiler) doUnregister(profileConsumer cpuprofile.ProfileCon
 // parseCPUProfile uses to aggregate the cpu-profile sample data by sql_global_uid labels,
 // Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
 // Since `SQLCPUCollector` only care about the cpu time that consume by (sql_global_uid), the other sample data
-// without those label will be ignore.
+// without those label will be ignored.
 func (pp *ProcessCPUProfiler) parseCPUProfile(p *profile.Profile) {
 	sqlMap := make(map[uint64]sqlCPUTimeRecord)
 	idx := len(p.SampleType) - 1
@@ -192,18 +192,23 @@ func (pp *ProcessCPUProfiler) parseCPUProfile(p *profile.Profile) {
 			connID, _ := strconv.ParseUint(keys[0], 10, 64)
 			sqlID, _ := strconv.ParseUint(keys[1], 10, 64)
 			if timeRecord, ok := sqlMap[connID]; ok {
-				if sqlID != sqlMap[connID].sqlGlobalUID {
+				if sqlID < sqlMap[connID].sqlID {
 					// Ignore previous sql's cpu profile data inside the same connection
 					continue
+				} else if sqlID > sqlMap[connID].sqlID {
+					// Resets sqlID and total value
+					timeRecord.sqlID = sqlID
+					timeRecord.total = s.Value[idx]
+				} else {
+					timeRecord.total += s.Value[idx]
 				}
-				timeRecord.total += s.Value[idx]
 				sqlMap[connID] = timeRecord
 			} else {
-				sqlMap[connID] = sqlCPUTimeRecord{sqlID, 0}
+				sqlMap[connID] = sqlCPUTimeRecord{sqlID, s.Value[idx]}
 			}
 		}
 	}
 	for key, val := range sqlMap {
-		pp.updater.UpdateProcessCPUTime(key, val.sqlGlobalUID, time.Duration(val.total))
+		pp.updater.UpdateProcessCPUTime(key, val.sqlID, time.Duration(val.total))
 	}
 }

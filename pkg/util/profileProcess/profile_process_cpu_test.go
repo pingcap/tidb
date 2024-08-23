@@ -16,7 +16,6 @@ package profileprocess
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -26,9 +25,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPProfCPUProfile(t *testing.T) {
+func TestProcessProfCPUProfile(t *testing.T) {
 	// short the interval to speed up the test.
-	interval := time.Millisecond * 200
+	interval := time.Millisecond * 400
 	defCollectTickerInterval = interval
 	cpuprofile.DefProfileDuration = interval
 
@@ -38,50 +37,54 @@ func TestPProfCPUProfile(t *testing.T) {
 
 	topsqlstate.EnableTopSQL()
 	updater := &mockUpdater{}
-	updater.data = make(map[uint64]uint64)
+	updater.dataCh = make(chan bool, 10)
+	updater.connIDSet = make(map[uint64]uint64)
 	sqlCPUCollector := NewProcessCPUProfiler(updater)
 	sqlCPUCollector.Start()
 	defer sqlCPUCollector.Stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	testutil.MockCPULoadV2(ctx, "0_0", "1_0", "2_1", "3_1")
-	time.Sleep(interval * 4)
-	updater.Lock()
-	currDataLen := len(updater.data)
-	updater.Unlock()
-	require.Equal(t, 4, currDataLen)
+	testutil.MockCPULoadV2(ctx, "0_0", "1_0", "2_1")
+	<-updater.dataCh
+	require.Len(t, updater.connIDSet, 3)
+	require.Equal(t, updater.connIDSet[0], uint64(0))
+	require.Equal(t, updater.connIDSet[1], uint64(0))
+	require.Equal(t, updater.connIDSet[2], uint64(1))
 
 	// Test disable then re-enable.
 	topsqlstate.DisableTopSQL()
-	time.Sleep(interval * 4)
-	updater.Lock()
-	updater.data = make(map[uint64]uint64)
-	updater.Unlock()
-
-	time.Sleep(interval * 4)
-	updater.Lock()
-	currDataLen = len(updater.data)
-	updater.Unlock()
-	require.Equal(t, 0, currDataLen)
+	time.Sleep(interval * 2)
+	for len(updater.dataCh) > 0 {
+		<-updater.dataCh
+	}
+	updater.connIDSet = make(map[uint64]uint64)
+	time.Sleep(interval * 2)
+	require.Equal(t, 0, len(updater.dataCh))
+	require.Equal(t, 0, len(updater.connIDSet))
 
 	topsqlstate.EnableTopSQL()
-	time.Sleep(interval * 4)
-	updater.Lock()
-	currDataLen = len(updater.data)
-	updater.Unlock()
-	require.Equal(t, 4, currDataLen)
+	ticker := time.NewTicker(interval * 8)
+	select {
+	case <-ticker.C:
+	case <-updater.dataCh:
+	}
+	require.Len(t, updater.connIDSet, 3)
+	require.Equal(t, updater.connIDSet[0], uint64(0))
+	require.Equal(t, updater.connIDSet[1], uint64(0))
+	require.Equal(t, updater.connIDSet[2], uint64(1))
 }
 
 type mockUpdater struct {
-	sync.Mutex
-	data map[uint64]uint64
+	dataCh    chan bool
+	connIDSet map[uint64]uint64
 }
 
 // UpdateProcessCPUTime updates specific process's tidb CPU time when the process is still running
 // It implements ProcessCPUTimeUpdater interface
 func (s *mockUpdater) UpdateProcessCPUTime(connID uint64, sqlID uint64, _ time.Duration) {
-	s.Lock()
-	defer s.Unlock()
-	s.data[connID] = sqlID
+	s.connIDSet[connID] = sqlID
+	if len(s.connIDSet) == 3 {
+		s.dataCh <- true
+	}
 }

@@ -58,7 +58,7 @@ func mockCPULoadByGoroutineWithLabel(ctx context.Context, labels ...string) {
 		default:
 		}
 		sum := 0
-		for i := 0; i < 10000000; i++ {
+		for i := 0; i < 1000000; i++ {
 			sum = sum + i*2
 		}
 	}
