@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/golang/protobuf/proto"
@@ -62,6 +63,26 @@ func (t *TaskEvent) String() string {
 		return fmt.Sprintf("%s(%s, err = %s)", t.Type, t.Name, t.Err)
 	}
 	return fmt.Sprintf("%s(%s)", t.Type, t.Name)
+}
+
+type TaskInfoRedacted struct {
+	Info *backuppb.StreamBackupTaskInfo
+}
+
+func (t TaskInfoRedacted) redactSensitiveInfo(input string) string {
+	// Define regular expressions to match the fields
+	reAccessKey := regexp.MustCompile(`access_key:\"[^\"]*\"`)
+	reSecretAccessKey := regexp.MustCompile(`secret_access_key:\"[^\"]*\"`)
+
+	// Replace the matched fields with redacted versions
+	output := reAccessKey.ReplaceAllString(input, `access_key:"[REDACTED]"`)
+	output = reSecretAccessKey.ReplaceAllString(output, `secret_access_key:"[REDACTED]"`)
+
+	return output
+}
+
+func (t TaskInfoRedacted) String() string {
+	return t.redactSensitiveInfo(t.Info.String())
 }
 
 type AdvancerExt struct {
