@@ -748,7 +748,7 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	return getTableInfo(tbl), ok
 }
 
-// SchemaTableInfos implements MetaOnlyInfoSchema, only public tables are retrieved.
+// SchemaTableInfos implements MetaOnlyInfoSchema, non-public schema will not be retrieved.
 func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableInfo, error) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
@@ -791,13 +791,7 @@ retry:
 		}
 		return nil, errors.Trace(err)
 	}
-	publicTblInfos := make([]*model.TableInfo, 0, len(tblInfos))
-	for _, tbl := range tblInfos {
-		if tbl.State == model.StatePublic {
-			publicTblInfos = append(publicTblInfos, tbl)
-		}
-	}
-	return publicTblInfos, nil
+	return tblInfos, nil
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
@@ -1064,11 +1058,6 @@ func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts
 				fmt.Sprintf("(Schema ID %d)", dbID),
 				fmt.Sprintf("(Table ID %d)", tblID),
 			))
-		}
-
-		// Sanity check table state
-		if tblInfo.State != model.StatePublic {
-			return nil, errors.Errorf("loadTableInfo get non-public table %s", tblInfo.Name.String())
 		}
 
 		ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
