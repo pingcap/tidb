@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
@@ -821,4 +822,49 @@ func TestSubscriptionPanic(t *testing.T) {
 	}
 	cancel()
 	wg.Wait()
+}
+
+func TestRedactBackend(t *testing.T) {
+	info := new(backuppb.StreamBackupTaskInfo)
+	info.Name = "test"
+	info.Storage = &backuppb.StorageBackend{
+		Backend: &backuppb.StorageBackend_S3{
+			S3: &backuppb.S3{
+				Endpoint: "http://",
+				Bucket:   "test",
+				Prefix:   "test",
+				AccessKey: "12abCD!@#[]{}?/\\",
+				SecretAccessKey: "12abCD!@#[]{}?/\\",
+			},
+		},
+	}
+
+	redacted := streamhelper.TaskInfoRedacted{info}
+	require.Equal(t, "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
+
+	info.Storage = &backuppb.StorageBackend{
+		Backend: &backuppb.StorageBackend_Gcs{
+			Gcs: &backuppb.GCS{
+				Endpoint: "http://",
+				Bucket:   "test",
+				Prefix:   "test",
+				CredentialsBlob: "12abCD!@#[]{}?/\\",
+			},
+		},
+	}
+	redacted = streamhelper.TaskInfoRedacted{info}
+	require.Equal(t, "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" CredentialsBlob:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
+
+	info.Storage = &backuppb.StorageBackend{
+		Backend: &backuppb.StorageBackend_AzureBlobStorage{
+			AzureBlobStorage: &backuppb.AzureBlobStorage{
+				Endpoint: "http://",
+				Bucket: "test",
+				Prefix:   "test",
+				SharedKey: "12abCD!@#[]{}?/\\",
+			},
+		},
+	}
+	redacted = streamhelper.TaskInfoRedacted{info}
+	require.Equal(t, "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" SharedKey:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
 }

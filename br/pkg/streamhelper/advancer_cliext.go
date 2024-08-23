@@ -24,6 +24,13 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	reAccessKey        = regexp.MustCompile(`access_key:\"[^\"]*\"`)
+	reSecretAccessKey  = regexp.MustCompile(`secret_access_key:\"[^\"]*\"`)
+	reSharedKey        = regexp.MustCompile(`shared_key:\"[^\"]*\"`)
+	reCredentialsBlob  = regexp.MustCompile(`credentials_blob:\"[^\"]*\"`)
+)
+
 type EventType int
 
 const (
@@ -69,20 +76,18 @@ type TaskInfoRedacted struct {
 	Info *backuppb.StreamBackupTaskInfo
 }
 
-func (t TaskInfoRedacted) redactSensitiveInfo(input string) string {
-	// Define regular expressions to match the fields
-	reAccessKey := regexp.MustCompile(`access_key:\"[^\"]*\"`)
-	reSecretAccessKey := regexp.MustCompile(`secret_access_key:\"[^\"]*\"`)
-
+func (t TaskInfoRedacted) redact(input string) string {
 	// Replace the matched fields with redacted versions
 	output := reAccessKey.ReplaceAllString(input, `access_key:"[REDACTED]"`)
 	output = reSecretAccessKey.ReplaceAllString(output, `secret_access_key:"[REDACTED]"`)
+	output = reSharedKey.ReplaceAllString(output, `SharedKey:"[REDACTED]"`)
+	output = reCredentialsBlob.ReplaceAllString(output, `CredentialsBlob:"[REDACTED]"`)
 
 	return output
 }
 
 func (t TaskInfoRedacted) String() string {
-	return t.redactSensitiveInfo(t.Info.String())
+	return t.redact(t.Info.String())
 }
 
 type AdvancerExt struct {
