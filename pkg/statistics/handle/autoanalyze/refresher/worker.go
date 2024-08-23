@@ -134,5 +134,6 @@ func (w *worker) GetRunningJobs() map[int64]struct{} {
 func (w *worker) Stop() {
 	w.cancel()
 	close(w.jobChan)
+	// TODO: Check if we need to kill the running jobs.
 	w.wg.Wait()
 }
