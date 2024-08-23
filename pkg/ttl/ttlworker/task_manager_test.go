@@ -163,14 +163,18 @@ func TestTaskFinishedCondition(t *testing.T) {
 		},
 	}
 	logger := logutil.BgLogger()
-	task.statistics.TotalRows.Store(10)
 
-	// result == nil means it is not finished
+	// result == nil means it is not finished, even if all rows processed
 	require.Nil(t, task.result)
+	require.False(t, task.finished(logger))
+	task.statistics.TotalRows.Store(10)
+	task.statistics.SuccessRows.Store(10)
 	require.False(t, task.finished(logger))
 
 	for _, resultErr := range []error{nil, errors.New("mockErr")} {
-		// result != nil but not are rows processed means it is not finished
+		// result != nil but not all rows processed means it is not finished
+		task.statistics.SuccessRows.Store(0)
+		task.statistics.ErrorRows.Store(0)
 		task.result = task.ttlScanTask.result(resultErr)
 		require.InDelta(t, task.result.time.Unix(), time.Now().Unix(), 5)
 		require.False(t, task.finished(logger))
@@ -181,6 +185,11 @@ func TestTaskFinishedCondition(t *testing.T) {
 		// result != nil but time out means it is finished
 		task.result = task.ttlScanTask.result(resultErr)
 		task.result.time = time.Now().Add(-waitTaskProcessRowsTimeout - time.Second)
+		require.True(t, task.finished(logger))
+
+		// result != nil and processed rows are more that total rows means it is finished
+		task.statistics.SuccessRows.Store(8)
+		task.statistics.ErrorRows.Store(3)
 		require.True(t, task.finished(logger))
 	}
 }
