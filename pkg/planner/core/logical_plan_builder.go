@@ -4956,7 +4956,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		b.hintProcessor = originHintProcessor
 		b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
 	}()
-	nodeW := resolve.NewNodeW(selectNode)
+	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
 	selectLogicalPlan, err := b.Build(ctx, nodeW)
 	if err != nil {
 		logutil.BgLogger().Error("build plan for view failed", zap.Error(err))
@@ -6641,7 +6641,9 @@ func (u *updatableTableListResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				newTableName.Name = v.AsName
 				newTableName.Schema = model.NewCIStr("")
 				u.updatableTableList = append(u.updatableTableList, &newTableName)
-				u.resolveCtx.AddTableName(&newTableName, u.resolveCtx.GetTableName(s))
+				if tnW := u.resolveCtx.GetTableName(s); tnW != nil {
+					u.resolveCtx.AddTableName(&newTableName, tnW)
+				}
 			} else {
 				u.updatableTableList = append(u.updatableTableList, s)
 			}
@@ -6654,7 +6656,7 @@ func (u *updatableTableListResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 // If asName is true, extract AsName prior to OrigName.
 // Privilege check should use OrigName, while expression may use AsName.
 func ExtractTableList(node *resolve.NodeW, asName bool) []*ast.TableName {
-	if node == nil {
+	if node.Node == nil {
 		return []*ast.TableName{}
 	}
 	e := &tableListExtractor{
@@ -6715,7 +6717,9 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 				newTableName.Name = x.AsName
 				newTableName.Schema = model.NewCIStr("")
 				e.tableNames = append(e.tableNames, &newTableName)
-				e.resolveCtx.AddTableName(&newTableName, e.resolveCtx.GetTableName(s))
+				if tnW := e.resolveCtx.GetTableName(s); tnW != nil {
+					e.resolveCtx.AddTableName(&newTableName, tnW)
+				}
 			} else {
 				e.tableNames = append(e.tableNames, s)
 			}

@@ -494,6 +494,8 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
+	// Build might be called recursively, right now they all share the same resolve
+	// context, so it's ok to override it.
 	b.resolveCtx = node.GetResolveContext()
 	b.optFlag |= rule.FlagPruneColumns
 	switch x := node.Node.(type) {
