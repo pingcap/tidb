@@ -601,7 +601,7 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 			if !vars.StrictSQLMode {
 				sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))
 			} else {
-				return datum, table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name)
+				return datum, table.ErrNoDefaultValue.GenWithStackByArgs(column.ToInfo().Name)
 			}
 		}
 
