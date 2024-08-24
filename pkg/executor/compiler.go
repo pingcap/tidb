@@ -107,11 +107,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		staleread.AssertStmtStaleness(c.Ctx, val.(bool))
 	})
 
-	resolveCtx := nodeW.GetResolveContext()
 	if preparedObj != nil {
-		CountStmtNode(preparedObj.PreparedAst.Stmt, resolveCtx, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
+		CountStmtNode(preparedObj.PreparedAst.Stmt, preparedObj.ResolveCtx, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	} else {
-		CountStmtNode(stmtNode, resolveCtx, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
+		CountStmtNode(stmtNode, nodeW.GetResolveContext(), sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {

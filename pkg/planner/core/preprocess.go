@@ -545,7 +545,8 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	tblNames := ExtractTableList(originNode, false)
+	nodeW := resolve.NewNodeWWithCtx(originNode, p.resolveCtx)
+	tblNames := ExtractTableList(nodeW, false)
 	for _, tn := range tblNames {
 		tbl, err := p.tableByName(tn)
 		if err != nil {

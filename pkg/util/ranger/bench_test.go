@@ -116,7 +116,6 @@ WHERE
 	err = plannercore.Preprocess(context.Background(), sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
 	require.NoError(b, err)
 	ctx := context.Background()
-	nodeW = resolve.NewNodeW(stmts[0])
 	p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 	require.NoError(b, err)
 	selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
