@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -265,7 +266,8 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	fmt.Println(sql)
 	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
 	require.NoError(b, err, sql)
-	p, err := core.BuildLogicalPlanForTest(ctx, s.GetSCtx(), stmt, s.GetIS())
+	nodeW := ddlmodel.NewNodeW(stmt)
+	p, err := core.BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
 	require.NoError(b, err)
 	selection := p.(base.LogicalPlan).Children()[0]
 	m := make(core.ExprColumnMap, len(selection.Schema().Columns))

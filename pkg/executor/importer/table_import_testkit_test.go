@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -83,8 +84,10 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	table, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
-		Table: &ast.TableName{
-			Name: model.NewCIStr("t"),
+		Table: &ddlmodel.TableNameW{
+			TableName: &ast.TableName{
+				Name: model.NewCIStr("t"),
+			},
 			DBInfo: &model.DBInfo{
 				Name: model.NewCIStr("test"),
 				ID:   dbInfo.ID,

@@ -50,6 +50,7 @@ go_test(
     deps = [
         ":ranger",
         "//pkg/config",
+        "//pkg/ddl/model",
         "//pkg/domain",
         "//pkg/expression",
         "//pkg/expression/contextstatic",

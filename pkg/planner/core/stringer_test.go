@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -119,7 +120,8 @@ func TestPlanStringer(t *testing.T) {
 		require.NoError(t, err, "for %s", tt.sql)
 		ret := &core.PreprocessorReturn{}
 		builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
-		p, err := builder.Build(context.TODO(), stmt)
+		nodeW := ddlmodel.NewNodeW(stmt)
+		p, err := builder.Build(context.TODO(), nodeW)
 		require.NoError(t, err, "for %s", tt.sql)
 		p, err = core.LogicalOptimize(context.TODO(), builder.GetOptFlag(), p.(base.LogicalPlan))
 		require.NoError(t, err, "for %s", tt.sql)

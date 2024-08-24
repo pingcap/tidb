@@ -108,6 +108,7 @@ go_test(
         "//br/pkg/mock",
         "//br/pkg/streamhelper",
         "//pkg/config",
+        "//pkg/ddl/model",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/testutil",
         "//pkg/expression",

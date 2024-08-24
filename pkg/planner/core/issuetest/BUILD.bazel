@@ -12,6 +12,7 @@ go_test(
     race = "on",
     shard_count = 4,
     deps = [
+        "//pkg/ddl/model",
         "//pkg/parser",
         "//pkg/planner",
         "//pkg/planner/core",

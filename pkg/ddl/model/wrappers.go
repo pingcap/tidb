@@ -40,6 +40,7 @@ func NewNodeW(node ast.Node) *NodeW {
 	}
 }
 
+// NewNodeWWithCtx creates a NodeW with the given ResolveContext.
 func NewNodeWWithCtx(node ast.Node, resolveCtx *ResolveContext) *NodeW {
 	return &NodeW{
 		Node:       node,
@@ -47,6 +48,7 @@ func NewNodeWWithCtx(node ast.Node, resolveCtx *ResolveContext) *NodeW {
 	}
 }
 
+// CloneWithNewNode creates a new NodeW with the given ast.Node.
 func (n *NodeW) CloneWithNewNode(newNode ast.Node) *NodeW {
 	return &NodeW{
 		Node:       newNode,
@@ -54,6 +56,7 @@ func (n *NodeW) CloneWithNewNode(newNode ast.Node) *NodeW {
 	}
 }
 
+// GetResolveContext returns the ResolveContext of the NodeW.
 func (n *NodeW) GetResolveContext() *ResolveContext {
 	return n.resolveCtx
 }

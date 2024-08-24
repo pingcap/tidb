@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/ddl/model",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/executor",

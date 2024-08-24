@@ -93,6 +93,7 @@ go_library(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/label",
+        "//pkg/ddl/model",
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/distsql",
@@ -377,6 +378,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/ddl/model",
         "//pkg/ddl/placement",
         "//pkg/ddl/util",
         "//pkg/distsql",

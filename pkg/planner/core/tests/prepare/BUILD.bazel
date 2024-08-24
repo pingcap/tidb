@@ -10,6 +10,7 @@ go_test(
     flaky = True,
     shard_count = 24,
     deps = [
+        "//pkg/ddl/model",
         "//pkg/errno",
         "//pkg/executor",
         "//pkg/expression",
