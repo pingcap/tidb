@@ -1224,11 +1224,12 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 	if tblName == nil {
 		return nil
 	}
+	// tnW might be nil, in some ut, query is directly 'optimized' without pre-process
 	tnW := resolveCtx.GetTableName(tblName)
-	tbl := tnW.TableInfo
-	if tbl == nil {
+	if tnW == nil {
 		return nil
 	}
+	tbl := tnW.TableInfo
 	// Skip the optimization with partition selection.
 	// TODO: Add test and remove this!
 	if len(tblName.PartitionNames) > 0 {
@@ -1322,6 +1323,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	if tblName == nil {
 		return nil
 	}
+	// tnW might be nil, in some ut, query is directly 'optimized' without pre-process
 	tnW := resolveCtx.GetTableName(tblName)
 	if tnW == nil {
 		return nil
