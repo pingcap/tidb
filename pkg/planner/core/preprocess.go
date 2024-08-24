@@ -140,7 +140,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *ddlmodel.Nod
 	if v.PreprocessorReturn == nil {
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
-	node.Accept(&v)
+	node.Node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
 	return errors.Trace(v.err)

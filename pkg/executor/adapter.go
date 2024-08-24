@@ -397,8 +397,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	ret := &plannercore.PreprocessorReturn{}
 	nodeW := ddlmodel.NewNodeW(a.StmtNode)
-	err := plannercore.Preprocess(ctx, a.Ctx, nodeW, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret))
-	if err != nil {
+	if err := plannercore.Preprocess(ctx, a.Ctx, nodeW, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return 0, err
 	}
 

@@ -28,7 +28,7 @@ type TableNameW struct {
 
 // NodeW is a wrapper of ast.Node.
 type NodeW struct {
-	ast.Node
+	Node       ast.Node
 	resolveCtx *ResolveContext
 }
 

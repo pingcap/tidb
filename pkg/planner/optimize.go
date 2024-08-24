@@ -139,7 +139,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *ddlmodel.NodeW
 	}
 
 	if !sessVars.InRestrictedSQL && (variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load()) {
-		allowed, err := allowInReadOnlyMode(pctx, node)
+		allowed, err := allowInReadOnlyMode(pctx, node.Node)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -148,7 +148,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *ddlmodel.NodeW
 		}
 	}
 
-	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node, sessVars) {
+	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node.Node, sessVars) {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
 		if hasTiFlashAccess {
@@ -168,7 +168,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *ddlmodel.NodeW
 		return p, names, err
 	}
 
-	tableHints := hint.ExtractTableHintsFromStmtNode(node, sessVars.StmtCtx)
+	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
 	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
 		setVarHintChecker, hypoIndexChecker(ctx, is),
 		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
@@ -462,7 +462,7 @@ var optimizeCnt int
 func optimize(ctx context.Context, sctx pctx.PlanContext, node *ddlmodel.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
 	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
 		// only count the optimization for SQL with specified text
-		if testSQL, ok := val.(string); ok && testSQL == node.OriginalText() {
+		if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
 			optimizeCnt++
 			if optimizeCnt > 1 {
 				failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
@@ -481,7 +481,7 @@ func optimize(ctx context.Context, sctx pctx.PlanContext, node *ddlmodel.NodeW, 
 
 	// build logical plan
 	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
-	node.Accept(hintProcessor)
+	node.Node.Accept(hintProcessor)
 	defer hintProcessor.HandleUnusedViewHints()
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
@@ -496,7 +496,7 @@ func optimize(ctx context.Context, sctx pctx.PlanContext, node *ddlmodel.NodeW, 
 	// we need the table information to check privilege, which is collected
 	// into the visitInfo in the logical plan builder.
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		visitInfo := core.VisitInfo4PrivCheck(ctx, is, node, builder.GetVisitInfo())
+		visitInfo := core.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
 		if err := core.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {
 			return nil, nil, 0, err
 		}
