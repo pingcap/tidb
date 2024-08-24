@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -214,13 +213,9 @@ func TestDDLHistogram(t *testing.T) {
 func TestDDLPartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-<<<<<<< HEAD
-	testkit.WithPruneMode(testKit, variable.Static, func() {
-=======
 	for i, pruneMode := range []string{"static", "dynamic"} {
 		testKit.MustExec("set @@tidb_partition_prune_mode=`" + pruneMode + "`")
 		testKit.MustExec("set global tidb_partition_prune_mode=`" + pruneMode + "`")
->>>>>>> 51f1a828e47 (statistics: record last gc ts to avoid huge read on stats table (#46138))
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
 		h := do.StatsHandle()
@@ -295,5 +290,5 @@ PARTITION BY RANGE ( a ) (
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.False(t, statsTbl.Pseudo)
 		}
-	})
+	}
 }

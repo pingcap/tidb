@@ -142,18 +142,8 @@ nogo(
                "//build:with_nogo": [
                    "//build/linter/allrevive",
                    "//build/linter/errcheck",
-<<<<<<< HEAD
                    "//build/linter/filepermission",
                    "//build/linter/revive",
-=======
-                   "//build/linter/lll",
-                   "//build/linter/revive",
-               ],
-               "//conditions:default": [],
-           }) +
-           select({
-               "//build:without_rbe": [
->>>>>>> 51f1a828e47 (statistics: record last gc ts to avoid huge read on stats table (#46138))
                ],
                "//conditions:default": [],
            }),

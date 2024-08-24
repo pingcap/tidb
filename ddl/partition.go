@@ -1844,13 +1844,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				return ver, errors.Trace(err)
 			}
 		}
-<<<<<<< HEAD
-=======
-		if tblInfo.TiFlashReplica != nil {
-			removeTiFlashAvailablePartitionIDs(tblInfo, physicalTableIDs)
-		}
 		droppedDefs := tblInfo.Partition.DroppingDefinitions
->>>>>>> 51f1a828e47 (statistics: record last gc ts to avoid huge read on stats table (#46138))
 		tblInfo.Partition.DroppingDefinitions = nil
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{physicalTableIDs}
