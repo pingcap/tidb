@@ -32,9 +32,10 @@ type worker struct {
 	jobChan        chan priorityqueue.AnalysisJob
 	ctx            context.Context
 	cancel         context.CancelFunc
+	mu             sync.Mutex
 	runningJobs    map[int64]struct{}
-	runningJobsMu  sync.Mutex
 	maxConcurrency int
+	currentJobs    int
 }
 
 func newWorker(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker, maxConcurrency int) *worker {
@@ -42,7 +43,7 @@ func newWorker(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.T
 	w := &worker{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
-		jobChan:        make(chan priorityqueue.AnalysisJob, maxConcurrency),
+		jobChan:        make(chan priorityqueue.AnalysisJob, 10),
 		ctx:            ctx,
 		cancel:         cancel,
 		runningJobs:    make(map[int64]struct{}),
@@ -55,25 +56,8 @@ func newWorker(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.T
 
 // UpdateConcurrency updates the maximum concurrency for the worker
 func (w *worker) UpdateConcurrency(newConcurrency int) {
-	w.runningJobsMu.Lock()
-	defer w.runningJobsMu.Unlock()
-
-	if newConcurrency == w.maxConcurrency {
-		return
-	}
-
-	// Create a new job channel with the updated capacity
-	newJobChan := make(chan priorityqueue.AnalysisJob, newConcurrency)
-
-	// Move existing jobs to the new channel
-	close(w.jobChan)
-
-	// TODO: consider the case that the concurrency is reduced.
-	for job := range w.jobChan {
-		newJobChan <- job
-	}
-
-	w.jobChan = newJobChan
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.maxConcurrency = newConcurrency
 }
 
@@ -85,49 +69,47 @@ func (w *worker) run() {
 			return
 		case job := <-w.jobChan:
 			w.wg.Add(1)
-			go func(job priorityqueue.AnalysisJob) {
-				defer w.wg.Done()
-				w.runningJobsMu.Lock()
-				w.runningJobs[job.GetTableID()] = struct{}{}
-				w.runningJobsMu.Unlock()
-
-				if err := job.Analyze(w.statsHandle, w.sysProcTracker); err != nil {
-					statslogutil.StatsLogger().Error(
-						"Auto analyze job execution failed",
-						zap.Stringer("job", job),
-						zap.Error(err),
-					)
-				}
-
-				w.runningJobsMu.Lock()
-				delete(w.runningJobs, job.GetTableID())
-				w.runningJobsMu.Unlock()
-			}(job)
+			go w.processJob(job)
 		}
 	}
 }
 
-func (w *worker) SubmitJob(job priorityqueue.AnalysisJob) bool {
-	w.runningJobsMu.Lock()
-	defer w.runningJobsMu.Unlock()
+func (w *worker) processJob(job priorityqueue.AnalysisJob) {
+	defer w.wg.Done()
+	defer func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		delete(w.runningJobs, job.GetTableID())
+		w.currentJobs--
+	}()
 
-	if len(w.runningJobs) >= w.maxConcurrency {
+	if err := job.Analyze(w.statsHandle, w.sysProcTracker); err != nil {
+		statslogutil.StatsLogger().Error(
+			"Auto analyze job execution failed",
+			zap.Stringer("job", job),
+			zap.Error(err),
+		)
+	}
+}
+
+func (w *worker) SubmitJob(job priorityqueue.AnalysisJob) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.currentJobs >= w.maxConcurrency {
 		statslogutil.StatsLogger().Warn("Worker at maximum capacity, job discarded", zap.Stringer("job", job))
 		return false
 	}
 
-	select {
-	case w.jobChan <- job:
-		return true
-	default:
-		statslogutil.StatsLogger().Warn("Worker job channel is full, job discarded", zap.Stringer("job", job))
-		return false
-	}
+	w.currentJobs++
+	w.runningJobs[job.GetTableID()] = struct{}{}
+	w.jobChan <- job
+	return true
 }
 
 func (w *worker) GetRunningJobs() map[int64]struct{} {
-	w.runningJobsMu.Lock()
-	defer w.runningJobsMu.Unlock()
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	runningJobs := make(map[int64]struct{}, len(w.runningJobs))
 	for id := range w.runningJobs {
 		runningJobs[id] = struct{}{}
@@ -138,6 +120,5 @@ func (w *worker) GetRunningJobs() map[int64]struct{} {
 func (w *worker) Stop() {
 	w.cancel()
 	close(w.jobChan)
-	// TODO: Check if we need to kill the running jobs.
 	w.wg.Wait()
 }
