@@ -12,7 +12,6 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
-        "//pkg/ddl/model",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/executor",
@@ -29,6 +28,7 @@ go_test(
         "//pkg/planner",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/resolve",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",

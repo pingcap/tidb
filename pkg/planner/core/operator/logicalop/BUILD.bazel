@@ -31,7 +31,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/ddl/model",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/infoschema",
@@ -45,6 +44,7 @@ go_library(
         "//pkg/planner/core/constraint",
         "//pkg/planner/core/cost",
         "//pkg/planner/core/operator/baseimpl",
+        "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule/util",
         "//pkg/planner/funcdep",
         "//pkg/planner/property",

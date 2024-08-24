@@ -22,12 +22,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -213,7 +213,7 @@ func TestIndexRead(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
@@ -245,7 +245,7 @@ func TestEmptyTable(t *testing.T) {
 		require.Len(t, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
@@ -313,7 +313,7 @@ func TestAnalyze(t *testing.T) {
 		err = executor.ResetContextOfStmt(ctx, stmt)
 		require.NoError(t, err)
 		ret := &core.PreprocessorReturn{}
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)

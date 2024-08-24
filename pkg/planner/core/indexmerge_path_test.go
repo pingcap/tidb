@@ -21,7 +21,6 @@ import (
 	"strings"
 	"testing"
 
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -57,7 +57,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	require.NoError(t, err)
 	tk.Session().GetSessionVars().PlanID.Store(0)
 	tk.Session().GetSessionVars().PlanColumnID.Store(0)
-	nodeW := ddlmodel.NewNodeW(stmt)
+	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 	require.NoError(t, err)
 	require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())

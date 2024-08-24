@@ -200,7 +200,6 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
-        "//pkg/ddl/model",
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression/context",
@@ -214,6 +213,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core",
+        "//pkg/planner/core/resolve",
         "//pkg/session",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",

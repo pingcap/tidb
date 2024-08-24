@@ -29,7 +29,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -85,7 +85,7 @@ type SimpleExec struct {
 	exec.BaseExecutor
 
 	Statement  ast.StmtNode
-	ResolveCtx *ddlmodel.ResolveContext
+	ResolveCtx *resolve.Context
 	// IsFromRemote indicates whether the statement IS FROM REMOTE TiDB instance in cluster,
 	//   and executing in coprocessor.
 	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
@@ -2754,12 +2754,12 @@ func (e *SimpleExec) executeDropStats(ctx context.Context, s *ast.DropStatsStmt)
 	var statsIDs []int64
 	// TODO: GLOBAL option will be deprecated. Also remove this condition when the syntax is removed
 	if s.IsGlobalStats {
-		tnW := e.ResolveCtx.Get(s.Tables[0])
+		tnW := e.ResolveCtx.GetTableName(s.Tables[0])
 		statsIDs = []int64{tnW.TableInfo.ID}
 	} else {
 		if len(s.PartitionNames) == 0 {
 			for _, table := range s.Tables {
-				tnW := e.ResolveCtx.Get(table)
+				tnW := e.ResolveCtx.GetTableName(table)
 				partitionStatIDs, _, err := core.GetPhysicalIDsAndPartitionNames(tnW.TableInfo, nil)
 				if err != nil {
 					return err
@@ -2769,7 +2769,7 @@ func (e *SimpleExec) executeDropStats(ctx context.Context, s *ast.DropStatsStmt)
 			}
 		} else {
 			// TODO: drop stats for specific partition is deprecated. Also remove this condition when the syntax is removed
-			tnW := e.ResolveCtx.Get(s.Tables[0])
+			tnW := e.ResolveCtx.GetTableName(s.Tables[0])
 			if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(tnW.TableInfo, s.PartitionNames); err != nil {
 				return err
 			}

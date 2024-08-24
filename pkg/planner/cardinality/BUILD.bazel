@@ -62,7 +62,6 @@ go_test(
     shard_count = 28,
     deps = [
         "//pkg/config",
-        "//pkg/ddl/model",
         "//pkg/domain",
         "//pkg/executor",
         "//pkg/expression",
@@ -74,6 +73,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/resolve",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",

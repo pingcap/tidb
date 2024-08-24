@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"testing"
 
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -69,7 +69,7 @@ func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 		tk.Session().GetSessionVars().StmtCtx.OriginalSQL = tt
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
@@ -106,7 +106,7 @@ func TestDAGPlanBuilderJoin(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
@@ -144,7 +144,7 @@ func TestDAGPlanBuilderSubquery(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
@@ -175,7 +175,7 @@ func TestDAGPlanTopN(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
@@ -208,7 +208,7 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 		comment := fmt.Sprintf("input: %s", tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		err = core.Preprocess(context.Background(), se, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), se, nodeW, is)
@@ -250,7 +250,7 @@ func TestDAGPlanBuilderUnion(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
@@ -286,7 +286,7 @@ func TestDAGPlanBuilderUnionScan(t *testing.T) {
 		require.NoError(t, err, comment)
 		dom := domain.GetDomain(tk.Session())
 		require.NoError(t, dom.Reload())
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		plan, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
@@ -324,7 +324,7 @@ func TestDAGPlanBuilderAgg(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
@@ -357,7 +357,7 @@ func doTestDAGPlanBuilderWindow(t *testing.T, vars, input []string, output []str
 
 		err = sessiontxn.NewTxn(context.Background(), tk.Session())
 		require.NoError(t, err)
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {

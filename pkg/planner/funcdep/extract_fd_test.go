@@ -19,12 +19,12 @@ import (
 	"fmt"
 	"testing"
 
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -221,7 +221,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
@@ -321,7 +321,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
@@ -370,7 +370,7 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())

@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -66,7 +66,7 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 		require.NoError(t, err)
 		stmt := stmts[0]
 		ret := &plannercore.PreprocessorReturn{}
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
@@ -109,7 +109,7 @@ func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
 
 	stmt, err := p.ParseOneStmt("select avg(a),avg(b),avg(c) from t", "", "")
 	require.NoError(t, err)
-	nodeW := ddlmodel.NewNodeW(stmt)
+	nodeW := resolve.NewNodeW(stmt)
 	err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 	require.NoError(t, err) // no error
 	_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
@@ -1155,7 +1155,7 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		nodeW := ddlmodel.NewNodeW(stmtNode)
+		nodeW := resolve.NewNodeW(stmtNode)
 		err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.TODO(), ctx, nodeW, preprocessorReturn.InfoSchema)

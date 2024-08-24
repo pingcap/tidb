@@ -11,7 +11,6 @@ go_test(
     flaky = True,
     shard_count = 10,
     deps = [
-        "//pkg/ddl/model",
         "//pkg/domain",
         "//pkg/infoschema",
         "//pkg/parser",
@@ -19,6 +18,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/planner",
         "//pkg/planner/core",
+        "//pkg/planner/core/resolve",
         "//pkg/session",
         "//pkg/sessiontxn",
         "//pkg/testkit",

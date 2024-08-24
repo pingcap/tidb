@@ -23,7 +23,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -702,7 +702,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 	}
-	tblNameW := &ddlmodel.TableNameW{
+	tblNameW := &resolve.TableNameW{
 		TableName: tableName,
 		TableInfo: &model.TableInfo{
 			Columns: columns,

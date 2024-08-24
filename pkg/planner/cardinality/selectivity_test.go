@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -35,6 +34,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -89,7 +89,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	require.NoErrorf(b, err, "error %v, for expr %s", err, exprs)
 	require.Len(b, stmts, 1)
 	ret := &plannercore.PreprocessorReturn{}
-	nodeW := ddlmodel.NewNodeW(stmts[0])
+	nodeW := resolve.NewNodeW(stmts[0])
 	err = plannercore.Preprocess(context.Background(), sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
 	require.NoErrorf(b, err, "for %s", exprs)
 	p, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, nodeW, ret.InfoSchema)
@@ -448,7 +448,7 @@ func TestSelectivity(t *testing.T) {
 		require.Len(t, stmts, 1)
 
 		ret := &plannercore.PreprocessorReturn{}
-		nodeW := ddlmodel.NewNodeW(stmts[0])
+		nodeW := resolve.NewNodeW(stmts[0])
 		err = plannercore.Preprocess(context.Background(), sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
 		require.NoErrorf(t, err, "for expr %s", tt.exprs)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
@@ -507,7 +507,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 		require.Len(t, stmts, 1)
 
 		ret := &plannercore.PreprocessorReturn{}
-		nodeW := ddlmodel.NewNodeW(stmts[0])
+		nodeW := resolve.NewNodeW(stmts[0])
 		err = plannercore.Preprocess(context.Background(), sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
 		require.NoErrorf(t, err, "error %v, for sql %s", err, tt)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)

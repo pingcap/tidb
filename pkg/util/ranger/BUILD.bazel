@@ -50,7 +50,6 @@ go_test(
     deps = [
         ":ranger",
         "//pkg/config",
-        "//pkg/ddl/model",
         "//pkg/domain",
         "//pkg/expression",
         "//pkg/expression/contextstatic",
@@ -60,6 +59,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/resolve",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/testkit",

@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
@@ -93,7 +93,7 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 		} else if err != nil {
 			continue
 		}
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.Background(), tk.Session(), nodeW, is)
@@ -136,7 +136,7 @@ func TestAnalyzeSetRate(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, is)
@@ -172,7 +172,7 @@ func TestRequestTypeSupportedOff(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	nodeW := ddlmodel.NewNodeW(stmt)
+	nodeW := resolve.NewNodeW(stmt)
 	p, _, err := planner.Optimize(context.TODO(), se, nodeW, is)
 	require.NoError(t, err)
 	require.Equal(t, expect, core.ToString(p), fmt.Sprintf("sql: %s", sql))
@@ -201,7 +201,7 @@ func TestDoSubQuery(t *testing.T) {
 		comment := fmt.Sprintf("for %s", tt.sql)
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		require.Equal(t, tt.best, core.ToString(p), comment)
@@ -217,7 +217,7 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 	require.NoError(t, err)
 
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-	nodeW := ddlmodel.NewNodeW(stmt)
+	nodeW := resolve.NewNodeW(stmt)
 	p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 	require.NoError(t, err)
 	require.Equal(t, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}", core.ToString(p))
@@ -357,10 +357,10 @@ func TestHintAlias(t *testing.T) {
 		stmt2, err := p.ParseOneStmt(tt.sql2, "", "")
 		require.NoError(t, err, comment)
 
-		nodeW1 := ddlmodel.NewNodeW(stmt1)
+		nodeW1 := resolve.NewNodeW(stmt1)
 		p1, _, err := planner.Optimize(ctx, tk.Session(), nodeW1, is)
 		require.NoError(t, err)
-		nodeW2 := ddlmodel.NewNodeW(stmt2)
+		nodeW2 := resolve.NewNodeW(stmt2)
 		p2, _, err := planner.Optimize(ctx, tk.Session(), nodeW2, is)
 		require.NoError(t, err)
 
@@ -396,7 +396,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)

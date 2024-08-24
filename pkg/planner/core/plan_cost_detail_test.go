@@ -18,11 +18,11 @@ import (
 	"context"
 	"testing"
 
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -135,7 +135,7 @@ func TestPlanCostDetail(t *testing.T) {
 func optimize(t *testing.T, sql string, p *parser.Parser, ctx sessionctx.Context, dom *domain.Domain) map[string]*tracing.PhysicalPlanCostDetail {
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	nodeW := ddlmodel.NewNodeW(stmt)
+	nodeW := resolve.NewNodeW(stmt)
 	err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := plannercore.MockContext()

@@ -60,7 +60,6 @@ go_test(
     deps = [
         ":isolation",
         "//pkg/config",
-        "//pkg/ddl/model",
         "//pkg/executor",
         "//pkg/expression",
         "//pkg/infoschema",
@@ -68,6 +67,7 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/planner",
+        "//pkg/planner/core/resolve",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessiontxn",

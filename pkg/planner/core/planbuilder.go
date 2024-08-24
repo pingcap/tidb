@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/config"
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -293,7 +293,7 @@ type PlanBuilder struct {
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
-	resolveCtx *ddlmodel.ResolveContext
+	resolveCtx *resolve.Context
 }
 
 type handleColHelper struct {
@@ -493,7 +493,7 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 }
 
 // Build builds the ast node to a Plan.
-func (b *PlanBuilder) Build(ctx context.Context, node *ddlmodel.NodeW) (base.Plan, error) {
+func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
 	b.resolveCtx = node.GetResolveContext()
 	b.optFlag |= rule.FlagPruneColumns
 	switch x := node.Node.(type) {
@@ -1486,19 +1486,19 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 			return ret, err
 		}
 	case ast.AdminRecoverIndex:
-		tnW := b.resolveCtx.Get(as.Tables[0])
+		tnW := b.resolveCtx.GetTableName(as.Tables[0])
 		p := &RecoverIndex{Table: tnW, IndexName: as.Index}
 		p.setSchemaAndNames(buildRecoverIndexFields())
 		ret = p
 	case ast.AdminCleanupIndex:
-		tnW := b.resolveCtx.Get(as.Tables[0])
+		tnW := b.resolveCtx.GetTableName(as.Tables[0])
 		p := &CleanupIndex{Table: tnW, IndexName: as.Index}
 		p.setSchemaAndNames(buildCleanupIndexFields())
 		ret = p
 	case ast.AdminChecksumTable:
-		tnWs := make([]*ddlmodel.TableNameW, 0, len(as.Tables))
+		tnWs := make([]*resolve.TableNameW, 0, len(as.Tables))
 		for _, tn := range as.Tables {
-			tnWs = append(tnWs, b.resolveCtx.Get(tn))
+			tnWs = append(tnWs, b.resolveCtx.GetTableName(tn))
 		}
 		p := &ChecksumTable{Tables: tnWs}
 		p.setSchemaAndNames(buildChecksumTableSchema())
@@ -1829,7 +1829,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 
 func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStmt) (*CheckTable, error) {
 	tblName := as.Tables[0]
-	tnW := b.resolveCtx.Get(tblName)
+	tnW := b.resolveCtx.GetTableName(tblName)
 	tableInfo := tnW.TableInfo
 	tbl, ok := b.is.TableByID(ctx, tableInfo.ID)
 	if !ok {
@@ -1879,7 +1879,7 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 	schema := expression.NewSchema()
 	var names types.NameSlice
 	indexName = strings.ToLower(indexName)
-	tnW := b.resolveCtx.Get(tn)
+	tnW := b.resolveCtx.GetTableName(tn)
 	indicesInfo := tnW.TableInfo.Indices
 	cols := tnW.TableInfo.Cols()
 	for _, idxInfo := range indicesInfo {
@@ -1917,7 +1917,7 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 
 // getColsInfo returns the info of index columns, normal columns and primary key.
 func (b *PlanBuilder) getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo) {
-	tnW := b.resolveCtx.Get(tn)
+	tnW := b.resolveCtx.GetTableName(tn)
 	tbl := tnW.TableInfo
 	for _, col := range tbl.Columns {
 		// The virtual column will not store any data in TiKV, so it should be ignored when collect statistics
@@ -2033,7 +2033,7 @@ type calcOnceMap struct {
 }
 
 // getMustAnalyzedColumns puts the columns whose statistics must be collected into `cols` if `cols` has not been calculated.
-func (b *PlanBuilder) getMustAnalyzedColumns(tbl *ddlmodel.TableNameW, cols *calcOnceMap) (map[int64]struct{}, error) {
+func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calcOnceMap) (map[int64]struct{}, error) {
 	if cols.calculated {
 		return cols.data, nil
 	}
@@ -2094,7 +2094,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *ddlmodel.TableNameW, cols *cal
 }
 
 // getPredicateColumns gets the columns used in predicates.
-func (b *PlanBuilder) getPredicateColumns(tbl *ddlmodel.TableNameW, cols *calcOnceMap) (map[int64]struct{}, error) {
+func (b *PlanBuilder) getPredicateColumns(tbl *resolve.TableNameW, cols *calcOnceMap) (map[int64]struct{}, error) {
 	// Already calculated in the previous call.
 	if cols.calculated {
 		return cols.data, nil
@@ -2124,7 +2124,7 @@ func (b *PlanBuilder) getPredicateColumns(tbl *ddlmodel.TableNameW, cols *calcOn
 	return cols.data, nil
 }
 
-func getAnalyzeColumnList(specifiedColumns []model.CIStr, tbl *ddlmodel.TableNameW) ([]*model.ColumnInfo, error) {
+func getAnalyzeColumnList(specifiedColumns []model.CIStr, tbl *resolve.TableNameW) ([]*model.ColumnInfo, error) {
 	colList := make([]*model.ColumnInfo, 0, len(specifiedColumns))
 	for _, colName := range specifiedColumns {
 		colInfo := model.FindColumnInfo(tbl.TableInfo.Columns, colName.L)
@@ -2140,7 +2140,7 @@ func getAnalyzeColumnList(specifiedColumns []model.CIStr, tbl *ddlmodel.TableNam
 // The first return value is the columns which need to be analyzed and the second return value is the columns which need to
 // be record in mysql.analyze_options(only for the case of analyze table t columns c1, .., cn).
 func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
-	tbl *ddlmodel.TableNameW,
+	tbl *resolve.TableNameW,
 	columnChoice model.ColumnChoice,
 	specifiedCols []*model.ColumnInfo,
 	predicateCols, mustAnalyzedCols *calcOnceMap,
@@ -2212,7 +2212,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 }
 
 func (b *PlanBuilder) getColumnsBasedOnPredicateColumns(
-	tbl *ddlmodel.TableNameW,
+	tbl *resolve.TableNameW,
 	predicateCols, mustAnalyzedCols *calcOnceMap,
 	rewriteAllStatsNeeded bool,
 ) ([]*model.ColumnInfo, error) {
@@ -2333,7 +2333,7 @@ func getModifiedIndexesInfoForAnalyze(
 }
 
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
-func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *ddlmodel.TableNameW, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo) {
+func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *resolve.TableNameW, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo) {
 	// If the session is in restricted SQL mode, it uses @@global.tidb_analyze_skip_column_types to get the skipTypes list.
 	skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
 	if b.ctx.GetSessionVars().InRestrictedSQL {
@@ -2371,7 +2371,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	analyzePlan *Analyze,
 	physicalIDs []int64,
 	partitionNames []string,
-	tbl *ddlmodel.TableNameW,
+	tbl *resolve.TableNameW,
 	version int,
 	persistOpts bool,
 ) error {
@@ -2463,7 +2463,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 
 func (b *PlanBuilder) genV2AnalyzeOptions(
 	persist bool,
-	tbl *ddlmodel.TableNameW,
+	tbl *resolve.TableNameW,
 	isAnalyzeTable bool,
 	physicalIDs []int64,
 	astOpts map[ast.AnalyzeOptionType]uint64,
@@ -2650,7 +2650,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 
 	// Construct tasks for each table.
 	for _, tbl := range as.TableNames {
-		tnW := b.resolveCtx.Get(tbl)
+		tnW := b.resolveCtx.GetTableName(tbl)
 		if tnW.TableInfo.IsView() {
 			return nil, errors.Errorf("analyze view %s is not supported now", tbl.Name.O)
 		}
@@ -2725,7 +2725,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	if statsHandle == nil {
 		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
 	}
-	tnW := b.resolveCtx.Get(as.TableNames[0])
+	tnW := b.resolveCtx.GetTableName(as.TableNames[0])
 	tblInfo := tnW.TableInfo
 	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
@@ -2778,7 +2778,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	if statsHandle == nil {
 		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
 	}
-	tnW := b.resolveCtx.Get(as.TableNames[0])
+	tnW := b.resolveCtx.GetTableName(as.TableNames[0])
 	tblInfo := tnW.TableInfo
 	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
@@ -3290,7 +3290,7 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 }
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.Plan, error) {
-	tnW := b.resolveCtx.Get(show.Table)
+	tnW := b.resolveCtx.GetTableName(show.Table)
 	p := logicalop.LogicalShow{
 		ShowContents: logicalop.ShowContents{
 			Tp:                    show.Tp,
@@ -3790,7 +3790,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.FastGenByArgs()
 	}
-	tnW := b.resolveCtx.Get(tn)
+	tnW := b.resolveCtx.GetTableName(tn)
 	tableInfo := tnW.TableInfo
 	if tableInfo.IsView() {
 		err := errors.Errorf("insert into view %s is not supported now", tableInfo.Name.O)
@@ -4190,7 +4190,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 			}
 		}
 	}
-	nodeW := ddlmodel.NewNodeWWithCtx(insert.Select, b.resolveCtx)
+	nodeW := resolve.NewNodeWWithCtx(insert.Select, b.resolveCtx)
 	selectPlan, err := b.Build(ctx, nodeW)
 	if err != nil {
 		return err
@@ -4270,7 +4270,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		}
 		options = append(options, &loadDataOpt)
 	}
-	tnW := b.resolveCtx.Get(ld.Table)
+	tnW := b.resolveCtx.GetTableName(ld.Table)
 	p := LoadData{
 		FileLocRef:         ld.FileLocRef,
 		OnDuplicate:        ld.OnDuplicate,
@@ -4354,7 +4354,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		}
 		options = append(options, &loadDataOpt)
 	}
-	tnW := b.resolveCtx.Get(ld.Table)
+	tnW := b.resolveCtx.GetTableName(ld.Table)
 	p := ImportInto{
 		Path:               ld.Path,
 		Format:             ld.Format,
@@ -4417,7 +4417,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 
 	if ld.Select != nil {
 		// privilege of tables in select will be checked here
-		nodeW := ddlmodel.NewNodeWWithCtx(ld.Select, b.resolveCtx)
+		nodeW := resolve.NewNodeWWithCtx(ld.Select, b.resolveCtx)
 		selectPlan, err2 := b.Build(ctx, nodeW)
 		if err2 != nil {
 			return nil, err2
@@ -4491,7 +4491,7 @@ func (*PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) base.Plan {
 }
 
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (base.Plan, error) {
-	tnW := b.resolveCtx.Get(node.Table)
+	tnW := b.resolveCtx.GetTableName(node.Table)
 	if tnW.TableInfo.TempTableType != model.TempTableNone {
 		return nil, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("split table")
 	}
@@ -4505,7 +4505,7 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (base.Plan, er
 }
 
 func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (base.Plan, error) {
-	tnW := b.resolveCtx.Get(node.Table)
+	tnW := b.resolveCtx.GetTableName(node.Table)
 	tblInfo := tnW.TableInfo
 	if node.IndexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
 		(tblInfo.IsCommonHandle || tblInfo.PKIsHandle) {
@@ -4629,7 +4629,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan base.Lo
 }
 
 func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (base.Plan, error) {
-	tnW := b.resolveCtx.Get(node.Table)
+	tnW := b.resolveCtx.GetTableName(node.Table)
 	tblInfo := tnW.TableInfo
 	handleColInfos := buildHandleColumnInfos(tblInfo)
 	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
@@ -4890,7 +4890,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			stmt.AsViewSchema = true
 		}
 
-		nodeW := ddlmodel.NewNodeWWithCtx(v.Select, b.resolveCtx)
+		nodeW := resolve.NewNodeWWithCtx(v.Select, b.resolveCtx)
 		plan, err := b.Build(ctx, nodeW)
 		if err != nil {
 			return nil, err
@@ -5191,7 +5191,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return nil, err
 	}
 
-	nodeW := ddlmodel.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
+	nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
 	targetPlan, _, err := OptimizeAstNode(ctx, sctx, nodeW, b.is)
 	if err != nil {
 		return nil, err
@@ -5210,7 +5210,7 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	if err != nil {
 		return nil, err
 	}
-	nodeW := ddlmodel.NewNodeWWithCtx(sel, b.resolveCtx)
+	nodeW := resolve.NewNodeWWithCtx(sel, b.resolveCtx)
 	targetPlan, _, err := OptimizeAstNode(ctx, sctx, nodeW, b.is)
 	if err != nil {
 		return nil, err
@@ -5607,7 +5607,7 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (base.Plan, 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, node.Table.Schema.L,
 		node.Table.Name.L, "", authErr)
 
-	tnW := b.resolveCtx.Get(node.Table)
+	tnW := b.resolveCtx.GetTableName(node.Table)
 	tblInfo := tnW.TableInfo
 	p := &CompactTable{
 		ReplicaKind:    node.ReplicaKind,

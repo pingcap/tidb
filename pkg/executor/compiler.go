@@ -19,13 +19,13 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -65,7 +65,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 
 	// Do preprocess and validate.
 	ret := &plannercore.PreprocessorReturn{}
-	nodeW := ddlmodel.NewNodeW(stmtNode)
+	nodeW := resolve.NewNodeW(stmtNode)
 	err = plannercore.Preprocess(
 		ctx,
 		c.Ctx,
@@ -188,7 +188,7 @@ func isPhysicalPlanNeedLowerPriority(p base.PhysicalPlan) bool {
 }
 
 // CountStmtNode records the number of statements with the same type.
-func CountStmtNode(stmtNode ast.StmtNode, resolveCtx *ddlmodel.ResolveContext, inRestrictedSQL bool, resourceGroup string) {
+func CountStmtNode(stmtNode ast.StmtNode, resolveCtx *resolve.Context, inRestrictedSQL bool, resourceGroup string) {
 	if inRestrictedSQL {
 		return
 	}
@@ -212,7 +212,7 @@ func CountStmtNode(stmtNode ast.StmtNode, resolveCtx *ddlmodel.ResolveContext, i
 	}
 }
 
-func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *ddlmodel.ResolveContext) map[string]struct{} {
+func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[string]struct{} {
 	dbLabelSet := make(map[string]struct{})
 
 	switch x := stmtNode.(type) {
@@ -533,7 +533,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *ddlmodel.ResolveContext) 
 	return dbLabelSet
 }
 
-func getDbFromResultNode(resultNode ast.ResultSetNode, resolveCtx *ddlmodel.ResolveContext) []string { // may have duplicate db name
+func getDbFromResultNode(resultNode ast.ResultSetNode, resolveCtx *resolve.Context) []string { // may have duplicate db name
 	var dbLabels []string
 
 	if resultNode == nil {
@@ -548,7 +548,7 @@ func getDbFromResultNode(resultNode ast.ResultSetNode, resolveCtx *ddlmodel.Reso
 			return getDbFromResultNode(x.From.TableRefs, resolveCtx)
 		}
 	case *ast.TableName:
-		xW := resolveCtx.Get(x)
+		xW := resolveCtx.GetTableName(x)
 		if xW.DBInfo != nil {
 			dbLabels = append(dbLabels, xW.DBInfo.Name.O)
 		}

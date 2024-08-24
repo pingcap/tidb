@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package model
+package resolve
 
 import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -29,19 +29,19 @@ type TableNameW struct {
 // NodeW is a wrapper of ast.Node.
 type NodeW struct {
 	Node       ast.Node
-	resolveCtx *ResolveContext
+	resolveCtx *Context
 }
 
 // NewNodeW creates a NodeW.
 func NewNodeW(node ast.Node) *NodeW {
 	return &NodeW{
 		Node:       node,
-		resolveCtx: NewResolveContext(),
+		resolveCtx: NewContext(),
 	}
 }
 
-// NewNodeWWithCtx creates a NodeW with the given ResolveContext.
-func NewNodeWWithCtx(node ast.Node, resolveCtx *ResolveContext) *NodeW {
+// NewNodeWWithCtx creates a NodeW with the given Context.
+func NewNodeWWithCtx(node ast.Node, resolveCtx *Context) *NodeW {
 	return &NodeW{
 		Node:       node,
 		resolveCtx: resolveCtx,
@@ -56,29 +56,29 @@ func (n *NodeW) CloneWithNewNode(newNode ast.Node) *NodeW {
 	}
 }
 
-// GetResolveContext returns the ResolveContext of the NodeW.
-func (n *NodeW) GetResolveContext() *ResolveContext {
+// GetResolveContext returns the Context of the NodeW.
+func (n *NodeW) GetResolveContext() *Context {
 	return n.resolveCtx
 }
 
-// ResolveContext is used to store the context and result of resolving AST tree.
-type ResolveContext struct {
+// Context is used to store the context and result of resolving AST tree.
+type Context struct {
 	tableNames map[*ast.TableName]*TableNameW
 }
 
-// NewResolveContext creates a ResolveContext.
-func NewResolveContext() *ResolveContext {
-	return &ResolveContext{
+// NewContext creates a Context.
+func NewContext() *Context {
+	return &Context{
 		tableNames: make(map[*ast.TableName]*TableNameW),
 	}
 }
 
-// Add adds the table name and its corresponding TableNameW to the ResolveContext.
-func (c *ResolveContext) Add(tableName *ast.TableName, tableNameW *TableNameW) {
+// AddTableName adds the AST table name and its corresponding TableNameW to the Context.
+func (c *Context) AddTableName(tableName *ast.TableName, tableNameW *TableNameW) {
 	c.tableNames[tableName] = tableNameW
 }
 
-// Get returns the TableNameW of the table name.
-func (c *ResolveContext) Get(tableName *ast.TableName) *TableNameW {
+// GetTableName returns the TableNameW of the AST table name.
+func (c *Context) GetTableName(tableName *ast.TableName) *TableNameW {
 	return c.tableNames[tableName]
 }

@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"testing"
 
-	ddlmodel "github.com/pingcap/tidb/pkg/ddl/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -141,7 +141,7 @@ func BenchmarkOptimize(b *testing.B) {
 		require.Len(b, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		nodeW := ddlmodel.NewNodeW(stmt)
+		nodeW := resolve.NewNodeW(stmt)
 		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(b, err)
 

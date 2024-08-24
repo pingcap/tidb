@@ -33,7 +33,6 @@ go_test(
     flaky = True,
     shard_count = 17,
     deps = [
-        "//pkg/ddl/model",
         "//pkg/domain",
         "//pkg/expression",
         "//pkg/infoschema",
@@ -42,6 +41,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/resolve",
         "//pkg/planner/pattern",
         "//pkg/planner/property",
         "//pkg/sessionctx/variable",

@@ -13,7 +13,6 @@ go_test(
     shard_count = 35,
     deps = [
         "//pkg/config",
-        "//pkg/ddl/model",
         "//pkg/domain",
         "//pkg/executor",
         "//pkg/infoschema",
@@ -22,6 +21,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/planner",
         "//pkg/planner/core",
+        "//pkg/planner/core/resolve",
         "//pkg/planner/util/coretestsdk",
         "//pkg/testkit",
         "//pkg/testkit/external",
