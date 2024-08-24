@@ -84,21 +84,25 @@ func (w *worker) run() {
 		case <-w.ctx.Done():
 			return
 		case job := <-w.jobChan:
-			w.runningJobsMu.Lock()
-			w.runningJobs[job.GetTableID()] = struct{}{}
-			w.runningJobsMu.Unlock()
+			w.wg.Add(1)
+			go func(job priorityqueue.AnalysisJob) {
+				defer w.wg.Done()
+				w.runningJobsMu.Lock()
+				w.runningJobs[job.GetTableID()] = struct{}{}
+				w.runningJobsMu.Unlock()
 
-			if err := job.Analyze(w.statsHandle, w.sysProcTracker); err != nil {
-				statslogutil.StatsLogger().Error(
-					"Auto analyze job execution failed",
-					zap.Stringer("job", job),
-					zap.Error(err),
-				)
-			}
+				if err := job.Analyze(w.statsHandle, w.sysProcTracker); err != nil {
+					statslogutil.StatsLogger().Error(
+						"Auto analyze job execution failed",
+						zap.Stringer("job", job),
+						zap.Error(err),
+					)
+				}
 
-			w.runningJobsMu.Lock()
-			delete(w.runningJobs, job.GetTableID())
-			w.runningJobsMu.Unlock()
+				w.runningJobsMu.Lock()
+				delete(w.runningJobs, job.GetTableID())
+				w.runningJobsMu.Unlock()
+			}(job)
 		}
 	}
 }
