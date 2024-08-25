@@ -141,6 +141,7 @@ func pdRequest(
 		return nil, errors.Trace(err)
 	}
 	reqURL := fmt.Sprintf("%s/%s", u, prefix)
+<<<<<<< HEAD
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -151,6 +152,19 @@ func pdRequest(
 	}
 	count := 0
 	for {
+=======
+	var (
+		req  *http.Request
+		resp *http.Response
+	)
+	count := 0
+	for {
+		req, err = http.NewRequestWithContext(ctx, method, reqURL, body)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
+		resp, err = cli.Do(req) //nolint:bodyclose
+>>>>>>> b9b336843bc (lightning: every HTTP retry should use its own request (#47959))
 		count++
 		if count > pdRequestRetryTime || resp.StatusCode < 500 {
 			break
