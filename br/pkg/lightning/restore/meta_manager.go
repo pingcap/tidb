@@ -267,7 +267,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				found := false
 				for _, info := range autoIDInfos {
 					if strings.ToLower(info.Column) == autoIDField {
-						maxRowIDMax = info.NextID - 1
+						maxRowIDMax = int64(info.NextID) - 1
 						found = true
 						break
 					}
