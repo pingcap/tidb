@@ -102,16 +102,26 @@ func TestPlacementPolicy(t *testing.T) {
 	require.NoError(t, err)
 }
 
+<<<<<<< HEAD:meta/meta_test.go
 func TestBackupAndRestoreAutoIDs(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
 		require.NoError(t, err)
+=======
+func TestResourceGroup(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+
+	defer func() {
+		require.NoError(t, store.Close())
+>>>>>>> a3e2ddb5864 (*: Keep the auto id allocator for single table renames (#47892)):pkg/meta/meta_test.go
 	}()
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
+<<<<<<< HEAD:meta/meta_test.go
 	m := meta.NewMeta(txn)
 	acc := m.GetAutoIDAccessors(1, 1)
 	require.NoError(t, acc.RowID().Put(100))
@@ -147,6 +157,44 @@ func TestBackupAndRestoreAutoIDs(t *testing.T) {
 	acc2 = m.GetAutoIDAccessors(2, 2)
 	require.Equal(t, mustGet(acc2.RowID()), 100)
 	require.Equal(t, mustGet(acc2.RandomID()), 101)
+=======
+
+	// test the independent policy ID allocation.
+	m := meta.NewMeta(txn)
+	groups, err := m.ListResourceGroups()
+	require.NoError(t, err)
+	require.Equal(t, len(groups), 1)
+	require.Equal(t, groups[0], meta.DefaultGroupMeta4Test())
+
+	groupID := int64(2)
+	checkResourceGroup := func(ru uint64) {
+		rg, err := m.GetResourceGroup(groupID)
+		require.NoError(t, err)
+		require.Equal(t, rg.RURate, ru)
+	}
+
+	rg := &model.ResourceGroupInfo{
+		ID:   groupID,
+		Name: model.NewCIStr("aa"),
+		ResourceGroupSettings: &model.ResourceGroupSettings{
+			RURate: 100,
+		},
+	}
+	require.NoError(t, m.AddResourceGroup(rg))
+	checkResourceGroup(100)
+
+	groups, err = m.ListResourceGroups()
+	require.NoError(t, err)
+	require.Equal(t, len(groups), 2)
+
+	rg.RURate = 200
+	require.NoError(t, m.UpdateResourceGroup(rg))
+	checkResourceGroup(200)
+
+	m.DropResourceGroup(groupID)
+	_, err = m.GetResourceGroup(groupID)
+	require.Error(t, err)
+>>>>>>> a3e2ddb5864 (*: Keep the auto id allocator for single table renames (#47892)):pkg/meta/meta_test.go
 }
 
 func TestMeta(t *testing.T) {
@@ -305,18 +353,20 @@ func TestMeta(t *testing.T) {
 	n, err = m.GetAutoIDAccessors(currentDBID, tid).RowID().Inc(10)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
-	// Fail to update auto ID.
+	// Test to update non-existing auto ID.
 	// The table ID doesn't exist.
+	// We can no longer test for non-existing ids.
 	nonExistentID := int64(1234)
 	_, err = m.GetAutoIDAccessors(currentDBID, nonExistentID).RowID().Inc(10)
-	require.NotNil(t, err)
-	require.True(t, meta.ErrTableNotExists.Equal(err))
-	// Fail to update auto ID.
+	require.NoError(t, err)
+	//require.True(t, meta.ErrTableNotExists.Equal(err))
+	// Test to update non-existing auto ID.
 	// The current database ID doesn't exist.
+	// We can no longer test for non-existing ids.
 	currentDBID = nonExistentID
 	_, err = m.GetAutoIDAccessors(currentDBID, tid).RowID().Inc(10)
-	require.NotNil(t, err)
-	require.True(t, meta.ErrDBNotExists.Equal(err))
+	require.NoError(t, err)
+	//require.True(t, meta.ErrDBNotExists.Equal(err))
 	// Test case for CreateTableAndSetAutoID.
 	tbInfo3 := &model.TableInfo{
 		ID:   3,
