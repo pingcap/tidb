@@ -6737,7 +6737,11 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 						newTableName.Name = x.AsName
 						newTableName.Schema = model.NewCIStr("")
 						innerTableName = &newTableName
+						if tnW := e.resolveCtx.GetTableName(innerList[0]); tnW != nil {
+							e.resolveCtx.AddTableName(&newTableName, tnW)
+						}
 					}
+					// why the first inner table is used to represent the table source???
 					e.tableNames = append(e.tableNames, innerTableName)
 				}
 			}
