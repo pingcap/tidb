@@ -1,0 +1,621 @@
+--echo # TestWriteListPartitionTable2
+--echo # test for write list partition when the partition expression is complicated and contain generated column.
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (id int, name varchar(10),b int generated always as (length(name)+1) virtual)
+    partition by list  (id*2 + b*b + b*b - b*b*2 - abs(id)) (
+   	partition p0 values in (3,5,6,9,17),
+   	partition p1 values in (1,2,10,11,19,20),
+   	partition p2 values in (4,12,13,14,18),
+   	partition p3 values in (7,8,15,16,27,null)
+);
+
+analyze table t;
+
+--echo ## Test add unique index failed.
+insert into t (id,name) values  (1, 'a'),(1,'b');
+--error 1062
+alter table t add unique index idx (id,b);
+--echo ## Test add unique index success.
+delete from t where name='b';
+alter table t add unique index idx (id,b);
+
+--echo ## --------------------------Test insert---------------------------
+--echo ## Test insert 1 partition.
+delete from t;
+insert into t (id,name) values  (1, 'a'),(2,'b'),(10,'c');
+select id,name from t partition(p1) order by id;
+--echo ## Test insert multi-partitions.
+delete from t;
+insert into t (id,name) values  (1, 'a'),(3,'c'),(4,'e');
+select id,name from t partition(p0) order by id;
+select id,name from t partition(p1) order by id;
+select id,name from t partition(p2) order by id;
+select id,name from t partition(p3) order by id;
+--echo ## Test insert on duplicate.
+insert into t (id,name) values (1, 'd'), (3,'f'),(5,'g') on duplicate key update name='x';
+select id,name from t partition(p0) order by id;
+select id,name from t partition(p1) order by id;
+select id,name from t partition(p2) order by id;
+select id,name from t partition(p3) order by id;
+--echo ## Test insert on duplicate error
+--error 1062
+insert into t (id,name) values (3, 'a'), (11,'x') on duplicate key update id=id+1;
+select id,name from t order by id;
+--echo ## Test insert ignore with duplicate
+insert ignore into t (id,name) values  (1, 'b'), (5,'a'),(null,'y');
+show warnings;
+select id,name from t partition(p0) order by id;
+select id,name from t partition(p1) order by id;
+select id,name from t partition(p2) order by id;
+select id,name from t partition(p3) order by id;
+--echo ## Test insert ignore without duplicate
+insert ignore into t (id,name) values  (15, 'a'),(17,'a');
+select id,name from t partition(p0,p1,p2) order by id;
+select id,name from t partition(p3) order by id;
+--echo ## Test insert meet no partition error.
+--error 1526
+insert into t (id,name) values (100, 'd');
+
+--echo ## --------------------------Test update---------------------------
+--echo ## Test update 1 partition.
+delete from t;
+insert into t (id,name) values  (1, 'a'),(2,'b'),(3,'c');
+update t set name='b' where id=2;;
+select id,name from t partition(p1);
+update t set name='x' where id in (1,2);
+select id,name from t partition(p1);
+update t set name='y' where id < 3;
+select id,name from t order by id;
+--echo ## Test update meet duplicate error.
+--error 1062
+update t set id=2 where id = 1;
+select id,name from t order by id;
+
+--echo ## Test update multi-partitions
+update t set name='z' where id in (1,2,3);;
+select id,name from t order by id;
+update t set name='a' limit 3;
+select id,name from t order by id;
+update t set id=id*10 where id in (1,2);
+select id,name from t order by id;
+--echo ## Test update meet duplicate error.
+--error 1062
+update t set id=id+17 where id in (3,10);
+select id,name from t order by id;
+--echo ## Test update meet no partition error.
+--error 1526
+update t set id=id*2 where id in (3,20);
+select id,name from t order by id;
+
+--echo ## --------------------------Test replace---------------------------
+--echo ## Test replace 1 partition.
+delete from t;
+replace into t (id,name) values  (1, 'a'),(2,'b');
+select id,name from t order by id;
+--echo ## Test replace multi-partitions.
+replace into t (id,name) values  (3, 'c'),(4,'d'),(7,'f');
+select id,name from t partition(p0) order by id;
+select id,name from t partition(p1) order by id;
+select id,name from t partition(p2) order by id;
+select id,name from t partition(p3) order by id;
+--echo ## Test replace on duplicate.
+replace into t (id,name) values  (1, 'x'),(7,'x');
+select id,name from t order by id;
+--echo ## Test replace meet no partition error.
+--error 1526
+replace into t (id,name) values  (10,'x'),(50,'x');
+select id,name from t order by id;
+
+--echo ## --------------------------Test delete---------------------------
+--echo ## Test delete 1 partition.
+delete from t where id = 3;
+select id,name from t partition(p0) order by id;
+delete from t where id in (1,2);
+select id,name from t partition(p1) order by id;
+--echo ## Test delete multi-partitions.
+delete from t where id in (4,7,10,11);
+select id,name from t;
+insert into t (id,name) values  (3, 'c'),(4,'d'),(7,'f');
+delete from t where id < 10;
+select id,name from t;
+insert into t (id,name) values  (3, 'c'),(4,'d'),(7,'f');
+delete from t limit 3;
+select id,name from t;
+set @@session.tidb_enable_list_partition = default;
+
+--echo # TestWriteListColumnsPartitionTable1
+set @@session.tidb_enable_list_partition = ON;
+
+drop table if exists t;
+create table t (id int, name varchar(10)) partition by list columns (id) (
+    partition p0 values in (3,5,6,9,17),
+    partition p1 values in (1,2,10,11,19,20),
+    partition p2 values in (4,12,13,14,18),
+    partition p3 values in (7,8,15,16,null)
+);
+
+analyze table t;
+
+--echo ## Test add unique index failed.
+insert into t values  (1, 'a'),(1,'b');
+--error 1062
+alter table t add unique index idx (id);
+--echo ## Test add unique index success.
+delete from t where name='b';
+alter table t add unique index idx (id);
+
+--echo ## --------------------------Test insert---------------------------
+--echo ## Test insert 1 partition.
+delete from t;
+insert into t values  (1, 'a'),(2,'b'),(10,'c');
+select * from t partition(p1) order by id;
+--echo ## Test insert multi-partitions.
+delete from t;
+insert into t values  (1, 'a'),(3,'c'),(4,'e');
+select * from t partition(p0) order by id;
+select * from t partition(p1) order by id;
+select * from t partition(p2) order by id;
+select * from t partition(p3) order by id;
+--echo ## Test insert on duplicate.
+insert into t values (1, 'd'), (3,'f'),(5,'g') on duplicate key update name='x';
+select * from t partition(p0) order by id;
+select * from t partition(p1) order by id;
+select * from t partition(p2) order by id;
+select * from t partition(p3) order by id;
+--echo ## Test insert on duplicate error
+--error 1062
+insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1;
+select * from t order by id;
+--echo ## Test insert ignore with duplicate
+insert ignore into t values  (1, 'b'), (5,'a'),(null,'y');
+show warnings;
+select * from t partition(p0) order by id;
+select * from t partition(p1) order by id;
+select * from t partition(p2) order by id;
+select * from t partition(p3) order by id;
+--echo ## Test insert ignore without duplicate
+insert ignore into t values  (15, 'a'),(17,'a');
+select * from t partition(p0,p1,p2) order by id;
+select * from t partition(p3) order by id;
+--echo ## Test insert meet no partition error.
+--error 1526
+insert into t values (100, 'd');
+
+--echo ## --------------------------Test update---------------------------
+--echo ## Test update 1 partition.
+delete from t;
+insert into t values  (1, 'a'),(2,'b'),(3,'c');
+update t set name='b' where id=2;;
+select * from t partition(p1);
+update t set name='x' where id in (1,2);
+select * from t partition(p1);
+update t set name='y' where id < 3;
+select * from t order by id;
+--echo ## Test update meet duplicate error.
+--error 1062
+update t set id=2 where id = 1;
+select * from t order by id;
+
+--echo ## Test update multi-partitions
+update t set name='z' where id in (1,2,3);;
+select * from t order by id;
+update t set name='a' limit 3;
+select * from t order by id;
+update t set id=id*10 where id in (1,2);
+select * from t order by id;
+--echo ## Test update meet duplicate error.
+--error 1062
+update t set id=id+17 where id in (3,10);
+select * from t order by id;
+--echo ## Test update meet no partition error.
+--error 1526
+update t set id=id*2 where id in (3,20);
+select * from t order by id;
+
+--echo ## --------------------------Test replace---------------------------
+--echo ## Test replace 1 partition.
+delete from t;
+replace into t values  (1, 'a'),(2,'b');
+select * from t order by id;
+--echo ## Test replace multi-partitions.
+replace into t values  (3, 'c'),(4,'d'),(7,'f');
+select * from t partition(p0) order by id;
+select * from t partition(p1) order by id;
+select * from t partition(p2) order by id;
+select * from t partition(p3) order by id;
+--echo ## Test replace on duplicate.
+replace into t values  (1, 'x'),(7,'x');
+select * from t order by id;
+--echo ## Test replace meet no partition error.
+--error 1526
+replace into t values  (10,'x'),(100,'x');
+select * from t order by id;
+
+--echo ## --------------------------Test delete---------------------------
+--echo ## Test delete 1 partition.
+delete from t where id = 3;
+select * from t partition(p0) order by id;
+delete from t where id in (1,2);
+select * from t partition(p1) order by id;
+--echo ## Test delete multi-partitions.
+delete from t where id in (4,7,10,11);
+select * from t;
+insert into t values  (3, 'c'),(4,'d'),(7,'f');
+delete from t where id < 10;
+select * from t;
+insert into t values  (3, 'c'),(4,'d'),(7,'f');
+delete from t limit 3;
+select * from t;
+
+set @@session.tidb_enable_list_partition = default;
+
+
+# TestPartitionedTableReplace
+set tidb_opt_fix_control = "44262:ON";
+drop table if exists replace_test;
+create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
+			partition by range (id) (
+			PARTITION p0 VALUES LESS THAN (3),
+			PARTITION p1 VALUES LESS THAN (5),
+			PARTITION p2 VALUES LESS THAN (7),
+			PARTITION p3 VALUES LESS THAN (9));
+--enable_info
+replace replace_test (c1) values (1),(2),(NULL);
+--disable_info
+begin;
+-- error 1136
+replace replace_test (c1) values ();
+rollback;
+begin;
+-- error 1136
+replace replace_test (c1, c2) values (1,2),(1);
+rollback;
+begin;
+-- error 1054
+replace replace_test (xxx) values (3);
+rollback;
+begin;
+-- error 1146
+replace replace_test_xxx (c1) values ();
+rollback;
+--enable_info
+replace replace_test set c1 = 3;
+--disable_info
+begin;
+-- error 1110
+replace replace_test set c1 = 4, c1 = 5;
+rollback;
+begin;
+-- error 1054
+replace replace_test set xxx = 6;
+rollback;
+
+drop table if exists replace_test_1;
+create table replace_test_1 (id int, c1 int) partition by range (id) (
+			PARTITION p0 VALUES LESS THAN (4),
+			PARTITION p1 VALUES LESS THAN (6),
+			PARTITION p2 VALUES LESS THAN (8),
+			PARTITION p3 VALUES LESS THAN (10),
+			PARTITION p4 VALUES LESS THAN (100));
+--enable_info
+replace replace_test_1 select id, c1 from replace_test;
+--disable_info
+
+drop table if exists replace_test_2;
+create table replace_test_2 (id int, c1 int) partition by range (id) (
+			PARTITION p0 VALUES LESS THAN (10),
+			PARTITION p1 VALUES LESS THAN (50),
+			PARTITION p2 VALUES LESS THAN (100),
+			PARTITION p3 VALUES LESS THAN (300));
+--enable_info
+replace replace_test_2 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;
+--disable_info
+begin;
+-- error 1136
+replace replace_test_2 select c1 from replace_test;
+rollback;
+
+drop table if exists replace_test_3;
+create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2)) partition by range (c2) (
+				    PARTITION p0 VALUES LESS THAN (4),
+				    PARTITION p1 VALUES LESS THAN (7),
+				    PARTITION p2 VALUES LESS THAN (11));
+--enable_info
+replace into replace_test_3 set c2=8;
+replace into replace_test_3 set c2=8;
+replace into replace_test_3 set c1=8, c2=8;
+replace into replace_test_3 set c2=NULL;
+replace into replace_test_3 set c2=NULL;
+--disable_info
+
+drop table if exists replace_test_4;
+create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by range (c1) (
+				    PARTITION p0 VALUES LESS THAN (4),
+				    PARTITION p1 VALUES LESS THAN (7),
+				    PARTITION p2 VALUES LESS THAN (11));
+--enable_info
+replace into replace_test_4 set c2=NULL;
+replace into replace_test_4 set c2=NULL;
+--disable_info
+
+drop table if exists replace_test_5;
+create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by range (c2) (
+				    PARTITION p0 VALUES LESS THAN (4),
+				    PARTITION p1 VALUES LESS THAN (7),
+				    PARTITION p2 VALUES LESS THAN (11));
+--enable_info
+replace into replace_test_5 set c1=1, c2=2;
+replace into replace_test_5 set c1=1, c2=2;
+--disable_info
+
+drop table if exists tIssue989;
+CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by range (b) (
+			    PARTITION p1 VALUES LESS THAN (100),
+			    PARTITION p2 VALUES LESS THAN (200));
+--enable_info
+insert into tIssue989 (a, b) values (1, 2);
+replace into tIssue989(a, b) values (111, 2);
+--disable_info
+select * from tIssue989;
+
+set tidb_opt_fix_control = default;
+
+
+# TestPartitionedTableUpdate
+set tidb_opt_fix_control = "44262:ON";
+drop table if exists t;
+create table t (id int not null default 1, name varchar(255))
+			PARTITION BY RANGE ( id ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21));
+insert INTO t VALUES (1, "hello");
+insert INTO t VALUES (7, "hello");
+
+--echo ## update non partition column
+--enable_info
+UPDATE t SET name = "abc" where id > 0;
+--disable_info
+SELECT * from t order by id limit 2;
+
+--echo ## update partition column
+--enable_info
+update t set id = id + 1;
+--disable_info
+SELECT * from t order by id limit 2;
+
+--echo ## update partition column, old and new record locates on different partitions
+--enable_info
+update t set id = 20 where id = 8;
+--disable_info
+SELECT * from t order by id limit 2;
+
+--echo ## table option is auto-increment
+drop table if exists t;
+create table t (id int not null auto_increment, name varchar(255), primary key(id))
+			PARTITION BY RANGE ( id ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21));
+insert into t(name) values ('aa');
+--enable_info
+update t set id = 8 where name = 'aa';
+--disable_info
+insert into t(name) values ('bb');
+select * from t;
+-- error 1048
+update t set id = null where name = 'aa';
+
+--echo ## Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
+drop table if exists t;
+create table t (id int, name int unique)
+			PARTITION BY RANGE ( name ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21));
+insert t values (1, 1), (2, 2);
+-- error 1062
+update t set name = 1 where id = 2;
+select * from t;
+
+--echo ## test update ignore for pimary key
+drop table if exists t;
+create table t(a bigint, primary key (a))
+			PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11));
+insert into t values (5);
+insert into t values (7);
+update ignore t set a = 5 where a = 7;
+SHOW WARNINGS;
+select * from t order by a;
+
+--echo ## test update ignore for truncate as warning
+update ignore t set a = 1 where a = (select '2a');
+SHOW WARNINGS;
+
+--echo ## test update ignore for unique key
+drop table if exists t;
+create table t(a bigint, unique key I_uniq (a))
+			PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11));
+insert into t values (5);
+insert into t values (7);
+--enable_info
+update ignore t set a = 5 where a = 7;
+--disable_info
+SHOW WARNINGS;
+select * from t order by a;
+set tidb_opt_fix_control = default;
+
+
+# TestPartitionedTableDelete
+drop table if exists t;
+set tidb_opt_fix_control = "44262:ON";
+CREATE TABLE t (id int not null default 1, name varchar(255), index(id))
+			  PARTITION BY RANGE ( id ) (
+			  PARTITION p0 VALUES LESS THAN (6),
+			  PARTITION p1 VALUES LESS THAN (11),
+			  PARTITION p2 VALUES LESS THAN (16),
+			  PARTITION p3 VALUES LESS THAN (21));
+insert into t values (1, "hello"),(2, "hello"),(3, "hello"),(4, "hello"),(5, "hello"),(6, "hello"),(7, "hello"),(8, "hello"),(9, "hello"),(10, "hello"),(11, "hello"),(12, "hello"),(13, "hello"),(14, "hello"),(15, "hello"),(16, "hello"),(17, "hello"),(18, "hello"),(19, "hello"),(20, "hello");
+--enable_info
+delete from t where id = 2 limit 1;
+
+--echo ## Test delete with false condition
+delete from t where 0;
+--disable_info
+
+insert into t values (2, 'abc');
+--enable_info
+delete from t where t.id = 2 limit 1;
+--disable_info
+
+--echo ## Test delete ignore
+insert into t values (2, 'abc');
+## TODO: https://github.com/pingcap/tidb/issues/48120
+--replace_regex /INTEGER/DOUBLE/
+-- error 1292
+delete from t where id = (select '2a');
+--enable_info
+delete ignore from t where id = (select '2a');
+--disable_info
+SHOW WARNINGS;
+
+--echo ## Test delete without using index, involve multiple partitions.
+--enable_info
+delete from t ignore index(id) where id >= 13 and id <= 17;
+--disable_info
+
+admin check table t;
+--enable_info
+delete from t;
+--disable_info
+
+--echo ## Fix that partitioned table should not use PointGetPlan.
+drop table if exists t1;
+create table t1 (c1 bigint, c2 bigint, c3 bigint, primary key(c1)) partition by range (c1) (partition p0 values less than (3440));
+insert into t1 values (379, 379, 379);
+--enable_info
+delete from t1 where c1 = 379;
+--disable_info
+drop table t1;
+
+set tidb_opt_fix_control=default;
+
+
+# TestHashPartitionedTableReplace
+set @@session.tidb_enable_table_partition = '1';
+drop table if exists replace_test;
+create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
+			partition by hash(id) partitions 4;
+replace replace_test (c1) values (1),(2),(NULL);
+begin;
+-- error 1136
+replace replace_test (c1) values ();
+rollback;
+begin;
+-- error 1136
+replace replace_test (c1, c2) values (1,2),(1);
+rollback;
+begin;
+-- error 1054
+replace replace_test (xxx) values (3);
+rollback;
+begin;
+-- error 1146
+replace replace_test_xxx (c1) values ();
+rollback;
+begin;
+-- error 1110
+replace replace_test set c1 = 4, c1 = 5;
+rollback;
+begin;
+-- error 1054
+replace replace_test set xxx = 6;
+rollback;
+replace replace_test set c1 = 3;
+replace replace_test set c1 = 4;
+replace replace_test set c1 = 5;
+replace replace_test set c1 = 6;
+replace replace_test set c1 = 7;
+
+drop table if exists replace_test_1;
+create table replace_test_1 (id int, c1 int) partition by hash(id) partitions 5;
+replace replace_test_1 select id, c1 from replace_test;
+
+drop table if exists replace_test_2;
+create table replace_test_2 (id int, c1 int) partition by hash(id) partitions 6;
+replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;
+begin;
+-- error 1136
+replace replace_test_1 select c1 from replace_test;
+rollback;
+
+drop table if exists replace_test_3;
+create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2)) partition by hash(c2) partitions 7;
+replace into replace_test_3 set c2=8;
+--enable_info
+replace into replace_test_3 set c2=8;
+replace into replace_test_3 set c1=8, c2=8;
+--disable_info
+replace into replace_test_3 set c2=NULL;
+--enable_info
+replace into replace_test_3 set c2=NULL;
+--disable_info
+
+replace into replace_test_3 set c2=0;
+replace into replace_test_3 set c2=1;
+replace into replace_test_3 set c2=2;
+replace into replace_test_3 set c2=3;
+replace into replace_test_3 set c2=4;
+replace into replace_test_3 set c2=5;
+replace into replace_test_3 set c2=6;
+replace into replace_test_3 set c2=7;
+replace into replace_test_3 set c2=8;
+replace into replace_test_3 set c2=9;
+select count(*) from replace_test_3;
+
+drop table if exists replace_test_4;
+create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by hash(c1) partitions 8;
+replace into replace_test_4 set c2=NULL;
+--enable_info
+replace into replace_test_4 set c2=NULL;
+--disable_info
+
+drop table if exists replace_test_5;
+create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by hash (c2) partitions 9;
+replace into replace_test_5 set c1=1, c2=2;
+--enable_info
+replace into replace_test_5 set c1=1, c2=2;
+--disable_info
+
+drop table if exists tIssue989;
+CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by hash (b) partitions 10;
+insert into tIssue989 (a, b) values (1, 2);
+replace into tIssue989(a, b) values (111, 2);
+select * from tIssue989;
+
+set @@session.tidb_enable_table_partition = default;
+
+## test partition insert/update ignore to invalid partition
+drop table if exists insert_update_ignore_test;
+create table insert_update_ignore_test (a int) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200));
+insert ignore into insert_update_ignore_test values(1000);
+show warnings where Message not like '%disable dynamic pruning%';
+insert ignore into insert_update_ignore_test partition(p0) values(101);
+show warnings where Message not like '%disable dynamic pruning%';
+select * from insert_update_ignore_test;
+insert into insert_update_ignore_test values(1);
+update ignore insert_update_ignore_test set a=1000;
+show warnings where Message not like '%disable dynamic pruning%';
+select * from insert_update_ignore_test;
+update ignore insert_update_ignore_test partition(p0) set a=101;
+show warnings where Message not like '%disable dynamic pruning%';
+select * from insert_update_ignore_test;
+drop table insert_update_ignore_test;
