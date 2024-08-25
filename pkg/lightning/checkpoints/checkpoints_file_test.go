@@ -41,7 +41,7 @@ func newTestConfig() *config.Config {
 	return cfg
 }
 
-func newFileCheckpointsDB(t *testing.T) *checkpoints.FileCheckpointsDB {
+func newFileCheckpointsDB(t *testing.T, addIndexBySQL bool) *checkpoints.FileCheckpointsDB {
 	dir := t.TempDir()
 	ctx := context.Background()
 	cpdb, err := checkpoints.NewFileCheckpointsDB(ctx, filepath.Join(dir, "cp.pb"))
@@ -49,6 +49,7 @@ func newFileCheckpointsDB(t *testing.T) *checkpoints.FileCheckpointsDB {
 
 	// 2. initialize with checkpoint data.
 	cfg := newTestConfig()
+	cfg.TikvImporter.AddIndexBySQL = addIndexBySQL
 	err = cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
 		"db1": {
 			Name: "db1",
@@ -164,13 +165,7 @@ func setInvalidStatus(cpdb *checkpoints.FileCheckpointsDB) {
 
 func TestGet(t *testing.T) {
 	ctx := context.Background()
-	cpdb := newFileCheckpointsDB(t)
-
-	// 5. get back the checkpoints
-
-	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
-	require.NoError(t, err)
-	expect := &checkpoints.TableCheckpoint{
+	expectT2 := &checkpoints.TableCheckpoint{
 		Status:    checkpoints.CheckpointStatusAllWritten,
 		AllocBase: 132861,
 		Checksum:  verification.MakeKVChecksum(4492, 686, 486070148910),
@@ -203,11 +198,18 @@ func TestGet(t *testing.T) {
 			},
 		},
 	}
-	require.Equal(t, expect, cp)
 
-	cp, err = cpdb.Get(ctx, "`db2`.`t3`")
-	require.NoError(t, err)
-	expect = &checkpoints.TableCheckpoint{
+	expectT3 := &checkpoints.TableCheckpoint{
+		Status: checkpoints.CheckpointStatusLoaded,
+		Engines: map[int32]*checkpoints.EngineCheckpoint{
+			-1: {
+				Status: checkpoints.CheckpointStatusLoaded,
+				Chunks: []*checkpoints.ChunkCheckpoint{},
+			},
+		},
+	}
+
+	expectT3AddIndexBySQL := &checkpoints.TableCheckpoint{
 		Status: checkpoints.CheckpointStatusLoaded,
 		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {
@@ -219,16 +221,41 @@ func TestGet(t *testing.T) {
 			Name: model.NewCIStr("t3"),
 		},
 	}
-	require.Equal(t, expect, cp)
 
-	cp, err = cpdb.Get(ctx, "`db3`.`not-exists`")
-	require.Nil(t, cp)
-	require.True(t, errors.IsNotFound(err))
+	t.Run("normal", func(t *testing.T) {
+		cpdb := newFileCheckpointsDB(t, false)
+		cp, err := cpdb.Get(ctx, "`db1`.`t2`")
+		require.NoError(t, err)
+		require.Equal(t, expectT2, cp)
+
+		cp, err = cpdb.Get(ctx, "`db2`.`t3`")
+		require.NoError(t, err)
+		require.Equal(t, expectT3, cp)
+
+		cp, err = cpdb.Get(ctx, "`db3`.`not-exists`")
+		require.Nil(t, cp)
+		require.True(t, errors.IsNotFound(err))
+	})
+
+	t.Run("add-index-by-sql", func(t *testing.T) {
+		cpdb := newFileCheckpointsDB(t, true)
+		cp, err := cpdb.Get(ctx, "`db1`.`t2`")
+		require.NoError(t, err)
+		require.Equal(t, expectT2, cp)
+
+		cp, err = cpdb.Get(ctx, "`db2`.`t3`")
+		require.NoError(t, err)
+		require.Equal(t, expectT3AddIndexBySQL, cp)
+
+		cp, err = cpdb.Get(ctx, "`db3`.`not-exists`")
+		require.Nil(t, cp)
+		require.True(t, errors.IsNotFound(err))
+	})
 }
 
 func TestRemoveAllCheckpoints(t *testing.T) {
 	ctx := context.Background()
-	cpdb := newFileCheckpointsDB(t)
+	cpdb := newFileCheckpointsDB(t, false)
 
 	err := cpdb.RemoveCheckpoint(ctx, "all")
 	require.NoError(t, err)
@@ -244,7 +271,7 @@ func TestRemoveAllCheckpoints(t *testing.T) {
 
 func TestRemoveOneCheckpoint(t *testing.T) {
 	ctx := context.Background()
-	cpdb := newFileCheckpointsDB(t)
+	cpdb := newFileCheckpointsDB(t, false)
 
 	err := cpdb.RemoveCheckpoint(ctx, "`db1`.`t2`")
 	require.NoError(t, err)
@@ -260,7 +287,7 @@ func TestRemoveOneCheckpoint(t *testing.T) {
 
 func TestIgnoreAllErrorCheckpoints(t *testing.T) {
 	ctx := context.Background()
-	cpdb := newFileCheckpointsDB(t)
+	cpdb := newFileCheckpointsDB(t, false)
 
 	setInvalidStatus(cpdb)
 
@@ -278,7 +305,7 @@ func TestIgnoreAllErrorCheckpoints(t *testing.T) {
 
 func TestIgnoreOneErrorCheckpoints(t *testing.T) {
 	ctx := context.Background()
-	cpdb := newFileCheckpointsDB(t)
+	cpdb := newFileCheckpointsDB(t, false)
 
 	setInvalidStatus(cpdb)
 
@@ -296,7 +323,7 @@ func TestIgnoreOneErrorCheckpoints(t *testing.T) {
 
 func TestDestroyAllErrorCheckpoints(t *testing.T) {
 	ctx := context.Background()
-	cpdb := newFileCheckpointsDB(t)
+	cpdb := newFileCheckpointsDB(t, false)
 
 	setInvalidStatus(cpdb)
 
@@ -328,7 +355,7 @@ func TestDestroyAllErrorCheckpoints(t *testing.T) {
 
 func TestDestroyOneErrorCheckpoint(t *testing.T) {
 	ctx := context.Background()
-	cpdb := newFileCheckpointsDB(t)
+	cpdb := newFileCheckpointsDB(t, false)
 
 	setInvalidStatus(cpdb)
 

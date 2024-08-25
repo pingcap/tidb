@@ -214,6 +214,14 @@ func (txn *LazyTxn) SetMemoryFootprintChangeHook(hook func(uint64)) {
 	txn.Transaction.SetMemoryFootprintChangeHook(hook)
 }
 
+// MemHookSet returns whether the memory footprint change hook is set.
+func (txn *LazyTxn) MemHookSet() bool {
+	if txn.Transaction == nil {
+		return false
+	}
+	return txn.Transaction.MemHookSet()
+}
+
 // Valid implements the kv.Transaction interface.
 func (txn *LazyTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()

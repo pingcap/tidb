@@ -17,9 +17,9 @@ package casetest
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -31,7 +31,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1 (a int, b int, c int, t time)")
+	tk.MustExec("create table t1 (a int, b int, c int, t time, index idx(a, b, c, t))")
 	tk.MustExec("insert into t1 values(1,1,1,'08:00:00'), (2,2,2,'09:00:00'), (3,3,3,'10:00:00')")
 	for i := 0; i < 14; i++ {
 		tk.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
@@ -40,18 +40,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	// Create virtual `tiflash` replica info.
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t1" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
 	// Enable late materialization.
 	tk.MustExec("set @@tidb_opt_enable_late_materialization = on")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")

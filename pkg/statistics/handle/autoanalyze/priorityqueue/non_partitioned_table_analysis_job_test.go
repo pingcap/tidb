@@ -15,6 +15,7 @@
 package priorityqueue_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -73,7 +74,7 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	// Before analyze table.
 	handle := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats := handle.GetTableStats(tbl.Meta())
 	require.True(t, tblStats.Pseudo)
@@ -81,7 +82,7 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats = handle.GetTableStats(tbl.Meta())
 	require.Equal(t, int64(3), tblStats.RealtimeCount)
@@ -103,21 +104,21 @@ func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
 	handle := dom.StatsHandle()
 	// Before analyze indexes.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats := handle.GetTableStats(tbl.Meta())
-	require.False(t, tblStats.Indices[1].IsAnalyzed())
+	require.False(t, tblStats.GetIdx(1).IsAnalyzed())
 
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats = handle.GetTableStats(tbl.Meta())
-	require.NotNil(t, tblStats.Indices[1])
-	require.True(t, tblStats.Indices[1].IsAnalyzed())
-	require.NotNil(t, tblStats.Indices[2])
-	require.True(t, tblStats.Indices[2].IsAnalyzed())
+	require.NotNil(t, tblStats.GetIdx(1))
+	require.True(t, tblStats.GetIdx(1).IsAnalyzed())
+	require.NotNil(t, tblStats.GetIdx(2))
+	require.True(t, tblStats.GetIdx(2).IsAnalyzed())
 	// Check analyze jobs are created.
 	rows := tk.MustQuery("select * from mysql.analyze_jobs").Rows()
 	// Because analyze one index will analyze all indexes and all columns together, so there is only 1 job.

@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -316,21 +316,18 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
 		var physicalTableIDs []int64
-		// partInfo is not used, but is set in ReorgPartition.
-		// Better to have an additional argument in job.DecodeArgs since it is ignored,
-		// instead of having one to few, which will remove the data from the job arguments...
-		var partInfo model.PartitionInfo
-		if err := job.DecodeArgs(&physicalTableIDs, &partInfo); err != nil {
+		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
 			return errors.Trace(err)
 		}
-		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "drop partition: physical table ID(s)"))
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "reorganize/drop partition: physical table ID(s)"))
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		allIndexIDs := make([]int64, 1)
 		ifExists := make([]bool, 1)
+		isGlobal := make([]bool, 0, 1)
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&allIndexIDs[0], &ifExists[0], &partitionIDs); err != nil {
-			if err = job.DecodeArgs(&allIndexIDs, &ifExists, &partitionIDs); err != nil {
+			if err = job.DecodeArgs(&allIndexIDs, &ifExists, &partitionIDs, &isGlobal); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -339,7 +336,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		if len(partitionIDs) > 0 {
 			physicalIDs = partitionIDs
 		}
-		for _, indexID := range allIndexIDs {
+		for i, indexID := range allIndexIDs {
 			// Determine the index IDs to be added.
 			tempIdxID := tablecodec.TempIndexPrefix | indexID
 			var indexIDs []int64
@@ -348,9 +345,15 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			} else {
 				indexIDs = []int64{tempIdxID}
 			}
-			for _, pid := range physicalIDs {
-				if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "add index: physical table ID(s)"); err != nil {
+			if len(isGlobal) != 0 && isGlobal[i] {
+				if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "add index: physical table ID(s)"); err != nil {
 					return errors.Trace(err)
+				}
+			} else {
+				for _, pid := range physicalIDs {
+					if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "add index: physical table ID(s)"); err != nil {
+						return errors.Trace(err)
+					}
 				}
 			}
 		}

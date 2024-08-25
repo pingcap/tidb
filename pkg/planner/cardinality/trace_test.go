@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -159,7 +160,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	}
 	require.Nil(t, statsHandle.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t with 1 samplerate, 20 topn")
-	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
+	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
 	// Add 100 modify count
 	sql := "insert into t values "
 	topNValue := fmt.Sprintf("(%d,%d) ,", 5000, 5000)
@@ -167,7 +168,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	sql = sql[0 : len(sql)-1]
 	tk.MustExec(sql)
 	require.Nil(t, statsHandle.DumpStatsDeltaToKV(true))
-	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
+	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
 
 	var (
 		in  []string
@@ -188,7 +189,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	require.NoError(t, err)
 
 	sctx := tk.Session().(sessionctx.Context)
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
 	statsTbl := statsHandle.GetTableStats(tblInfo)
@@ -209,12 +210,12 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		p, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, stmt, ret.InfoSchema)
 		require.NoError(t, err)
 
-		sel := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		sel := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
 		ds := sel.Children()[0].(*plannercore.DataSource)
 
 		dsSchemaCols = append(dsSchemaCols, ds.Schema().Columns)
 		selConditions = append(selConditions, sel.Conditions)
-		tblInfos = append(tblInfos, ds.TableInfo())
+		tblInfos = append(tblInfos, ds.TableInfo)
 	}
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)
@@ -239,7 +240,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 
 	tk.MustExec("set tidb_analyze_version = 1")
 	tk.MustExec("analyze table t with 20 topn")
-	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
+	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
 	statsTbl = statsHandle.GetTableStats(tblInfo)
 
 	// Test using ver1 stats.

@@ -28,10 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -466,6 +466,28 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				return true, false, e
 			}
 			return false, false, v
+		}
+		// If the collation of the column is PAD SPACE,
+		// we can't propagate the constant to the length function.
+		// For example, schema = ['name'], newExprs = ['a'], v = length(name).
+		// We can't substitute name with 'a' in length(name) because the collation of name is PAD SPACE.
+		// TODO: We will fix it here temporarily, and redesign the logic if we encounter more similar functions or situations later.
+		// Fixed issue #53730
+		if ctx.IsConstantPropagateCheck() && v.FuncName.L == ast.Length {
+			arg0, isColumn := v.GetArgs()[0].(*Column)
+			if isColumn {
+				id := schema.ColumnIndex(arg0)
+				if id != -1 {
+					_, isConstant := newExprs[id].(*Constant)
+					if isConstant {
+						mappedNewColumnCollate := schema.Columns[id].GetStaticType().GetCollate()
+						if mappedNewColumnCollate == charset.CollationUTF8MB4 ||
+							mappedNewColumnCollate == charset.CollationUTF8 {
+							return false, false, v
+						}
+					}
+				}
+			}
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
@@ -990,9 +1012,14 @@ func containOuterNot(expr Expression, not bool) bool {
 }
 
 // Contains tests if `exprs` contains `e`.
-func Contains(exprs []Expression, e Expression) bool {
+func Contains(ectx EvalContext, exprs []Expression, e Expression) bool {
 	for _, expr := range exprs {
-		if e == expr {
+		// Check string equivalence if one of the expressions is a clone.
+		sameString := false
+		if e != nil && expr != nil {
+			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		if e == expr || sameString {
 			return true
 		}
 	}
@@ -1168,15 +1195,14 @@ func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 }
 
 // ParamMarkerExpression generate a getparam function expression.
-func ParamMarkerExpression(ctx variable.SessionVarsProvider, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
-	useCache := ctx.GetSessionVars().StmtCtx.UseCache()
+func ParamMarkerExpression(ctx BuildContext, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
+	useCache := ctx.IsUseCache()
 	tp := types.NewFieldType(mysql.TypeUnspecified)
 	types.InferParamTypeFromDatum(&v.Datum, tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
 	if useCache || needParam {
 		value.ParamMarker = &ParamMarker{
 			order: v.Order,
-			ctx:   ctx,
 		}
 	}
 	return value, nil
@@ -1224,11 +1250,11 @@ func ConstructPositionExpr(p *driver.ParamMarkerExpr) *ast.PositionExpr {
 }
 
 // PosFromPositionExpr generates a position value from PositionExpr.
-func PosFromPositionExpr(ctx BuildContext, vars variable.SessionVarsProvider, v *ast.PositionExpr) (int, bool, error) {
+func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (int, bool, error) {
 	if v.P == nil {
 		return v.N, false, nil
 	}
-	value, err := ParamMarkerExpression(vars, v.P.(*driver.ParamMarkerExpr), false)
+	value, err := ParamMarkerExpression(ctx, v.P.(*driver.ParamMarkerExpr), false)
 	if err != nil {
 		return 0, true, err
 	}
@@ -1398,7 +1424,12 @@ func GetUint64FromConstant(ctx EvalContext, expr Expression) (uint64, bool, bool
 	}
 	dt := con.Value
 	if con.ParamMarker != nil {
-		dt = con.ParamMarker.GetUserVar(ctx)
+		var err error
+		dt, err = con.ParamMarker.GetUserVar(ctx)
+		if err != nil {
+			logutil.BgLogger().Warn("get param failed", zap.Error(err))
+			return 0, false, false
+		}
 	} else if con.DeferredExpr != nil {
 		var err error
 		dt, err = con.DeferredExpr.Eval(ctx, chunk.Row{})
@@ -1452,6 +1483,57 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 		}
 	}
 	return false
+}
+
+func jsonUnquoteFunctionBenefitsFromPushedDown(sf *ScalarFunction) bool {
+	arg0 := sf.GetArgs()[0]
+	// Only `->>` which parsed to JSONUnquote(CAST(JSONExtract() AS string)) can be pushed down to tikv
+	if fChild, ok := arg0.(*ScalarFunction); ok {
+		if fChild.FuncName.L == ast.Cast {
+			if fGrand, ok := fChild.GetArgs()[0].(*ScalarFunction); ok {
+				if fGrand.FuncName.L == ast.JSONExtract {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// ProjectionBenefitsFromPushedDown evaluates if the expressions can improve performance when pushed down to TiKV
+// Projections are not pushed down to tikv by default, thus we need to check strictly here to avoid potential performance degradation.
+// Note: virtual column is not considered here, since this function cares performance instead of functionality
+func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bool {
+	allColRef := true
+	colRefCount := 0
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Column:
+			colRefCount = colRefCount + 1
+			continue
+		case *ScalarFunction:
+			allColRef = false
+			switch v.FuncName.L {
+			case ast.JSONDepth, ast.JSONLength, ast.JSONType, ast.JSONValid, ast.JSONContains, ast.JSONContainsPath,
+				ast.JSONExtract, ast.JSONKeys, ast.JSONSearch, ast.JSONMemberOf, ast.JSONOverlaps:
+				continue
+			case ast.JSONUnquote:
+				if jsonUnquoteFunctionBenefitsFromPushedDown(v) {
+					continue
+				}
+				return false
+			default:
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	// For all col refs, only push down column pruning projections
+	if allColRef {
+		return colRefCount < inputSchemaLen
+	}
+	return true
 }
 
 // MaybeOverOptimized4PlanCache used to check whether an optimization can work
@@ -1780,7 +1862,7 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, exec contex
 // to make it better for display and debug, it also escapes the string to corresponding golang string literal,
 // which means using \t, \n, \x??, \u????, ... to represent newline, control character, non-printable character,
 // invalid utf-8 bytes and so on.
-func ExprsToStringsForDisplay(exprs []Expression) []string {
+func ExprsToStringsForDisplay(ctx EvalContext, exprs []Expression) []string {
 	strs := make([]string, len(exprs))
 	for i, cond := range exprs {
 		quote := `"`
@@ -1788,7 +1870,7 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 		// so we trim the \" prefix and suffix here.
 		strs[i] = strings.TrimSuffix(
 			strings.TrimPrefix(
-				strconv.Quote(cond.String()),
+				strconv.Quote(cond.StringWithCtx(ctx, errors.RedactLogDisable)),
 				quote),
 			quote)
 	}
@@ -1808,4 +1890,31 @@ func ConstExprConsiderPlanCache(expr Expression, inPlanCache bool) bool {
 	default:
 		return false
 	}
+}
+
+// ExprsHasSideEffects checks if any of the expressions has side effects.
+func ExprsHasSideEffects(exprs []Expression) bool {
+	for _, expr := range exprs {
+		if ExprHasSetVarOrSleep(expr) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExprHasSetVarOrSleep checks if the expression has SetVar function or Sleep function.
+func ExprHasSetVarOrSleep(expr Expression) bool {
+	scalaFunc, isScalaFunc := expr.(*ScalarFunction)
+	if !isScalaFunc {
+		return false
+	}
+	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
+		return true
+	}
+	for _, arg := range scalaFunc.GetArgs() {
+		if ExprHasSetVarOrSleep(arg) {
+			return true
+		}
+	}
+	return false
 }

@@ -39,7 +39,7 @@ func ExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) 
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))
 		}
 		pbExpr = append(pbExpr, v)
 	}
@@ -58,7 +58,7 @@ func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client k
 			v = pc.ExprToPB(expr)
 		}
 		if v == nil {
-			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))
 		}
 		pbExpr = append(pbExpr, v)
 	}
@@ -175,6 +175,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlEnum:
 		tp = tipb.ExprType_MysqlEnum
 		val = codec.EncodeUint(nil, d.GetUint64())
+	case types.KindVectorFloat32:
+		tp = tipb.ExprType_TiDBVectorFloat32
+		val = d.GetVectorFloat32().ZeroCopySerialize()
 	default:
 		return tp, nil, false
 	}

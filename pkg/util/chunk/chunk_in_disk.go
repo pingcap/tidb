@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"time"
 	"unsafe"
 
 	errors2 "github.com/pingcap/errors"
@@ -333,6 +334,9 @@ func injectChunkInDiskRandomError() error {
 			randNum := rand.Int31n(10000)
 			if randNum < 3 {
 				err = errors2.New("random error is triggered")
+			} else if randNum < 6 {
+				delayTime := rand.Int31n(10) + 5
+				time.Sleep(time.Duration(delayTime) * time.Millisecond)
 			}
 		}
 	})

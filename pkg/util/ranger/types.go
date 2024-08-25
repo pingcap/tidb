@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -36,7 +37,9 @@ type MutableRanges interface {
 	// Range returns the underlying range values.
 	Range() Ranges
 	// Rebuild rebuilds the underlying ranges again.
-	Rebuild() error
+	Rebuild(sctx context.PlanContext) error
+	// CloneForPlanCache clones the MutableRanges for plan cache.
+	CloneForPlanCache() MutableRanges
 }
 
 // Ranges implements the MutableRanges interface for range array.
@@ -48,8 +51,20 @@ func (rs Ranges) Range() Ranges {
 }
 
 // Rebuild rebuilds this range.
-func (Ranges) Rebuild() error {
+func (Ranges) Rebuild(context.PlanContext) error {
 	return nil
+}
+
+// CloneForPlanCache clones the MutableRanges for plan cache.
+func (rs Ranges) CloneForPlanCache() MutableRanges {
+	if rs == nil {
+		return nil
+	}
+	cloned := make([]*Range, 0, len(rs))
+	for _, r := range rs {
+		cloned = append(cloned, r.Clone())
+	}
+	return Ranges(cloned)
 }
 
 // MemUsage gets the memory usage of ranges.
@@ -173,15 +188,38 @@ func HasFullRange(ranges []*Range, unsignedIntHandle bool) bool {
 	return false
 }
 
+func dealWithRedact(input string, redact string) string {
+	if input == "-inf" || input == "+inf" {
+		return input
+	}
+	if redact == errors.RedactLogDisable {
+		return input
+	} else if redact == errors.RedactLogEnable {
+		return "?"
+	}
+	return fmt.Sprintf("‹%s›", input)
+}
+
 // String implements the Stringer interface.
+// don't use it in the product.
 func (ran *Range) String() string {
+	return ran.string(errors.RedactLogDisable)
+}
+
+// Redact is to print the range with redacting sensitive data.
+func (ran *Range) Redact(redact string) string {
+	return ran.string(redact)
+}
+
+// String implements the Stringer interface.
+func (ran *Range) string(redact string) string {
 	lowStrs := make([]string, 0, len(ran.LowVal))
 	for _, d := range ran.LowVal {
-		lowStrs = append(lowStrs, formatDatum(d, true))
+		lowStrs = append(lowStrs, dealWithRedact(formatDatum(d, true), redact))
 	}
 	highStrs := make([]string, 0, len(ran.LowVal))
 	for _, d := range ran.HighVal {
-		highStrs = append(highStrs, formatDatum(d, false))
+		highStrs = append(highStrs, dealWithRedact(formatDatum(d, false), redact))
 	}
 	l, r := "[", "]"
 	if ran.LowExclude {
@@ -280,4 +318,238 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 		return fmt.Sprintf("\"%v\"", d.GetValue())
 	}
 	return fmt.Sprintf("%v", d.GetValue())
+}
+
+// compareLexicographically compares two bounds from two ranges and returns 0, 1, -1
+// for equal, greater than or less than respectively. It gets the two bounds,
+// collations and if each bound is open (open1, open2) or closed. In addition,
+// it also gets if each bound is lower or upper (low1, low2).
+// Lower bounds logically can be extended with -infinity and upper bounds can be extended with +infinity.
+func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, collators []collate.Collator,
+	open1, open2, low1, low2 bool) (int, error) {
+	n1 := len(bound1)
+	n2 := len(bound2)
+	n := min(n1, n2)
+
+	for i := 0; i < n; i++ {
+		cmp, err := bound1[i].Compare(tc, &bound2[i], collators[i])
+		if err != nil {
+			return 0, err
+		}
+		if cmp != 0 {
+			return cmp, nil
+		}
+	}
+
+	// Handle interval types
+	if n1 == n2 {
+		switch {
+		case !open1 && !open2:
+			return 0, nil
+		case open1 == open2:
+			if low1 == low2 {
+				return 0, nil
+			} else if low1 {
+				return 1, nil
+			} else {
+				return -1, nil
+			}
+		case open1:
+			if low1 {
+				return 1, nil
+			}
+			return -1, nil
+		case open2:
+			if low2 {
+				return -1, nil
+			}
+			return 1, nil
+		}
+	}
+
+	// Unequal length ranges. We use -infinity for lower bounds and +infinity for upper bounds.
+	if n1 < n2 {
+		if low1 {
+			// -infinity is less than anything
+			return -1, nil
+		}
+		// +infinity is higher than anything
+		return 1, nil
+	}
+	// n1 > n2
+	if low2 {
+		// anything is larger than -infinity.
+		return 1, nil
+	}
+	// anything is less than +infinity
+	return -1, nil
+}
+
+// Check if a list of Datum is a prefix of another list of Datum. This is useful for checking if
+// lower/upper bound of a range is a subset of another.
+func prefix(tc types.Context, superValue []types.Datum, supValue []types.Datum, length int, collators []collate.Collator) bool {
+	for i := 0; i < length; i++ {
+		cmp, err := superValue[i].Compare(tc, &supValue[i], collators[i])
+		if (err != nil) || (cmp != 0) {
+			return false
+		}
+	}
+	return true
+}
+
+// Subset checks if a list of ranges(rs) is a subset of another list of ranges(superRanges).
+// This is true if every range in the first list is a subset of any
+// range in the second list. Also, we check if all elements of superRanges are covered.
+func (rs Ranges) Subset(tc types.Context, superRanges Ranges) bool {
+	var subset bool
+	superRangesCovered := make([]bool, len(superRanges))
+	if len(rs) == 0 {
+		return len(superRanges) == 0
+	} else if len(superRanges) == 0 {
+		// unrestricted superRanges and restricted rs
+		return true
+	}
+
+	for _, subRange := range rs {
+		subset = false
+		for i, superRange := range superRanges {
+			if subRange.Subset(tc, superRange) {
+				subset = true
+				superRangesCovered[i] = true
+				break
+			}
+		}
+		if !subset {
+			return false
+		}
+	}
+	for i := 0; i < len(superRangesCovered); i++ {
+		if !superRangesCovered[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+func checkCollators(ran1 *Range, ran2 *Range, length int) bool {
+	// Make sure both ran and superRange have the same collations.
+	// The current code path for this function always will have same collation
+	// for ran and superRange. It is added here for future
+	// use of the function.
+	for i := 0; i < length; i++ {
+		if ran1.Collators[i] != ran2.Collators[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Subset for Range type, check if range(ran)  is a subset of another range(otherRange).
+// This is done by:
+//   - Both ran and otherRange have the same collators. This is not needed for the current code path.
+//     But, it is used here for future use of the function.
+//   - Checking if the lower/upper bound of otherRange covers the corresponding lower/upper bound of ran.
+//     Thus include checking open/closed inetrvals.
+func (ran *Range) Subset(tc types.Context, otherRange *Range) bool {
+	if len(ran.LowVal) < len(otherRange.LowVal) {
+		return false
+	}
+
+	if !checkCollators(ran, otherRange, len(otherRange.LowVal)) {
+		return false
+	}
+
+	// Either otherRange is closed or both ranges have the same open/close setting.
+	lowExcludeOK := !otherRange.LowExclude || ran.LowExclude == otherRange.LowExclude
+	highExcludeOK := !otherRange.HighExclude || ran.HighExclude == otherRange.HighExclude
+	if !lowExcludeOK || !highExcludeOK {
+		return false
+	}
+
+	return prefix(tc, otherRange.LowVal, ran.LowVal, len(otherRange.LowVal), ran.Collators) &&
+		prefix(tc, otherRange.HighVal, ran.HighVal, len(otherRange.LowVal), ran.Collators)
+}
+
+// IntersectRange computes intersection between two ranges. err is set of something went wrong
+// during comparison.
+func (ran *Range) IntersectRange(tc types.Context, otherRange *Range) (*Range, error) {
+	intersectLength := max(len(ran.LowVal), len(otherRange.LowVal))
+	result := &Range{
+		LowVal:    make([]types.Datum, 0, intersectLength),
+		HighVal:   make([]types.Datum, 0, intersectLength),
+		Collators: make([]collate.Collator, 0, intersectLength),
+	}
+
+	if len(ran.LowVal) > len(otherRange.LowVal) {
+		result.Collators = ran.Collators
+	} else {
+		result.Collators = otherRange.Collators
+	}
+
+	lowVsHigh, err := compareLexicographically(tc, ran.LowVal, otherRange.HighVal, ran.Collators,
+		ran.LowExclude, otherRange.HighExclude, true, false)
+	if err != nil {
+		return &Range{}, err
+	}
+	if lowVsHigh == 1 {
+		return nil, nil
+	}
+
+	lowVsHigh, err = compareLexicographically(tc, otherRange.LowVal, ran.HighVal, ran.Collators,
+		otherRange.LowExclude, ran.HighExclude, true, false)
+	if err != nil {
+		return &Range{}, err
+	}
+	if lowVsHigh == 1 {
+		return nil, nil
+	}
+
+	lowVsLow, err := compareLexicographically(tc, ran.LowVal, otherRange.LowVal,
+		ran.Collators, ran.LowExclude, otherRange.LowExclude, true, true)
+	if err != nil {
+		return &Range{}, err
+	}
+	if lowVsLow == -1 {
+		result.LowVal = otherRange.LowVal
+		result.LowExclude = otherRange.LowExclude
+	} else {
+		result.LowVal = ran.LowVal
+		result.LowExclude = ran.LowExclude
+	}
+
+	highVsHigh, err := compareLexicographically(tc, ran.HighVal, otherRange.HighVal,
+		ran.Collators, ran.HighExclude, otherRange.HighExclude, false, false)
+	if err != nil {
+		return &Range{}, err
+	}
+	if highVsHigh == 1 {
+		result.HighVal = otherRange.HighVal
+		result.HighExclude = otherRange.HighExclude
+	} else {
+		result.HighVal = ran.HighVal
+		result.HighExclude = ran.HighExclude
+	}
+	return result, nil
+}
+
+// IntersectRanges computes pairwise intersection between each element in rs and otherRangeList.
+func (rs Ranges) IntersectRanges(tc types.Context, otherRanges Ranges) Ranges {
+	result := Ranges{}
+	for _, rsRange := range rs {
+		for _, otherRange := range otherRanges {
+			subsetLength := min(len(rsRange.LowVal), len(otherRange.LowVal))
+			if !checkCollators(rsRange, otherRange, subsetLength) {
+				return nil
+			}
+			oneIntersection, err := rsRange.IntersectRange(tc, otherRange)
+			if err != nil {
+				return nil
+			}
+			if oneIntersection != nil {
+				result = append(result, oneIntersection)
+			}
+		}
+	}
+	return result
 }

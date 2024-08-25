@@ -813,3 +813,24 @@ func TestDeniedByBDR(t *testing.T) {
 		assert.Equal(t, tc.expected, ast.DeniedByBDR(tc.role, tc.action, tc.job), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
 	}
 }
+
+func TestAddQueryWatchStmtRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			"QUERY WATCH ADD ACTION KILL SQL TEXT EXACT TO 'select * from test.t2'",
+			"QUERY WATCH ADD ACTION = KILL SQL TEXT EXACT TO _UTF8MB4'select * from test.t2'",
+		},
+		{
+			"QUERY WATCH ADD RESOURCE GROUP rg1 SQL TEXT SIMILAR TO 'select * from test.t2'",
+			"QUERY WATCH ADD RESOURCE GROUP `rg1` SQL TEXT SIMILAR TO _UTF8MB4'select * from test.t2'",
+		},
+		{
+			"QUERY WATCH ADD RESOURCE GROUP rg1 ACTION COOLDOWN PLAN DIGEST 'd08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57'",
+			"QUERY WATCH ADD RESOURCE GROUP `rg1` ACTION = COOLDOWN PLAN DIGEST _UTF8MB4'd08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57'",
+		},
+	}
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.AddQueryWatchStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}

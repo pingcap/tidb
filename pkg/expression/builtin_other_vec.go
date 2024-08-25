@@ -126,10 +126,6 @@ func (b *builtinGetParamStringSig) vectorized() bool {
 }
 
 func (b *builtinGetParamStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return err
-	}
 	n := input.NumRows()
 	idx, err := b.bufAllocator.get()
 	if err != nil {
@@ -147,7 +143,11 @@ func (b *builtinGetParamStringSig) vecEvalString(ctx EvalContext, input *chunk.C
 			continue
 		}
 		idxI := idxIs[i]
-		v := sessionVars.PlanCacheParams.GetParamValue(int(idxI))
+		v, err := ctx.GetParamValue(int(idxI))
+		if err != nil {
+			return err
+		}
+
 		str, err := v.ToString()
 		if err != nil {
 			result.AppendNull()

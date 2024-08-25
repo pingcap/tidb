@@ -8,13 +8,13 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 3,
+    shard_count = 8,
     deps = [
         "//pkg/config",
         "//pkg/metrics",
         "//pkg/parser/mysql",
         "//pkg/server",
-        "//pkg/session",
+        "//pkg/server/tests/servertestkit",
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
@@ -22,6 +22,7 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_yangkeao_go_mysql_driver//:go-mysql-driver",
         "@org_uber_go_goleak//:goleak",
     ],
 )

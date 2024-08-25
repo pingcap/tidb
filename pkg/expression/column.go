@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -80,6 +81,11 @@ func (col *CorrelatedColumn) VecEvalDuration(ctx EvalContext, input *chunk.Chunk
 // VecEvalJSON evaluates this expression in a vectorized manner.
 func (col *CorrelatedColumn) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETJson, input, result)
+}
+
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETVectorFloat32, input, result)
 }
 
 // Traverse implements the TraverseDown interface.
@@ -151,6 +157,14 @@ func (col *CorrelatedColumn) EvalJSON(ctx EvalContext, row chunk.Row) (types.Bin
 		return types.BinaryJSON{}, true, nil
 	}
 	return col.Data.GetMysqlJSON(), false, nil
+}
+
+// EvalVectorFloat32 returns VectorFloat32 representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	if col.Data.IsNull() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return col.Data.GetVectorFloat32(), false, nil
 }
 
 // Equal implements Expression interface.
@@ -229,7 +243,7 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 
 // Column represents a column.
 type Column struct {
-	RetType *types.FieldType
+	RetType *types.FieldType `plan-cache-clone:"shallow"`
 	// ID is used to specify whether this column is ExtraHandleColumn or to access histogram.
 	// We'll try to remove it in the future.
 	ID int64
@@ -386,13 +400,29 @@ func (col *Column) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 	return nil
 }
 
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
 const columnPrefix = "Column#"
+
+// StringWithCtx implements Expression interface.
+func (col *Column) StringWithCtx(_ ParamValues, redact string) string {
+	return col.string(redact)
+}
 
 // String implements Stringer interface.
 func (col *Column) String() string {
+	return col.string(errors.RedactLogDisable)
+}
+
+func (col *Column) string(redact string) string {
 	if col.IsHidden && col.VirtualExpr != nil {
 		// A hidden column without virtual expression indicates it's a stored type.
-		return col.VirtualExpr.String()
+		// a virtual column should be able to be stringified without context.
+		return col.VirtualExpr.StringWithCtx(exprctx.EmptyParamValues, redact)
 	}
 	if col.OrigName != "" {
 		return col.OrigName
@@ -400,11 +430,6 @@ func (col *Column) String() string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
 	return builder.String()
-}
-
-// MarshalJSON implements json.Marshaler interface.
-func (col *Column) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("%q", col)), nil
 }
 
 // GetType implements Expression interface.
@@ -508,9 +533,21 @@ func (col *Column) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, b
 	return row.GetJSON(col.Index), false, nil
 }
 
+// EvalVectorFloat32 returns VectorFloat32 representation of Column.
+func (col *Column) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	if row.IsNull(col.Index) {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return row.GetVectorFloat32(col.Index), false, nil
+}
+
 // Clone implements Expression interface.
 func (col *Column) Clone() Expression {
 	newCol := *col
+	if col.hashcode != nil {
+		newCol.hashcode = make([]byte, len(col.hashcode))
+		copy(newCol.hashcode, col.hashcode)
+	}
 	return &newCol
 }
 

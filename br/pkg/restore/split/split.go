@@ -148,8 +148,8 @@ func PaginateScanRegion(
 	return lastRegions, err
 }
 
-// CheckPartRegionConsistency only checks the continuity of regions and the first region consistency.
-func CheckPartRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
+// checkPartRegionConsistency only checks the continuity of regions and the first region consistency.
+func checkPartRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
@@ -199,7 +199,7 @@ func ScanRegionsWithRetry(
 			return err
 		}
 
-		if err = CheckPartRegionConsistency(startKey, endKey, regions); err != nil {
+		if err = checkPartRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
 			return err
 		}

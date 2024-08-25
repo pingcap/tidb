@@ -9,7 +9,6 @@ go_library(
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/parser/model",
-        "//pkg/sessionctx",
         "//pkg/store/helper",
         "//pkg/tablecodec",
         "//pkg/types",

@@ -80,6 +80,7 @@ import (
 	hintSetVar              "SET_VAR"
 	hintResourceGroup       "RESOURCE_GROUP"
 	hintQBName              "QB_NAME"
+	hintHypoIndex           "HYPO_INDEX"
 
 	/* TiDB hint names */
 	hintAggToCop              "AGG_TO_COP"
@@ -646,6 +647,7 @@ SupportedTableLevelOptimizerHintName:
 |	"HASH_JOIN_BUILD"
 |	"HASH_JOIN_PROBE"
 |	"LEADING"
+|	"HYPO_INDEX"
 
 UnsupportedIndexLevelOptimizerHintName:
 	"INDEX_MERGE"
@@ -733,6 +735,7 @@ Identifier:
 |	"SET_VAR"
 |	"RESOURCE_GROUP"
 |	"QB_NAME"
+|	"HYPO_INDEX"
 /* TiDB hint names */
 |	"AGG_TO_COP"
 |	"LIMIT_TO_COP"

@@ -15,6 +15,8 @@
 package infoschema
 
 import (
+	stdctx "context"
+
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
@@ -25,9 +27,9 @@ import (
 // InfoSchema is read-only, and the returned value is a copy.
 type InfoSchema interface {
 	context.MetaOnlyInfoSchema
-	TableByName(schema, table model.CIStr) (table.Table, error)
-	TableByID(id int64) (table.Table, bool)
-	SchemaTables(schema model.CIStr) []table.Table
+	TableByName(ctx stdctx.Context, schema, table model.CIStr) (table.Table, error)
+	TableByID(ctx stdctx.Context, id int64) (table.Table, bool)
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
+	ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult
 	base() *infoSchema
 }

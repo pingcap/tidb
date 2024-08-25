@@ -3,6 +3,7 @@
 package split
 
 import (
+	"bytes"
 	"context"
 	"sync"
 
@@ -115,6 +116,48 @@ func (c *MockPDClientForSplit) ScanRegions(
 		})
 	}
 	return ret, nil
+}
+
+func (c *MockPDClientForSplit) BatchScanRegions(
+	_ context.Context,
+	keyRanges []pd.KeyRange,
+	limit int,
+	_ ...pd.GetRegionOption,
+) ([]*pd.Region, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(c.scanRegions.errors) > 0 {
+		err := c.scanRegions.errors[0]
+		c.scanRegions.errors = c.scanRegions.errors[1:]
+		return nil, err
+	}
+
+	if c.scanRegions.beforeHook != nil {
+		c.scanRegions.beforeHook()
+	}
+
+	regions := make([]*pd.Region, 0, len(keyRanges))
+	var lastRegion *pdtypes.Region
+	for _, keyRange := range keyRanges {
+		if lastRegion != nil {
+			if len(lastRegion.Meta.EndKey) == 0 || bytes.Compare(lastRegion.Meta.EndKey, keyRange.EndKey) >= 0 {
+				continue
+			}
+			if bytes.Compare(lastRegion.Meta.EndKey, keyRange.StartKey) > 0 {
+				keyRange.StartKey = lastRegion.Meta.EndKey
+			}
+		}
+		rs := c.Regions.ScanRange(keyRange.StartKey, keyRange.EndKey, limit)
+		for _, r := range rs {
+			lastRegion = r
+			regions = append(regions, &pd.Region{
+				Meta:   r.Meta,
+				Leader: r.Leader,
+			})
+		}
+	}
+	return regions, nil
 }
 
 func (c *MockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64, _ ...pd.GetRegionOption) (*pd.Region, error) {

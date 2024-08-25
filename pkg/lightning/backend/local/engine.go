@@ -27,6 +27,7 @@ import (
 	"slices"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/objstorage/objstorageprovider"
@@ -262,6 +263,8 @@ func (e *Engine) unlock() {
 	e.mutex.Unlock()
 }
 
+var sizeOfKVPair = int64(unsafe.Sizeof(common.KvPair{}))
+
 // TotalMemorySize returns the total memory size of the engine.
 func (e *Engine) TotalMemorySize() int64 {
 	var memSize int64
@@ -272,6 +275,9 @@ func (e *Engine) TotalMemorySize() int64 {
 			memSize += w.kvBuffer.TotalSize()
 			w.Unlock()
 		}
+		w.Lock()
+		memSize += sizeOfKVPair * int64(cap(w.writeBatch))
+		w.Unlock()
 		return true
 	})
 	return memSize

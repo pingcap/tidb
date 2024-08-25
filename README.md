@@ -14,8 +14,8 @@
 [![Coverage Status](https://codecov.io/gh/pingcap/tidb/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb)
 [![GoDoc](https://img.shields.io/badge/Godoc-reference-blue.svg)](https://godoc.org/github.com/pingcap/tidb)
 
-<div>  
-  
+<div>
+
 [![Official Website](<https://img.shields.io/badge/-Visit%20the%20Official%20Website%20%E2%86%92-rgb(21,204,116)?style=for-the-badge>)](https://www.pingcap.com/?utm_source=github&utm_medium=tidb_readme)
 [![Playground](<https://img.shields.io/badge/-Try%20It%20Online%20%E2%86%92-rgb(84,56,255)?style=for-the-badge>)](https://play.tidbcloud.com/?utm_source=github&utm_medium=tidb_readme)
 
@@ -24,7 +24,7 @@
 ---
 
 <div>
-    <a href="https://twitter.com/tidb_developer"><img src="https://img.shields.io/badge/- @TiDB__Developer -424549?style=social&logo=twitter" height=25></a>
+    <a href="https://x.com/tidb_developer"><img src="https://img.shields.io/badge/- @TiDB__Developer -424549?style=social&logo=x" height=25></a>
     &nbsp;
     <a href="https://ask.pingcap.com/"><img src="https://img.shields.io/badge/- Forum -red?style=social&logo=discourse" height=25></a>
     &nbsp;
@@ -37,7 +37,7 @@
 
 <br />
 
-</div> 
+</div>
 
 ## What is TiDB?
 

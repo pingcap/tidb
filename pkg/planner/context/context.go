@@ -106,3 +106,14 @@ func (b *BuildPBContext) GetExprCtx() exprctx.BuildContext {
 func (b *BuildPBContext) GetClient() kv.Client {
 	return b.Client
 }
+
+// Detach detaches this context from the session context.
+//
+// NOTE: Though this session context can be used parallelly with this context after calling
+// it, the `StatementContext` cannot. The session context should create a new `StatementContext`
+// before executing another statement.
+func (b *BuildPBContext) Detach(staticExprCtx exprctx.BuildContext) *BuildPBContext {
+	newCtx := *b
+	newCtx.ExprCtx = staticExprCtx
+	return &newCtx
+}

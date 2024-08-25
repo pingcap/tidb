@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"golang.org/x/exp/slices"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -81,7 +82,7 @@ func (ft *FieldType) IsDecimalValid() bool {
 // IsVarLengthType Determine whether the column type is a variable-length type
 func (ft *FieldType) IsVarLengthType() bool {
 	switch ft.GetType() {
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeJSON, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeJSON, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeTiDBVectorFloat32:
 		return true
 	default:
 		return false
@@ -289,7 +290,7 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	// because flen for them is useless.
 	// The decimal field can be ignored if the type is int or string.
 	tpEqual := (ft.GetType() == other.GetType()) || (ft.GetType() == mysql.TypeVarchar && other.GetType() == mysql.TypeVarString) || (ft.GetType() == mysql.TypeVarString && other.GetType() == mysql.TypeVarchar)
-	flenEqual := ft.flen == other.flen || (ft.EvalType() == ETReal && ft.decimal == UnspecifiedLength)
+	flenEqual := ft.flen == other.flen || (ft.EvalType() == ETReal && ft.decimal == UnspecifiedLength) || ft.EvalType() == ETJson
 	ignoreDecimal := ft.EvalType() == ETInt || ft.EvalType() == ETString
 	partialEqual := tpEqual &&
 		(ignoreDecimal || ft.decimal == other.decimal) &&
@@ -297,15 +298,10 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 		ft.collate == other.collate &&
 		flenEqual &&
 		mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
-	if !partialEqual || len(ft.elems) != len(other.elems) {
+	if !partialEqual {
 		return false
 	}
-	for i := range ft.elems {
-		if ft.elems[i] != other.elems[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(ft.elems, other.elems)
 }
 
 // PartialEqual checks whether two FieldType objects are equal.
@@ -346,6 +342,8 @@ func (ft *FieldType) EvalType() EvalType {
 		return ETDuration
 	case mysql.TypeJSON:
 		return ETJson
+	case mysql.TypeTiDBVectorFloat32:
+		return ETVectorFloat32
 	case mysql.TypeEnum, mysql.TypeSet:
 		if ft.flag&mysql.EnumSetAsIntFlag > 0 {
 			return ETInt
@@ -427,6 +425,10 @@ func (ft *FieldType) CompactStr() string {
 		}
 	case mysql.TypeYear:
 		suffix = fmt.Sprintf("(%d)", ft.flen)
+	case mysql.TypeTiDBVectorFloat32:
+		if ft.flen != UnspecifiedLength {
+			suffix = fmt.Sprintf("(%d)", ft.flen)
+		}
 	case mysql.TypeNull:
 		suffix = "(0)"
 	}
@@ -585,6 +587,8 @@ func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx, explicitCharset b
 		ctx.WriteKeyWord("FLOAT")
 	case mysql.TypeYear:
 		ctx.WriteKeyWord("YEAR")
+	case mysql.TypeTiDBVectorFloat32:
+		ctx.WriteKeyWord("VECTOR")
 	}
 	if ft.array {
 		ctx.WritePlain(" ")

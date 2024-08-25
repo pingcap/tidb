@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -39,7 +40,7 @@ type ScalarFunction struct {
 	FuncName model.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
-	RetType           *types.FieldType
+	RetType           *types.FieldType `plan-cache-clone:"shallow"`
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
@@ -108,6 +109,11 @@ func (sf *ScalarFunction) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, resul
 	return sf.Function.vecEvalJSON(ctx, input, result)
 }
 
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalVectorFloat32(ctx, input, result)
+}
+
 // GetArgs gets arguments of function.
 func (sf *ScalarFunction) GetArgs() []Expression {
 	return sf.Function.getArgs()
@@ -118,20 +124,20 @@ func (sf *ScalarFunction) Vectorized() bool {
 	return sf.Function.vectorized() && sf.Function.isChildrenVectorized()
 }
 
-// String implements fmt.Stringer interface.
-func (sf *ScalarFunction) String() string {
+// StringWithCtx implements Expression interface.
+func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
 	switch sf.FuncName.L {
 	case ast.Cast:
 		for _, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.String())
+			buffer.WriteString(arg.StringWithCtx(ctx, redact))
 			buffer.WriteString(", ")
 			buffer.WriteString(sf.RetType.String())
 		}
 	default:
 		for i, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.String())
+			buffer.WriteString(arg.StringWithCtx(ctx, redact))
 			if i+1 != len(sf.GetArgs()) {
 				buffer.WriteString(", ")
 			}
@@ -141,9 +147,9 @@ func (sf *ScalarFunction) String() string {
 	return buffer.String()
 }
 
-// MarshalJSON implements json.Marshaler interface.
-func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("%q", sf)), nil
+// String returns the string representation of the function
+func (sf *ScalarFunction) String() string {
+	return sf.StringWithCtx(exprctx.EmptyParamValues, errors.RedactLogDisable)
 }
 
 // typeInferForNull infers the NULL constants field type and set the field type
@@ -337,7 +343,15 @@ func (sf *ScalarFunction) Clone() Expression {
 		FuncName: sf.FuncName,
 		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
-		hashcode: sf.hashcode,
+	}
+	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
+	if sf.hashcode != nil {
+		c.hashcode = make([]byte, len(sf.hashcode))
+		copy(c.hashcode, sf.hashcode)
+	}
+	if sf.canonicalhashcode != nil {
+		c.canonicalhashcode = make([]byte, len(sf.canonicalhashcode))
+		copy(c.canonicalhashcode, sf.canonicalhashcode)
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
@@ -363,6 +377,9 @@ func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 		return false
 	}
 	if sf.FuncName.L != fun.FuncName.L {
+		return false
+	}
+	if !sf.RetType.Equal(fun.RetType) {
 		return false
 	}
 	return sf.Function.equal(ctx, fun.Function)
@@ -444,6 +461,8 @@ func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, e
 		res, isNull, err = sf.EvalDuration(ctx, row)
 	case types.ETJson:
 		res, isNull, err = sf.EvalJSON(ctx, row)
+	case types.ETVectorFloat32:
+		res, isNull, err = sf.EvalVectorFloat32(ctx, row)
 	case types.ETString:
 		var str string
 		str, isNull, err = sf.EvalString(ctx, row)
@@ -525,6 +544,11 @@ func (sf *ScalarFunction) EvalJSON(ctx EvalContext, row chunk.Row) (types.Binary
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalJSON(ctx, row)
+}
+
+// EvalVectorFloat32 implements Expression interface.
+func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	return sf.Function.evalVectorFloat32(ctx, row)
 }
 
 // HashCode implements Expression interface.

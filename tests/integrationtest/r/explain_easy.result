@@ -648,8 +648,8 @@ id	estRows	task	access object	operator info
 Point_Get	1.00	root	table:t	handle:0
 explain format = 'brief' select * from t where _tidb_rowid > 0;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		explain_easy.t.a
-└─TableReader	10000.00	root		data:TableRangeScan
+TableReader	8000.00	root		data:Projection
+└─Projection	8000.00	cop[tikv]		explain_easy.t.a
   └─TableRangeScan	10000.00	cop[tikv]	table:t	range:(0,+inf], keep order:false, stats:pseudo
 explain format = 'brief' select a, _tidb_rowid from t where a > 0;
 id	estRows	task	access object	operator info
@@ -658,8 +658,8 @@ TableReader	3333.33	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where _tidb_rowid > 0 and a > 0;
 id	estRows	task	access object	operator info
-Projection	2666.67	root		explain_easy.t.a
-└─TableReader	2666.67	root		data:Selection
+TableReader	2666.67	root		data:Projection
+└─Projection	2666.67	cop[tikv]		explain_easy.t.a
   └─Selection	2666.67	cop[tikv]		gt(explain_easy.t.a, 0)
     └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(0,+inf], keep order:false, stats:pseudo
 drop table if exists t;
@@ -722,7 +722,7 @@ rollback;
 drop table if exists t;
 create table t(a time, b date);
 insert into t values (1, "1000-01-01"), (2, "1000-01-02"), (3, "1000-01-03");
-analyze table t;
+analyze table t all columns;
 explain format = 'brief' select * from t where a = 1;
 id	estRows	task	access object	operator info
 TableReader	1.00	root		data:Selection
@@ -736,11 +736,11 @@ TableReader	1.00	root		data:Selection
 drop table t;
 create table t(a int);
 insert into t values (1),(2),(2),(2),(9),(9),(9),(10);
-analyze table t with 1 buckets;
+analyze table t all columns with 1 buckets;
 explain format = 'brief' select * from t where a >= 3 and a <= 8;
 id	estRows	task	access object	operator info
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		ge(explain_easy.t.a, 3), le(explain_easy.t.a, 8)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		ge(explain_easy.t.a, 3), le(explain_easy.t.a, 8)
   └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
 drop table t;
 create table t(a int, b int, index idx_ab(a, b));

@@ -18,10 +18,12 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -131,5 +133,44 @@ func TestIssue45716(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/inlNewInnerPanic", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/inlNewInnerPanic")
 	err := tk.QueryToErr("select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a;")
+	require.Error(t, err)
 	tk.MustContainErrMsg(err.Error(), "test inlNewInnerPanic")
+}
+
+func TestIssue54688(t *testing.T) {
+	val := runtime.GOMAXPROCS(1)
+	defer func() {
+		runtime.GOMAXPROCS(val)
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t, s;")
+	tk.MustExec("create table t(a int, index(a));")
+	tk.MustExec("create table s(a int, index(a));")
+	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16);")
+	tk.MustExec("insert into s values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16);")
+	tk.MustExec("insert into s select * from s")
+	tk.MustExec("insert into s select * from s")
+	tk.MustExec("insert into s select * from s")
+	tk.MustExec("insert into s select * from s")
+	tk.MustExec("insert into s select * from s")
+	tk.MustExec("insert into s select * from s")
+	tk.MustExec("insert into s select * from s")
+	tk.MustExec("insert into s select * from s")
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
+	tk.MustExec("set @@tidb_index_join_batch_size=1000000;")
+
+	for i := 0; i <= 100; i++ {
+		rs, err := tk.Exec("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a")
+		require.NoError(t, err)
+		context, cancel := context.WithCancel(context.Background())
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/executor/join/joinMatchedInnerRow2Chunk",
+			func() {
+				cancel()
+			},
+		))
+		_, _ = session.GetRows4Test(context, nil, rs)
+		rs.Close()
+	}
 }

@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"math/rand"
 	"net"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
-	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -53,9 +53,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -64,11 +66,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 )
 
 var (
@@ -202,11 +204,6 @@ type TxnCtxNoNeedToRestore struct {
 	StartTS     uint64
 	StaleReadTs uint64
 
-	// ShardStep indicates the max size of continuous rowid shard in one transaction.
-	ShardStep    int
-	shardRemain  int
-	currentShard int64
-
 	// unchangedKeys is used to store the unchanged keys that needs to lock for pessimistic transaction.
 	unchangedKeys map[string]struct{}
 
@@ -268,24 +265,62 @@ type SavepointRecord struct {
 	TxnCtxSavepoint TxnCtxNeedToRestore
 }
 
-// GetCurrentShard returns the shard for the next `count` IDs.
-func (s *SessionVars) GetCurrentShard(count int) int64 {
-	tc := s.TxnCtx
-	if s.shardRand == nil {
-		s.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
-	}
-	if tc.shardRemain <= 0 {
-		tc.updateShard(s.shardRand)
-		tc.shardRemain = tc.ShardStep
-	}
-	tc.shardRemain -= count
-	return tc.currentShard
+// RowIDShardGenerator is used to generate shard for row id.
+type RowIDShardGenerator struct {
+	// shardRand is used for generated rand shard
+	shardRand *rand.Rand
+	// shardStep indicates the max size of continuous rowid shard in one transaction.
+	shardStep    int
+	shardRemain  int
+	currentShard int64
 }
 
-func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
+// NewRowIDShardGenerator creates a new RowIDShardGenerator.
+func NewRowIDShardGenerator(shardRand *rand.Rand, step int) *RowIDShardGenerator {
+	intest.AssertNotNil(shardRand)
+	return &RowIDShardGenerator{
+		shardRand: shardRand,
+		shardStep: step,
+	}
+}
+
+// SetShardStep sets the step of shard
+func (s *RowIDShardGenerator) SetShardStep(step int) {
+	s.shardStep = step
+	s.shardRemain = 0
+}
+
+// GetShardStep returns the shard step
+func (s *RowIDShardGenerator) GetShardStep() int {
+	return s.shardStep
+}
+
+// GetCurrentShard returns the shard for the next `count` IDs.
+func (s *RowIDShardGenerator) GetCurrentShard(count int) int64 {
+	if s.shardRemain <= 0 {
+		s.updateShard(s.shardRand)
+		s.shardRemain = s.GetShardStep()
+	}
+	s.shardRemain -= count
+	return s.currentShard
+}
+
+func (s *RowIDShardGenerator) updateShard(shardRand *rand.Rand) {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], shardRand.Uint64())
-	tc.currentShard = int64(murmur3.Sum32(buf[:]))
+	s.currentShard = int64(murmur3.Sum32(buf[:]))
+}
+
+// GetRowIDShardGenerator shard row id generator
+func (s *SessionVars) GetRowIDShardGenerator() *RowIDShardGenerator {
+	if s.shardGenerator != nil {
+		return s.shardGenerator
+	}
+
+	intest.Assert(s.TxnCtx.StartTS > 0)
+	r := rand.New(rand.NewSource(int64(s.TxnCtx.StartTS))) // #nosec G404
+	s.shardGenerator = NewRowIDShardGenerator(r, int(s.ShardAllocateStep))
+	return s.shardGenerator
 }
 
 // AddUnchangedKeyForLock adds an unchanged key for pessimistic lock.
@@ -305,36 +340,38 @@ func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key
 	return buf
 }
 
-// UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
-	tc.tdmLock.Lock()
-	defer tc.tdmLock.Unlock()
-	if tc.TableDeltaMap == nil {
-		tc.TableDeltaMap = make(map[int64]TableDelta)
-	}
-	item := tc.TableDeltaMap[physicalTableID]
-	if item.ColSize == nil && colSize != nil {
-		item.ColSize = make(map[int64]int64, len(colSize))
-	}
-	item.Delta += delta
-	item.Count += count
-	item.TableID = physicalTableID
-	for key, val := range colSize {
-		item.ColSize[key] += val
-	}
-	tc.TableDeltaMap[physicalTableID] = item
-}
-
 // ColSize is a data struct to store the delta information for a table.
 type ColSize struct {
 	ColID int64
 	Size  int64
 }
 
-// UpdateDeltaForTableFromColSlice is the same as UpdateDeltaForTable, but it accepts a slice of column size.
-func (tc *TransactionContext) UpdateDeltaForTableFromColSlice(
+// DeltaCols is used to update the delta size for cols.
+type DeltaCols interface {
+	// UpdateColSizeMap is used to update delta map for cols.
+	UpdateColSizeMap(m map[int64]int64) map[int64]int64
+}
+
+// DeltaColsMap implements DeltaCols
+type DeltaColsMap map[int64]int64
+
+// UpdateColSizeMap implements DeltaCols
+func (cols DeltaColsMap) UpdateColSizeMap(m map[int64]int64) map[int64]int64 {
+	if m == nil && len(cols) > 0 {
+		m = make(map[int64]int64, len(cols))
+	}
+	for colID, size := range cols {
+		m[colID] += size
+	}
+	return m
+}
+
+// UpdateDeltaForTable updates the delta info for some table.
+// The `cols` argument is used to update the delta size for cols.
+// If `cols` is nil, it means that the delta size for cols is not changed.
+func (tc *TransactionContext) UpdateDeltaForTable(
 	physicalTableID int64, delta int64,
-	count int64, colSizes []ColSize,
+	count int64, cols DeltaCols,
 ) {
 	tc.tdmLock.Lock()
 	defer tc.tdmLock.Unlock()
@@ -342,14 +379,11 @@ func (tc *TransactionContext) UpdateDeltaForTableFromColSlice(
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
 	item := tc.TableDeltaMap[physicalTableID]
-	if item.ColSize == nil && len(colSizes) > 0 {
-		item.ColSize = make(map[int64]int64, len(colSizes))
-	}
 	item.Delta += delta
 	item.Count += count
 	item.TableID = physicalTableID
-	for _, s := range colSizes {
-		item.ColSize[s.ColID] += s.Size
+	if cols != nil {
+		item.ColSize = cols.UpdateColSizeMap(item.ColSize)
 	}
 	tc.TableDeltaMap[physicalTableID] = item
 }
@@ -428,16 +462,10 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	for k, v := range tc.TableDeltaMap {
 		tableDeltaMap[k] = v.Clone()
 	}
-	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
-	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
-	CurrentStmtPessimisticLockCache := make(map[string][]byte, len(tc.CurrentStmtPessimisticLockCache))
-	maps.Copy(CurrentStmtPessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
-	cachedTables := make(map[int64]any, len(tc.CachedTables))
-	maps.Copy(cachedTables, tc.CachedTables)
 	return TxnCtxNeedToRestore{
 		TableDeltaMap:        tableDeltaMap,
-		pessimisticLockCache: pessimisticLockCache,
-		CachedTables:         cachedTables,
+		pessimisticLockCache: maps.Clone(tc.pessimisticLockCache),
+		CachedTables:         maps.Clone(tc.CachedTables),
 		InsertTTLRowsCount:   tc.InsertTTLRowsCount,
 	}
 }
@@ -1090,8 +1118,9 @@ type SessionVars struct {
 	// TxnMode indicates should be pessimistic or optimistic.
 	TxnMode string
 
-	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
-	LowResolutionTSO bool
+	// lowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
+	// Do not use it directly, use the `UseLowResolutionTSO` method below.
+	lowResolutionTSO bool
 
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the value is 0, timeouts are not enabled.
@@ -1117,7 +1146,7 @@ type SessionVars struct {
 	// NoopFuncsMode allows OFF/ON/WARN values as 0/1/2.
 	NoopFuncsMode int
 
-	// StartTime is the start time of the last query.
+	// StartTime is the start time of the last query. It's set after the query is parsed and before the query is compiled.
 	StartTime time.Time
 
 	// DurationParse is the duration of parsing SQL string to AST of the last query.
@@ -1136,7 +1165,7 @@ type SessionVars struct {
 	DurationWaitTS time.Duration
 
 	// PrevStmt is used to store the previous executed statement in the current session.
-	PrevStmt fmt.Stringer
+	PrevStmt *LazyStmtText
 
 	// prevStmtDigest is used to store the digest of the previous statement in the current session.
 	prevStmtDigest string
@@ -1229,9 +1258,6 @@ type SessionVars struct {
 
 	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
 	EnableGlobalIndex bool
-
-	// PresumeKeyNotExists indicates lazy existence checking is enabled.
-	PresumeKeyNotExists bool
 
 	// EnableParallelApply indicates that whether to use parallel apply.
 	EnableParallelApply bool
@@ -1511,11 +1537,12 @@ type SessionVars struct {
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
 
-	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
-	shardRand *rand.Rand
+	// shardGenerator indicates to generate shard for row id.
+	shardGenerator *RowIDShardGenerator
 
 	// Resource group name
 	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
+	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
@@ -1618,6 +1645,16 @@ type SessionVars struct {
 
 	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
 	GroupConcatMaxLen uint64
+
+	// TiFlashPreAggMode indicates the policy of pre aggregation.
+	TiFlashPreAggMode string
+
+	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
+	EnableLazyCursorFetch bool
+
+	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
+	// `select for update` statements which do acquire pessimsitic locks.
+	SharedLockPromotion bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -1829,6 +1866,16 @@ func (s *SessionVars) AllocNewPlanID() int {
 	return int(s.PlanID.Add(1))
 }
 
+// GetTotalCostDuration returns the total cost duration of the last statement in the current session.
+func (s *SessionVars) GetTotalCostDuration() time.Duration {
+	return time.Since(s.StartTime) + s.DurationParse
+}
+
+// GetExecuteDuration returns the execute duration of the last statement in the current session.
+func (s *SessionVars) GetExecuteDuration() time.Duration {
+	return time.Since(s.StartTime) - s.DurationCompile
+}
+
 const (
 	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
 	PlacementModeStrict string = "STRICT"
@@ -1924,6 +1971,48 @@ func (p *PlanCacheParamList) GetParamValue(idx int) types.Datum {
 // AllParamValues returns all parameter values.
 func (p *PlanCacheParamList) AllParamValues() []types.Datum {
 	return p.paramValues
+}
+
+// LazyStmtText represents the sql text of a stmt that used in log. It's lazily evaluated to reduce the mem allocs.
+type LazyStmtText struct {
+	text   *string
+	SQL    string
+	Redact string
+	Params PlanCacheParamList
+	Format func(string) string
+}
+
+// SetText sets the text directly.
+func (s *LazyStmtText) SetText(text string) {
+	s.text = &text
+}
+
+// Update resets the lazy text and leads to re-eval for next `s.String()`. It copies params so it's safe to use
+// `SessionVars.PlanCacheParams` directly without worrying about the params get reset later.
+func (s *LazyStmtText) Update(redact string, sql string, params *PlanCacheParamList) {
+	s.text = nil
+	s.SQL = sql
+	s.Redact = redact
+	s.Params.Reset()
+	if params != nil {
+		s.Params.forNonPrepCache = params.forNonPrepCache
+		s.Params.paramValues = append(s.Params.paramValues, params.paramValues...)
+	}
+}
+
+// String implements fmt.Stringer.
+func (s *LazyStmtText) String() string {
+	if s == nil {
+		return ""
+	}
+	if s.text == nil {
+		text := redact.String(s.Redact, s.SQL+s.Params.String())
+		if s.Format != nil {
+			text = s.Format(text)
+		}
+		s.text = &text
+	}
+	return *s.text
 }
 
 // ConnectionInfo presents the connection information, which is mainly used by audit logs.
@@ -2075,6 +2164,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
+		EnableRedactLog:               DefTiDBRedactLog,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
@@ -2666,14 +2756,11 @@ func (s *SessionVars) GetDivPrecisionIncrement() int {
 	return s.DivPrecisionIncrement
 }
 
-// LazyCheckKeyNotExists returns if we can lazy check key not exists.
-func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && s.StmtCtx.ErrGroupLevel(errctx.ErrGroupDupKey) == errctx.LevelError)
-}
-
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
 	if tblInfo.TempTableType != model.TempTableNone {
+		s.TxnCtxMu.Lock()
+		defer s.TxnCtxMu.Unlock()
 		if s.TxnCtx.TemporaryTables == nil {
 			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}
@@ -2754,7 +2841,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
-	s.ResourceGroupName = sessionStates.ResourceGroupName
+	s.SetResourceGroupName(sessionStates.ResourceGroupName)
 	s.HypoIndexes = sessionStates.HypoIndexes
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
@@ -2763,6 +2850,15 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
+}
+
+// SetResourceGroupName changes the resource group name and inc/dec the metrics accordingly.
+func (s *SessionVars) SetResourceGroupName(groupName string) {
+	if s.ResourceGroupName != groupName {
+		metrics.ConnGauge.WithLabelValues(s.ResourceGroupName).Dec()
+		metrics.ConnGauge.WithLabelValues(groupName).Inc()
+	}
+	s.ResourceGroupName = groupName
 }
 
 // TableDelta stands for the changed count for one table or partition.
@@ -2776,12 +2872,10 @@ type TableDelta struct {
 
 // Clone returns a cloned TableDelta.
 func (td TableDelta) Clone() TableDelta {
-	colSize := make(map[int64]int64, len(td.ColSize))
-	maps.Copy(colSize, td.ColSize)
 	return TableDelta{
 		Delta:    td.Delta,
 		Count:    td.Count,
-		ColSize:  colSize,
+		ColSize:  maps.Clone(td.ColSize),
 		InitTime: td.InitTime,
 		TableID:  td.TableID,
 	}
@@ -3636,6 +3730,16 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 	return s.TxnCtx.relatedTableForMDL
 }
 
+// ClearRelatedTableForMDL clears the related table for MDL.
+// related tables for MDL is filled during build logical plan or Preprocess for all DataSources,
+// even for queries inside DDLs like `create view as select xxx` and `create table as select xxx`.
+// it should be cleared before we execute the DDL statement.
+func (s *SessionVars) ClearRelatedTableForMDL() {
+	s.TxnCtx.tdmLock.Lock()
+	defer s.TxnCtx.tdmLock.Unlock()
+	s.TxnCtx.relatedTableForMDL = nil
+}
+
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
@@ -3798,4 +3902,60 @@ const (
 // Please see comments of SessionVars.OptObjective for details.
 func (s *SessionVars) GetOptObjective() string {
 	return s.OptObjective
+}
+
+// ForcePreAggStr means 1st hashagg will be pre aggregated.
+// AutoStr means TiFlash will decide which policy for 1st hashagg.
+// ForceStreamingStr means 1st hashagg will for pass through all blocks.
+const (
+	ForcePreAggStr    = "force_preagg"
+	AutoStr           = "auto"
+	ForceStreamingStr = "force_streaming"
+)
+
+// ValidTiFlashPreAggMode returns all valid modes.
+func ValidTiFlashPreAggMode() string {
+	return ForcePreAggStr + ", " + AutoStr + ", " + ForceStreamingStr
+}
+
+// ToTiPBTiFlashPreAggMode return the corresponding tipb value of preaggregation mode.
+func ToTiPBTiFlashPreAggMode(mode string) (tipb.TiFlashPreAggMode, bool) {
+	switch mode {
+	case ForcePreAggStr:
+		return tipb.TiFlashPreAggMode_ForcePreAgg, true
+	case ForceStreamingStr:
+		return tipb.TiFlashPreAggMode_ForceStreaming, true
+	case AutoStr:
+		return tipb.TiFlashPreAggMode_Auto, true
+	default:
+		return tipb.TiFlashPreAggMode_ForcePreAgg, false
+	}
+}
+
+// UseLowResolutionTSO indicates whether low resolution tso could be used for execution.
+// After `tidb_low_resolution_tso` supports the global scope, this variable is expected to only affect
+// user sessions and not impact internal background sessions and tasks.
+// Currently, one of the problems is that the determination of whether a session is an internal task
+// session within TiDB is quite inconsistent and chaotic, posing risks. Some internal sessions rely on
+// upper-level users correctly using `ExecuteInternal` or `ExecuteRestrictedSQL` for assurance.
+// Additionally, the BR code also contains some session-related encapsulation and usage.
+//
+// TODO: There needs to be a more comprehensive and unified entry point to ensure that all internal
+// sessions and global user sessions/variables are isolated and do not affect each other.
+func (s *SessionVars) UseLowResolutionTSO() bool {
+	return !s.InRestrictedSQL && s.lowResolutionTSO && s.ConnectionID > 0
+}
+
+// PessimisticLockEligible indicates whether pessimistic lock should not be ignored for the current
+// statement execution. There are cases the `for update` clause should not take effect, like autocommit
+// statements with “pessimistic-auto-commit disabled.
+func (s *SessionVars) PessimisticLockEligible() bool {
+	if s.StmtCtx.ForShareLockEnabledByNoop {
+		return false
+	}
+	if !s.IsAutocommit() || s.InTxn() || (config.GetGlobalConfig().
+		PessimisticTxn.PessimisticAutoCommit.Load() && !s.BulkDMLEnabled) {
+		return true
+	}
+	return false
 }

@@ -18,13 +18,15 @@ import (
 	"fmt"
 	"unsafe"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // NewOne stands for a number 1.
@@ -115,7 +117,7 @@ func NewNullWithFieldType(fieldType *types.FieldType) *Constant {
 // Constant stands for a constant value.
 type Constant struct {
 	Value   types.Datum
-	RetType *types.FieldType
+	RetType *types.FieldType `plan-cache-clone:"shallow"`
 	// DeferredExpr holds deferred function in PlanCache cached plan.
 	// it's only used to represent non-deterministic functions(see expression.DeferredFunctions)
 	// in PlanCache cached plan, so let them can be evaluated until cached item be used.
@@ -130,40 +132,47 @@ type Constant struct {
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
 type ParamMarker struct {
-	ctx   variable.SessionVarsProvider
 	order int
 }
 
 // GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
-func (d *ParamMarker) GetUserVar(ctx EvalContext) types.Datum {
+func (d *ParamMarker) GetUserVar(ctx ParamValues) (types.Datum, error) {
 	return ctx.GetParamValue(d.order)
 }
 
-func (d *ParamMarker) getUserVarWithInternalCtx() types.Datum {
-	// TODO: remove this function in the future
-	sessionVars := d.ctx.GetSessionVars()
-	return sessionVars.PlanCacheParams.GetParamValue(d.order)
-}
-
-// String implements fmt.Stringer interface.
-func (c *Constant) String() string {
+// StringWithCtx implements Expression interface.
+func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 	if c.ParamMarker != nil {
-		dt := c.ParamMarker.getUserVarWithInternalCtx()
+		dt, err := c.ParamMarker.GetUserVar(ctx)
+		intest.AssertNoError(err, "fail to get param")
+		if err != nil {
+			return "?"
+		}
 		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
-		return c.DeferredExpr.String()
+		return c.DeferredExpr.StringWithCtx(ctx, redact)
 	}
-	return fmt.Sprintf("%v", c.Value.GetValue())
-}
-
-// MarshalJSON implements json.Marshaler interface.
-func (c *Constant) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("%q", c)), nil
+	if redact == perrors.RedactLogDisable {
+		return fmt.Sprintf("%v", c.Value.GetValue())
+	} else if redact == perrors.RedactLogMarker {
+		return fmt.Sprintf("‹%v›", c.Value.GetValue())
+	}
+	return "?"
 }
 
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
 	con := *c
+	if c.ParamMarker != nil {
+		con.ParamMarker = &ParamMarker{order: c.ParamMarker.order}
+	}
+	if c.DeferredExpr != nil {
+		con.DeferredExpr = c.DeferredExpr.Clone()
+	}
+	if c.hashcode != nil {
+		con.hashcode = make([]byte, len(c.hashcode))
+		copy(con.hashcode, c.hashcode)
+	}
 	return &con
 }
 
@@ -173,7 +182,12 @@ func (c *Constant) GetType(ctx EvalContext) *types.FieldType {
 		// GetType() may be called in multi-threaded context, e.g, in building inner executors of IndexJoin,
 		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
 		tp := types.NewFieldType(mysql.TypeUnspecified)
-		dt := c.ParamMarker.GetUserVar(ctx)
+		dt, err := c.ParamMarker.GetUserVar(ctx)
+		intest.AssertNoError(err, "fail to get param")
+		if err != nil {
+			logutil.BgLogger().Warn("fail to get param", zap.Error(err))
+			return nil
+		}
 		types.InferParamTypeFromDatum(&dt, tp)
 		return tp
 	}
@@ -236,9 +250,22 @@ func (c *Constant) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 	return c.DeferredExpr.VecEvalJSON(ctx, input, result)
 }
 
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (c *Constant) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, types.ETVectorFloat32, input, result)
+	}
+	return c.DeferredExpr.VecEvalVectorFloat32(ctx, input, result)
+}
+
 func (c *Constant) getLazyDatum(ctx EvalContext, row chunk.Row) (dt types.Datum, isLazy bool, err error) {
 	if c.ParamMarker != nil {
-		return c.ParamMarker.GetUserVar(ctx), true, nil
+		val, err := c.ParamMarker.GetUserVar(ctx)
+		intest.AssertNoError(err, "fail to get param")
+		if err != nil {
+			return val, true, err
+		}
+		return val, true, nil
 	} else if c.DeferredExpr != nil {
 		dt, err = c.DeferredExpr.Eval(ctx, row)
 		return dt, true, err
@@ -412,6 +439,21 @@ func (c *Constant) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, b
 		return types.BinaryJSON{}, true, nil
 	}
 	return dt.GetMysqlJSON(), false, nil
+}
+
+// EvalVectorFloat32 returns VectorFloat32 representation of Constant.
+func (c *Constant) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	dt, lazy, err := c.getLazyDatum(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, false, err
+	}
+	if !lazy {
+		dt = c.Value
+	}
+	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return dt.GetVectorFloat32(), false, nil
 }
 
 // Equal implements Expression interface.

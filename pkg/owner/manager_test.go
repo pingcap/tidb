@@ -55,7 +55,7 @@ func newTestInfo(t *testing.T) *testInfo {
 	cli := cluster.Client(0)
 	ic := infoschema.NewCache(nil, 2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	d := NewDDL(
+	d, _ := NewDDL(
 		context.Background(),
 		WithEtcdClient(cli),
 		WithStore(store),
@@ -250,7 +250,7 @@ func TestCluster(t *testing.T) {
 	cli1 := cluster.Client(1)
 	ic2 := infoschema.NewCache(nil, 2)
 	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	d1 := NewDDL(
+	d1, _ := NewDDL(
 		context.Background(),
 		WithEtcdClient(cli1),
 		WithStore(store),
@@ -275,7 +275,7 @@ func TestCluster(t *testing.T) {
 	cli3 := cluster.Client(3)
 	ic3 := infoschema.NewCache(nil, 2)
 	ic3.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	d3 := NewDDL(
+	d3, _ := NewDDL(
 		context.Background(),
 		WithEtcdClient(cli3),
 		WithStore(store),

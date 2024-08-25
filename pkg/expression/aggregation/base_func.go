@@ -70,12 +70,12 @@ func (a *baseFuncDesc) clone() *baseFuncDesc {
 	return &clone
 }
 
-// String implements the fmt.Stringer interface.
-func (a *baseFuncDesc) String() string {
+// StringWithCtx returns the string within given context.
+func (a *baseFuncDesc) StringWithCtx(ctx expression.ParamValues, redact string) string {
 	buffer := bytes.NewBufferString(a.Name)
 	buffer.WriteString("(")
 	for i, arg := range a.Args {
-		buffer.WriteString(arg.String())
+		buffer.WriteString(arg.StringWithCtx(ctx, redact))
 		if i+1 != len(a.Args) {
 			buffer.WriteString(", ")
 		}
@@ -149,7 +149,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx expression.EvalContext) er
 	}
 	percent, isNull, err := a.Args[1].EvalInt(ctx, chunk.Row{})
 	if err != nil {
-		return fmt.Errorf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].String())
+		return fmt.Errorf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].StringWithCtx(ctx, errors.RedactLogDisable))
 	}
 	if percent <= 0 || percent > 100 || isNull {
 		if isNull {
@@ -423,8 +423,10 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
 		castFunc = expression.WrapWithCastAsDuration
 	case types.ETJson:
 		castFunc = expression.WrapWithCastAsJSON
+	case types.ETVectorFloat32:
+		castFunc = expression.WrapWithCastAsVectorFloat32
 	default:
-		panic("should never happen in baseFuncDesc.WrapCastForAggArgs")
+		panic(fmt.Sprintf("unsupported type %s during evaluation", retTp.EvalType()))
 	}
 	for i := range a.Args {
 		// Do not cast the second args of these functions, as they are simply non-negative numbers.

@@ -28,6 +28,7 @@ import (
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
@@ -48,7 +49,7 @@ type TTLTimerData struct {
 
 // TTLTimersSyncer is used to sync timers for ttl
 type TTLTimersSyncer struct {
-	pool           sessionPool
+	pool           util.SessionPool
 	cli            timerapi.TimerClient
 	key2Timers     map[string]*timerapi.TimerRecord
 	lastPullTimers time.Time
@@ -59,7 +60,7 @@ type TTLTimersSyncer struct {
 }
 
 // NewTTLTimerSyncer creates a new TTLTimersSyncer
-func NewTTLTimerSyncer(pool sessionPool, cli timerapi.TimerClient) *TTLTimersSyncer {
+func NewTTLTimerSyncer(pool util.SessionPool, cli timerapi.TimerClient) *TTLTimersSyncer {
 	return &TTLTimersSyncer{
 		pool:        pool,
 		cli:         cli,
@@ -184,13 +185,10 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 	defer se.Close()
 
 	currentTimerKeys := make(map[string]struct{})
-	for _, dbName := range is.AllSchemaNames() {
-		for _, tbl := range is.SchemaTables(dbName) {
-			tblInfo := tbl.Meta()
-			if tblInfo.State != model.StatePublic || tblInfo.TTLInfo == nil {
-				continue
-			}
-			for _, key := range g.syncTimersForTable(ctx, se, dbName, tblInfo) {
+	ch := is.ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	for _, v := range ch {
+		for _, tblInfo := range v.TableInfos {
+			for _, key := range g.syncTimersForTable(ctx, se, v.DBName, tblInfo) {
 				currentTimerKeys[key] = struct{}{}
 			}
 		}

@@ -18,6 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 )
 
@@ -34,4 +36,30 @@ func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]Meta, error) {
 		return nil, errors.Trace(r.Err)
 	}
 	return r.Item, nil
+}
+
+func TEST_NewLogFileManager(startTS, restoreTS, shiftStartTS uint64, helper streamMetadataHelper) *LogFileManager {
+	return &LogFileManager{
+		startTS:      startTS,
+		restoreTS:    restoreTS,
+		shiftStartTS: shiftStartTS,
+		helper:       helper,
+	}
+}
+
+type FakeStreamMetadataHelper struct {
+	streamMetadataHelper
+
+	Data []byte
+}
+
+func (helper *FakeStreamMetadataHelper) ReadFile(
+	ctx context.Context,
+	path string,
+	offset uint64,
+	length uint64,
+	compressionType backuppb.CompressionType,
+	storage storage.ExternalStorage,
+) ([]byte, error) {
+	return helper.Data[offset : offset+length], nil
 }

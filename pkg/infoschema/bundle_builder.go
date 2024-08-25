@@ -15,6 +15,8 @@
 package infoschema
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -114,7 +116,7 @@ func (b *bundleInfoBuilder) completeUpdateTables(is *infoSchema) {
 
 func (b *bundleInfoBuilder) updateTableBundles(infoSchemaInterface InfoSchema, tableID int64) {
 	is := infoSchemaInterface.base()
-	tbl, ok := infoSchemaInterface.TableByID(tableID)
+	tbl, ok := infoSchemaInterface.TableByID(context.Background(), tableID)
 	if !ok {
 		b.deleteBundle(is, tableID)
 		return

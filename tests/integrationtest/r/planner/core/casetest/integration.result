@@ -65,7 +65,7 @@ set tidb_opt_limit_push_down_threshold=0;
 drop table if exists t;
 create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));
 insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5);
-analyze table t;
+analyze table t all columns;
 explain format = 'brief' select * from t order by a;
 id	estRows	task	access object	operator info
 Sort	10005.00	root		planner__core__casetest__integration.t.a
@@ -376,9 +376,8 @@ id	estRows	task	access object	operator info
 HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(2, planner__core__casetest__integration.t.b)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-└─Projection(Probe)	10000.00	root		1->Column#22
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t;
 (2) in (select b from t)
 1
@@ -601,6 +600,13 @@ explain format = 'brief' select * from t3 where a >= 'a' and a <= 'a' and b = 'b
 id	estRows	task	access object	operator info
 IndexReader	0.33	root		index:IndexRangeScan
 └─IndexRangeScan	0.33	cop[tikv]	table:t3, index:a(a, b, c)	range:("a" "b" "c","a" "b" +inf], keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a is null or a in (1, 2, 3);
+id	estRows	task	access object	operator info
+IndexReader	260.00	root		index:IndexRangeScan
+└─IndexRangeScan	260.00	cop[tikv]	table:t1, index:a(a, b, c)	range:[NULL,NULL], [1,3], keep order:false, stats:pseudo
+explain format = 'brief' select * from t1 where a is null and a = 1;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
 drop table if exists t1;
 CREATE TABLE t1 (
 key1 int(11) NOT NULL,
@@ -1148,17 +1154,17 @@ TableReader_7	3.00	130.42	root		data:Selection_6
   └─TableFullScan_5	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_11	0.00	98.74	root		offset:0, count:1
-└─TableReader_24	0.00	98.74	root		data:Limit_23
-  └─Limit_23	0.00	1386.04	cop[tikv]		offset:0, count:1
-    └─Selection_22	0.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+Limit_11	1.00	98.74	root		offset:0, count:1
+└─TableReader_24	1.00	98.74	root		data:Limit_23
+  └─Limit_23	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_22	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_21	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_8	0.00	98.74	root		offset:0, count:1
-└─TableReader_13	0.00	98.74	root		data:Limit_12
-  └─Limit_12	0.00	1386.04	cop[tikv]		offset:0, count:1
-    └─Selection_11	0.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+Limit_8	1.00	98.74	root		offset:0, count:1
+└─TableReader_13	1.00	98.74	root		data:Limit_12
+  └─Limit_12	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_11	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_10	5.00	1136.54	cop[tikv]	table:t	keep order:false
 set tidb_opt_prefer_range_scan = 1;
 explain format = 'verbose' select * from t where b > 5;
@@ -1170,19 +1176,19 @@ Level	Code	Message
 Note	1105	[idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-TopN_9	0.00	1956.63	root		planner__core__casetest__integration.t.a, offset:0, count:1
-└─IndexLookUp_16	0.00	1951.83	root		
-  ├─TopN_15(Build)	0.00	206.70	cop[tikv]		planner__core__casetest__integration.t.a, offset:0, count:1
-  │ └─IndexRangeScan_13	0.00	203.50	cop[tikv]	table:t, index:idx_b(b)	range:[6,6], keep order:false
-  └─TableRowIDScan_14(Probe)	0.00	186.61	cop[tikv]	table:t	keep order:false
+TopN_9	1.00	1956.63	root		planner__core__casetest__integration.t.a, offset:0, count:1
+└─IndexLookUp_16	1.00	1951.83	root		
+  ├─TopN_15(Build)	1.00	206.70	cop[tikv]		planner__core__casetest__integration.t.a, offset:0, count:1
+  │ └─IndexRangeScan_13	1.00	203.50	cop[tikv]	table:t, index:idx_b(b)	range:[6,6], keep order:false
+  └─TableRowIDScan_14(Probe)	1.00	186.61	cop[tikv]	table:t	keep order:false
 Level	Code	Message
 Note	1105	[idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copMultiReadTask}
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_13	0.00	1170.97	root		limit embedded(offset:0, count:1)
-├─Limit_12(Build)	0.00	203.50	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan_10	0.00	203.50	cop[tikv]	table:t, index:idx_b(b)	range:[6,6], keep order:false
-└─TableRowIDScan_11(Probe)	0.00	186.61	cop[tikv]	table:t	keep order:false
+IndexLookUp_13	1.00	1170.97	root		limit embedded(offset:0, count:1)
+├─Limit_12(Build)	1.00	203.50	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan_10	1.00	203.50	cop[tikv]	table:t, index:idx_b(b)	range:[6,6], keep order:false
+└─TableRowIDScan_11(Probe)	1.00	186.61	cop[tikv]	table:t	keep order:false
 Level	Code	Message
 Note	1105	[idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copMultiReadTask}
 set @@tidb_enable_chunk_rpc = default;
@@ -1424,22 +1430,22 @@ explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not e
 id	estRows	task	access object	operator info
 HashJoin_19	2658.67	root		anti semi join, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
 ├─PartitionUnion_23(Build)	13293.33	root		
-│ ├─Projection_24	3323.33	root		planner__core__casetest__integration.t2_part.a
-│ │ └─TableReader_27	3323.33	root		data:Selection_26
-│ │   └─Selection_26	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-│ │     └─TableFullScan_25	10000.00	cop[tikv]	table:t2_part, partition:p0	keep order:false, stats:pseudo
-│ ├─Projection_28	3323.33	root		planner__core__casetest__integration.t2_part.a
-│ │ └─TableReader_31	3323.33	root		data:Selection_30
+│ ├─TableReader_31	3323.33	root		data:Projection_25
+│ │ └─Projection_25	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
 │ │   └─Selection_30	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-│ │     └─TableFullScan_29	10000.00	cop[tikv]	table:t2_part, partition:p1	keep order:false, stats:pseudo
-│ ├─Projection_32	3323.33	root		planner__core__casetest__integration.t2_part.a
-│ │ └─TableReader_35	3323.33	root		data:Selection_34
-│ │   └─Selection_34	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-│ │     └─TableFullScan_33	10000.00	cop[tikv]	table:t2_part, partition:p2	keep order:false, stats:pseudo
-│ └─Projection_36	3323.33	root		planner__core__casetest__integration.t2_part.a
-│   └─TableReader_39	3323.33	root		data:Selection_38
-│     └─Selection_38	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-│       └─TableFullScan_37	10000.00	cop[tikv]	table:t2_part, partition:p3	keep order:false, stats:pseudo
+│ │     └─TableFullScan_29	10000.00	cop[tikv]	table:t2_part, partition:p0	keep order:false, stats:pseudo
+│ ├─TableReader_39	3323.33	root		data:Projection_33
+│ │ └─Projection_33	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_38	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_37	10000.00	cop[tikv]	table:t2_part, partition:p1	keep order:false, stats:pseudo
+│ ├─TableReader_47	3323.33	root		data:Projection_41
+│ │ └─Projection_41	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_46	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_45	10000.00	cop[tikv]	table:t2_part, partition:p2	keep order:false, stats:pseudo
+│ └─TableReader_55	3323.33	root		data:Projection_49
+│   └─Projection_49	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│     └─Selection_54	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│       └─TableFullScan_53	10000.00	cop[tikv]	table:t2_part, partition:p3	keep order:false, stats:pseudo
 └─TableReader_22(Probe)	3323.33	root		data:Selection_21
   └─Selection_21	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
     └─TableFullScan_20	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

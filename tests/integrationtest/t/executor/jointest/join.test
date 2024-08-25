@@ -951,7 +951,7 @@ create table t(id int primary key);
 create table s(id int);
 insert into t values(1), (2);
 insert into s values(2), (2);
-select *, (select count(id) from s where id = t.id) from t;
+select *, (select count(id) from s where id = t.id) from t order by id;
 select *, 0 < any (select count(id) from s where id = t.id) from t;
 select (select count(*) from t k where t.id = id) from s, t where t.id = s.id limit 1;
 
@@ -1071,7 +1071,7 @@ insert into t select * from t;
 insert into t select * from t;
 insert into t select * from t;
 insert into t select * from t;
--- replace_regex /conn=[0-9]+/conn=<num>/
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;
 

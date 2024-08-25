@@ -53,6 +53,7 @@ func (a *SimplePlanColumnIDAllocator) AllocPlanColumnID() int64 {
 // EvalContext is used to evaluate an expression
 type EvalContext interface {
 	contextutil.WarnHandler
+	ParamValues
 	// CtxID indicates the id of the context.
 	CtxID() uint64
 	// SQLMode returns the sql mode
@@ -70,6 +71,8 @@ type EvalContext interface {
 	CurrentTime() (time.Time, error)
 	// GetMaxAllowedPacket returns the value of the 'max_allowed_packet' system variable.
 	GetMaxAllowedPacket() uint64
+	// GetTiDBRedactLog returns the value of the 'tidb_redact_log' system variable.
+	GetTiDBRedactLog() string
 	// GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 	GetDefaultWeekFormatMode() string
 	// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
@@ -82,8 +85,6 @@ type EvalContext interface {
 	GetOptionalPropSet() OptionalEvalPropKeySet
 	// GetOptionalPropProvider gets the optional property provider by key
 	GetOptionalPropProvider(OptionalEvalPropKey) (OptionalEvalPropProvider, bool)
-	// GetParamValue returns the value of the parameter by index.
-	GetParamValue(idx int) types.Datum
 }
 
 // BuildContext is used to build an expression
@@ -114,6 +115,9 @@ type BuildContext interface {
 	// in most cases except for the method `isNullRejected` in planner.
 	// See the comments for `isNullRejected` in planner for more details.
 	IsInNullRejectCheck() bool
+	// IsConstantPropagateCheck returns the flag to indicate whether the expression is in constant propagate check.
+	// It should be true only when we are doing constant propagation in rule_predicate_push_down.
+	IsConstantPropagateCheck() bool
 	// ConnectionID indicates the connection ID of the current session.
 	// If the context is not in a session, it should return 0.
 	ConnectionID() uint64
@@ -142,6 +146,21 @@ func WithNullRejectCheck(ctx ExprContext) *NullRejectCheckExprContext {
 
 // IsInNullRejectCheck always returns true for `NullRejectCheckExprContext`
 func (ctx *NullRejectCheckExprContext) IsInNullRejectCheck() bool {
+	return true
+}
+
+// ConstantPropagateCheckContext is a wrapper to return true for `IsConstantPropagateCheck`.
+type ConstantPropagateCheckContext struct {
+	ExprContext
+}
+
+// WithConstantPropagateCheck returns a new `ConstantPropagateCheckContext` with the given `ExprContext`.
+func WithConstantPropagateCheck(ctx ExprContext) *ConstantPropagateCheckContext {
+	return &ConstantPropagateCheckContext{ExprContext: ctx}
+}
+
+// IsConstantPropagateCheck always returns true for `ConstantPropagateCheckContext`
+func (ctx *ConstantPropagateCheckContext) IsConstantPropagateCheck() bool {
 	return true
 }
 
@@ -212,6 +231,6 @@ func AssertLocationWithSessionVars(ctxLoc *time.Location, vars *variable.Session
 	stmtLocStr := vars.StmtCtx.TimeZone().String()
 	intest.Assert(ctxLocStr == varsLocStr && ctxLocStr == stmtLocStr,
 		"location mismatch, ctxLoc: %s, varsLoc: %s, stmtLoc: %s",
-		ctxLoc.String(), ctxLocStr, stmtLocStr,
+		ctxLocStr, varsLocStr, stmtLocStr,
 	)
 }

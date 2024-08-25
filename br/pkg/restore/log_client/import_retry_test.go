@@ -22,9 +22,11 @@ import (
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -53,6 +55,7 @@ func assertRegions(t *testing.T, regions []*split.RegionInfo, keys ...string) {
 
 type TestClient struct {
 	split.SplitClient
+	pd.Client
 
 	mu           sync.RWMutex
 	stores       map[uint64]*metapb.Store
@@ -87,6 +90,14 @@ func (c *TestClient) GetAllRegions() map[uint64]*split.RegionInfo {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.regions
+}
+
+func (c *TestClient) GetPDClient() *utiltest.FakePDClient {
+	stores := make([]*metapb.Store, 0, len(c.stores))
+	for _, store := range c.stores {
+		stores = append(stores, store)
+	}
+	return utiltest.NewFakePDClient(stores, false, nil)
 }
 
 func (c *TestClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
@@ -597,4 +608,26 @@ func TestPaginateScanLeader(t *testing.T) {
 		return logclient.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba")
+}
+
+func TestRetryRecognizeErrCode(t *testing.T) {
+	waitTime := 1 * time.Millisecond
+	maxWaitTime := 16 * time.Millisecond
+	ctx := context.Background()
+	inner := 0
+	outer := 0
+	utils.WithRetry(ctx, func() error {
+		e := utils.WithRetry(ctx, func() error {
+			inner++
+			e := status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
+			if e != nil {
+				return errors.Trace(e)
+			}
+			return nil
+		}, utils.NewBackoffer(10, waitTime, maxWaitTime, utils.NewErrorContext("download sst", 3)))
+		outer++
+		return errors.Trace(e)
+	}, utils.NewBackoffer(10, waitTime, maxWaitTime, utils.NewErrorContext("import sst", 3)))
+	require.Equal(t, 10, outer)
+	require.Equal(t, 100, inner)
 }

@@ -67,6 +67,9 @@ func (s *Schema) String() string {
 
 // Clone copies the total schema.
 func (s *Schema) Clone() *Schema {
+	if s == nil {
+		return nil
+	}
 	cols := make([]*Column, 0, s.Len())
 	keys := make([]KeyInfo, 0, len(s.Keys))
 	for _, col := range s.Columns {

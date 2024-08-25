@@ -15,12 +15,11 @@
 package contextstatic
 
 import (
-	"sync/atomic"
-
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
@@ -39,8 +38,7 @@ type staticExprCtxState struct {
 	sysDateIsNow               bool
 	noopFuncsMode              int
 	rng                        *mathutil.MysqlRng
-	canUseCache                *atomic.Bool
-	skipCacheHandleFunc        func(useCache *atomic.Bool, skipReason string)
+	planCacheTracker           *contextutil.PlanCacheTracker
 	columnIDAllocator          exprctx.PlanColumnIDAllocator
 	connectionID               uint64
 	windowingUseHighPrecision  bool
@@ -103,17 +101,11 @@ func WithRng(rng *mathutil.MysqlRng) StaticExprCtxOption {
 	}
 }
 
-// WithUseCache sets the return value of `IsUseCache` for `StaticExprContext`.
-func WithUseCache(useCache bool) StaticExprCtxOption {
+// WithPlanCacheTracker sets the plan cache tracker for `StaticExprContext`.
+func WithPlanCacheTracker(tracker *contextutil.PlanCacheTracker) StaticExprCtxOption {
+	intest.AssertNotNil(tracker)
 	return func(s *staticExprCtxState) {
-		s.canUseCache.Store(useCache)
-	}
-}
-
-// WithSkipCacheHandleFunc sets inner skip plan cache function for StaticExprContext
-func WithSkipCacheHandleFunc(fn func(useCache *atomic.Bool, skipReason string)) StaticExprCtxOption {
-	return func(s *staticExprCtxState) {
-		s.skipCacheHandleFunc = fn
+		s.planCacheTracker = tracker
 	}
 }
 
@@ -170,10 +162,6 @@ func NewStaticExprContext(opts ...StaticExprCtxOption) *StaticExprContext {
 			groupConcatMaxLen:          variable.DefGroupConcatMaxLen,
 		},
 	}
-
-	ctx.canUseCache = &atomic.Bool{}
-	ctx.canUseCache.Store(true)
-
 	for _, opt := range opts {
 		opt(&ctx.staticExprCtxState)
 	}
@@ -190,6 +178,12 @@ func NewStaticExprContext(opts ...StaticExprCtxOption) *StaticExprContext {
 		ctx.columnIDAllocator = exprctx.NewSimplePlanColumnIDAllocator(0)
 	}
 
+	if ctx.planCacheTracker == nil {
+		cacheTracker := contextutil.NewPlanCacheTracker(ctx.evalCtx)
+		ctx.planCacheTracker = &cacheTracker
+		ctx.planCacheTracker.EnablePlanCache()
+	}
+
 	return ctx
 }
 
@@ -198,9 +192,6 @@ func (ctx *StaticExprContext) Apply(opts ...StaticExprCtxOption) *StaticExprCont
 	newCtx := &StaticExprContext{
 		staticExprCtxState: ctx.staticExprCtxState,
 	}
-
-	newCtx.canUseCache = &atomic.Bool{}
-	newCtx.canUseCache.Store(ctx.canUseCache.Load())
 
 	for _, opt := range opts {
 		opt(&newCtx.staticExprCtxState)
@@ -211,6 +202,11 @@ func (ctx *StaticExprContext) Apply(opts ...StaticExprCtxOption) *StaticExprCont
 
 // GetEvalCtx implements the `ExprContext.GetEvalCtx`.
 func (ctx *StaticExprContext) GetEvalCtx() exprctx.EvalContext {
+	return ctx.evalCtx
+}
+
+// GetStaticEvalCtx returns the inner `StaticEvalContext`.
+func (ctx *StaticExprContext) GetStaticEvalCtx() *StaticEvalContext {
 	return ctx.evalCtx
 }
 
@@ -246,16 +242,12 @@ func (ctx *StaticExprContext) Rng() *mathutil.MysqlRng {
 
 // IsUseCache implements the `ExprContext.IsUseCache`.
 func (ctx *StaticExprContext) IsUseCache() bool {
-	return ctx.canUseCache.Load()
+	return ctx.planCacheTracker.UseCache()
 }
 
 // SetSkipPlanCache implements the `ExprContext.SetSkipPlanCache`.
 func (ctx *StaticExprContext) SetSkipPlanCache(reason string) {
-	if fn := ctx.skipCacheHandleFunc; fn != nil {
-		fn(ctx.canUseCache, reason)
-		return
-	}
-	ctx.canUseCache.Store(false)
+	ctx.planCacheTracker.SetSkipPlanCache(reason)
 }
 
 // AllocPlanColumnID implements the `ExprContext.AllocPlanColumnID`.
@@ -265,6 +257,11 @@ func (ctx *StaticExprContext) AllocPlanColumnID() int64 {
 
 // IsInNullRejectCheck implements the `ExprContext.IsInNullRejectCheck` and should always return false.
 func (ctx *StaticExprContext) IsInNullRejectCheck() bool {
+	return false
+}
+
+// IsConstantPropagateCheck implements the `ExprContext.IsConstantPropagateCheck` and should always return false.
+func (ctx *StaticExprContext) IsConstantPropagateCheck() bool {
 	return false
 }
 

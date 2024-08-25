@@ -71,11 +71,19 @@ type EngineFileSize struct {
 
 // LocalWriterConfig defines the configuration to open a LocalWriter
 type LocalWriterConfig struct {
-	// is the chunk KV written to this LocalWriter sent in order
-	// only needed for local backend, can omit for tidb backend
-	IsKVSorted bool
-	// only needed for tidb backend, can omit for local backend
-	TableName string
+	// Local backend specified configuration
+	Local struct {
+		// is the chunk KV written to this LocalWriter sent in order
+		IsKVSorted bool
+		// MemCacheSize specifies the estimated memory cache limit used by this local
+		// writer. It has higher priority than BackendConfig.LocalWriterMemCacheSize if
+		// set.
+		MemCacheSize int64
+	}
+	// TiDB backend specified configuration
+	TiDB struct {
+		TableName string
+	}
 }
 
 // EngineConfig defines configuration used for open engine

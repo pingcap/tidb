@@ -215,18 +215,6 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 	return (cnt == 0 || (cnt > c.defaultValue && cnt < 2*(c.count/uint64(c.width)))) && c.defaultValue > 0
 }
 
-func updateValueBytes(c *CMSketch, t *TopN, d []byte, count uint64) {
-	h1, h2 := murmur3.Sum128(d)
-	if oriCount, ok := t.QueryTopN(nil, d); ok {
-		if count > oriCount {
-			t.updateTopNWithDelta(d, count-oriCount, true)
-		} else {
-			t.updateTopNWithDelta(d, oriCount-count, false)
-		}
-	}
-	c.setValue(h1, h2, count)
-}
-
 // setValue sets the count for value that hashed into (h1, h2), and update defaultValue if necessary.
 func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
 	oriCount := c.queryHashValue(nil, h1, h2)

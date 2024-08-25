@@ -163,6 +163,7 @@ nogo(
                "//build/linter/noloopclosure",
                "//build/linter/prealloc",
                "//build/linter/predeclared",
+               "//build/linter/printexpression",
                "//build/linter/unconvert",
                "//build/linter/rowserrcheck",
                "//build/linter/toomanytests",

@@ -84,12 +84,11 @@ func rebuildRange(p base.Plan) error {
 	case *PhysicalIndexMergeJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
 	case *PhysicalIndexJoin:
-		if err := x.Ranges.Rebuild(); err != nil {
+		if err := x.Ranges.Rebuild(sctx); err != nil {
 			return err
 		}
 		if mutableRange, ok := x.Ranges.(*mutableIndexJoinRange); ok {
-			helper := mutableRange.buildHelper
-			rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols, mutableRange.outerJoinKeys)
+			rangeInfo := mutableRange.rangeInfo
 			innerPlan := x.Children()[x.InnerChildIdx]
 			updateRange(innerPlan, x.Ranges.Range(), rangeInfo)
 		}

@@ -146,6 +146,25 @@ func TestWaitSnapshotsCreated(t *testing.T) {
 			expectErr:    true,
 		},
 		{
+			desc: "snapshot failed w/out state message",
+			snapshotsOutput: ec2.DescribeSnapshotsOutput{
+				Snapshots: []*ec2.Snapshot{
+					{
+						SnapshotId: awsapi.String("snap-1"),
+						VolumeSize: awsapi.Int64(1),
+						State:      awsapi.String(ec2.SnapshotStateCompleted),
+					},
+					{
+						SnapshotId:   awsapi.String("snap-2"),
+						State:        awsapi.String(ec2.SnapshotStateError),
+						StateMessage: nil,
+					},
+				},
+			},
+			expectedSize: 0,
+			expectErr:    true,
+		},
+		{
 			desc: "snapshots pending",
 			snapshotsOutput: ec2.DescribeSnapshotsOutput{
 				Snapshots: []*ec2.Snapshot{

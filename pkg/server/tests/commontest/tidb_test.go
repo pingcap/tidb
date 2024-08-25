@@ -22,6 +22,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -61,7 +63,192 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.opencensus.io/stats/view"
+	gorm_mysql "gorm.io/driver/mysql"
+	"gorm.io/gorm"
 )
+
+func TestVectorTypeTextProtocol(t *testing.T) {
+	// Text protocol is used in non-prepared query (COM_QUERY).
+	// See https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_text_resultset.html
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("DROP TABLE IF EXISTS test")
+		dbt.MustExec("CREATE TABLE test (a VECTOR, b VECTOR(3))")
+		dbt.MustExec("INSERT INTO test VALUES ('[]', '[1,2,3]')")
+
+		rows := dbt.MustQuery("SELECT * FROM test")
+
+		// Check column types
+		columnTypes, err := rows.ColumnTypes()
+		require.NoError(t, err)
+		require.Len(t, columnTypes, 2)
+		require.Equal(t, "LONGTEXT", columnTypes[0].DatabaseTypeName())
+		// https://github.com/go-sql-driver/mysql/blob/v1.7.1/fields.go#L195
+		require.Equal(t, reflect.TypeOf(sql.RawBytes{}).String(), columnTypes[0].ScanType().String())
+		require.Equal(t, "LONGTEXT", columnTypes[1].DatabaseTypeName())
+		require.Equal(t, reflect.TypeOf(sql.RawBytes{}).String(), columnTypes[1].ScanType().String())
+
+		require.True(t, rows.Next())
+		rowDatums := make([]any, 2)
+		rowDatumsPtr := make([]any, 2)
+		for i := range rowDatumsPtr {
+			rowDatumsPtr[i] = &rowDatums[i]
+		}
+
+		err = rows.Scan(rowDatumsPtr...)
+		require.NoError(t, err)
+
+		require.Equal(t, []byte("[]"), rowDatums[0])
+		require.Equal(t, []byte("[1,2,3]"), rowDatums[1])
+
+		require.False(t, rows.Next())
+		require.NoError(t, rows.Close())
+
+		// When using string, the driver will return the data as string.
+		rows = dbt.MustQuery("SELECT * FROM test")
+		require.NoError(t, err)
+
+		require.True(t, rows.Next())
+		var valA, valB string
+		err = rows.Scan(&valA, &valB)
+		require.NoError(t, err)
+
+		require.Equal(t, "[]", valA)
+		require.Equal(t, "[1,2,3]", valB)
+
+		require.False(t, rows.Next())
+		require.NoError(t, rows.Close())
+
+		// Also work with VECTOR immediate values.
+		rows = dbt.MustQuery("SELECT VEC_FROM_TEXT('[1,2]')")
+		require.NoError(t, err)
+
+		columnTypes, err = rows.ColumnTypes()
+		require.NoError(t, err)
+		require.Len(t, columnTypes, 1)
+		require.Equal(t, "LONGTEXT", columnTypes[0].DatabaseTypeName())
+		require.Equal(t, reflect.TypeOf(sql.RawBytes{}), columnTypes[0].ScanType())
+
+		require.True(t, rows.Next())
+		err = rows.Scan(&valA)
+		require.NoError(t, err)
+
+		require.Equal(t, "[1,2]", valA)
+
+		require.False(t, rows.Next())
+		require.NoError(t, rows.Close())
+	})
+}
+
+func TestVectorTypeBinaryProtocol(t *testing.T) {
+	// Binary protocol is used in prepared statements (COM_STMT_EXECUTE).
+	// See https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_binary_resultset.html
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("DROP TABLE IF EXISTS test")
+		dbt.MustExec("CREATE TABLE test (a VECTOR, b VECTOR(3))")
+		dbt.MustExec("INSERT INTO test VALUES ('[]', '[1,2,3]')")
+
+		stmt := dbt.MustPrepare("SELECT * FROM test")
+		defer stmt.Close()
+
+		// When using interface{}, the driver will return the data as []byte.
+		// Note: This is the same behavior as TEXT type.
+		rows, err := stmt.Query()
+		require.NoError(t, err)
+
+		columnTypes, err := rows.ColumnTypes()
+		require.NoError(t, err)
+		require.Len(t, columnTypes, 2)
+		require.Equal(t, "LONGTEXT", columnTypes[0].DatabaseTypeName())
+		// https://github.com/go-sql-driver/mysql/blob/v1.7.1/fields.go#L195
+		require.Equal(t, reflect.TypeOf(sql.RawBytes{}).String(), columnTypes[0].ScanType().String())
+		require.Equal(t, "LONGTEXT", columnTypes[1].DatabaseTypeName())
+		require.Equal(t, reflect.TypeOf(sql.RawBytes{}).String(), columnTypes[1].ScanType().String())
+
+		require.True(t, rows.Next())
+		rowDatums := make([]any, 2)
+		rowDatumsPtr := make([]any, 2)
+		for i := range rowDatumsPtr {
+			rowDatumsPtr[i] = &rowDatums[i]
+		}
+
+		err = rows.Scan(rowDatumsPtr...)
+		require.NoError(t, err)
+
+		require.Equal(t, []byte("[]"), rowDatums[0])
+		require.Equal(t, []byte("[1,2,3]"), rowDatums[1])
+
+		require.False(t, rows.Next())
+		require.NoError(t, rows.Close())
+
+		// When using string, the driver will return the data as string.
+		rows, err = stmt.Query()
+		require.NoError(t, err)
+
+		require.True(t, rows.Next())
+		var valA, valB string
+		err = rows.Scan(&valA, &valB)
+		require.NoError(t, err)
+
+		require.Equal(t, "[]", valA)
+		require.Equal(t, "[1,2,3]", valB)
+
+		require.False(t, rows.Next())
+		require.NoError(t, rows.Close())
+
+		// Also work with VECTOR immediate values.
+		stmt2 := dbt.MustPrepare("SELECT VEC_FROM_TEXT('[1,2]')")
+		defer stmt2.Close()
+
+		rows, err = stmt2.Query()
+		require.NoError(t, err)
+
+		columnTypes, err = rows.ColumnTypes()
+		require.NoError(t, err)
+		require.Len(t, columnTypes, 1)
+		require.Equal(t, "LONGTEXT", columnTypes[0].DatabaseTypeName())
+		require.Equal(t, reflect.TypeOf(sql.RawBytes{}), columnTypes[0].ScanType())
+
+		require.True(t, rows.Next())
+		err = rows.Scan(&valA)
+		require.NoError(t, err)
+
+		require.Equal(t, "[1,2]", valA)
+
+		require.False(t, rows.Next())
+		require.NoError(t, rows.Close())
+	})
+}
+
+type VectorTestModel struct {
+	ID         int
+	Embedding  string `gorm:"type:vector(3)"`
+	Embedding2 string `gorm:"type:vector(3)"`
+}
+
+func TestVectorTypeGORM(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestsOnNewDB(t, nil, "vector_db", func(dbt *testkit.DBTestKit) {
+		dbgorm, err := gorm.Open(gorm_mysql.New(gorm_mysql.Config{
+			Conn: dbt.GetDB(),
+		}), &gorm.Config{})
+		require.NoError(t, err)
+
+		require.NoError(t, dbgorm.AutoMigrate(&VectorTestModel{}))
+
+		tx := dbgorm.Create(&VectorTestModel{ID: 10, Embedding: "[1,2.0,3.0]", Embedding2: "[2,2,2]"})
+		require.NoError(t, tx.Error)
+
+		var v VectorTestModel
+		tx = dbgorm.First(&v, "id = ?", 10)
+		require.NoError(t, tx.Error)
+
+		require.Equal(t, 10, v.ID)
+		require.Equal(t, "[1,2,3]", v.Embedding)
+		require.Equal(t, "[2,2,2]", v.Embedding2)
+	})
+}
 
 func TestRegression(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
@@ -1772,7 +1959,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 		isQuery bool
 	}{
 		{"insert into t () values (),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),()", "", false},
-		{"analyze table t", "", false},
+		{"analyze table t all columns", "", false},
 		{"explain analyze select sum(a+b) from t", ".*TableReader.*", true},
 		{"trace select sum(b*a), sum(a+b) from t", "", true},
 		{"set global tidb_stmt_summary_history_size=5;", "", false},
@@ -3086,4 +3273,83 @@ func TestConnectionCount(t *testing.T) {
 func TestTypeAndCharsetOfSendLongData(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 	ts.RunTestTypeAndCharsetOfSendLongData(t)
+}
+
+func TestIssue53634(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
+	ts.RunTestIssue53634(t)
+}
+
+func TestIssue54254(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
+	ts.RunTestIssue54254(t)
+}
+
+func TestAuthSocket(t *testing.T) {
+	defer server2.ClearOSUserForAuthSocket()
+
+	cfg := util2.NewTestConfig()
+	cfg.Socket = filepath.Join(t.TempDir(), "authsock.sock")
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	ts := servertestkit.CreateTidbTestSuiteWithCfg(t, cfg)
+	ts.WaitUntilServerCanConnect()
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("CREATE USER 'u1'@'%' IDENTIFIED WITH auth_socket;")
+		dbt.MustExec("CREATE USER 'u2'@'%' IDENTIFIED WITH auth_socket AS 'sockuser'")
+		dbt.MustExec("CREATE USER 'sockuser'@'%' IDENTIFIED WITH auth_socket;")
+	})
+
+	// network login should be denied
+	for _, uname := range []string{"u1", "u2", "u3"} {
+		server2.MockOSUserForAuthSocket(uname)
+		db, err := sql.Open("mysql", ts.GetDSN(func(config *mysql.Config) {
+			config.User = uname
+		}))
+		require.NoError(t, err)
+		_, err = db.Conn(context.TODO())
+		require.EqualError(t,
+			err,
+			fmt.Sprintf("Error 1045 (28000): Access denied for user '%s'@'127.0.0.1' (using password: NO)", uname),
+		)
+		require.NoError(t, db.Close())
+	}
+
+	socketAuthConf := func(user string) func(*mysql.Config) {
+		return func(config *mysql.Config) {
+			config.User = user
+			config.Net = "unix"
+			config.Addr = cfg.Socket
+			config.DBName = ""
+		}
+	}
+
+	server2.MockOSUserForAuthSocket("sockuser")
+
+	// mysql username that is different with the OS user should be rejected.
+	db, err := sql.Open("mysql", ts.GetDSN(socketAuthConf("u1")))
+	require.NoError(t, err)
+	_, err = db.Conn(context.TODO())
+	require.EqualError(t, err, "Error 1045 (28000): Access denied for user 'u1'@'localhost' (using password: YES)")
+	require.NoError(t, db.Close())
+
+	// mysql username that is the same with the OS user should be accepted.
+	ts.RunTests(t, socketAuthConf("sockuser"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.CheckRows(t, rows, "sockuser@%")
+	})
+
+	// When a user is created with `IDENTIFIED WITH auth_socket AS ...`.
+	// It should be accepted when username or as string is the same with OS user.
+	ts.RunTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.CheckRows(t, rows, "u2@%")
+	})
+
+	server2.MockOSUserForAuthSocket("u2")
+	ts.RunTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.CheckRows(t, rows, "u2@%")
+	})
 }

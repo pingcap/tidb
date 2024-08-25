@@ -146,9 +146,10 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 				}
 				return k
 			},
-			Tbl:  t.Meta(),
-			Idx:  idx.Meta(),
-			Sctx: sessCtx,
+			Tbl:             t.Meta(),
+			Idx:             idx.Meta(),
+			EnableRedactLog: sessCtx.GetSessionVars().EnableRedactLog,
+			Storage:         sessCtx.GetStore(),
 		}
 	}
 

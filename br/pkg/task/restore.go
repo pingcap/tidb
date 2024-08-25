@@ -7,9 +7,11 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -33,27 +35,30 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
 const (
-	flagOnline              = "online"
-	flagNoSchema            = "no-schema"
-	flagLoadStats           = "load-stats"
-	flagGranularity         = "granularity"
-	flagConcurrencyPerStore = "tikv-max-restore-concurrency"
+	flagOnline                   = "online"
+	flagNoSchema                 = "no-schema"
+	flagLoadStats                = "load-stats"
+	flagGranularity              = "granularity"
+	flagConcurrencyPerStore      = "tikv-max-restore-concurrency"
+	flagAllowPITRFromIncremental = "allow-pitr-from-incremental"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -97,7 +102,6 @@ const (
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultFlagDdlBatchSize   = 128
 	resetSpeedLimitRetryTimes = 3
-	maxRestoreBatchSizeLimit  = 10240
 )
 
 const (
@@ -149,7 +153,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
 	flags.String(flagGranularity, string(restore.CoarseGrained), "(deprecated) Whether split & scatter regions using fine-grained way during restore")
-	flags.Uint(flagConcurrencyPerStore, 128, "The size of thread pool on each store that executes tasks, only enabled when `--granularity=coarse-grained`")
+	flags.Uint(flagConcurrencyPerStore, 128, "The size of thread pool on each store that executes tasks")
 	flags.Uint32(flagConcurrency, 128, "(deprecated) The size of thread pool on BR that executes tasks, "+
 		"where each task restores one SST file to TiKV")
 	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
@@ -167,6 +171,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagWithSysTable, true, "whether restore system privilege tables on default setting")
 	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
 	flags.Bool(flagUseFSR, false, "whether enable FSR for AWS snapshots")
+
 	_ = flags.MarkHidden(FlagResetSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
@@ -174,6 +179,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(FlagStatsConcurrency)
 	_ = flags.MarkHidden(FlagBatchFlushInterval)
 	_ = flags.MarkHidden(FlagDdlBatchSize)
+	_ = flags.MarkHidden(flagUseFSR)
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -237,6 +243,10 @@ type RestoreConfig struct {
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
+	// AllowPITRFromIncremental indicates whether this restore should enter a compatibility mode for incremental restore.
+	// In this restore mode, the restore will not perform timestamp rewrite on the incremental data.
+	AllowPITRFromIncremental bool `json:"allow-pitr-from-incremental" toml:"allow-pitr-from-incremental"`
+
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
 	StartTS         uint64                      `json:"start-ts" toml:"start-ts"`
 	RestoreTS       uint64                      `json:"restore-ts" toml:"restore-ts"`
@@ -279,6 +289,10 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
+	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore"+
+		" default is true, the incremental restore will not perform rewrite on the incremental data"+
+		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
+		" these ddl jobs are Add index, Modify column and Reorganize partition")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -393,6 +407,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.WaitTiflashReady, err = flags.GetBool(FlagWaitTiFlashReady)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)
+	}
+
+	cfg.AllowPITRFromIncremental, err = flags.GetBool(flagAllowPITRFromIncremental)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
@@ -700,7 +719,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if IsStreamRestore(cmdName) {
 		restoreError = RunStreamRestore(c, g, cmdName, cfg)
 	} else {
-		restoreError = runRestore(c, g, cmdName, cfg)
+		restoreError = runRestore(c, g, cmdName, cfg, nil)
 	}
 	if restoreError != nil {
 		return errors.Trace(restoreError)
@@ -732,7 +751,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	return nil
 }
 
-func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig, checkInfo *PiTRTaskInfo) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -820,6 +839,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
 
+	if cfg.CheckRequirements {
+		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	archiveSize := reader.ArchiveSize(ctx, files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
@@ -827,6 +852,11 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	restoreTS, err := restore.GetTSWithRetry(ctx, mgr.GetPDClient())
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// for full + log restore. should check the cluster is empty.
+	if client.IsFull() && checkInfo != nil && checkInfo.FullRestoreCheckErr != nil {
+		return checkInfo.FullRestoreCheckErr
 	}
 
 	if client.IsIncremental() {
@@ -880,6 +910,11 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
 		if cfg.WithSysTable {
 			client.InitFullClusterRestore(cfg.ExplicitFilter)
+		}
+	} else if checkpointFirstRun && cfg.CheckRequirements {
+		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+			schedulersRemovable = true
+			return errors.Trace(err)
 		}
 	}
 
@@ -938,12 +973,14 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	var newTS uint64
-	if client.IsIncremental() {
-		newTS = restoreTS
-	}
 	ddlJobs := FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = FilterDDLJobByRules(ddlJobs, DDLJobBlockListRule)
+	if cfg.AllowPITRFromIncremental {
+		err = CheckDDLJobByRules(ddlJobs, DDLJobLogIncrementalCompactBlockListRule)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder)
 	if err != nil {
@@ -1000,10 +1037,26 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
+	var newTS uint64
+	if client.IsIncremental() {
+		if !cfg.AllowPITRFromIncremental {
+			// we need to get the new ts after execDDL
+			// or backfilled data in upstream may not be covered by
+			// the new ts.
+			// see https://github.com/pingcap/tidb/issues/54426
+			newTS, err = restore.GetTSWithRetry(ctx, mgr.GetPDClient())
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
 
-	tableStream := client.GoCreateTables(ctx, tables, newTS, errCh)
+	createdTables, err := client.CreateTables(ctx, tables, newTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
@@ -1023,30 +1076,25 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 
 		// Hijack the tableStream and rewrite the rewrite rules.
-		tableStream = util.ChanMap(tableStream, func(t snapclient.CreatedTable) snapclient.CreatedTable {
+		for _, createdTable := range createdTables {
 			// Set the keyspace info for the checksum requests
-			t.RewriteRule.OldKeyspace = oldKeyspace
-			t.RewriteRule.NewKeyspace = newKeyspace
+			createdTable.RewriteRule.OldKeyspace = oldKeyspace
+			createdTable.RewriteRule.NewKeyspace = newKeyspace
 
-			for _, rule := range t.RewriteRule.Data {
+			for _, rule := range createdTable.RewriteRule.Data {
 				rule.OldKeyPrefix = append(append([]byte{}, oldKeyspace...), rule.OldKeyPrefix...)
 				rule.NewKeyPrefix = codec.EncodeKey(rule.NewKeyPrefix)
 			}
-			return t
-		})
+		}
 	}
 
 	if cfg.tiflashRecorder != nil {
-		tableStream = util.ChanMap(tableStream, func(t snapclient.CreatedTable) snapclient.CreatedTable {
-			if cfg.tiflashRecorder != nil {
-				cfg.tiflashRecorder.Rewrite(t.OldTable.Info.ID, t.Table.ID)
-			}
-			return t
-		})
+		for _, createdTable := range createdTables {
+			cfg.tiflashRecorder.Rewrite(createdTable.OldTable.Info.ID, createdTable.Table.ID)
+		}
 	}
 
-	// Block on creating tables before restore starts. since create table is no longer a heavy operation any more.
-	tableStream = client.GoBlockCreateTablesPipeline(ctx, maxRestoreBatchSizeLimit, tableStream)
+	tableStream := afterTableCreatedCh(ctx, createdTables)
 
 	tableFileMap := MapTableToFiles(files)
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
@@ -1166,6 +1214,143 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	return nil
 }
 
+func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
+	var resp map[string]any
+	err = utils.WithRetry(ctx, func() error {
+		resp, err = mgr.GetPDHTTPClient().GetReplicateConfig(ctx)
+		return err
+	}, utils.NewPDReqBackoffer())
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	key := "max-replicas"
+	val, ok := resp[key]
+	if !ok {
+		return 0, errors.Errorf("key %s not found in response %v", key, resp)
+	}
+	return uint64(val.(float64)), nil
+}
+
+func getStores(ctx context.Context, mgr *conn.Mgr) (stores *http.StoresInfo, err error) {
+	err = utils.WithRetry(ctx, func() error {
+		stores, err = mgr.GetPDHTTPClient().GetStores(ctx)
+		return err
+	}, utils.NewPDReqBackoffer())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return stores, nil
+}
+
+func EstimateTikvUsage(files []*backuppb.File, replicaCnt uint64, storeCnt uint64) uint64 {
+	if storeCnt == 0 {
+		return 0
+	}
+	if replicaCnt > storeCnt {
+		replicaCnt = storeCnt
+	}
+	totalSize := uint64(0)
+	for _, file := range files {
+		totalSize += file.GetSize_()
+	}
+	log.Info("estimate tikv usage", zap.Uint64("total size", totalSize), zap.Uint64("replicaCnt", replicaCnt), zap.Uint64("store count", storeCnt))
+	return totalSize * replicaCnt / storeCnt
+}
+
+func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
+	if storeCnt == 0 {
+		return 0
+	}
+	tiflashTotal := uint64(0)
+	for _, table := range tables {
+		if table.Info.TiFlashReplica == nil || table.Info.TiFlashReplica.Count <= 0 {
+			continue
+		}
+		tableBytes := uint64(0)
+		for _, file := range table.Files {
+			tableBytes += file.GetSize_()
+		}
+		tiflashTotal += tableBytes * table.Info.TiFlashReplica.Count
+	}
+	log.Info("estimate tiflash usage", zap.Uint64("total size", tiflashTotal), zap.Uint64("store count", storeCnt))
+	return tiflashTotal / storeCnt
+}
+
+func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
+	available, err := units.RAMInBytes(store.Status.Available)
+	if err != nil {
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s", store.Store.ID, store.Status.Available)
+	}
+	if available <= 0 {
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s", store.Store.ID, store.Status.Available)
+	}
+	if uint64(available) < necessary {
+		return errors.Annotatef(berrors.ErrKVDiskFull, "store %d has no space left on device, available %s, necessary %s",
+			store.Store.ID, units.BytesSize(float64(available)), units.BytesSize(float64(necessary)))
+	}
+	return nil
+}
+
+func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, tables []*metautil.Table) error {
+	maxReplica, err := getMaxReplica(ctx, mgr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	stores, err := getStores(ctx, mgr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var tikvCnt, tiflashCnt uint64 = 0, 0
+	for i := range stores.Stores {
+		store := &stores.Stores[i]
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			tiflashCnt += 1
+			continue
+		}
+		tikvCnt += 1
+	}
+
+	// We won't need to restore more than 1800 PB data at one time, right?
+	preserve := func(base uint64, ratio float32) uint64 {
+		if base > 1000*units.PB {
+			return base
+		}
+		return base * uint64(ratio*10) / 10
+	}
+
+	// The preserve rate for tikv is quite accurate, while rate for tiflash is a
+	// number calculated from tpcc testing with variable data sizes.  1.4 is a
+	// relative conservative value.
+	tikvUsage := preserve(EstimateTikvUsage(files, maxReplica, tikvCnt), 1.1)
+	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.4)
+	log.Info("preserved disk space", zap.Uint64("tikv", tikvUsage), zap.Uint64("tiflash", tiflashUsage))
+
+	err = utils.WithRetry(ctx, func() error {
+		stores, err = getStores(ctx, mgr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, store := range stores.Stores {
+			if engine.IsTiFlashHTTPResp(&store.Store) {
+				if err := CheckStoreSpace(tiflashUsage, &store); err != nil {
+					return errors.Trace(err)
+				}
+				continue
+			}
+			if err := CheckStoreSpace(tikvUsage, &store); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}, utils.NewDiskCheckBackoffer())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // Exhaust drains all remaining errors in the channel, into a slice of errors.
 func Exhaust(ec <-chan error) []error {
 	out := make([]error, 0, len(ec))
@@ -1179,6 +1364,28 @@ func Exhaust(ec <-chan error) []error {
 			return out
 		}
 	}
+}
+
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+	// Tasks from br clp client use other checks to validate
+	if g.GetClient() != glue.ClientSql {
+		return nil
+	}
+	message := "table already exists: "
+	allUnique := true
+	for _, table := range tables {
+		_, err := mgr.GetDomain().InfoSchema().TableByName(ctx, table.DB.Name, table.Info.Name)
+		if err == nil {
+			message += fmt.Sprintf("%s.%s ", table.DB.Name, table.Info.Name)
+			allUnique = false
+		} else if !infoschema.ErrTableNotExists.Equal(err) {
+			return errors.Trace(err)
+		}
+	}
+	if !allUnique {
+		return errors.Annotate(berrors.ErrTablesAlreadyExisted, message)
+	}
+	return nil
 }
 
 // EstimateRangeSize estimates the total range count by file.
@@ -1473,6 +1680,19 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 	return ddlJobs
 }
 
+// CheckDDLJobByRules if one of rules returns true, the job in srcDDLJobs will be filtered.
+func CheckDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) error {
+	for _, ddlJob := range srcDDLJobs {
+		for _, rule := range rules {
+			if rule(ddlJob) {
+				return errors.Annotatef(berrors.ErrRestoreModeMismatch, "DDL job %s is not allowed in incremental restore"+
+					" when --allow-pitr-from-incremental enabled", ddlJob.String())
+			}
+		}
+	}
+	return nil
+}
+
 // FilterDDLJobByRules if one of rules returns true, the job in srcDDLJobs will be filtered.
 func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (dstDDLJobs []*model.Job) {
 	dstDDLJobs = make([]*model.Job, 0, len(srcDDLJobs))
@@ -1502,12 +1722,44 @@ var incrementalRestoreActionBlockList = map[model.ActionType]struct{}{
 	model.ActionUnlockTable:                {},
 }
 
+var logIncrementalRestoreCompactibleBlockList = map[model.ActionType]struct{}{
+	model.ActionAddIndex:            {},
+	model.ActionModifyColumn:        {},
+	model.ActionReorganizePartition: {},
+}
+
 // DDLJobBlockListRule rule for filter ddl job with type in block list.
 func DDLJobBlockListRule(ddlJob *model.Job) bool {
 	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlockList)
 }
 
+func DDLJobLogIncrementalCompactBlockListRule(ddlJob *model.Job) bool {
+	return checkIsInActions(ddlJob.Type, logIncrementalRestoreCompactibleBlockList)
+}
+
 func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
 	_, ok := actions[action]
 	return ok
+}
+
+func afterTableCreatedCh(ctx context.Context, createdTables []*snapclient.CreatedTable) <-chan snapclient.CreatedTable {
+	outCh := make(chan snapclient.CreatedTable)
+
+	go func() {
+		defer close(outCh)
+
+		sort.Slice(createdTables, func(a, b int) bool {
+			return createdTables[a].Table.ID < createdTables[b].Table.ID
+		})
+
+		for _, createdTable := range createdTables {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				outCh <- *createdTable
+			}
+		}
+	}()
+	return outCh
 }

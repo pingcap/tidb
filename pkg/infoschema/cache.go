@@ -37,6 +37,10 @@ type InfoCache struct {
 
 	r    autoid.Requirement
 	Data *Data
+
+	// first known schema version records the first known schema version, all schemas between [firstKnownSchemaVersion, latest)
+	// are known as long as we keep the DDL history correctly.
+	firstKnownSchemaVersion int64
 }
 
 type schemaAndTimestamp struct {
@@ -84,6 +88,36 @@ func (h *InfoCache) Reset(capacity int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.cache = make([]schemaAndTimestamp, 0, capacity)
+}
+
+// Upsert is Resert and Insert combined, used during infoschema v1 v2 switch.
+func (h *InfoCache) Upsert(is InfoSchema, schemaTS uint64) func() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	old := h.cache
+	h.cache = make([]schemaAndTimestamp, 0, cap(h.cache))
+	h.cache = append(h.cache, schemaAndTimestamp{
+		infoschema: is,
+		timestamp:  int64(schemaTS),
+	})
+	h.firstKnownSchemaVersion = is.SchemaMetaVersion()
+
+	return func() {
+		// TODO: It's a bit tricky here, somewhere is holding the reference of the old infoschema.
+		// So GC can not release this object, leading to memory leak.
+		// Here we destroy the old infoschema on purpose, so someone use it would panic and
+		// we get to know where it is referenced.
+		for _, oldItem := range old {
+			switch raw := oldItem.infoschema.(type) {
+			case *infoSchema:
+				*raw = infoSchema{}
+			case *infoschemaV2:
+				*raw = infoschemaV2{}
+			}
+		}
+		logutil.BgLogger().Info("reset the old infoschema after v1 v2 switch, using the stale object will panic")
+	}
 }
 
 // GetLatest gets the newest information schema.
@@ -194,8 +228,28 @@ func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 	//			return h.cache[i]
 	//		}
 	// ```
+	// upsert is a full reset of InfoCache, after upsert, the DDL history might lost and the assumption does not hold anymore.
+	// For example:
+	//     Before
+	//              infoschema 51
+	//              infoschema 52
+	//              infoschema 53
+	//              infoschema 54
+	//              infoschema 55
+	//              infoschema 56
+	//     After Upsert()
+	//              infoschema 56
+	//     Then load historial snapshot version 51
+	//              infoschema 51
+	//              infoschema 56
+	// Now, request for schema version 55, return infoschem 51 would be wrong!
+	//
+	if i == len(h.cache) {
+		return nil
+	}
 
-	if i < len(h.cache) && (i != 0 || h.cache[i].infoschema.SchemaMetaVersion() == version) {
+	if h.cache[i].infoschema.SchemaMetaVersion() == version ||
+		(i != 0 && h.cache[i].infoschema.SchemaMetaVersion() >= h.firstKnownSchemaVersion) {
 		infoschema_metrics.HitVersionCounter.Inc()
 		return h.cache[i].infoschema
 	}
@@ -247,6 +301,9 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 			}
 			return true
 		}
+
+		// replace the old with the new one
+		h.cache[i].infoschema = is
 	}
 
 	if len(h.cache) < cap(h.cache) {
@@ -256,6 +313,9 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 		h.cache[i] = schemaAndTimestamp{
 			infoschema: is,
 			timestamp:  int64(schemaTS),
+		}
+		if len(h.cache) == 1 {
+			h.firstKnownSchemaVersion = is.SchemaMetaVersion()
 		}
 	} else if i < len(h.cache) {
 		// drop older schema

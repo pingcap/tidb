@@ -1,7 +1,7 @@
 drop table if exists t;
 create table t (a int);
 insert into t values (1);
-analyze table t;
+analyze table t all columns;
 explain format='verbose' select /*+ limit_to_cop() */ * from t where a=1 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
 TopN_8	1.00	20.71	root		planner__core__plan_cost_ver2.t.a, offset:0, count:1
