@@ -274,14 +274,11 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	return false
 }
 
-// AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
-var AutoAnalyzeMinCnt int64 = 1000
-
 func autoAnalyzeTable(sctx sessionctx.Context,
 	statsHandle statsutil.StatsHandle,
 	tblInfo *model.TableInfo, statsTbl *statistics.Table,
 	ratio float64, sql string, params ...interface{}) bool {
-	if statsTbl.Pseudo || statsTbl.RealtimeCount < AutoAnalyzeMinCnt {
+	if statsTbl.Pseudo || statsTbl.RealtimeCount < statistics.AutoAnalyzeMinCnt {
 		return false
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
@@ -375,7 +372,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 	partitionNames := make([]interface{}, 0, len(partitionDefs))
 	for _, def := range partitionDefs {
 		partitionStatsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
-		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
+		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < statistics.AutoAnalyzeMinCnt {
 			continue
 		}
 		if needAnalyze, reason := NeedAnalyzeTable(partitionStatsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
