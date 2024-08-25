@@ -41,6 +41,13 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
+	case model.ActionDropTable:
+		ids := h.getInitStateTableIDs(t.TableInfo)
+		for _, id := range ids {
+			if err := h.resetTableStats2KVForDrop(id); err != nil {
+				return err
+			}
+		}
 	case model.ActionAddColumn, model.ActionModifyColumn:
 		ids := h.getInitStateTableIDs(t.TableInfo)
 		for _, id := range ids {
@@ -58,6 +65,11 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		pruneMode := h.CurrentPruneMode()
 		if pruneMode == variable.Dynamic && t.PartInfo != nil {
 			if err := h.updateGlobalStats(t.TableInfo); err != nil {
+				return err
+			}
+		}
+		for _, def := range t.PartInfo.Definitions {
+			if err := h.resetTableStats2KVForDrop(def.ID); err != nil {
 				return err
 			}
 		}
@@ -253,6 +265,30 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 		if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 1, %?, 0, %?)", physicalID, idx.ID, startTS); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// resetTableStats2KV resets the count to 0.
+func (h *Handle) resetTableStats2KVForDrop(physicalID int64) (err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	startTS := txn.StartTS()
+	if _, err := exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%? where table_id =%?", startTS, physicalID); err != nil {
+		return err
 	}
 	return nil
 }
