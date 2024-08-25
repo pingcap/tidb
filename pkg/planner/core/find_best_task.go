@@ -1137,7 +1137,9 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 		}
 	}
 
-	if (ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount <= 1) && len(candidates) > 1 {
+	preferByStats := ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount <= 1
+	preferByVar := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
+	if (preferByVar || preferByStats) && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path, we just keep them. For other candidate paths, if there exists
 		// any range scan path, we remove full scan paths and keep range scan paths.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
@@ -1154,8 +1156,10 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 				}
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
-				preferredPaths = append(preferredPaths, c)
-				hasRangeScanPath = true
+				if preferByVar || ((c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0) && prop.IsSortItemEmpty()) || c.isMatchProp {
+					preferredPaths = append(preferredPaths, c)
+					hasRangeScanPath = true
+				}
 			}
 		}
 		if hasRangeScanPath {
