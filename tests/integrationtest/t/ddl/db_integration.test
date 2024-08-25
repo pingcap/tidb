@@ -1,0 +1,1119 @@
+# TestNoZeroDateMode
+drop table if exists test_zero_date;
+set session sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION';
+-- error 1067
+create table test_zero_date(agent_start_time date NOT NULL DEFAULT '0000-00-00');
+-- error 1067
+create table test_zero_date(agent_start_time datetime NOT NULL DEFAULT '0000-00-00 00:00:00');
+-- error 1067
+create table test_zero_date(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00');
+-- error 1067
+create table test_zero_date(a timestamp default '0000-00-00 00');
+-- error 1067
+create table test_zero_date(a timestamp default 0);
+set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+create table test_zero_date (a timestamp default 0);
+insert into test_zero_date values (0);
+select a, unix_timestamp(a) from test_zero_date;
+update test_zero_date set a = '2001-01-01 11:11:11' where a = 0;
+replace into test_zero_date values (0);
+delete from test_zero_date where a = 0;
+update test_zero_date set a = 0 where a = '2001-01-01 11:11:11';
+set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+-- error 1292
+insert into test_zero_date values (0);
+-- error 1292
+replace into test_zero_date values (0);
+-- error 1292
+update test_zero_date set a = 0 where a = 0;
+delete from test_zero_date where a = 0;
+select a, unix_timestamp(a) from test_zero_date;
+drop table test_zero_date;
+set session sql_mode='';
+create table test_zero_date (a timestamp default 0);
+drop table test_zero_date;
+create table test_zero_date (a int);
+insert into test_zero_date values (0);
+alter table test_zero_date modify a date;
+set session sql_mode='NO_ZERO_DATE';
+drop table test_zero_date;
+create table test_zero_date (a timestamp default 0);
+drop table test_zero_date;
+create table test_zero_date (a int);
+insert into test_zero_date values (0);
+alter table test_zero_date modify a date;
+set session sql_mode='STRICT_TRANS_TABLES';
+drop table test_zero_date;
+create table test_zero_date (a timestamp default 0);
+drop table test_zero_date;
+create table test_zero_date (a int);
+insert into test_zero_date values (0);
+-- error 1292
+alter table test_zero_date modify a date;
+set session sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES';
+drop table test_zero_date;
+-- error 1067
+create table test_zero_date (a timestamp default 0);
+create table test_zero_date (a int);
+insert into test_zero_date values (0);
+-- error 1292
+alter table test_zero_date modify a date;
+drop table if exists test_zero_date;
+set session sql_mode=default;
+
+# TestInvalidDefault
+drop table if exists t;
+-- error 1067
+create table t(c1 decimal default 1.7976931348623157E308);
+-- error 1067
+create table t( c1 varchar(2) default 'TiDB');
+
+# TestKeyWithoutLengthCreateTable
+# for issue #13452
+drop table if exists t_without_length;
+-- error 1170
+create table t_without_length (a text primary key);
+
+# TestInvalidNameWhenCreateTable
+# for issue #3848
+drop table if exists t;
+-- error 1102
+create table t(xxx.t.a bigint);
+-- error 1103
+create table t(ddl__db_integration.tttt.a bigint);
+-- error 1102
+create table t(t.tttt.a bigint);
+
+# TestIssue6101
+drop table if exists t1;
+create table t1 (quantity decimal(2) unsigned);
+-- error 1264
+insert into t1 values (500), (-500), (~0), (-1);
+drop table t1;
+set sql_mode='';
+create table t1 (quantity decimal(2) unsigned);
+insert into t1 values (500), (-500), (~0), (-1);
+select * from t1;
+drop table t1;
+set sql_mode=default;
+
+# TestIssue3833
+drop table if exists issue3833, issue3833_2;
+create table issue3833 (b char(0), c binary(0), d  varchar(0));
+-- error 1167
+create index idx on issue3833 (b);
+-- error 1167
+alter table issue3833 add index idx (b);
+-- error 1167
+create table issue3833_2 (b char(0), c binary(0), d varchar(0), index(b));
+-- error 1167
+create index idx on issue3833 (c);
+-- error 1167
+alter table issue3833 add index idx (c);
+-- error 1167
+create table issue3833_2 (b char(0), c binary(0), d varchar(0), index(c));
+-- error 1167
+create index idx on issue3833 (d);
+-- error 1167
+alter table issue3833 add index idx (d);
+-- error 1167
+create table issue3833_2 (b char(0), c binary(0), d varchar(0), index(d));
+
+# TestErrnoErrorCode
+drop table if exists test_error_code_succ, test_error_code1, test_error_code_2, test_error_code_3, test_error_code_null, test_error_code_succ;
+drop table if exists t1, t2, test_add_columns_on_update, test_drop_column, test_drop_columns;
+-- error 1059
+create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+-- error 1007
+create database test;
+-- error 1115
+create database test1 character set uft8;
+-- error 1115
+create database test2 character set gkb;
+-- error 1115
+create database test3 character set laitn1;
+-- error 1008
+drop database db_not_exist;
+create table test_error_code_succ (c1 int, c2 int, c3 int, primary key(c3));
+-- error 1050
+create table test_error_code_succ (c1 int, c2 int, c3 int);
+-- error 1060
+create table test_error_code1 (c1 int, c2 int, c2 int);
+-- error 1059
+create table test_error_code1 (c1 int, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int);
+-- error 1166
+create table test_error_code1 (c1 int, `_tidb_rowid` int);
+-- error 1059
+create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int);
+-- error 1061
+create table test_error_code1 (c1 int, c2 int, key aa (c1, c2), key aa (c1));
+-- error 1072
+create table test_error_code1 (c1 int, c2 int, c3 int, key(c_not_exist));
+-- error 1072
+create table test_error_code1 (c1 int, c2 int, c3 int, primary key(c_not_exist));
+-- error 1067
+create table test_error_code1 (c1 int not null default '');
+-- error 1067
+CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT 2.0 DEFAULT now());
+-- error 1067
+CREATE TABLE `t` (`a` double DEFAULT now());
+-- error 1115
+create table t1(a int) character set uft8;
+-- error 1115
+create table t1(a int) character set gkb;
+-- error 1115
+create table t1(a int) character set laitn1;
+-- error 1239
+create table test_error_code (a int not null ,b int not null,c int not null, d int not null, foreign key (b, c) references product(id));
+-- error 1113
+create table test_error_code_2;
+-- error 1113
+create table test_error_code_2 (unique(c1));
+-- error 1068
+create table test_error_code_2(c1 int, c2 int, c3 int, primary key(c1), primary key(c2));
+-- error 1170
+create table test_error_code_3(pt blob ,primary key (pt));
+-- error 1071
+create table test_error_code_3(a text, unique (a(769)));
+-- error 1071
+create table test_error_code_3(a text charset ascii, unique (a(3073)));
+-- error 1280
+create table test_error_code_3(`id` int, key `primary`(`id`));
+-- error 1103
+create table t2(c1.c2 blob default null);
+-- error 1067
+create table t2 (id int default null primary key , age int);
+-- error 1171
+create table t2 (id int null primary key , age int);
+-- error 1171
+create table t2 (id int default null, age int, primary key(id));
+-- error 1171
+create table t2 (id int null, age int, primary key(id));
+-- error 1075
+create table t2 (id int auto_increment, c int auto_increment);
+-- error 1067
+create table t2 (a datetime(2) default current_timestamp(3));
+-- error 1294
+create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp);
+-- error 1294
+create table t2 (a datetime default current_timestamp on update current_timestamp(2));
+-- error 1294
+create table t2 (a datetime(2) default current_timestamp(2) on update current_timestamp(3));
+-- error 1391
+create table t(a blob(10), index(a(0)));
+-- error 1391
+create table t(a char(10), index(a(0)));
+create table t2 (id int primary key , age int);
+-- error 1060
+alter table test_error_code_succ add column c1 int;
+-- error 1059
+alter table test_error_code_succ add column aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int;
+-- error 1146
+alter table test_comment comment 'test comment';
+-- error 1166
+alter table test_error_code_succ add column `a ` int ;
+-- error 1166
+alter table test_error_code_succ add column `_tidb_rowid` int ;
+create table test_on_update (c1 int, c2 int);
+-- error 1294
+alter table test_on_update add column c3 int on update current_timestamp;
+-- error 1294
+create table test_on_update_2(c int on update current_timestamp);
+-- error 1060
+alter table test_error_code_succ add column c1 int, add column c1 int;
+-- error 1059
+alter table test_error_code_succ add column (aa int, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int);
+-- error 1166
+alter table test_error_code_succ add column `a ` int, add column `b ` int;
+create table test_add_columns_on_update (c1 int, c2 int);
+-- error 1294
+alter table test_add_columns_on_update add column cc int, add column c3 int on update current_timestamp;
+-- error 1091
+alter table test_error_code_succ drop c_not_exist;
+create table test_drop_column (c1 int );
+-- error 1090
+alter table test_drop_column drop column c1;
+-- error 1091
+alter table test_error_code_succ drop c_not_exist, drop cc_not_exist;
+create table test_drop_columns (c1 int);
+alter table test_drop_columns add column c2 int first, add column c3 int after c1;
+-- error 1090
+alter table test_drop_columns drop column c1, drop column c2, drop column c3;
+-- error 1060
+alter table test_drop_columns drop column c1, add column c2 int;
+-- error 8200
+alter table test_drop_columns drop column c1, drop column c1;
+-- error 1072
+alter table test_error_code_succ add index idx (c_not_exist);
+alter table test_error_code_succ add index idx (c1);
+-- error 1061
+alter table test_error_code_succ add index idx (c1);
+-- error 1091
+alter table test_error_code_succ drop index idx_not_exist;
+-- error 8200
+alter table test_error_code_succ drop column c3;
+-- error 1102
+alter table test_error_code_succ modify testx.test_error_code_succ.c1 bigint;
+-- error 1103
+alter table test_error_code_succ modify t.c1 bigint;
+-- error 1166
+alter table test_error_code_succ change c1 _tidb_rowid bigint;
+-- error 1166
+alter table test_error_code_succ rename column c1 to _tidb_rowid;
+create table test_error_code_null(c1 char(100) not null);
+-- error 1048
+insert into test_error_code_null (c1) values(null);
+
+# TestTableDDLWithFloatType
+drop table if exists t;
+-- error 1427
+create table t (a decimal(1, 2));
+-- error 1427
+create table t (a float(1, 2));
+-- error 1427
+create table t (a double(1, 2));
+create table t (a double(1, 1));
+-- error 1427
+alter table t add column b decimal(1, 2);
+-- error 1427
+alter table t modify column a float(1, 4);
+-- error 1427
+alter table t change column a aa float(1, 4);
+drop table t;
+
+# TestCreateTableTooManyIndexes
+drop table if exists t_too_many_indexes;
+-- error 1069
+create table t_too_many_indexes (c0 int,c1 int,c2 int,c3 int,c4 int,c5 int,c6 int,c7 int,c8 int,c9 int,c10 int,c11 int,c12 int,c13 int,c14 int,c15 int,c16 int,c17 int,c18 int,c19 int,c20 int,c21 int,c22 int,c23 int,c24 int,c25 int,c26 int,c27 int,c28 int,c29 int,c30 int,c31 int,c32 int,c33 int,c34 int,c35 int,c36 int,c37 int,c38 int,c39 int,c40 int,c41 int,c42 int,c43 int,c44 int,c45 int,c46 int,c47 int,c48 int,c49 int,c50 int,c51 int,c52 int,c53 int,c54 int,c55 int,c56 int,c57 int,c58 int,c59 int,c60 int,c61 int,c62 int,c63 int,c64 int,c65 int,c66 int,c67 int,c68 int,c69 int,c70 int,c71 int,c72 int,c73 int,c74 int,c75 int,c76 int,c77 int,c78 int,c79 int,c80 int,c81 int,c82 int,c83 int,c84 int,c85 int,c86 int,c87 int,c88 int,c89 int,c90 int,c91 int,c92 int,c93 int,c94 int,c95 int,c96 int,c97 int,c98 int,c99 int,key k0(c0),key k1(c1),key k2(c2),key k3(c3),key k4(c4),key k5(c5),key k6(c6),key k7(c7),key k8(c8),key k9(c9),key k10(c10),key k11(c11),key k12(c12),key k13(c13),key k14(c14),key k15(c15),key k16(c16),key k17(c17),key k18(c18),key k19(c19),key k20(c20),key k21(c21),key k22(c22),key k23(c23),key k24(c24),key k25(c25),key k26(c26),key k27(c27),key k28(c28),key k29(c29),key k30(c30),key k31(c31),key k32(c32),key k33(c33),key k34(c34),key k35(c35),key k36(c36),key k37(c37),key k38(c38),key k39(c39),key k40(c40),key k41(c41),key k42(c42),key k43(c43),key k44(c44),key k45(c45),key k46(c46),key k47(c47),key k48(c48),key k49(c49),key k50(c50),key k51(c51),key k52(c52),key k53(c53),key k54(c54),key k55(c55),key k56(c56),key k57(c57),key k58(c58),key k59(c59),key k60(c60),key k61(c61),key k62(c62),key k63(c63),key k64(c64),key k65(c65),key k66(c66),key k67(c67),key k68(c68),key k69(c69),key k70(c70),key k71(c71),key k72(c72),key k73(c73),key k74(c74),key k75(c75),key k76(c76),key k77(c77),key k78(c78),key k79(c79),key k80(c80),key k81(c81),key k82(c82),key k83(c83),key k84(c84),key k85(c85),key k86(c86),key k87(c87),key k88(c88),key k89(c89),key k90(c90),key k91(c91),key k92(c92),key k93(c93),key k94(c94),key k95(c95),key k96(c96),key k97(c97),key k98(c98),key k99(c99));
+
+# TestCreateTooManyIndexes
+drop table if exists t_too_many;
+create table t_index_too_many (c0 int,c1 int,c2 int,c3 int,c4 int,c5 int,c6 int,c7 int,c8 int,c9 int,c10 int,c11 int,c12 int,c13 int,c14 int,c15 int,c16 int,c17 int,c18 int,c19 int,c20 int,c21 int,c22 int,c23 int,c24 int,c25 int,c26 int,c27 int,c28 int,c29 int,c30 int,c31 int,c32 int,c33 int,c34 int,c35 int,c36 int,c37 int,c38 int,c39 int,c40 int,c41 int,c42 int,c43 int,c44 int,c45 int,c46 int,c47 int,c48 int,c49 int,c50 int,c51 int,c52 int,c53 int,c54 int,c55 int,c56 int,c57 int,c58 int,c59 int,c60 int,c61 int,c62 int,c63 int,c64 int,c65 int,c66 int,c67 int,c68 int,c69 int,c70 int,c71 int,c72 int,c73 int,c74 int,c75 int,c76 int,c77 int,c78 int,c79 int,c80 int,c81 int,c82 int,c83 int,c84 int,c85 int,c86 int,c87 int,c88 int,c89 int,c90 int,c91 int,c92 int,c93 int,c94 int,c95 int,c96 int,c97 int,c98 int,c99 int,key k0(c0),key k1(c1),key k2(c2),key k3(c3),key k4(c4),key k5(c5),key k6(c6),key k7(c7),key k8(c8),key k9(c9),key k10(c10),key k11(c11),key k12(c12),key k13(c13),key k14(c14),key k15(c15),key k16(c16),key k17(c17),key k18(c18),key k19(c19),key k20(c20),key k21(c21),key k22(c22),key k23(c23),key k24(c24),key k25(c25),key k26(c26),key k27(c27),key k28(c28),key k29(c29),key k30(c30),key k31(c31),key k32(c32),key k33(c33),key k34(c34),key k35(c35),key k36(c36),key k37(c37),key k38(c38),key k39(c39),key k40(c40),key k41(c41),key k42(c42),key k43(c43),key k44(c44),key k45(c45),key k46(c46),key k47(c47),key k48(c48),key k49(c49),key k50(c50),key k51(c51),key k52(c52),key k53(c53),key k54(c54),key k55(c55),key k56(c56),key k57(c57),key k58(c58),key k59(c59),key k60(c60),key k61(c61),key k62(c62));
+create index idx1 on t_index_too_many (c62);
+-- error 1069
+create index idx2 on t_index_too_many (c63);
+
+# TestAddColumnTooMany
+drop table if exists t_column_too_many;
+create table t_column_too_many (a0 int,a1 int,a2 int,a3 int,a4 int,a5 int,a6 int,a7 int,a8 int,a9 int,a10 int,a11 int,a12 int,a13 int,a14 int,a15 int,a16 int,a17 int,a18 int,a19 int,a20 int,a21 int,a22 int,a23 int,a24 int,a25 int,a26 int,a27 int,a28 int,a29 int,a30 int,a31 int,a32 int,a33 int,a34 int,a35 int,a36 int,a37 int,a38 int,a39 int,a40 int,a41 int,a42 int,a43 int,a44 int,a45 int,a46 int,a47 int,a48 int,a49 int,a50 int,a51 int,a52 int,a53 int,a54 int,a55 int,a56 int,a57 int,a58 int,a59 int,a60 int,a61 int,a62 int,a63 int,a64 int,a65 int,a66 int,a67 int,a68 int,a69 int,a70 int,a71 int,a72 int,a73 int,a74 int,a75 int,a76 int,a77 int,a78 int,a79 int,a80 int,a81 int,a82 int,a83 int,a84 int,a85 int,a86 int,a87 int,a88 int,a89 int,a90 int,a91 int,a92 int,a93 int,a94 int,a95 int,a96 int,a97 int,a98 int,a99 int,a100 int,a101 int,a102 int,a103 int,a104 int,a105 int,a106 int,a107 int,a108 int,a109 int,a110 int,a111 int,a112 int,a113 int,a114 int,a115 int,a116 int,a117 int,a118 int,a119 int,a120 int,a121 int,a122 int,a123 int,a124 int,a125 int,a126 int,a127 int,a128 int,a129 int,a130 int,a131 int,a132 int,a133 int,a134 int,a135 int,a136 int,a137 int,a138 int,a139 int,a140 int,a141 int,a142 int,a143 int,a144 int,a145 int,a146 int,a147 int,a148 int,a149 int,a150 int,a151 int,a152 int,a153 int,a154 int,a155 int,a156 int,a157 int,a158 int,a159 int,a160 int,a161 int,a162 int,a163 int,a164 int,a165 int,a166 int,a167 int,a168 int,a169 int,a170 int,a171 int,a172 int,a173 int,a174 int,a175 int,a176 int,a177 int,a178 int,a179 int,a180 int,a181 int,a182 int,a183 int,a184 int,a185 int,a186 int,a187 int,a188 int,a189 int,a190 int,a191 int,a192 int,a193 int,a194 int,a195 int,a196 int,a197 int,a198 int,a199 int,a200 int,a201 int,a202 int,a203 int,a204 int,a205 int,a206 int,a207 int,a208 int,a209 int,a210 int,a211 int,a212 int,a213 int,a214 int,a215 int,a216 int,a217 int,a218 int,a219 int,a220 int,a221 int,a222 int,a223 int,a224 int,a225 int,a226 int,a227 int,a228 int,a229 int,a230 int,a231 int,a232 int,a233 int,a234 int,a235 int,a236 int,a237 int,a238 int,a239 int,a240 int,a241 int,a242 int,a243 int,a244 int,a245 int,a246 int,a247 int,a248 int,a249 int,a250 int,a251 int,a252 int,a253 int,a254 int,a255 int,a256 int,a257 int,a258 int,a259 int,a260 int,a261 int,a262 int,a263 int,a264 int,a265 int,a266 int,a267 int,a268 int,a269 int,a270 int,a271 int,a272 int,a273 int,a274 int,a275 int,a276 int,a277 int,a278 int,a279 int,a280 int,a281 int,a282 int,a283 int,a284 int,a285 int,a286 int,a287 int,a288 int,a289 int,a290 int,a291 int,a292 int,a293 int,a294 int,a295 int,a296 int,a297 int,a298 int,a299 int,a300 int,a301 int,a302 int,a303 int,a304 int,a305 int,a306 int,a307 int,a308 int,a309 int,a310 int,a311 int,a312 int,a313 int,a314 int,a315 int,a316 int,a317 int,a318 int,a319 int,a320 int,a321 int,a322 int,a323 int,a324 int,a325 int,a326 int,a327 int,a328 int,a329 int,a330 int,a331 int,a332 int,a333 int,a334 int,a335 int,a336 int,a337 int,a338 int,a339 int,a340 int,a341 int,a342 int,a343 int,a344 int,a345 int,a346 int,a347 int,a348 int,a349 int,a350 int,a351 int,a352 int,a353 int,a354 int,a355 int,a356 int,a357 int,a358 int,a359 int,a360 int,a361 int,a362 int,a363 int,a364 int,a365 int,a366 int,a367 int,a368 int,a369 int,a370 int,a371 int,a372 int,a373 int,a374 int,a375 int,a376 int,a377 int,a378 int,a379 int,a380 int,a381 int,a382 int,a383 int,a384 int,a385 int,a386 int,a387 int,a388 int,a389 int,a390 int,a391 int,a392 int,a393 int,a394 int,a395 int,a396 int,a397 int,a398 int,a399 int,a400 int,a401 int,a402 int,a403 int,a404 int,a405 int,a406 int,a407 int,a408 int,a409 int,a410 int,a411 int,a412 int,a413 int,a414 int,a415 int,a416 int,a417 int,a418 int,a419 int,a420 int,a421 int,a422 int,a423 int,a424 int,a425 int,a426 int,a427 int,a428 int,a429 int,a430 int,a431 int,a432 int,a433 int,a434 int,a435 int,a436 int,a437 int,a438 int,a439 int,a440 int,a441 int,a442 int,a443 int,a444 int,a445 int,a446 int,a447 int,a448 int,a449 int,a450 int,a451 int,a452 int,a453 int,a454 int,a455 int,a456 int,a457 int,a458 int,a459 int,a460 int,a461 int,a462 int,a463 int,a464 int,a465 int,a466 int,a467 int,a468 int,a469 int,a470 int,a471 int,a472 int,a473 int,a474 int,a475 int,a476 int,a477 int,a478 int,a479 int,a480 int,a481 int,a482 int,a483 int,a484 int,a485 int,a486 int,a487 int,a488 int,a489 int,a490 int,a491 int,a492 int,a493 int,a494 int,a495 int,a496 int,a497 int,a498 int,a499 int,a500 int,a501 int,a502 int,a503 int,a504 int,a505 int,a506 int,a507 int,a508 int,a509 int,a510 int,a511 int,a512 int,a513 int,a514 int,a515 int,a516 int,a517 int,a518 int,a519 int,a520 int,a521 int,a522 int,a523 int,a524 int,a525 int,a526 int,a527 int,a528 int,a529 int,a530 int,a531 int,a532 int,a533 int,a534 int,a535 int,a536 int,a537 int,a538 int,a539 int,a540 int,a541 int,a542 int,a543 int,a544 int,a545 int,a546 int,a547 int,a548 int,a549 int,a550 int,a551 int,a552 int,a553 int,a554 int,a555 int,a556 int,a557 int,a558 int,a559 int,a560 int,a561 int,a562 int,a563 int,a564 int,a565 int,a566 int,a567 int,a568 int,a569 int,a570 int,a571 int,a572 int,a573 int,a574 int,a575 int,a576 int,a577 int,a578 int,a579 int,a580 int,a581 int,a582 int,a583 int,a584 int,a585 int,a586 int,a587 int,a588 int,a589 int,a590 int,a591 int,a592 int,a593 int,a594 int,a595 int,a596 int,a597 int,a598 int,a599 int,a600 int,a601 int,a602 int,a603 int,a604 int,a605 int,a606 int,a607 int,a608 int,a609 int,a610 int,a611 int,a612 int,a613 int,a614 int,a615 int,a616 int,a617 int,a618 int,a619 int,a620 int,a621 int,a622 int,a623 int,a624 int,a625 int,a626 int,a627 int,a628 int,a629 int,a630 int,a631 int,a632 int,a633 int,a634 int,a635 int,a636 int,a637 int,a638 int,a639 int,a640 int,a641 int,a642 int,a643 int,a644 int,a645 int,a646 int,a647 int,a648 int,a649 int,a650 int,a651 int,a652 int,a653 int,a654 int,a655 int,a656 int,a657 int,a658 int,a659 int,a660 int,a661 int,a662 int,a663 int,a664 int,a665 int,a666 int,a667 int,a668 int,a669 int,a670 int,a671 int,a672 int,a673 int,a674 int,a675 int,a676 int,a677 int,a678 int,a679 int,a680 int,a681 int,a682 int,a683 int,a684 int,a685 int,a686 int,a687 int,a688 int,a689 int,a690 int,a691 int,a692 int,a693 int,a694 int,a695 int,a696 int,a697 int,a698 int,a699 int,a700 int,a701 int,a702 int,a703 int,a704 int,a705 int,a706 int,a707 int,a708 int,a709 int,a710 int,a711 int,a712 int,a713 int,a714 int,a715 int,a716 int,a717 int,a718 int,a719 int,a720 int,a721 int,a722 int,a723 int,a724 int,a725 int,a726 int,a727 int,a728 int,a729 int,a730 int,a731 int,a732 int,a733 int,a734 int,a735 int,a736 int,a737 int,a738 int,a739 int,a740 int,a741 int,a742 int,a743 int,a744 int,a745 int,a746 int,a747 int,a748 int,a749 int,a750 int,a751 int,a752 int,a753 int,a754 int,a755 int,a756 int,a757 int,a758 int,a759 int,a760 int,a761 int,a762 int,a763 int,a764 int,a765 int,a766 int,a767 int,a768 int,a769 int,a770 int,a771 int,a772 int,a773 int,a774 int,a775 int,a776 int,a777 int,a778 int,a779 int,a780 int,a781 int,a782 int,a783 int,a784 int,a785 int,a786 int,a787 int,a788 int,a789 int,a790 int,a791 int,a792 int,a793 int,a794 int,a795 int,a796 int,a797 int,a798 int,a799 int,a800 int,a801 int,a802 int,a803 int,a804 int,a805 int,a806 int,a807 int,a808 int,a809 int,a810 int,a811 int,a812 int,a813 int,a814 int,a815 int,a816 int,a817 int,a818 int,a819 int,a820 int,a821 int,a822 int,a823 int,a824 int,a825 int,a826 int,a827 int,a828 int,a829 int,a830 int,a831 int,a832 int,a833 int,a834 int,a835 int,a836 int,a837 int,a838 int,a839 int,a840 int,a841 int,a842 int,a843 int,a844 int,a845 int,a846 int,a847 int,a848 int,a849 int,a850 int,a851 int,a852 int,a853 int,a854 int,a855 int,a856 int,a857 int,a858 int,a859 int,a860 int,a861 int,a862 int,a863 int,a864 int,a865 int,a866 int,a867 int,a868 int,a869 int,a870 int,a871 int,a872 int,a873 int,a874 int,a875 int,a876 int,a877 int,a878 int,a879 int,a880 int,a881 int,a882 int,a883 int,a884 int,a885 int,a886 int,a887 int,a888 int,a889 int,a890 int,a891 int,a892 int,a893 int,a894 int,a895 int,a896 int,a897 int,a898 int,a899 int,a900 int,a901 int,a902 int,a903 int,a904 int,a905 int,a906 int,a907 int,a908 int,a909 int,a910 int,a911 int,a912 int,a913 int,a914 int,a915 int,a916 int,a917 int,a918 int,a919 int,a920 int,a921 int,a922 int,a923 int,a924 int,a925 int,a926 int,a927 int,a928 int,a929 int,a930 int,a931 int,a932 int,a933 int,a934 int,a935 int,a936 int,a937 int,a938 int,a939 int,a940 int,a941 int,a942 int,a943 int,a944 int,a945 int,a946 int,a947 int,a948 int,a949 int,a950 int,a951 int,a952 int,a953 int,a954 int,a955 int,a956 int,a957 int,a958 int,a959 int,a960 int,a961 int,a962 int,a963 int,a964 int,a965 int,a966 int,a967 int,a968 int,a969 int,a970 int,a971 int,a972 int,a973 int,a974 int,a975 int,a976 int,a977 int,a978 int,a979 int,a980 int,a981 int,a982 int,a983 int,a984 int,a985 int,a986 int,a987 int,a988 int,a989 int,a990 int,a991 int,a992 int,a993 int,a994 int,a995 int,a996 int,a997 int,a998 int,a999 int,a1000 int,a1001 int,a1002 int,a1003 int,a1004 int,a1005 int,a1006 int,a1007 int,a1008 int,a1009 int,a1010 int,a1011 int,a1012 int,a1013 int,a1014 int,a1015 int);
+alter table t_column_too_many add column a_512 int;
+-- error 1117
+alter table t_column_too_many add column a_513 int;
+
+# TestCreateSecondaryIndexInCluster
+drop table if exists t;
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) DEFAULT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02,c03) clustered,
+  KEY c04 (c04)
+);
+drop table t;
+-- error 1071
+
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) NOT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02,c03,c04) clustered
+);
+
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) DEFAULT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02,c03) clustered,
+  unique key c04 (c04)
+);
+drop table t;
+
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) DEFAULT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  PRIMARY KEY (c01,c02) clustered
+);
+create index idx1 on t(c03);
+create index idx2 on t(c03, c04);
+create unique index uk2 on t(c03, c04);
+drop table t;
+
+CREATE TABLE t (
+  c01 varchar(255) NOT NULL,
+  c02 varchar(255) NOT NULL,
+  c03 varchar(255) NOT NULL,
+  c04 varchar(255) DEFAULT NULL,
+  c05 varchar(255) DEFAULT NULL,
+  c06 varchar(255) DEFAULT NULL,
+  Index idx1(c03),
+  PRIMARY KEY (c01,c02) clustered,
+  unique index uk1(c06)
+);
+alter table t change c03 c10 varchar(256) default null;
+-- error 1071
+alter table t change c10 c100 varchar(1024) default null;
+alter table t modify c10 varchar(600) default null;
+alter table t modify c06 varchar(600) default null;
+alter table t modify c01 varchar(510);
+drop table if exists t2;
+create table t2 like t;
+
+# TestAlterTableAddUniqueOnPartionRangeColumn
+drop table if exists t;
+create table t(
+	a int,
+	b varchar(100),
+	c int,
+	INDEX idx_c(c))
+PARTITION BY RANGE COLUMNS( a ) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11),
+	PARTITION p2 VALUES LESS THAN (16),
+	PARTITION p3 VALUES LESS THAN (21)
+);
+insert into t values (4, 'xxx', 4);
+insert into t values (4, 'xxx', 9);
+insert into t values (17, 'xxx', 12);
+-- error 1062
+alter table t add unique index idx_a(a);
+delete from t where a = 4;
+alter table t add unique index idx_a(a);
+alter table t add unique index idx_ac(a, c);
+-- error 1503
+alter table t add unique index idx_b(b);
+drop table if exists t;
+
+# TestFulltextIndexIgnore
+drop table if exists t_ft;
+create table t_ft (a text, fulltext key (a));
+show warnings;
+alter table t_ft add fulltext key (a);
+show warnings;
+show create table t_ft;
+drop table if exists t_ft;
+
+# TestDefaultValueIsString
+drop table if exists t;
+create table t (a int default b'1');
+show create table t;
+drop table if exists t;
+
+# TestDefaultColumnWithUUID
+drop table if exists t;
+create table t (c int(10), c1 varchar(256) default (uuid()));
+-- error 1674
+alter table t add column c2 varchar(256) default (uuid());
+insert into t(c) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+select count(distinct c1) from t;
+show create table t;
+
+# TestDropAutoIncrementIndex
+drop table if exists t1;
+create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c));
+alter table t1 drop index a;
+drop table if exists t1;
+create table t1 (a int auto_increment, unique key (a));
+alter table t1 drop index a;
+drop table if exists t1;
+create table t1 (a int(11) not null auto_increment, b int(11), c bigint, unique key (a, b, c));
+alter table t1 drop index a;
+
+# TestInsertIntoGeneratedColumnWithDefaultExpr
+drop table if exists t1;
+create table t1 (a int, b int as (-a) virtual, c int as (-a) stored);
+insert into t1 values (1, default, default);
+select * from t1;
+delete from t1;
+insert into t1(a,b) values (1, default), (2, default);
+select * from t1;
+delete from t1;
+insert into t1(b) values (default);
+select * from t1;
+delete from t1;
+insert into t1(c) values (default);
+select * from t1;
+delete from t1;
+drop table if exists t2;
+create table t2 like t1;
+alter table t2 add index idx1(a);
+alter table t2 add index idx2(b);
+insert into t2 values (1, default, default);
+select * from t2;
+delete from t2;
+alter table t2 drop index idx1;
+alter table t2 drop index idx2;
+insert into t2 values (1, default, default);
+select * from t2;
+drop table if exists t3;
+create table t3 (gc1 int as (r+1), gc2 int as (r+1) stored, gc3 int as (gc2+1), gc4 int as (gc1+1) stored, r int);
+insert into t3 values (default, default, default, default, 1);
+select * from t3;
+drop table if exists t4;
+create table t4 (a int key, b int, c int as (a+1), d int as (b+1) stored);
+insert into t4 values (1, 10, default, default);
+select * from t4;
+replace into t4 values (1, 20, default, default);
+select * from t4;
+drop table if exists t5;
+create table t5 (a int default 10, b int as (a+1));
+-- error 3105
+insert into t5 values (20, default(a));
+drop table t1, t2, t3, t4, t5;
+
+# TestCreateExpressionIndexWithJSONFunction
+drop table if exists t;
+create table t(a int, b json);
+insert into t values (1, '{"a": 1}');
+alter table t add index idx((cast(b->'$.a' as char(255))));
+select * from t force index(idx);
+select * from t ignore index(idx);
+alter table t add index idx1((cast(b->>'$.a' as char(255))));
+select * from t force index(idx1);
+select * from t ignore index(idx1);
+alter table t add index idx2((json_type(b)));
+select * from t force index(idx2) where json_type(b) = 'OBJECT';
+select * from t ignore index(idx2) where json_type(b) = 'OBJECT';
+-- error 3753
+alter table t add index idx_wrong((b->'$.a'));
+-- error 3757
+alter table t add index idx_wrong((b->>'$.a'));
+-- error 3757
+alter table t add index idx_wrong((json_pretty(b)));
+drop table if exists t;
+-- error 1071
+create table t(a char(255), index idx((json_quote(a))));
+create table t(a char(40));
+insert into t values ('[1, 2, 3]');
+alter table t add index idx3((json_quote(a)));
+select * from t force index(idx3) where json_quote(a) = '"[1, 2, 3]"';
+select * from t ignore index(idx3) where json_quote(a) = '"[1, 2, 3]"';
+drop table if exists t;
+create table t(a int, b json);
+-- error 3753
+alter table t add index idx_wrong((json_array(b)));
+-- error 3753
+alter table t add index idx_wrong((json_object('key', b)));
+-- error 3753
+alter table t add index idx_wrong((json_merge_preserve(b, '{"k": "v"}')));
+-- error 3753
+alter table t add index idx_wrong((json_set(b, '$.a', 'v')));
+-- error 3753
+alter table t add index idx_wrong((json_insert(b, '$.a', 'v')));
+-- error 3753
+alter table t add index idx_wrong((json_replace(b, '$.a', 'v')));
+-- error 3753
+alter table t add index idx_wrong((json_remove(b, '$.a')));
+-- error 3753
+alter table t add index idx_wrong((json_array_append(b, '$.a', 1)));
+-- error 3753
+alter table t add index idx_wrong((json_merge_patch(b, '{"k": "v"}')));
+-- error 3753
+alter table t add index idx_wrong((json_search(b, 'one', 'a')));
+-- error 3753
+alter table t add index idx_wrong((json_keys(b)));
+drop table if exists t;
+create table t(a int, b json);
+insert into t values (1, '{"a": 1}');
+alter table t add index idx0((json_type(json_search(b, 'one', 'a'))));
+alter table t add index idx1((json_type(json_array(b))));
+alter table t add index idx2((json_type(json_object('key', b))));
+alter table t add index idx3((json_type(json_merge_preserve(b, '{"k": "v"}'))));
+alter table t add index idx4((json_type(json_set(b, '$.a', 'v'))));
+alter table t add index idx5((json_type(json_insert(b, '$.a', 'v'))));
+alter table t add index idx6((json_type(json_replace(b, '$.a', 'v'))));
+alter table t add index idx7((json_type(json_remove(b, '$.a'))));
+alter table t add index idx8((json_type(json_array_append(b, '$.a', 1))));
+alter table t add index idx9((json_type(json_merge_patch(b, '{"k": "v"}'))));
+alter table t add index idx10((json_type(json_keys(b))));
+alter table t add index idx11((cast(json_quote(cast(a as char(10))) as char(64))));
+alter table t add index idx12((json_storage_size(b)));
+alter table t add index idx13((json_depth(b)));
+alter table t add index idx14((json_length(b)));
+select * from t force index(idx0) where json_type(json_search(b, 'one', 'a')) is NULL;
+select * from t force index(idx1) where json_type(json_array(b)) = 'ARRAY';
+select * from t force index(idx2) where json_type(json_object('key', b)) = 'OBJECT';
+select * from t force index(idx3) where json_type(json_merge_preserve(b, '{"k": "v"}')) = 'OBJECT';
+select * from t force index(idx4) where json_type(json_set(b, '$.a', 'v')) = 'OBJECT';
+select * from t force index(idx5) where json_type(json_insert(b, '$.a', 'v')) = 'OBJECT';
+select * from t force index(idx6) where json_type(json_replace(b, '$.a', 'v')) = 'OBJECT';
+select * from t force index(idx7) where json_type(json_remove(b, '$.a')) = 'OBJECT';
+select * from t force index(idx8) where json_type(json_array_append(b, '$.a', 1)) = 'OBJECT';
+select * from t force index(idx9) where json_type(json_merge_patch(b, '{"k": "v"}')) = 'OBJECT';
+select * from t force index(idx10) where json_type(json_keys(b)) = 'ARRAY';
+select * from t force index(idx11) where cast(json_quote(cast(a as char(10))) as char(64)) = '"1"';
+select * from t force index(idx12) where json_storage_size(b) > 1;
+select * from t force index(idx13) where json_depth(b) > 0;
+select * from t force index(idx14) where json_length(b) > 0;
+select * from t ignore index(idx0) where json_type(json_search(b, 'one', 'a')) is NULL;
+select * from t ignore index(idx1) where json_type(json_array(b)) = 'ARRAY';
+select * from t ignore index(idx2) where json_type(json_object('key', b)) = 'OBJECT';
+select * from t ignore index(idx3) where json_type(json_merge_preserve(b, '{"k": "v"}')) = 'OBJECT';
+select * from t ignore index(idx4) where json_type(json_set(b, '$.a', 'v')) = 'OBJECT';
+select * from t ignore index(idx5) where json_type(json_insert(b, '$.a', 'v')) = 'OBJECT';
+select * from t ignore index(idx6) where json_type(json_replace(b, '$.a', 'v')) = 'OBJECT';
+select * from t ignore index(idx7) where json_type(json_remove(b, '$.a')) = 'OBJECT';
+select * from t ignore index(idx8) where json_type(json_array_append(b, '$.a', 1)) = 'OBJECT';
+select * from t ignore index(idx9) where json_type(json_merge_patch(b, '{"k": "v"}')) = 'OBJECT';
+select * from t ignore index(idx10) where json_type(json_keys(b)) = 'ARRAY';
+select * from t ignore index(idx11) where cast(json_quote(cast(a as char(10))) as char(64)) = '"1"';
+select * from t ignore index(idx12) where json_storage_size(b) > 1;
+select * from t ignore index(idx13) where json_depth(b) > 0;
+select * from t ignore index(idx14) where json_length(b) > 0;
+
+# TestAddExpressionIndexOnPartition
+drop table if exists t;
+create table t(
+	a int,
+	b varchar(100),
+	c int)
+	PARTITION BY RANGE ( a ) (
+	PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+	);
+insert into t values (1, 'test', 2), (12, 'test', 3), (15, 'test', 10), (20, 'test', 20);
+alter table t add index idx((a+c));
+show create table t;
+--sorted_result
+select * from t order by a;
+
+# TestCreateTableWithAutoIdCache test the auto_id_cache table option.
+# `auto_id_cache` take effects on handle too when `PKIshandle` is false,
+# or even there is no auto_increment column at all.
+drop table if exists t;
+drop table if exists t1;
+create table t(a int auto_increment key clustered) auto_id_cache 100;
+show create table t;
+insert into t values();
+select * from t;
+delete from t;
+rename table t to t1;
+insert into t1 values();
+select * from t1;
+drop table if exists t;
+drop table if exists t1;
+create table t(a int) auto_id_cache 100;
+insert into t values();
+select _tidb_rowid from t;
+delete from t;
+rename table t to t1;
+insert into t1 values();
+select _tidb_rowid from t1;
+drop table if exists t;
+drop table if exists t1;
+create table t(a int null, b int auto_increment unique) auto_id_cache 100;
+insert into t(b) values(NULL);
+select b, _tidb_rowid from t;
+delete from t;
+rename table t to t1;
+insert into t1(b) values(NULL);
+select b, _tidb_rowid from t1;
+delete from t1;
+alter table t1 auto_id_cache 200;
+show create table t1;
+insert into t1(b) values(NULL);
+select b, _tidb_rowid from t1;
+delete from t1;
+rename table t1 to t;
+insert into t(b) values(NULL);
+select b, _tidb_rowid from t;
+delete from t;
+drop table if exists t;
+drop table if exists t1;
+create table t(a int auto_increment key clustered) auto_id_cache 3;
+show create table t;
+insert into t(a) values(NULL),(NULL),(NULL);
+insert into t(a) values(NULL);
+select a from t;
+delete from t;
+rename table t to t1;
+insert into t1(a) values(NULL);
+select a from t1;
+drop table if exists t;
+-- error 1105
+create table t(a int) auto_id_cache = 9223372036854775808;
+create table t(a int) auto_id_cache = 9223372036854775807;
+-- error 1105
+alter table t auto_id_cache = 9223372036854775808;
+
+# TestAlterIndexVisibility
+drop table if exists t, t1, t2, t3;
+create table t(a int NOT NULL, b int, key(a), unique(b) invisible);
+select distinct index_name, is_visible from information_schema.statistics where table_schema = 'ddl__db_integration' and table_name = 't' order by index_name;
+alter table t alter index a invisible;
+select distinct index_name, is_visible from information_schema.statistics where table_schema = 'ddl__db_integration' and table_name = 't' order by index_name;
+alter table t alter index b visible;
+select distinct index_name, is_visible from information_schema.statistics where table_schema = 'ddl__db_integration' and table_name = 't' order by index_name;
+alter table t alter index b invisible;
+select distinct index_name, is_visible from information_schema.statistics where table_schema = 'ddl__db_integration' and table_name = 't' order by index_name;
+-- error 1176
+alter table t alter index non_exists_idx visible;
+create table t1(a int NOT NULL, unique(a));
+-- error 3522
+alter table t1 alter index a invisible;
+create table t2(a int, primary key(a));
+-- error 1064
+alter table t2 alter index PRIMARY invisible;
+create table t3(a int NOT NULL, b int);
+alter table t3 add index idx((a+b));
+select distinct index_name, is_visible from information_schema.statistics where table_schema = 'ddl__db_integration' and table_name = 't3' order by index_name;
+alter table t3 alter index idx invisible;
+select distinct index_name, is_visible from information_schema.statistics where table_schema = 'ddl__db_integration' and table_name = 't3' order by index_name;
+
+# TestDropLastVisibleColumnOrColumns
+drop table if exists t_drop_last_column, t_drop_last_columns;
+create table t_drop_last_column(x int, key((1+1)));
+-- error 1113
+alter table t_drop_last_column drop column x;
+create table t_drop_last_columns(x int, y int, key((1+1)));
+-- error 1113
+alter table t_drop_last_columns drop column x, drop column y;
+drop table if exists t_drop_last_column, t_drop_last_columns;
+
+# TestIssue20741WithSetField
+drop table if exists issue20741_2;
+create table issue20741_2(id int primary key, c int);
+insert into issue20741_2(id, c) values(1, 2), (2, 2);
+alter table issue20741_2 add column cc set('a', 'b', 'c', 'd') not null;
+update issue20741_2 set c=2 where id=1;
+select * from issue20741_2;
+select * from issue20741_2 where cc = 0;
+select * from issue20741_2 where cc = 1;
+-- error 1364
+insert into issue20741_2(id, c) values (3, 3);
+
+# TestIssue21835
+drop table if exists t;
+-- error 1427
+create table t( col decimal(1,2) not null default 0);
+
+# TestPlacementOnTemporaryTable
+drop table if exists tplacement1, tplacement2;
+drop database if exists db2;
+drop placement policy if exists x;
+create placement policy x primary_region='r1' regions='r1';
+-- error 8006
+create temporary table tplacement2 (id int) placement policy='x';
+create global temporary table tplacement1 (id int) on commit delete rows;
+-- error 8006
+alter table tplacement1  placement policy='x';
+create temporary table tplacement2 (id int);
+-- error 8200
+alter table tplacement2  placement policy='x';
+create database db2 placement policy x;
+create global temporary table db2.tplacement3 (id int) on commit delete rows;
+show create table db2.tplacement3;
+create temporary table db2.tplacement4 (id int);
+show create table db2.tplacement4;
+create table db2.t1 (a int) placement policy 'default';
+create global temporary table db2.tplacement5 like db2.t1 on commit delete rows;
+show create table db2.tplacement5;
+create temporary table db2.tplacement6 like db2.t1;
+show create table db2.tplacement6;
+drop table db2.tplacement6;
+drop table db2.tplacement5;
+drop table db2.t1;
+drop table db2.tplacement3;
+drop database db2;
+drop table tplacement1, tplacement2;
+drop placement policy x;
+
+# TestDropWithGlobalTemporaryTableKeyWord
+drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2;
+create table tb(id int);
+create table tb2(id int);
+create global temporary table temp(id int) on commit delete rows;
+create global temporary table temp1(id int) on commit delete rows;
+create temporary table ltemp1(id int);
+create temporary table ltemp2(id int);
+-- error 8007
+drop global temporary table tb;
+-- error 8007
+drop global temporary table ddl__db_integration.tb;
+-- error 8007
+drop global temporary table ltemp1;
+-- error 8007
+drop global temporary table ddl__db_integration.ltemp1;
+-- error 8007
+drop global temporary table ltemp1, temp;
+-- error 8007
+drop global temporary table temp, ltemp1;
+-- error 8007
+drop global temporary table xxx, ltemp1;
+-- error 1051
+drop global temporary table xxx;
+-- error 8007
+drop global temporary table if exists tb;
+-- error 8007
+drop global temporary table if exists ltemp1;
+drop global temporary table if exists xxx;
+show warnings;
+-- error 8007
+drop global temporary table if exists xxx,tb;
+-- error 8007
+drop global temporary table if exists ddl__db_integration.tb;
+drop global temporary table temp;
+-- error 1146
+select * from temp;
+drop global temporary table ddl__db_integration.temp1;
+-- error 1146
+select * from temp2;
+create global temporary table temp (id int) on commit delete rows;
+create global temporary table temp1 (id int) on commit delete rows;
+drop global temporary table temp, temp1;
+-- error 1146
+select * from temp;
+-- error 1146
+select * from temp1;
+create global temporary table temp (id int) on commit delete rows;
+create global temporary table temp1 (id int) on commit delete rows;
+drop global temporary table if exists temp;
+show warnings;
+-- error 1146
+select * from temp;
+drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2;
+
+# TestDropWithLocalTemporaryTableKeyWord
+drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2, testt.ltemp3;
+create table tb(id int);
+create table tb2(id int);
+insert into tb2 values(1);
+create temporary table tb2(id int);
+create global temporary table temp(id int) on commit delete rows;
+create global temporary table temp1(id int) on commit delete rows;
+create temporary table ltemp1(id int);
+create temporary table ltemp2(id int);
+create database if not exists testt;
+create temporary table testt.ltemp3(id int);
+-- error 1051
+drop temporary table tb;
+-- error 1051
+drop temporary table ddl__db_integration.tb;
+-- error 1051
+drop temporary table temp1;
+-- error 1051
+drop temporary table ddl__db_integration.temp1;
+-- error 1051
+drop temporary table ltemp1, tb;
+-- error 1051
+drop temporary table temp, ltemp1;
+-- error 1051
+drop temporary table xxx, ltemp1;
+-- error 1051
+drop temporary table xxx;
+drop temporary table if exists xxx;
+show warnings;
+drop temporary table if exists ltemp1, xxx;
+show warnings;
+drop temporary table if exists tb1, xxx;
+show warnings;
+drop temporary table if exists temp1;
+show warnings;
+drop temporary table if exists temp1, xxx;
+show warnings;
+drop temporary table if exists testt.ltemp4;
+show warnings;
+drop temporary table if exists testt.ltemp3, tb1;
+show warnings;
+drop temporary table ltemp1;
+-- error 1146
+select * from ltemp1;
+drop temporary table ddl__db_integration.ltemp2;
+-- error 1146
+select * from ltemp2;
+drop temporary table tb2;
+select * from tb2;
+create temporary table ltemp1 (id int);
+create temporary table ltemp2 (id int);
+drop temporary table testt.ltemp3, ltemp1;
+-- error 1146
+select * from testt.ltemp3;
+-- error 1146
+select * from ltemp1;
+drop temporary table if exists ltemp2;
+show warnings;
+-- error 1146
+select * from ltemp2;
+drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2, testt.ltemp3;
+drop database testt;
+
+# TestIssue29326
+drop table if exists t1;
+create table t1 (id int);
+insert into t1 values(1);
+drop table if exists t2;
+create table t2 (id int);
+insert into t2 values(1);
+drop view if exists v1;
+create view v1 as select 1,1;
+select * from v1;
+drop view if exists v1;
+create view v1 as select 1, 2, 1, 2, 1, 2, 1, 2;
+select * from v1;
+drop view if exists v1;
+create view v1 as select 't', 't', 1 as t;
+select * from v1;
+drop view if exists v1;
+create definer=`root`@`127.0.0.1` view v1 as select 1, 1 union all select 1, 1;
+show create view v1;
+select * from v1;
+drop view if exists v1;
+create definer=`root`@`127.0.0.1` view v1 as select 'id', id from t1;
+show create view v1;
+select * from v1;
+drop view if exists v1;
+create definer=`root`@`127.0.0.1` view v1 as select 1, (select id from t1 where t1.id=t2.id) as '1' from t2;
+show create view v1;
+select * from v1;
+drop view if exists v1;
+create definer=`root`@`127.0.0.1` view v1 as select 1 as 'abs(t1.id)', abs(t1.id) from t1;
+show create view v1;
+select * from v1;
+drop view if exists v1;
+-- error 1060
+create definer=`root`@`127.0.0.1` view v1 as select 1 as t,1 as t;
+drop view if exists v1;
+-- error 1060
+create definer=`root`@`127.0.0.1` view v1 as select 1 as id, id from t1;
+drop view if exists v1;
+-- error 1060
+create definer=`root`@`127.0.0.1` view v1 as select * from t1 left join t2 on t1.id=t2.id;
+drop view if exists v1;
+-- error 1060
+create definer=`root`@`127.0.0.1` view v1 as select t1.id, t2.id from t1,t2 where t1.id=t2.id;
+drop view if exists v1;
+drop table t2;
+drop table t1;
+
+# TestInvalidPartitionNameWhenCreateTable
+drop table if exists t;
+-- error 1567
+create table t(a int) partition by range (a) (partition p0 values less than (0), partition `p1 ` values less than (3));
+-- error 1567
+create table t(a int) partition by range (a) (partition `` values less than (0), partition `p1` values less than (3));
+create table t(a int) partition by range (a) (partition `p0` values less than (0), partition `p1` values less than (3));
+-- error 1567
+alter table t add partition (partition `p2 ` values less than (5));
+
+# TestRegexpFunctionsGeneratedColumn
+drop table if exists reg_like;
+create table reg_like(a varchar(50), b varchar(50), c int generated always as (regexp_like(a, b)));
+insert into reg_like(a, b) values('123', '2');
+insert into reg_like(a, b) values('456', '1');
+select * from reg_like;
+drop table if exists reg_sub;
+create table reg_sub(a varchar(50),b varchar(50),c varchar(50) generated always as (regexp_substr(a, b)));
+insert into reg_sub(a, b) values('abcd', 'bc.');
+insert into reg_sub(a, b) values('1234', '23.');
+select * from reg_sub;
+drop table if exists reg_instr;
+create table reg_instr(a varchar(50),b varchar(50),c varchar(50) generated always as (regexp_instr(a, b)));
+insert into reg_instr(a, b) values('abcd', 'bc.');
+insert into reg_instr(a, b) values('1234', '23.');
+select * from reg_instr;
+drop table if exists reg_replace;
+create table reg_replace(a varchar(50),b varchar(50),c varchar(50),d varchar(50) generated always as (regexp_replace(a, b, c)));
+insert into reg_replace(a, b, c) values('abcd', 'bc.', 'xzx');
+insert into reg_replace(a, b, c) values('1234', '23.', 'xzx');
+select * from reg_replace;
+drop table if exists reg_like;
+
+# TestReorgPartitionRangeFailure
+drop table if exists t;
+CREATE TABLE t (id int, d varchar(255)) partition by range (id) (partition p0 values less than (1000000), partition p1 values less than (2000000), partition p2 values less than (3000000));
+-- error 8200
+ALTER TABLE t REORGANIZE PARTITION p0,p2 INTO (PARTITION p0 VALUES LESS THAN (1000000));
+-- error 8200
+ALTER TABLE t REORGANIZE PARTITION p0,p2 INTO (PARTITION p0 VALUES LESS THAN (4000000));
+
+# TestReorgPartitionDocs
+drop table if exists members, member_level;
+CREATE TABLE members (
+    id int,
+    fname varchar(255),
+    lname varchar(255),
+    dob date,
+    data json
+)
+PARTITION BY RANGE (YEAR(dob)) (
+ PARTITION pBefore1950 VALUES LESS THAN (1950),
+ PARTITION p1950 VALUES LESS THAN (1960),
+ PARTITION p1960 VALUES LESS THAN (1970),
+ PARTITION p1970 VALUES LESS THAN (1980),
+ PARTITION p1980 VALUES LESS THAN (1990),
+ PARTITION p1990 VALUES LESS THAN (2000));
+CREATE TABLE member_level (
+ id int,
+ level int,
+ achievements json
+)
+PARTITION BY LIST (level) (
+ PARTITION l1 VALUES IN (1),
+ PARTITION l2 VALUES IN (2),
+ PARTITION l3 VALUES IN (3),
+ PARTITION l4 VALUES IN (4),
+ PARTITION l5 VALUES IN (5));
+ALTER TABLE members DROP PARTITION p1990;
+ALTER TABLE member_level DROP PARTITION l5;
+ALTER TABLE members TRUNCATE PARTITION p1980;
+ALTER TABLE member_level TRUNCATE PARTITION l4;
+ALTER TABLE members ADD PARTITION (PARTITION `p1990to2010` VALUES LESS THAN (2010));
+ALTER TABLE member_level ADD PARTITION (PARTITION l5_6 VALUES IN (5,6));
+-- error 1493
+ALTER TABLE members ADD PARTITION (PARTITION p1990 VALUES LESS THAN (2000));
+ALTER TABLE members REORGANIZE PARTITION p1990to2010 INTO
+(PARTITION p1990 VALUES LESS THAN (2000),
+ PARTITION p2000 VALUES LESS THAN (2010),
+ PARTITION p2010 VALUES LESS THAN (2020),
+ PARTITION p2020 VALUES LESS THAN (2030),
+ PARTITION pMax VALUES LESS THAN (MAXVALUE));
+ALTER TABLE member_level REORGANIZE PARTITION l5_6 INTO
+(PARTITION l5 VALUES IN (5),
+ PARTITION l6 VALUES IN (6));
+ALTER TABLE members REORGANIZE PARTITION pBefore1950,p1950 INTO (PARTITION pBefore1960 VALUES LESS THAN (1960));
+ALTER TABLE member_level REORGANIZE PARTITION l1,l2 INTO (PARTITION l1_2 VALUES IN (1,2));
+ALTER TABLE members REORGANIZE PARTITION pBefore1960,p1960,p1970,p1980,p1990,p2000,p2010,p2020,pMax INTO
+(PARTITION p1800 VALUES LESS THAN (1900),
+ PARTITION p1900 VALUES LESS THAN (2000),
+ PARTITION p2000 VALUES LESS THAN (2100));
+ALTER TABLE member_level REORGANIZE PARTITION l1_2,l3,l4,l5,l6 INTO
+(PARTITION lOdd VALUES IN (1,3,5),
+ PARTITION lEven VALUES IN (2,4,6));
+-- error 8200
+ALTER TABLE members REORGANIZE PARTITION p1800,p2000 INTO (PARTITION p2000 VALUES LESS THAN (2100));
+INSERT INTO members VALUES (313, "John", "Doe", "2022-11-22", NULL);
+ALTER TABLE members REORGANIZE PARTITION p2000 INTO (PARTITION p2000 VALUES LESS THAN (2050));
+-- error 1526
+ALTER TABLE members REORGANIZE PARTITION p2000 INTO (PARTITION p2000 VALUES LESS THAN (2020));
+INSERT INTO member_level (id, level) values (313, 6);
+-- error 1526
+ALTER TABLE member_level REORGANIZE PARTITION lEven INTO (PARTITION lEven VALUES IN (2,4));
+
+# TestDisableDDL
+# https://github.com/pingcap/tidb/issues/41277
+select @@global.tidb_enable_ddl;
+-- error 8246
+set @@global.tidb_enable_ddl=false;
+-- error 8246
+set @@global.tidb_enable_ddl=false;
+select @@global.tidb_enable_ddl;
+
+# TestReorganizePartitionWarning
+# https://github.com/pingcap/tidb/issues/42183
+drop table if exists t;
+create table t (id bigint, b varchar(20), index idxb(b)) partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));
+alter table t reorganize partition p0 into (partition p01 values less than (10), partition p02 values less than (20));
+show warnings;
+
+
+# TestCreateExpressionIndexError
+drop table if exists t;
+create table t (a int, b real);
+-- error 3756
+alter table t add primary key ((a+b)) nonclustered;
+-- error 3753
+create table t(a int, index((cast(a as JSON))));
+drop table if exists t;
+create table t (a int, b real);
+-- error 3756
+alter table t add primary key ((a+b)) nonclustered;
+-- error 3758
+alter table t add index ((rand()));
+-- error 3758
+alter table t add index ((now()+1));
+alter table t add column (_V$_idx_0 int);
+-- error 1060
+alter table t add index idx((a+1));
+alter table t drop column _V$_idx_0;
+alter table t add index idx((a+1));
+-- error 1060
+alter table t add column (_V$_idx_0 int);
+alter table t drop index idx;
+alter table t add column (_V$_idx_0 int);
+alter table t add column (_V$_expression_index_0 int);
+-- error 1060
+alter table t add index ((a+1));
+alter table t drop column _V$_expression_index_0;
+alter table t add index ((a+1));
+-- error 1091
+alter table t drop column _V$_expression_index_0;
+-- error 1054
+alter table t add column e int as (_V$_expression_index_0 + 1);
+
+## NOTE (#18150): In creating expression index, row value is not allowed.
+drop table if exists t;
+-- error 3800
+create table t (j json, key k (((j,j))));
+create table t (j json, key k ((j+1),(j+1)));
+-- error 3761
+create table t1 (col1 int, index ((concat(''))));
+-- error 3756
+CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);
+
+## For issue 26349
+drop table if exists t;
+create table t(id char(10) primary key, short_name char(10), name char(10), key n((upper(`name`))));
+update t t1 set t1.short_name='a' where t1.id='1';
+
+
+# TestStrictDoubleTypeCheck
+set @@tidb_enable_strict_double_type_check = 'ON';
+drop table if exists double_type_check;
+--error 1149
+create table double_type_check(id int, c double(10));
+set @@tidb_enable_strict_double_type_check = 'OFF';
+create table double_type_check(id int, c double(10));
+set @@tidb_enable_strict_double_type_check = default;
+
+
+# TestCreateTempTableInTxn
+# https://github.com/pingcap/tidb/issues/35644
+drop table if exists t1, t2, tt;
+begin;
+create temporary table t1(id int primary key, v int);
+select * from t1;
+insert into t1 values(123, 456);
+select * from t1 where id=123;
+truncate table t1;
+select * from t1 where id=123;
+commit;
+
+connect (conn1, localhost, root,, ddl__db_integration);
+create table tt(id int);
+begin;
+create temporary table t1(id int);
+insert into tt select * from t1;
+drop table tt;
+disconnect conn1;
+
+connect (conn1, localhost, root,, ddl__db_integration);
+create table t2(id int primary key, v int);
+insert into t2 values(234, 567);
+begin;
+create temporary table t2(id int primary key, v int);
+select * from t2 where id=234;
+commit;
+disconnect conn1;
+
+# Test Generated column use Grouping function, issue #49909.
+drop table if exists t;
+--error 1111
+create table t(a int, b int as ((grouping(a))) stored);
+create table t(a int);
+--error 1111
+alter table t add column  b int as ((grouping(a))) stored;
+drop table t;
