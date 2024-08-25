@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -1031,6 +1032,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// even nothing to restore, we show a success message since there is no failure.
 		summary.SetSuccessStatus(true)
 		return nil
+	}
+
+	// set the fast create table variable to speed up the create table process.
+	err = variable.SwitchFastCreateTable(true)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	if err = client.CreateDatabases(ctx, dbs); err != nil {
