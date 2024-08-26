@@ -15,7 +15,7 @@
 package logicalop
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/util/hashequaler"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -59,7 +59,7 @@ func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProj
 // *************************** start implementation of HashEquals interface ****************************
 
 // Hash64 implements the base.Hash64.<0th> interface.
-func (p *LogicalProjection) Hash64(h hashequaler.Hasher) {
+func (p *LogicalProjection) Hash64(h base2.Hasher) {
 	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
 	// like schema and names are lost.
 	p.LogicalSchemaProducer.Hash64(h)

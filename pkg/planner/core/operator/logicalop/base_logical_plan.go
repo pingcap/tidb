@@ -17,12 +17,12 @@ package logicalop
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/hashequaler"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
@@ -55,7 +55,7 @@ type BaseLogicalPlan struct {
 // *************************** implementation of HashEquals interface ***************************
 
 // Hash64 implements HashEquals.<0th> interface.
-func (p *BaseLogicalPlan) Hash64(h hashequaler.Hasher) {
+func (p *BaseLogicalPlan) Hash64(h base2.Hasher) {
 	intest.Assert(false, "Hash64 should not be called directly")
 	h.HashInt(p.ID())
 }
