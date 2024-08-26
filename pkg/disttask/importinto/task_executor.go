@@ -415,16 +415,15 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	localBackend.WorkerConcurrency = subtask.Concurrency * 2
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			StorageURI:      e.taskMeta.Plan.CloudStorageURI,
-			DataFiles:       sm.DataFiles,
-			StatFiles:       sm.StatFiles,
-			StartKey:        sm.StartKey,
-			EndKey:          sm.EndKey,
-			SplitKeys:       sm.RangeSplitKeys,
-			RegionSplitSize: sm.RangeSplitSize,
-			TotalFileSize:   int64(sm.TotalKVSize),
-			TotalKVCount:    0,
-			CheckHotspot:    false,
+			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
+			DataFiles:     sm.DataFiles,
+			StatFiles:     sm.StatFiles,
+			StartKey:      sm.StartKey,
+			EndKey:        sm.EndKey,
+			SplitKeys:     sm.RangeSplitKeys,
+			TotalFileSize: int64(sm.TotalKVSize),
+			TotalKVCount:  0,
+			CheckHotspot:  false,
 		},
 		TS: sm.TS,
 	}, engineUUID)

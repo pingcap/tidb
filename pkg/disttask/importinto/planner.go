@@ -416,7 +416,6 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 					DataFiles:      dataFiles,
 					StatFiles:      statFiles,
 					RangeSplitKeys: rangeSplitKeys,
-					RangeSplitSize: splitter.GetRangeSplitSize(),
 					TS:             ts,
 				}
 				specs = append(specs, &WriteIngestSpec{m})
