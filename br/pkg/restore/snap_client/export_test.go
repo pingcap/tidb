@@ -36,6 +36,7 @@ var (
 	GetSSTMetaFromFile = getSSTMetaFromFile
 	GetKeyRangeByMode  = getKeyRangeByMode
 	MapTableToFiles    = mapTableToFiles
+	GetFileRangeKey    = getFileRangeKey
 )
 
 // MockClient create a fake Client used to test.
