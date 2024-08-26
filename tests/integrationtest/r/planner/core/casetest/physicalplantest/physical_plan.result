@@ -986,26 +986,27 @@ insert into test.tt values (1, 1), (2, 2), (3, 4);
 set @@tidb_partition_prune_mode='static';
 explain format = 'brief' select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1;
 id	estRows	task	access object	operator info
-TableReader	0.01	root		data:Selection
-└─Selection	0.01	cop[tikv]		eq(test.tt.a, 1), eq(test.tt.b, 1)
-  └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = 'brief' select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;
-id	estRows	task	access object	operator info
 IndexLookUp	0.01	root		
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:a(a)	range:[1,1], keep order:false, stats:pseudo
 └─Selection(Probe)	0.01	cop[tikv]		eq(test.tt.b, 1)
   └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = 'brief' select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;
+explain format = 'brief' select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;
 id	estRows	task	access object	operator info
 IndexLookUp	0.01	root		
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:b(b)	range:[1,1], keep order:false, stats:pseudo
 └─Selection(Probe)	0.01	cop[tikv]		eq(test.tt.a, 1)
   └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format = 'brief' select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;
+explain format = 'brief' select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;
 id	estRows	task	access object	operator info
 IndexLookUp	0.01	root		
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:a(a)	range:[1,1], keep order:false, stats:pseudo
 └─Selection(Probe)	0.01	cop[tikv]		eq(test.tt.b, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format = 'brief' select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;
+id	estRows	task	access object	operator info
+IndexLookUp	0.01	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:b(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	0.01	cop[tikv]		eq(test.tt.a, 1)
   └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 explain format = 'brief' select * from test.tt where a=1 and b=1;
 id	estRows	task	access object	operator info

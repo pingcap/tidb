@@ -1115,21 +1115,21 @@ Level	Code	Message
 Note	1105	[f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where f > 3 and g = 5;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_15	3.33	19551.99	root		
-├─IndexRangeScan_12(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
-└─Selection_14(Probe)	3.33	3269.59	cop[tikv]		gt(planner__core__casetest__integration.t.f, 3)
-  └─TableRowIDScan_13	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_8	3.33	19551.99	root		
+├─IndexRangeScan_5(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
+└─Selection_7(Probe)	3.33	3269.59	cop[tikv]		gt(planner__core__casetest__integration.t.f, 3)
+  └─TableRowIDScan_6	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Note	1105	[t,f_g,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
+Note	1105	[g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where g = 5 order by f;
 id	estRows	estCost	task	access object	operator info
 Sort_5	10.00	21321.97	root		planner__core__casetest__integration.t.f
-└─IndexLookUp_13	10.00	19545.34	root		
-  ├─IndexRangeScan_11(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
-  └─TableRowIDScan_12(Probe)	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexLookUp_10	10.00	19545.34	root		
+  ├─IndexRangeScan_8(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
+  └─TableRowIDScan_9(Probe)	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
+Note	1105	[g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 Note	1105	[t,f_g,g] remain after pruning paths for t given Prop{SortItems: [{planner__core__casetest__integration.t.f asc}], TaskTp: rootTask}
-Note	1105	[t,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where d = 3 order by c, e;
 id	estRows	estCost	task	access object	operator info
 IndexLookUp_15	10.00	215519.24	root		
