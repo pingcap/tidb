@@ -1140,12 +1140,12 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 	preferByStats := ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount <= 1
 	preferByVar := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
 	if (preferByVar || preferByStats) && len(candidates) > 1 {
-		// If a candidate path is TiFlash-path or forced-path, we just keep them. For other candidate paths, if there exists
+		// If a candidate path is TiFlash-path or forced-path or MV index, we just keep them. For other candidate paths, if there exists
 		// any range scan path, we remove full scan paths and keep range scan paths.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath bool
 		for _, c := range candidates {
-			if c.path.Forced || c.path.StoreType == kv.TiFlash {
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && c.path.Index.MVIndex) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
