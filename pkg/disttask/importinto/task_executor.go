@@ -404,6 +404,11 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
 	localBackend.WorkerConcurrency = subtask.Concurrency * 2
+	// compatible with old version TiDB
+	jobKeys := sm.RangeJobKeys
+	if jobKeys == nil {
+		jobKeys = sm.RangeSplitKeys
+	}
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
@@ -411,6 +416,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			StatFiles:     sm.StatFiles,
 			StartKey:      sm.StartKey,
 			EndKey:        sm.EndKey,
+			JobKeys:       jobKeys,
 			SplitKeys:     sm.RangeSplitKeys,
 			TotalFileSize: int64(sm.TotalKVSize),
 			TotalKVCount:  0,
