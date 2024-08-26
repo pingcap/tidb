@@ -35,11 +35,11 @@ func (tc *testcase) EqualsT(other *testcase) bool {
 }
 
 func (tc *testcase) EqualsAny(other any) bool {
-	if tc, ok := other.(*testcase); !ok {
+	tc1, ok := other.(*testcase)
+	if !ok {
 		return false
-	} else {
-		return tc.a == tc.a && tc.b == tc.b && tc.c == tc.c
 	}
+	return tc.a == tc1.a && tc.b == tc1.b && tc.c == tc1.c
 }
 
 // goos: linux
