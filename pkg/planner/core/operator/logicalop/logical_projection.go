@@ -59,6 +59,7 @@ func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProj
 
 // *************************** start implementation of HashEquals interface ****************************
 
+// Hash64 implements the base.Hash64.<0th> interface.
 func (p *LogicalProjection) Hash64(h mutil.Hasher) {
 	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
 	// like schema and names are lost.
@@ -74,6 +75,24 @@ func (p *LogicalProjection) Hash64(h mutil.Hasher) {
 	}
 	h.HashBool(p.CalculateNoDelay)
 	h.HashBool(p.Proj4Expand)
+}
+
+// Equals implements the base.HashEquals.<1st> interface.
+func (p *LogicalProjection) Equals(other *LogicalProjection) bool {
+	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
+	// like schema and names are lost.
+	if !p.LogicalSchemaProducer.Equals(&other.BaseLogicalPlan) {
+		return false
+	}
+	for i, one := range p.Exprs {
+		if !one.(memo.ScalarOperator[any]).Equals(other.Exprs[i]) {
+			return false
+		}
+	}
+	if p.CalculateNoDelay != other.CalculateNoDelay {
+		return false
+	}
+	return p.Proj4Expand == other.Proj4Expand
 }
 
 // *************************** start implementation of Plan interface **********************************
