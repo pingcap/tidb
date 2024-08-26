@@ -532,18 +532,8 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
-<<<<<<< HEAD:executor/insert_common.go
-	txn, err := e.ctx.Txn(false)
-	if err != nil {
-		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
-	}
-	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
 	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
-=======
-	e.Ctx().StmtCommit(ctx)
-	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
->>>>>>> 9960ae746a3 (executor: do not track membuffer's memory in executor (#53985)):pkg/executor/insert_common.go
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}

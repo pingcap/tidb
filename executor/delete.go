@@ -148,18 +148,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 }
 
 func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
-<<<<<<< HEAD:executor/delete.go
-	txn, err := e.ctx.Txn(false)
-	if err != nil {
-		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
-	}
-	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
 	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
-=======
-	e.Ctx().StmtCommit(ctx)
-	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
->>>>>>> 9960ae746a3 (executor: do not track membuffer's memory in executor (#53985)):pkg/executor/delete.go
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
