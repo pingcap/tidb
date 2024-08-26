@@ -204,7 +204,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 
 	checkSubtaskCnt := func(tasks []*proto.Task, taskIDs []int64) {
 		for i, taskID := range taskIDs {
-			require.Equal(t, int64(i+1), tasks[i].ID)
+			require.Equal(t, taskID, tasks[i].ID)
 			require.Eventually(t, func() bool {
 				cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepOne)
 				require.NoError(t, err)
