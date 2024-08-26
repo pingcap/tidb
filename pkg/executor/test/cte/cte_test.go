@@ -276,3 +276,24 @@ WHERE
 		"    └─TableRowIDScan_30(Probe) 10000.00 cop[tikv] table:g keep order:false, stats:pseudo"))
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 }
+
+func Test53454(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int, key(a));")
+	tk.MustExec("create table t2 (a int, b int, key(a));")
+	tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern=on;")
+	tk.MustQuery("desc with cte as (select a, count(b) from t2 group by a) select /*+ INL_JOIN(cte) */  * from t1, cte where t1.a=cte.a;").Check(testkit.Rows(
+		"Projection_13 9990.00 root  test.t1.a, test.t1.b, test.t2.a, Column#13",
+		"└─HashJoin_46 9990.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+		"  ├─HashAgg_71(Build) 7992.00 root  group by:test.t2.a, funcs:count(Column#29)->Column#13, funcs:firstrow(test.t2.a)->test.t2.a",
+		"  │ └─TableReader_72 7992.00 root  data:HashAgg_64",
+		"  │   └─HashAgg_64 7992.00 cop[tikv]  group by:test.t2.a, funcs:count(test.t2.b)->Column#29",
+		"  │     └─Selection_70 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+		"  │       └─TableFullScan_69 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─TableReader_60(Probe) 9990.00 root  data:Selection_59",
+		"    └─Selection_59 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"      └─TableFullScan_58 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+}
