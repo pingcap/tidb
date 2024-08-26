@@ -80,8 +80,7 @@ type mockUpdater struct {
 	connIDSet map[uint64]uint64
 }
 
-// UpdateProcessCPUTime updates specific process's tidb CPU time when the process is still running
-// It implements ProcessCPUTimeUpdater interface
+// UpdateProcessCPUTime implements ProcessCPUTimeUpdater interface
 func (s *mockUpdater) UpdateProcessCPUTime(connID uint64, sqlID uint64, _ time.Duration) {
 	s.connIDSet[connID] = sqlID
 	if len(s.connIDSet) == 3 {
