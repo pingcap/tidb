@@ -16,7 +16,6 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -168,12 +167,11 @@ const (
 )
 
 // Expression represents all scalar expression in SQL.
-type Expression[T any] interface {
+type Expression interface {
 	VecExpr
 	CollationInfo
-	memo.HashEquals[T]
 
-	Traverse(TraverseAction) Expression[any]
+	Traverse(TraverseAction) Expression
 
 	// Eval evaluates an expression through a row.
 	Eval(ctx EvalContext, row chunk.Row) (types.Datum, error)
@@ -206,10 +204,10 @@ type Expression[T any] interface {
 	GetType(ctx EvalContext) *types.FieldType
 
 	// Clone copies an expression totally.
-	Clone() Expression[any]
+	Clone() Expression
 
 	// Equal checks whether two expressions are equal.
-	Equal(ctx EvalContext, e Expression[any]) bool
+	Equal(ctx EvalContext, e Expression) bool
 
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool

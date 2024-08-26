@@ -16,7 +16,6 @@ package base
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -191,9 +190,8 @@ func (c *PlanCounterTp) IsForce() bool {
 
 // LogicalPlan is a tree of logical operators.
 // We can do a lot of logical optimizations to it, like predicate push-down and column pruning.
-type LogicalPlan[T any] interface {
+type LogicalPlan interface {
 	Plan
-	memo.HashEquals[T]
 
 	// HashCode encodes a LogicalPlan to fast compare whether a LogicalPlan equals to another.
 	// We use a strict encode method here which ensures there is no conflict.
@@ -202,10 +200,10 @@ type LogicalPlan[T any] interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression[any], *optimizetrace.LogicalOptimizeOp) ([]expression.Expression[any], LogicalPlan[any])
+	PredicatePushDown([]expression.Expression, *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan)
 
 	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
-	PruneColumns([]*expression.Column, *optimizetrace.LogicalOptimizeOp) (LogicalPlan[any], error)
+	PruneColumns([]*expression.Column, *optimizetrace.LogicalOptimizeOp) (LogicalPlan, error)
 
 	// FindBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -225,19 +223,19 @@ type LogicalPlan[T any] interface {
 
 	// PushDownTopN will push down the topN or limit operator during logical optimization.
 	// interface definition should depend on concrete implementation type.
-	PushDownTopN(topN LogicalPlan[any], opt *optimizetrace.LogicalOptimizeOp) LogicalPlan[any]
+	PushDownTopN(topN LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
 
 	// DeriveTopN derives an implicit TopN from a filter on row_number window function...
-	DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan[any]
+	DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
 
 	// PredicateSimplification consolidates different predcicates on a column and its equivalence classes.
-	PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan[any]
+	PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
 
 	// ConstantPropagation generate new constant predicate according to column equivalence relation
-	ConstantPropagation(parentPlan LogicalPlan[any], currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) (newRoot LogicalPlan[any])
+	ConstantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) (newRoot LogicalPlan)
 
 	// PullUpConstantPredicates recursive find constant predicate, used for the constant propagation rule
-	PullUpConstantPredicates() []expression.Expression[any]
+	PullUpConstantPredicates() []expression.Expression
 
 	// RecursiveDeriveStats derives statistic info between plans.
 	RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
@@ -271,13 +269,13 @@ type LogicalPlan[T any] interface {
 	MaxOneRow() bool
 
 	// Children Get all the children.
-	Children() []LogicalPlan[any]
+	Children() []LogicalPlan
 
 	// SetChildren sets the children for the plan.
-	SetChildren(...LogicalPlan[any])
+	SetChildren(...LogicalPlan)
 
 	// SetChild sets the ith child for the plan.
-	SetChild(i int, child LogicalPlan[any])
+	SetChild(i int, child LogicalPlan)
 
 	// RollBackTaskMap roll back all taskMap's logs after TimeStamp TS.
 	RollBackTaskMap(TS uint64)
@@ -289,8 +287,8 @@ type LogicalPlan[T any] interface {
 	ExtractFD() *fd.FDSet
 
 	// GetBaseLogicalPlan return the baseLogicalPlan inside each logical plan.
-	GetBaseLogicalPlan() LogicalPlan[any]
+	GetBaseLogicalPlan() LogicalPlan
 
 	// ConvertOuterToInnerJoin converts outer joins if the matching rows are filtered.
-	ConvertOuterToInnerJoin(predicates []expression.Expression[any]) LogicalPlan[any]
+	ConvertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
 }
