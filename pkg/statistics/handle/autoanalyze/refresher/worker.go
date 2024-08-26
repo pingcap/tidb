@@ -41,7 +41,6 @@ type worker struct {
 	// mu is used to protect the following fields.
 	runningJobs    map[int64]struct{}
 	maxConcurrency int
-	currentJobs    int
 }
 
 func newWorker(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker, maxConcurrency int) *worker {
@@ -73,7 +72,15 @@ func (w *worker) run() {
 		select {
 		case <-w.ctx.Done():
 			return
-		case job := <-w.jobChan:
+		case job, ok := <-w.jobChan:
+			if !ok {
+				statslogutil.StatsLogger().Info("job channel closed")
+				return
+			}
+			if job == nil {
+				statslogutil.StatsLogger().Info("job is nil")
+				continue
+			}
 			w.wg.Add(1)
 			go w.processJob(job)
 		}
@@ -86,7 +93,6 @@ func (w *worker) processJob(job priorityqueue.AnalysisJob) {
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		delete(w.runningJobs, job.GetTableID())
-		w.currentJobs--
 	}()
 
 	if err := job.Analyze(w.statsHandle, w.sysProcTracker); err != nil {
@@ -102,12 +108,11 @@ func (w *worker) SubmitJob(job priorityqueue.AnalysisJob) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if w.currentJobs >= w.maxConcurrency {
+	if len(w.runningJobs) >= w.maxConcurrency {
 		statslogutil.StatsLogger().Warn("Worker at maximum capacity, job discarded", zap.Stringer("job", job))
 		return false
 	}
 
-	w.currentJobs++
 	w.runningJobs[job.GetTableID()] = struct{}{}
 	w.jobChan <- job
 	return true
