@@ -5,5 +5,9 @@ go_library(
     srcs = ["base.go"],
     importpath = "github.com/pingcap/tidb/pkg/planner/cascades/memo",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/planner/cascades/util"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/planner/cascades/mutil",
+        "//pkg/planner/core/base",
+    ],
 )

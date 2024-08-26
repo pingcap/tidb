@@ -1,32 +1,18 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "internal",
+    name = "mutil",
     srcs = ["hash_equaler.go"],
-    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/internal",
-    visibility = ["//pkg/planner/cascades:__subpackages__"],
-)
-
-go_test(
-    name = "internal_test",
-    timeout = "short",
-    srcs = ["hash_equaler_test.go"],
-    embed = [":internal"],
-    flaky = True,
-    shard_count = 3,
-    deps = ["@com_github_stretchr_testify//require"],
-)
-
-go_library(
-    name = "util",
-    srcs = ["hash_equaler.go"],
-    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/util",
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/mutil",
     visibility = ["//visibility:public"],
 )
 
 go_test(
-    name = "util_test",
+    name = "mutil_test",
+    timeout = "short",
     srcs = ["hash_equaler_test.go"],
-    embed = [":util"],
+    embed = [":mutil"],
+    flaky = True,
+    shard_count = 3,
     deps = ["@com_github_stretchr_testify//require"],
 )
