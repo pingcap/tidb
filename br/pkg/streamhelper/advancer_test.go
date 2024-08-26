@@ -839,7 +839,7 @@ func TestRedactBackend(t *testing.T) {
 		},
 	}
 
-	redacted := streamhelper.TaskInfoRedacted{info}
+	redacted := streamhelper.TaskInfoRedacted{Info: info}
 	require.Equal(t, "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
 
 	info.Storage = &backuppb.StorageBackend{
@@ -852,7 +852,7 @@ func TestRedactBackend(t *testing.T) {
 			},
 		},
 	}
-	redacted = streamhelper.TaskInfoRedacted{info}
+	redacted = streamhelper.TaskInfoRedacted{Info: info}
 	require.Equal(t, "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" CredentialsBlob:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
 
 	info.Storage = &backuppb.StorageBackend{
@@ -865,6 +865,6 @@ func TestRedactBackend(t *testing.T) {
 			},
 		},
 	}
-	redacted = streamhelper.TaskInfoRedacted{info}
+	redacted = streamhelper.TaskInfoRedacted{Info: info}
 	require.Equal(t, "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" SharedKey:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
 }
