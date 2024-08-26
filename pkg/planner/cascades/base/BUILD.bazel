@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "base",
+    srcs = ["base.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/base",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/planner/cascades/mutil"],
+)
+
+go_test(
+    name = "base_test",
+    timeout = "short",
+    srcs = ["base_test.go"],
+    embed = [":base"],
+    flaky = True,
+)
