@@ -300,15 +300,11 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 	if name != variable.TiDBSnapshot && name != variable.TiDBTxnReadTS {
 		return nil
 	}
-<<<<<<< HEAD:executor/set.go
-	vars := e.ctx.GetSessionVars()
-=======
-	return loadSnapshotInfoSchemaIfNeeded(e.Ctx(), snapshotTS)
+	return loadSnapshotInfoSchemaIfNeeded(e.ctx, snapshotTS)
 }
 
 func loadSnapshotInfoSchemaIfNeeded(sctx sessionctx.Context, snapshotTS uint64) error {
 	vars := sctx.GetSessionVars()
->>>>>>> c5185cbdc58 (executor: `runWithSystemSession` also copy snapshot status (#54989)):pkg/executor/set.go
 	if snapshotTS == 0 {
 		vars.SnapshotInfoschema = nil
 		return nil
@@ -316,20 +312,12 @@ func loadSnapshotInfoSchemaIfNeeded(sctx sessionctx.Context, snapshotTS uint64) 
 	logutil.BgLogger().Info("load snapshot info schema",
 		zap.Uint64("conn", vars.ConnectionID),
 		zap.Uint64("SnapshotTS", snapshotTS))
-<<<<<<< HEAD:executor/set.go
-	dom := domain.GetDomain(e.ctx)
-=======
 	dom := domain.GetDomain(sctx)
->>>>>>> c5185cbdc58 (executor: `runWithSystemSession` also copy snapshot status (#54989)):pkg/executor/set.go
 	snapInfo, err := dom.GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return err
 	}
 
-<<<<<<< HEAD:executor/set.go
-	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(e.ctx, snapInfo)
-=======
 	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(sctx, snapInfo)
->>>>>>> c5185cbdc58 (executor: `runWithSystemSession` also copy snapshot status (#54989)):pkg/executor/set.go
 	return nil
 }

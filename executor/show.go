@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -2140,10 +2141,7 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD:executor/show.go
 	defer b.releaseSysSession(ctx, sysCtx)
-=======
-	defer b.ReleaseSysSession(ctx, sysCtx)
 
 	if err = loadSnapshotInfoSchemaIfNeeded(sysCtx, sctx.GetSessionVars().SnapshotTS); err != nil {
 		return err
@@ -2156,6 +2154,5 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 	if err = ResetContextOfStmt(sysCtx, &ast.SelectStmt{}); err != nil {
 		return err
 	}
->>>>>>> c5185cbdc58 (executor: `runWithSystemSession` also copy snapshot status (#54989)):pkg/executor/show.go
 	return fn(sysCtx)
 }
