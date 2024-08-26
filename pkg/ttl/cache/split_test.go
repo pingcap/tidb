@@ -517,8 +517,9 @@ func TestSplitTTLScanRangesWithBytes(t *testing.T) {
 		createTTLTable(t, tk, "t3", "varchar(32) CHARACTER SET BINARY"),
 		createTTLTable(t, tk, "t4", "bit(32)"),
 		create2PKTTLTable(t, tk, "t5", "binary(32)"),
-		createTTLTable(t, tk, "t6", "char(32) CHARACTER SET UTF8MB4"),
-		create2PKTTLTable(t, tk, "t7", "char(32) CHARACTER SET gbk"),
+		createTTLTable(t, tk, "t6", "char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"),
+		createTTLTable(t, tk, "t7", "char(32) CHARACTER SET utf8 COLLATE utf8_bin"),
+		create2PKTTLTable(t, tk, "t8", "char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin"),
 	}
 
 	cases := []struct {
@@ -656,6 +657,8 @@ func TestNoTTLSplitSupportTables(t *testing.T) {
 		createTTLTable(t, tk, "t2", "date"),
 		createTTLTable(t, tk, "t3", "datetime"),
 		createTTLTable(t, tk, "t4", "timestamp"),
+		createTTLTable(t, tk, "t5", "varchar(32) character set utf8mb4 collate utf8mb4_general_ci"),
+		createTTLTable(t, tk, "t6", "varchar(32) character set utf8mb4 collate utf8mb4_0900_ai_ci"),
 	}
 
 	tikvStore := newMockTiKVStore(t)

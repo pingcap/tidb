@@ -17,6 +17,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/parser/ast",
+        "//pkg/parser/charset",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

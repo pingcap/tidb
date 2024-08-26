@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -287,13 +288,31 @@ func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, s
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeInt24:
 		if len(t.KeyColumns) > 1 {
-			return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, true, mysql.HasUnsignedFlag(ft.GetFlag()), false)
+			return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, true, mysql.HasUnsignedFlag(ft.GetFlag()), nil)
 		}
 		return t.splitIntRanges(ctx, tikvStore, splitCnt)
 	case mysql.TypeBit:
-		return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false, true)
+		return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false, nil)
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
-		return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false, mysql.HasBinaryFlag(ft.GetFlag()))
+		var decode func([]byte) types.Datum
+		if !mysql.HasBinaryFlag(ft.GetFlag()) {
+			switch ft.GetCharset() {
+			case charset.CharsetASCII, charset.CharsetLatin1:
+				// ASCII and Latin1 are 8-bit charset, we can use GetASCIIPrefixDatumFromBytes to decode it.
+				decode = GetASCIIPrefixDatumFromBytes
+			case charset.CharsetUTF8, charset.CharsetUTF8MB4:
+				switch ft.GetCollate() {
+				case charset.CollationUTF8, charset.CollationUTF8MB4, "utf8mb4_0900_bin":
+					// We can only use GetASCIIPrefixDatumFromBytes to decode UTF8 and UTF8MB4 when they are
+					// "utf8_bin" or "utf8mb4_bin" collation.
+					decode = GetASCIIPrefixDatumFromBytes
+				}
+			}
+			if decode == nil {
+				return []ScanRange{newFullRange()}, nil
+			}
+		}
+		return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false, decode)
 	}
 	return []ScanRange{newFullRange()}, nil
 }
@@ -363,7 +382,7 @@ func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, 
 }
 
 func (t *PhysicalTable) splitCommonHandleRanges(
-	ctx context.Context, store tikv.Storage, splitCnt int, isInt bool, unsigned bool, binary bool,
+	ctx context.Context, store tikv.Storage, splitCnt int, isInt bool, unsigned bool, decode func([]byte) types.Datum,
 ) ([]ScanRange, error) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(t.ID)
 	startKey, endKey := recordPrefix, recordPrefix.PrefixNext()
@@ -385,8 +404,8 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 				curScanEnd = GetNextIntDatumFromCommonHandle(keyRange.EndKey, recordPrefix, unsigned)
 			} else {
 				curScanEnd = GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
-				if !binary {
-					curScanEnd = GetASCIIPrefixDatumFromBytes(curScanEnd.GetBytes())
+				if decode != nil {
+					curScanEnd = decode(curScanEnd.GetBytes())
 				}
 
 				// "" is the smallest value for string/[]byte, skip to add it to ranges.
