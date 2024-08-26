@@ -8,11 +8,7 @@ go_test(
         "mdl_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD:ddl/metadatalocktest/BUILD.bazel
     shard_count = 34,
-=======
-    shard_count = 21,
->>>>>>> 9fffc2f5ee4 (planner: make sure mpp join task's hashCols are all contained of its plan's schema (#52836)):pkg/planner/core/casetest/mpp/BUILD.bazel
     deps = [
         "//config",
         "//ddl",
