@@ -17,7 +17,6 @@ package logicalop
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/mutil"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
@@ -31,10 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
-var (
-	_ base.LogicalPlan                       = &BaseLogicalPlan{}
-	_ memo.LogicalOperator[*BaseLogicalPlan] = &BaseLogicalPlan{}
-)
+var _ base.LogicalPlan = &BaseLogicalPlan{}
 
 // BaseLogicalPlan is the common structure that used in logical plan.
 type BaseLogicalPlan struct {
@@ -63,11 +59,15 @@ func (p *BaseLogicalPlan) Hash64(h mutil.Hasher) {
 }
 
 // Equals implements HashEquals.<1st> interface.
-func (p *BaseLogicalPlan) Equals(other *BaseLogicalPlan) bool {
-	if other != nil {
-		return p.ID() == other.ID()
+func (p *BaseLogicalPlan) Equals(other any) bool {
+	if other == nil {
+		return false
 	}
-	return false
+	olp, ok := other.(*BaseLogicalPlan)
+	if !ok {
+		return false
+	}
+	return p.ID() == olp.ID()
 }
 
 // *************************** implementation of base Plan interface ***************************

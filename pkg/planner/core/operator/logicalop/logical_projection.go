@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/mutil"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -70,29 +69,36 @@ func (p *LogicalProjection) Hash64(h mutil.Hasher) {
 	//		one.Hash64(one)
 	// }
 	// otherwise, we would use the belowing code.
-	for _, one := range p.Exprs {
-		one.(memo.ScalarOperator[any]).Hash64(h)
-	}
+	//for _, one := range p.Exprs {
+	//	one.Hash64(h)
+	//}
 	h.HashBool(p.CalculateNoDelay)
 	h.HashBool(p.Proj4Expand)
 }
 
 // Equals implements the base.HashEquals.<1st> interface.
-func (p *LogicalProjection) Equals(other *LogicalProjection) bool {
+func (p *LogicalProjection) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	proj, ok := other.(*LogicalProjection)
+	if !ok {
+		return false
+	}
 	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
 	// like schema and names are lost.
-	if !p.LogicalSchemaProducer.Equals(&other.BaseLogicalPlan) {
+	if !p.LogicalSchemaProducer.Equals(&proj.BaseLogicalPlan) {
 		return false
 	}
-	for i, one := range p.Exprs {
-		if !one.(memo.ScalarOperator[any]).Equals(other.Exprs[i]) {
-			return false
-		}
-	}
-	if p.CalculateNoDelay != other.CalculateNoDelay {
+	//for i, one := range p.Exprs {
+	//	if !one.(memo.ScalarOperator[any]).Equals(other.Exprs[i]) {
+	//		return false
+	//	}
+	//}
+	if p.CalculateNoDelay != proj.CalculateNoDelay {
 		return false
 	}
-	return p.Proj4Expand == other.Proj4Expand
+	return p.Proj4Expand == proj.Proj4Expand
 }
 
 // *************************** start implementation of Plan interface **********************************

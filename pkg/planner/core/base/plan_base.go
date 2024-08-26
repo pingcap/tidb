@@ -16,6 +16,7 @@ package base
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -192,6 +193,7 @@ func (c *PlanCounterTp) IsForce() bool {
 // We can do a lot of logical optimizations to it, like predicate push-down and column pruning.
 type LogicalPlan interface {
 	Plan
+	memo.HashEquals
 
 	// HashCode encodes a LogicalPlan to fast compare whether a LogicalPlan equals to another.
 	// We use a strict encode method here which ensures there is no conflict.
