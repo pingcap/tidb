@@ -57,6 +57,7 @@ type BackfillSubTaskMeta struct {
 	RowEnd   []byte `json:"row_end"`
 
 	// Used by global sort write & ingest step.
+	RangeJobKeys   [][]byte `json:"range_job_keys,omitempty"`
 	RangeSplitKeys [][]byte `json:"range_split_keys,omitempty"`
 	DataFiles      []string `json:"data-files,omitempty"`
 	StatFiles      []string `json:"stat-files,omitempty"`
