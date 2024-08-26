@@ -124,7 +124,6 @@ func doSendBackup(
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
-
 	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
 			"process will notify the shell.")
