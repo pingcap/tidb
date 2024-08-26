@@ -139,8 +139,11 @@ func (w *worker) Stop() {
 func (w *worker) WaitAutoAnalyzeFinishedForTest() {
 	for {
 		time.Sleep(time.Millisecond * 100)
+		w.mu.Lock()
 		if len(w.runningJobs) == 0 {
+			w.mu.Unlock()
 			return
 		}
+		w.mu.Unlock()
 	}
 }
