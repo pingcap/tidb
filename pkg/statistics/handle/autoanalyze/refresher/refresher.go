@@ -144,6 +144,8 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	return false
 }
 
+// WaitAutoAnalyzeFinishedForTest waits for the auto analyze job to be finished.
+// Only used in the test.
 func (r *Refresher) WaitAutoAnalyzeFinishedForTest() {
 	r.worker.WaitAutoAnalyzeFinishedForTest()
 }
