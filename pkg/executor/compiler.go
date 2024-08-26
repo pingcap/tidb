@@ -548,7 +548,7 @@ func getDbFromResultNode(resultNode ast.ResultSetNode, resolveCtx *resolve.Conte
 		}
 	case *ast.TableName:
 		xW := resolveCtx.GetTableName(x)
-		if xW.DBInfo != nil {
+		if xW != nil {
 			dbLabels = append(dbLabels, xW.DBInfo.Name.O)
 		}
 	case *ast.Join:

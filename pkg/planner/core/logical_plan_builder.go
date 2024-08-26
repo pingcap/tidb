@@ -5777,7 +5777,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			}
 			tb := tbInfoList[name]
 			tnW := b.resolveCtx.GetTableName(tb)
-			localResolveCtx.AddTableName(tn, &resolve.TableNameW{
+			localResolveCtx.AddTableName(&resolve.TableNameW{
 				TableName: tn,
 				TableInfo: tnW.TableInfo,
 				DBInfo:    tnW.DBInfo,
@@ -5868,7 +5868,11 @@ func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]util.HandleCols, sch
 	return newMap, nil
 }
 
-func (p *Delete) cleanTblID2HandleMap(tablesToDelete map[int64][]*resolve.TableNameW, tblID2Handle map[int64][]util.HandleCols, outputNames []*types.FieldName) map[int64][]util.HandleCols {
+func (p *Delete) cleanTblID2HandleMap(
+	tablesToDelete map[int64][]*resolve.TableNameW,
+	tblID2Handle map[int64][]util.HandleCols,
+	outputNames []*types.FieldName,
+) map[int64][]util.HandleCols {
 	for id, cols := range tblID2Handle {
 		names, ok := tablesToDelete[id]
 		if !ok {
@@ -6646,7 +6650,11 @@ func (u *updatableTableListResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				newTableName.Schema = model.NewCIStr("")
 				u.updatableTableList = append(u.updatableTableList, &newTableName)
 				if tnW := u.resolveCtx.GetTableName(s); tnW != nil {
-					u.resolveCtx.AddTableName(&newTableName, tnW)
+					u.resolveCtx.AddTableName(&resolve.TableNameW{
+						TableName: &newTableName,
+						DBInfo:    tnW.DBInfo,
+						TableInfo: tnW.TableInfo,
+					})
 				}
 			} else {
 				u.updatableTableList = append(u.updatableTableList, s)
@@ -6722,7 +6730,11 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 				newTableName.Schema = model.NewCIStr("")
 				e.tableNames = append(e.tableNames, &newTableName)
 				if tnW := e.resolveCtx.GetTableName(s); tnW != nil {
-					e.resolveCtx.AddTableName(&newTableName, tnW)
+					e.resolveCtx.AddTableName(&resolve.TableNameW{
+						TableName: &newTableName,
+						DBInfo:    tnW.DBInfo,
+						TableInfo: tnW.TableInfo,
+					})
 				}
 			} else {
 				e.tableNames = append(e.tableNames, s)
@@ -6738,7 +6750,11 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 						newTableName.Schema = model.NewCIStr("")
 						innerTableName = &newTableName
 						if tnW := e.resolveCtx.GetTableName(innerList[0]); tnW != nil {
-							e.resolveCtx.AddTableName(&newTableName, tnW)
+							e.resolveCtx.AddTableName(&resolve.TableNameW{
+								TableName: &newTableName,
+								DBInfo:    tnW.DBInfo,
+								TableInfo: tnW.TableInfo,
+							})
 						}
 					}
 					// why the first inner table is used to represent the table source???

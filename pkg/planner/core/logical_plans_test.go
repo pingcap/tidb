@@ -422,7 +422,7 @@ func buildLogicPlan4GroupBy(s *plannerSuite, t *testing.T, sql string) (base.Pla
 
 	nodeW := resolve.NewNodeW(stmt)
 	tn := stmt.(*ast.SelectStmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName)
-	nodeW.GetResolveContext().AddTableName(tn, &resolve.TableNameW{
+	nodeW.GetResolveContext().AddTableName(&resolve.TableNameW{
 		TableName: tn,
 		TableInfo: mockedTableInfo,
 	})

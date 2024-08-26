@@ -564,7 +564,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 		}
 		tableInfo := tbl.Meta()
 		dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), tableInfo)
-		p.resolveCtx.AddTableName(tn, &resolve.TableNameW{
+		p.resolveCtx.AddTableName(&resolve.TableNameW{
 			TableName: tn,
 			DBInfo:    dbInfo,
 			TableInfo: tableInfo,
@@ -1633,7 +1633,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 	}
-	p.resolveCtx.AddTableName(tn, &resolve.TableNameW{
+	p.resolveCtx.AddTableName(&resolve.TableNameW{
 		TableName: tn,
 		DBInfo:    dbInfo,
 		TableInfo: tableInfo,

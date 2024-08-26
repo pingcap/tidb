@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package resolve is used for semantic resolve of the AST tree.
+// semantic resolve is mostly done by 'core.preprocessor', in tableListExtractor
+// and updatableTableListResolver we also do some resolve for aliases.
 package resolve
 
 import (
@@ -19,14 +22,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
-// TableNameW is a wrapper of ast.TableName.
+// TableNameW is a wrapper around ast.TableName to store more information.
 type TableNameW struct {
 	*ast.TableName
 	DBInfo    *model.DBInfo
 	TableInfo *model.TableInfo
 }
 
-// NodeW is a wrapper of ast.Node.
+// NodeW is a wrapper around ast.Node to store resolve context.
 type NodeW struct {
 	Node       ast.Node
 	resolveCtx *Context
@@ -74,11 +77,14 @@ func NewContext() *Context {
 }
 
 // AddTableName adds the AST table name and its corresponding TableNameW to the Context.
-func (c *Context) AddTableName(tableName *ast.TableName, tableNameW *TableNameW) {
-	c.tableNames[tableName] = tableNameW
+func (c *Context) AddTableName(tableNameW *TableNameW) {
+	c.tableNames[tableNameW.TableName] = tableNameW
 }
 
 // GetTableName returns the TableNameW of the AST table name.
+// the TableNameW should have been added to the Context in pre-process phase before
+// calling this function, if it doesn't exist, pre-process should have returned error,
+// so we don't check nil-ness in most cases.
 func (c *Context) GetTableName(tableName *ast.TableName) *TableNameW {
 	return c.tableNames[tableName]
 }
