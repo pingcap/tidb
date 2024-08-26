@@ -15,7 +15,7 @@
 package base
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/cascades/mutil"
+	"github.com/pingcap/tidb/pkg/planner/util/hashequaler"
 )
 
 // Hash64 is the interface for hashcode.
@@ -23,7 +23,7 @@ import (
 // rather than compacted bytes from cascaded operators bottom-up.
 type Hash64 interface {
 	// Hash64 returns the uint64 digest of an object.
-	Hash64(h mutil.Hasher)
+	Hash64(h hashequaler.Hasher)
 }
 
 // Equals is the interface for equality check.

@@ -5,7 +5,7 @@ go_library(
     srcs = ["base.go"],
     importpath = "github.com/pingcap/tidb/pkg/planner/cascades/base",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/planner/cascades/mutil"],
+    deps = ["//pkg/planner/util/hashequaler"],
 )
 
 go_test(
