@@ -45,9 +45,9 @@ type BaseLogicalPlan struct {
 	taskMapBak []string
 	// taskMapBakTS stores the timestamps of logs.
 	taskMapBakTS []uint64
-	self         base.LogicalPlan[any]
+	self         base.LogicalPlan
 	maxOneRow    bool
-	children     []base.LogicalPlan[any]
+	children     []base.LogicalPlan
 	// fdSet is a set of functional dependencies(FDs) which powers many optimizations,
 	// including eliminating unnecessary DISTINCT operators, simplifying ORDER BY columns,
 	// removing Max1Row operators, and mapping semi-joins to inner-joins.
@@ -113,7 +113,7 @@ func (p *BaseLogicalPlan) HashCode() []byte {
 }
 
 // PredicatePushDown implements LogicalPlan.<1st> interface.
-func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression[any], opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	if len(p.children) == 0 {
 		return predicates, p.self
 	}
