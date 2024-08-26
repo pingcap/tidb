@@ -233,11 +233,12 @@ func WriteRedact(build *strings.Builder, v string, redact string) {
 	build.WriteString(v)
 }
 
+// TaskInfoRedacted is a wrapper of backup.StreamBackupTaskInfo to redact sensitive information
 type TaskInfoRedacted struct {
 	Info *backup.StreamBackupTaskInfo
 }
 
-func (t TaskInfoRedacted) redact(input string) string {
+func (TaskInfoRedacted) redact(input string) string {
 	// Replace the matched fields with redacted versions
 	output := reAccessKey.ReplaceAllString(input, `access_key:"[REDACTED]"`)
 	output = reSecretAccessKey.ReplaceAllString(output, `secret_access_key:"[REDACTED]"`)
@@ -249,6 +250,7 @@ func (t TaskInfoRedacted) redact(input string) string {
 	return output
 }
 
+// String returns the redacted string of the task info
 func (t TaskInfoRedacted) String() string {
 	return t.redact(t.Info.String())
 }
