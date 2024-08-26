@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
@@ -55,11 +56,13 @@ type BaseLogicalPlan struct {
 
 // Hash64 implements HashEquals.<0th> interface.
 func (p *BaseLogicalPlan) Hash64(h mutil.Hasher) {
+	intest.Assert(false, "Hash64 should not be called directly")
 	h.HashInt(p.ID())
 }
 
 // Equals implements HashEquals.<1st> interface.
 func (p *BaseLogicalPlan) Equals(other any) bool {
+	intest.Assert(false, "Equals should not be called directly")
 	if other == nil {
 		return false
 	}
