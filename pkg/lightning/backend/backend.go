@@ -117,6 +117,7 @@ type ExternalEngineConfig struct {
 	StatFiles  []string
 	StartKey   []byte
 	EndKey     []byte
+	JobKeys    [][]byte
 	SplitKeys  [][]byte
 	// TotalFileSize can be an estimated value.
 	TotalFileSize int64
