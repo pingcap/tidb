@@ -25,6 +25,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// worker manages the execution of analysis jobs.
+// Fields are ordered to represent the mutex protection clearly.
+//
+//nolint:fieldalignment
 type worker struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sysproctrack.Tracker
@@ -32,7 +36,9 @@ type worker struct {
 	jobChan        chan priorityqueue.AnalysisJob
 	ctx            context.Context
 	cancel         context.CancelFunc
-	mu             sync.Mutex
+
+	mu sync.Mutex
+	// mu is used to protect the following fields.
 	runningJobs    map[int64]struct{}
 	maxConcurrency int
 	currentJobs    int
