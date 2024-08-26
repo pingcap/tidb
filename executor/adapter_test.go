@@ -20,17 +20,12 @@ import (
 	"testing"
 	"time"
 
-<<<<<<< HEAD:executor/adapter_test.go
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/testkit"
-=======
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/testkit"
->>>>>>> 3004c07b939 (copIterator: return context error to avoid return incorrect result on context cancel/timeout (#53489)):pkg/executor/adapter_test.go
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -71,7 +66,10 @@ func TestContextCancelWhenReadFromCopIterator(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
 
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/store/copr/CtxCancelBeforeReceive", "return(true)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/CtxCancelBeforeReceive", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/CtxCancelBeforeReceive"))
+	}()
 	ctx := context.WithValue(context.Background(), "TestContextCancel", "test")
 	ctx, cancelFunc := context.WithCancel(ctx)
 	defer cancelFunc()
