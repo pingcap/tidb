@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:executor/show.go
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -54,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -73,64 +73,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"golang.org/x/exp/slices"
-=======
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/bindinfo"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
-	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	parserformat "github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/parser/tidb"
-	field_types "github.com/pingcap/tidb/pkg/parser/types"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/plugin"
-	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/privilege/privileges"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/tidb-binlog/node"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/etcd"
-	"github.com/pingcap/tidb/pkg/util/filter"
-	"github.com/pingcap/tidb/pkg/util/format"
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/sem"
-	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/tikv/client-go/v2/oracle"
->>>>>>> b19a91817c5 (*: isolate more variables for `runWithSystemSession` (#54791)):pkg/executor/show.go
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -2199,10 +2141,7 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD:executor/show.go
 	defer b.releaseSysSession(ctx, sysCtx)
-=======
-	defer b.ReleaseSysSession(ctx, sysCtx)
 	// `fn` may use KV transaction, so initialize the txn here
 	if err = sessiontxn.NewTxn(ctx, sysCtx); err != nil {
 		return err
@@ -2211,6 +2150,5 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 	if err = ResetContextOfStmt(sysCtx, &ast.SelectStmt{}); err != nil {
 		return err
 	}
->>>>>>> b19a91817c5 (*: isolate more variables for `runWithSystemSession` (#54791)):pkg/executor/show.go
 	return fn(sysCtx)
 }

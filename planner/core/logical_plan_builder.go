@@ -27,7 +27,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD:planner/core/logical_plan_builder.go
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -66,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/size"
+	"go.uber.org/zap"
 )
 
 const (
@@ -152,56 +152,6 @@ const (
 	HintSemiJoinRewrite = "semi_join_rewrite"
 	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
 	HintNoDecorrelate = "no_decorrelate"
-=======
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
-	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
-	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
-	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/table/temptable"
-	"github.com/pingcap/tidb/pkg/types"
-	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	util2 "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/hack"
-	h "github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/intset"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
->>>>>>> b19a91817c5 (*: isolate more variables for `runWithSystemSession` (#54791)):pkg/planner/core/logical_plan_builder.go
 )
 
 const (
@@ -5355,7 +5305,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	}()
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
-<<<<<<< HEAD:planner/core/logical_plan_builder.go
+		logutil.BgLogger().Error("build plan for view failed", zap.Error(err))
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
 			terror.ErrorNotEqual(err, ErrNoSuchTable) &&
 			terror.ErrorNotEqual(err, ErrInternal) &&
@@ -5364,17 +5314,6 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 			terror.ErrorNotEqual(err, ErrViewNoExplain) &&
 			terror.ErrorNotEqual(err, ErrNotSupportedYet) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
-=======
-		logutil.BgLogger().Error("build plan for view failed", zap.Error(err))
-		if terror.ErrorNotEqual(err, plannererrors.ErrViewRecursive) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrNoSuchTable) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrInternal) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrFieldNotInGroupBy) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrMixOfGroupFuncAndFields) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrViewNoExplain) &&
-			terror.ErrorNotEqual(err, plannererrors.ErrNotSupportedYet) {
-			err = plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
->>>>>>> b19a91817c5 (*: isolate more variables for `runWithSystemSession` (#54791)):pkg/planner/core/logical_plan_builder.go
 		}
 		return nil, err
 	}
