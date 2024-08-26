@@ -144,6 +144,10 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	return false
 }
 
+func (r *Refresher) WaitAutoAnalyzeFinishedForTest() {
+	r.worker.WaitAutoAnalyzeFinishedForTest()
+}
+
 // GetRunningJobs returns the currently running jobs.
 func (r *Refresher) GetRunningJobs() map[int64]struct{} {
 	return r.worker.GetRunningJobs()

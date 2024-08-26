@@ -17,6 +17,7 @@ package refresher
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
@@ -132,4 +133,14 @@ func (w *worker) Stop() {
 	w.cancel()
 	close(w.jobChan)
 	w.wg.Wait()
+}
+
+// TODO: remove this after we have a better way to wait for the auto analyze job to be finished.
+func (w *worker) WaitAutoAnalyzeFinishedForTest() {
+	for {
+		time.Sleep(time.Millisecond * 100)
+		if len(w.runningJobs) == 0 {
+			return
+		}
+	}
 }

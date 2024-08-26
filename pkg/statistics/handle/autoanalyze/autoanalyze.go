@@ -41,6 +41,7 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -305,7 +306,12 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
 			return false
 		}
-		return sa.refresher.AnalyzeHighestPriorityTables()
+		analyzed := sa.refresher.AnalyzeHighestPriorityTables()
+		// During the test, we need to wait for the auto analyze job to be finished.
+		if intest.InTest {
+			sa.refresher.WaitAutoAnalyzeFinishedForTest()
+		}
+		return analyzed
 	}
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
