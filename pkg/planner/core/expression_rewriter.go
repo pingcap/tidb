@@ -1675,9 +1675,7 @@ func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 		return
 	}
 
-	if er.planCtx != nil {
-		intest.Assert(sessionVars == er.planCtx.builder.ctx.GetSessionVars())
-	}
+	intest.Assert(er.planCtx == nil || sessionVars == er.planCtx.builder.ctx.GetSessionVars())
 
 	if v.Value != nil {
 		tp := er.ctxStack[stkLen-1].GetType(er.sctx.GetEvalCtx())
