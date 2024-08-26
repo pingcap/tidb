@@ -34,7 +34,7 @@ import (
 
 func TestDDLHistoryBasic(t *testing.T) {
 	var (
-		DDLHistoryJobCount = 0
+		ddlHistoryJobCount = 0
 	)
 
 	store := testkit.CreateMockStore(t)
@@ -84,7 +84,7 @@ func TestDDLHistoryBasic(t *testing.T) {
 		m := meta.NewMeta(txn)
 		jobs, err := ddl.GetAllHistoryDDLJobs(m)
 		require.NoError(t, err)
-		DDLHistoryJobCount = len(jobs)
+		ddlHistoryJobCount = len(jobs)
 		return nil
 	})
 
@@ -106,14 +106,14 @@ func TestDDLHistoryBasic(t *testing.T) {
 		m := meta.NewMeta(txn)
 		jobs, err := ddl.ScanHistoryDDLJobs(m, 0, 0)
 		require.NoError(t, err)
-		if DDLHistoryJobCount <= ddl.DefNumGetDDLHistoryJobs {
-			require.Equal(t, DDLHistoryJobCount, len(jobs))
+		if ddlHistoryJobCount <= ddl.DefNumGetDDLHistoryJobs {
+			require.Equal(t, ddlHistoryJobCount, len(jobs))
 		} else {
 			require.Equal(t, ddl.DefNumGetDDLHistoryJobs, len(jobs))
 		}
 		require.True(t, len(jobs) > 2)
-		require.Equal(t, int64(2), jobs[DDLHistoryJobCount-2].ID)
-		require.Equal(t, int64(1), jobs[DDLHistoryJobCount-1].ID)
+		require.Equal(t, int64(2), jobs[ddlHistoryJobCount-2].ID)
+		require.Equal(t, int64(1), jobs[ddlHistoryJobCount-1].ID)
 		return nil
 	})
 
