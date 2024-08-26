@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 
 	"github.com/golang/protobuf/proto"
@@ -22,13 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/redact"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-)
-
-var (
-	reAccessKey       = regexp.MustCompile(`access_key:\"[^\"]*\"`)
-	reSecretAccessKey = regexp.MustCompile(`secret_access_key:\"[^\"]*\"`)
-	reSharedKey       = regexp.MustCompile(`shared_key:\"[^\"]*\"`)
-	reCredentialsBlob = regexp.MustCompile(`credentials_blob:\"[^\"]*\"`)
 )
 
 type EventType int
@@ -70,24 +62,6 @@ func (t *TaskEvent) String() string {
 		return fmt.Sprintf("%s(%s, err = %s)", t.Type, t.Name, t.Err)
 	}
 	return fmt.Sprintf("%s(%s)", t.Type, t.Name)
-}
-
-type TaskInfoRedacted struct {
-	Info *backuppb.StreamBackupTaskInfo
-}
-
-func (t TaskInfoRedacted) redact(input string) string {
-	// Replace the matched fields with redacted versions
-	output := reAccessKey.ReplaceAllString(input, `access_key:"[REDACTED]"`)
-	output = reSecretAccessKey.ReplaceAllString(output, `secret_access_key:"[REDACTED]"`)
-	output = reSharedKey.ReplaceAllString(output, `SharedKey:"[REDACTED]"`)
-	output = reCredentialsBlob.ReplaceAllString(output, `CredentialsBlob:"[REDACTED]"`)
-
-	return output
-}
-
-func (t TaskInfoRedacted) String() string {
-	return t.redact(t.Info.String())
 }
 
 type AdvancerExt struct {

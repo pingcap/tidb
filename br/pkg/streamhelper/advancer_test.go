@@ -13,13 +13,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -825,11 +825,11 @@ func TestSubscriptionPanic(t *testing.T) {
 }
 
 func TestRedactBackend(t *testing.T) {
-	info := new(backuppb.StreamBackupTaskInfo)
+	info := new(backup.StreamBackupTaskInfo)
 	info.Name = "test"
-	info.Storage = &backuppb.StorageBackend{
-		Backend: &backuppb.StorageBackend_S3{
-			S3: &backuppb.S3{
+	info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_S3{
+			S3: &backup.S3{
 				Endpoint:        "http://",
 				Bucket:          "test",
 				Prefix:          "test",
@@ -839,12 +839,12 @@ func TestRedactBackend(t *testing.T) {
 		},
 	}
 
-	redacted := streamhelper.TaskInfoRedacted{Info: info}
+	redacted := redact.TaskInfoRedacted{Info: info}
 	require.Equal(t, "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
 
-	info.Storage = &backuppb.StorageBackend{
-		Backend: &backuppb.StorageBackend_Gcs{
-			Gcs: &backuppb.GCS{
+	info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_Gcs{
+			Gcs: &backup.GCS{
 				Endpoint:        "http://",
 				Bucket:          "test",
 				Prefix:          "test",
@@ -852,19 +852,24 @@ func TestRedactBackend(t *testing.T) {
 			},
 		},
 	}
-	redacted = streamhelper.TaskInfoRedacted{Info: info}
+	redacted = redact.TaskInfoRedacted{Info: info}
 	require.Equal(t, "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" CredentialsBlob:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
 
-	info.Storage = &backuppb.StorageBackend{
-		Backend: &backuppb.StorageBackend_AzureBlobStorage{
-			AzureBlobStorage: &backuppb.AzureBlobStorage{
+	info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_AzureBlobStorage{
+			AzureBlobStorage: &backup.AzureBlobStorage{
 				Endpoint:  "http://",
 				Bucket:    "test",
 				Prefix:    "test",
 				SharedKey: "12abCD!@#[]{}?/\\",
+				AccessSig: "12abCD!@#[]{}?/\\",
+				EncryptionKey: &backup.AzureCustomerKey{
+					EncryptionKey:       "12abCD!@#[]{}?/\\",
+					EncryptionKeySha256: "12abCD!@#[]{}?/\\",
+				},
 			},
 		},
 	}
-	redacted = streamhelper.TaskInfoRedacted{Info: info}
-	require.Equal(t, "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" SharedKey:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
+	redacted = redact.TaskInfoRedacted{Info: info}
+	require.Equal(t, "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" access_sig:\"[REDACTED]\" encryption_key:<[REDACTED]> > > name:\"test\" ", redacted.String())
 }
