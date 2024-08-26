@@ -27,6 +27,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	mathrand "math/rand"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -355,8 +356,8 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	if err := taskCfg.Adjust(taskCtx); err != nil {
 		return err
 	}
-
-	taskCfg.TaskID = int64(uuid.New().ID())
+	r := mathrand.New(mathrand.NewSource(time.Now().UnixNano()))
+	taskCfg.TaskID = r.Int63()
 
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
