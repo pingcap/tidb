@@ -287,15 +287,13 @@ func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, s
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeInt24:
 		if len(t.KeyColumns) > 1 {
-			return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, true, mysql.HasUnsignedFlag(ft.GetFlag()))
+			return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, true, mysql.HasUnsignedFlag(ft.GetFlag()), false)
 		}
 		return t.splitIntRanges(ctx, tikvStore, splitCnt)
 	case mysql.TypeBit:
-		return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false)
+		return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false, true)
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
-		if mysql.HasBinaryFlag(ft.GetFlag()) {
-			return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false)
-		}
+		return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false, mysql.HasBinaryFlag(ft.GetFlag()))
 	}
 	return []ScanRange{newFullRange()}, nil
 }
@@ -365,7 +363,7 @@ func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, 
 }
 
 func (t *PhysicalTable) splitCommonHandleRanges(
-	ctx context.Context, store tikv.Storage, splitCnt int, isInt bool, unsigned bool,
+	ctx context.Context, store tikv.Storage, splitCnt int, isInt bool, unsigned bool, binary bool,
 ) ([]ScanRange, error) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(t.ID)
 	startKey, endKey := recordPrefix, recordPrefix.PrefixNext()
@@ -381,20 +379,26 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 	scanRanges := make([]ScanRange, 0, len(keyRanges))
 	curScanStart := nullDatum()
 	for i, keyRange := range keyRanges {
-		if i != 0 && curScanStart.IsNull() {
-			break
-		}
-
 		curScanEnd := nullDatum()
 		if i != len(keyRanges)-1 {
 			if isInt {
 				curScanEnd = GetNextIntDatumFromCommonHandle(keyRange.EndKey, recordPrefix, unsigned)
 			} else {
 				curScanEnd = GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
+				if !binary {
+					curScanEnd = GetASCIIPrefixDatumFromBytes(curScanEnd.GetBytes())
+				}
+
+				// "" is the smallest value for string/[]byte, skip to add it to ranges.
+				if len(curScanEnd.GetBytes()) == 0 {
+					continue
+				}
 			}
 		}
 
 		if !curScanStart.IsNull() && !curScanEnd.IsNull() {
+			// Sometimes curScanStart >= curScanEnd because the edge datum is an approximate value.
+			// At this time, we should skip this range to ensure the incremental of ranges.
 			cmp, err := curScanStart.Compare(types.StrictContext, &curScanEnd, collate.GetBinaryCollator())
 			intest.AssertNoError(err)
 			if err != nil {
@@ -407,6 +411,9 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 		}
 
 		scanRanges = append(scanRanges, newDatumRange(curScanStart, curScanEnd))
+		if curScanEnd.IsNull() {
+			break
+		}
 		curScanStart = curScanEnd
 	}
 	return scanRanges, nil
@@ -647,4 +654,28 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 	}
 	d.SetBytes(val)
 	return d
+}
+
+// GetASCIIPrefixDatumFromBytes is used to convert bytes to string datum which only contains ASCII prefix string.
+// The ASCII prefix string only contains visible characters and `\t`, `\n`, `\r`.
+// "abc" -> "abc"
+// "\0abc" -> ""
+// "ab\x01c" -> "ab"
+// "ab\xffc" -> "ab"
+// "ab\rc\xff" -> "ab\rc"
+func GetASCIIPrefixDatumFromBytes(bs []byte) types.Datum {
+	for i, c := range bs {
+		if c >= 0x20 && c <= 0x7E {
+			// visible characters from ` ` to `~`
+			continue
+		}
+
+		if c == '\t' || c == '\n' || c == '\r' {
+			continue
+		}
+
+		bs = bs[:i]
+		break
+	}
+	return types.NewStringDatum(string(bs))
 }
