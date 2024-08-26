@@ -34,6 +34,7 @@ type Equals interface {
 	Equals(any) bool
 }
 
+// HashEquals is the interface for hash64 and equality check.
 type HashEquals interface {
 	Hash64
 	Equals
