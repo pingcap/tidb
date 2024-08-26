@@ -324,7 +324,8 @@ func (rc *LogClient) RestoreCompactedSsts(
 		// no need to record the value here
 		if err := checkpoint.AppendRangesForRestore(eCtx, checkpointRunner,
 			int64(regionId), ""); err != nil {
-			return errors.Trace(err)
+			log.Warn("failed to append checkpoint", zap.Uint64("regionID", regionId), zap.Error(err))
+			// return errors.Trace(err)
 		}
 	}
 

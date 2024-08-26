@@ -1343,7 +1343,7 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 		sstTaskName := taskName + "_sst"
-		sstCheckpoints, err = client.InitCheckpointMetadataForSstRestore(ctx, taskName)
+		sstCheckpoints, err = client.InitCheckpointMetadataForSstRestore(ctx, sstTaskName)
 		if err != nil {
 			return errors.Trace(err)
 		}
