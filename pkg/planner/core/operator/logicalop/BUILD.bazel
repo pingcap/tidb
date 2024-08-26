@@ -40,6 +40,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/cardinality",
+        "//pkg/planner/cascades/util",
         "//pkg/planner/core/base",
         "//pkg/planner/core/constraint",
         "//pkg/planner/core/cost",

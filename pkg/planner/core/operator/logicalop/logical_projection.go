@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
+	"github.com/pingcap/tidb/pkg/planner/cascades/mutil"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -55,7 +57,26 @@ func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProj
 	return &p
 }
 
-// *************************** start implementation of Plan interface ***************************
+// *************************** start implementation of HashEquals interface ****************************
+
+func (p *LogicalProjection) Hash64(h mutil.Hasher) {
+	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
+	// like schema and names are lost.
+	p.LogicalSchemaProducer.Hash64(h)
+	// todo: if we change the logicalProjection's Expr defintion as:Exprs []memo.ScalarOperator[any],
+	// we should use like below:
+	// for _, one := range p.Exprs {
+	//		one.Hash64(one)
+	// }
+	// otherwise, we would use the belowing code.
+	for _, one := range p.Exprs {
+		one.(memo.ScalarOperator[any]).Hash64(h)
+	}
+	h.HashBool(p.CalculateNoDelay)
+	h.HashBool(p.Proj4Expand)
+}
+
+// *************************** start implementation of Plan interface **********************************
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalProjection) ExplainInfo() string {
@@ -71,7 +92,7 @@ func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Co
 	}
 }
 
-// *************************** end implementation of Plan interface ***************************
+// *************************** end implementation of Plan interface ************************************
 
 // *************************** start implementation of logicalPlan interface ***************************
 
