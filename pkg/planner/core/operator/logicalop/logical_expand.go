@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"bytes"
@@ -20,11 +20,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -33,7 +33,7 @@ import (
 
 // LogicalExpand represents a logical Expand OP serves for data replication requirement.
 type LogicalExpand struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 
 	// distinct group by columns. (maybe projected below if it's a non-col)
 	DistinctGroupByCol  []*expression.Column
@@ -66,7 +66,7 @@ type LogicalExpand struct {
 
 // Init initializes LogicalProjection.
 func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeExpand, &p, offset)
 	return &p
 }
 
@@ -139,7 +139,7 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *o
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return exhaustPhysicalPlans4LogicalExpand(p, prop)
+	return utilfuncp.ExhaustPhysicalPlans4LogicalExpand(p, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -294,7 +294,8 @@ func (p *LogicalExpand) GenerateGroupingMarks(sourceCols []*expression.Column) [
 	return resSliceMap
 }
 
-func (p *LogicalExpand) trySubstituteExprWithGroupingSetCol(expr expression.Expression) (expression.Expression, bool) {
+// TrySubstituteExprWithGroupingSetCol is used to substitute the original gby expression with new gby col.
+func (p *LogicalExpand) TrySubstituteExprWithGroupingSetCol(expr expression.Expression) (expression.Expression, bool) {
 	// since all the original group items has been projected even single col,
 	// let's check the origin gby expression here, and map it to new gby col.
 	for i, oneExpr := range p.DistinctGbyExprs {
@@ -307,8 +308,8 @@ func (p *LogicalExpand) trySubstituteExprWithGroupingSetCol(expr expression.Expr
 	return expr, false
 }
 
-// CheckGroupingFuncArgsInGroupBy checks whether grouping function args is in grouping items.
-func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expression.Expression) ([]*expression.Column, error) {
+// ResolveGroupingFuncArgsInGroupBy checks whether grouping function args is in grouping items.
+func (p *LogicalExpand) ResolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expression.Expression) ([]*expression.Column, error) {
 	// build GBYColMap
 	distinctGBYColMap := make(map[int64]struct{}, len(p.DistinctGroupByCol))
 	for _, oneDistinctGBYCol := range p.DistinctGroupByCol {

@@ -250,6 +250,14 @@ func (c *Constant) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 	return c.DeferredExpr.VecEvalJSON(ctx, input, result)
 }
 
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (c *Constant) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, types.ETVectorFloat32, input, result)
+	}
+	return c.DeferredExpr.VecEvalVectorFloat32(ctx, input, result)
+}
+
 func (c *Constant) getLazyDatum(ctx EvalContext, row chunk.Row) (dt types.Datum, isLazy bool, err error) {
 	if c.ParamMarker != nil {
 		val, err := c.ParamMarker.GetUserVar(ctx)
@@ -431,6 +439,21 @@ func (c *Constant) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, b
 		return types.BinaryJSON{}, true, nil
 	}
 	return dt.GetMysqlJSON(), false, nil
+}
+
+// EvalVectorFloat32 returns VectorFloat32 representation of Constant.
+func (c *Constant) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	dt, lazy, err := c.getLazyDatum(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, false, err
+	}
+	if !lazy {
+		dt = c.Value
+	}
+	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return dt.GetVectorFloat32(), false, nil
 }
 
 // Equal implements Expression interface.

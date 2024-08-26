@@ -138,6 +138,9 @@ type VecExpr interface {
 
 	// VecEvalJSON evaluates this expression in a vectorized manner.
 	VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
+
+	// VecEvalBool evaluates this expression in a vectorized manner.
+	VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 }
 
 // TraverseAction define the interface for action when traversing down an expression.
@@ -193,6 +196,9 @@ type Expression interface {
 
 	// EvalJSON returns the JSON representation of expression.
 	EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
+
+	// EvalVectorFloat32 returns the VectorFloat32 representation of expression.
+	EvalVectorFloat32(ctx EvalContext, row chunk.Row) (val types.VectorFloat32, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType(ctx EvalContext) *types.FieldType
@@ -584,6 +590,20 @@ func toBool(tc types.Context, tp *types.FieldType, eType types.EvalType, buf *ch
 				}
 			}
 		}
+	case types.ETVectorFloat32:
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if buf.GetVectorFloat32(i).IsZeroValue() {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
+	default:
+		return errors.Errorf("unsupported type %s during evaluation", eType)
 	}
 	return nil
 }
@@ -632,10 +652,12 @@ func EvalExpr(ctx EvalContext, vecEnabled bool, expr Expression, evalType types.
 			err = expr.VecEvalString(ctx, input, result)
 		case types.ETJson:
 			err = expr.VecEvalJSON(ctx, input, result)
+		case types.ETVectorFloat32:
+			err = expr.VecEvalVectorFloat32(ctx, input, result)
 		case types.ETDecimal:
 			err = expr.VecEvalDecimal(ctx, input, result)
 		default:
-			err = fmt.Errorf("invalid eval type %v", expr.GetType(ctx).EvalType())
+			err = errors.Errorf("unsupported type %s during evaluation", evalType)
 		}
 	} else {
 		ind, n := 0, input.NumRows()
@@ -727,6 +749,19 @@ func EvalExpr(ctx EvalContext, vecEnabled bool, expr Expression, evalType types.
 					result.AppendJSON(value)
 				}
 			}
+		case types.ETVectorFloat32:
+			result.ReserveVectorFloat32(n)
+			for it := iter.Begin(); it != iter.End(); it = iter.Next() {
+				value, isNull, err := expr.EvalVectorFloat32(ctx, it)
+				if err != nil {
+					return err
+				}
+				if isNull {
+					result.AppendNull()
+				} else {
+					result.AppendVectorFloat32(value)
+				}
+			}
 		case types.ETDecimal:
 			result.ResizeDecimal(n, false)
 			d64s := result.Decimals()
@@ -743,7 +778,7 @@ func EvalExpr(ctx EvalContext, vecEnabled bool, expr Expression, evalType types.
 				ind++
 			}
 		default:
-			err = fmt.Errorf("invalid eval type %v", expr.GetType(ctx).EvalType())
+			err = errors.Errorf("unsupported type %s during evaluation", expr.GetType(ctx).EvalType())
 		}
 	}
 	return

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -35,7 +36,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 	}{
 		{
 			sql:            "select count(1) from t join (select count(1) from t where false) as tmp;",
-			flags:          []uint64{flagPrunColumns},
+			flags:          []uint64{rule.FlagPruneColumns},
 			assertRuleName: "column_prune",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -66,7 +67,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select a from t where b > 5;",
-			flags:          []uint64{flagPrunColumns},
+			flags:          []uint64{rule.FlagPruneColumns},
 			assertRuleName: "column_prune",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -77,7 +78,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from t as t1 where t1.a < (select sum(t2.a) from t as t2 where t2.b = t1.b);",
-			flags:          []uint64{flagDecorrelate, flagBuildKeyInfo, flagPrunColumns},
+			flags:          []uint64{rule.FlagDecorrelate, rule.FlagBuildKeyInfo, rule.FlagPruneColumns},
 			assertRuleName: "decorrelate",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -104,7 +105,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from t as t1 join t as t2 on t1.a = t2.a where t1.a < 1;",
-			flags:          []uint64{flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			flags:          []uint64{rule.FlagPredicatePushDown, rule.FlagBuildKeyInfo, rule.FlagPruneColumns},
 			assertRuleName: "predicate_push_down",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -127,7 +128,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from t where a < 1;",
-			flags:          []uint64{flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			flags:          []uint64{rule.FlagPredicatePushDown, rule.FlagBuildKeyInfo, rule.FlagPruneColumns},
 			assertRuleName: "predicate_push_down",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -142,7 +143,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from t as t1 left join t as t2 on t1.a = t2.a order by t1.a limit 10;",
-			flags:          []uint64{flagPrunColumns, flagBuildKeyInfo, flagPushDownTopN},
+			flags:          []uint64{rule.FlagPruneColumns, rule.FlagBuildKeyInfo, rule.FlagPushDownTopN},
 			assertRuleName: "topn_push_down",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -169,7 +170,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from t order by a limit 10",
-			flags:          []uint64{flagPrunColumns, flagBuildKeyInfo, flagPushDownTopN},
+			flags:          []uint64{rule.FlagPruneColumns, rule.FlagBuildKeyInfo, rule.FlagPushDownTopN},
 			assertRuleName: "topn_push_down",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -188,7 +189,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from pt3 where ptn > 3;",
-			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			flags:          []uint64{rule.FlagPartitionProcessor, rule.FlagPredicatePushDown, rule.FlagBuildKeyInfo, rule.FlagPruneColumns},
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -199,7 +200,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from pt3 where ptn = 1;",
-			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			flags:          []uint64{rule.FlagPartitionProcessor, rule.FlagPredicatePushDown, rule.FlagBuildKeyInfo, rule.FlagPruneColumns},
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -210,7 +211,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from pt2 where ptn in (1,2,3);",
-			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			flags:          []uint64{rule.FlagPartitionProcessor, rule.FlagPredicatePushDown, rule.FlagBuildKeyInfo, rule.FlagPruneColumns},
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -221,7 +222,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from pt2 where ptn = 1;",
-			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			flags:          []uint64{rule.FlagPartitionProcessor, rule.FlagPredicatePushDown, rule.FlagBuildKeyInfo, rule.FlagPruneColumns},
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -232,7 +233,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from pt1 where ptn > 100;",
-			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			flags:          []uint64{rule.FlagPartitionProcessor, rule.FlagPredicatePushDown, rule.FlagBuildKeyInfo, rule.FlagPruneColumns},
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -243,7 +244,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from pt1 where ptn in (10,20);",
-			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			flags:          []uint64{rule.FlagPartitionProcessor, rule.FlagPredicatePushDown, rule.FlagBuildKeyInfo, rule.FlagPruneColumns},
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -254,7 +255,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from pt1 where ptn < 4;",
-			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			flags:          []uint64{rule.FlagPartitionProcessor, rule.FlagPredicatePushDown, rule.FlagBuildKeyInfo, rule.FlagPruneColumns},
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -265,7 +266,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from (t t1, t t2, t t3,t t4) union all select * from (t t5, t t6, t t7,t t8)",
-			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagDecorrelate, flagPredicatePushDown, flagEliminateOuterJoin, flagJoinReOrder},
+			flags:          []uint64{rule.FlagBuildKeyInfo, rule.FlagPruneColumns, rule.FlagDecorrelate, rule.FlagPredicatePushDown, rule.FlagEliminateOuterJoin, rule.FlagJoinReOrder},
 			assertRuleName: "join_reorder",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -276,7 +277,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select * from t t1, t t2, t t3 where t1.a=t2.a and t3.a=t2.a and t1.a=t3.a",
-			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagDecorrelate, flagPredicatePushDown, flagEliminateOuterJoin, flagJoinReOrder},
+			flags:          []uint64{rule.FlagBuildKeyInfo, rule.FlagPruneColumns, rule.FlagDecorrelate, rule.FlagPredicatePushDown, rule.FlagEliminateOuterJoin, rule.FlagJoinReOrder},
 			assertRuleName: "join_reorder",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -287,7 +288,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select min(distinct a) from t group by a",
-			flags:          []uint64{flagBuildKeyInfo, flagEliminateAgg},
+			flags:          []uint64{rule.FlagBuildKeyInfo, rule.FlagEliminateAgg},
 			assertRuleName: "aggregation_eliminate",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -302,7 +303,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select 1+num from (select 1+a as num from t) t1;",
-			flags:          []uint64{flagEliminateProjection},
+			flags:          []uint64{rule.FlagEliminateProjection},
 			assertRuleName: "projection_eliminate",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -313,7 +314,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select count(*) from t a , t b, t c",
-			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagPushDownAgg},
+			flags:          []uint64{rule.FlagBuildKeyInfo, rule.FlagPruneColumns, rule.FlagPushDownAgg},
 			assertRuleName: "aggregation_push_down",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -324,7 +325,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b) x group by c2",
-			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagPushDownAgg},
+			flags:          []uint64{rule.FlagBuildKeyInfo, rule.FlagPruneColumns, rule.FlagPushDownAgg},
 			assertRuleName: "aggregation_push_down",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -343,7 +344,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select max(a)-min(a) from t",
-			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagMaxMinEliminate},
+			flags:          []uint64{rule.FlagBuildKeyInfo, rule.FlagPruneColumns, rule.FlagMaxMinEliminate},
 			assertRuleName: "max_min_eliminate",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -362,7 +363,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select max(e) from t",
-			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagMaxMinEliminate},
+			flags:          []uint64{rule.FlagBuildKeyInfo, rule.FlagPruneColumns, rule.FlagMaxMinEliminate},
 			assertRuleName: "max_min_eliminate",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -373,7 +374,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select t1.b,t1.c from t as t1 left join t as t2 on t1.a = t2.a;",
-			flags:          []uint64{flagBuildKeyInfo, flagEliminateOuterJoin},
+			flags:          []uint64{rule.FlagBuildKeyInfo, rule.FlagEliminateOuterJoin},
 			assertRuleName: "outer_join_eliminate",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -384,7 +385,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		},
 		{
 			sql:            "select count(distinct t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
-			flags:          []uint64{flagPrunColumns, flagBuildKeyInfo, flagEliminateOuterJoin},
+			flags:          []uint64{rule.FlagPruneColumns, rule.FlagBuildKeyInfo, rule.FlagEliminateOuterJoin},
 			assertRuleName: "outer_join_eliminate",
 			assertRuleSteps: []assertTraceStep{
 				{

@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -28,19 +27,16 @@ import (
 
 type analyzeSaveStatsWorker struct {
 	resultsCh <-chan *statistics.AnalyzeResults
-	sctx      sessionctx.Context
 	errCh     chan<- error
 	killer    *sqlkiller.SQLKiller
 }
 
 func newAnalyzeSaveStatsWorker(
 	resultsCh <-chan *statistics.AnalyzeResults,
-	sctx sessionctx.Context,
 	errCh chan<- error,
 	killer *sqlkiller.SQLKiller) *analyzeSaveStatsWorker {
 	worker := &analyzeSaveStatsWorker{
 		resultsCh: resultsCh,
-		sctx:      sctx,
 		errCh:     errCh,
 		killer:    killer,
 	}
