@@ -57,8 +57,6 @@ var skipTestNames = map[string]struct{}{
 	"TestMemCacheReadLock":                   {},
 	"TestUnrelatedDDLTriggerReload":          {},
 	"TestPartitionMemCacheReadLock":          {},
-
-	"TestRepairTableWithPartition": {},
 }
 
 func getFuncName(skip int) string {
