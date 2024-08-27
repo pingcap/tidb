@@ -241,9 +241,9 @@ func (rc *LogClient) RestoreCompactedSsts(
 			continue
 		}
 		items := CompactedItems
-		// collect split keys every 1/4 files
+		// collect split keys every 1/8 files
 		// the default file size is 128MB, so we split region every 512MB
-		splitCount := len(items) / 4
+		splitCount := len(items) / 8
 
 		if splitCount == 0 {
 			cnt += 1
@@ -278,17 +278,29 @@ func (rc *LogClient) RestoreCompactedSsts(
 			sort.Slice(items, func(i, j int) bool {
 				return bytes.Compare(items[i].regionMinKey, items[j].regionMinKey) < 0
 			})
+
+			// remove duplicate
+			uniqeItems := make([]CompactedItem, 0)
+			uniqeItems = append(uniqeItems, items[0])
+			for i := 1; i < len(items); i++ {
+				if !bytes.Equal(items[i].regionMinKey, items[i-1].regionMinKey) {
+					uniqeItems = append(uniqeItems, items[i])
+				}
+			}
+
 			log.Info("find min split key for region",
 				zap.Uint64("region_id", regionId),
-				zap.Int("split_count", splitCount))
-			for i := 0; i < splitCount; i++ {
+				zap.Int("split_count", splitCount),
+				zap.Int("unique_items", len(uniqeItems)),
+				zap.Int("items", len(items)))
+			for i := 0; i < splitCount && i < len(uniqeItems); i++ {
 				// build split ranges
 				tmpRng := rtree.Range{
-					StartKey: []byte(items[i].regionMinKey),
-					EndKey:   []byte(items[i].regionMinKey),
+					StartKey: []byte(uniqeItems[i].regionMinKey),
+					EndKey:   []byte(uniqeItems[i].regionMinKey),
 				}
 				// only one range in the region should split
-				rg, err := restoreutils.RewriteRange(&tmpRng, items[i].files.RewriteRules)
+				rg, err := restoreutils.RewriteRange(&tmpRng, uniqeItems[i].files.RewriteRules)
 				if err != nil {
 					return errors.Trace(err)
 				}
