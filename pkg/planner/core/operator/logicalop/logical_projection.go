@@ -63,7 +63,7 @@ func (p *LogicalProjection) Hash64(h base2.Hasher) {
 	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
 	// like schema and names are lost.
 	p.LogicalSchemaProducer.Hash64(h)
-	// todo: if we change the logicalProjection's Expr defintion as:Exprs []memo.ScalarOperator[any],
+	// todo: if we change the logicalProjection's Expr definition as:Exprs []memo.ScalarOperator[any],
 	// we should use like below:
 	// for _, one := range p.Exprs {
 	//		one.Hash64(one)
