@@ -522,7 +522,7 @@ PARTITION pWest VALUES IN (11, 12, 13, 14, 15),
 PARTITION pCentral VALUES IN (16, 17, 18, 19, 20)
 );`
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB(nil)
+	tracker.CreateTestDB()
 	execCreate(t, tracker, sql)
 
 	sql = "ALTER TABLE test.employees11 DROP PARTITION pEast;"
