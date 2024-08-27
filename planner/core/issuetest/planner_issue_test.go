@@ -208,7 +208,6 @@ func TestQBHintHandlerDuplicateObjects(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
-<<<<<<< HEAD
 func TestCTETableInvaildTask(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
