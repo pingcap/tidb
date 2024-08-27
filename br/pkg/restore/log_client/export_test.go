@@ -21,6 +21,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/pkg/domain"
 )
 
 var FilterFilesByRegion = filterFilesByRegion
@@ -36,6 +37,18 @@ func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]Meta, error) {
 		return nil, errors.Trace(r.Err)
 	}
 	return r.Item, nil
+}
+
+func TEST_NewLogClient(clusterID, startTS, restoreTS uint64, storage storage.ExternalStorage, dom *domain.Domain) *LogClient {
+	return &LogClient{
+		dom: dom,
+		LogFileManager: &LogFileManager{
+			startTS:   startTS,
+			restoreTS: restoreTS,
+		},
+		clusterID: clusterID,
+		storage:   storage,
+	}
 }
 
 func TEST_NewLogFileManager(startTS, restoreTS, shiftStartTS uint64, helper streamMetadataHelper) *LogFileManager {
