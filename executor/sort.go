@@ -196,6 +196,13 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	for {
 		chk := tryNewCacheChunk(e.children[0])
 		err := Next(ctx, e.children[0], chk)
+		failpoint.Inject("errInSortExecFetchRowChunks", func(val failpoint.Value) {
+			switch val.(int) {
+			case 1:
+				err = errors.New("mockError")
+			default:
+			}
+		})
 		if err != nil {
 			return err
 		}
