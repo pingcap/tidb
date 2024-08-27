@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -614,19 +613,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
-	isUpdateColAndIdxExistenceMap := false
 	colInfo = tbl.ColAndIdxExistenceMap.GetCol(col.ID)
-	if colInfo == nil {
-		// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
-		// so we have to get the column info from the domain.
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		tblInfo, ok := statsHandle.TableInfoByID(is, col.TableID)
-		if !ok {
-			return nil
-		}
-		colInfo = tblInfo.Meta().GetColumnByID(col.ID)
-		isUpdateColAndIdxExistenceMap = true
-	}
 	hg, _, statsVer, _, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
 	if hg == nil || err != nil {
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
@@ -680,11 +667,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		if statsVer != statistics.Version0 {
 			tbl.StatsVer = int(statsVer)
 		}
-		if isUpdateColAndIdxExistenceMap {
-			tbl.ColAndIdxExistenceMap.InsertCol(col.ID, colInfo, true)
-		}
-	} else if isUpdateColAndIdxExistenceMap {
-		tbl.ColAndIdxExistenceMap.InsertCol(col.ID, colInfo, false)
 	}
 	tbl.SetCol(col.ID, colHist)
 	statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
