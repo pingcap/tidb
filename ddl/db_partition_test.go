@@ -4873,4 +4873,33 @@ func TestRangeExchangeValidate(t *testing.T) {
 	// TODO: add test not in first partition (both last without maxvalue and also not last with/without maxvalue)
 }
 
+func TestIssue54829(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustGetErrCode("create table t(a int, b datetime, c varchar(8))"+
+		"PARTITION BY RANGE COLUMNS(`c`,`b`)"+
+		"(PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),"+
+		" PARTITION `p20240521A` VALUES LESS THAN ('A','2024-05-21 00:00:00'))", 1493)
+
+	tk.MustGetErrCode("create table t(a int, b datetime, c varchar(8))"+
+		"PARTITION BY RANGE COLUMNS(`c`,`b`)"+
+		"(PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),"+
+		" PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'))", 1493)
+
+	tk.MustExec("create table t(a int, b datetime, c varchar(8))" +
+		"PARTITION BY RANGE COLUMNS(`c`,`b`)" +
+		"(PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00')," +
+		" PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-21 00:00:00'))")
+
+	tk.MustExec("drop table t")
+
+	tk.MustExec("create table t(a int, b datetime, c varchar(8))" +
+		"PARTITION BY RANGE COLUMNS(`c`,`b`)" +
+		"(PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'))")
+
+	tk.MustGetErrCode("alter table t add partition (PARTITION `p20240521A` VALUES LESS THAN ('A','2024-05-21 00:00:00'))", 1493)
+	tk.MustExec("alter table t add partition (PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-21 00:00:00'))")
+}
+
 // TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)
