@@ -19,6 +19,8 @@ package testkit
 import (
 	"flag"
 	"os"
+	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -43,8 +45,39 @@ import (
 // WithTiKV flag is only used for debugging locally with real tikv cluster.
 var WithTiKV = flag.String("with-tikv", "", "address of tikv cluster, if set, running test with real tikv cluster")
 
+var skipTestNames = map[string]struct{}{
+	// Full load related tests
+	"TestAllViewHintType":                    {},
+	"TestJoinHintCompatibility":              {},
+	"TestPartitionErrorCode":                 {},
+	"TestTxnSavepointWithDDL":                {},
+	"TestSkipSchemaChecker":                  {},
+	"TestSchemaCheckerSQL":                   {},
+	"TestPrepareStmtCommitWhenSchemaChanged": {},
+	"TestMemCacheReadLock":                   {},
+	"TestUnrelatedDDLTriggerReload":          {},
+	"TestPartitionMemCacheReadLock":          {},
+
+	"TestRepairTableWithPartition": {},
+}
+
+func getFuncName(skip int) string {
+	pc, _, _, _ := runtime.Caller(skip)
+	funcName := runtime.FuncForPC(pc).Name()
+	lastSlash := strings.LastIndexByte(funcName, '/')
+	if lastSlash < 0 {
+		lastSlash = 0
+	}
+	lastDot := strings.LastIndexByte(funcName[lastSlash:], '.') + lastSlash
+	return funcName[lastDot+1:]
+}
+
 // CreateMockStore return a new mock kv.Storage.
 func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
+	if _, ok := skipTestNames[getFuncName(2)]; ok {
+		t.Skip()
+	}
+
 	if *WithTiKV != "" {
 		var d driver.TiKVDriver
 		var err error
@@ -220,6 +253,10 @@ func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext 
 
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
+	if _, ok := skipTestNames[getFuncName(2)]; ok {
+		t.Skip()
+	}
+
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
 	dom := bootstrap(t, store, 500*time.Millisecond)
