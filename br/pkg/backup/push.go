@@ -75,8 +75,8 @@ func (push *pushDown) pushBackup(
 		store := s
 		storeID := s.GetId()
 		lctx := logutil.ContextWithField(ctx, zap.Uint64("store-id", storeID))
-		if s.GetState() != metapb.StoreState_Up {
-			logutil.CL(lctx).Warn("skip store", zap.Stringer("State", s.GetState()))
+		if err := utils.CheckStoreLiveness(s); err != nil {
+			logutil.CL(lctx).Warn("skip store", logutil.ShortError(err))
 			continue
 		}
 		client, err := push.mgr.GetBackupClient(lctx, storeID)
@@ -84,7 +84,11 @@ func (push *pushDown) pushBackup(
 			// BR should be able to backup even some of stores disconnected.
 			// The regions managed by this store can be retried at fine-grained backup then.
 			logutil.CL(lctx).Warn("fail to connect store, skipping", zap.Error(err))
+<<<<<<< HEAD
 			return res, nil
+=======
+			continue
+>>>>>>> f22ae5f8a30 (backup: check the store state by last heartbeat (#43099))
 		}
 		wg.Add(1)
 		go func() {
