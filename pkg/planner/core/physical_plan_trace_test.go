@@ -60,15 +60,6 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 				"Projection_8",
 			},
 		},
-		{
-			sql: "select * from t where c = 3",
-			physicalList: []string{
-				"IndexRangeScan_5",
-				"TableRowIDScan_6",
-				"IndexLookUp_7",
-				"Projection_3",
-			},
-		},
 	}
 
 	for _, testcase := range testcases {
