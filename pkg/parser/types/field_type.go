@@ -100,11 +100,16 @@ func (ft *FieldType) Equals(other any) bool {
 	if other == nil {
 		return false
 	}
-	ft2, ok := other.(*FieldType)
-	if !ok {
+	var ft2 *FieldType
+	switch x := other.(type) {
+	case *FieldType:
+		ft2 = x
+	case FieldType:
+		ft2 = &x
+	default:
 		return false
 	}
-	ok = ft.tp == ft2.tp &&
+	ok := ft.tp == ft2.tp &&
 		ft.flag == ft2.flag &&
 		ft.flen == ft2.flen &&
 		ft.decimal == ft2.decimal &&
