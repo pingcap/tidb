@@ -313,11 +313,12 @@ func TestWatchOwner(t *testing.T) {
 	require.NoError(t, err)
 
 	// watch the ownerKey with the `DELETE` event.
-	ctx2, _ := context.WithTimeout(ctx, time.Millisecond*300)
+	ctx2, cancel2 := context.WithTimeout(ctx, time.Millisecond*300)
+	defer cancel2()
 	watchDone := make(chan bool)
 	watched := false
 	go func() {
-		owner.WatchOwner(ownerManager, ctx2, session, ownerKey, createRevision)
+		owner.WatchOwnerForTest(ctx2, ownerManager, session, ownerKey, createRevision)
 		watchDone <- true
 	}()
 
@@ -328,15 +329,16 @@ func TestWatchOwner(t *testing.T) {
 	require.False(t, watched)
 
 	// delete the owner, and can watch the event.
-	g(client, DDLOwnerKey)
+	deleteLeader(client, DDLOwnerKey)
 	require.NoError(t, err)
 	watched = <-watchDone
 	require.True(t, watched)
 
 	// the ownerKey has been deleted, watch ownerKey again, it can be watched.
-	watched = false
+	ctx3, cancel3 := context.WithTimeout(ctx, time.Millisecond*300)
+	defer cancel3()
 	go func() {
-		owner.WatchOwner(ownerManager, ctx2, session, ownerKey, createRevision)
+		owner.WatchOwnerForTest(ctx3, ownerManager, session, ownerKey, createRevision)
 		watchDone <- true
 	}()
 
