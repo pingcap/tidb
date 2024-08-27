@@ -58,14 +58,7 @@ func TestMain(m *testing.M) {
 	}
 
 	opts := []goleak.Option{
-<<<<<<< HEAD:server/main_test.go
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
-=======
-		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*defaultPolicy).processItems"),
-		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*Cache).processItems"),
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
->>>>>>> 156f23aacb9 (planer: fix invalid pointer caused by a recursive CTE query (#54450)):pkg/server/main_test.go
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("time.Sleep"),
 		goleak.IgnoreTopFunction("database/sql.(*Tx).awaitDone"),
