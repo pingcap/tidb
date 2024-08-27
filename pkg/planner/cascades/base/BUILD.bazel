@@ -19,6 +19,9 @@ go_test(
     ],
     embed = [":base"],
     flaky = True,
-    shard_count = 3,
-    deps = ["@com_github_stretchr_testify//require"],
+    shard_count = 4,
+    deps = [
+        "//pkg/util/benchdaily",
+        "@com_github_stretchr_testify//require",
+    ],
 )
