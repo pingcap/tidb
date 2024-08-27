@@ -367,17 +367,18 @@ func CheckPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy
 		if ref := dbInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
 			return dbterror.ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
 		}
+	}
 
-		tblInfos, err := is.SchemaTableInfos(context.Background(), dbInfo.Name)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, tblInfo := range tblInfos {
+	schemaTables := is.ListTablesWithSpecialAttribute(infoschema.AllPlacementPolicyAttribute)
+	for _, schemaTable := range schemaTables {
+		for _, tblInfo := range schemaTable.TableInfos {
 			if err := checkPlacementPolicyNotUsedByTable(tblInfo, policy); err != nil {
 				return err
 			}
+
 		}
 	}
+
 	return nil
 }
 
