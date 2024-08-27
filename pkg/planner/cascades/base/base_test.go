@@ -30,9 +30,21 @@ type TestEqualAny interface {
 	EqualsAny(other any) bool
 }
 
+type TestSuperEquals interface {
+	TestEquals[TestSuperEquals]
+}
+
 func (tc *testcase) EqualsT(other *testcase) bool {
 	return tc.a == other.a && tc.b == other.b && tc.c == other.c
 }
+
+//func (tc *testcase) EqualsT(other TestSuperEquals) bool {
+//	tc1, ok := other.(*testcase)
+//	if !ok {
+//		return false
+//	}
+//	return tc.a == tc1.a && tc.b == tc1.b && tc.c == tc1.c
+//}
 
 func (tc *testcase) EqualsAny(other any) bool {
 	tc1, ok := other.(*testcase)
@@ -41,6 +53,20 @@ func (tc *testcase) EqualsAny(other any) bool {
 	}
 	return tc.a == tc1.a && tc.b == tc1.b && tc.c == tc1.c
 }
+
+// goos: linux
+// goarch: amd64
+// pkg: github.com/pingcap/tidb/pkg/planner/cascades/base
+// cpu: 12th Gen Intel(R) Core(TM) i7-12700KF
+// BenchmarkSuperEquals
+// BenchmarkSuperEquals-20    	1000000000	         0.9047 ns/op
+//func BenchmarkSuperEquals(b *testing.B) {
+//	tc1 := &testcase{a: 1, b: 2, c: "3"}
+//	var tc2 TestSuperEquals = &testcase{a: 1, b: 2, c: "3"}
+//	for i := 0; i < b.N; i++ {
+//		tc1.EqualsT(tc2)
+//	}
+//}
 
 // goos: linux
 // goarch: amd64
