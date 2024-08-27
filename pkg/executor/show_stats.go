@@ -38,11 +38,29 @@ import (
 func (e *ShowExec) fetchShowStatsExtended(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
-	partitionTables := do.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	is := do.InfoSchema()
+	partitionTables := is.ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	partitionTableIDMap := make(map[int64]struct{}, len(partitionTables))
 	for _, tbls := range partitionTables {
-		dbName := tbls.DBName.L
 		for _, tbl := range tbls.TableInfos {
-			e.appendTableForStatsExtended(dbName, tbl, h.GetTableStats(tbl))
+			partitionTableIDMap[tbl.ID] = struct{}{}
+		}
+	}
+
+	for _, db := range is.AllSchemaNames() {
+		simpleTblInfos, err := is.SchemaSimpleTableInfos(ctx, db)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, simpleTblInfo := range simpleTblInfos {
+			if _, ok := partitionTableIDMap[simpleTblInfo.ID]; !ok {
+				// Extended statistics for partitioned table is not supported now.
+				tblInfo, err := is.TableByName(ctx, db, simpleTblInfo.Name)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				e.appendTableForStatsExtended(db.L, tblInfo.Meta(), h.GetTableStats(tblInfo.Meta()))
+			}
 		}
 	}
 	return nil
