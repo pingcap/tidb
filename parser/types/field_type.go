@@ -263,13 +263,8 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	// When tp is float or double with decimal unspecified, do not check whether flen is equal,
 	// because flen for them is useless.
 	// The decimal field can be ignored if the type is int or string.
-<<<<<<< HEAD:parser/types/field_type.go
-	tpEqual := (ft.tp == other.tp) || (ft.tp == mysql.TypeVarchar && other.tp == mysql.TypeVarString) || (ft.tp == mysql.TypeVarString && other.tp == mysql.TypeVarchar)
-	flenEqual := ft.flen == other.flen || (ft.EvalType() == ETReal && ft.decimal == UnspecifiedLength)
-=======
 	tpEqual := (ft.GetType() == other.GetType()) || (ft.GetType() == mysql.TypeVarchar && other.GetType() == mysql.TypeVarString) || (ft.GetType() == mysql.TypeVarString && other.GetType() == mysql.TypeVarchar)
 	flenEqual := ft.flen == other.flen || (ft.EvalType() == ETReal && ft.decimal == UnspecifiedLength) || ft.EvalType() == ETJson
->>>>>>> 1a24c032126 (expression: correct the erroneous scalar function equivalence check (#54067)):pkg/parser/types/field_type.go
 	ignoreDecimal := ft.EvalType() == ETInt || ft.EvalType() == ETString
 	partialEqual := tpEqual &&
 		(ignoreDecimal || ft.decimal == other.decimal) &&
