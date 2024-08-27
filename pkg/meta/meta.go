@@ -1023,12 +1023,12 @@ var checkAttributesInOrder = []string{
 	`"ttl_info":null`,
 }
 
-// IsTableMustLoad checks whether the table info needs to be loaded.
+// IsTableInfoMustLoad checks whether the table info needs to be loaded.
 // If the byte representation contains all the given attributes,
 // then it does not need to be loaded and this function will return false.
 // Otherwise, it will return true, indicating that the table info should be loaded.
 // Exported for testing.
-func IsTableMustLoad(json []byte, attrs ...string) bool {
+func IsTableInfoMustLoad(json []byte, attrs ...string) bool {
 	idx := 0
 	for _, substr := range attrs {
 		idx = bytes.Index(json, hack.Slice(substr))
@@ -1082,7 +1082,7 @@ func GetAllNameToIDAndTheMustLoadedTableInfo(m *Meta, dbID int64) (map[string]in
 
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
-		if IsTableMustLoad(value, checkAttributesInOrder...) {
+		if IsTableInfoMustLoad(value, checkAttributesInOrder...) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1111,7 +1111,7 @@ func GetTableInfoWithAttributes(m *Meta, dbID int64, attrs ...string) ([]*model.
 			return nil
 		}
 
-		if IsTableMustLoad(value, attrs...) {
+		if IsTableInfoMustLoad(value, attrs...) {
 			tbInfo := &model.TableInfo{}
 			err := json.Unmarshal(value, tbInfo)
 			if err != nil {
