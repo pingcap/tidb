@@ -640,7 +640,7 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	schemas := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
 	for _, schema := range schemas {
 		for _, tbl := range schema.TableInfos {
-			replicaInfos = h.getTiFlashReplicaInfo(tbl, replicaInfos)
+			replicaInfos = appendTiFlashReplicaInfo(replicaInfos, tbl)
 		}
 	}
 
@@ -653,7 +653,7 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	handler.WriteData(w, replicaInfos)
 }
 
-func (FlashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, replicaInfos []*TableFlashReplicaInfo) []*TableFlashReplicaInfo {
+func appendTiFlashReplicaInfo(replicaInfos []*TableFlashReplicaInfo, tblInfo *model.TableInfo) []*TableFlashReplicaInfo {
 	if tblInfo.TiFlashReplica == nil {
 		return replicaInfos
 	}
@@ -713,7 +713,7 @@ func (h FlashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 			return false, nil
 		}
 		uniqueIDMap[tblInfo.ID] = struct{}{}
-		replicaInfos = h.getTiFlashReplicaInfo(tblInfo, replicaInfos)
+		replicaInfos = appendTiFlashReplicaInfo(replicaInfos, tblInfo)
 		return false, nil
 	}
 	dom := domain.GetDomain(s)
