@@ -38,7 +38,11 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/store/mockstore"
+=======
+	"github.com/pingcap/tidb/sessionctx/variable"
+>>>>>>> 0e0243c1e... main: fix `@@hostname` always returns `localhost` (#33064)
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sem"
@@ -2029,6 +2033,12 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 
 	tk.MustQuery(`SELECT @@session.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
 	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
+
+	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(variable.DefHostname))
+	sem.Disable()
+	if hostname, err := os.Hostname(); err == nil {
+		tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(hostname))
+	}
 }
 
 // TestViewDefiner tests that default roles are correctly applied in the algorithm definer
