@@ -87,7 +87,7 @@ func (p *LogicalProjection) Equals(other any) bool {
 	}
 	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
 	// like schema and names are lost.
-	if !p.LogicalSchemaProducer.Equals(&proj.BaseLogicalPlan) {
+	if !p.LogicalSchemaProducer.Equals(&proj.LogicalSchemaProducer) {
 		return false
 	}
 	//for i, one := range p.Exprs {
