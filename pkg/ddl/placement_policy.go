@@ -375,7 +375,6 @@ func CheckPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy
 			if err := checkPlacementPolicyNotUsedByTable(tblInfo, policy); err != nil {
 				return err
 			}
-
 		}
 	}
 
@@ -415,7 +414,10 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo
 		if dbInfo.PlacementPolicyRef != nil && dbInfo.PlacementPolicyRef.ID == policy.ID {
 			dbIDs = append(dbIDs, dbInfo.ID)
 		}
-		tables, err := t.ListTables(dbInfo.ID)
+		tables, err := meta.GetTableInfoWithAttributes(
+			t, dbInfo.ID,
+			`"partition":null"`,
+			`"policy_ref_info":null`)
 		if err != nil {
 			return nil, nil, nil, err
 		}
