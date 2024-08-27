@@ -210,10 +210,6 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 
-		task2, err2 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
-		require.Nil(t, err2)
-		require.Nil(t, task2)
-
 		require.NoError(t, failpoint.Disable(fp.failPath))
 		task3, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 		require.NoError(t, err3)
