@@ -446,6 +446,13 @@ func GetOwnerOpValue(ctx context.Context, etcdCli *clientv3.Client, ownerPath, l
 	return op, errors.Trace(err)
 }
 
+// WatchOwner watches the ownerKey. It's exported for testing only.
+func WatchOwner(m Manager, ctx context.Context, etcdSession *concurrency.Session, key string, ownerRevision int64) {
+	if ownerManager, ok := m.(*ownerManager); ok {
+		ownerManager.watchOwner(ctx, etcdSession, key, ownerRevision)
+	}
+}
+
 func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.Session, key string, ownerRevision int64) {
 	logPrefix := fmt.Sprintf("[%s] ownerManager %s watch owner key %v", m.prompt, m.id, key)
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)

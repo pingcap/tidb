@@ -300,6 +300,67 @@ func TestCluster(t *testing.T) {
 	require.Equal(t, op, owner.OpNone)
 }
 
+func TestWatchOwner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	tInfo := newTestInfo(t)
+	client, d := tInfo.client, tInfo.ddl
+	defer tInfo.Close(t)
+	ownerManager := d.OwnerManager()
+	lis := &listener{}
+	ownerManager.SetListener(lis)
+	require.NoError(t, ownerManager.CampaignOwner())
+	isOwner := checkOwner(d, true)
+	require.True(t, isOwner)
+
+	// get the owner id.
+	ctx := context.Background()
+	id, err := ownerManager.GetOwnerID(ctx)
+	require.NoError(t, err)
+
+	// create etcd session.
+	session, err := concurrency.NewSession(client)
+	require.NoError(t, err)
+
+	// test the GetOwnerKeyWithCreateRevision()
+	ownerKey, createRevision, err := owner.GetOwnerKeyWithCreateRevision(ctx, context.TODO(), client, DDLOwnerKey, id)
+	require.NoError(t, err)
+
+	// watch the ownerKey with the `DELETE` event.
+	ctx2, _ := context.WithTimeout(ctx, time.Millisecond*300)
+	watchDone := make(chan bool)
+	watched := false
+	go func() {
+		owner.WatchOwner(ownerManager, ctx2, session, ownerKey, createRevision)
+		watchDone <- true
+	}()
+
+	select {
+	case watched = <-watchDone:
+	case <-ctx2.Done():
+	}
+	require.False(t, watched)
+
+	// delete the owner, and can watch the event.
+	g(client, DDLOwnerKey)
+	require.NoError(t, err)
+	watched = <-watchDone
+	require.True(t, watched)
+
+	// the ownerKey has been deleted, watch ownerKey again, it can be watched.
+	watched = false
+	go func() {
+		owner.WatchOwner(ownerManager, ctx2, session, ownerKey, createRevision)
+		watchDone <- true
+	}()
+
+	watched = <-watchDone
+	require.True(t, watched)
+}
+
 func checkOwner(d DDL, fbVal bool) (isOwner bool) {
 	manager := d.OwnerManager()
 	// The longest to wait for 30 seconds to
