@@ -94,6 +94,8 @@ func filterOutFiles(checkpointSet map[string]struct{}, files []*backuppb.File, u
 	return newFiles
 }
 
+const MergedRangeCountThreshold = 1536
+
 // SortAndValidateFileRanges sort, merge and validate files by tables and yields tables with range.
 func SortAndValidateFileRanges(
 	createdTables []*CreatedTable,
@@ -184,8 +186,10 @@ func SortAndValidateFileRanges(
 			// split key generation
 			afterMergedGroupSize := groupSize + rg.Size
 			afterMergedGroupCount := groupCount + rg.Count
-			if afterMergedGroupSize > splitSizeBytes || afterMergedGroupCount > splitKeyCount {
-				log.Info("merge ranges across tables due to kv size/count threshold exceeded", zap.Uint64("merged kv size", groupSize), zap.Uint64("merged kv count", groupCount),
+			if afterMergedGroupSize > splitSizeBytes || afterMergedGroupCount > splitKeyCount || mergedRangeCount > MergedRangeCountThreshold {
+				log.Info("merge ranges across tables due to kv size/count or merged count threshold exceeded",
+					zap.Uint64("merged kv size", groupSize),
+					zap.Uint64("merged kv count", groupCount),
 					zap.Int("merged range count", mergedRangeCount))
 				groupSize, groupCount = rg.Size, rg.Count
 				mergedRangeCount = 0
@@ -196,14 +200,16 @@ func SortAndValidateFileRanges(
 				// then generate a new files group
 				if lastFilesGroup != nil {
 					tableIDWithFilesGroup = append(tableIDWithFilesGroup, lastFilesGroup)
+					// reset the lastFiltesGroup immediately because it is not always updated in each loop cycle.
 					lastFilesGroup = nil
 				}
 			} else {
-				groupSize = afterMergedGroupSize
-				groupCount = afterMergedGroupCount
+				groupSize, groupCount = afterMergedGroupSize, afterMergedGroupCount
 			}
 			// override the previous key, which may not become a split key.
 			lastKey = rg.EndKey
+			// mergedRangeCount increment by the number of files before filtered by checkpoint in order to make split keys
+			// always the same as that from before execution.
 			mergedRangeCount += len(rg.Files)
 			// checkpoint filter out the import done files in the previous restore executions.
 			// Notice that skip ranges after select split keys in order to make the split keys
@@ -224,7 +230,9 @@ func SortAndValidateFileRanges(
 
 		// If the config split-table/split-region-on-table is on, it skip merging ranges over tables.
 		if splitOnTable {
-			log.Info("merge ranges across tables due to split on table", zap.Uint64("merged kv size", groupSize), zap.Uint64("merged kv count", groupCount),
+			log.Info("merge ranges across tables due to split on table",
+				zap.Uint64("merged kv size", groupSize),
+				zap.Uint64("merged kv count", groupCount),
 				zap.Int("merged range count", mergedRangeCount))
 			groupSize, groupCount = 0, 0
 			mergedRangeCount = 0
@@ -243,7 +251,9 @@ func SortAndValidateFileRanges(
 	}
 	// append the last files group anyway
 	if lastFilesGroup != nil {
-		log.Info("merge ranges across tables due to the last group", zap.Uint64("merged kv size", groupSize), zap.Uint64("merged kv count", groupCount),
+		log.Info("merge ranges across tables due to the last group",
+			zap.Uint64("merged kv size", groupSize),
+			zap.Uint64("merged kv count", groupCount),
 			zap.Int("merged range count", mergedRangeCount))
 		tableIDWithFilesGroup = append(tableIDWithFilesGroup, lastFilesGroup)
 	}
@@ -376,6 +386,7 @@ func (rc *SnapClient) RestoreSSTFiles(
 					rangeKeySet := make(map[string]struct{})
 					for _, file := range filesGroup.Files {
 						rangeKey := getFileRangeKey(file.Name)
+						// Assert that the files having the same rangeKey are all in the current filesGroup.Files
 						rangeKeySet[rangeKey] = struct{}{}
 					}
 					for rangeKey := range rangeKeySet {
