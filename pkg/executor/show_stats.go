@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -37,19 +38,11 @@ import (
 func (e *ShowExec) fetchShowStatsExtended(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
-	dbs := do.InfoSchema().AllSchemaNames()
-	for _, db := range dbs {
-		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, tblInfo := range tables {
-			pi := tblInfo.GetPartitionInfo()
-			// Extended statistics for partitioned table is not supported now.
-			if pi != nil {
-				continue
-			}
-			e.appendTableForStatsExtended(db.L, tblInfo, h.GetTableStats(tblInfo))
+	partitionTables := do.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	for _, tbls := range partitionTables {
+		dbName := tbls.DBName.L
+		for _, tbl := range tbls.TableInfos {
+			e.appendTableForStatsExtended(dbName, tbl, h.GetTableStats(tbl))
 		}
 	}
 	return nil
