@@ -1779,13 +1779,6 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 }
 
 func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
-	t.Skip("skip due to the delay of dynamic region feature, and external engine changed its behaviour")
-	backup := external.LargeRegionSplitDataThreshold
-	external.LargeRegionSplitDataThreshold = 1
-	t.Cleanup(func() {
-		external.LargeRegionSplitDataThreshold = backup
-	})
-
 	ctx := context.Background()
 	local := &Backend{
 		splitCli: initTestSplitClient(
@@ -1813,6 +1806,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		statFiles,
 		[]byte{1},
 		[]byte{10},
+		keys,
 		[][]byte{{1}, {11}},
 		common.NoopKeyAdapter{},
 		false,

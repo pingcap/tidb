@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -97,6 +96,7 @@ type Engine struct {
 	statsFiles        []string
 	startKey          []byte
 	endKey            []byte
+	jobKeys           [][]byte
 	splitKeys         [][]byte
 	regionSplitSize   int64
 	smallBlockBufPool *membuf.Pool
@@ -139,6 +139,7 @@ func NewExternalEngine(
 	statsFiles []string,
 	startKey []byte,
 	endKey []byte,
+	jobKeys [][]byte,
 	splitKeys [][]byte,
 	keyAdapter common.KeyAdapter,
 	duplicateDetection bool,
@@ -157,6 +158,7 @@ func NewExternalEngine(
 		statsFiles: statsFiles,
 		startKey:   startKey,
 		endKey:     endKey,
+		jobKeys:    jobKeys,
 		splitKeys:  splitKeys,
 		smallBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
@@ -382,9 +384,6 @@ func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *M
 		importedKVCount:    e.importedKVCount,
 	}
 }
-
-// LargeRegionSplitDataThreshold is exposed for test.
-var LargeRegionSplitDataThreshold = int(config.SplitRegionSize)
 
 // KVStatistics returns the total kv size and total kv count.
 func (e *Engine) KVStatistics() (totalKVSize int64, totalKVCount int64) {
