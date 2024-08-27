@@ -32,35 +32,34 @@ import (
 func TestMultiSchemaVerPartitionBy(t *testing.T) {
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
-	dom1 := distCtx.GetDomain(0)
-	dom2 := distCtx.GetDomain(1)
+	domOwner := distCtx.GetDomain(0)
+	domNonOwner := distCtx.GetDomain(1)
 	defer func() {
-		dom1.Close()
-		dom2.Close()
+		domOwner.Close()
+		domNonOwner.Close()
 		store.Close()
 	}()
+	if !domOwner.DDL().OwnerManager().IsOwner() {
+		domOwner, domNonOwner = domNonOwner, domOwner
+	}
 
 	ddlJobsSQL := `admin show ddl jobs where db_name = 'test' and table_name = 't' and job_type = 'alter table partition by'`
 
-	se1, err := session.CreateSessionWithDomain(store, dom1)
+	seOwner, err := session.CreateSessionWithDomain(store, domOwner)
 	require.NoError(t, err)
-	se2, err := session.CreateSessionWithDomain(store, dom2)
+	seNonOwner, err := session.CreateSessionWithDomain(store, domNonOwner)
 	require.NoError(t, err)
 
-	// Session on non DDL owner domain (~ TiDB Server)
-	tk1 := testkit.NewTestKitWithSession(t, store, se1)
-	// Session on DDL owner domain (~ TiDB Server), used for concurrent DDL
-	tk2 := testkit.NewTestKitWithSession(t, store, se2)
-	// Session on DDL owner domain (~ TiDB Server), used for queries
-	tk3 := testkit.NewTestKitWithSession(t, store, se2)
-	tk1.MustExec(`use test`)
-	tk2.MustExec(`use test`)
-	tk3.MustExec(`use test`)
-	// The DDL Owner will be the first created domain, so use tk1.
-	tk1.MustExec(`create table t (a int primary key, b varchar(255))`)
-	dom1.Reload()
-	dom2.Reload()
-	verStart := dom1.InfoSchema().SchemaMetaVersion()
+	tkOwner := testkit.NewTestKitWithSession(t, store, seOwner)
+	tkNonOwner := testkit.NewTestKitWithSession(t, store, seNonOwner)
+	tkDDL := testkit.NewTestKitWithSession(t, store, seOwner)
+	tkOwner.MustExec(`use test`)
+	tkNonOwner.MustExec(`use test`)
+	tkDDL.MustExec(`use test`)
+	tkDDL.MustExec(`create table t (a int primary key, b varchar(255))`)
+	domOwner.Reload()
+	domNonOwner.Reload()
+	verStart := domOwner.InfoSchema().SchemaMetaVersion()
 	alterChan := make(chan struct{})
 
 	// Is it possible to only do this on a single DOM?
@@ -71,7 +70,7 @@ func TestMultiSchemaVerPartitionBy(t *testing.T) {
 	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", hookFunc)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	go func() {
-		tk1.MustExec(`alter table t partition by hash(a) partitions 3`)
+		tkDDL.MustExec(`alter table t partition by hash(a) partitions 3`)
 		alterChan <- struct{}{}
 	}()
 	// Wait for the first state change to begin
@@ -81,18 +80,18 @@ func TestMultiSchemaVerPartitionBy(t *testing.T) {
 	stateChange := int64(1)
 	<-alterChan
 	// Waiting before running the second State change
-	verCurr := dom1.InfoSchema().SchemaMetaVersion()
+	verCurr := domOwner.InfoSchema().SchemaMetaVersion()
 	require.Equal(t, stateChange, verCurr-verStart)
-	require.Equal(t, verStart, dom2.InfoSchema().SchemaMetaVersion())
-	tk2.MustQuery(`show create table t`).Check(testkit.Rows("" +
+	require.Equal(t, verStart, domNonOwner.InfoSchema().SchemaMetaVersion())
+	tkNonOwner.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	dom2.Reload()
-	require.Equal(t, verCurr, dom2.InfoSchema().SchemaMetaVersion())
-	tk2.MustQuery(`show create table t`).Check(testkit.Rows("" +
+	domNonOwner.Reload()
+	require.Equal(t, verCurr, domNonOwner.InfoSchema().SchemaMetaVersion())
+	tkNonOwner.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` varchar(255) DEFAULT NULL,\n" +
@@ -100,17 +99,17 @@ func TestMultiSchemaVerPartitionBy(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY NONE ()\n" +
 		"(PARTITION `pFullTable` COMMENT 'Intermediate partition during ALTER TABLE ... PARTITION BY ...')"))
-	tk2.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"delete only", "running"}})
+	tkNonOwner.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"delete only", "running"}})
 	alterChan <- struct{}{}
 	// doing second State change
 	stateChange++
 	<-alterChan
 	// Waiting before running the third State change
-	verCurr = dom1.InfoSchema().SchemaMetaVersion()
+	verCurr = domOwner.InfoSchema().SchemaMetaVersion()
 	require.Equal(t, stateChange, verCurr-verStart)
-	dom2.Reload()
-	require.Equal(t, verCurr, dom1.InfoSchema().SchemaMetaVersion())
-	tk2.MustQuery(`show create table t`).Check(testkit.Rows("" +
+	domNonOwner.Reload()
+	require.Equal(t, verCurr, domOwner.InfoSchema().SchemaMetaVersion())
+	tkNonOwner.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` varchar(255) DEFAULT NULL,\n" +
@@ -118,15 +117,15 @@ func TestMultiSchemaVerPartitionBy(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY NONE ()\n" +
 		"(PARTITION `pFullTable` COMMENT 'Intermediate partition during ALTER TABLE ... PARTITION BY ...')"))
-	tk2.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"write only", "running"}})
+	tkNonOwner.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"write only", "running"}})
 	alterChan <- struct{}{}
 	<-alterChan
 	stateChange++
-	verCurr = dom1.InfoSchema().SchemaMetaVersion()
+	verCurr = domOwner.InfoSchema().SchemaMetaVersion()
 	require.Equal(t, stateChange, verCurr-verStart)
-	dom2.Reload()
-	require.Equal(t, verCurr, dom2.InfoSchema().SchemaMetaVersion())
-	tk2.MustQuery(`show create table t`).Check(testkit.Rows("" +
+	domNonOwner.Reload()
+	require.Equal(t, verCurr, domNonOwner.InfoSchema().SchemaMetaVersion())
+	tkNonOwner.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` varchar(255) DEFAULT NULL,\n" +
@@ -134,38 +133,38 @@ func TestMultiSchemaVerPartitionBy(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY NONE ()\n" +
 		"(PARTITION `pFullTable` COMMENT 'Intermediate partition during ALTER TABLE ... PARTITION BY ...')"))
-	tk2.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"write reorganization", "running"}})
+	tkNonOwner.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"write reorganization", "running"}})
 	alterChan <- struct{}{}
 	<-alterChan
 	stateChange++
-	verCurr = dom1.InfoSchema().SchemaMetaVersion()
+	verCurr = domOwner.InfoSchema().SchemaMetaVersion()
 	require.Equal(t, stateChange, verCurr-verStart)
-	dom2.Reload()
-	require.Equal(t, verCurr, dom2.InfoSchema().SchemaMetaVersion())
-	tk2.MustQuery(`show create table t`).Check(testkit.Rows("" +
+	domNonOwner.Reload()
+	require.Equal(t, verCurr, domNonOwner.InfoSchema().SchemaMetaVersion())
+	tkNonOwner.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 3"))
-	tk2.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"delete reorganization", "running"}})
+	tkNonOwner.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"delete reorganization", "running"}})
 	alterChan <- struct{}{}
 	<-alterChan
 	// Alter done!
 	stateChange++
-	verCurr = dom1.InfoSchema().SchemaMetaVersion()
+	verCurr = domOwner.InfoSchema().SchemaMetaVersion()
 	require.Equal(t, stateChange, verCurr-verStart)
-	dom2.Reload()
-	require.Equal(t, verCurr, dom2.InfoSchema().SchemaMetaVersion())
-	tk2.MustQuery(`show create table t`).Check(testkit.Rows("" +
+	domNonOwner.Reload()
+	require.Equal(t, verCurr, domNonOwner.InfoSchema().SchemaMetaVersion())
+	tkNonOwner.MustQuery(`show create table t`).Check(testkit.Rows("" +
 		"t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 3"))
-	tk2.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"none", "synced"}})
+	tkNonOwner.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"none", "synced"}})
 }
 
 func TestMultiSchemaVerAddPartition(t *testing.T) {
@@ -413,6 +412,12 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 		//tk.t.Logf("RefreshSession rand seed: %d", seed)
 		logutil.BgLogger().Info("XXXXXXXXXXX states loop", zap.String("prev state", states[i]), zap.String("curr state", states[i+1]), zap.Int64("verCurr", verCurr))
 		domOwner.Reload()
+		if i >= 0 {
+			rows := tkO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("rows tkO Start", zap.Reflect("rows", rows))
+			rows = tkNO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("rows tkNO Start", zap.Reflect("rows", rows))
+		}
 		require.Equal(t, verCurr-1, domNonOwner.InfoSchema().SchemaMetaVersion())
 		require.Equal(t, verCurr, domOwner.InfoSchema().SchemaMetaVersion())
 		// TODO: Add initial rows, i.e. state -1
@@ -433,13 +438,37 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 		// NO:
 		lastRowIDForNO := lastRowIDp0
 		lastRowIDp0 = step1(tkNO, dbRows, keys[:4], i, offsetP1, lastRowIDp0)
+		if i >= 0 {
+			rows := tkO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("rows tkO step 1 tkNO", zap.Reflect("rows", rows))
+			rows = tkNO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("rows tkNO step 1 tkNO", zap.Reflect("rows", rows))
+		}
 		// O:
 		lastRowIDForO := lastRowIDp0
 		lastRowIDp0 = step1(tkO, dbRows, keys[4:], i, offsetP1, lastRowIDp0)
+		if i >= 0 {
+			rows := tkO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("tkO tkO step 1", zap.Reflect("rows", rows))
+			rows = tkNO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("tkNO tkO step 1", zap.Reflect("rows", rows))
+		}
 		// NO:
 		lastRowIDp0 = step2(tkNO, dbRows, keys[4:], i, offsetP1, lastRowIDForO+1, lastRowIDp0)
+		if i >= 0 {
+			rows := tkO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("tkO tkNO step 2", zap.Reflect("rows", rows))
+			rows = tkNO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("tkNO tkNO step 2", zap.Reflect("rows", rows))
+		}
 		// O:
 		lastRowIDp0 = step2(tkO, dbRows, keys[:4], i, offsetP1, lastRowIDForNO+1, lastRowIDp0)
+		if i >= 0 {
+			rows := tkO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("tkO tkO step 2", zap.Reflect("rows", rows))
+			rows = tkNO.MustQuery(`select * from t`).Sort().Rows()
+			logutil.BgLogger().Info("tkNO tkO step 2", zap.Reflect("rows", rows))
+		}
 
 		keys = keys[:0]
 		for key := range dbRows {
@@ -455,13 +484,37 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 		// NO:
 		lastRowIDForNO = lastRowIDp1
 		lastRowIDp1 = step1(tkNO, dbRows, keys[:4], i, offsetP1, lastRowIDp1)
+		if i >= 0 {
+			rows := tkO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("rows", zap.Reflect("rows", rows))
+			rows = tkNO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("rows", zap.Reflect("rows", rows))
+		}
 		// O:
 		lastRowIDForO = lastRowIDp1
 		lastRowIDp1 = step1(tkO, dbRows, keys[4:], i, offsetP1, lastRowIDp1)
+		if i >= 0 {
+			rows := tkO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("rows", zap.Reflect("rows", rows))
+			rows = tkNO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("rows", zap.Reflect("rows", rows))
+		}
 		// NO:
 		lastRowIDp1 = step2(tkNO, dbRows, keys[4:], i, offsetP1, lastRowIDForO+1, lastRowIDp1)
+		if i >= 0 {
+			rows := tkO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("rows", zap.Reflect("rows", rows))
+			rows = tkNO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("rows", zap.Reflect("rows", rows))
+		}
 		// O:
 		lastRowIDp1 = step2(tkO, dbRows, keys[:4], i, offsetP1, lastRowIDForNO+1, lastRowIDp1)
+		if i >= 0 {
+			rows := tkO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("rows", zap.Reflect("rows", rows))
+			rows = tkNO.MustQuery(`select id from t`).Sort().Rows()
+			logutil.BgLogger().Info("rows", zap.Reflect("rows", rows))
+		}
 
 		domNonOwner.Reload()
 		verCurr++
@@ -471,6 +524,12 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 		}
 	}
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
+	if verCurr > 0 {
+		rows := tkO.MustQuery(`select * from t`).Sort().Rows()
+		logutil.BgLogger().Info("rows", zap.Reflect("rows", rows))
+		rows = tkNO.MustQuery(`select * from t`).Sort().Rows()
+		logutil.BgLogger().Info("rows", zap.Reflect("rows", rows))
+	}
 	//tk1.MustQuery(`select * from t`).Sort().Check(testkit.Rows())
 	// First iteration, which rows needs to exists 'before':
 	// 3 to update, 1 to delete X 2 = 8 rows
@@ -487,23 +546,28 @@ func step1(tk *testkit.TestKit, dbRows map[int][]string, keys []int, state int, 
 		hist := fmt.Sprintf(":Update(%d:%d:%d)", state, j, lastRowID)
 		r[4] += hist
 		tk.MustExec(fmt.Sprintf(`update t set history = concat(history,'%s') where id = %d`, hist, keys[j]))
+		logutil.BgLogger().Info("update", zap.Int("keys[j]", keys[j]))
 	}
 	// delete at least one row from 'before'
 	tk.MustExec(fmt.Sprintf(`delete from t where id = %d`, keys[3]))
+	logutil.BgLogger().Info("delete", zap.Int("keys[3]", keys[3]))
 	delete(dbRows, keys[3])
 	// insert at least three rows (one to keep untouched, one to update, one to delete)
 	lastRowID++
 	dbRows[lastRowID] = []string{strconv.Itoa(lastRowID), strconv.Itoa(offset - lastRowID), "p0", strconv.Itoa(state), ""}
 	a, b, c, d, e := dbRows[lastRowID][0], dbRows[lastRowID][1], dbRows[lastRowID][2], dbRows[lastRowID][3], dbRows[lastRowID][4]
 	tk.MustExec(fmt.Sprintf(`insert into t values (%s, %s, '%s', %s, '%s')`, a, b, c, d, e))
+	logutil.BgLogger().Info("insert", zap.Int("id", lastRowID))
 	lastRowID++
 	dbRows[lastRowID] = []string{strconv.Itoa(lastRowID), strconv.Itoa(offset - lastRowID), "p0", strconv.Itoa(state), ""}
 	a, b, c, d, e = dbRows[lastRowID][0], dbRows[lastRowID][1], dbRows[lastRowID][2], dbRows[lastRowID][3], dbRows[lastRowID][4]
 	tk.MustExec(fmt.Sprintf(`insert into t values (%s, %s, '%s', %s, '%s')`, a, b, c, d, e))
+	logutil.BgLogger().Info("insert", zap.Int("id", lastRowID))
 	lastRowID++
 	dbRows[lastRowID] = []string{strconv.Itoa(lastRowID), strconv.Itoa(offset - lastRowID), "p0", strconv.Itoa(state), ""}
 	a, b, c, d, e = dbRows[lastRowID][0], dbRows[lastRowID][1], dbRows[lastRowID][2], dbRows[lastRowID][3], dbRows[lastRowID][4]
 	tk.MustExec(fmt.Sprintf(`insert into t values (%s, %s, '%s', %s, '%s')`, a, b, c, d, e))
+	logutil.BgLogger().Info("insert", zap.Int("id", lastRowID))
 	// Check for rows, including test insert and update for duplicate key!!!
 	return lastRowID
 }
@@ -514,23 +578,28 @@ func step2(tk *testkit.TestKit, dbRows map[int][]string, keys []int, state int, 
 	dbRows[lastRowID] = []string{strconv.Itoa(lastRowID), strconv.Itoa(offset - lastRowID), "p0", strconv.Itoa(state), ""}
 	a, b, c, d, e := dbRows[lastRowID][0], dbRows[lastRowID][1], dbRows[lastRowID][2], dbRows[lastRowID][3], dbRows[lastRowID][4]
 	tk.MustExec(fmt.Sprintf(`insert into t values (%s, %s, '%s', %s, '%s')`, a, b, c, d, e))
+	logutil.BgLogger().Info("insert", zap.Int("id", lastRowID))
 	// update one row that A inserted
 	r := dbRows[startID]
 	hist := fmt.Sprintf(":Update(%d:%d:%d:%d)", state, 4, startID, lastRowID)
 	r[4] += hist
 	tk.MustExec(fmt.Sprintf(`update t set history = concat(history,'%s') where id = %d`, hist, startID))
+	logutil.BgLogger().Info("update", zap.Int("id", startID))
 	startID++
 	// update one row that A updated
 	r = dbRows[keys[0]]
 	hist = fmt.Sprintf(":Update(%d:%d:%d:%d)", state, 4, startID, lastRowID)
 	r[4] += hist
 	tk.MustExec(fmt.Sprintf(`update t set history = concat(history,'%s') where id = %d`, hist, keys[0]))
+	logutil.BgLogger().Info("update", zap.Int("id keys[0]", keys[0]))
 	// delete one row that A inserted
 	tk.MustExec(fmt.Sprintf(`delete from t where id = %d`, startID))
+	logutil.BgLogger().Info("delete", zap.Int("startID", startID))
 	delete(dbRows, startID)
 	startID++
 	// delete one row that A updated
 	tk.MustExec(fmt.Sprintf(`delete from t where id = %d`, keys[1]))
+	logutil.BgLogger().Info("delete", zap.Int("keys[1]", keys[1]))
 	delete(dbRows, keys[1])
 	// Check for the row A deleted
 	return lastRowID
