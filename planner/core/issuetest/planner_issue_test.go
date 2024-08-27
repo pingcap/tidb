@@ -207,3 +207,53 @@ func TestQBHintHandlerDuplicateObjects(t *testing.T) {
 	tk.MustQuery("EXPLAIN WITH t AS (SELECT /*+ inl_join(e) */ em.* FROM t_employees em JOIN t_employees e WHERE em.store_id = e.department_id) SELECT * FROM t;")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
+
+func TestCTETableInvaildTask(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE p ( groupid bigint(20) DEFAULT NULL, KEY k1 (groupid));")
+	tk.MustExec(`CREATE TABLE g (groupid bigint(20) DEFAULT NULL,parentid bigint(20) NOT NULL,KEY k1 (parentid),KEY k2 (groupid,parentid));`)
+	tk.MustExec(`set tidb_opt_enable_hash_join=off;`)
+	tk.MustQuery(`explain WITH RECURSIVE w(gid) AS (
+  SELECT
+    groupId
+  FROM
+    p
+  UNION
+  SELECT
+    g.groupId
+  FROM
+    g
+    JOIN w ON g.parentId = w.gid
+)
+SELECT
+  1
+FROM
+  g
+WHERE
+  g.groupId IN (
+    SELECT
+      gid
+    FROM
+      w
+  );`).Check(testkit.Rows(
+		"Projection_54 9990.00 root  1->Column#17",
+		"└─IndexJoin_59 9990.00 root  inner join, inner:IndexReader_58, outer key:test.p.groupid, inner key:test.g.groupid, equal cond:eq(test.p.groupid, test.g.groupid)",
+		"  ├─HashAgg_75(Build) 12800.00 root  group by:test.p.groupid, funcs:firstrow(test.p.groupid)->test.p.groupid",
+		"  │ └─Selection_72 12800.00 root  not(isnull(test.p.groupid))",
+		"  │   └─CTEFullScan_73 16000.00 root CTE:w data:CTE_0",
+		"  └─IndexReader_58(Probe) 9990.00 root  index:Selection_57",
+		"    └─Selection_57 9990.00 cop[tikv]  not(isnull(test.g.groupid))",
+		"      └─IndexRangeScan_56 10000.00 cop[tikv] table:g, index:k2(groupid, parentid) range: decided by [eq(test.g.groupid, test.p.groupid)], keep order:false, stats:pseudo",
+		"CTE_0 16000.00 root  Recursive CTE",
+		"├─IndexReader_24(Seed Part) 10000.00 root  index:IndexFullScan_23",
+		"│ └─IndexFullScan_23 10000.00 cop[tikv] table:p, index:k1(groupid) keep order:false, stats:pseudo",
+		"└─IndexHashJoin_34(Recursive Part) 10000.00 root  inner join, inner:IndexLookUp_31, outer key:test.p.groupid, inner key:test.g.parentid, equal cond:eq(test.p.groupid, test.g.parentid)",
+		"  ├─Selection_51(Build) 8000.00 root  not(isnull(test.p.groupid))",
+		"  │ └─CTETable_52 10000.00 root  Scan on CTE_0",
+		"  └─IndexLookUp_31(Probe) 10000.00 root  ",
+		"    ├─IndexRangeScan_29(Build) 10000.00 cop[tikv] table:g, index:k1(parentid) range: decided by [eq(test.g.parentid, test.p.groupid)], keep order:false, stats:pseudo",
+		"    └─TableRowIDScan_30(Probe) 10000.00 cop[tikv] table:g keep order:false, stats:pseudo"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+}

@@ -7,11 +7,7 @@ go_test(
         "mdl_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD:ddl/metadatalocktest/BUILD.bazel
     shard_count = 36,
-=======
-    shard_count = 8,
->>>>>>> 156f23aacb9 (planer: fix invalid pointer caused by a recursive CTE query (#54450)):pkg/executor/test/cte/BUILD.bazel
     deps = [
         "//config",
         "//ddl",
