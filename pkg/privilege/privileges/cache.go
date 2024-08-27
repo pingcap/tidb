@@ -427,14 +427,8 @@ func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// See https://dev.mysql.com/doc/refman/8.0/en/connection-access.html
-	// When multiple matches are possible, the server must determine which of them to use. It resolves this issue as follows:
-	// 1. Whenever the server reads the user table into memory, it sorts the rows.
-	// 2. When a client attempts to connect, the server looks through the rows in sorted order.
-	// 3. The server uses the first row that matches the client host name and user name.
-	// The server uses sorting rules that order rows with the most-specific Host values first.
-	p.SortUserTable()
 	p.buildUserMap()
+	p.sortUserTable()
 	return nil
 }
 
@@ -509,9 +503,18 @@ func compareHost(x, y string) int {
 	return 0
 }
 
-// SortUserTable sorts p.User in the MySQLPrivilege struct.
-func (p MySQLPrivilege) SortUserTable() {
-	slices.SortFunc(p.User, compareUserRecord)
+// sortUserTable sorts p.User in the MySQLPrivilege struct.
+// See https://dev.mysql.com/doc/refman/8.0/en/connection-access.html
+// When multiple matches are possible, the server must determine which of them to use. It resolves this issue as follows:
+// 1. Whenever the server reads the user table into memory, it sorts the rows.
+// 2. When a client attempts to connect, the server looks through the rows in sorted order.
+// 3. The server uses the first row that matches the client host name and user name.
+// The server uses sorting rules that order rows with the most-specific Host values first.
+func (p MySQLPrivilege) sortUserTable() {
+	for userName, records := range p.UserMap {
+		slices.SortFunc(records, compareUserRecord)
+		p.UserMap[userName] = records
+	}
 }
 
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
