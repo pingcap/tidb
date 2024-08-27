@@ -16,8 +16,6 @@ package base
 
 import (
 	"testing"
-
-	"github.com/pingcap/tidb/pkg/util/benchdaily"
 )
 
 type testcase struct {
@@ -86,8 +84,4 @@ func BenchmarkEqualsAny(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		tc1.EqualsAny(tc2)
 	}
-}
-
-func TestBenchDaily(t *testing.T) {
-	benchdaily.Run(BenchmarkEqualsAny, BenchmarkEqualsT)
 }
