@@ -1114,13 +1114,8 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 		lines = append(chars, lines...) // nozero
 
 		// find first '\n' or '\r'
-		for i := 0; i < len(chars); i++ {
-			// reach the line end
-			// the first newline may be in the line end at the first round
-			if i >= len(lines)-1 {
-				break
-			}
-			if (chars[i] == 10 || chars[i] == 13) && chars[i+1] != 10 && chars[i+1] != 13 {
+		for i := 0; i < len(chars)-1; i++ {
+			if (chars[i] == '\n' || chars[i] == '\r') && chars[i+1] != '\n' && chars[i+1] != '\r' {
 				firstNonNewlinePos = i + 1
 				break
 			}
