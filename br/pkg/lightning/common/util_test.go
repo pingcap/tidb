@@ -16,10 +16,18 @@ package common_test
 
 import (
 	"context"
+<<<<<<< HEAD
+=======
+	"encoding/base64"
+>>>>>>> d0376379d6 (*: don't use DSN to avoid some security problems (#38342))
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+<<<<<<< HEAD
+=======
+	"testing"
+>>>>>>> d0376379d6 (*: don't use DSN to avoid some security problems (#38342))
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
@@ -27,6 +35,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+<<<<<<< HEAD
+=======
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+>>>>>>> d0376379d6 (*: don't use DSN to avoid some security problems (#38342))
 )
 
 type utilSuite struct{}
@@ -78,11 +91,25 @@ func (s *utilSuite) TestGetJSON(c *C) {
 	c.Assert(err, ErrorMatches, ".*http status code != 200.*")
 }
 
+<<<<<<< HEAD
 func (s *utilSuite) TestToDSN(c *C) {
+=======
+func TestConnect(t *testing.T) {
+	plainPsw := "dQAUoDiyb1ucWZk7"
+
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/br/pkg/lightning/common/MustMySQLPassword",
+		fmt.Sprintf("return(\"%s\")", plainPsw)))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/MustMySQLPassword"))
+	}()
+
+>>>>>>> d0376379d6 (*: don't use DSN to avoid some security problems (#38342))
 	param := common.MySQLConnectParam{
 		Host:             "127.0.0.1",
 		Port:             4000,
 		User:             "root",
+<<<<<<< HEAD
 		Password:         "123456",
 		SQLMode:          "strict",
 		MaxAllowedPacket: 1234,
@@ -95,6 +122,17 @@ func (s *utilSuite) TestToDSN(c *C) {
 
 	param.Host = "::1"
 	c.Assert(param.ToDSN(), Equals, "root:123456@tcp([::1]:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency='1'")
+=======
+		Password:         plainPsw,
+		SQLMode:          "strict",
+		MaxAllowedPacket: 1234,
+	}
+	_, err := param.Connect()
+	require.NoError(t, err)
+	param.Password = base64.StdEncoding.EncodeToString([]byte(plainPsw))
+	_, err = param.Connect()
+	require.NoError(t, err)
+>>>>>>> d0376379d6 (*: don't use DSN to avoid some security problems (#38342))
 }
 
 func (s *utilSuite) TestIsContextCanceledError(c *C) {

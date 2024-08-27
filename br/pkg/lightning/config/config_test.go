@@ -32,7 +32,11 @@ import (
 	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/parser/mysql"
+=======
+	"github.com/stretchr/testify/require"
+>>>>>>> d0376379d6 (*: don't use DSN to avoid some security problems (#38342))
 )
 
 func Test(t *testing.T) {
@@ -610,8 +614,15 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 	taskCfg.Checkpoint.Driver = config.CheckpointDriverMySQL
 	taskCfg.TiDB.DistSQLScanConcurrency = 1
 	err = taskCfg.Adjust(context.Background())
+<<<<<<< HEAD
 	c.Assert(err, IsNil)
 	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8mb4&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864&tls=false")
+=======
+	require.NoError(t, err)
+	equivalentDSN := taskCfg.Checkpoint.MySQLParam.ToDriverConfig().FormatDSN()
+	expectedDSN := "guest:12345@tcp(172.16.30.11:4001)/?tls=false&maxAllowedPacket=67108864&charset=utf8mb4&sql_mode=%27ONLY_FULL_GROUP_BY%2CSTRICT_TRANS_TABLES%2CNO_ZERO_IN_DATE%2CNO_ZERO_DATE%2CERROR_FOR_DIVISION_BY_ZERO%2CNO_AUTO_CREATE_USER%2CNO_ENGINE_SUBSTITUTION%27"
+	require.Equal(t, expectedDSN, equivalentDSN)
+>>>>>>> d0376379d6 (*: don't use DSN to avoid some security problems (#38342))
 
 	result := taskCfg.String()
 	c.Assert(result, Matches, `.*"pd-addr":"172.16.30.11:2379,172.16.30.12:2379".*`)
