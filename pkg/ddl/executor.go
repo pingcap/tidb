@@ -485,9 +485,13 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
-	tbls, err := is.SchemaTableInfos(context.Background(), dbInfo.Name)
-	if err != nil {
-		return errors.Trace(err)
+	schemas := is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	var tbls []*model.TableInfo
+	for _, schema := range schemas {
+		if schema.DBName.L == dbInfo.Name.L {
+			tbls = schema.TableInfos
+			break
+		}
 	}
 
 	total := len(tbls)
@@ -499,7 +503,7 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 	if total == 0 {
 		return infoschema.ErrEmptyDatabase.GenWithStack("Empty database '%v'", dbName.O)
 	}
-	err = checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
+	err := checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
 	if err != nil {
 		return errors.Trace(err)
 	}
