@@ -2237,6 +2237,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 	// REORGANIZE PARTITION - (re)create indexes on partitions to be added (3)
 	// REORGANIZE PARTITION - Update new Global indexes with data from non-touched partitions (4)
 	// (i.e. pi.Definitions - pi.DroppingDefinitions)
+	// MODIFY COLUMN - no change in partitions, just use pi.Definitions (5)
 	var pid int64
 	var err error
 	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
@@ -2256,6 +2257,9 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 				pid, err = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
 			}
 		}
+	} else if bytes.Equal(reorg.currElement.TypeKey, meta.ColumnElementKey) {
+		// case 5
+		pid, err = findNextPartitionID(currPhysicalTableID, pi.Definitions)
 	} else {
 		// case 2
 		pid, err = findNextPartitionID(currPhysicalTableID, pi.DroppingDefinitions)

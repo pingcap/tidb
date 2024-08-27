@@ -107,10 +107,6 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if tblInfo.Partition != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table"))
-	}
 
 	changingCol := modifyInfo.changingCol
 	if changingCol == nil {
