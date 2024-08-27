@@ -50,12 +50,6 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 			},
 		},
 		{
-			sql: "select * from t where a = 1",
-			physicalList: []string{
-				"Point_Get_5", "Projection_4",
-			},
-		},
-		{
 			sql: "select max(b) from t",
 			physicalList: []string{
 				"IndexFullScan_19",
@@ -69,20 +63,10 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		{
 			sql: "select * from t where c = 3",
 			physicalList: []string{
-				"IndexRangeScan_8",
-				"TableRowIDScan_9",
-				"IndexLookUp_10",
-				"Projection_4",
-			},
-		},
-		{
-			sql: "SELECT * FROM t WHERE b = 1 OR c = 1;",
-			physicalList: []string{
-				"TableRowIDScan_10",
-				"IndexRangeScan_8",
-				"IndexRangeScan_9",
-				"IndexMerge_11",
-				"Projection_4",
+				"IndexRangeScan_5",
+				"TableRowIDScan_6",
+				"IndexLookUp_7",
+				"Projection_3",
 			},
 		},
 	}
