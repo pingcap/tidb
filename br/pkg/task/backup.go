@@ -250,11 +250,16 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		statsHandle = mgr.GetDomain().StatsHandle()
 	}
 
-	se, err := g.CreateSession(mgr.GetStorage())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	newCollationEnable, err := se.GetGlobalVariable(tidbNewCollationEnabled)
+	var newCollationEnable string
+	err = g.UseOneShotSession(mgr.GetStorage(), !needDomain, func(se glue.Session) error {
+		newCollationEnable, err = se.GetGlobalVariable(tidbNewCollationEnabled)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		log.Info("get new_collations_enabled_on_first_bootstrap config from system table",
+			zap.String(tidbNewCollationEnabled, newCollationEnable))
+		return nil
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}

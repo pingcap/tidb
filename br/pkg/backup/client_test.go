@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -38,6 +39,7 @@ type testBackup struct {
 	cancel context.CancelFunc
 
 	mockPDClient pd.Client
+	mockGlue     *gluetidb.MockGlue
 	backupClient *backup.Client
 
 	cluster *mock.Cluster
