@@ -1080,9 +1080,6 @@ type SessionVars struct {
 	// EnableAutoIncrementInGenerated is used to control whether to allow auto incremented columns in generated columns.
 	EnableAutoIncrementInGenerated bool
 
-	// EnablePointGetCache is used to cache value for point get for read only scenario.
-	EnablePointGetCache bool
-
 	// PlacementMode the placement mode we use
 	//   strict: Check placement settings strictly in ddl operations
 	//   ignore: Ignore all placement settings in ddl operations
