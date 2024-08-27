@@ -301,7 +301,8 @@ func (importer *SnapFileImporter) getKeyRangeForFiles(
 }
 
 // ImportSSTFiles tries to import a file.
-// All rules must contain encoded keys.
+// Assert 1: All rewrite rules must contain raw key prefix.
+// Assert 2: len(filesGroup[any].Files) > 0.
 func (importer *SnapFileImporter) ImportSSTFiles(
 	ctx context.Context,
 	filesGroup []TableIDWithFiles,
@@ -498,22 +499,22 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 	rewriteRules *restoreutils.RewriteRules,
 	regionInfo *split.RegionInfo,
 	cipher *backuppb.CipherInfo,
-) (*import_sstpb.DownloadRequest, import_sstpb.SSTMeta, bool, error) {
+) (*import_sstpb.DownloadRequest, import_sstpb.SSTMeta, error) {
 	// Get the rewrite rule for the file.
 	fileRule := restoreutils.FindMatchedRewriteRule(file, rewriteRules)
 	if fileRule == nil {
 		log.Warn("download file skipped", logutil.Region(regionInfo.Region), zap.Error(berrors.ErrKVRewriteRuleNotFound))
-		return nil, import_sstpb.SSTMeta{}, true, nil
+		return nil, import_sstpb.SSTMeta{}, nil
 	}
 
 	// Check whether the range of the file overlaps with the region
 	encodedStartKey := restoreutils.RewriteAndEncodeRawKey(file.StartKey, fileRule)
 	if len(regionInfo.Region.EndKey) > 0 && bytes.Compare(encodedStartKey, regionInfo.Region.EndKey) >= 0 {
-		return nil, import_sstpb.SSTMeta{}, true, nil
+		return nil, import_sstpb.SSTMeta{}, nil
 	}
 	encodedEndKey := restoreutils.RewriteAndEncodeRawKey(file.EndKey, fileRule)
 	if bytes.Compare(encodedEndKey, regionInfo.Region.StartKey) <= 0 {
-		return nil, import_sstpb.SSTMeta{}, true, nil
+		return nil, import_sstpb.SSTMeta{}, nil
 	}
 
 	// For the legacy version of TiKV, we need to encode the key prefix, since in the legacy
@@ -532,7 +533,7 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 
 	sstMeta, err := getSSTMetaFromFile(file, regionInfo.Region, &rule, importer.rewriteMode)
 	if err != nil {
-		return nil, import_sstpb.SSTMeta{}, false, err
+		return nil, import_sstpb.SSTMeta{}, err
 	}
 
 	req := &import_sstpb.DownloadRequest{
@@ -551,7 +552,7 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 			RequestSource: kvutil.BuildRequestSource(true, kv.InternalTxnBR, kvutil.ExplicitTypeBR),
 		},
 	}
-	return req, *sstMeta, false, nil
+	return req, *sstMeta, nil
 }
 
 func (importer *SnapFileImporter) downloadSST(
@@ -567,12 +568,12 @@ func (importer *SnapFileImporter) downloadSST(
 	downloadReqsMap := make(map[string]*import_sstpb.DownloadRequest)
 	for _, files := range filesGroup {
 		for _, file := range files.Files {
-			req, sstMeta, skip, err := importer.buildDownloadRequest(file, files.RewriteRules, regionInfo, cipher)
+			req, sstMeta, err := importer.buildDownloadRequest(file, files.RewriteRules, regionInfo, cipher)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			// the range of the file does not overlap with the region
-			if skip {
+			if req == nil {
 				continue
 			}
 			sstMeta.ApiVersion = apiVersion
@@ -653,7 +654,7 @@ func (importer *SnapFileImporter) downloadRawKVSST(
 	cipher *backuppb.CipherInfo,
 	apiVersion kvrpcpb.APIVersion,
 ) ([]*import_sstpb.SSTMeta, error) {
-	downloadMetas := make([]*import_sstpb.SSTMeta, 0, len(filesGroup)*2)
+	downloadMetas := make([]*import_sstpb.SSTMeta, 0, len(filesGroup)*2+1)
 	for _, files := range filesGroup {
 		for _, file := range files.Files {
 			// Empty rule
