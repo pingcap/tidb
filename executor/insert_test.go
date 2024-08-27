@@ -1889,3 +1889,106 @@ func (s *testSuite13) TestReplaceAllocatingAutoID(c *C) {
 	// Note that this error is different from MySQL's duplicated primary key error.
 	tk.MustGetErrCode("REPLACE INTO t1 VALUES (0,'newmaxvalue');", errno.ErrAutoincReadFailed)
 }
+<<<<<<< HEAD
+=======
+
+func TestInsertIntoSelectError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1(a INT) ENGINE = InnoDB;")
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(NULL));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(-1));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(1));")
+	tk.MustQuery("SELECT * FROM t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustExec("DROP TABLE t1;")
+}
+
+// https://github.com/pingcap/tidb/issues/32213.
+func TestIssue32213(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec("create table test.t1(c1 float)")
+	tk.MustExec("insert into test.t1 values(999.99)")
+	tk.MustQuery("select cast(test.t1.c1 as decimal(4, 1)) from test.t1").Check(testkit.Rows("999.9"))
+	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 1)) from test.t1").Check(testkit.Rows("1000.0"))
+
+	tk.MustExec("drop table if exists test.t1")
+	tk.MustExec("create table test.t1(c1 decimal(6, 4))")
+	tk.MustExec("insert into test.t1 values(99.9999)")
+	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 3)) from test.t1").Check(testkit.Rows("99.999"))
+	tk.MustQuery("select cast(test.t1.c1 as decimal(6, 3)) from test.t1").Check(testkit.Rows("100.000"))
+}
+
+func TestInsertLock(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	for _, tt := range []struct {
+		name string
+		ddl  string
+		dml  string
+	}{
+		{
+			"replace-pk",
+			"create table t (c int primary key clustered)",
+			"replace into t values (1)",
+		},
+		{
+			"replace-uk",
+			"create table t (c int unique key)",
+			"replace into t values (1)",
+		},
+		{
+			"insert-ingore-pk",
+			"create table t (c int primary key clustered)",
+			"insert ignore into t values (1)",
+		},
+		{
+			"insert-ingore-uk",
+			"create table t (c int unique key)",
+			"insert ignore into t values (1)",
+		},
+		{
+			"insert-update-pk",
+			"create table t (c int primary key clustered)",
+			"insert into t values (1) on duplicate key update c = values(c)",
+		},
+		{
+			"insert-update-uk",
+			"create table t (c int unique key)",
+			"insert into t values (1) on duplicate key update c = values(c)",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tk1.MustExec("drop table if exists t")
+			tk1.MustExec(tt.ddl)
+			tk1.MustExec("insert into t values (1)")
+			tk1.MustExec("begin")
+			tk1.MustExec(tt.dml)
+			done := make(chan struct{})
+			go func() {
+				tk2.MustExec("delete from t")
+				done <- struct{}{}
+			}()
+			select {
+			case <-done:
+				require.Failf(t, "txn2 is not blocked by %q", tt.dml)
+			case <-time.After(100 * time.Millisecond):
+			}
+			tk1.MustExec("commit")
+			<-done
+			tk1.MustQuery("select * from t").Check([][]interface{}{})
+		})
+	}
+}
+>>>>>>> 24cd54c7462 (executor: lock duplicated keys on insert-ignore & replace-nothing (#42210))
