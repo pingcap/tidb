@@ -446,8 +446,9 @@ func GetOwnerOpValue(ctx context.Context, etcdCli *clientv3.Client, ownerPath, l
 	return op, errors.Trace(err)
 }
 
-// WatchOwner watches the ownerKey. It's exported for testing only.
-func WatchOwner(m Manager, ctx context.Context, etcdSession *concurrency.Session, key string, ownerRevision int64) {
+// WatchOwnerForTest watches the ownerKey.
+// This function is used to test watchOwner().
+func WatchOwnerForTest(ctx context.Context, m Manager, etcdSession *concurrency.Session, key string, ownerRevision int64) {
 	if ownerManager, ok := m.(*ownerManager); ok {
 		ownerManager.watchOwner(ctx, etcdSession, key, ownerRevision)
 	}
