@@ -331,6 +331,9 @@ func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, 
 				log.Warn("Failed to parse split region on table from config", logutil.ShortError(e))
 				return e
 			}
+			if splitRegionOnTable.Value && !splitTable {
+				return errors.Errorf("the configure `split-region-on-table` from TiKVs are different")
+			}
 			splitRegionOnTable.Value = splitRegionOnTable.Value || splitTable
 		}
 		if !mergeRegionSize.Modified || !mergeRegionKeyCount.Modified {
