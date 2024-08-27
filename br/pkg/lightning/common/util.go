@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table/tables"
 	"go.uber.org/zap"
 )
 
@@ -336,4 +337,23 @@ func StringSliceEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// GetAutoRandomColumn return the column with auto_random, return nil if the table doesn't have it.
+// todo: better put in ddl package, but this will cause import cycle since ddl package import lightning
+func GetAutoRandomColumn(tblInfo *model.TableInfo) *model.ColumnInfo {
+	if !tblInfo.ContainsAutoRandomBits() {
+		return nil
+	}
+	if tblInfo.PKIsHandle {
+		return tblInfo.GetPkColInfo()
+	} else if tblInfo.IsCommonHandle {
+		pk := tables.FindPrimaryIndex(tblInfo)
+		if pk == nil {
+			return nil
+		}
+		offset := pk.Columns[0].Offset
+		return tblInfo.Columns[offset]
+	}
+	return nil
 }
