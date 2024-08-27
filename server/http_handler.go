@@ -751,14 +751,22 @@ func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case "reset":
 		binloginfo.ResetSkippedCommitterCounter()
 	case "nowait":
-		binloginfo.DisableSkipBinlogFlag()
+		err := binloginfo.DisableSkipBinlogFlag()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 	case "status":
 	default:
 		sec, err := strconv.ParseInt(req.FormValue(qSeconds), 10, 64)
 		if sec <= 0 || err != nil {
 			sec = 1800
 		}
-		binloginfo.DisableSkipBinlogFlag()
+		err = binloginfo.DisableSkipBinlogFlag()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		timeout := time.Duration(sec) * time.Second
 		err = binloginfo.WaitBinlogRecover(timeout)
 		if err != nil {
