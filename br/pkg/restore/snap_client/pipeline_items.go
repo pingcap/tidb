@@ -52,6 +52,12 @@ type CreatedTable struct {
 	OldTable    *metautil.Table
 }
 
+type PhysicalTable struct {
+	NewPhysicalID int64
+	OldPhysicalID int64
+	RewriteRules  *restoreutils.RewriteRules
+}
+
 type TableIDWithFiles struct {
 	TableID int64
 

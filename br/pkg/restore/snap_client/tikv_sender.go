@@ -36,6 +36,31 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
+	physicalTables := make([]*PhysicalTable, 0, len(createdTables))
+	for _, createdTable := range createdTables {
+		physicalTables = append(physicalTables, &PhysicalTable{
+			NewPhysicalID: createdTable.Table.ID,
+			OldPhysicalID: createdTable.OldTable.Info.ID,
+			RewriteRules:  createdTable.RewriteRule,
+		})
+
+		partitionIDMap := restoreutils.GetPartitionIDMap(createdTable.Table, createdTable.OldTable.Info)
+		for oldID, newID := range partitionIDMap {
+			physicalTables = append(physicalTables, &PhysicalTable{
+				NewPhysicalID: newID,
+				OldPhysicalID: oldID,
+				RewriteRules:  createdTable.RewriteRule,
+			})
+		}
+	}
+	// sort the physical table by downstream stream physical id
+	sort.Slice(physicalTables, func(a, b int) bool {
+		return physicalTables[a].NewPhysicalID < physicalTables[b].NewPhysicalID
+	})
+	return physicalTables
+}
+
 // mapTableToFiles makes a map that mapping table ID to its backup files.
 // aware that one file can and only can hold one table.
 func mapTableToFiles(files []*backuppb.File) (map[int64][]*backuppb.File, int) {
@@ -98,17 +123,14 @@ const MergedRangeCountThreshold = 1536
 
 // SortAndValidateFileRanges sort, merge and validate files by tables and yields tables with range.
 func SortAndValidateFileRanges(
-	createdTables []*CreatedTable,
+	createdTablesX []*CreatedTable,
 	allFiles []*backuppb.File,
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
 	splitOnTable bool,
 	updateCh glue.Progress,
 ) ([][]byte, [][]TableIDWithFiles, error) {
-	// sort the created table by downstream stream table id
-	sort.Slice(createdTables, func(a, b int) bool {
-		return createdTables[a].Table.ID < createdTables[b].Table.ID
-	})
+	sortedPhysicalTables := getSortedPhysicalTables(createdTablesX)
 	// mapping table ID to its backup files
 	fileOfTable, hintSplitKeyCount := mapTableToFiles(allFiles)
 	// sort, merge, and validate files in each tables, and generate split keys by the way
@@ -129,28 +151,23 @@ func SortAndValidateFileRanges(
 
 	log.Info("start to merge ranges", zap.Uint64("kv size threshold", splitSizeBytes), zap.Uint64("kv count threshold", splitKeyCount))
 	// Notice that TiDB does not split partition even if the config `split-table` is on.
-	for _, table := range createdTables {
-		files := fileOfTable[table.OldTable.Info.ID]
-		if partitions := table.OldTable.Info.Partition; partitions != nil {
-			for _, partition := range partitions.Definitions {
-				files = append(files, fileOfTable[partition.ID]...)
-			}
-		}
+	for _, table := range sortedPhysicalTables {
+		files := fileOfTable[table.OldPhysicalID]
 		for _, file := range files {
-			if err := restoreutils.ValidateFileRewriteRule(file, table.RewriteRule); err != nil {
+			if err := restoreutils.ValidateFileRewriteRule(file, table.RewriteRules); err != nil {
 				return nil, nil, errors.Trace(err)
 			}
 		}
 		// Merge small ranges to reduce split and scatter regions.
 		// Notice that the files having the same start key and end key are in the same range.
 		sortedRanges, stat, err := restoreutils.MergeAndRewriteFileRanges(
-			files, table.RewriteRule, splitSizeBytes, splitKeyCount)
+			files, table.RewriteRules, splitSizeBytes, splitKeyCount)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		log.Info("merge and validate file",
-			zap.Stringer("database", table.OldTable.DB.Name),
-			zap.Stringer("table", table.Table.Name),
+			zap.Int64("new physical ID", table.NewPhysicalID),
+			zap.Int64("old physical ID", table.OldPhysicalID),
 			zap.Int("Files(total)", stat.TotalFiles),
 			zap.Int("File(write)", stat.TotalWriteCFFile),
 			zap.Int("File(default)", stat.TotalDefaultCFFile),
@@ -164,7 +181,7 @@ func SortAndValidateFileRanges(
 		// skip some ranges if recorded by checkpoint
 		// Notice that skip ranges after select split keys in order to make the split keys
 		// always the same.
-		checkpointSet := checkpointSetWithTableID[table.Table.ID]
+		checkpointSet := checkpointSetWithTableID[table.NewPhysicalID]
 
 		// Generate the split keys, and notice that the way to generate split keys must be deterministic
 		// and regardless of the current cluster region distribution. Therefore, when restore fails, the
@@ -217,11 +234,11 @@ func SortAndValidateFileRanges(
 			newFiles := filterOutFiles(checkpointSet, rg.Files, updateCh)
 			// append the new files into the group
 			if len(newFiles) > 0 {
-				if len(lastFilesGroup) == 0 || lastFilesGroup[len(lastFilesGroup)-1].TableID != table.Table.ID {
+				if len(lastFilesGroup) == 0 || lastFilesGroup[len(lastFilesGroup)-1].TableID != table.NewPhysicalID {
 					lastFilesGroup = append(lastFilesGroup, TableIDWithFiles{
-						TableID:      table.Table.ID,
+						TableID:      table.NewPhysicalID,
 						Files:        nil,
-						RewriteRules: table.RewriteRule,
+						RewriteRules: table.RewriteRules,
 					})
 				}
 				lastFilesGroup[len(lastFilesGroup)-1].Files = append(lastFilesGroup[len(lastFilesGroup)-1].Files, newFiles...)
