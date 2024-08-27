@@ -15,12 +15,14 @@
 package infoschema
 
 import (
+	"slices"
+
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"slices"
 )
 
 // BuilderV3 ...
@@ -38,6 +40,12 @@ func NewBuilderV3(r autoid.Requirement, factory func() (pools.Resource, error), 
 		useV2:     useV2,
 	}
 	return v3
+}
+
+func (b *BuilderV3) WithStore(s kv.Storage) *BuilderV3 {
+	b.builderV1.store = s
+	b.builderV2.store = s
+	return b
 }
 
 // InitWithOldInfoSchema ...
