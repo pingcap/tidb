@@ -637,15 +637,10 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
-	allDBs := schema.AllSchemaNames()
-	for _, db := range allDBs {
-		tbls, err := schema.SchemaTableInfos(context.Background(), db)
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-		for _, tbl := range tbls {
-			replicaInfos = h.getTiFlashReplicaInfo(tbl, replicaInfos)
+	schemaTables := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	for _, schemaTable := range schemaTables {
+		for _, tblInfo := range schemaTable.TableInfos {
+			replicaInfos = h.getTiFlashReplicaInfo(tblInfo, replicaInfos)
 		}
 	}
 
