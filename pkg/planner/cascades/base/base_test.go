@@ -40,14 +40,6 @@ func (tc *testcase) EqualsT(other *testcase) bool {
 	return tc.a == other.a && tc.b == other.b && tc.c == other.c
 }
 
-//func (tc *testcase) EqualsT(other TestSuperEquals) bool {
-//	tc1, ok := other.(*testcase)
-//	if !ok {
-//		return false
-//	}
-//	return tc.a == tc1.a && tc.b == tc1.b && tc.c == tc1.c
-//}
-
 func (tc *testcase) EqualsAny(other any) bool {
 	tc1, ok := other.(*testcase)
 	if !ok {
