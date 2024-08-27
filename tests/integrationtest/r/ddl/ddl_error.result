@@ -1,0 +1,13 @@
+drop database if exists ddl__ddl_error2;
+drop table if exists table_1;
+drop view if exists view_1;
+create database test_2;
+create table table_1 (a int);
+create view view_1 as select a from table_1;
+rename table ddl__ddl_error.view_1 to ddl__ddl_error2.view_1;
+Error 1450 (HY000): Changing schema from 'ddl__ddl_error' to 'ddl__ddl_error2' is not allowed.
+rename table ddl__ddl_error.view_1 to ddl__ddl_error2.view_1;
+Error 1450 (HY000): Changing schema from 'ddl__ddl_error' to 'ddl__ddl_error2' is not allowed.
+rename table ddl__ddl_error.view_1 to ddl__ddl_error2.view_1;
+Error 1450 (HY000): Changing schema from 'ddl__ddl_error' to 'ddl__ddl_error2' is not allowed.
+rename table ddl__ddl_error.view_1 to ddl__ddl_error.view_1000;

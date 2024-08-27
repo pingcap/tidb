@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "keyspace",
+    srcs = ["keyspace.go"],
+    importpath = "github.com/pingcap/tidb/pkg/keyspace",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)
+
+go_test(
+    name = "keyspace_test",
+    timeout = "short",
+    srcs = ["keyspace_test.go"],
+    embed = [":keyspace"],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "@com_github_stretchr_testify//require",
+    ],
+)

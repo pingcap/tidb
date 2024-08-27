@@ -1,0 +1,87 @@
+# TestExportRowID
+set session tidb_opt_write_row_id = ON;
+drop table if exists t;
+create table t (a int, b int);
+insert t values (1, 7), (1, 8), (1, 9);
+select *, _tidb_rowid from t;
+update t set a = 2 where _tidb_rowid = 2;
+select *, _tidb_rowid from t;
+delete from t where _tidb_rowid = 2;
+select *, _tidb_rowid from t;
+insert t (a, b, _tidb_rowid) values (2, 2, 2), (5, 5, 5);
+select *, _tidb_rowid from t;
+create table s (a int primary key);
+insert s values (1);
+-- error 1054
+insert s (a, _tidb_rowid) values (1, 2);
+-- error 1054
+select _tidb_rowid from s;
+-- error 1054
+update s set a = 2 where _tidb_rowid = 1;
+-- error 1054
+delete from s where _tidb_rowid = 1;
+# Make sure "AllowWriteRowID" is a session variable.
+connect (conn1, localhost, root,, executor__rowid);
+connection conn1;
+-- error 1105
+insert into t (a, _tidb_rowid) values(10, 1);
+connection default;
+disconnect conn1;
+set session tidb_opt_write_row_id = default;
+
+# TestNotAllowWriteRowID
+set tidb_enable_clustered_index = INT_ONLY;
+drop table if exists tt;
+create table tt(id binary(10), c int, primary key(id));
+insert tt values (1, 10);
+select hex(id), c, _tidb_rowid from tt;
+-- error 1105
+insert into tt (id, c, _tidb_rowid) values(30000,10,1);
+-- error 1105
+replace into tt (id, c, _tidb_rowid) values(30000,10,1);
+-- error 1105
+update tt set id = 2, _tidb_rowid = 1 where _tidb_rowid = 1;
+update tt set id = 2 where _tidb_rowid = 1;
+admin check table tt;
+drop table tt;
+set tidb_enable_clustered_index = default;
+
+# TestExplicitInsertRowID
+# https://github.com/pingcap/tidb/issues/22029
+drop table if exists t;
+create table t (a int);
+set @@tidb_opt_write_row_id = true;
+insert into t (_tidb_rowid, a) values (1, 1), (2, 2);
+--sorted_result
+select *, _tidb_rowid from t;
+drop table if exists t;
+create table t(id varchar(10), c int);
+insert t values('one', 101), ('two', 102);
+--sorted_result
+select *, _tidb_rowid from t;
+insert t (id, c, _tidb_rowid) values ('three', 103, 9), ('four', 104, 16), ('five', 105, 5);
+--sorted_result
+select *, _tidb_rowid from t where c > 102;
+insert t values ('six', 106), ('seven', 107);
+--sorted_result
+select *, _tidb_rowid from t where c > 105;
+drop table if exists t;
+create table t (a int) shard_row_id_bits = 5;
+insert into t values (1);
+select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;
+insert into t (a, _tidb_rowid) values (2, (1<<62)+5);
+insert into t values (3);
+select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;
+insert into t (a, _tidb_rowid) values (4, null);
+select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;
+delete from t;
+SET sql_mode=(SELECT CONCAT(@@sql_mode,',NO_AUTO_VALUE_ON_ZERO'));
+insert into t (a, _tidb_rowid) values (5, 0);
+select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;
+SET sql_mode=(SELECT REPLACE(@@sql_mode,'NO_AUTO_VALUE_ON_ZERO',''));
+insert into t (a, _tidb_rowid) values (6, 0);
+select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;
+insert into t (_tidb_rowid, a) values (0, 7);
+select *, ((1 << (64-5-1)) - 1) & _tidb_rowid from t order by a;
+set @@tidb_opt_write_row_id = default;
+

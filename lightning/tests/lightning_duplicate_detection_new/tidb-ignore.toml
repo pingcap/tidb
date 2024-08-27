@@ -1,0 +1,6 @@
+[lightning]
+# Disable concurrency to make sure the import is deterministic.
+region-concurrency = 1
+
+[tikv-importer]
+on-duplicate = "ignore"

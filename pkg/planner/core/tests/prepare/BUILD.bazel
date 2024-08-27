@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "prepare_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "prepare_test.go",
+    ],
+    flaky = True,
+    shard_count = 24,
+    deps = [
+        "//pkg/errno",
+        "//pkg/executor",
+        "//pkg/expression",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/metrics",
+        "//pkg/parser",
+        "//pkg/parser/auth",
+        "//pkg/planner/core",
+        "//pkg/session",
+        "//pkg/session/types",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/util",
+        "//pkg/util/hint",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

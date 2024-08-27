@@ -1,0 +1,41 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "backend",
+    srcs = ["backend.go"],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/backend",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/lightning/backend/encode",
+        "//pkg/lightning/checkpoints",
+        "//pkg/lightning/common",
+        "//pkg/lightning/log",
+        "//pkg/lightning/metric",
+        "//pkg/lightning/mydump",
+        "//pkg/parser/model",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "backend_test",
+    timeout = "short",
+    srcs = ["backend_test.go"],
+    flaky = True,
+    shard_count = 14,
+    deps = [
+        ":backend",
+        "//br/pkg/mock",
+        "//pkg/lightning/backend/encode",
+        "//pkg/parser/mysql",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_mock//gomock",
+    ],
+)

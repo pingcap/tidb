@@ -9,7 +9,11 @@ import (
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/tidb/config"
+	kvconfig "github.com/pingcap/tidb/br/pkg/config"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/config"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
@@ -156,4 +160,84 @@ func TestCheckCipherKey(t *testing.T) {
 			require.Error(t, err)
 		}
 	}
+}
+
+func must[T any](t T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+func expectedDefaultConfig() Config {
+	return Config{
+		BackendOptions:            storage.BackendOptions{S3: storage.S3BackendOptions{ForcePathStyle: true}},
+		PD:                        []string{"127.0.0.1:2379"},
+		ChecksumConcurrency:       4,
+		Checksum:                  true,
+		SendCreds:                 true,
+		CheckRequirements:         true,
+		FilterStr:                 []string(nil),
+		TableFilter:               filter.CaseInsensitive(must(filter.Parse([]string{"*.*"}))),
+		Schemas:                   map[string]struct{}{},
+		Tables:                    map[string]struct{}{},
+		SwitchModeInterval:        300000000000,
+		GRPCKeepaliveTime:         10000000000,
+		GRPCKeepaliveTimeout:      3000000000,
+		CipherInfo:                backup.CipherInfo{CipherType: 1},
+		MetadataDownloadBatchSize: 0x80,
+	}
+}
+
+func expectedDefaultBackupConfig() BackupConfig {
+	return BackupConfig{
+		Config: expectedDefaultConfig(),
+		GCTTL:  utils.DefaultBRGCSafePointTTL,
+		CompressionConfig: CompressionConfig{
+			CompressionType: backup.CompressionType_ZSTD,
+		},
+		IgnoreStats:     true,
+		UseBackupMetaV2: true,
+		UseCheckpoint:   true,
+	}
+}
+
+func expectedDefaultRestoreConfig() RestoreConfig {
+	defaultConfig := expectedDefaultConfig()
+	defaultConfig.Concurrency = defaultRestoreConcurrency
+	return RestoreConfig{
+		Config: defaultConfig,
+		RestoreCommonConfig: RestoreCommonConfig{Online: false,
+			Granularity:               "fine-grained",
+			MergeSmallRegionSizeBytes: kvconfig.ConfigTerm[uint64]{Value: 0x6000000},
+			MergeSmallRegionKeyCount:  kvconfig.ConfigTerm[uint64]{Value: 0xea600},
+			WithSysTable:              true,
+			ResetSysUsers:             []string{"cloud_admin", "root"}},
+		NoSchema:            false,
+		LoadStats:           true,
+		PDConcurrency:       0x1,
+		StatsConcurrency:    0xc,
+		BatchFlushInterval:  16000000000,
+		DdlBatchSize:        0x80,
+		WithPlacementPolicy: "STRICT",
+		UseCheckpoint:       true,
+	}
+}
+
+func TestDefault(t *testing.T) {
+	def := DefaultConfig()
+	defaultConfig := expectedDefaultConfig()
+	require.Equal(t, defaultConfig, def)
+}
+
+func TestDefaultBackup(t *testing.T) {
+	def := DefaultBackupConfig()
+	defaultConfig := expectedDefaultBackupConfig()
+	require.Equal(t, defaultConfig, def)
+}
+
+func TestDefaultRestore(t *testing.T) {
+	def := DefaultRestoreConfig()
+	defaultConfig := expectedDefaultRestoreConfig()
+	require.Equal(t, defaultConfig, def)
 }

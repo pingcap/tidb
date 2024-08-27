@@ -1,0 +1,621 @@
+set tidb_cost_model_version=2;
+drop table if exists t;
+CREATE TABLE t (
+a int(11) DEFAULT NULL,
+b int(11) DEFAULT NULL,
+UNIQUE KEY idx (a));
+explain format='brief' select t.*, _tidb_rowid from t where a = 1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:idx(a)	
+explain format='brief' select t.*, _tidb_rowid, date_format(a, "") from t where a = 1;
+id	estRows	task	access object	operator info
+Projection	1.00	root		planner__core__point_get_plan.t.a, planner__core__point_get_plan.t.b, planner__core__point_get_plan.t._tidb_rowid, date_format(cast(planner__core__point_get_plan.t.a, datetime BINARY), )->Column#4
+└─Point_Get	1.00	root	table:t, index:idx(a)	
+begin;
+insert into t values (1, 1);
+explain format='brief' select t.*, _tidb_rowid from t where a = 1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:idx(a)	
+commit;
+explain format='brief' select count(_tidb_rowid) from t where a=1;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:count(planner__core__point_get_plan.t._tidb_rowid)->Column#4
+└─Point_Get	1.00	root	table:t, index:idx(a)	
+explain format='brief' select *, date_format(b, "") from t where a =1 for update;
+id	estRows	task	access object	operator info
+Projection	1.00	root		planner__core__point_get_plan.t.a, planner__core__point_get_plan.t.b, date_format(cast(planner__core__point_get_plan.t.b, datetime BINARY), )->Column#4
+└─SelectLock	1.00	root		for update 0
+  └─Point_Get	1.00	root	table:t, index:idx(a)	
+create table t1 (pk int, a int, b int, primary key(pk), unique key(a));
+explain format='brief' select t1.*, _tidb_rowid from t1 where a = 1;
+Error 1054 (42S22): Unknown column '_tidb_rowid' in 'field list'
+set tidb_cost_model_version=DEFAULT;
+drop table if exists users;
+CREATE TABLE users (id bigint(20) unsigned NOT NULL primary key, name longtext DEFAULT NULL, company_id bigint(20) DEFAULT NULL);
+create table companies(id bigint primary key, name longtext default null);
+insert into companies values(14, 'Company14');
+insert into companies values(15, 'Company15');
+insert into users(id, company_id, name) values(239, 15, 'xxxx');
+UPDATE users SET name=(SELECT name FROM companies WHERE companies.id = users.company_id)  WHERE id = 239;
+select * from users;
+id	name	company_id
+239	Company15	15
+drop table if exists t;
+create table t(a int primary key auto_increment not null, b int, c int, unique key idx_abc(a, b, c));
+insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 5);
+select * from t;
+a	b	c
+1	1	1
+2	2	2
+3	3	3
+4	4	5
+explain format = 'brief' select * from t where a = 1 and b = 1 and c = 1;
+id	estRows	task	access object	operator info
+Selection	1.00	root		eq(planner__core__point_get_plan.t.b, 1), eq(planner__core__point_get_plan.t.c, 1)
+└─Point_Get	1.00	root	table:t	handle:1
+explain format = 'brief' select * from t where 1 = a and 1 = b and 1 = c;
+id	estRows	task	access object	operator info
+Selection	1.00	root		eq(1, planner__core__point_get_plan.t.b), eq(1, planner__core__point_get_plan.t.c)
+└─Point_Get	1.00	root	table:t	handle:1
+explain format = 'brief' select * from t where 1 = a and b = 1 and 1 = c;
+id	estRows	task	access object	operator info
+Selection	1.00	root		eq(1, planner__core__point_get_plan.t.c), eq(planner__core__point_get_plan.t.b, 1)
+└─Point_Get	1.00	root	table:t	handle:1
+explain format = 'brief' select * from t where (a, b, c) in ((1, 1, 1), (2, 2, 2));
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:t, index:idx_abc(a, b, c)	keep order:false, desc:false
+explain format = 'brief' select * from t where a in (1, 2, 3, 4, 5);
+id	estRows	task	access object	operator info
+Batch_Point_Get	5.00	root	table:t	handle:[1 2 3 4 5], keep order:false, desc:false
+explain format = 'brief' select * from t where a in (1, 2, 3, 1, 2);
+id	estRows	task	access object	operator info
+Batch_Point_Get	5.00	root	table:t	handle:[1 2 3], keep order:false, desc:false
+begin;
+explain format = 'brief' select * from t where a in (1, 2, 3, 1, 2) FOR UPDATE;
+id	estRows	task	access object	operator info
+Batch_Point_Get	5.00	root	table:t	handle:[1 2 3], keep order:false, desc:false, lock
+rollback;
+explain format = 'brief' select * from t where (a) in ((1), (2), (3), (1), (2));
+id	estRows	task	access object	operator info
+Batch_Point_Get	5.00	root	table:t	handle:[1 2 3], keep order:false, desc:false
+drop table if exists t;
+create table t(a int, b int, c int, unique key idx_ab(a, b));
+insert into t values(1, 2, 3), (2, 3, 4), (3, 4, 5), (4, 5, 6);
+select * from t;
+a	b	c
+1	2	3
+2	3	4
+3	4	5
+4	5	6
+explain format = 'brief' select * from t where (a, b) in ((1, 2), (2, 3));
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:t, index:idx_ab(a, b)	keep order:false, desc:false
+select * from t where (a, b) in ((1, 2), (2, 3));
+a	b	c
+1	2	3
+2	3	4
+select * from t where (b, a) in ((1, 2), (2, 3));
+a	b	c
+select * from t where (b, a) in ((2, 1), (3, 2));
+a	b	c
+1	2	3
+2	3	4
+select * from t where (b, a) in ((2, 1), (3, 2), (2, 1), (5, 4));
+a	b	c
+1	2	3
+2	3	4
+4	5	6
+select * from t where (b, a) in ((2, 1), (3, 2), (2, 1), (5, 4), (3, 4));
+a	b	c
+1	2	3
+2	3	4
+4	5	6
+begin pessimistic;
+explain format = 'brief' select * from t where (a, b) in ((1, 2), (2, 3)) FOR UPDATE;
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:t, index:idx_ab(a, b)	keep order:false, desc:false, lock
+rollback;
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t(a int, b int, unique key(a));
+insert into t values(1,1),(2,2),(3,3);
+prepare stmt from 'select * from t use index(a) where (a >= ? and a <= ?) or a = 3';
+set @p=1,@q=2,@u=3;
+execute stmt using @p,@p;
+a	b
+1	1
+3	3
+execute stmt using @u,@q;
+a	b
+3	3
+drop table t;
+create table t(a int, b int, primary key(a,b)) partition by hash(b) partitions 2;
+insert into t values(1,1),(1,2),(1,3),(2,1),(2,2),(2,3),(3,1),(3,2),(3,3);
+set @@tidb_partition_prune_mode = 'static';
+prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and b = ?';
+execute stmt using @p,@p,@p;
+a	b
+1	1
+2	1
+execute stmt using @q,@q,@p;
+a	b
+2	1
+execute stmt using @q,@q,@q;
+a	b
+2	2
+execute stmt using @p,@u,@p;
+a	b
+1	1
+2	1
+3	1
+execute stmt using @u,@p,@p;
+a	b
+2	1
+prepare stmt from 'select * from t where a in (?,?) and b = ?';
+execute stmt using @p,@q,@p;
+a	b
+1	1
+2	1
+execute stmt using @q,@p,@p;
+a	b
+1	1
+2	1
+execute stmt using @q,@q,@p;
+a	b
+2	1
+execute stmt using @p,@q,@q;
+a	b
+1	2
+2	2
+prepare stmt from 'select * from t where a = ? and ((b >= ? and b <= ?) or b = 2)';
+execute stmt using @p,@p,@p;
+a	b
+1	1
+1	2
+execute stmt using @p,@q,@q;
+a	b
+1	2
+execute stmt using @q,@q,@q;
+a	b
+2	2
+execute stmt using @p,@p,@u;
+a	b
+1	1
+1	2
+1	3
+execute stmt using @p,@u,@p;
+a	b
+1	2
+prepare stmt from 'select * from t where a = ? and b in (?,?)';
+execute stmt using @p,@p,@q;
+a	b
+1	1
+1	2
+execute stmt using @p,@q,@p;
+a	b
+1	1
+1	2
+execute stmt using @p,@q,@q;
+a	b
+1	2
+execute stmt using @q,@p,@q;
+a	b
+2	1
+2	2
+set tidb_enable_clustered_index = 'ON';
+drop table t;
+create table t(a int, b int, primary key(a,b)) partition by hash(b) partitions 2;
+insert into t values(1,1),(1,2),(1,3),(2,1),(2,2),(2,3),(3,1),(3,2),(3,3);
+prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and b = ?';
+execute stmt using @p,@p,@p;
+a	b
+1	1
+2	1
+execute stmt using @q,@q,@p;
+a	b
+2	1
+execute stmt using @q,@q,@q;
+a	b
+2	2
+execute stmt using @p,@u,@p;
+a	b
+1	1
+2	1
+3	1
+execute stmt using @u,@p,@p;
+a	b
+2	1
+prepare stmt from 'select * from t where a in (?,?) and b = ?';
+execute stmt using @p,@q,@p;
+a	b
+1	1
+2	1
+execute stmt using @q,@p,@p;
+a	b
+1	1
+2	1
+execute stmt using @q,@q,@p;
+a	b
+2	1
+execute stmt using @p,@q,@q;
+a	b
+1	2
+2	2
+prepare stmt from 'select * from t where a = ? and ((b >= ? and b <= ?) or b = 2)';
+execute stmt using @p,@p,@p;
+a	b
+1	1
+1	2
+execute stmt using @p,@q,@q;
+a	b
+1	2
+execute stmt using @q,@q,@q;
+a	b
+2	2
+execute stmt using @p,@p,@u;
+a	b
+1	1
+1	2
+1	3
+execute stmt using @p,@u,@p;
+a	b
+1	2
+prepare stmt from 'select * from t where a = ? and b in (?,?)';
+execute stmt using @p,@p,@q;
+a	b
+1	1
+1	2
+execute stmt using @p,@q,@p;
+a	b
+1	1
+1	2
+execute stmt using @p,@q,@q;
+a	b
+1	2
+execute stmt using @q,@p,@q;
+a	b
+2	1
+2	2
+drop table t;
+create table t(a int, b int, primary key(a)) partition by hash(a) partitions 2;
+insert into t values(1,0),(2,0),(3,0),(4,0);
+prepare stmt from 'select * from t where ((a >= ? and a <= ?) or a = 2) and 1 = 1';
+execute stmt using @p,@p;
+a	b
+1	0
+2	0
+execute stmt using @q,@q;
+a	b
+2	0
+execute stmt using @p,@u;
+a	b
+1	0
+2	0
+3	0
+execute stmt using @u,@p;
+a	b
+2	0
+prepare stmt from 'select * from t where a in (?,?) and 1 = 1';
+execute stmt using @p,@q;
+a	b
+1	0
+2	0
+execute stmt using @q,@p;
+a	b
+1	0
+2	0
+execute stmt using @q,@q;
+a	b
+2	0
+set tidb_enable_prepared_plan_cache=DEFAULT;
+set tidb_enable_clustered_index = DEFAULT;
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t(a int primary key, b int);
+insert into t values(1, 1), (2, 2), (3, 3), (4, 4);
+explain format = 'brief' select * from t where a in (1, 2);
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:t	handle:[1 2], keep order:false, desc:false
+prepare stmt from 'select * from t where a in (?,?)';
+set @p1 = 1, @p2 = 2;
+execute stmt using @p1, @p2;
+a	b
+1	1
+2	2
+set @p1 = 3, @p2 = 4;
+execute stmt using @p1, @p2;
+a	b
+3	3
+4	4
+set tidb_enable_prepared_plan_cache=DEFAULT;
+set tidb_enable_prepared_plan_cache=1;
+set tidb_enable_clustered_index = 'ON';
+drop table if exists t;
+create table t(a int primary key, b int) PARTITION BY HASH(a) PARTITIONS 4;
+insert into t values (1, 1), (2, 2), (3, 3), (4, 4);
+explain format = 'brief' select * from t where a in (1, 2, 3, 4);
+id	estRows	task	access object	operator info
+Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3	handle:[1 2 3 4], keep order:false, desc:false
+select * from t where a in (1, 2, 3, 4);
+a	b
+1	1
+2	2
+3	3
+4	4
+explain format = 'brief' update t set b = b + 1 where a in (1, 2, 3, 4);
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3	handle:[1 2 3 4], keep order:false, desc:false
+update t set b = b + 1 where a in (1, 2, 3, 4);
+select * from t where a in (1, 2, 3, 4);
+a	b
+1	2
+2	3
+3	4
+4	5
+explain format = 'brief' delete from t where a in (1, 2, 3, 4);
+id	estRows	task	access object	operator info
+Delete	N/A	root		N/A
+└─Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3	handle:[1 2 3 4], keep order:false, desc:false
+delete from t where a in (1, 2, 3, 4);
+select * from t where a in (1, 2, 3, 4);
+a	b
+drop table t;
+create table t(a int, b int, c int, primary key (a, b)) PARTITION BY HASH(a) PARTITIONS 4;
+insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4);
+explain format = 'brief' select * from t where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, partition:p1, clustered index:PRIMARY(a, b)	
+explain format = 'brief' select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4));
+id	estRows	task	access object	operator info
+Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b)	keep order:false, desc:false
+select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4));
+a	b	c
+1	1	1
+2	2	2
+3	3	3
+4	4	4
+explain format = 'brief' update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4));
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b)	keep order:false, desc:false
+update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4));
+select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4));
+a	b	c
+1	1	2
+2	2	3
+3	3	4
+4	4	5
+explain format = 'brief' delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4));
+id	estRows	task	access object	operator info
+Delete	N/A	root		N/A
+└─Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b)	keep order:false, desc:false
+delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4));
+select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4));
+a	b	c
+set tidb_enable_clustered_index = DEFAULT;
+set tidb_enable_prepared_plan_cache=DEFAULT;
+create table t19141 (c_int int, primary key (c_int)) partition by hash ( c_int ) partitions 4;
+insert into t19141 values (1), (2), (3), (4);
+select * from t19141 partition (p0);
+c_int
+4
+select * from t19141 partition (p0) where c_int = 1;
+c_int
+update t19141 partition (p0) set c_int = -c_int where c_int = 1;
+select * from t19141 order by c_int;
+c_int
+1
+2
+3
+4
+select * from t19141 partition (p0, p2) where c_int in (1,2,3);
+c_int
+2
+update t19141 partition (p1) set c_int = -c_int where c_int in (2,3);
+select * from t19141 order by c_int;
+c_int
+1
+2
+3
+4
+delete from t19141 partition (p0) where c_int in (2,3);
+select * from t19141 order by c_int;
+c_int
+1
+2
+3
+4
+drop table if exists t2;
+create table t2(a int, b int, c int, primary key(a, b, c));
+insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4);
+select * from t2 where (a, b, c) in ((1, 1, 1));
+a	b	c
+1	1	1
+select * from t2 where (a, b, c) in ((1, 1, 1, 1));
+Error 1241 (21000): Operand should contain 3 column(s)
+select * from t2 where (a, b, c) in ((1, 1, 1), (2, 2, 2, 2));
+Error 1241 (21000): Operand should contain 3 column(s)
+select * from t2 where (a, b, c) in ((1, 1), (2, 2, 2));
+Error 1241 (21000): Operand should contain 3 column(s)
+drop table if exists t;
+create table t (c1 int, unique(c1));
+alter table t alter index c1 invisible;
+explain format = 'brief' select * from t where c1 = 10;
+id	estRows	task	access object	operator info
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__point_get_plan.t.c1, 10)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (c1 int, unique(c1));
+alter table t alter index c1 invisible;
+explain format = 'brief' select * from t where c1 in (10, 20);
+id	estRows	task	access object	operator info
+TableReader	2.00	root		data:Selection
+└─Selection	2.00	cop[tikv]		in(planner__core__point_get_plan.t.c1, 10, 20)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int, b int, unique index ab(a, b), unique index ba(b, a));
+explain format='brief' select a, b from t where a=1 and b=1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:ab(a, b)	
+explain format='brief' select a, b from t use index(ba) where a=1 and b=1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:ba(b, a)	
+explain format='brief' select a, b from t ignore index(ab, ba) where a=1 and b=1;
+id	estRows	task	access object	operator info
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__core__point_get_plan.t.a, 1), eq(planner__core__point_get_plan.t.b, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select a, b from t where (a=1 and b=1) or (a=2 and b=2);
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:t, index:ab(a, b)	keep order:false, desc:false
+explain format='brief' select a, b from t use index(ba) where (a=1 and b=1) or (a=2 and b=2);
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:t, index:ba(b, a)	keep order:false, desc:false
+explain format='brief' select a, b from t ignore index(ab, ba) where (a=1 and b=1) or (a=2 and b=2);
+id	estRows	task	access object	operator info
+TableReader	2.00	root		data:Selection
+└─Selection	2.00	cop[tikv]		or(and(eq(planner__core__point_get_plan.t.a, 1), eq(planner__core__point_get_plan.t.b, 1)), and(eq(planner__core__point_get_plan.t.a, 2), eq(planner__core__point_get_plan.t.b, 2)))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select a, b from t where (a, b) in ((1, 1), (2, 2));
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:t, index:ab(a, b)	keep order:false, desc:false
+explain format='brief' select a, b from t use index(ba) where (a, b) in ((1, 1), (2, 2));
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:t, index:ba(b, a)	keep order:false, desc:false
+explain format='brief' select a, b from t ignore index(ab, ba) where (a, b) in ((1, 1), (2, 2));
+id	estRows	task	access object	operator info
+TableReader	2.00	root		data:Selection
+└─Selection	2.00	cop[tikv]		or(and(eq(planner__core__point_get_plan.t.a, 1), eq(planner__core__point_get_plan.t.b, 1)), and(eq(planner__core__point_get_plan.t.a, 2), eq(planner__core__point_get_plan.t.b, 2)))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t1;
+create table t1(a int primary key, b int, unique index ab(a, b));
+explain format='brief' select a from t1 where a=1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t1	handle:1
+explain format='brief' select a from t1 use index(ab) where a=1;
+id	estRows	task	access object	operator info
+IndexReader	10.00	root		index:IndexRangeScan
+└─IndexRangeScan	10.00	cop[tikv]	table:t1, index:ab(a, b)	range:[1,1], keep order:false, stats:pseudo
+drop table if exists t2;
+create table t2 (a int, b int, unique index aa(a), unique index bb(b));
+explain format='brief' select a from t2 ignore index(bb) where a=1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t2, index:aa(a)	
+explain format='brief' select a from t2 use index(bb) where a=1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t2, index:bb(b)	keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(planner__core__point_get_plan.t2.a, 1)
+  └─TableRowIDScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a float, unique index uidx(a));
+insert into t values(9.46347e37), (1.1);
+explain format='brief' select * from t where a = 9.46347e37;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where a in (-1.56018e38, -1.96716e38, 9.46347e37);
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t where a in (1.1, 9.46347e37);
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+prepare stmt from 'select * from t where a in (?, ?, ?);';
+prepare stmt1 from 'select * from t where a = ?;';
+prepare stmt2 from 'select * from t where a in (?, ?);';
+set @a=-1.56018e38, @b=-1.96716e38, @c=9.46347e37, @d=1.1, @e=0, @f=-1, @g=1, @h=2, @i=-1.1;
+execute stmt using @a,@b,@c;
+a
+execute stmt1 using @c;
+a
+execute stmt2 using @c, @d;
+a
+drop table if exists t2;
+create table t2(a float, b float, c float, primary key(a, b, c) nonclustered);
+insert into t2 values(-1, 0, 1), (-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37), (0, 1, 2);
+explain format='brief' select * from t2 where (a, b, c) in ((-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37));
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+select * from t2 where (a, b, c) in ((-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37), (-1, 0, 1));
+a	b	c
+-1	0	1
+select * from t2 where (a, b, c) in ((-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37), (0, 1, 2));
+a	b	c
+0	1	2
+prepare stmt3 from 'select * from t2 where (a, b, c) in ((?, ?, ?), (?, ?, ?));';
+prepare stmt4 from 'select * from t2 where (a, b, c) in ((?, ?, ?), (?, ?, ?), (?, ?, ?));';
+execute stmt3 using @i,@e,@d,@a,@b,@c;
+a	b	c
+execute stmt4 using @i,@e,@d,@a,@b,@c,@f,@e,@g;
+a	b	c
+-1	0	1
+execute stmt4 using @i,@e,@d,@a,@b,@c,@e,@g,@h;
+a	b	c
+0	1	2
+drop table if exists t1, t2;
+CREATE TABLE `t1`  (`COL1` bit(11) NOT NULL,PRIMARY KEY (`COL1`) NONCLUSTERED);
+CREATE TABLE `t2`  (`COL1` bit(11) NOT NULL);
+insert into t1 values(b'00000111001'), (b'00000000000');
+insert into t2 values(b'00000111001');
+select * from t1 where col1 = 0x39;
+COL1
+ 9
+select * from t2 where col1 = 0x39;
+COL1
+ 9
+select * from t1 where col1 = 0x00;
+COL1
+  
+select * from t1 where col1 = 0x0000;
+COL1
+  
+explain format = 'brief' select * from t1 where col1 = 0x39;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t1, index:PRIMARY(COL1)	
+select * from t1 where col1 = 0x0039;
+COL1
+ 9
+select * from t2 where col1 = 0x0039;
+COL1
+ 9
+select * from t1 where col1 = 0x000039;
+COL1
+ 9
+select * from t2 where col1 = 0x000039;
+COL1
+ 9
+drop table t1, t2;
+drop table if exists fu;
+create table fu (id int primary key, val int);
+insert into fu values (6, 6);
+explain format = 'brief' select * from fu where id = 6 for update;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:fu	handle:6
+select * from fu where id = 6 for update;
+id	val
+6	6
+begin;
+explain format = 'brief' select * from fu where id = 6 for update;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:fu	handle:6, lock
+select * from fu where id = 6 for update;
+id	val
+6	6
+rollback;
+set @@session.autocommit = 0;
+explain format = 'brief' select * from fu where id = 6 for update;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:fu	handle:6, lock
+select * from fu where id = 6 for update;
+id	val
+6	6
+rollback;
+set @@session.autocommit = default;
+drop table if exists tbllock;
+create table tbllock(id int, c int);
+insert into tbllock values(1, 2), (2, 2);
+lock table tbllock read;
+update tbllock set c = 3 where id = 2;
+Error 1099 (HY000): Table 'tbllock' was locked with a READ lock and can't be updated
+unlock tables;

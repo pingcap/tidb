@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build ignore
+
 package main
 
 import (
@@ -33,7 +35,7 @@ func main() {
 
 	// Extract the current work directory
 	cwd := os.Args[0]
-	cwd = cwd[:len(cwd)-len("tools/bin/xprog")]
+	cwd = cwd[:len(cwd)-len(filepath.Join("tools", "bin", "xprog"))]
 
 	testBinaryPath := filepath.Clean(os.Args[1])
 	dir, _ := filepath.Split(testBinaryPath)
@@ -41,12 +43,12 @@ func main() {
 	// Extract the package info from /tmp/go-build2662369829/b1382/importcfg.link
 	pkg := getPackageInfo(dir)
 
-	const prefix = "github.com/pingcap/tidb/"
+	var prefix = filepath.Join("github.com", "pingcap", "tidb")
 	if !strings.HasPrefix(pkg, prefix) {
 		os.Exit(-3)
 	}
 
-	// github.com/pingcap/tidb/util/topsql.test => util/topsql
+	// github.com/pingcap/tidb/pkg/util/topsql.test => util/topsql
 	pkg = pkg[len(prefix) : len(pkg)-len(".test")]
 
 	_, file := filepath.Split(pkg)
@@ -73,7 +75,7 @@ func getPackageInfo(dir string) string {
 	defer f.Close()
 
 	r := bufio.NewReader(f)
-	// packagefile github.com/pingcap/tidb/session.test=/home/genius/.cache/go-build/fb/fb1587cce5727fa9461131eab8260a52878da04f5c8da49dd3c7b2d941430c63-d
+	// packagefile github.com/pingcap/tidb/pkg/session.test=/home/genius/.cache/go-build/fb/fb1587cce5727fa9461131eab8260a52878da04f5c8da49dd3c7b2d941430c63-d
 	line, _, err := r.ReadLine()
 	if err != nil {
 		os.Exit(-2)

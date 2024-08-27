@@ -1,0 +1,887 @@
+# TestListPartitionDML
+create database list_partition_dml;
+use list_partition_dml;
+drop table if exists tlist;
+set tidb_enable_list_partition = 1;
+create table tlist (a int) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+insert into tlist partition(p0) values (0), (1);
+insert into tlist partition(p0, p1) values (2), (3), (8), (9);
+-- error 1748
+insert into tlist partition(p0) values (9);
+-- error 1735
+insert into tlist partition(p3) values (20);
+update tlist partition(p0) set a=a+1;
+select a from tlist order by a;
+update tlist partition(p0, p1) set a=a-1;
+select a from tlist order by a;
+delete from tlist partition(p1);
+select a from tlist order by a;
+delete from tlist partition(p0, p2);
+select a from tlist order by a;
+create table tcollist (a int) partition by list columns(a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+insert into tcollist partition(p0) values (0), (1);
+insert into tcollist partition(p0, p1) values (2), (3), (8), (9);
+-- error 1748
+insert into tcollist partition(p0) values (9);
+-- error 1735
+insert into tcollist partition(p3) values (20);
+update tcollist partition(p0) set a=a+1;
+select a from tcollist order by a;
+update tcollist partition(p0, p1) set a=a-1;
+select a from tcollist order by a;
+delete from tcollist partition(p1);
+select a from tcollist order by a;
+delete from tcollist partition(p0, p2);
+select a from tcollist order by a;
+
+
+# TestListPartitionCreation
+create database list_partition_cre;
+use list_partition_cre;
+drop table if exists tlist;
+set tidb_enable_list_partition = 1;
+create table tuk1 (a int, b int, unique key(a)) partition by list (a) (partition p0 values in (0));
+-- error 1503
+create table tuk2 (a int, b int, unique key(a)) partition by list (b) (partition p0 values in (0));
+-- error 1503
+create table tuk2 (a int, b int, unique key(a), unique key(b)) partition by list (a) (partition p0 values in (0));
+create table tcoluk1 (a int, b int, unique key(a)) partition by list columns(a) (partition p0 values in (0));
+-- error 1503
+create table tcoluk2 (a int, b int, unique key(a)) partition by list columns(b) (partition p0 values in (0));
+-- error 1503
+create table tcoluk2 (a int, b int, unique key(a), unique key(b)) partition by list columns(a) (partition p0 values in (0));
+create table tpk1 (a int, b int, primary key(a)) partition by list (a) (partition p0 values in (0));
+create table tpk2 (a int, b int, primary key(a, b)) partition by list (a) (partition p0 values in (0));
+create table tcolpk1 (a int, b int, primary key(a)) partition by list columns(a) (partition p0 values in (0));
+create table tcolpk2 (a int, b int, primary key(a, b)) partition by list columns(a) (partition p0 values in (0));
+create table tidx1 (a int, b int, key(a), key(b)) partition by list (a) (partition p0 values in (0));
+create table tidx2 (a int, b int, key(a, b), key(b)) partition by list (a) (partition p0 values in (0));
+create table tcolidx1 (a int, b int, key(a), key(b)) partition by list columns(a) (partition p0 values in (0));
+create table tcolidx2 (a int, b int, key(a, b), key(b)) partition by list columns(a) (partition p0 values in (0));
+create table texp1 (a int, b int) partition by list(a-10000) (partition p0 values in (0));
+create table texp2 (a int, b int) partition by list(a%b) (partition p0 values in (0));
+create table texp3 (a int, b int) partition by list(a*b) (partition p0 values in (0));
+-- error 1564
+create table texp4 (a int, b int) partition by list(a|b) (partition p0 values in (0));
+-- error 1564
+create table texp4 (a int, b int) partition by list(a^b) (partition p0 values in (0));
+-- error 1564
+create table texp4 (a int, b int) partition by list(a&b) (partition p0 values in (0));
+
+
+# TestListPartitionDDL
+create database list_partition_ddl;
+use list_partition_ddl;
+drop table if exists tlist;
+set tidb_enable_list_partition = 1;
+create table tlist (a int, b int) partition by list (a) (partition p0 values in (0));
+-- error 1503
+alter table tlist add primary key (b);
+alter table tlist add primary key (a);
+-- error 1503
+alter table tlist add unique key (b);
+alter table tlist add key (b);
+alter table tlist rename index b to bb;
+alter table tlist drop index bb;
+create table tcollist (a int, b int) partition by list columns (a) (partition p0 values in (0));
+-- error 1503
+alter table tcollist add primary key (b);
+alter table tcollist add primary key (a);
+-- error 1503
+alter table tcollist add unique key (b);
+alter table tcollist add key (b);
+alter table tcollist rename index b to bb;
+alter table tcollist drop index bb;
+alter table tlist add column c varchar(8);
+alter table tlist rename column c to cc;
+alter table tlist drop column cc;
+alter table tcollist add column c varchar(8);
+alter table tcollist rename column c to cc;
+alter table tcollist drop column cc;
+alter table tlist rename to tlistxx;
+truncate tlistxx;
+drop table tlistxx;
+alter table tcollist rename to tcollistxx;
+truncate tcollistxx;
+drop table tcollistxx;
+
+
+# TestListPartitionOperations
+create database list_partition_op;
+use list_partition_op;
+drop table if exists tlist;
+set tidb_enable_list_partition = 1;
+create table tlist (a int) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14),
+    partition p3 values in (15, 16, 17, 18, 19));
+create table tcollist (a int) partition by list columns(a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14),
+    partition p3 values in (15, 16, 17, 18, 19));
+insert into tlist values (0), (5), (10), (15);
+--sorted_result
+select * from tlist;
+alter table tlist truncate partition p0;
+--sorted_result
+select * from tlist;
+alter table tlist truncate partition p1, p2;
+--sorted_result
+select * from tlist;
+insert into tcollist values (0), (5), (10), (15);
+--sorted_result
+select * from tcollist;
+alter table tcollist truncate partition p0;
+--sorted_result
+select * from tcollist;
+alter table tcollist truncate partition p1, p2;
+--sorted_result
+select * from tcollist;
+insert into tlist values (0), (5), (10);
+--sorted_result
+select * from tlist;
+alter table tlist drop partition p0;
+--sorted_result
+select * from tlist;
+--sorted_result
+--error 1735
+select * from tlist partition (p0);
+alter table tlist drop partition p1, p2;
+--sorted_result
+select * from tlist;
+--sorted_result
+--error 1735
+select * from tlist partition (p1);
+--error 1508
+alter table tlist drop partition p3;
+insert into tcollist values (0), (5), (10);
+--sorted_result
+select * from tcollist;
+alter table tcollist drop partition p0;
+--sorted_result
+select * from tcollist;
+--sorted_result
+--error 1735
+select * from tcollist partition (p0);
+alter table tcollist drop partition p1, p2;
+--sorted_result
+select * from tcollist;
+--sorted_result
+--error 1735
+select * from tcollist partition (p1);
+--error 1508
+alter table tcollist drop partition p3;
+alter table tlist add partition (partition p0 values in (0, 1, 2, 3, 4));
+alter table tlist add partition (partition p1 values in (5, 6, 7, 8, 9), partition p2 values in (10, 11, 12, 13, 14));
+insert into tlist values (0), (5), (10);
+--sorted_result
+select * from tlist;
+--error 1495
+alter table tlist add partition (partition pxxx values in (4));
+alter table tcollist add partition (partition p0 values in (0, 1, 2, 3, 4));
+alter table tcollist add partition (partition p1 values in (5, 6, 7, 8, 9), partition p2 values in (10, 11, 12, 13, 14));
+insert into tcollist values (0), (5), (10);
+--sorted_result
+select * from tcollist;
+--error 1495
+alter table tcollist add partition (partition pxxx values in (4));
+
+
+# TestListPartitionShardBits
+create database list_partition_shard_bits;
+use list_partition_shard_bits;
+drop table if exists tlist;
+set tidb_enable_list_partition = 1;
+create table tlist (a int) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+insert into tlist values (0), (1), (5), (6), (10), (12);
+--sorted_result
+select * from tlist;
+--sorted_result
+select * from tlist partition (p0);
+--sorted_result
+select * from tlist partition (p1, p2);
+create table tcollist (a int) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+insert into tcollist values (0), (1), (5), (6), (10), (12);
+--sorted_result
+select * from tcollist;
+--sorted_result
+select * from tcollist partition (p0);
+--sorted_result
+select * from tcollist partition (p1, p2);
+
+
+# TestListPartitionSplitRegion
+create database list_partition_split_region;
+use list_partition_split_region;
+drop table if exists tlist;
+set tidb_enable_list_partition = 1;
+create table tlist (a int, key(a)) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+insert into tlist values (0), (1), (5), (6), (10), (12);
+split table tlist index a between (2) and (15) regions 10;
+--sorted_result
+select * from tlist;
+--sorted_result
+select * from tlist partition (p0);
+--sorted_result
+select * from tlist partition (p1, p2);
+create table tcollist (a int, key(a)) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+insert into tcollist values (0), (1), (5), (6), (10), (12);
+split table tcollist index a between (2) and (15) regions 10;
+--sorted_result
+select * from tcollist;
+--sorted_result
+select * from tcollist partition (p0);
+--sorted_result
+select * from tcollist partition (p1, p2);
+
+# TestListPartitionAutoIncre
+create database list_partition_auto_incre;
+use list_partition_auto_incre;
+drop table if exists tlist;
+set tidb_enable_list_partition = 1;
+create table tlist1 (a int, b int AUTO_INCREMENT) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+create table tlist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+insert into tlist (a) values (0);
+insert into tlist (a) values (5);
+insert into tlist (a) values (10);
+insert into tlist (a) values (1);
+create table tcollist1 (a int, b int AUTO_INCREMENT) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+create table tcollist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+insert into tcollist (a) values (0);
+insert into tcollist (a) values (5);
+insert into tcollist (a) values (10);
+insert into tcollist (a) values (1);
+
+
+# TestListPartitionAutoRandom
+create database list_partition_auto_rand;
+use list_partition_auto_rand;
+drop table if exists tlist;
+set tidb_enable_list_partition = 1;
+--error 8216
+create table tlist (a int, b bigint AUTO_RANDOM) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+create table tlist (a bigint auto_random, primary key(a)) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+--error 8216
+create table tcollist (a int, b bigint AUTO_RANDOM) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+create table tcollist (a bigint auto_random, primary key(a)) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+
+
+# TestListPartitionInvisibleIdx
+create database list_partition_invisible_idx;
+use list_partition_invisible_idx;
+drop table if exists tlist;
+set tidb_enable_list_partition = 1;
+create table tlist (a int, b int, key(a)) partition by list (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5));
+alter table tlist alter index a invisible;
+explain select a from tlist where a>=0 and a<=5;
+create table tcollist (a int, b int, key(a)) partition by list columns (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5));
+alter table tcollist alter index a invisible;
+explain select a from tcollist where a>=0 and a<=5;
+
+
+# TestListPartitionCTE
+create database list_partition_cte;
+use list_partition_cte;
+drop table if exists tlist;
+set tidb_enable_list_partition = 1;
+create table tlist (a int) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+insert into tlist values (0), (1), (5), (6), (10);
+--sorted_result
+with tmp as (select a+1 as a from tlist) select * from tmp;
+create table tcollist (a int) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+insert into tcollist values (0), (1), (5), (6), (10);
+--sorted_result
+with tmp as (select a+1 as a from tcollist) select * from tmp;
+
+
+# TestListPartitionTempTable
+create database list_partition_temp_table;
+use list_partition_temp_table;
+drop table if exists tlist;
+set tidb_enable_list_partition = 1;
+--error 1562
+create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows;
+--error 1562
+create global temporary table t(a int, b int) partition by list columns (a) (partition p0 values in (0)) on commit delete rows;
+
+
+# TestListPartitionAlterPK
+create database list_partition_alter_pk;
+use list_partition_alter_pk;
+drop table if exists tlist;
+set tidb_enable_list_partition = 1;
+create table tlist (a int, b int) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+alter table tlist add primary key(a);
+alter table tlist drop primary key;
+-- error 1503
+alter table tlist add primary key(b);
+create table tcollist (a int, b int) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14));
+alter table tcollist add primary key(a);
+alter table tcollist drop primary key;
+-- error 1503
+alter table tcollist add primary key(b);
+
+
+# TestIssue27018
+create database issue_27018;
+use issue_27018;
+set tidb_enable_list_partition = 1;
+CREATE TABLE PK_LP9326 (
+  COL1 tinyint(45) NOT NULL DEFAULT '30' COMMENT 'NUMERIC PK',
+  PRIMARY KEY (COL1) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+  PARTITION P0 VALUES IN (56,127,-128,-125,-40,-18,-10,-5,49,51),
+  PARTITION P1 VALUES IN (-107,-97,-57,-37,4,43,99,-9,-6,45),
+  PARTITION P2 VALUES IN (108,114,-85,-72,-38,-11,29,97,40,107),
+  PARTITION P3 VALUES IN (-112,-95,-42,24,28,47,-103,-94,7,64),
+  PARTITION P4 VALUES IN (-115,-101,-76,-47,1,19,-114,-23,-19,11),
+  PARTITION P5 VALUES IN (44,95,-92,-89,-26,-21,25,-117,-116,27),
+  PARTITION P6 VALUES IN (50,61,118,-110,-32,-1,111,125,-90,74),
+  PARTITION P7 VALUES IN (75,121,-96,-87,-14,-13,37,-68,-58,81),
+  PARTITION P8 VALUES IN (126,30,48,68)
+);
+insert into PK_LP9326 values(30),(48),(56);
+--sorted_result
+SELECT COL1 FROM PK_LP9326 WHERE COL1 NOT IN (621579514938,-17333745845828,2777039147338);
+
+
+# TestIssue27017
+create database issue_27017;
+use issue_27017;
+set tidb_enable_list_partition = 1;
+CREATE TABLE PK_LP9465 (
+  COL1 mediumint(45) NOT NULL DEFAULT '77' COMMENT 'NUMERIC PK',
+  PRIMARY KEY (COL1) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+  PARTITION P0 VALUES IN (-5237720,2949267,6047247,-8317208,-6854239,-6612749,-6578207,-5649321,2450483,2953765),
+  PARTITION P1 VALUES IN (5884439,-7816703,-6716210,-6050369,-5691207,6836620,5769359,-8237127,-1294367,-1228621),
+  PARTITION P2 VALUES IN (-976130,-8351227,-8294140,-4800605,1370685,-7351802,-6447779,77,1367409,5965199),
+  PARTITION P3 VALUES IN (7347944,7397124,8013414,-5737292,-3938813,-3687304,1307396,444598,1216072,1603451),
+  PARTITION P4 VALUES IN (2518402,-8388608,-5291256,-3796824,121011,8388607,39191,2323510,3386861,4886727),
+  PARTITION P5 VALUES IN (-6512367,-5922779,-3272589,-1313463,5751641,-3974640,2605656,3336269,4416436,-7975238),
+  PARTITION P6 VALUES IN (-6693544,-6023586,-4201506,6416586,-3254125,-205332,1072201,2679754,1963191,2077718),
+  PARTITION P7 VALUES IN (4205081,5170051,-8087893,-5805143,-1202286,1657202,8330979,5042855,7578575,-5830439),
+  PARTITION P8 VALUES IN (-5244013,3837781,4246485,670906,5644986,5843443,7794811,7831812,-7704740,-2222984),
+  PARTITION P9 VALUES IN (764108,3406142,8263677,248997,6129417,7556305,7939455,3526998,8239485,-5195482),
+  PARTITION P10 VALUES IN (-3625794,69270,377245)
+);
+insert into PK_LP9465 values(8263677);
+SELECT COL1 FROM PK_LP9465 HAVING COL1>=-12354348921530;
+
+
+# TestIssue27544
+create database issue_27544;
+use issue_27544;
+set tidb_enable_list_partition = 1;
+create table t3 (a datetime) partition by list (mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1) (
+		partition p0 values in (2),
+		partition p1 values in (3),
+		partition p3 values in (4));
+insert into t3 values ('1921-05-10 15:20:10');
+insert into t3 values ('1921-05-10 15:20:20');
+insert into t3 values ('1921-05-10 15:20:30');
+
+
+# TestIssue27012
+create database issue_27012;
+use issue_27012;
+set tidb_enable_list_partition = 1;
+CREATE TABLE IDT_LP24306 (
+  COL1 tinyint(16) DEFAULT '41' COMMENT 'NUMERIC UNIQUE INDEX',
+  KEY UK_COL1 (COL1) /*!80000 INVISIBLE */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+  PARTITION P0 VALUES IN (-126,-36,-96,-6,-83,-123,-5,-52,-98,-124),
+  PARTITION P1 VALUES IN (-2,-22,-88,-100,-60,-39,-69,-38,-11,-30),
+  PARTITION P2 VALUES IN (-119,-13,-67,-91,-65,-16,0,-128,-73,-118),
+  PARTITION P3 VALUES IN (-99,-56,-76,-110,-93,-114,-78,NULL)
+);
+insert into IDT_LP24306 values(-128);
+--sorted_result
+select * from IDT_LP24306 where col1 not between 12021 and 99 and col1 <= -128;
+drop table if exists IDT_LP24306;
+CREATE TABLE IDT_LP24306 (
+  COL1 tinyint(16) DEFAULT '41' COMMENT 'NUMERIC UNIQUE INDEX',
+  KEY UK_COL1 (COL1) /*!80000 INVISIBLE */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into IDT_LP24306 values(-128);
+--sorted_result
+select * from IDT_LP24306 where col1 not between 12021 and 99 and col1 <= -128;
+
+
+# TestIssue27030
+create database issue_27030;
+use issue_27030;
+set tidb_enable_list_partition = 1;
+CREATE TABLE PK_LCP9290 (
+  COL1 varbinary(10) NOT NULL,
+  PRIMARY KEY (COL1) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+  PARTITION P5 VALUES IN (x'32d8fb9da8b63508a6b8'),
+  PARTITION P6 VALUES IN (x'ffacadeb424179bc4b5c'),
+  PARTITION P8 VALUES IN (x'ae9f733168669fa900be')
+);
+insert into PK_LCP9290 values(0xffacadeb424179bc4b5c),(0xae9f733168669fa900be),(0x32d8fb9da8b63508a6b8);
+--sorted_result
+SELECT COL1 FROM PK_LCP9290 WHERE COL1!=x'9f7ebdc957a36f2531b5' AND COL1 IN (x'ffacadeb424179bc4b5c',x'ae9f733168669fa900be',x'32d8fb9da8b63508a6b8');
+--sorted_result
+SELECT COL1 FROM PK_LCP9290 WHERE COL1 IN (x'ffacadeb424179bc4b5c',x'ae9f733168669fa900be',x'32d8fb9da8b63508a6b8');
+
+
+# TestIssue27070
+create database issue_27070;
+use issue_27070;
+set @@tidb_enable_list_partition = OFF;
+--enable_warnings
+create table if not exists t (id int,   create_date date NOT NULL DEFAULT '2000-01-01',   PRIMARY KEY (id,create_date)  ) PARTITION BY list COLUMNS(create_date) (   PARTITION p20210506 VALUES IN ("20210507"),   PARTITION p20210507 VALUES IN ("20210508") );
+--disable_warnings
+
+
+# TestIssue27031
+create database issue_27031;
+use issue_27031;
+set tidb_enable_list_partition = 1;
+CREATE TABLE NT_LP27390 (
+  COL1 mediumint(28) DEFAULT '114' COMMENT 'NUMERIC NO INDEX'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+  PARTITION P9 VALUES IN (3376825,-7753310,-4123498,6483048,6953968,-996842,-7542484,320451,-8322717,-2426029)
+);
+insert into NT_LP27390 values(-4123498);
+--sorted_result
+SELECT COL1 FROM NT_LP27390 WHERE COL1 IN (46015556,-4123498,54419751);
+
+
+# TestIssue27493
+create database issue_27493;
+use issue_27493;
+set tidb_enable_list_partition = 1;
+CREATE TABLE UK_LP17321 (
+  COL1 mediumint(16) DEFAULT '82' COMMENT 'NUMERIC UNIQUE INDEX',
+  COL3 bigint(20) DEFAULT NULL,
+  UNIQUE KEY UM_COL (COL1,COL3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST (COL1 DIV COL3) (
+  PARTITION P0 VALUES IN (NULL,0)
+);
+--sorted_result
+select * from UK_LP17321 where col1 is null;
+
+
+# TestIssue27532
+create database issue_27532;
+use issue_27532;
+set tidb_enable_list_partition = 1;
+create table t2 (c1 int primary key, c2 int, c3 int, c4 int, key k2 (c2), key k3 (c3)) partition by hash(c1) partitions 10;
+insert into t2 values (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4);
+set @@tidb_partition_prune_mode="dynamic";
+set autocommit = 0;
+--sorted_result
+select * from t2;
+--sorted_result
+select * from t2;
+drop table t2;
+drop database issue_27532;
+set autocommit = DEFAULT;
+
+
+# TestIssue37508
+use planner__core__integration_partition;
+set @@tidb_partition_prune_mode = 'dynamic';
+select @@tidb_partition_prune_mode;
+drop table if exists t1;
+create table t1 (id int, c date) partition by range (to_days(c))
+(partition p0 values less than (to_days('2022-01-11')),
+partition p1 values less than (to_days('2022-02-11')),
+partition p2 values less than (to_days('2022-03-11')));
+analyze table t1;
+explain select * from t1 where c in ('2022-01-23', '2022-01-22');
+--sorted_result
+select * from t1 where c in ('2022-01-23', '2022-01-22');
+explain select * from t1 where c in (NULL, '2022-01-23');
+--sorted_result
+select * from t1 where c in (NULL, '2022-01-23');
+drop table t1;
+
+
+# TestRangeColumnsMultiColumn
+create database RangeColumnsMulti;
+use RangeColumnsMulti;
+-- error 1566
+create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p0 values less than (NULL,NULL,NULL));
+-- error 1654
+create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p1 values less than (-2147483649,'0000-00-00',""));
+create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p1 values less than (-2147483648,'0000-00-00',""),partition p2 values less than (10,'2022-01-01',"Wow"),partition p3 values less than (11,'2022-01-01',MAXVALUE),partition p4 values less than (MAXVALUE,'2022-01-01',"Wow"));
+-- error 1292
+insert into t values (-2147483648,'0000-00-00',null);
+insert into t values (NULL,NULL,NULL);
+set @@sql_mode = '';
+insert into t values (-2147483648,'0000-00-00',null);
+insert into t values (-2147483648,'0000-00-00',"");
+-- enable_warnings
+insert into t values (5,'0000-00-00',null);
+insert into t values (5,'0000-00-00',"Hi");
+-- disable_warnings
+set @@sql_mode = DEFAULT;
+insert into t values (10,'2022-01-01',"Hi");
+insert into t values (10,'2022-01-01',"Wow");
+insert into t values (10,'2022-01-01',"Wowe");
+insert into t values (11,'2022-01-01',"Wow");
+insert into t values (1,null,"Wow");
+insert into t values (NULL,'2022-01-01',"Wow");
+insert into t values (11,null,"Wow");
+analyze table t;
+--sorted_result
+select a,b,c from t partition(p1);
+--sorted_result
+select a,b,c from t partition(p2);
+--sorted_result
+select a,b,c from t partition(p3);
+--sorted_result
+select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
+--sorted_result
+select * from t where a = 10 and b = "2022-01-01" and c <= "Wow";
+--sorted_result
+select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
+--sorted_result
+select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
+--sorted_result
+select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
+explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
+explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c <= "Wow";
+explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
+explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
+explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
+--sorted_result
+select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
+--sorted_result
+select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
+--sorted_result
+select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow";
+explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
+--sorted_result
+select * from t where a <= 11 and b <= '2022-01-01' and c < "Wow";
+explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
+create table tref (a int, b datetime, c varchar(255), key (a,b,c));
+set @@sql_mode = '';
+insert into tref select * from t;
+set @@sql_mode = DEFAULT;
+explain format = 'brief' select * from tref where a <= 10 and b <= '2022-01-01' and c < "Wow";
+explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow";
+--sorted_result
+select * from t where a = 2 and b = "2022-01-02" and c = "Hi" or b = '2022-01-01' and c = "Wow";
+--sorted_result
+select * from t where a = 2 and b = "2022-01-02" and c = "Hi" or a = 10 and b = '2022-01-01' and c = "Wow";
+--sorted_result
+select * from t where a = 2 and b = "2022-01-02" and c = "Hi";
+--sorted_result
+select * from t where a = 2 and b = "2022-01-02" and c < "Hi";
+--sorted_result
+select * from t where a < 2;
+--sorted_result
+select * from t where a <= 2 and b <= "2022-01-02" and c < "Hi";
+explain format = 'brief' select * from t where a < 2;
+--sorted_result
+select * from t where a < 2 and a > -22;
+explain format = 'brief' select * from t where a < 2 and a > -22;
+--sorted_result
+select * from t where c = "";
+explain format = 'brief' select * from t where c = "";
+
+
+# TestRangeMultiColumnsPruning
+create database RColumnsMulti;
+use RColumnsMulti;
+create table t (a int, b datetime, c varchar(255), key (a,b,c)) partition by range columns (a,b,c) (partition p0 values less than (-2147483648, '0000-01-01', ""), partition p1 values less than (-2147483648, '0001-01-01', ""), partition p2 values less than (-2, '0001-01-01', ""), partition p3 values less than (0, '0001-01-01', ""), partition p4 values less than (0, '2031-01-01', ""), partition p5 values less than (0, '2031-01-01', "Wow"), partition p6 values less than (0, '2031-01-01', MAXVALUE), partition p7 values less than (0, MAXVALUE, MAXVALUE), partition p8 values less than (MAXVALUE, MAXVALUE, MAXVALUE));
+--error 1292
+insert into t values (-2147483648,'0000-00-00',null);
+insert into t values (NULL,NULL,NULL);
+set @@sql_mode = '';
+insert into t values (-2147483648,'0000-00-00',null);
+insert into t values (-2147483648,'0000-00-00',"");
+--enable_warnings
+insert into t values (5,'0000-00-00',null);
+insert into t values (5,'0000-00-00',"Hi");
+--disable_warnings
+set @@sql_mode = DEFAULT;
+insert into t values (10,'2022-01-01',"Hi");
+insert into t values (10,'2022-01-01',"Wow");
+insert into t values (11,'2022-01-01',"Wow");
+insert into t values (0,'2020-01-01',"Wow");
+insert into t values (1,null,"Wow");
+insert into t values (NULL,'2022-01-01',"Wow");
+insert into t values (11,null,"Wow");
+analyze table t;
+--sorted_result
+select a,b from t where b = '2022-01-01';
+--sorted_result
+select a,b,c from t where a = 1;
+--sorted_result
+select a,b,c from t where a = 1 AND c = "Wow";
+explain format = 'brief' select a,b,c from t where a = 1 AND c = "Wow";
+--sorted_result
+select a,b,c from t where a = 0 AND c = "Wow";
+explain format = 'brief' select a,b,c from t where a = 0 AND c = "Wow";
+
+
+# TestRangeColumnsExpr
+create database rce;
+use rce;
+create table tref (a int unsigned, b int, c int);
+create table t (a int unsigned, b int, c int) partition by range columns (a,b) (partition p0 values less than (3, MAXVALUE),  partition p1 values less than (4, -2147483648),  partition p2 values less than (4, 1),  partition p3 values less than (4, 4),  partition p4 values less than (4, 7),  partition p5 values less than (4, 11),  partition p6 values less than (4, 14),  partition p7 values less than (4, 17),  partition p8 values less than (4, MAXVALUE),  partition p9 values less than (7, 0),  partition p10 values less than (11, MAXVALUE),  partition p11 values less than (14, -2147483648),  partition p12 values less than (17, 17),  partition p13 values less than (MAXVALUE, -2147483648));
+insert into t values (0,0,0),(11,2147483647,2147483647),(14,10,4),(14,NULL,2),(14,NULL,NULL),(17,16,16),(17,17,17),(3,2147483647,9),(4,-2147483648,-2147483648),(4,1,1),(4,10,3),(4,13,1),(4,14,2),(4,2147483647,2147483647),(4,4,4),(4,5,6),(4,NULL,4),(5,0,0),(7,0,0),(NULL,-2147483648,NULL),(NULL,NULL,NULL);
+insert into tref select * from t;
+analyze table t;
+--sorted_result
+select * from tref;
+--sorted_result
+select * from t;
+--sorted_result
+select * from t partition (p0);
+--sorted_result
+select * from t partition (p1);
+--sorted_result
+select * from t partition (p2);
+--sorted_result
+select * from t partition (p3);
+--sorted_result
+select * from t partition (p4);
+--sorted_result
+select * from t partition (p5);
+--sorted_result
+select * from t partition (p6);
+--sorted_result
+select * from t partition (p7);
+--sorted_result
+select * from t partition (p8);
+--sorted_result
+select * from t partition (p9);
+--sorted_result
+select * from t partition (p10);
+--sorted_result
+select * from t partition (p11);
+--sorted_result
+select * from t partition (p12);
+--sorted_result
+select * from t partition (p13);
+explain format = 'brief' select * from t where c = 3;
+explain format = 'brief' select * from t where b > 3 and c = 3;
+explain format = 'brief' select * from t where a = 5 and c = 3;
+explain format = 'brief' select * from t where a = 4 and c = 3;
+explain format = 'brief' select * from t where a in (4,14) and c = 3;
+explain format = 'brief' select * from t where a in (4,14) and b in (null,10);
+--sorted_result
+select * from tref where a in (4,14) and b in (null,10);
+--sorted_result
+select * from t where a in (4,14) and b in (null,10);
+explain format = 'brief' select * from t where a in (4,14) and (b in (11,10) OR b is null);
+--sorted_result
+select * from tref where a in (4,14) and (b in (11,10) OR b is null);
+--sorted_result
+select * from t where a in (4,14) and (b in (11,10) OR b is null);
+
+
+# TestPartitionRangePrunerCharWithCollation
+create database cwc;
+use cwc;
+create table t (a char(32) collate utf8mb4_unicode_ci) partition by range columns (a) (partition p0 values less than ('c'), partition p1 values less than ('F'), partition p2 values less than ('h'), partition p3 values less than ('L'), partition p4 values less than ('t'), partition p5 values less than (MAXVALUE));
+insert into t values ('a'),('A'),('c'),('C'),('f'),('F'),('h'),('H'),('l'),('L'),('t'),('T'),('z'),('Z');
+analyze table t;
+--sorted_result
+select * from t partition(p0);
+--sorted_result
+select * from t partition(p1);
+--sorted_result
+select * from t partition(p2);
+--sorted_result
+select * from t partition(p3);
+--sorted_result
+select * from t partition(p4);
+--sorted_result
+select * from t partition(p5);
+--sorted_result
+select * from t where a > 'C' and a < 'q';
+--sorted_result
+select * from t where a > 'c' and a < 'Q';
+explain format = 'brief' select * from t where a > 'C' and a < 'q';
+explain format = 'brief' select * from t where a > 'c' and a < 'Q';
+
+# TestPartitionRangePrunerDate
+drop database if exists rcd;
+create database rcd;
+use rcd;
+set @@tidb_partition_prune_mode = 'dynamic';
+create table i (a int, b int, key (a,b));
+select * from i where a < 1 and a > 2;
+explain format = 'brief' select * from i where a < 1 and a > 2;
+create table t (a date) partition by range columns (a) (partition p0 values less than ('19990601'), partition p1 values less than ('2000-05-01'), partition p2 values less than ('20080401'), partition p3 values less than ('2010-03-01'), partition p4 values less than ('20160201'), partition p5 values less than ('2020-01-01'), partition p6 values less than (MAXVALUE));
+show create table t;
+insert into t values ('19990101'),('1999-06-01'),('2000-05-01'),('20080401'),('2010-03-01'),('2016-02-01'),('2020-01-01');
+analyze table t;
+--sorted_result
+select * from t partition(p0);
+--sorted_result
+select * from t partition(p1);
+--sorted_result
+select * from t partition(p2);
+--sorted_result
+select * from t partition(p3);
+--sorted_result
+select * from t partition(p4);
+--sorted_result
+select * from t partition(p5);
+--sorted_result
+select * from t partition(p6);
+explain select * from t where a < '1943-02-12';
+explain select * from t where a >= '19690213';
+explain select * from t where a > '2003-03-13';
+explain select * from t where a < '2006-02-03';
+explain select * from t where a = '20070707';
+explain select * from t where a > '1949-10-10';
+explain select * from t where a > '2016-02-01' AND a < '20000103';
+explain select * from t where a < '19691112' or a >= '2019-09-18';
+explain select * from t where a is null;
+explain select * from t where '2003-02-27' >= a;
+explain select * from t where '20141024' < a;
+explain select * from t where '2003-03-30' > a;
+explain select * from t where a between '2003-03-30' AND '2014-01-01';
+
+
+# TestPartitionRangeColumnPruning
+drop database if exists rcd;
+create database rcd;
+use rcd;
+create table t1 (a char, b char, c char) partition by range columns (a,b,c) ( partition p0 values less than ('a','b','c'), partition p1 values less than ('b','c','d'), partition p2 values less than ('d','e','f'));
+insert into t1 values ('a', NULL, 'd');
+analyze table t1;
+explain format=brief select * from t1 where a = 'a' AND c = 'd';
+--sorted_result
+select * from t1 where a = 'a' AND c = 'd';
+drop table t1;
+
+
+# TestPartitionProcessorWithUninitializedTable
+drop table if exists q1, q2;
+create table q1(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+create table q2(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+explain format=brief select * from q1,q2;
+analyze table q1;
+explain format=brief select * from q1,q2;
+analyze table q2;
+explain format=brief select * from q1,q2;
+
+
+# TestIssue42323
+create database issue42323;
+use issue42323;
+set @@session.tidb_partition_prune_mode = 'dynamic';
+CREATE TABLE t(col1 int(11) NOT NULL DEFAULT '0' ) PARTITION BY RANGE (FLOOR(col1))(
+			PARTITION p2021 VALUES LESS THAN (202200),
+			PARTITION p2022 VALUES LESS THAN (202300),
+			PARTITION p2023 VALUES LESS THAN (202400));
+insert into t values(202303);
+analyze table t;
+select * from t where col1 = 202303;
+select * from t where col1 = floor(202303);
+drop database issue42323;
+
+
+# TestListPartitionPrivilege
+drop database if exists list_partition_pri;
+create database list_partition_pri;
+use list_partition_pri;
+set tidb_enable_list_partition = 1;
+create table tlist (a int) partition by list (a) (partition p0 values in (0), partition p1 values in (1));
+drop user if exists 'priv_test'@'%';
+create user 'priv_test'@'%';
+grant select on list_partition_pri.tlist to 'priv_test';
+
+connect (conn1, localhost, priv_test,,);
+use list_partition_pri;
+--error 1142
+alter table tlist truncate partition p0;
+--error 1142
+alter table tlist drop partition p0;
+--error 1142
+alter table tlist add partition (partition p2 values in (2));
+--error 1142
+insert into tlist values (1);
+disconnect conn1;
+
+use planner__core__integration_partition;
+set tidb_enable_list_partition = DEFAULT;
+
+
+# TestForbidPartitionTableGeneratePointGetPlanWithTidbRowid
+drop table if exists t;
+create table t(id int) PARTITION BY HASH(id) partitions 5;
+insert into t values(0),(0);
+analyze table t;
+explain select *,_tidb_rowid from t where _tidb_rowid=1;
+select *,_tidb_rowid from t where _tidb_rowid=1;
+explain select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+explain select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+explain select *,_tidb_rowid from t partition(p0,p1) where _tidb_rowid=1;
+
+

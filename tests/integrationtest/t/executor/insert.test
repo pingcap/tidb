@@ -1,0 +1,1602 @@
+# TestClusterIndexInsertOnDuplicateKey
+set tidb_enable_clustered_index = on;
+drop table if exists t;
+create table t(a char(20), b int, primary key(a));
+insert into t values('aa', 1), ('bb', 1);
+-- error 1062
+insert into t values('aa', 2);
+drop table t;
+create table t(a char(20), b varchar(30), c varchar(10), primary key(a, b, c));
+insert into t values ('a', 'b', 'c'), ('b', 'a', 'c');
+-- error 1062
+insert into t values ('a', 'b', 'c');
+set tidb_enable_clustered_index = default;
+
+# TestPaddingCommonHandle
+set tidb_enable_clustered_index = on;
+drop table if exists t1;
+create table t1(c1 decimal(6,4), primary key(c1));
+insert into t1 set c1 = 0.1;
+insert into t1 set c1 = 0.1 on duplicate key update c1 = 1;
+select * from t1;
+set tidb_enable_clustered_index = default;
+
+# TestInsertReorgDelete
+drop table if exists t1;
+create table t1(c1 year);
+insert into t1 set c1 = '2004';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 year);
+insert into t1 set c1 = 2004;
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 bit);
+insert into t1 set c1 = 1;
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 smallint unsigned);
+insert into t1 set c1 = 1;
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 int unsigned);
+insert into t1 set c1 = 1;
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 smallint);
+insert into t1 set c1 = -1;
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 int);
+insert into t1 set c1 = -1;
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 decimal(6,4));
+insert into t1 set c1 = '1.1';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 decimal);
+insert into t1 set c1 = 1.1;
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 numeric);
+insert into t1 set c1 = -1;
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 float);
+insert into t1 set c1 = 1.2;
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 double);
+insert into t1 set c1 = 1.2;
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 double);
+insert into t1 set c1 = 1.3;
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 real);
+insert into t1 set c1 = 1.4;
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 date);
+insert into t1 set c1 = '2020-01-01';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 time);
+insert into t1 set c1 = '20:00:00';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 datetime);
+insert into t1 set c1 = '2020-01-01 22:22:22';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 timestamp);
+insert into t1 set c1 = '2020-01-01 22:22:22';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 year);
+insert into t1 set c1 = '2020';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 char(15));
+insert into t1 set c1 = 'test';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 varchar(15));
+insert into t1 set c1 = 'test';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 binary(3));
+insert into t1 set c1 = 'a';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 varbinary(3));
+insert into t1 set c1 = 'b';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 blob);
+insert into t1 set c1 = 'test';
+alter table t1 add index idx(c1(3));
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 text);
+insert into t1 set c1 = 'test';
+alter table t1 add index idx(c1(3));
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 enum('a', 'b'));
+insert into t1 set c1 = 'a';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+drop table if exists t1;
+create table t1(c1 set('a', 'b'));
+insert into t1 set c1 = 'a,b';
+alter table t1 add index idx(c1);
+delete from t1;
+admin check table t1;
+
+# TestUpdateDuplicateKey
+drop table if exists c;
+create table c(i int,j int,k int,primary key(i,j,k));
+insert into c values(1,2,3);
+insert into c values(1,2,4);
+-- error 1062
+update c set i=1,j=2,k=4 where i=1 and j=2 and k=3;
+
+# TestIssue37187
+drop table if exists t1, t2;
+create table t1 (a int(11) ,b varchar(100) ,primary key (a));
+create table t2 (c int(11) ,d varchar(100) ,primary key (c));
+prepare in1 from 'insert into t1 (a,b) select c,null from t2 t on duplicate key update b=t.d';
+execute in1;
+
+# TestInsertWrongValueForField
+drop table if exists t1;
+create table t1(a bigint);
+-- error 1366
+insert into t1 values("asfasdfsajhlkhlksdaf");
+drop table if exists t1;
+create table t1(a varchar(10)) charset ascii;
+-- error 1366
+insert into t1 values('我');
+drop table if exists t1;
+create table t1(a char(10) charset utf8);
+insert into t1 values('我');
+alter table t1 add column b char(10) charset ascii as ((a));
+select * from t1;
+drop table if exists t;
+create table t (a year);
+-- error 1264
+insert into t values(2156);
+DROP TABLE IF EXISTS ts;
+CREATE TABLE ts (id int DEFAULT NULL, time1 TIMESTAMP NULL DEFAULT NULL);
+SET @@sql_mode='';
+INSERT INTO ts (id, time1) VALUES (1, TIMESTAMP '1018-12-23 00:00:00');
+SHOW WARNINGS;
+SELECT * FROM ts ORDER BY id;
+SET @@sql_mode='STRICT_TRANS_TABLES';
+-- error 1292
+INSERT INTO ts (id, time1) VALUES (2, TIMESTAMP '1018-12-24 00:00:00');
+DROP TABLE ts;
+CREATE TABLE t0(c0 SMALLINT AUTO_INCREMENT PRIMARY KEY);
+INSERT IGNORE  INTO t0(c0) VALUES (194626268);
+INSERT IGNORE  INTO t0(c0) VALUES ('*');
+SHOW WARNINGS;
+SET @@sql_mode=default;
+
+# TestInsertValueForCastDecimalField
+drop table if exists t1;
+create table t1(a decimal(15,2));
+insert into t1 values (1111111111111.01);
+select * from t1;
+select cast(a as decimal) from t1;
+
+# TestInsertForMultiValuedIndex
+drop table if exists t1;
+create table t1(a json, b int, unique index idx((cast(a as signed array))));
+insert into t1 values ('[1,11]', 1);
+insert into t1 values ('[2, 22]', 2);
+select * from t1;
+-- error 1062
+insert into t1 values ('[2, 222]', 2);
+replace into t1 values ('[1, 10]', 10);
+select * from t1;
+replace into t1 values ('[1, 2]', 1);
+select * from t1;
+replace into t1 values ('[1, 11]', 1);
+insert into t1 values ('[2, 22]', 2);
+select * from t1;
+insert ignore into t1 values ('[1]', 2);
+select * from t1;
+insert ignore into t1 values ('[1, 2]', 2);
+select * from t1;
+insert into t1 values ('[2]', 2) on duplicate key update b = 10;
+select * from t1;
+-- error 1062
+insert into t1 values ('[2, 1]', 2) on duplicate key update a = '[1,2]';
+-- error 1062
+insert into t1 values ('[1,2]', 2) on duplicate key update a = '[1,2]';
+-- error 1062
+insert into t1 values ('[11, 22]', 2) on duplicate key update a = '[1,2]';
+
+# TestInsertDateTimeWithTimeZone
+set time_zone="+09:00";
+drop table if exists t;
+create table t (id int, c1 datetime not null default CURRENT_TIMESTAMP);
+set TIMESTAMP = 1234;
+insert t (id) values (1);
+select * from t;
+drop table if exists t;
+create table t (dt datetime);
+set @@time_zone='+08:00';
+delete from t;
+insert into t values ('2020-10-22');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22-16');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22 16-31');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22 16:31-15');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22T16:31:15-10');
+select * from t;
+delete from t;
+insert into t values ('2020.10-22');
+select * from t;
+delete from t;
+insert into t values ('2020-10.22-16');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22.16-31');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22 16.31-15');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22T16.31.15+14');
+select * from t;
+delete from t;
+insert into t values ('2020-10:22');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22:16');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22-16:31');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22 16-31:15');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22T16.31.15+09:30');
+select * from t;
+delete from t;
+insert into t values ('2020.10-22:16');
+select * from t;
+delete from t;
+insert into t values ('2020-10.22-16:31');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22.16-31:15');
+select * from t;
+delete from t;
+insert into t values ('2020-10-22T16:31.15+09:30');
+select * from t;
+drop table if exists t;
+create table t (dt datetime, ts timestamp);
+delete from t;
+set @@time_zone='+08:00';
+insert into t values ('2020-10-22T16:53:40Z', '2020-10-22T16:53:40Z');
+set @@time_zone='+00:00';
+select * from t;
+delete from t;
+set @@time_zone='-08:00';
+insert into t values ('2020-10-22T16:53:40Z', '2020-10-22T16:53:40Z');
+set @@time_zone='+08:00';
+select * from t;
+delete from t;
+set @@time_zone='-03:00';
+insert into t values ('2020-10-22T16:53:40+03:00', '2020-10-22T16:53:40+03:00');
+set @@time_zone='+08:00';
+select * from t;
+delete from t;
+set @@time_zone='+08:00';
+insert into t values ('2020-10-22T16:53:40+08:00', '2020-10-22T16:53:40+08:00');
+set @@time_zone='+08:00';
+select * from t;
+drop table if exists t;
+create table t (ts timestamp);
+insert into t values ('2020-10-22T12:00:00Z'), ('2020-10-22T13:00:00Z'), ('2020-10-22T14:00:00Z');
+select count(*) from t where ts > '2020-10-22T12:00:00Z';
+set @@time_zone='+08:00';
+drop table if exists t;
+create table t (dt datetime(2), ts timestamp(2));
+insert into t values ('2020-10-27T14:39:10.10+00:00', '2020-10-27T14:39:10.10+00:00');
+select * from t;
+drop table if exists t;
+create table t (dt datetime(1), ts timestamp(1));
+insert into t values ('2020-10-27T14:39:10.3+0200', '2020-10-27T14:39:10.3+0200');
+select * from t;
+drop table if exists t;
+create table t (dt datetime(6), ts timestamp(6));
+insert into t values ('2020-10-27T14:39:10.3-02', '2020-10-27T14:39:10.3-02');
+select * from t;
+drop table if exists t;
+create table t (dt datetime(2), ts timestamp(2));
+insert into t values ('2020-10-27T14:39:10.10Z', '2020-10-27T14:39:10.10Z');
+select * from t;
+set time_zone=default;
+set timestamp=default;
+
+# TestInsertZeroYear
+drop table if exists t1;
+create table t1(a year(4));
+insert into t1 values(0000),(00),("0000"),("000"), ("00"), ("0"), (79), ("79");
+select * from t1;
+drop table if exists t;
+create table t(f_year year NOT NULL DEFAULT '0000')ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into t values();
+select * from t;
+insert into t values('0000');
+select * from t;
+
+# TestAllowInvalidDates
+drop table if exists t1, t2, t3, t4;
+create table t1(d date);
+create table t2(d datetime);
+create table t3(d date);
+create table t4(d datetime);
+set sql_mode='STRICT_TRANS_TABLES,ALLOW_INVALID_DATES';
+insert into t1 values ('0000-00-00');
+insert into t2 values ('0000-00-00');
+insert into t1 values ('2019-00-00');
+insert into t2 values ('2019-00-00');
+insert into t1 values ('2019-01-00');
+insert into t2 values ('2019-01-00');
+insert into t1 values ('2019-00-01');
+insert into t2 values ('2019-00-01');
+insert into t1 values ('2019-02-31');
+insert into t2 values ('2019-02-31');
+select year(d), month(d), day(d) from t1;
+select year(d), month(d), day(d) from t2;
+insert t3 select d from t1;
+select year(d), month(d), day(d) from t3;
+insert t4 select d from t2;
+select year(d), month(d), day(d) from t4;
+
+truncate t1;truncate t2;truncate t3;truncate t4;
+set sql_mode='ALLOW_INVALID_DATES';
+insert into t1 values ('0000-00-00');
+insert into t2 values ('0000-00-00');
+insert into t1 values ('2019-00-00');
+insert into t2 values ('2019-00-00');
+insert into t1 values ('2019-01-00');
+insert into t2 values ('2019-01-00');
+insert into t1 values ('2019-00-01');
+insert into t2 values ('2019-00-01');
+insert into t1 values ('2019-02-31');
+insert into t2 values ('2019-02-31');
+select year(d), month(d), day(d) from t1;
+select year(d), month(d), day(d) from t2;
+insert t3 select d from t1;
+select year(d), month(d), day(d) from t3;
+insert t4 select d from t2;
+select year(d), month(d), day(d) from t4;
+set sql_mode=default;
+
+# TestPartitionInsertOnDuplicate
+drop table if exists t1, t2, t3;
+create table t1 (a int,b int,primary key(a,b)) partition by range(a) (partition p0 values less than (100),partition p1 values less than (1000));
+insert into t1 set a=1, b=1;
+insert into t1 set a=1,b=1 on duplicate key update a=1,b=1;
+select * from t1;
+create table t2 (a int,b int,primary key(a,b)) partition by hash(a) partitions 4;
+insert into t2 set a=1,b=1;
+insert into t2 set a=1,b=1 on duplicate key update a=1,b=1;
+select * from t2;
+CREATE TABLE t3 (a int, b int, c int, d int, e int,
+  PRIMARY KEY (a,b),
+  UNIQUE KEY (b,c,d)
+) PARTITION BY RANGE ( b ) (
+  PARTITION p0 VALUES LESS THAN (4),
+  PARTITION p1 VALUES LESS THAN (7),
+  PARTITION p2 VALUES LESS THAN (11)
+);
+insert into t3 values (1,2,3,4,5);
+insert into t3 values (1,2,3,4,5),(6,2,3,4,6) on duplicate key update e = e + values(e);
+select * from t3;
+
+# TestBit
+drop table if exists t1;
+create table t1 (a bit(3));
+-- error 1406
+insert into t1 values(-1);
+-- error 1406
+insert into t1 values(9);
+create table t64 (a bit(64));
+insert into t64 values(-1);
+insert into t64 values(18446744073709551615);
+-- error 1264
+insert into t64 values(18446744073709551616);
+
+# TestJiraIssue5366
+drop table if exists bug;
+create table bug (a varchar(100));
+insert into bug select  ifnull(JSON_UNQUOTE(JSON_EXTRACT('[{"amount":2000,"feeAmount":0,"merchantNo":"20190430140319679394","shareBizCode":"20160311162_SECOND"}]', '$[0].merchantNo')),'') merchant_no union SELECT '20180531557' merchant_no;
+--sorted_result
+select * from bug;
+
+# TestDMLCast
+drop table if exists t;
+create table t (a int, b double);
+insert into t values (ifnull('',0)+0, 0);
+insert into t values (0, ifnull('',0)+0);
+select * from t;
+-- error 1366
+insert into t values ('', 0);
+-- error 1366
+insert into t values (0, '');
+-- error 1292
+update t set a = '';
+-- error 1292
+update t set b = '';
+update t set a = ifnull('',0)+0;
+update t set b = ifnull('',0)+0;
+delete from t where a = '';
+select * from t;
+
+# TestInsertFloatOverflow
+drop table if exists t,t1;
+create table t(col1 FLOAT, col2 FLOAT(10,2), col3 DOUBLE, col4 DOUBLE(10,2), col5 DECIMAL, col6 DECIMAL(10,2));
+-- error 1264
+insert into t values (-3.402823466E+68, -34028234.6611, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);
+-- error 1264
+insert into t values (-34028234.6611, -3.402823466E+68, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);
+create table t1(id1 float,id2 float);
+insert ignore into t1 values(999999999999999999999999999999999999999,-999999999999999999999999999999999999999);
+select @@warning_count;
+select convert(id1,decimal(65)),convert(id2,decimal(65)) from t1;
+
+# TestTextTooLongError
+# Fix https://github.com/pingcap/tidb/issues/32601
+set sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_ALL_TABLES,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+# For max_allowed_packet default value is big enough to ensure tinytext, text can test correctly
+drop table if exists t1;
+CREATE TABLE t1(c1 TINYTEXT CHARACTER SET utf8mb4);
+-- error 1406
+INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 128));
+drop table if exists t1;
+CREATE TABLE t1(c1 Text CHARACTER SET utf8mb4);
+-- error 1406
+INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 32768));
+drop table if exists t1;
+CREATE TABLE t1(c1 mediumtext);
+-- error 1406
+INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 8777215));
+# For long text, max_allowed_packet default value can not allow 4GB package, skip the test case.
+# Set non strict sql_mode, we are not supposed to raise an error but to truncate the value.
+set sql_mode = 'ONLY_FULL_GROUP_BY,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+drop table if exists t1;
+CREATE TABLE t1(c1 TINYTEXT CHARACTER SET utf8mb4);
+INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 128));
+select length(c1) from t1;
+drop table if exists t1;
+CREATE TABLE t1(c1 Text CHARACTER SET utf8mb4);
+INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 32768));
+select length(c1) from t1;
+# For mediumtext or bigger size, for tikv limit, we will get:ERROR 8025 (HY000): entry too large, the max entry size is 6291456, the size of data is 16777247, no need to test.
+set sql_mode = default;
+
+# TestAutoRandomIDExplicit
+set @@allow_auto_random_explicit_insert = true;
+drop table if exists ar;
+create table ar (id bigint key clustered auto_random, name char(10));
+insert into ar(id) values (1);
+select id from ar;
+select last_insert_id();
+delete from ar;
+insert into ar(id) values (1), (2);
+select id from ar;
+select last_insert_id();
+delete from ar;
+drop table ar;
+set @@allow_auto_random_explicit_insert = default;
+
+# TestInsertErrorMsg
+drop table if exists t, t1;
+create table t (a int primary key, b datetime, d date);
+-- error 1292
+insert into t values (1, '2019-02-11 30:00:00', '2019-01-31');
+CREATE TABLE t1 (a BINARY(16) PRIMARY KEY);
+INSERT INTO t1 VALUES (AES_ENCRYPT('a','a'));
+-- error 1062
+INSERT INTO t1 VALUES (AES_ENCRYPT('a','a'));
+INSERT INTO t1 VALUES (AES_ENCRYPT('b','b'));
+-- error 1062
+INSERT INTO t1 VALUES (AES_ENCRYPT('b','b'));
+drop table if exists t1;
+create table t1 (a bit primary key) engine=innodb;
+insert into t1 values (b'0');
+-- error 1062
+insert into t1 values (b'0');
+
+# TestIssue16366
+drop table if exists t;
+create table t(c numeric primary key);
+insert ignore into t values(null);
+-- error 1062
+insert into t values(0);
+
+# TestClusterPrimaryTablePlainInsert
+set tidb_enable_clustered_index = on;
+drop table if exists t1pk;
+create table t1pk(id varchar(200) primary key, v int);
+insert into t1pk(id, v) values('abc', 1);
+select * from t1pk;
+set @@tidb_constraint_check_in_place=true;
+-- error 1062
+insert into t1pk(id, v) values('abc', 2);
+set @@tidb_constraint_check_in_place=false;
+-- error 1062
+insert into t1pk(id, v) values('abc', 3);
+select v, id from t1pk;
+select id from t1pk where id = 'abc';
+select v, id from t1pk where id = 'abc';
+drop table if exists t3pk;
+create table t3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3));
+insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 1);
+select * from t3pk;
+set @@tidb_constraint_check_in_place=true;
+-- error 1062
+insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 2);
+set @@tidb_constraint_check_in_place=false;
+-- error 1062
+insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 3);
+select v, id3, id2, id1 from t3pk;
+select id3, id2, id1 from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc';
+select id3, id2, id1, v from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc';
+insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 101, 1);
+insert into t3pk(id1, id2, id3, v) values('abc', 'zzz', 101, 1);
+drop table if exists t1pku;
+create table t1pku(id varchar(200) primary key, uk int, v int, unique key ukk(uk));
+insert into t1pku(id, uk, v) values('abc', 1, 2);
+select * from t1pku where id = 'abc';
+-- error 1062
+insert into t1pku(id, uk, v) values('aaa', 1, 3);
+select * from t1pku;
+select * from t3pk where (id1, id2, id3) in (('abc', 'xyz', 100), ('abc', 'xyz', 101), ('abc', 'zzz', 101));
+set @@tidb_constraint_check_in_place=default;
+set tidb_enable_clustered_index = default;
+
+# TestClusterPrimaryTableInsertIgnore
+set tidb_enable_clustered_index = on;
+drop table if exists it1pk;
+create table it1pk(id varchar(200) primary key, v int);
+insert into it1pk(id, v) values('abc', 1);
+insert ignore into it1pk(id, v) values('abc', 2);
+select * from it1pk where id = 'abc';
+drop table if exists it2pk;
+create table it2pk(id1 varchar(200), id2 varchar(200), v int, primary key(id1, id2));
+insert into it2pk(id1, id2, v) values('abc', 'cba', 1);
+select * from it2pk where id1 = 'abc' and id2 = 'cba';
+insert ignore into it2pk(id1, id2, v) values('abc', 'cba', 2);
+select * from it2pk where id1 = 'abc' and id2 = 'cba';
+drop table if exists it1pku;
+create table it1pku(id varchar(200) primary key, uk int, v int, unique key ukk(uk));
+insert into it1pku(id, uk, v) values('abc', 1, 2);
+select * from it1pku where id = 'abc';
+insert ignore into it1pku(id, uk, v) values('aaa', 1, 3), ('bbb', 2, 1);
+select * from it1pku;
+set tidb_enable_clustered_index = default;
+
+# TestClusterPrimaryTableInsertDuplicate
+set tidb_enable_clustered_index = on;
+drop table if exists dt1pi;
+create table dt1pi(id varchar(200) primary key, v int);
+insert into dt1pi(id, v) values('abb', 1),('acc', 2);
+insert into dt1pi(id, v) values('abb', 2) on duplicate key update v = v + 1;
+select * from dt1pi;
+insert into dt1pi(id, v) values('abb', 2) on duplicate key update v = v + 1, id = 'xxx';
+select * from dt1pi;
+drop table if exists dt1piu;
+create table dt1piu(id varchar(200) primary key, uk int, v int, unique key uuk(uk));
+insert into dt1piu(id, uk, v) values('abb', 1, 10),('acc', 2, 20);
+insert into dt1piu(id, uk, v) values('xyz', 1, 100) on duplicate key update v = v + 1;
+select * from dt1piu;
+insert into dt1piu(id, uk, v) values('abb', 1, 2) on duplicate key update v = v + 1, id = 'xxx';
+select * from dt1piu;
+drop table if exists ts1pk;
+create table ts1pk(id1 timestamp, id2 timestamp, v int, primary key(id1, id2));
+insert into ts1pk (id1, id2, v) values('2018-01-01 11:11:11', '2018-01-01 11:11:11', 1);
+select id1, id2, v from ts1pk;
+insert into ts1pk (id1, id2, v) values('2018-01-01 11:11:11', '2018-01-01 11:11:11', 2) on duplicate key update v = values(v);
+select id1, id2, v from ts1pk;
+insert into ts1pk (id1, id2, v) values('2018-01-01 11:11:11', '2018-01-01 11:11:11', 2) on duplicate key update v = values(v), id1 = '2018-01-01 11:11:12';
+select id1, id2, v from ts1pk;
+set tidb_enable_clustered_index = default;
+
+# TestClusterPrimaryKeyForIndexScan
+set tidb_enable_clustered_index = on;
+drop table if exists pkt1;
+CREATE TABLE pkt1 (a varchar(255), b int, index idx(b), primary key(a,b));
+insert into pkt1 values ('aaa',1);
+select b from pkt1 where b = 1;
+drop table if exists pkt2;
+CREATE TABLE pkt2 (a varchar(255), b int, unique index idx(b), primary key(a,b));
+insert into pkt2 values ('aaa',1);
+select b from pkt2 where b = 1;
+drop table if exists issue_18232;
+create table issue_18232 (a int, b int, c int, d int, primary key (a, b), index idx(c));
+select a from issue_18232 use index (idx);
+select b from issue_18232 use index (idx);
+select a,b from issue_18232 use index (idx);
+select c from issue_18232 use index (idx);
+select a,c from issue_18232 use index (idx);
+select b,c from issue_18232 use index (idx);
+select a,b,c from issue_18232 use index (idx);
+select d from issue_18232 use index (idx);
+select a,d from issue_18232 use index (idx);
+select b,d from issue_18232 use index (idx);
+select a,b,d from issue_18232 use index (idx);
+select c,d from issue_18232 use index (idx);
+select a,c,d from issue_18232 use index (idx);
+select b,c,d from issue_18232 use index (idx);
+select a,b,c,d from issue_18232 use index (idx);
+set tidb_enable_clustered_index = default;
+
+# TestIssue20768
+drop table if exists t1, t2;
+create table t1(a year, primary key(a));
+insert ignore into t1 values(null);
+create table t2(a int, key(a));
+insert into t2 values(0);
+select /*+ hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;
+select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;
+select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a;
+select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;
+select /*+ inl_merge_join(t1) */ * from t1 join t2 on t1.a = t2.a;
+select /*+ merge_join(t1) */ * from t1 join t2 on t1.a = t2.a;
+
+# TestIssue10402
+drop table if exists vctt;
+create table vctt (v varchar(4), c char(4));
+insert into vctt values ('ab  ', 'ab   ');
+select * from vctt;
+delete from vctt;
+insert into vctt values ('ab\n\n\n', 'ab\n\n\n'), ('ab\t\t\t', 'ab\t\t\t'), ('ab    ', 'ab    '), ('ab\r\r\r', 'ab\r\r\r');
+show warnings;
+select * from vctt;
+select length(v), length(c) from vctt;
+
+# TestDuplicatedEntryErr
+# See https://github.com/pingcap/tidb/issues/24582
+drop table if exists t1;
+create table t1(a int, b varchar(20), primary key(a,b(3)) clustered);
+insert into t1 values(1,'aaaaa');
+-- error 1062
+insert into t1 values(1,'aaaaa');
+-- error 1062
+insert into t1 select 1, 'aaa';
+insert into t1 select 1, 'bb';
+-- error 1062
+insert into t1 select 1, 'bb';
+
+# TestBinaryLiteralInsertToEnum
+drop table if exists bintest;
+create table bintest (h enum(0x61, '1', 'b')) character set utf8mb4;
+insert into bintest(h) values(0x61);
+select * from bintest;
+
+# TestBinaryLiteralInsertToSet
+drop table if exists bintest;
+create table bintest (h set(0x61, '1', 'b')) character set utf8mb4;
+insert into bintest(h) values(0x61);
+select * from bintest;
+
+# TestGlobalTempTableAutoInc
+drop table if exists temp_test;
+create global temporary table temp_test(id int primary key auto_increment) on commit delete rows;
+
+## Data is cleared after transaction auto commits.
+insert into temp_test(id) values(0);
+select * from temp_test;
+
+## Data is not cleared inside a transaction.
+begin;
+insert into temp_test(id) values(0);
+select * from temp_test;
+commit;
+
+## AutoID allocator is cleared.
+begin;
+insert into temp_test(id) values(0);
+select * from temp_test;
+## Test whether auto-inc is incremental
+insert into temp_test(id) values(0);
+select id from temp_test order by id;
+commit;
+
+## multi-value insert
+begin;
+insert into temp_test(id) values(0), (0);
+select id from temp_test order by id;
+insert into temp_test(id) values(0), (0);
+select id from temp_test order by id;
+commit;
+
+## rebase
+begin;
+insert into temp_test(id) values(10);
+insert into temp_test(id) values(0);
+select id from temp_test order by id;
+insert into temp_test(id) values(20), (30);
+insert into temp_test(id) values(0), (0);
+select id from temp_test order by id;
+commit;
+drop table if exists temp_test;
+
+# TestGlobalTempTableRowID
+drop table if exists temp_test;
+create global temporary table temp_test(id int) on commit delete rows;
+
+## Data is cleared after transaction auto commits.
+insert into temp_test(id) values(0);
+select _tidb_rowid from temp_test;
+
+## Data is not cleared inside a transaction.
+begin;
+insert into temp_test(id) values(0);
+select _tidb_rowid from temp_test;
+commit;
+
+## AutoID allocator is cleared.
+begin;
+insert into temp_test(id) values(0);
+select _tidb_rowid from temp_test;
+## Test whether row id is incremental
+insert into temp_test(id) values(0);
+select _tidb_rowid from temp_test order by _tidb_rowid;
+commit;
+
+## multi-value insert
+begin;
+insert into temp_test(id) values(0), (0);
+select _tidb_rowid from temp_test order by _tidb_rowid;
+insert into temp_test(id) values(0), (0);
+select _tidb_rowid from temp_test order by _tidb_rowid;
+commit;
+drop table if exists temp_test;
+
+# TestIssue26762
+drop table if exists t1;
+create table t1(c1 date);
+-- error 1292
+insert into t1 values('2020-02-31');
+set @@sql_mode='ALLOW_INVALID_DATES';
+insert into t1 values('2020-02-31');
+select * from t1;
+set @@sql_mode='STRICT_TRANS_TABLES';
+-- error 1292
+insert into t1 values('2020-02-31');
+set sql_mode=default;
+
+# TestStringtoDecimal
+drop table if exists t;
+create table t (id decimal(10));
+-- error 1366
+insert into t values('1sdf');
+-- error 1366
+insert into t values('1edf');
+-- error 1366
+insert into t values('12Ea');
+-- error 1366
+insert into t values('1E');
+-- error 1366
+insert into t values('1e');
+-- error 1366
+insert into t values('1.2A');
+-- error 1366
+insert into t values('1.2.3.4.5');
+-- error 1366
+insert into t values('1.2.');
+-- error 1366
+insert into t values('1,999.00');
+## TODO: MySQL8.0 reports Note 1265 Data truncated for column 'id' at row 1
+insert into t values('12e-3');
+show warnings;
+select id from t;
+drop table if exists t;
+
+# TestReplaceAllocatingAutoID
+# https://github.com/pingcap/tidb/issues/29483
+SET sql_mode='NO_ENGINE_SUBSTITUTION';
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (a tinyint not null auto_increment primary key, b char(20));
+INSERT INTO t1 VALUES (127,'maxvalue');
+## Note that this error is different from MySQL's duplicated primary key error
+-- error 1467
+REPLACE INTO t1 VALUES (0,'newmaxvalue');
+set sql_mode=default;
+
+# TestInsertIntoSelectError
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(a INT) ENGINE = InnoDB;
+INSERT IGNORE into t1(SELECT SLEEP(NULL));
+SHOW WARNINGS;
+INSERT IGNORE into t1(SELECT SLEEP(-1));
+SHOW WARNINGS;
+INSERT IGNORE into t1(SELECT SLEEP(1));
+SELECT * FROM t1;
+DROP TABLE t1;
+
+# TestIssue32213
+drop table if exists t1;
+create table t1(c1 float);
+insert into t1 values(999.99);
+select cast(t1.c1 as decimal(4, 1)) from t1;
+select cast(t1.c1 as decimal(5, 1)) from t1;
+drop table if exists t1;
+create table t1(c1 decimal(6, 4));
+insert into t1 values(99.9999);
+select cast(t1.c1 as decimal(5, 3)) from t1;
+select cast(t1.c1 as decimal(6, 3)) from t1;
+
+# TestInsertBigScientificNotation
+# https://github.com/pingcap/tidb/issues/47787
+drop table if exists t1;
+create table t1(id int, a int);
+set @@SQL_MODE='STRICT_TRANS_TABLES';
+-- error 1264
+insert into t1 values(1, '1e100');
+-- error 1264
+insert into t1 values(2, '-1e100');
+select id, a from t1;
+set @@SQL_MODE='';
+insert into t1 values(1, '1e100');
+show warnings;
+insert into t1 values(2, '-1e100');
+show warnings;
+select id, a from t1 order by id asc;
+set sql_mode=default;
+
+# TestUnsignedDecimalFloatInsertNegative
+# https://github.com/pingcap/tidb/issues/47945
+drop table if exists tf;
+create table tf(a float(1, 0) unsigned);
+-- error 1264
+insert into tf values('-100');
+set @@sql_mode='';
+insert into tf values('-100');
+select * from tf;
+set @@sql_mode=default;
+
+# TestIssue17745
+drop table if exists tt1;
+create table tt1 (c1 decimal(64));
+-- error 1264
+insert into tt1 values(89000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);
+-- error 1264
+insert into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000);
+insert ignore into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000);
+show warnings;
+select c1 from tt1;
+-- error 1264
+update tt1 set c1 = 89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000;
+drop table if exists tt1;
+-- error 1367
+insert into tt1 values(4556414e723532);
+select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888;
+show warnings;
+
+# TestIssue38950
+drop table if exists t;
+create table t (id smallint auto_increment primary key);
+alter table t add column c1 int default 1;
+--enable_info
+insert ignore into t(id) values (194626268);
+--disable_info
+select * from t;
+--enable_info
+insert ignore into t(id) values ('*') on duplicate key update c1 = 2;
+--disable_info
+select * from t;
+
+# TestInsertIgnoreOnDup
+drop table if exists t;
+create table t (i int not null primary key, j int unique key);
+--enable_info
+insert into t values (1, 1), (2, 2);
+insert ignore into t values(1, 1) on duplicate key update i = 2;
+--disable_info
+select * from t;
+--enable_info
+insert ignore into t values(1, 1) on duplicate key update j = 2;
+--disable_info
+select * from t;
+
+drop table if exists t2;
+create table t2(`col_25` set('Alice','Bob','Charlie','David') NOT NULL,`col_26` date NOT NULL DEFAULT '2016-04-15', PRIMARY KEY (`col_26`) clustered, UNIQUE KEY `idx_9` (`col_25`,`col_26`),UNIQUE KEY `idx_10` (`col_25`));
+insert into t2(col_25, col_26) values('Bob', '1989-03-23'),('Alice', '2023-11-24'), ('Charlie', '2023-12-05');
+insert ignore into t2 (col_25,col_26) values ( 'Bob','1977-11-23' ) on duplicate key update col_25 = 'Alice', col_26 = '2036-12-13';
+show warnings;
+select * from t2;
+
+drop table if exists t4;
+create table t4(id int primary key clustered, k int, v int, unique key uk1(k));
+insert into t4 values (1, 10, 100), (3, 30, 300);
+insert ignore into t4 (id, k, v) values(1, 0, 0) on duplicate key update id = 2, k = 30;
+show warnings;
+select * from t4;
+
+drop table if exists t5;
+create table t5(k1 varchar(100), k2 varchar(100), uk1 int, v int, primary key(k1, k2) clustered, unique key ukk1(uk1), unique key ukk2(v));
+insert into t5(k1, k2, uk1, v) values('1', '1', 1, '100'), ('1', '3', 2, '200');
+update ignore t5 set k2 = '2', uk1 = 2 where k1 = '1' and k2 = '1';
+show warnings;
+select * from t5;
+
+drop table if exists t6;
+create table t6 (a int, b int, c int, primary key(a, b) clustered, unique key idx_14(b), unique key idx_15(b), unique key idx_16(a, b));
+insert into t6 select 10, 10, 20;
+insert ignore into t6 set a = 20, b = 10 on duplicate key update a = 100;
+select * from t6;
+insert ignore into t6 set a = 200, b= 10 on duplicate key update c = 1000;
+select * from t6;
+
+# TestInsertAutoInc
+drop table if exists insert_autoinc_test;
+create table insert_autoinc_test (id int primary key auto_increment, c1 int);
+insert into insert_autoinc_test(c1) values (1), (2);
+begin;
+select * from insert_autoinc_test;
+commit;
+begin;
+insert into insert_autoinc_test(id, c1) values (5,5);
+insert into insert_autoinc_test(c1) values (6);
+commit;
+begin;
+select * from insert_autoinc_test;
+commit;
+begin;
+insert into insert_autoinc_test(id, c1) values (3,3);
+commit;
+begin;
+select * from insert_autoinc_test;
+commit;
+begin;
+insert into insert_autoinc_test(c1) values (7);
+commit;
+begin;
+select * from insert_autoinc_test;
+commit;
+drop table if exists insert_autoinc_test;
+
+## issue-962
+create table insert_autoinc_test (id int primary key auto_increment, c1 int);
+insert into insert_autoinc_test(id, c1) values (0.3, 1);
+select * from insert_autoinc_test;
+insert into insert_autoinc_test(id, c1) values (-0.3, 2);
+select * from insert_autoinc_test;
+insert into insert_autoinc_test(id, c1) values (-3.3, 3);
+select * from insert_autoinc_test;
+insert into insert_autoinc_test(id, c1) values (4.3, 4);
+select * from insert_autoinc_test;
+insert into insert_autoinc_test(c1) values (5);
+select * from insert_autoinc_test;
+insert into insert_autoinc_test(id, c1) values (null, 6);
+select * from insert_autoinc_test;
+drop table if exists insert_autoinc_test;
+
+## SQL_MODE=NO_AUTO_VALUE_ON_ZERO
+create table insert_autoinc_test (id int primary key auto_increment, c1 int);
+insert into insert_autoinc_test(id, c1) values (5, 1);
+select * from insert_autoinc_test;
+insert into insert_autoinc_test(id, c1) values (0, 2);
+select * from insert_autoinc_test;
+insert into insert_autoinc_test(id, c1) values (0, 3);
+select * from insert_autoinc_test;
+set SQL_MODE=NO_AUTO_VALUE_ON_ZERO;
+insert into insert_autoinc_test(id, c1) values (0, 4);
+select * from insert_autoinc_test;
+-- error 1062
+insert into insert_autoinc_test(id, c1) values (0, 5);
+insert into insert_autoinc_test(c1) values (6);
+select * from insert_autoinc_test;
+insert into insert_autoinc_test(id, c1) values (null, 7);
+select * from insert_autoinc_test;
+set SQL_MODE='';
+insert into insert_autoinc_test(id, c1) values (0, 8);
+select * from insert_autoinc_test;
+insert into insert_autoinc_test(id, c1) values (null, 9);
+select * from insert_autoinc_test;
+set sql_mode = default;
+
+# TestInsert
+drop table if exists insert_test;
+create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);
+--enable_info
+insert insert_test (c1) values (1),(2),(NULL);
+--disable_info
+begin;
+-- error 1136
+insert insert_test (c1) values ();
+rollback;
+begin;
+-- error 1136
+insert insert_test (c1, c2) values (1,2),(1);
+rollback;
+begin;
+-- error 1054
+insert insert_test (xxx) values (3);
+rollback;
+begin;
+-- error 1146
+insert insert_test_xxx (c1) values ();
+rollback;
+--enable_info
+insert insert_test set c1 = 3;
+--disable_info
+begin;
+-- error 1110
+insert insert_test set c1 = 4, c1 = 5;
+rollback;
+begin;
+-- error 1054
+insert insert_test set xxx = 6;
+rollback;
+
+drop table if exists insert_test_1, insert_test_2;
+create table insert_test_1 (id int, c1 int);
+--enable_info
+insert insert_test_1 select id, c1 from insert_test;
+--disable_info
+create table insert_test_2 (id int, c1 int);
+--enable_info
+insert insert_test_1 select id, c1 from insert_test union select id * 10, c1 * 10 from insert_test;
+--disable_info
+begin;
+-- error 1136
+insert insert_test_1 select c1 from insert_test;
+rollback;
+begin;
+-- error 1136
+insert insert_test_1 values(default, default, default, default, default);
+rollback;
+select * from insert_test where id = 1;
+--enable_info
+insert into insert_test (id, c3) values (1, 2) on duplicate key update id=values(id), c2=10;
+--disable_info
+select * from insert_test where id = 1;
+--enable_info
+insert into insert_test (id, c2) values (1, 1) on duplicate key update insert_test.c2=10;
+--disable_info
+-- error 1054
+insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10;
+--enable_info
+INSERT INTO insert_test (id, c3) VALUES (1, 2) ON DUPLICATE KEY UPDATE c3=values(c3)+c3+3;
+--disable_info
+select * from insert_test where id = 1;
+--enable_info
+INSERT IGNORE INTO insert_test (id, c3) VALUES (1, 2) ON DUPLICATE KEY UPDATE c3=values(c3)+c3+3;
+--disable_info
+select * from insert_test where id = 1;
+
+drop table if exists insert_err;
+create table insert_err (id int, c1 varchar(8));
+-- error 1406
+insert insert_err values (1, 'abcdabcdabcd');
+insert insert_err values (1, '你好，世界');
+create table TEST1 (ID INT NOT NULL, VALUE INT DEFAULT NULL, PRIMARY KEY (ID));
+--enable_info
+INSERT INTO TEST1(id,value) VALUE(3,3) on DUPLICATE KEY UPDATE VALUE=4;
+--disable_info
+
+drop table if exists t;
+create table t (id int);
+insert into t values(1);
+update t t1 set id = (select count(*) + 1 from t t2 where t1.id = t2.id);
+select * from t;
+
+## issue 3235
+drop table if exists t;
+create table t(c decimal(5, 5));
+insert into t value(0);
+-- error 1264
+insert into t value(1);
+
+drop table if exists t;
+create table t(c binary(255));
+insert into t value(1);
+select length(c) from t;
+
+drop table if exists t;
+create table t(c varbinary(255));
+insert into t value(1);
+select length(c) from t;
+
+## issue 3509
+drop table if exists t;
+create table t(c int);
+set @@time_zone = '+08:00';
+insert into t value(Unix_timestamp('2002-10-27 01:00'));
+select * from t;
+set @@time_zone = default;
+
+## issue 3832
+drop table if exists t1;
+create table t1 (b char(0));
+insert into t1 values ("");
+
+## issue 3895
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a DECIMAL(4,2));
+INSERT INTO t VALUES (1.000001);
+SHOW WARNINGS;
+INSERT INTO t VALUES (1.000000);
+SHOW WARNINGS;
+
+## issue 4653
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a datetime);
+-- error 1292
+INSERT INTO t VALUES('2017-00-00');
+set sql_mode = '';
+INSERT INTO t VALUES('2017-00-00');
+SELECT * FROM t;
+set sql_mode = 'strict_all_tables';
+SELECT * FROM t;
+set sql_mode = default;
+
+drop table if exists test;
+CREATE TABLE test(id int(10) UNSIGNED NOT NULL AUTO_INCREMENT, p int(10) UNSIGNED NOT NULL, PRIMARY KEY(p), KEY(id));
+insert into test(p) value(1);
+select * from test;
+select * from test use index (id) where id = 1;
+insert into test values(NULL, 2);
+select * from test use index (id) where id = 2;
+insert into test values(2, 3);
+select * from test use index (id) where id = 2;
+
+## issue 6360
+drop table if exists t;
+create table t(a bigint unsigned);
+set @@sql_mode = 'strict_all_tables';
+-- error 1264
+insert into t value (-1);
+set @@sql_mode = '';
+insert into t value (-1);
+show warnings;
+insert into t select -1;
+show warnings;
+insert into t select cast(-1 as unsigned);
+insert into t value (-1.111);
+show warnings;
+insert into t value ('-1.111');
+show warnings;
+update t set a = -1 limit 1;
+show warnings;
+select * from t;
+set @@sql_mode = default;
+
+# issue 6424 & issue 20207
+drop table if exists t;
+create table t(a time(6));
+insert into t value('20070219173709.055870'), ('20070219173709.055'), ('20070219173709.055870123');
+select * from t;
+truncate table t;
+insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123);
+select * from t;
+-- error 1292
+insert into t value(-20070219173709.055870);
+
+drop table if exists t;
+set @@sql_mode='';
+create table t(a float unsigned, b double unsigned);
+insert into t value(-1.1, -1.1), (-2.1, -2.1), (0, 0), (1.1, 1.1);
+show warnings;
+select * from t;
+set @@sql_mode=default;
+
+## issue 7061
+drop table if exists t;
+create table t(a int default 1, b int default 2);
+insert into t values(default, default);
+select * from t;
+truncate table t;
+insert into t values(default(b), default(a));
+select * from t;
+truncate table t;
+insert into t (b) values(default);
+select * from t;
+truncate table t;
+insert into t (b) values(default(a));
+select * from t;
+
+drop view if exists v;
+create view v as select * from t;
+-- error 1105
+insert into v values(1,2);
+-- error 1105
+replace into v values(1,2);
+drop view v;
+
+drop sequence if exists seq;
+create sequence seq;
+-- error 1105
+insert into seq values();
+-- error 1105
+replace into seq values();
+drop sequence seq;
+
+## issue 22851
+drop table if exists t;
+create table t(name varchar(255), b int, c int, primary key(name(2)));
+insert into t(name, b) values("cha", 3);
+-- error 1062
+insert into t(name, b) values("chb", 3);
+insert into t(name, b) values("测试", 3);
+-- error 1062
+insert into t(name, b) values("测试", 3);
+
+# TestInsertOnDup
+drop table if exists t;
+create table t (i int unique key);
+--enable_info
+insert into t values (1),(2);
+--disable_info
+select * from t;
+--enable_info
+insert into t values (1), (2) on duplicate key update i = values(i);
+--disable_info
+select * from t;
+--enable_info
+insert into t values (2), (3) on duplicate key update i = 3;
+--disable_info
+select * from t;
+
+drop table if exists t;
+create table t (i int primary key, j int unique key);
+--enable_info
+insert into t values (-1, 1);
+--disable_info
+select * from t;
+--enable_info
+insert into t values (1, 1) on duplicate key update j = values(j);
+--disable_info
+select * from t;
+
+drop table if exists test;
+create table test (i int primary key, j int unique);
+begin;
+insert into test values (1,1);
+insert into test values (2,1) on duplicate key update i = -i, j = -j;
+commit;
+select * from test;
+delete from test;
+insert into test values (1, 1);
+begin;
+delete from test where i = 1;
+insert into test values (2, 1) on duplicate key update i = -i, j = -j;
+commit;
+select * from test;
+delete from test;
+insert into test values (1, 1);
+begin;
+update test set i = 2, j = 2 where i = 1;
+insert into test values (1, 3) on duplicate key update i = -i, j = -j;
+insert into test values (2, 4) on duplicate key update i = -i, j = -j;
+commit;
+select * from test order by i;
+delete from test;
+begin;
+insert into test values (1, 3), (1, 3) on duplicate key update i = values(i), j = values(j);
+commit;
+select * from test order by i;
+create table tmp (id int auto_increment, code int, primary key(id, code));
+create table m (id int primary key auto_increment, code int unique);
+insert tmp (code) values (1);
+insert tmp (code) values (1);
+set tidb_init_chunk_size=1;
+insert m (code) select code from tmp on duplicate key update code = values(code);
+select * from m;
+
+## The following two cases are used for guaranteeing the last_insert_id
+## to be set as the value of on-duplicate-update assigned.
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (f1 INT AUTO_INCREMENT PRIMARY KEY,
+f2 VARCHAR(5) NOT NULL UNIQUE);
+--enable_info
+INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);
+--disable_info
+SELECT LAST_INSERT_ID();
+--enable_info
+INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);
+--disable_info
+SELECT LAST_INSERT_ID();
+
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (f1 INT AUTO_INCREMENT UNIQUE,
+f2 VARCHAR(5) NOT NULL UNIQUE);
+--enable_info
+INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);
+--disable_info
+SELECT LAST_INSERT_ID();
+--enable_info
+INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);
+--disable_info
+SELECT LAST_INSERT_ID();
+--enable_info
+INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = 2;
+--disable_info
+SELECT LAST_INSERT_ID();
+
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (f1 INT);
+--enable_info
+INSERT t1 VALUES (1) ON DUPLICATE KEY UPDATE f1 = 1;
+--disable_info
+SELECT * FROM t1;
+
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT NOT NULL UNIQUE);
+--enable_info
+INSERT t1 VALUES (1, 1);
+INSERT t1 VALUES (1, 1), (1, 1) ON DUPLICATE KEY UPDATE f1 = 2, f2 = 2;
+--disable_info
+SELECT * FROM t1 order by f1;
+-- error 1048
+INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;
+--enable_info
+INSERT IGNORE t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;
+--disable_info
+show warnings;
+SELECT * FROM t1 order by f1;
+
+SET sql_mode='';
+INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;
+show warnings;
+SELECT * FROM t1 order by f1;
+set sql_mode=default;
+
+set tidb_init_chunk_size=default;
+
+
+# TestInsertOnDuplicateKey
+drop table if exists t1, t2;
+create table t1(a1 bigint primary key, b1 bigint);
+create table t2(a2 bigint primary key, b2 bigint);
+--enable_info
+insert into t1 values(1, 100);
+insert into t2 values(1, 200);
+insert into t1 select a2, b2 from t2 on duplicate key update b1 = a2;
+--disable_info
+select * from t1;
+--enable_info
+insert into t1 select a2, b2 from t2 on duplicate key update b1 = b2;
+--disable_info
+select * from t1;
+--enable_info
+insert into t1 select a2, b2 from t2 on duplicate key update a1 = a2;
+--disable_info
+select * from t1;
+--enable_info
+insert into t1 select a2, b2 from t2 on duplicate key update b1 = 300;
+--disable_info
+select * from t1;
+--enable_info
+insert into t1 values(1, 1) on duplicate key update b1 = 400;
+--disable_info
+select * from t1;
+--enable_info
+insert into t1 select 1, 500 from t2 on duplicate key update b1 = 400;
+--disable_info
+select * from t1;
+
+drop table if exists t1, t2;
+create table t1(a bigint primary key, b bigint);
+create table t2(a bigint primary key, b bigint);
+-- error 1054
+insert into t1 select * from t2 on duplicate key update c = t2.b;
+
+drop table if exists t1, t2;
+create table t1(a bigint primary key, b bigint);
+create table t2(a bigint primary key, b bigint);
+-- error 1052
+insert into t1 select * from t2 on duplicate key update a = b;
+
+drop table if exists t1, t2;
+create table t1(a bigint primary key, b bigint);
+create table t2(a bigint primary key, b bigint);
+-- error 1054
+insert into t1 select * from t2 on duplicate key update c = b;
+
+drop table if exists t1, t2;
+create table t1(a1 bigint primary key, b1 bigint);
+create table t2(a2 bigint primary key, b2 bigint);
+-- error 1054
+insert into t1 select * from t2 on duplicate key update a1 = values(b2);
+
+drop table if exists t1, t2;
+create table t1(a1 bigint primary key, b1 bigint);
+create table t2(a2 bigint primary key, b2 bigint);
+--enable_info
+insert into t1 values(1, 100);
+insert into t2 values(1, 200);
+insert into t1 select * from t2 on duplicate key update b1 = values(b1) + b2;
+--disable_info
+select * from t1;
+--enable_info
+insert into t1 select * from t2 on duplicate key update b1 = values(b1) + b2;
+--disable_info
+select * from t1;
+
+drop table if exists t;
+create table t(k1 bigint, k2 bigint, val bigint, primary key(k1, k2));
+--enable_info
+insert into t (val, k1, k2) values (3, 1, 2);
+--disable_info
+select * from t;
+--enable_info
+insert into t (val, k1, k2) select c, a, b from (select 1 as a, 2 as b, 4 as c) tmp on duplicate key update val = tmp.c;
+--disable_info
+select * from t;
+
+drop table if exists t;
+create table t(k1 double, k2 double, v double, primary key(k1, k2));
+--enable_info
+insert into t (v, k1, k2) select c, a, b from (select "3" c, "1" a, "2" b) tmp on duplicate key update v=c;
+--disable_info
+select * from t;
+--enable_info
+insert into t (v, k1, k2) select c, a, b from (select "3" c, "1" a, "2" b) tmp on duplicate key update v=c;
+--disable_info
+select * from t;
+
+drop table if exists t1, t2;
+create table t1(id int, a int, b int);
+--enable_info
+insert into t1 values (1, 1, 1);
+insert into t1 values (2, 2, 1);
+insert into t1 values (3, 3, 1);
+--disable_info
+create table t2(a int primary key, b int, unique(b));
+--enable_info
+insert into t2 select a, b from t1 order by id on duplicate key update a=t1.a, b=t1.b;
+--disable_info
+select * from t2 order by a;
+
+drop table if exists t1, t2;
+create table t1(id int, a int, b int);
+--enable_info
+insert into t1 values (1, 1, 1);
+insert into t1 values (2, 1, 2);
+insert into t1 values (3, 3, 1);
+--disable_info
+create table t2(a int primary key, b int, unique(b));
+--enable_info
+insert into t2 select a, b from t1 order by id on duplicate key update a=t1.a, b=t1.b;
+--disable_info
+select * from t2 order by a;
+
+drop table if exists t1, t2;
+create table t1(id int, a int, b int, c int);
+--enable_info
+insert into t1 values (1, 1, 1, 1);
+insert into t1 values (2, 2, 1, 2);
+insert into t1 values (3, 3, 2, 2);
+insert into t1 values (4, 4, 2, 2);
+--disable_info
+create table t2(a int primary key, b int, c int, unique(b), unique(c));
+--enable_info
+insert into t2 select a, b, c from t1 order by id on duplicate key update b=t2.b, c=t2.c;
+--disable_info
+select * from t2 order by a;
+
+drop table if exists t1;
+create table t1(a int primary key, b int);
+--enable_info
+insert into t1 values(1,1),(2,2),(3,3),(4,4),(5,5);
+insert into t1 values(4,14),(5,15),(6,16),(7,17),(8,18) on duplicate key update b=b+10;
+--disable_info
+
+drop table if exists a, b;
+create table a(x int primary key);
+create table b(x int, y int);
+--enable_info
+insert into a values(1);
+insert into b values(1, 2);
+insert into a select x from b ON DUPLICATE KEY UPDATE a.x=b.y;
+--disable_info
+select * from a;
+
+--echo ## Test issue 28078.
+--echo ## Use different types of columns so that there's likely to be error if the types mismatches.
+drop table if exists a, b;
+create table a(id int, a1 timestamp, a2 varchar(10), a3 float, unique(id));
+create table b(id int, b1 time, b2 varchar(10), b3 int);
+--enable_info
+insert into a values (1, '2022-01-04 07:02:04', 'a', 1.1), (2, '2022-01-04 07:02:05', 'b', 2.2);
+insert into b values (2, '12:34:56', 'c', 10), (3, '01:23:45', 'd', 20);
+insert into a (id) select id from b on duplicate key update a.a2 = b.b2, a.a3 = 3.3;
+--disable_info
+select * from a;
+--enable_info
+insert into a (id) select 4 from b where b3 = 20 on duplicate key update a.a3 = b.b3;
+--disable_info
+select * from a;
+--enable_info
+insert into a (a2, a3) select 'x', 1.2 from b on duplicate key update a.a2 = b.b3;
+--disable_info
+select * from a;
+
+--echo ## reproduce insert on duplicate key update bug under new row format.
+drop table if exists t1;
+create table t1(c1 decimal(6,4), primary key(c1));
+insert into t1 set c1 = 0.1;
+insert into t1 set c1 = 0.1 on duplicate key update c1 = 1;
+select * from t1 use index(primary);
+
+# TestNonStrictInsertOverflowValue
+drop table if exists t;
+create table t (d int);
+-- error 1690
+insert into t values (cast('18446744073709551616' as unsigned));
+set sql_mode='';
+--enable_warnings
+insert into t values (cast('18446744073709551616' as unsigned));
+--disable_warnings
+set sql_mode=DEFAULT;

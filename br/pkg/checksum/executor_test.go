@@ -7,14 +7,15 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/distsql"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,9 +24,38 @@ func getTableInfo(t *testing.T, mock *mock.Cluster, db, table string) *model.Tab
 	require.NoError(t, err)
 	cDBName := model.NewCIStr(db)
 	cTableName := model.NewCIStr(table)
-	tableInfo, err := info.TableByName(cDBName, cTableName)
+	tableInfo, err := info.TableByName(context.Background(), cDBName, cTableName)
 	require.NoError(t, err)
 	return tableInfo.Meta()
+}
+
+func TestChecksumContextDone(t *testing.T) {
+	mock, err := mock.NewCluster()
+	require.NoError(t, err)
+	require.NoError(t, mock.Start())
+	defer mock.Stop()
+
+	tk := testkit.NewTestKit(t, mock.Storage)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int, key i1(a, b), primary key (a));")
+	tk.MustExec("insert into t1 values (10, 10);")
+	tableInfo1 := getTableInfo(t, mock, "test", "t1")
+	exe, err := checksum.NewExecutorBuilder(tableInfo1, math.MaxUint64).
+		SetConcurrency(variable.DefChecksumTableConcurrency).
+		Build()
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	cctx, cancel := context.WithCancel(ctx)
+
+	cancel()
+
+	resp, err := exe.Execute(cctx, mock.Storage.GetClient(), func() { t.Log("request done") })
+	t.Log(err)
+	t.Log(resp)
+	require.Error(t, err)
 }
 
 func TestChecksum(t *testing.T) {
@@ -102,10 +132,18 @@ func TestChecksum(t *testing.T) {
 	require.NoError(t, exe3.Each(func(req *kv.Request) error {
 		if first {
 			first = false
-			ranges, err := backup.BuildTableRanges(tableInfo3)
+			ranges, err := distsql.BuildTableRanges(tableInfo3)
 			require.NoError(t, err)
 			require.Equalf(t, ranges[:1], req.KeyRanges.FirstPartitionRange(), "%v", req.KeyRanges.FirstPartitionRange())
 		}
 		return nil
 	}))
+
+	exe4, err := checksum.NewExecutorBuilder(tableInfo3, math.MaxUint64).Build()
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/checksum/checksumRetryErr", `1*return(true)`))
+	failpoint.Disable("github.com/pingcap/tidb/br/pkg/checksum/checksumRetryErr")
+	resp4, err := exe4.Execute(context.TODO(), mock.Storage.GetClient(), func() {})
+	require.NoError(t, err)
+	require.NotNil(t, resp4)
 }

@@ -1,0 +1,1 @@
+create table `latin1` (`оп` int primary key comment 'оп', `data` varchar(20));

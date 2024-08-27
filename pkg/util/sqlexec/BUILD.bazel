@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sqlexec",
+    srcs = [
+        "restricted_sql_executor.go",
+        "simple_record_set.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/sqlexec",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx/sysproctrack",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util/chunk",
+    ],
+)
+
+go_test(
+    name = "sqlexec_test",
+    timeout = "short",
+    srcs = ["main_test.go"],
+    embed = [":sqlexec"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

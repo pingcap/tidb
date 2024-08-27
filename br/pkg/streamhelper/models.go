@@ -12,7 +12,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"go.uber.org/zap"
 )
 
@@ -94,6 +94,12 @@ func Pause(task string) string {
 	return path.Join(streamKeyPrefix, taskPausePath, task)
 }
 
+// PrefixOfPause returns the prefix for pausing the task.
+// Normally it would be <prefix>/pause/
+func PrefixOfPause() string {
+	return path.Join(streamKeyPrefix, taskPausePath) + "/"
+}
+
 // LastErrorPrefixOf make the prefix for searching last error by some task.
 func LastErrorPrefixOf(task string) string {
 	return strings.TrimSuffix(path.Join(streamKeyPrefix, taskLastErrorPath, task), "/") + "/"
@@ -164,7 +170,8 @@ func (t *TaskInfo) Check() (*TaskInfo, error) {
 		return nil, errors.Annotate(berrors.ErrPiTRInvalidTaskInfo, "the storage backend is null")
 	}
 	if len(t.PBInfo.TableFilter) == 0 {
-		return nil, errors.Annotate(berrors.ErrPiTRInvalidTaskInfo, "the table filter is empty, maybe add '*.*' for including all tables")
+		return nil, errors.Annotate(berrors.ErrPiTRInvalidTaskInfo,
+			"the table filter is empty, maybe add '*.*' for including all tables")
 	}
 	// Maybe check StartTs > 0?
 	if !taskNameRe.MatchString(t.PBInfo.Name) {

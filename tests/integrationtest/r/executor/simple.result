@@ -1,0 +1,456 @@
+FLUSH TABLES;
+FLUSH TABLES WITH READ LOCK;
+Error 1105 (HY000): FLUSH TABLES WITH READ LOCK is not supported.  Please use @@tidb_snapshot
+USE test;
+USE ``;
+Error 1046 (3D000): No database selected
+use executor__simple;
+drop user if exists 'user_admin'@'localhost';
+drop user if exists test_create_user;
+create user 'user_admin'@'localhost';
+grant create user on *.* to 'user_admin'@'localhost';
+create user test_create_user;
+drop user test_create_user;
+revoke create user on *.* from 'user_admin'@'localhost';
+grant insert, delete on mysql.user to 'user_admin'@'localhost';
+create user test_create_user;
+drop user test_create_user;
+create role test_create_user;
+drop role test_create_user;
+drop user 'user_admin'@'localhost';
+drop role if exists r1, r2, r3;
+create role r2;
+create role r1, r2, r3;
+Error 1396 (HY000): Operation CREATE ROLE failed for 'r2'@'%'
+SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3');
+user
+r2
+drop role r1, r2, r3;
+Error 1396 (HY000): Operation DROP ROLE failed for r1@%
+SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3');
+user
+r2
+drop role r2;
+DROP USER IF EXISTS issue23649;
+CREATE USER issue23649;
+GRANT bogusrole to issue23649;
+Error 3523 (HY000): Unknown authorization ID `bogusrole`@`%`
+GRANT bogusrole to nonexisting;
+Error 3523 (HY000): Unknown authorization ID `bogusrole`@`%`
+drop user if exists issue28534;
+CREATE USER issue28534;
+SET PASSWORD FOR CURRENT_USER() = "43582eussi";
+SELECT authentication_string FROM mysql.User WHERE User="issue28534";
+authentication_string
+*ED69FD0F45ED6D6D31345869E17860014701E007
+DROP USER IF EXISTS issue28534;
+drop user if exists u29473;
+drop role if exists r29473;
+CREATE USER u29473;
+CREATE ROLE r29473;
+GRANT r29473 TO u29473;
+GRANT CREATE USER ON *.* TO u29473;
+SET ROLE r29473;
+DROP ROLE r29473;
+SHOW GRANTS;
+Grants for User
+GRANT CREATE USER ON *.* TO 'u29473'@'%'
+DROP USER IF EXISTS u29473;
+drop table if exists t1;
+drop user if exists u1;
+create table t1(id int, v int);
+CREATE USER u1 require ssl;
+GRANT CREATE ON executor__simple.* TO u1;
+GRANT UPDATE ON executor__simple.t1 TO u1;
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO u1;
+GRANT SELECT(v), UPDATE(v) on executor__simple.t1 TO u1;
+SELECT COUNT(1) FROM mysql.global_grants WHERE USER='u1' AND HOST='%';
+COUNT(1)
+1
+SELECT COUNT(1) FROM mysql.global_priv WHERE USER='u1' AND HOST='%';
+COUNT(1)
+1
+SELECT COUNT(1) FROM mysql.tables_priv WHERE USER='u1' AND HOST='%';
+COUNT(1)
+1
+SELECT COUNT(1) FROM mysql.columns_priv WHERE USER='u1' AND HOST='%';
+COUNT(1)
+1
+SHOW GRANTS FOR u1;
+Grants for u1@%
+GRANT USAGE ON *.* TO 'u1'@'%'
+GRANT CREATE ON `executor__simple`.* TO 'u1'@'%'
+GRANT UPDATE ON `executor__simple`.`t1` TO 'u1'@'%'
+GRANT SELECT(v), UPDATE(v) ON `executor__simple`.`t1` TO 'u1'@'%'
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%'
+DROP USER u1;
+SHOW GRANTS FOR u1;
+Error 1141 (42000): There is no such grant defined for user 'u1' on host '%'
+SELECT * FROM mysql.global_grants WHERE USER='u1' AND HOST='%';
+USER	HOST	PRIV	WITH_GRANT_OPTION
+SELECT * FROM mysql.global_priv WHERE USER='u1' AND HOST='%';
+Host	User	Priv
+SELECT * FROM mysql.tables_priv WHERE USER='u1' AND HOST='%';
+Host	DB	User	Table_name	Grantor	Timestamp	Table_priv	Column_priv
+SELECT * FROM mysql.columns_priv WHERE USER='u1' AND HOST='%';
+Host	DB	User	Table_name	Column_name	Timestamp	Column_priv
+DROP USER IF EXISTS u1;
+drop table t1;
+drop role if exists r1,r2,r3;
+create role r1, r2, r3;
+grant r1,r2,r3 to current_user();
+set role all;
+revoke r1, r3 from root;
+drop role r1;
+drop role if exists r1, r2, r3;
+drop table if exists ic, xx;
+create table ic (id int primary key);
+begin;
+insert into ic values (0);
+create table xx (id int);
+select * from ic where id = 0;
+id
+0
+delete from ic;
+rollback;
+begin;
+insert into ic values (1);
+create user 'xx'@'127.0.0.1';
+select * from ic where id = 1;
+id
+1
+delete from ic;
+rollback;
+begin;
+insert into ic values (2);
+grant SELECT on executor__simple.ic to 'xx'@'127.0.0.1';
+select * from ic where id = 2;
+id
+2
+delete from ic;
+rollback;
+begin;
+insert into ic values (3);
+flush privileges;
+select * from ic where id = 3;
+id
+3
+delete from ic;
+rollback;
+begin;
+insert into ic values (4);
+analyze table ic;
+select * from ic where id = 4;
+id
+4
+delete from ic;
+rollback;
+DO sum(1);
+DO avg(@e+@f);
+DO GROUP_CONCAT(NULLIF(ELT(1, @e), 2.0) ORDER BY 1);
+drop user if exists test_all;
+create user test_all;
+set default role all to test_all;
+drop user if exists 'testflush'@'localhost';
+CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';
+UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost";
+SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost";
+Error 1142 (42000): SELECT command denied to user 'testflush'@'localhost' for table 'user'
+FLUSH PRIVILEGES;
+SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost";
+authentication_string
+
+drop user if exists 'bob'@'localhost';
+drop user if exists 'bob2'@'localhost';
+CREATE USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_simple AS 'uid=bob,ou=People,dc=example,dc=com';
+SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob';
+Host	User	authentication_string	plugin
+localhost	bob	uid=bob,ou=People,dc=example,dc=com	authentication_ldap_simple
+CREATE USER 'bob2'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob2,ou=People,dc=example,dc=com';
+SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob2';
+Host	User	authentication_string	plugin
+localhost	bob2	uid=bob2,ou=People,dc=example,dc=com	authentication_ldap_sasl
+drop user if exists 'bob'@'localhost';
+CREATE USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_simple AS 'uid=bob,ou=People,dc=example,dc=com';
+SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob';
+Host	User	authentication_string	plugin
+localhost	bob	uid=bob,ou=People,dc=example,dc=com	authentication_ldap_simple
+ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com';
+SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob';
+Host	User	authentication_string	plugin
+localhost	bob	uid=bob,ou=Manager,dc=example,dc=com	authentication_ldap_sasl
+ALTER USER 'bob'@'localhost' PASSWORD HISTORY 5
+;
+ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=People,dc=example,dc=com';
+ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com';
+ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=People,dc=example,dc=com';
+ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com';
+drop user if exists u1, u2, u3, u4, u5;
+set global validate_password.enable = 1;
+create user u1 identified with 'tidb_auth_token';
+create user u2 identified with 'auth_socket';
+create user u3 identified with 'authentication_ldap_simple';
+create user u4 identified with 'authentication_ldap_sasl';
+create user u5 identified with 'mysql_native_password';
+Error 1819 (HY000): Your password does not satisfy the current policy requirements (Require Password Length: 8)
+create user u5 identified with 'caching_sha2_password';
+Error 1819 (HY000): Your password does not satisfy the current policy requirements (Require Password Length: 8)
+create user u5 identified with 'tidb_sm3_password';
+Error 1819 (HY000): Your password does not satisfy the current policy requirements (Require Password Length: 8)
+create user u5 identified with 'mysql_clear_password';
+Error 1524 (HY000): Plugin 'mysql_clear_password' is not loaded
+create user u5 identified with 'tidb_session_token';
+Error 1524 (HY000): Plugin 'tidb_session_token' is not loaded
+set global validate_password.enable = default;
+drop role if exists 'r1';
+create role 'r1' ;
+grant 'r1' to current_user();
+revoke 'r1' from current_user();
+grant 'r1' to current_user(),current_user();
+revoke 'r1' from current_user(),current_user();
+drop role 'r1' ;
+drop role if exists 'targetRole';
+drop user if exists 'testRoleAdmin';
+CREATE USER 'testRoleAdmin';
+CREATE ROLE 'targetRole';
+GRANT `targetRole` TO `testRoleAdmin`;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ROLE_ADMIN privilege(s) for this operation
+GRANT SUPER ON *.* TO `testRoleAdmin`;
+GRANT `targetRole` TO `testRoleAdmin`;
+REVOKE `targetRole` FROM `testRoleAdmin`;
+DROP USER 'testRoleAdmin';
+DROP ROLE 'targetRole';
+drop role if exists r_1, r_2, r_3, u_1;
+CREATE ROLE r_1, r_2, r_3, u_1;
+insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_1','%','u_1');
+insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_2','%','u_1');
+flush privileges;
+SET DEFAULT ROLE r_3 TO u_1;
+Error 3530 (HY000): `r_3`@`%` is not granted to u_1@%
+SET DEFAULT ROLE r_1 TO u_1000;
+Error 1396 (HY000): Operation SET DEFAULT ROLE failed for u_1000@%
+SET DEFAULT ROLE r_1, r_3 TO u_1;
+Error 3530 (HY000): `r_3`@`%` is not granted to u_1@%
+SET DEFAULT ROLE r_1 TO u_1;
+SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1";
+DEFAULT_ROLE_USER
+r_1
+SET DEFAULT ROLE r_2 TO u_1;
+SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1";
+DEFAULT_ROLE_USER
+r_2
+SET DEFAULT ROLE ALL TO u_1;
+SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1";
+DEFAULT_ROLE_USER
+r_1
+r_2
+SET DEFAULT ROLE NONE TO u_1;
+SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1";
+DEFAULT_ROLE_USER
+DROP USER r_1, r_2, r_3, u_1;
+drop user if exists 'issue17247';
+create user 'issue17247';
+grant CREATE USER on *.* to 'issue17247';
+ALTER USER USER() IDENTIFIED BY 'xxx';
+ALTER USER CURRENT_USER() IDENTIFIED BY 'yyy';
+ALTER USER CURRENT_USER IDENTIFIED BY 'zzz';
+ALTER USER 'issue17247'@'%' IDENTIFIED BY 'kkk';
+ALTER USER 'issue17247'@'%' IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';
+ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';" 
+drop table if exists t;
+do 1, @a:=1;
+select @a;
+@a
+1
+create table t (i int);
+insert into t values (1);
+select * from t;
+i
+1
+do @a := (select * from t where i = 1);
+insert into t values (2);
+select * from t;
+i
+1
+2
+drop user if exists set_role_all;
+create user set_role_all;
+set role all;
+select current_role;
+current_role
+NONE
+drop user if exists testCreateRole;
+drop role if exists test_create_role;
+create user testCreateRole;
+grant CREATE USER on *.* to testCreateRole;
+create role test_create_role;
+revoke CREATE USER on *.* from testCreateRole;
+grant CREATE ROLE on *.* to testCreateRole;
+drop role test_create_role;
+create role test_create_role;
+drop role test_create_role;
+create user test_create_role;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE User privilege(s) for this operation
+drop user testCreateRole;
+drop user if exists testCreateRole;
+drop role if exists test_create_role;
+create user testCreateRole;
+create user test_create_role;
+grant CREATE USER on *.* to testCreateRole;
+drop role test_create_role;
+revoke CREATE USER on *.* from testCreateRole;
+create role test_create_role;
+grant DROP ROLE on *.* to testCreateRole;
+drop role test_create_role;
+create user test_create_role;
+drop user test_create_role;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+drop user testCreateRole;
+SET GLOBAL tidb_enable_resource_control='on';
+drop RESOURCE GROUP if exists rg1;
+drop RESOURCE GROUP if exists rg2;
+drop user if exists user1;
+SET RESOURCE GROUP rg1;
+Error 8249 (HY000): Unknown resource group 'rg1'
+CREATE RESOURCE GROUP rg1 ru_per_sec = 100;
+create user user1;
+ALTER USER `user1` RESOURCE GROUP `rg1`;
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+default
+create role role_for_resource_group;
+alter user role_for_resource_group resource group rg1;
+Error 8257 (HY000): Cannot set resource group for a role
+drop role role_for_resource_group;
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+rg1
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+default
+CREATE RESOURCE GROUP rg2 ru_per_sec = 200;
+SET RESOURCE GROUP `rg2`;
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+rg2
+SET RESOURCE GROUP ``;
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+default
+SET RESOURCE GROUP default;
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+default
+SELECT /*+ RESOURCE_GROUP(rg1)*/ CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+rg1
+SELECT CURRENT_RESOURCE_GROUP();
+CURRENT_RESOURCE_GROUP()
+rg1
+drop user user1;
+SET GLOBAL tidb_enable_resource_control=default;
+drop user if exists testuser;
+drop user if exists testuser1;
+drop user if exists testuser2;
+CREATE USER testuser COMMENT '1234';
+CREATE USER testuser1 ATTRIBUTE '{"name": "Tom", "age": 19}';
+CREATE USER testuser2 ATTRIBUTE '{"name": "Tom", age: 19}';
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+CREATE USER testuser2;
+SELECT user_attributes FROM mysql.user WHERE user = 'testuser';
+user_attributes
+{"metadata": {"comment": "1234"}}
+SELECT user_attributes FROM mysql.user WHERE user = 'testuser1';
+user_attributes
+{"metadata": {"age": 19, "name": "Tom"}}
+SELECT user_attributes FROM mysql.user WHERE user = 'testuser2';
+user_attributes
+{}
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser';
+attribute
+{"comment": "1234"}
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 19, "name": "Tom"}
+SELECT attribute->>"$.age" AS age, attribute->>"$.name" AS name FROM information_schema.user_attributes WHERE user = 'testuser1';
+age	name
+19	Tom
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser2';
+attribute
+NULL
+ALTER USER testuser1 ATTRIBUTE '{"age": 20, "sex": "male"}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 20, "name": "Tom", "sex": "male"}
+ALTER USER testuser1 ATTRIBUTE '{"hobby": "soccer"}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 20, "hobby": "soccer", "name": "Tom", "sex": "male"}
+ALTER USER testuser1 ATTRIBUTE '{"sex": null, "hobby": null}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 20, "name": "Tom"}
+ALTER USER testuser1 COMMENT '5678';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 20, "comment": "5678", "name": "Tom"}
+ALTER USER testuser1 COMMENT '';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 20, "comment": "", "name": "Tom"}
+ALTER USER testuser1 ATTRIBUTE '{"comment": null}';
+SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1';
+attribute
+{"age": 20, "name": "Tom"}
+SELECT user, host, attribute FROM information_schema.user_attributes where user in ('testuser', 'testuser1', 'testuser2') ORDER BY user;
+user	host	attribute
+testuser	%	{"comment": "1234"}
+testuser1	%	{"age": 20, "name": "Tom"}
+testuser2	%	NULL
+SELECT user, host, user_attributes FROM mysql.user ORDER BY user;
+Error 1142 (42000): SELECT command denied to user 'testuser1'@'%' for table 'user'
+create user usr1@'%' identified by 'passord';
+alter user usr1 comment 'comment1';
+select user_attributes from mysql.user where user = 'usr1';
+user_attributes
+{"metadata": {"comment": "comment1"}}
+set global tidb_enable_resource_control = 'on';
+drop RESOURCE group if exists rg1;
+CREATE RESOURCE GROUP rg1 ru_per_sec = 100;
+alter user usr1 resource group rg1;
+select user_attributes from mysql.user where user = 'usr1';
+user_attributes
+{"metadata": {"comment": "comment1"}, "resource_group": "rg1"}
+set global tidb_enable_resource_control = default;
+## Some statements are like DDL, they commit the previous txn automically.
+## Fix issue https://github.com/pingcap/tidb/issues/10705
+begin;
+create user 'xxx'@'%';
+grant all privileges on *.* to 'xxx'@'%';
+create table auto_new (id int);
+begin;
+insert into auto_new values (1);
+revoke all privileges on *.* from 'xxx'@'%';
+## insert statement has already committed
+rollback;
+## Test the behavior when autocommit is false.
+select * from auto_new;
+id
+1
+set autocommit = 0;
+insert into auto_new values (2);
+create user 'yyy'@'%';
+rollback;
+select * from auto_new;
+id
+1
+2
+drop user 'yyy'@'%';
+insert into auto_new values (3);
+rollback;
+select * from auto_new;
+id
+1
+2
+set autocommit = default;

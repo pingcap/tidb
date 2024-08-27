@@ -16,9 +16,10 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/util/engine"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -35,6 +36,10 @@ var (
 	checkpointSupportError error = nil
 	// pitrSupportBatchKVFiles specifies whether TiKV-server supports batch PITR.
 	pitrSupportBatchKVFiles bool = false
+
+	// Once TableInfoVersion updated. BR need to check compatibility with
+	// new TableInfoVersion. both snapshot restore and pitr need to be checked.
+	CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION = model.TableInfoVersion5
 )
 
 // NextMajorVersion returns the next major version.
@@ -127,6 +132,9 @@ func CheckVersionForBackup(backupVersion *semver.Version) VerChecker {
 // CheckVersionForBRPiTR checks whether version of the cluster and BR-pitr itself is compatible.
 // Note: BR'version >= 6.1.0 at least in this function
 func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
+	if build.ReleaseVersion == build.ReleaseVersionForTest {
+		return nil
+	}
 	BRVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
 	if err != nil {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
@@ -170,8 +178,20 @@ func CheckVersionForDDL(s *metapb.Store, tikvVersion *semver.Version) error {
 	return nil
 }
 
+// CheckVersionForKeyspaceBR checks whether the cluster is support Backup/Restore keyspace data.
+func CheckVersionForKeyspaceBR(_ *metapb.Store, tikvVersion *semver.Version) error {
+	requireVersion := semver.New("6.6.0-alpha")
+	if tikvVersion.Compare(*requireVersion) < 0 {
+		return errors.Errorf("detected the old version of tidb cluster, require: >= 6.6.0, but got %s", tikvVersion.String())
+	}
+	return nil
+}
+
 // CheckVersionForBR checks whether version of the cluster and BR itself is compatible.
 func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
+	if build.ReleaseVersion == build.ReleaseVersionForTest {
+		return nil
+	}
 	BRVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
 	if err != nil {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
@@ -211,6 +231,15 @@ func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
 		// checkpoint mode only support after v6.5.0
 		checkpointSupportError = errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use checkpoint, please update tikv's version to at least v6.5.0",
 			s.Address, tikvVersion)
+	}
+
+	// 8.2 br(store based backup) does not support tikv <= 8.1
+	// due to the performance issue https://github.com/tikv/tikv/issues/17168
+	// TODO: we can remove this check if the performance issue is fixed and cherry-pick
+	if (BRVersion.Major > 8 || (BRVersion.Major == 8 && BRVersion.Minor >= 2)) &&
+		(tikvVersion.Major < 8 || (tikvVersion.Major == 8 && tikvVersion.Minor < 2)) {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch, please use the same version of BR",
+			s.Address, tikvVersion, build.ReleaseVersion)
 	}
 
 	// don't warn if we are the master build, which always have the version v4.0.0-beta.2-*
@@ -302,7 +331,7 @@ func NormalizeBackupVersion(version string) *semver.Version {
 // NOTE: the executed query will be:
 // - `select tidb_version()` if target db is tidb
 // - `select version()` if target db is not tidb
-func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
+func FetchVersion(ctx context.Context, db dbutil.QueryExecutor) (string, error) {
 	var versionInfo string
 	const queryTiDB = "SELECT tidb_version();"
 	tidbRow := db.QueryRowContext(ctx, queryTiDB)

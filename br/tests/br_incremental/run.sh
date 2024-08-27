@@ -19,23 +19,28 @@ DB="$TEST_NAME"
 TABLE="usertable"
 AUTO_ID_TABLE="a"
 ROW_COUNT=10
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 run_sql "CREATE DATABASE $DB;"
 
-go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
+go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
 row_count_ori_full=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 
 run_sql "CREATE TABLE IF NOT EXISTS ${DB}.${AUTO_ID_TABLE} (c1 INT);"
+run_sql "create table ${DB}.t (pk bigint primary key, val int not null);"
+run_sql "insert into ${DB}.t values (1, 11), (2, 22), (3, 33), (4, 44);"
 
-# full backup
 echo "full backup start..."
 run_br --pd $PD_ADDR backup db -s "local://$TEST_DIR/$DB/full" --db $DB
 
-go-ycsb run mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
+go-ycsb run mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB
 
 for i in $(seq $ROW_COUNT); do
     run_sql "INSERT INTO ${DB}.${AUTO_ID_TABLE}(c1) VALUES ($i);"
 done
+
+run_sql "create index index_val on ${DB}.t (val);"
+run_sql "update ${DB}.t set val = 66 - val;"
 
 # incremental backup
 echo "incremental backup start..."
@@ -56,7 +61,7 @@ if [ "${row_count_full}" != "${row_count_ori_full}" ];then
 fi
 # incremental restore
 echo "incremental restore start..."
-run_br restore db --db $DB -s "local://$TEST_DIR/$DB/inc" --pd $PD_ADDR
+run_br restore db --db $DB -s "local://$TEST_DIR/$DB/inc" --pd $PD_ADDR --allow-pitr-from-incremental=false
 row_count_inc=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 # check full restore
 if [ "${row_count_inc}" != "${row_count_ori_inc}" ];then
@@ -68,5 +73,16 @@ fi
 for i in $(seq $ROW_COUNT); do
     run_sql "INSERT INTO ${DB}.${AUTO_ID_TABLE}(c1) VALUES ($i);"
 done
+
+if run_sql "admin check table ${DB}.t;" | grep -q 'inconsistency'; then
+    echo "TEST: [$TEST_NAME] incremental restore fail on database $DB.t"
+    exit 1
+fi
+
+index_count=$(run_sql "select count(*) from $DB.t use index (index_val);" | awk '/count/{print $2}')
+if [ "${index_count}" != "4" ];then
+    echo "TEST: [$TEST_NAME] index check fail on database $DB.t"
+    exit 1
+fi
 
 run_sql "DROP DATABASE $DB;"

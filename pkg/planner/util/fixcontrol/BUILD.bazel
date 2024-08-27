@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "fixcontrol",
+    srcs = [
+        "get.go",
+        "set.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/util/fixcontrol",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_pingcap_errors//:errors"],
+)
+
+go_test(
+    name = "fixcontrol_test",
+    timeout = "short",
+    srcs = [
+        "fixcontrol_test.go",
+        "main_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    deps = [
+        ":fixcontrol",
+        "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//maps",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

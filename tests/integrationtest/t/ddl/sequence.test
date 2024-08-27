@@ -1,0 +1,370 @@
+# TestIssue28881
+drop sequence if exists s;
+create sequence s;
+create temporary table tmp1 (id int);
+select nextval(s);
+select lastval(s);
+drop sequence s;
+
+# TestDropSequence
+drop sequence if exists seq;
+-- error 4139
+drop sequence seq;
+create sequence seq;
+-- error 4139
+drop sequence seq, seq2;
+create table seq3 (a int);
+-- error 1347
+drop sequence seq3;
+-- error 4139
+drop sequence unknown.seq;
+create sequence seq;
+drop sequence seq;
+-- error 4139
+drop sequence seq;
+create sequence seq;
+-- error 1051
+drop table seq;
+-- error 1347
+drop view seq;
+drop sequence seq;
+
+# grant the myuser the access to database test.
+drop user if exists myuser@localhost;
+create user myuser@localhost;
+create sequence my_seq;
+grant select on ddl__sequence.* to 'myuser'@'localhost';
+connect (conn1, localhost, myuser,, ddl__sequence);
+-- error 1142
+drop sequence my_seq;
+disconnect conn1;
+drop sequence my_seq;
+
+drop sequence if exists seq_if_exists;
+show warnings;
+
+# TestShowCreateSequence
+drop table if exists t;
+drop sequence if exists seq;
+create table t(a int);
+create sequence seq;
+drop user if exists myuser@localhost;
+create user myuser@localhost;
+# Test show privilege.
+grant select on ddl__sequence.t to 'myuser'@'localhost';
+connect (conn1, localhost, myuser,, ddl__sequence);
+connection conn1;
+show create table t;
+-- error 1142
+show create sequence seq;
+connection default;
+grant select on ddl__sequence.seq to 'myuser'@'localhost';
+connection conn1;
+show create sequence seq;
+connection default;
+
+drop sequence if exists seq;
+create sequence seq;
+show create sequence seq;
+drop sequence if exists seq;
+create sequence seq start 10;
+show create sequence seq;
+drop sequence if exists seq;
+create sequence seq minvalue 0;
+show create sequence seq;
+drop sequence if exists seq;
+create sequence seq maxvalue 100;
+show create sequence seq;
+drop sequence if exists seq;
+create sequence seq increment = -2;
+show create sequence seq;
+drop sequence if exists seq;
+create sequence seq nocache;
+show create sequence seq;
+drop sequence if exists seq;
+create sequence seq cycle;
+show create sequence seq;
+drop sequence if exists seq;
+create sequence seq comment="ccc";
+show create sequence seq;
+drop sequence if exists seq;
+create table seq (a int);
+-- error 1347
+show create sequence seq;
+drop table if exists seq;
+drop sequence if exists seq;
+create sequence seq;
+show create sequence seq;
+drop sequence if exists seq;
+CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB;
+
+# TestSequenceAsDefaultValue
+drop sequence if exists seq;
+create sequence seq;
+drop table if exists t;
+create table t(a int not null default next value for seq key);
+drop table if exists t;
+create table t(a int not null default nextval(seq), b int, primary key(a));
+create table t1 (a int default next value for seq);
+-- error 8228
+create table t2 (a char(1) default next value for seq);
+create table t3 (a int default nextval(seq));
+create table t4 (a int);
+alter table t4 alter column a set default (next value for seq);
+alter table t4 alter column a set default (nextval(seq));
+create table t5 (a char(1));
+-- error 8228
+alter table t5 alter column a set default (next value for seq);
+-- error 8228
+alter table t5 alter column a set default (nextval(seq));
+-- error 8230
+alter table t5 add column c int default next value for seq;
+alter table t5 add column c int default -1;
+alter table t5 modify column c int default next value for seq;
+alter table t5 alter column c set default (next value for seq);
+alter table t5 change column c c int default next value for seq;
+
+# TestInsertSequence
+drop sequence if exists seq;
+drop table if exists t;
+create sequence seq;
+create table t (a int default next value for seq);
+insert into t values();
+select * from t;
+insert into t values(),(),();
+select * from t;
+delete from t;
+insert into t values(-1),(default),(-1);
+select * from t;
+drop table if exists t;
+create table t (a int);
+insert into t values(next value for seq);
+select * from t;
+insert into t values(next value for seq),(nextval(seq));
+select * from t;
+delete from t;
+insert into t values(next value for seq + 1),(nextval(seq) * 2);
+select * from t;
+delete from t;
+insert into t values((next value for seq - 1) / 2);
+select * from t;
+delete from t;
+insert into t values(-1),(next value for seq),(-1),(nextval(seq));
+select * from t;
+delete from t;
+insert into t values(lastval(seq)),(-1),(nextval(seq));
+select * from t;
+delete from t;
+select setval(seq, 100);
+insert into t values(lastval(seq)),(-1),(nextval(seq));
+select * from t;
+drop sequence if exists seq;
+create sequence seq;
+drop table if exists t;
+create table t (id int default next value for seq, col1 int generated always as (id + 1));
+insert into t values();
+select * from t;
+insert into t values(),();
+select * from t;
+delete from t;
+insert into t (id) values(-1),(default);
+select * from t;
+select setval(seq,9223372036854775807);
+-- error 4135
+select nextval(seq);
+
+# TestUnflodSequence
+drop sequence if exists seq;
+drop table if exists t1,t2,t3;
+create sequence seq;
+create table t1 (a int);
+create table t2 (a int, b int);
+create table t3 (a int, b int, c int);
+insert into t1 values(-1),(-1),(-1);
+select nextval(seq), a from t1;
+insert into t2 select nextval(seq), a from t1;
+select * from t2;
+delete from t2;
+select lastval(seq), nextval(seq), a from t1;
+insert into t3 select lastval(seq), nextval(seq), a from t1;
+select * from t3;
+delete from t3;
+select nextval(seq), setval(seq,100), a from t1;
+insert into t3 select nextval(seq), setval(seq,200), a from t1;
+select * from t3;
+delete from t3;
+select nextval(seq), lastval(seq), a from t1;
+insert into t3 select nextval(seq), lastval(seq), a from t1;
+select * from t3;
+delete from t3;
+select nextval(seq), nextval(seq), a from t1;
+insert into t3 select nextval(seq), nextval(seq), a from t1;
+select * from t3;
+delete from t3;
+select nextval(seq)+lastval(seq), a from t1;
+insert into t2 select nextval(seq)+lastval(seq), a from t1;
+select * from t2;
+delete from t2;
+select nextval(seq), b from (select nextval(seq) as b, a from t1) t2;
+insert into t2 select nextval(seq), b from (select nextval(seq) as b, a from t1) t2;
+select * from t2;
+delete from t2;
+# For union operator like select1 union select2, select1 and select2 will be executed parallelly,
+# so sequence function in both select are evaluated without order. Besides, the upper union operator
+# will gather results through multi worker goroutine parallelly leading the results unordered.
+# Cases like:
+# `select nextval(seq), a from t1 union select lastval(seq), a from t2`
+# `select nextval(seq), a from t1 union select nextval(seq), a from t2`
+# The executing order of nextval and lastval is implicit, don't make any assumptions on it.
+
+# TestSequenceFunctionPrivilege
+drop sequence if exists seq;
+create sequence seq;
+drop table if exists t;
+create table t(a int default next value for seq);
+# Test sequence function privilege.
+drop user if exists myuser@localhost;
+create user myuser@localhost;
+grant insert on ddl__sequence.t to 'myuser'@'localhost';
+connect (conn1, localhost, myuser,, ddl__sequence);
+connection conn1;
+-- error 1142
+select nextval(seq);
+-- error 1142
+insert into t values();
+-- error 1142
+select lastval(seq);
+-- error 1142
+select setval(seq, 10);
+connection default;
+grant SELECT, INSERT on ddl__sequence.seq to 'myuser'@'localhost';
+connection conn1;
+select nextval(seq);
+select lastval(seq);
+select setval(seq, 10);
+insert into t values();
+disconnect conn1;
+drop table t;
+drop sequence seq;
+drop user myuser@localhost;
+
+# Background: the newly added column in TiDB won't fill the known rows with specific
+# sequence next value immediately. Every time TiDB select the data from storage, kvDB
+# will fill the originDefaultValue to these incomplete rows (but not store).
+#
+# In sequence case, every time filling these rows, kvDB should eval the sequence
+# expr for len(incomplete rows) times, and combine these row data together. That
+# means the select result is not always the same.
+#
+# However, the altered column with sequence as it's default value can work well.
+# Because this column has already been added before the alter action, which also
+# means originDefaultValue should be something but nil, so the back filling in kvDB
+# can work well.
+#
+# The new altered sequence default value for this column only take effect on the
+# subsequent inserted rows.
+#
+# So under current situation, TiDB will
+# [0]: forbid the new added column has sequence as it's default value.
+# [1]: allow the altered column with sequence as default value.
+# TestSequenceDefaultLogic
+drop sequence if exists seq;
+drop table if exists t;
+create sequence seq;
+create table t(a int);
+insert into t values(-1),(-1),(-1);
+alter table t add column b int default -1;
+select * from t;
+alter table t modify column b int default next value for seq;
+select * from t;
+insert into t(a) values(-1),(-1);
+select * from t;
+drop sequence seq;
+drop table t;
+create sequence seq;
+create table t(a int);
+insert into t values(-1),(-1),(-1);
+-- error 8230
+alter table t add column b int default next value for seq;
+select * from t;
+
+# Close issue #17945, sequence cache shouldn't be negative.
+# TestSequenceCacheShouldNotBeNegative
+drop sequence if exists seq;
+-- error 4136
+create sequence seq cache -1;
+-- error 4136
+create sequence seq cache 0;
+# This will error because
+# 1: maxvalue = -1 by default
+# 2: minvalue = -9223372036854775807 by default
+# 3: increment = -9223372036854775807 by user
+# `seqInfo.CacheValue < (math.MaxInt64-absIncrement)/absIncrement` will
+# ensure there is enough value for one cache allocation at least.
+-- error 4136
+create sequence seq INCREMENT -9223372036854775807 cache 1;
+create sequence seq cache 1;
+
+# TestAlterSequence
+drop sequence if exists seq;
+create sequence seq;
+alter sequence seq increment by 2 start with 2;
+show create sequence seq;
+drop sequence if exists seq;
+create sequence seq;
+select nextval(seq);
+select nextval(seq);
+select nextval(seq);
+alter sequence seq increment by 2;
+show create sequence seq;
+select nextval(seq);
+select nextval(seq);
+select nextval(seq);
+alter sequence seq restart with 9;
+select nextval(seq);
+select nextval(seq);
+select nextval(seq);
+alter sequence seq restart with 10;
+select nextval(seq);
+select nextval(seq);
+select nextval(seq);
+alter sequence seq restart;
+select nextval(seq);
+select nextval(seq);
+select nextval(seq);
+drop sequence if exists seq;
+create sequence seq increment by 3;
+select nextval(seq);
+select nextval(seq);
+select nextval(seq);
+alter sequence seq increment by 4;
+select nextval(seq);
+select nextval(seq);
+select nextval(seq);
+drop sequence if exists seq;
+
+# TestAlterSequencePrivilege
+drop sequence if exists my_seq;
+create sequence my_seq;
+drop user if exists myuser@localhost;
+create user myuser@localhost;
+grant select on ddl__sequence.* to 'myuser'@'localhost';
+connect (conn1, localhost, myuser,, ddl__sequence);
+-- error 1142
+alter sequence my_seq increment = 2;
+connection default;
+disconnect conn1;
+drop sequence if exists my_seq;
+
+# TestDdl_AlterSequenceIssue31265
+drop sequence if exists seq, cache_to_nocache_seq, nocache_to_cache_seq;
+create sequence seq cache=1 nocache;
+show create sequence seq;
+create sequence cache_to_nocache_seq;
+alter sequence cache_to_nocache_seq nocache;
+show create sequence cache_to_nocache_seq;
+create sequence nocache_to_cache_seq nocache;
+alter sequence nocache_to_cache_seq cache 10;
+show create sequence nocache_to_cache_seq;
+drop sequence if exists seq, cache_to_nocache_seq, nocache_to_cache_seq;
+

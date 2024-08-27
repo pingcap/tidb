@@ -1,0 +1,51 @@
+# TestAddMultiColumnsIndexClusterIndex
+set tidb_enable_clustered_index = ON;
+drop table if exists t;
+create table t (a int, b varchar(10), c int, primary key (a, b));
+insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);
+create index idx on t (a, c);
+admin check index t idx;
+admin check table t;
+insert into t values (5, '5', 5), (6, '6', NULL);
+admin check index t idx;
+admin check table t;
+set tidb_enable_clustered_index = default;
+
+# TestAddIndexWithDupCols
+drop table if exists test_add_index_with_dup;
+create table test_add_index_with_dup (a int, b int);
+-- error 1060
+create index c on test_add_index_with_dup(b, a, b);
+-- error 1060
+create index c on test_add_index_with_dup(b, a, B);
+-- error 1060
+alter table test_add_index_with_dup add index c (b, a, b);
+-- error 1060
+alter table test_add_index_with_dup add index c (b, a, B);
+drop table test_add_index_with_dup;
+
+# TestAddIndexRestoreData
+set global tidb_ddl_enable_fast_reorg=true;
+drop table if exists test_add_index_restore_data;
+create table test_add_index_restore_data (a char(100) NOT NULL primary key, b int) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+insert test_add_index_restore_data value('abc', 0);
+alter table test_add_index_restore_data add index idx(b);
+select a from test_add_index_restore_data use index(idx);
+admin check table test_add_index_restore_data;
+
+drop table if exists test_add_index_restore_data;
+create table test_add_index_restore_data (a char(100), b int NOT NULL primary key) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+insert test_add_index_restore_data value('abc', 0);
+alter table test_add_index_restore_data add index idx(b);
+select a from test_add_index_restore_data use index(idx);
+admin check table test_add_index_restore_data;
+
+drop table if exists test_add_index_restore_data;
+create table test_add_index_restore_data (a char(100) NOT NULL, b date NOT NULL DEFAULT '2005-02-12', c int, primary key(a, b)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+insert test_add_index_restore_data value('abc', '1972-11-10', 0);
+alter table test_add_index_restore_data add index idx(c);
+select a from test_add_index_restore_data use index(idx);
+admin check table test_add_index_restore_data;
+
+drop table if exists test_add_index_restore_data;
+set global tidb_ddl_enable_fast_reorg=default;

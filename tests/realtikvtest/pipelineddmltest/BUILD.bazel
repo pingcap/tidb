@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "pipelineddmltest_test",
+    timeout = "moderate",
+    srcs = [
+        "main_test.go",
+        "pipelineddml_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//pkg/config",
+        "//pkg/kv",
+        "//pkg/sessionctx/binloginfo",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//tests/realtikvtest",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

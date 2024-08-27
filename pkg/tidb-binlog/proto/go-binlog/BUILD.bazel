@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "go-binlog",
+    srcs = ["secondary_binlog.pb.go"],
+    importpath = "github.com/pingcap/tidb/pkg/tidb-binlog/proto/go-binlog",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_golang_protobuf//proto"],
+)

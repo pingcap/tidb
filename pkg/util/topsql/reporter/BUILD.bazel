@@ -1,0 +1,63 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "reporter",
+    srcs = [
+        "datamodel.go",
+        "datasink.go",
+        "pubsub.go",
+        "reporter.go",
+        "single_target.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/topsql/reporter",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/util",
+        "//pkg/util/hack",
+        "//pkg/util/logutil",
+        "//pkg/util/topsql/collector",
+        "//pkg/util/topsql/reporter/metrics",
+        "//pkg/util/topsql/state",
+        "//pkg/util/topsql/stmtstats",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_wangjohn_quickselect//:quickselect",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//backoff",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "reporter_test",
+    timeout = "short",
+    srcs = [
+        "datamodel_test.go",
+        "datasink_test.go",
+        "main_test.go",
+        "pubsub_test.go",
+        "reporter_test.go",
+        "single_target_test.go",
+    ],
+    embed = [":reporter"],
+    flaky = True,
+    shard_count = 36,
+    deps = [
+        "//pkg/config",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/topsql/collector",
+        "//pkg/util/topsql/reporter/mock",
+        "//pkg/util/topsql/state",
+        "//pkg/util/topsql/stmtstats",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//metadata",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

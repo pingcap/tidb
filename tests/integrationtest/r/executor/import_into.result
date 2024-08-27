@@ -1,0 +1,172 @@
+drop table if exists t;
+create table t (id int);
+BEGIN;
+IMPORT INTO t FROM '/file.csv';
+Error 1105 (HY000): cannot run IMPORT INTO in explicit transaction
+commit;
+drop table if exists t;
+create table t (id int);
+import into t from '/file.csv' with xx=1;
+Error 8163 (HY000): Unknown option xx
+import into t from '/file.csv' with detached=1;
+Error 8164 (HY000): Invalid option value for detached
+import into t from '/file.csv' with character_set;
+Error 8164 (HY000): Invalid option value for character_set
+import into t from '/file.csv' with detached, detached;
+Error 8165 (HY000): Option detached specified more than once
+import into t from '/file.csv' with character_set=true;
+Error 8164 (HY000): Invalid option value for character_set
+import into t from '/file.csv' with character_set=null;
+Error 8164 (HY000): Invalid option value for character_set
+import into t from '/file.csv' with character_set=1;
+Error 8164 (HY000): Invalid option value for character_set
+import into t from '/file.csv' with character_set=true;
+Error 8164 (HY000): Invalid option value for character_set
+import into t from '/file.csv' with character_set='';
+Error 8164 (HY000): Invalid option value for character_set
+import into t from '/file.csv' with character_set='aa';
+Error 8164 (HY000): Invalid option value for character_set
+import into t from '/file.csv' with fields_terminated_by=null;
+Error 8164 (HY000): Invalid option value for fields_terminated_by
+import into t from '/file.csv' with fields_terminated_by=1;
+Error 8164 (HY000): Invalid option value for fields_terminated_by
+import into t from '/file.csv' with fields_terminated_by=true;
+Error 8164 (HY000): Invalid option value for fields_terminated_by
+import into t from '/file.csv' with fields_terminated_by='';
+Error 8164 (HY000): Invalid option value for fields_terminated_by
+import into t from '/file.csv' with fields_enclosed_by=null;
+Error 8164 (HY000): Invalid option value for fields_enclosed_by
+import into t from '/file.csv' with fields_enclosed_by='aa';
+Error 8164 (HY000): Invalid option value for fields_enclosed_by
+import into t from '/file.csv' with fields_enclosed_by=1;
+Error 8164 (HY000): Invalid option value for fields_enclosed_by
+import into t from '/file.csv' with fields_enclosed_by=true;
+Error 8164 (HY000): Invalid option value for fields_enclosed_by
+import into t from '/file.csv' with fields_escaped_by=null;
+Error 8164 (HY000): Invalid option value for fields_escaped_by
+import into t from '/file.csv' with fields_escaped_by='aa';
+Error 8164 (HY000): Invalid option value for fields_escaped_by
+import into t from '/file.csv' with fields_escaped_by=1;
+Error 8164 (HY000): Invalid option value for fields_escaped_by
+import into t from '/file.csv' with fields_escaped_by=true;
+Error 8164 (HY000): Invalid option value for fields_escaped_by
+import into t from '/file.csv' with fields_defined_null_by=null;
+Error 8164 (HY000): Invalid option value for fields_defined_null_by
+import into t from '/file.csv' with fields_defined_null_by=1;
+Error 8164 (HY000): Invalid option value for fields_defined_null_by
+import into t from '/file.csv' with fields_defined_null_by=true;
+Error 8164 (HY000): Invalid option value for fields_defined_null_by
+import into t from '/file.csv' with lines_terminated_by=null;
+Error 8164 (HY000): Invalid option value for lines_terminated_by
+import into t from '/file.csv' with lines_terminated_by=1;
+Error 8164 (HY000): Invalid option value for lines_terminated_by
+import into t from '/file.csv' with lines_terminated_by=true;
+Error 8164 (HY000): Invalid option value for lines_terminated_by
+import into t from '/file.csv' with lines_terminated_by='';
+Error 8164 (HY000): Invalid option value for lines_terminated_by
+import into t from '/file.csv' with skip_rows=null;
+Error 8164 (HY000): Invalid option value for skip_rows
+import into t from '/file.csv' with skip_rows='';
+Error 8164 (HY000): Invalid option value for skip_rows
+import into t from '/file.csv' with skip_rows=-1;
+Error 8164 (HY000): Invalid option value for skip_rows
+import into t from '/file.csv' with skip_rows=true;
+Error 8164 (HY000): Invalid option value for skip_rows
+import into t from '/file.csv' with split_file='aa';
+Error 8164 (HY000): Invalid option value for split_file
+import into t from '/file.csv' with split_file;
+Error 8164 (HY000): Invalid option value for lines_terminated_by, should not be empty when use split_file
+import into t from '/file.csv' with split_file, skip_rows=2;
+Error 8164 (HY000): Invalid option value for skip_rows, should be <= 1 when split-file is enabled
+import into t from '/file.csv' with disk_quota='aa';
+Error 8164 (HY000): Invalid option value for disk_quota
+import into t from '/file.csv' with disk_quota='220MiBxxx';
+Error 8164 (HY000): Invalid option value for disk_quota
+import into t from '/file.csv' with disk_quota=1;
+Error 8164 (HY000): Invalid option value for disk_quota
+import into t from '/file.csv' with disk_quota=false;
+Error 8164 (HY000): Invalid option value for disk_quota
+import into t from '/file.csv' with disk_quota=null;
+Error 8164 (HY000): Invalid option value for disk_quota
+import into t from '/file.csv' with thread='aa';
+Error 8164 (HY000): Invalid option value for thread
+import into t from '/file.csv' with thread=0;
+Error 8164 (HY000): Invalid option value for thread
+import into t from '/file.csv' with thread=false;
+Error 8164 (HY000): Invalid option value for thread
+import into t from '/file.csv' with thread=-100;
+Error 8164 (HY000): Invalid option value for thread
+import into t from '/file.csv' with thread=null;
+Error 8164 (HY000): Invalid option value for thread
+import into t from '/file.csv' with max_write_speed='aa';
+Error 8164 (HY000): Invalid option value for max_write_speed
+import into t from '/file.csv' with max_write_speed='11aa';
+Error 8164 (HY000): Invalid option value for max_write_speed
+import into t from '/file.csv' with max_write_speed=null;
+Error 8164 (HY000): Invalid option value for max_write_speed
+import into t from '/file.csv' with max_write_speed=-1;
+Error 8164 (HY000): Invalid option value for max_write_speed
+import into t from '/file.csv' with max_write_speed=false;
+Error 8164 (HY000): Invalid option value for max_write_speed
+import into t from '/file.csv' with checksum_table='';
+Error 8164 (HY000): Invalid option value for checksum_table
+import into t from '/file.csv' with checksum_table=123;
+Error 8164 (HY000): Invalid option value for checksum_table
+import into t from '/file.csv' with checksum_table=false;
+Error 8164 (HY000): Invalid option value for checksum_table
+import into t from '/file.csv' with checksum_table=null;
+Error 8164 (HY000): Invalid option value for checksum_table
+import into t from '/file.csv' with record_errors='aa';
+Error 8164 (HY000): Invalid option value for record_errors
+import into t from '/file.csv' with record_errors='111aa';
+Error 8164 (HY000): Invalid option value for record_errors
+import into t from '/file.csv' with record_errors=-123;
+Error 8164 (HY000): Invalid option value for record_errors
+import into t from '/file.csv' with record_errors=null;
+Error 8164 (HY000): Invalid option value for record_errors
+import into t from '/file.csv' with record_errors=true;
+Error 8164 (HY000): Invalid option value for record_errors
+import into t from '/file.csv' with cloud_storage_uri=123;
+Error 8164 (HY000): Invalid option value for cloud_storage_uri
+import into t from '/file.csv' with cloud_storage_uri=':';
+Error 8164 (HY000): Invalid option value for cloud_storage_uri
+import into t from '/file.csv' with cloud_storage_uri='sdsd';
+Error 8164 (HY000): Invalid option value for cloud_storage_uri
+import into t from '/file.csv' with cloud_storage_uri='http://sdsd';
+Error 8164 (HY000): Invalid option value for cloud_storage_uri
+import into t from '/file.csv' format 'parquet' with character_set='utf8';
+Error 8166 (HY000): Unsupported option character_set for non-CSV format
+import into t from '/file.csv' format 'sql' with character_set='utf8';
+Error 8166 (HY000): Unsupported option character_set for non-CSV format
+import into t from '/file.csv' format 'parquet' with fields_terminated_by='a';
+Error 8166 (HY000): Unsupported option fields_terminated_by for non-CSV format
+import into t from '/file.csv' format 'sql' with fields_terminated_by='a';
+Error 8166 (HY000): Unsupported option fields_terminated_by for non-CSV format
+import into t from '/file.csv' format 'parquet' with fields_enclosed_by='a';
+Error 8166 (HY000): Unsupported option fields_enclosed_by for non-CSV format
+import into t from '/file.csv' format 'sql' with fields_enclosed_by='a';
+Error 8166 (HY000): Unsupported option fields_enclosed_by for non-CSV format
+import into t from '/file.csv' format 'parquet' with fields_escaped_by='a';
+Error 8166 (HY000): Unsupported option fields_escaped_by for non-CSV format
+import into t from '/file.csv' format 'sql' with fields_escaped_by='a';
+Error 8166 (HY000): Unsupported option fields_escaped_by for non-CSV format
+import into t from '/file.csv' format 'parquet' with fields_defined_null_by='a';
+Error 8166 (HY000): Unsupported option fields_defined_null_by for non-CSV format
+import into t from '/file.csv' format 'sql' with fields_defined_null_by='a';
+Error 8166 (HY000): Unsupported option fields_defined_null_by for non-CSV format
+import into t from '/file.csv' format 'parquet' with lines_terminated_by='a';
+Error 8166 (HY000): Unsupported option lines_terminated_by for non-CSV format
+import into t from '/file.csv' format 'sql' with lines_terminated_by='a';
+Error 8166 (HY000): Unsupported option lines_terminated_by for non-CSV format
+import into t from '/file.csv' format 'parquet' with skip_rows=1;
+Error 8166 (HY000): Unsupported option skip_rows for non-CSV format
+import into t from '/file.csv' format 'sql' with skip_rows=1;
+Error 8166 (HY000): Unsupported option skip_rows for non-CSV format
+import into t from '/file.csv' format 'parquet' with split_file;
+Error 8166 (HY000): Unsupported option split_file for non-CSV format
+import into t from '/file.csv' format 'sql' with split_file;
+Error 8166 (HY000): Unsupported option split_file for non-CSV format
+import into t from '';
+Error 8156 (HY000): The value of INFILE must not be empty when LOAD DATA from LOCAL
+import into t from '/a.csv' format 'xx';
+Error 8157 (HY000): The FORMAT 'xx' is not supported

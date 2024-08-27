@@ -5,7 +5,6 @@ package backup
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -19,9 +18,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -38,21 +40,26 @@ type schemaInfo struct {
 	crc64xor   uint64
 	totalKvs   uint64
 	totalBytes uint64
-	stats      *handle.JSONTable
+	stats      *util.JSONTable
+	statsIndex []*backuppb.StatsFileIndex
 }
+
+type iterFuncTp func(kv.Storage, func(*model.DBInfo, *model.TableInfo)) error
 
 // Schemas is task for backuping schemas.
 type Schemas struct {
-	// name -> schema
-	schemas map[string]*schemaInfo
+	iterFunc iterFuncTp
+
+	size int
 
 	// checkpoint: table id -> checksum
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 }
 
-func NewBackupSchemas() *Schemas {
+func NewBackupSchemas(iterFunc iterFuncTp, size int) *Schemas {
 	return &Schemas{
-		schemas:            make(map[string]*schemaInfo),
+		iterFunc:           iterFunc,
+		size:               size,
 		checkpointChecksum: nil,
 	}
 }
@@ -61,28 +68,11 @@ func (ss *Schemas) SetCheckpointChecksum(checkpointChecksum map[int64]*checkpoin
 	ss.checkpointChecksum = checkpointChecksum
 }
 
-func (ss *Schemas) AddSchema(
-	dbInfo *model.DBInfo, tableInfo *model.TableInfo,
-) {
-	if tableInfo == nil {
-		ss.schemas[utils.EncloseName(dbInfo.Name.L)] = &schemaInfo{
-			dbInfo: dbInfo,
-		}
-		return
-	}
-	name := fmt.Sprintf("%s.%s",
-		utils.EncloseName(dbInfo.Name.L), utils.EncloseName(tableInfo.Name.L))
-	ss.schemas[name] = &schemaInfo{
-		tableInfo: tableInfo,
-		dbInfo:    dbInfo,
-	}
-}
-
 // BackupSchemas backups table info, including checksum and stats.
 func (ss *Schemas) BackupSchemas(
 	ctx context.Context,
 	metaWriter *metautil.MetaWriter,
-	checkpointRunner *checkpoint.CheckpointRunner,
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.BackupKeyType, checkpoint.BackupValueType],
 	store kv.Storage,
 	statsHandle *handle.Handle,
 	backupTS uint64,
@@ -97,27 +87,32 @@ func (ss *Schemas) BackupSchemas(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	workerPool := utils.NewWorkerPool(concurrency, "Schemas")
+	workerPool := tidbutil.NewWorkerPool(concurrency, "Schemas")
 	errg, ectx := errgroup.WithContext(ctx)
 	startAll := time.Now()
 	op := metautil.AppendSchema
 	metaWriter.StartWriteMetasAsync(ctx, op)
-	for _, s := range ss.schemas {
-		schema := s
-		// Because schema.dbInfo is a pointer that many tables point to.
-		// Remove "add Temporary-prefix into dbName" from closure to prevent concurrent operations.
+	err := ss.iterFunc(store, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
+		// because the field of `dbInfo` would be modified, which affects the later iteration.
+		// so copy the `dbInfo` for each to `newDBInfo`
+		newDBInfo := *dbInfo
+		schema := &schemaInfo{
+			tableInfo: tableInfo,
+			dbInfo:    &newDBInfo,
+		}
+
 		if utils.IsSysDB(schema.dbInfo.Name.L) {
 			schema.dbInfo.Name = utils.TemporaryDBName(schema.dbInfo.Name.O)
 		}
 
 		var checksum *checkpoint.ChecksumItem
 		var exists bool = false
-		if ss.checkpointChecksum != nil {
+		if ss.checkpointChecksum != nil && schema.tableInfo != nil {
 			checksum, exists = ss.checkpointChecksum[schema.tableInfo.ID]
 		}
 		workerPool.ApplyOnErrorGroup(errg, func() error {
 			if schema.tableInfo != nil {
-				logger := log.With(
+				logger := log.L().With(
 					zap.String("db", schema.dbInfo.Name.O),
 					zap.String("table", schema.tableInfo.Name.O),
 				)
@@ -139,27 +134,25 @@ func (ss *Schemas) BackupSchemas(
 							return errors.Trace(err)
 						}
 						calculateCost := time.Since(start)
-						var flushCost time.Duration
 						if checkpointRunner != nil {
 							// if checkpoint runner is running and the checksum is not from checkpoint
 							// then flush the checksum by the checkpoint runner
-							startFlush := time.Now()
-							if err = checkpointRunner.FlushChecksum(ctx, schema.tableInfo.ID, schema.crc64xor, schema.totalKvs, schema.totalBytes, calculateCost.Seconds()); err != nil {
+							if err = checkpointRunner.FlushChecksum(ctx, schema.tableInfo.ID, schema.crc64xor, schema.totalKvs, schema.totalBytes); err != nil {
 								return errors.Trace(err)
 							}
-							flushCost = time.Since(startFlush)
 						}
 						logger.Info("Calculate table checksum completed",
 							zap.Uint64("Crc64Xor", schema.crc64xor),
 							zap.Uint64("TotalKvs", schema.totalKvs),
 							zap.Uint64("TotalBytes", schema.totalBytes),
-							zap.Duration("calculate-take", calculateCost),
-							zap.Duration("flush-take", flushCost))
+							zap.Duration("calculate-take", calculateCost))
 					}
 				}
 				if statsHandle != nil {
-					if err := schema.dumpStatsToJSON(statsHandle); err != nil {
+					statsWriter := metaWriter.NewStatsWriter()
+					if err := schema.dumpStatsToJSON(ctx, statsWriter, statsHandle, backupTS); err != nil {
 						logger.Error("dump table stats failed", logutil.ShortError(err))
+						return errors.Trace(err)
 					}
 				}
 			}
@@ -176,6 +169,9 @@ func (ss *Schemas) BackupSchemas(
 			}
 			return nil
 		})
+	})
+	if err != nil {
+		return errors.Trace(err)
 	}
 	if err := errg.Wait(); err != nil {
 		return errors.Trace(err)
@@ -187,7 +183,7 @@ func (ss *Schemas) BackupSchemas(
 
 // Len returns the number of schemas.
 func (ss *Schemas) Len() int {
-	return len(ss.schemas)
+	return ss.size
 }
 
 func (s *schemaInfo) calculateChecksum(
@@ -197,6 +193,7 @@ func (s *schemaInfo) calculateChecksum(
 	concurrency uint,
 ) error {
 	exe, err := checksum.NewExecutorBuilder(s.tableInfo, backupTS).
+		SetExplicitRequestSourceType(kvutil.ExplicitTypeBR).
 		SetConcurrency(concurrency).
 		Build()
 	if err != nil {
@@ -216,14 +213,19 @@ func (s *schemaInfo) calculateChecksum(
 	return nil
 }
 
-func (s *schemaInfo) dumpStatsToJSON(statsHandle *handle.Handle) error {
-	jsonTable, err := statsHandle.DumpStatsToJSON(
-		s.dbInfo.Name.String(), s.tableInfo, nil, true)
-	if err != nil {
+func (s *schemaInfo) dumpStatsToJSON(ctx context.Context, statsWriter *metautil.StatsWriter, statsHandle *handle.Handle, backupTS uint64) error {
+	log.Info("dump stats to json", zap.Stringer("db", s.dbInfo.Name), zap.Stringer("table", s.tableInfo.Name))
+	if err := statsHandle.PersistStatsBySnapshot(
+		ctx, s.dbInfo.Name.String(), s.tableInfo, backupTS, statsWriter.BackupStats,
+	); err != nil {
 		return errors.Trace(err)
 	}
 
-	s.stats = jsonTable
+	statsFileIndexes, err := statsWriter.BackupStatsDone(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.statsIndex = statsFileIndexes
 	return nil
 }
 
@@ -255,5 +257,6 @@ func (s *schemaInfo) encodeToSchema() (*backuppb.Schema, error) {
 		TotalKvs:   s.totalKvs,
 		TotalBytes: s.totalBytes,
 		Stats:      statsBytes,
+		StatsIndex: s.statsIndex,
 	}, nil
 }

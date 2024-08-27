@@ -23,5 +23,6 @@ import (
 var Analyzer = durationcheck.Analyzer
 
 func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }

@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "context",
+    srcs = ["lockcontext.go"],
+    importpath = "github.com/pingcap/tidb/pkg/lock/context",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/parser/model"],
+)

@@ -9,7 +9,7 @@ go_test(
     ],
     flaky = True,
     deps = [
-        "//testkit/testsetup",
+        "//pkg/testkit/testsetup",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",

@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/tikv/client-go/v2/oracle"
@@ -24,6 +23,8 @@ const (
 	checkGCSafePointGapTime         = 5 * time.Second
 	// DefaultBRGCSafePointTTL means PD keep safePoint limit at least 5min.
 	DefaultBRGCSafePointTTL = 5 * 60
+	// DefaultCheckpointGCSafePointTTL means PD keep safePoint limit at least 72 minutes.
+	DefaultCheckpointGCSafePointTTL = 72 * 60
 	// DefaultStreamStartSafePointTTL specifies keeping the server safepoint 30 mins when start task.
 	DefaultStreamStartSafePointTTL = 1800
 	// DefaultStreamPauseSafePointTTL specifies Keeping the server safePoint at list 24h when pause task.
@@ -140,14 +141,4 @@ func StartServiceSafePointKeeper(
 		}
 	}()
 	return nil
-}
-
-type FakePDClient struct {
-	pd.Client
-	Stores []*metapb.Store
-}
-
-// GetAllStores return fake stores.
-func (c FakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
-	return append([]*metapb.Store{}, c.Stores...), nil
 }

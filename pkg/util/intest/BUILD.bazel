@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "intest",
+    srcs = [
+        "assert.go",  #keep
+        "common.go",
+        "intest.go",  #keep
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/intest",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "intest_test",
+    timeout = "short",
+    srcs = ["assert_test.go"],
+    flaky = True,
+    deps = [
+        ":intest",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)

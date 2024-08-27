@@ -8,9 +8,10 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
-        "//br/pkg/utils",
         "//br/pkg/version/build",
-        "//util/engine",
+        "//pkg/parser/model",
+        "//pkg/util/dbutil",
+        "//pkg/util/engine",
         "@com_github_coreos_go_semver//semver",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/metapb",
@@ -26,8 +27,10 @@ go_test(
     srcs = ["version_test.go"],
     embed = [":version"],
     flaky = True,
+    shard_count = 10,
     deps = [
         "//br/pkg/version/build",
+        "//pkg/parser/model",
         "@com_github_coreos_go_semver//semver",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_pingcap_kvproto//pkg/metapb",

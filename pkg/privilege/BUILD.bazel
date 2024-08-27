@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "privilege",
+    srcs = ["privilege.go"],
+    importpath = "github.com/pingcap/tidb/pkg/privilege",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/privilege/conn",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+    ],
+)

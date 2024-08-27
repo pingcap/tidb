@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "deadlockhistory",
+    srcs = ["deadlock_history.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/deadlockhistory",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/types",
+        "//pkg/util/logutil",
+        "//pkg/util/resourcegrouptag",
+        "@com_github_tikv_client_go_v2//error",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "deadlockhistory_test",
+    timeout = "short",
+    srcs = [
+        "deadlock_history_test.go",
+        "main_test.go",
+    ],
+    embed = [":deadlockhistory"],
+    flaky = True,
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/model",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "@com_github_pingcap_kvproto//pkg/deadlock",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_tikv_client_go_v2//error",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

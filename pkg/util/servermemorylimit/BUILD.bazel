@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "servermemorylimit",
+    srcs = ["servermemorylimit.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/servermemorylimit",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/logutil",
+        "//pkg/util/memory",
+        "//pkg/util/sqlkiller",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "servermemorylimit_test",
+    timeout = "short",
+    srcs = ["servermemorylimit_test.go"],
+    embed = [":servermemorylimit"],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//pkg/types",
+        "//pkg/util",
+        "@com_github_stretchr_testify//require",
+    ],
+)

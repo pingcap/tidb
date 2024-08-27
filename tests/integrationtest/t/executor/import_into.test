@@ -1,0 +1,176 @@
+# TestImportIntoExplicitTransaction
+drop table if exists t;
+create table t (id int);
+BEGIN;
+-- error 1105
+IMPORT INTO t FROM '/file.csv';
+commit;
+
+# TestImportIntoOptionsNegativeCase
+drop table if exists t;
+create table t (id int);
+-- error 8163
+import into t from '/file.csv' with xx=1;
+-- error 8164
+import into t from '/file.csv' with detached=1;
+-- error 8164
+import into t from '/file.csv' with character_set;
+-- error 8165
+import into t from '/file.csv' with detached, detached;
+-- error 8164
+import into t from '/file.csv' with character_set=true;
+-- error 8164
+import into t from '/file.csv' with character_set=null;
+-- error 8164
+import into t from '/file.csv' with character_set=1;
+-- error 8164
+import into t from '/file.csv' with character_set=true;
+-- error 8164
+import into t from '/file.csv' with character_set='';
+-- error 8164
+import into t from '/file.csv' with character_set='aa';
+-- error 8164
+import into t from '/file.csv' with fields_terminated_by=null;
+-- error 8164
+import into t from '/file.csv' with fields_terminated_by=1;
+-- error 8164
+import into t from '/file.csv' with fields_terminated_by=true;
+-- error 8164
+import into t from '/file.csv' with fields_terminated_by='';
+-- error 8164
+import into t from '/file.csv' with fields_enclosed_by=null;
+-- error 8164
+import into t from '/file.csv' with fields_enclosed_by='aa';
+-- error 8164
+import into t from '/file.csv' with fields_enclosed_by=1;
+-- error 8164
+import into t from '/file.csv' with fields_enclosed_by=true;
+-- error 8164
+import into t from '/file.csv' with fields_escaped_by=null;
+-- error 8164
+import into t from '/file.csv' with fields_escaped_by='aa';
+-- error 8164
+import into t from '/file.csv' with fields_escaped_by=1;
+-- error 8164
+import into t from '/file.csv' with fields_escaped_by=true;
+-- error 8164
+import into t from '/file.csv' with fields_defined_null_by=null;
+-- error 8164
+import into t from '/file.csv' with fields_defined_null_by=1;
+-- error 8164
+import into t from '/file.csv' with fields_defined_null_by=true;
+-- error 8164
+import into t from '/file.csv' with lines_terminated_by=null;
+-- error 8164
+import into t from '/file.csv' with lines_terminated_by=1;
+-- error 8164
+import into t from '/file.csv' with lines_terminated_by=true;
+-- error 8164
+import into t from '/file.csv' with lines_terminated_by='';
+-- error 8164
+import into t from '/file.csv' with skip_rows=null;
+-- error 8164
+import into t from '/file.csv' with skip_rows='';
+-- error 8164
+import into t from '/file.csv' with skip_rows=-1;
+-- error 8164
+import into t from '/file.csv' with skip_rows=true;
+-- error 8164
+import into t from '/file.csv' with split_file='aa';
+-- error 8164
+import into t from '/file.csv' with split_file;
+-- error 8164
+import into t from '/file.csv' with split_file, skip_rows=2;
+-- error 8164
+import into t from '/file.csv' with disk_quota='aa';
+-- error 8164
+import into t from '/file.csv' with disk_quota='220MiBxxx';
+-- error 8164
+import into t from '/file.csv' with disk_quota=1;
+-- error 8164
+import into t from '/file.csv' with disk_quota=false;
+-- error 8164
+import into t from '/file.csv' with disk_quota=null;
+-- error 8164
+import into t from '/file.csv' with thread='aa';
+-- error 8164
+import into t from '/file.csv' with thread=0;
+-- error 8164
+import into t from '/file.csv' with thread=false;
+-- error 8164
+import into t from '/file.csv' with thread=-100;
+-- error 8164
+import into t from '/file.csv' with thread=null;
+-- error 8164
+import into t from '/file.csv' with max_write_speed='aa';
+-- error 8164
+import into t from '/file.csv' with max_write_speed='11aa';
+-- error 8164
+import into t from '/file.csv' with max_write_speed=null;
+-- error 8164
+import into t from '/file.csv' with max_write_speed=-1;
+-- error 8164
+import into t from '/file.csv' with max_write_speed=false;
+-- error 8164
+import into t from '/file.csv' with checksum_table='';
+-- error 8164
+import into t from '/file.csv' with checksum_table=123;
+-- error 8164
+import into t from '/file.csv' with checksum_table=false;
+-- error 8164
+import into t from '/file.csv' with checksum_table=null;
+-- error 8164
+import into t from '/file.csv' with record_errors='aa';
+-- error 8164
+import into t from '/file.csv' with record_errors='111aa';
+-- error 8164
+import into t from '/file.csv' with record_errors=-123;
+-- error 8164
+import into t from '/file.csv' with record_errors=null;
+-- error 8164
+import into t from '/file.csv' with record_errors=true;
+-- error 8164
+import into t from '/file.csv' with cloud_storage_uri=123;
+-- error 8164
+import into t from '/file.csv' with cloud_storage_uri=':';
+-- error 8164
+import into t from '/file.csv' with cloud_storage_uri='sdsd';
+-- error 8164
+import into t from '/file.csv' with cloud_storage_uri='http://sdsd';
+-- error 8166
+import into t from '/file.csv' format 'parquet' with character_set='utf8';
+-- error 8166
+import into t from '/file.csv' format 'sql' with character_set='utf8';
+-- error 8166
+import into t from '/file.csv' format 'parquet' with fields_terminated_by='a';
+-- error 8166
+import into t from '/file.csv' format 'sql' with fields_terminated_by='a';
+-- error 8166
+import into t from '/file.csv' format 'parquet' with fields_enclosed_by='a';
+-- error 8166
+import into t from '/file.csv' format 'sql' with fields_enclosed_by='a';
+-- error 8166
+import into t from '/file.csv' format 'parquet' with fields_escaped_by='a';
+-- error 8166
+import into t from '/file.csv' format 'sql' with fields_escaped_by='a';
+-- error 8166
+import into t from '/file.csv' format 'parquet' with fields_defined_null_by='a';
+-- error 8166
+import into t from '/file.csv' format 'sql' with fields_defined_null_by='a';
+-- error 8166
+import into t from '/file.csv' format 'parquet' with lines_terminated_by='a';
+-- error 8166
+import into t from '/file.csv' format 'sql' with lines_terminated_by='a';
+-- error 8166
+import into t from '/file.csv' format 'parquet' with skip_rows=1;
+-- error 8166
+import into t from '/file.csv' format 'sql' with skip_rows=1;
+-- error 8166
+import into t from '/file.csv' format 'parquet' with split_file;
+-- error 8166
+import into t from '/file.csv' format 'sql' with split_file;
+-- error 8156
+import into t from '';
+-- error 8157
+import into t from '/a.csv' format 'xx';
+

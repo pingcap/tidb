@@ -1,0 +1,211 @@
+# TestExplainFormatHint
+drop table if exists t;
+create table t (c1 int not null, c2 int not null, key idx_c2(c2)) partition by range (c2) (partition p0 values less than (10), partition p1 values less than (20));
+explain format='hint'select /*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ count(1) from t t1 where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12);
+
+# TestNthPlanHint
+drop table if exists tt;
+create table tt (a int,b int, index(a), index(b));
+insert into tt values (1, 1), (2, 2), (3, 4);
+--enable_warnings
+explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;
+--disable_warnings
+drop table if exists t;
+create table t (a int, b int, c int, index(a), index(b), index(a,b));
+explain format='hint' select * from t where a=1 and b=1;
+explain format='hint' select /*+ nth_plan(1) */ * from t where a=1 and b=1;
+explain format='hint' select /*+ nth_plan(2) */ * from t where a=1 and b=1;
+--enable_warnings
+explain format='hint' select /*+ nth_plan(3) */ * from t where a=1 and b=1;
+explain format='hint' select /*+ nth_plan(500) */ * from t where a=1 and b=1;
+explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1;
+--disable_warnings
+insert into t values (1,1,1);
+select  /*+ nth_plan(1) */ * from t where a=1 and b=1;
+select  /*+ nth_plan(2) */ * from t where a=1 and b=1;
+select  /*+ nth_plan(1) */ * from tt where a=1 and b=1;
+select  /*+ nth_plan(2) */ * from tt where a=1 and b=1;
+select  /*+ nth_plan(3) */ * from tt where a=1 and b=1;
+--enable_warnings
+select /*+ nth_plan(1000) */ count(1) from t where (select count(1) from t, tt) > 1;
+select /*+ nth_plan(1000) */ count(1) from t where exists (select count(1) from t, tt);
+--disable_warnings
+
+
+# TestIssue25729
+drop table if exists tt;
+create table tt(a int, b int, key k((a+1)), key k1((a+1), b), key k2((a+1), b), key k3((a+1)));
+explain format='brief' select * from tt where a+1 = 5 and b=3;
+explain format='brief' select * from tt where a+1 = 5 and b=3;
+explain format='brief' select * from tt where a+1 = 5 and b=3;
+explain format='brief' select * from tt where a+1 = 5 and b=3;
+explain format='brief' select * from tt where a+1 = 5 and b=3;
+explain format='brief' select * from tt where a+1 = 5 and b=3;
+explain format='brief' select * from tt where a+1 = 5 and b=3;
+explain format='brief' select * from tt where a+1 = 5 and b=3;
+explain format='brief' select * from tt where a+1 = 5 and b=3;
+explain format='brief' select * from tt where a+1 = 5 and b=3;
+insert into tt values(4, 3);
+select * from tt where a+1 = 5 and b=3;
+drop table if exists t1;
+CREATE TABLE `t1` (  `a` varchar(10) DEFAULT NULL,  `b` varchar(10) DEFAULT NULL,  KEY `expression_index` ((concat(`a`, `b`))),  KEY `expression_index_2` ((concat(`a`, `b`))),  KEY `idx` ((concat(`a`, `b`)),`a`),  KEY `idx1` (`a`,(concat(`a`, `b`))),  KEY `idx2` (`a`,(concat(`a`, `b`)),`b`));
+explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
+explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
+explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
+explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
+explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
+explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
+explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
+explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
+explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
+explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
+explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
+explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
+explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
+explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
+explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
+explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
+explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
+explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
+explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
+explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
+insert into t1 values("a", "adwa");
+select * from t1  where concat(a, b) like "aadwa" and a = "a";
+
+
+# TestIssue34863
+drop table if exists c;
+drop table if exists o;
+create table c(c_id bigint);
+create table o(o_id bigint, c_id bigint);
+insert into c values(1),(2),(3),(4),(5);
+insert into o values(1,1),(2,1),(3,2),(4,2),(5,2);
+set @@tidb_opt_agg_push_down=1;
+select count(*) from c left join o on c.c_id=o.c_id;
+select count(c.c_id) from c left join o on c.c_id=o.c_id;
+select count(o.c_id) from c left join o on c.c_id=o.c_id;
+select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;
+select count(*) from c right join o on c.c_id=o.c_id;
+select count(o.c_id) from c right join o on c.c_id=o.c_id;
+set @@tidb_opt_agg_push_down=0;
+select count(*) from c left join o on c.c_id=o.c_id;
+select count(c.c_id) from c left join o on c.c_id=o.c_id;
+select count(o.c_id) from c left join o on c.c_id=o.c_id;
+select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;
+select count(*) from c right join o on c.c_id=o.c_id;
+select count(o.c_id) from c right join o on c.c_id=o.c_id;
+set @@tidb_opt_agg_push_down=DEFAULT;
+
+
+# TestTableDualAsSubQuery
+CREATE VIEW v0(c0) AS SELECT NULL;
+SELECT v0.c0 FROM v0 WHERE (v0.c0 IS NULL) LIKE(NULL);
+SELECT v0.c0 FROM (SELECT null as c0) v0 WHERE (v0.c0 IS NULL) like (NULL);
+
+
+# TestNullEQConditionPlan
+CREATE TABLE t0(c0 BOOL, PRIMARY KEY(c0));
+INSERT INTO t0 VALUES (FALSE);
+SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE));
+explain SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE));
+SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE));
+explain SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE));
+
+
+# TestOuterJoinOnNull
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 BLOB(5), c1 BLOB(5));
+CREATE TABLE t1 (c0 BOOL);
+INSERT INTO t1 VALUES(false);
+INSERT INTO t0(c0, c1) VALUES ('>', true);
+SELECT * FROM t0 LEFT OUTER JOIN t1 ON NULL;
+SELECT NOT '2' =(t1.c0 AND t0.c1 IS NULL) FROM t0 LEFT OUTER JOIN t1 ON NULL;
+SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE NOT '2' =(t1.c0 AND t0.c1 IS NULL);
+SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE t1.c0 or true;
+SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE not(t1.c0 and false);
+CREATE TABLE t2(c0 INT);
+CREATE TABLE t3(c0 INT);
+INSERT INTO t3 VALUES (1);
+SELECT ((NOT ('i'))AND(t2.c0)) IS NULL FROM  t2 RIGHT JOIN t3 ON t3.c0;
+SELECT * FROM t2 RIGHT JOIN t3 ON t2.c0 WHERE ((NOT ('i'))AND(t2.c0)) IS NULL;
+
+
+# TestHypoIndexDDL
+drop table if exists t;
+create table t (a int, b int, c int, d int, key(a));
+create index hypo_a type hypo on t (a);
+create index hypo_bc type hypo on t (b, c);
+show create table t;
+drop hypo index hypo_a on t;
+drop hypo index hypo_bc on t;
+show create table t;
+
+
+# TestHypoIndexPlan
+drop table if exists t;
+create table t (a int);
+explain select a from t where a = 1;
+create index hypo_a type hypo on t (a);
+explain select a from t where a = 1;
+drop hypo index hypo_a on t;
+create unique index hypo_a type hypo on t (a);
+explain select a from t where a = 1;
+
+
+# TestHypoTiFlashReplica
+drop table if exists t;
+create table t (a int);
+explain select a from t;
+alter table t set hypo tiflash replica 1;
+explain select a from t;
+alter table t set hypo tiflash replica 0;
+explain select a from t;
+
+
+# TestIssue40857
+drop table if exists t;
+CREATE TABLE t (c1 mediumint(9) DEFAULT '-4747160',c2 year(4) NOT NULL DEFAULT '2075',c3 double DEFAULT '1.1559030660251948',c4 enum('wbv4','eli','d8ym','m3gsx','lz7td','o','d1k7l','y1x','xcxq','bj','n7') DEFAULT 'xcxq',c5 int(11) DEFAULT '255080866',c6 tinyint(1) DEFAULT '1',PRIMARY KEY (c2),KEY `c4d86d54-091c-4307-957b-b164c9652b7f` (c6,c4) );
+insert into t values (-4747160, 2075, 722.5719203870632, 'xcxq', 1576824797, 1);
+--enable_info
+select /*+ stream_agg() */ bit_or(t.c5) as r0 from t where t.c3 in (select c6 from t where not(t.c6 <> 1) and not(t.c3 in(9263.749352636818))) group by t.c1;
+--disable_info
+
+
+# TestIssue40535
+drop table if exists t1;
+drop table if exists t2;
+CREATE TABLE `t1`(`c1` bigint(20) NOT NULL DEFAULT '-2312745469307452950', `c2` datetime DEFAULT '5316-02-03 06:54:49', `c3` tinyblob DEFAULT NULL, PRIMARY KEY (`c1`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+CREATE TABLE `t2`(`c1` set('kn8pu','7et','vekx6','v3','liwrh','q14','1met','nnd5i','5o0','8cz','l') DEFAULT '7et,vekx6,liwrh,q14,1met', `c2` float DEFAULT '1.683167', KEY `k1` (`c2`,`c1`), KEY `k2` (`c2`)) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
+--enable_info
+(select /*+ agg_to_cop()*/ locate(t1.c3, t1.c3) as r0, t1.c3 as r1 from t1 where not( IsNull(t1.c1)) order by r0,r1) union all (select concat_ws(',', t2.c2, t2.c1) as r0, t2.c1 as r1 from t2 order by r0, r1) order by 1 limit 273;
+--disable_info
+
+
+# TestIssue47445
+drop table if exists golang1, golang2;
+CREATE TABLE golang1 ( `fcbpdt` CHAR (8) COLLATE utf8_general_ci NOT NULL, `fcbpsq` VARCHAR (20) COLLATE utf8_general_ci NOT NULL, `procst` char (4) COLLATE utf8_general_ci DEFAULT NULL,`cipstx` VARCHAR (105) COLLATE utf8_general_ci DEFAULT NULL, `cipsst` CHAR (4) COLLATE utf8_general_ci DEFAULT NULL, `dyngtg` VARCHAR(4) COLLATE utf8_general_ci DEFAULT NULL, `blncdt` VARCHAR (8) COLLATE utf8_general_ci DEFAULT NULL, PRIMARY KEY ( fcbpdt, fcbpsq ));
+insert into golang1 values('20230925','12023092502158016','abc','','','','');
+create table golang2 (`sysgrp` varchar(20) NOT NULL,`procst` varchar(8) NOT NULL,`levlid` int(11) NOT NULL,PRIMARY key (procst));;
+insert into golang2 VALUES('COMMON','ACSC',90);
+insert into golang2 VALUES('COMMON','abc',8);
+insert into golang2 VALUES('COMMON','CH02',6);
+UPDATE golang1 a SET procst =(CASE WHEN ( SELECT levlid FROM golang2 b WHERE b.sysgrp = 'COMMON' AND b.procst = 'ACSC' ) > ( SELECT levlid FROM golang2 c WHERE c.sysgrp = 'COMMON' AND c.procst = a.procst ) THEN 'ACSC' ELSE a.procst END ), cipstx = 'CI010000', cipsst = 'ACSC', dyngtg = 'EAYT', blncdt= '20230925' WHERE fcbpdt = '20230925' AND fcbpsq = '12023092502158016';
+select * from golang1;
+UPDATE golang1 a SET procst= (SELECT 1 FROM golang2 c WHERE c.procst = a.procst) WHERE fcbpdt = '20230925' AND fcbpsq = '12023092502158016';
+select * from golang1;
+
+
+# TestExplainValuesStatement
+--error 1051
+EXPLAIN FORMAT = TRADITIONAL ((VALUES ROW ()) ORDER BY 1);
+
+
+# TestIssue35090
+drop table if exists p, t;
+create table p (id int, c int, key i_id(id), key i_c(c));
+create table t (id int);
+insert into p values (3,3), (4,4), (6,6), (9,9);
+insert into t values (4), (9);
+select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;
+--replace_column 5 <access_object> 6 <execution_info> 7 <operator_info> 8 <memory> 9 <disk>
+explain analyze format='brief' select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;

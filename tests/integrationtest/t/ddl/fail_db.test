@@ -1,0 +1,14 @@
+# TestIssue38699
+set sql_mode='';
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (a int);
+insert into t values (1000000000), (2000000);
+alter table t modify a tinyint;
+show warnings;
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (a int);
+insert into t values (1000000000);
+alter table t modify a tinyint;
+show warnings;
+set sql_mode=default;
+

@@ -1,0 +1,111 @@
+drop table if exists partition_table;
+create table partition_table (v int) partition by hash (v) partitions 10;
+insert into partition_table values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+alter table partition_table truncate partition all;
+select count(*) from partition_table;
+count(*)
+0
+drop table if exists auto_random_temporary, t;
+create global temporary table auto_random_temporary (a bigint primary key auto_random(3), b varchar(255)) on commit delete rows;
+Error 8006 (HY000): `auto_random` is unsupported on temporary tables.
+create temporary table t(a bigint key auto_random);
+Error 8006 (HY000): `auto_random` is unsupported on temporary tables.
+drop table if exists t;
+create table t (a bigint auto_random(5, 64) primary key, b int);
+drop table if exists t;
+create table t (a bigint unsigned auto_random(5, 32) primary key, b int);
+drop table if exists t;
+create table t (a bigint auto_random(5, 31) primary key, b int);
+Error 8216 (HY000): Invalid auto random: auto_random range bits must be between 32 and 64, but got 31
+create table t (a bigint auto_random(5, 65) primary key, b int);
+Error 8216 (HY000): Invalid auto random: auto_random range bits must be between 32 and 64, but got 65
+create table t (a bigint auto_random(15, 32) primary key, b int);
+Error 8216 (HY000): Invalid auto random: auto_random ID space is too small, please decrease the shard bits or increase the range bits
+create table t (a bigint auto_random(5, 64) primary key, b int);
+alter table t modify column a bigint auto_random(5, 32);
+Error 8216 (HY000): Invalid auto random: alter the range bits of auto_random column is not supported
+alter table t modify column a bigint auto_random(15, 64);
+create database dct;
+use dct;
+create table t(b varchar(10) collate utf8_bin, c varchar(10) collate utf8_general_ci) collate utf8_bin;
+alter table t modify b varchar(10) collate utf8_general_ci;
+alter table t modify c varchar(10) collate utf8_bin;
+alter table t modify c varchar(10) collate utf8_unicode_ci;
+alter table t charset utf8 collate utf8_general_ci;
+alter table t convert to charset utf8 collate utf8_bin;
+alter table t convert to charset utf8 collate utf8_unicode_ci;
+alter table t convert to charset utf8 collate utf8_general_ci;
+alter table t modify b varchar(10) collate utf8_unicode_ci;
+alter table t modify b varchar(10) collate utf8_bin;
+alter table t add index b_idx(b);
+alter table t add index c_idx(c);
+alter table t modify b varchar(10) collate utf8_general_ci;
+Error 8200 (HY000): Unsupported modifying collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.
+alter table t modify c varchar(10) collate utf8_bin;
+Error 8200 (HY000): Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_bin' when index is defined on it.
+alter table t modify c varchar(10) collate utf8_unicode_ci;
+Error 8200 (HY000): Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_unicode_ci' when index is defined on it.
+alter table t convert to charset utf8 collate utf8_general_ci;
+Error 8200 (HY000): Unsupported converting collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.
+alter table t modify c varchar(10) collate utf8mb4_general_ci;
+alter table t collate utf8mb4_general_ci;
+alter table t charset utf8mb4 collate utf8mb4_bin;
+alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
+alter table t charset utf8mb4 collate utf8mb4_zh_pinyin_tidb_as_cs;
+alter database dct charset utf8mb4 collate utf8mb4_general_ci;
+use ddl__serial;
+drop database dct;
+drop database if exists ucd;
+create database ucd charset utf8mb4 collate utf8mb4_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8mb4_roman_ci'
+create database ucd charset utf8 collate utf8_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+create database ucd;
+alter database ucd charset utf8mb4 collate utf8mb4_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8mb4_roman_ci'
+alter database ucd collate utf8mb4_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8mb4_roman_ci'
+use ucd;
+create table t(a varchar(20)) charset utf8mb4 collate utf8mb4_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8mb4_roman_ci'
+create table t(a varchar(20)) collate utf8_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+create table t(a varchar(20)) collate utf8mb4_general_ci;
+alter table t default collate utf8mb4_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8mb4_roman_ci'
+alter table t convert to charset utf8mb4 collate utf8mb4_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8mb4_roman_ci'
+create table t1(a varchar(20)) collate utf8mb4_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8mb4_roman_ci'
+create table t1(a varchar(20)) charset utf8 collate utf8_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+create table t1(a varchar(20));
+alter table t1 modify a varchar(20) collate utf8mb4_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8mb4_roman_ci'
+alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci;
+Error 1273 (HY000): Unsupported collation when new collation is enabled: 'utf8_roman_ci'
+drop database if exists ucd;
+use ddl__serial;
+drop table if exists t1, tmp1;
+create table t1 (id int);
+create temporary table tmp1 (id int primary key, a int unique, b int);
+rename table tmp1 to tmp2;
+Error 8200 (HY000): TiDB doesn't support RENAME TABLE for local temporary table
+alter table tmp1 add column c int;
+Error 8200 (HY000): TiDB doesn't support ALTER TABLE for local temporary table
+alter table tmp1 add index b(b);
+Error 8200 (HY000): TiDB doesn't support ALTER TABLE for local temporary table
+create index a on tmp1(b);
+Error 8200 (HY000): TiDB doesn't support CREATE INDEX for local temporary table
+drop index a on tmp1;
+Error 8200 (HY000): TiDB doesn't support DROP INDEX for local temporary table
+lock tables tmp1 read;
+Error 8200 (HY000): TiDB doesn't support LOCK TABLES for local temporary table
+lock tables tmp1 write;
+Error 8200 (HY000): TiDB doesn't support LOCK TABLES for local temporary table
+lock tables t1 read, tmp1 read;
+Error 8200 (HY000): TiDB doesn't support LOCK TABLES for local temporary table
+admin cleanup table lock tmp1;
+Error 8200 (HY000): TiDB doesn't support ADMIN CLEANUP TABLE LOCK for local temporary table

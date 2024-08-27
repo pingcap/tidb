@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "goyacc_lib",
+    srcs = [
+        "format_yacc.go",
+        "main.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/parser/goyacc",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/parser/format",
+        "@com_github_cznic_mathutil//:mathutil",
+        "@com_github_cznic_sortutil//:sortutil",
+        "@com_github_cznic_strutil//:strutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
+        "@org_modernc_parser//yacc",
+        "@org_modernc_y//:y",
+    ],
+)
+
+go_binary(
+    name = "goyacc",
+    embed = [":goyacc_lib"],
+    visibility = ["//visibility:public"],
+)

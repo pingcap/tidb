@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "showtest_test",
+    timeout = "moderate",
+    srcs = [
+        "main_test.go",
+        "show_test.go",
+    ],
+    flaky = True,
+    shard_count = 27,
+    deps = [
+        "//pkg/autoid_service",
+        "//pkg/config",
+        "//pkg/executor",
+        "//pkg/infoschema",
+        "//pkg/meta/autoid",
+        "//pkg/parser/auth",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/parser/types",
+        "//pkg/privilege/privileges",
+        "//pkg/session",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/types",
+        "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/dbterror/plannererrors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

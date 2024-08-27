@@ -1,0 +1,502 @@
+drop sequence if exists s;
+create sequence s;
+create temporary table tmp1 (id int);
+select nextval(s);
+nextval(s)
+1
+select lastval(s);
+lastval(s)
+1
+drop sequence s;
+drop sequence if exists seq;
+drop sequence seq;
+Error 4139 (HY000): Unknown SEQUENCE: 'ddl__sequence.seq'
+create sequence seq;
+drop sequence seq, seq2;
+Error 4139 (HY000): Unknown SEQUENCE: 'ddl__sequence.seq2'
+create table seq3 (a int);
+drop sequence seq3;
+Error 1347 (HY000): 'ddl__sequence.seq3' is not SEQUENCE
+drop sequence unknown.seq;
+Error 4139 (HY000): Unknown SEQUENCE: 'unknown.seq'
+create sequence seq;
+drop sequence seq;
+drop sequence seq;
+Error 4139 (HY000): Unknown SEQUENCE: 'ddl__sequence.seq'
+create sequence seq;
+drop table seq;
+Error 1051 (42S02): Unknown table 'ddl__sequence.seq'
+drop view seq;
+Error 1347 (HY000): 'ddl__sequence.seq' is not VIEW
+drop sequence seq;
+drop user if exists myuser@localhost;
+create user myuser@localhost;
+create sequence my_seq;
+grant select on ddl__sequence.* to 'myuser'@'localhost';
+drop sequence my_seq;
+Error 1142 (42000): DROP command denied to user 'myuser'@'localhost' for table 'my_seq'
+drop sequence my_seq;
+drop sequence if exists seq_if_exists;
+show warnings;
+Level	Code	Message
+Note	4139	Unknown SEQUENCE: 'ddl__sequence.seq_if_exists'
+drop table if exists t;
+drop sequence if exists seq;
+create table t(a int);
+create sequence seq;
+drop user if exists myuser@localhost;
+create user myuser@localhost;
+grant select on ddl__sequence.t to 'myuser'@'localhost';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+show create sequence seq;
+Error 1142 (42000): SHOW command denied to user 'myuser'@'localhost' for table 'seq'
+grant select on ddl__sequence.seq to 'myuser'@'localhost';
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB
+drop sequence if exists seq;
+create sequence seq;
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB
+drop sequence if exists seq;
+create sequence seq start 10;
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 10 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB
+drop sequence if exists seq;
+create sequence seq minvalue 0;
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 1 minvalue 0 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB
+drop sequence if exists seq;
+create sequence seq maxvalue 100;
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 100 increment by 1 cache 1000 nocycle ENGINE=InnoDB
+drop sequence if exists seq;
+create sequence seq increment = -2;
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with -1 minvalue -9223372036854775807 maxvalue -1 increment by -2 cache 1000 nocycle ENGINE=InnoDB
+drop sequence if exists seq;
+create sequence seq nocache;
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle ENGINE=InnoDB
+drop sequence if exists seq;
+create sequence seq cycle;
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 cycle ENGINE=InnoDB
+drop sequence if exists seq;
+create sequence seq comment="ccc";
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB COMMENT='ccc'
+drop sequence if exists seq;
+create table seq (a int);
+show create sequence seq;
+Error 1347 (HY000): 'ddl__sequence.seq' is not SEQUENCE
+drop table if exists seq;
+drop sequence if exists seq;
+create sequence seq;
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB
+drop sequence if exists seq;
+CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB;
+drop sequence if exists seq;
+create sequence seq;
+drop table if exists t;
+create table t(a int not null default next value for seq key);
+drop table if exists t;
+create table t(a int not null default nextval(seq), b int, primary key(a));
+create table t1 (a int default next value for seq);
+create table t2 (a char(1) default next value for seq);
+Error 8228 (HY000): Unsupported sequence default value for column type 'a'
+create table t3 (a int default nextval(seq));
+create table t4 (a int);
+alter table t4 alter column a set default (next value for seq);
+alter table t4 alter column a set default (nextval(seq));
+create table t5 (a char(1));
+alter table t5 alter column a set default (next value for seq);
+Error 8228 (HY000): Unsupported sequence default value for column type 'a'
+alter table t5 alter column a set default (nextval(seq));
+Error 8228 (HY000): Unsupported sequence default value for column type 'a'
+alter table t5 add column c int default next value for seq;
+Error 8230 (HY000): Unsupported using sequence as default value in add column 'c'
+alter table t5 add column c int default -1;
+alter table t5 modify column c int default next value for seq;
+alter table t5 alter column c set default (next value for seq);
+alter table t5 change column c c int default next value for seq;
+drop sequence if exists seq;
+drop table if exists t;
+create sequence seq;
+create table t (a int default next value for seq);
+insert into t values();
+select * from t;
+a
+1
+insert into t values(),(),();
+select * from t;
+a
+1
+2
+3
+4
+delete from t;
+insert into t values(-1),(default),(-1);
+select * from t;
+a
+-1
+5
+-1
+drop table if exists t;
+create table t (a int);
+insert into t values(next value for seq);
+select * from t;
+a
+6
+insert into t values(next value for seq),(nextval(seq));
+select * from t;
+a
+6
+7
+8
+delete from t;
+insert into t values(next value for seq + 1),(nextval(seq) * 2);
+select * from t;
+a
+10
+20
+delete from t;
+insert into t values((next value for seq - 1) / 2);
+select * from t;
+a
+5
+delete from t;
+insert into t values(-1),(next value for seq),(-1),(nextval(seq));
+select * from t;
+a
+-1
+12
+-1
+13
+delete from t;
+insert into t values(lastval(seq)),(-1),(nextval(seq));
+select * from t;
+a
+13
+-1
+14
+delete from t;
+select setval(seq, 100);
+setval(seq, 100)
+100
+insert into t values(lastval(seq)),(-1),(nextval(seq));
+select * from t;
+a
+14
+-1
+101
+drop sequence if exists seq;
+create sequence seq;
+drop table if exists t;
+create table t (id int default next value for seq, col1 int generated always as (id + 1));
+insert into t values();
+select * from t;
+id	col1
+1	2
+insert into t values(),();
+select * from t;
+id	col1
+1	2
+2	3
+3	4
+delete from t;
+insert into t (id) values(-1),(default);
+select * from t;
+id	col1
+-1	0
+4	5
+select setval(seq,9223372036854775807);
+setval(seq,9223372036854775807)
+9223372036854775807
+select nextval(seq);
+Error 4135 (HY000): Sequence 'ddl__sequence.seq' has run out
+drop sequence if exists seq;
+drop table if exists t1,t2,t3;
+create sequence seq;
+create table t1 (a int);
+create table t2 (a int, b int);
+create table t3 (a int, b int, c int);
+insert into t1 values(-1),(-1),(-1);
+select nextval(seq), a from t1;
+nextval(seq)	a
+1	-1
+2	-1
+3	-1
+insert into t2 select nextval(seq), a from t1;
+select * from t2;
+a	b
+4	-1
+5	-1
+6	-1
+delete from t2;
+select lastval(seq), nextval(seq), a from t1;
+lastval(seq)	nextval(seq)	a
+6	7	-1
+7	8	-1
+8	9	-1
+insert into t3 select lastval(seq), nextval(seq), a from t1;
+select * from t3;
+a	b	c
+9	10	-1
+10	11	-1
+11	12	-1
+delete from t3;
+select nextval(seq), setval(seq,100), a from t1;
+nextval(seq)	setval(seq,100)	a
+13	100	-1
+101	NULL	-1
+102	NULL	-1
+insert into t3 select nextval(seq), setval(seq,200), a from t1;
+select * from t3;
+a	b	c
+103	200	-1
+201	NULL	-1
+202	NULL	-1
+delete from t3;
+select nextval(seq), lastval(seq), a from t1;
+nextval(seq)	lastval(seq)	a
+203	203	-1
+204	204	-1
+205	205	-1
+insert into t3 select nextval(seq), lastval(seq), a from t1;
+select * from t3;
+a	b	c
+206	206	-1
+207	207	-1
+208	208	-1
+delete from t3;
+select nextval(seq), nextval(seq), a from t1;
+nextval(seq)	nextval(seq)	a
+209	210	-1
+211	212	-1
+213	214	-1
+insert into t3 select nextval(seq), nextval(seq), a from t1;
+select * from t3;
+a	b	c
+215	216	-1
+217	218	-1
+219	220	-1
+delete from t3;
+select nextval(seq)+lastval(seq), a from t1;
+nextval(seq)+lastval(seq)	a
+442	-1
+444	-1
+446	-1
+insert into t2 select nextval(seq)+lastval(seq), a from t1;
+select * from t2;
+a	b
+448	-1
+450	-1
+452	-1
+delete from t2;
+select nextval(seq), b from (select nextval(seq) as b, a from t1) t2;
+nextval(seq)	b
+227	228
+229	230
+231	232
+insert into t2 select nextval(seq), b from (select nextval(seq) as b, a from t1) t2;
+select * from t2;
+a	b
+233	234
+235	236
+237	238
+delete from t2;
+drop sequence if exists seq;
+create sequence seq;
+drop table if exists t;
+create table t(a int default next value for seq);
+drop user if exists myuser@localhost;
+create user myuser@localhost;
+grant insert on ddl__sequence.t to 'myuser'@'localhost';
+select nextval(seq);
+Error 1142 (42000): INSERT command denied to user 'myuser'@'localhost' for table 'seq'
+insert into t values();
+Error 1142 (42000): INSERT command denied to user 'myuser'@'localhost' for table 'seq'
+select lastval(seq);
+Error 1142 (42000): SELECT command denied to user 'myuser'@'localhost' for table 'seq'
+select setval(seq, 10);
+Error 1142 (42000): INSERT command denied to user 'myuser'@'localhost' for table 'seq'
+grant SELECT, INSERT on ddl__sequence.seq to 'myuser'@'localhost';
+select nextval(seq);
+nextval(seq)
+1
+select lastval(seq);
+lastval(seq)
+1
+select setval(seq, 10);
+setval(seq, 10)
+10
+insert into t values();
+drop table t;
+drop sequence seq;
+drop user myuser@localhost;
+drop sequence if exists seq;
+drop table if exists t;
+create sequence seq;
+create table t(a int);
+insert into t values(-1),(-1),(-1);
+alter table t add column b int default -1;
+select * from t;
+a	b
+-1	-1
+-1	-1
+-1	-1
+alter table t modify column b int default next value for seq;
+select * from t;
+a	b
+-1	-1
+-1	-1
+-1	-1
+insert into t(a) values(-1),(-1);
+select * from t;
+a	b
+-1	-1
+-1	-1
+-1	-1
+-1	1
+-1	2
+drop sequence seq;
+drop table t;
+create sequence seq;
+create table t(a int);
+insert into t values(-1),(-1),(-1);
+alter table t add column b int default next value for seq;
+Error 8230 (HY000): Unsupported using sequence as default value in add column 'b'
+select * from t;
+a
+-1
+-1
+-1
+drop sequence if exists seq;
+create sequence seq cache -1;
+Error 4136 (HY000): Sequence 'ddl__sequence.seq' values are conflicting
+create sequence seq cache 0;
+Error 4136 (HY000): Sequence 'ddl__sequence.seq' values are conflicting
+create sequence seq INCREMENT -9223372036854775807 cache 1;
+Error 4136 (HY000): Sequence 'ddl__sequence.seq' values are conflicting
+create sequence seq cache 1;
+drop sequence if exists seq;
+create sequence seq;
+alter sequence seq increment by 2 start with 2;
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 2 minvalue 1 maxvalue 9223372036854775806 increment by 2 cache 1000 nocycle ENGINE=InnoDB
+drop sequence if exists seq;
+create sequence seq;
+select nextval(seq);
+nextval(seq)
+1
+select nextval(seq);
+nextval(seq)
+2
+select nextval(seq);
+nextval(seq)
+3
+alter sequence seq increment by 2;
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 2 cache 1000 nocycle ENGINE=InnoDB
+select nextval(seq);
+nextval(seq)
+1001
+select nextval(seq);
+nextval(seq)
+1003
+select nextval(seq);
+nextval(seq)
+1005
+alter sequence seq restart with 9;
+select nextval(seq);
+nextval(seq)
+9
+select nextval(seq);
+nextval(seq)
+11
+select nextval(seq);
+nextval(seq)
+13
+alter sequence seq restart with 10;
+select nextval(seq);
+nextval(seq)
+11
+select nextval(seq);
+nextval(seq)
+13
+select nextval(seq);
+nextval(seq)
+15
+alter sequence seq restart;
+select nextval(seq);
+nextval(seq)
+1
+select nextval(seq);
+nextval(seq)
+3
+select nextval(seq);
+nextval(seq)
+5
+drop sequence if exists seq;
+create sequence seq increment by 3;
+select nextval(seq);
+nextval(seq)
+1
+select nextval(seq);
+nextval(seq)
+4
+select nextval(seq);
+nextval(seq)
+7
+alter sequence seq increment by 4;
+select nextval(seq);
+nextval(seq)
+3001
+select nextval(seq);
+nextval(seq)
+3005
+select nextval(seq);
+nextval(seq)
+3009
+drop sequence if exists seq;
+drop sequence if exists my_seq;
+create sequence my_seq;
+drop user if exists myuser@localhost;
+create user myuser@localhost;
+grant select on ddl__sequence.* to 'myuser'@'localhost';
+alter sequence my_seq increment = 2;
+Error 1142 (42000): ALTER command denied to user 'myuser'@'localhost' for table 'my_seq'
+drop sequence if exists my_seq;
+drop sequence if exists seq, cache_to_nocache_seq, nocache_to_cache_seq;
+create sequence seq cache=1 nocache;
+show create sequence seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle ENGINE=InnoDB
+create sequence cache_to_nocache_seq;
+alter sequence cache_to_nocache_seq nocache;
+show create sequence cache_to_nocache_seq;
+Sequence	Create Sequence
+cache_to_nocache_seq	CREATE SEQUENCE `cache_to_nocache_seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle ENGINE=InnoDB
+create sequence nocache_to_cache_seq nocache;
+alter sequence nocache_to_cache_seq cache 10;
+show create sequence nocache_to_cache_seq;
+Sequence	Create Sequence
+nocache_to_cache_seq	CREATE SEQUENCE `nocache_to_cache_seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 10 nocycle ENGINE=InnoDB
+drop sequence if exists seq, cache_to_nocache_seq, nocache_to_cache_seq;

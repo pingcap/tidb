@@ -1,0 +1,12 @@
+# TestTraceCEPartitionTable
+drop table if exists t;
+create table t(a int, b int, d varchar(10), index idx(a, b)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN MAXVALUE);
+insert into t values(1, 1, "aaa"),
+		(1, 1, "bbb"),
+		(1, 2, "ccc"),
+		(1, 2, "ddd"),
+		(2, 2, "aaa"),
+		(2, 3, "bbb");
+analyze table t;
+trace plan target='estimation' select * from t where a >=1;
+

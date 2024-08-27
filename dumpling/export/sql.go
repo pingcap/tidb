@@ -17,18 +17,19 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
-	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/store/helper"
+	dbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
 const (
 	orderByTiDBRowID = "ORDER BY `_tidb_rowid`"
+	snapshotVar      = "tidb_snapshot"
 )
 
 type listTableType int
@@ -243,6 +244,119 @@ func RestoreCharset(w io.StringWriter) {
 	_, _ = w.WriteString("SET character_set_client = @PREV_CHARACTER_SET_CLIENT;\n")
 	_, _ = w.WriteString("SET character_set_results = @PREV_CHARACTER_SET_RESULTS;\n")
 	_, _ = w.WriteString("SET collation_connection = @PREV_COLLATION_CONNECTION;\n")
+}
+
+// updateSpecifiedTablesMeta updates DatabaseTables with correct table type and avg row size.
+func updateSpecifiedTablesMeta(tctx *tcontext.Context, db *sql.Conn, dbTables DatabaseTables, listType listTableType) error {
+	var (
+		schema, table, tableTypeStr string
+		tableType                   TableType
+		avgRowLength                uint64
+		err                         error
+	)
+	switch listType {
+	case listTableByInfoSchema:
+		dbNames := make([]string, 0, len(dbTables))
+		for db := range dbTables {
+			dbNames = append(dbNames, fmt.Sprintf("'%s'", db))
+		}
+		query := fmt.Sprintf("SELECT TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA IN (%s)", strings.Join(dbNames, ","))
+		if err := simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
+			var (
+				sqlAvgRowLength sql.NullInt64
+				err2            error
+			)
+			if err2 = rows.Scan(&schema, &table, &tableTypeStr, &sqlAvgRowLength); err != nil {
+				return errors.Trace(err2)
+			}
+
+			tbls, ok := dbTables[schema]
+			if !ok {
+				return nil
+			}
+			for _, tbl := range tbls {
+				if tbl.Name == table {
+					tableType, err2 = ParseTableType(tableTypeStr)
+					if err2 != nil {
+						return errors.Trace(err2)
+					}
+					if sqlAvgRowLength.Valid {
+						avgRowLength = uint64(sqlAvgRowLength.Int64)
+					} else {
+						avgRowLength = 0
+					}
+					tbl.Type = tableType
+					tbl.AvgRowLength = avgRowLength
+				}
+			}
+			return nil
+		}, query); err != nil {
+			return errors.Annotatef(err, "sql: %s", query)
+		}
+		return nil
+	case listTableByShowFullTables:
+		for schema, tbls := range dbTables {
+			query := fmt.Sprintf("SHOW FULL TABLES FROM `%s`",
+				escapeString(schema))
+			if err := simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
+				var err2 error
+				if err2 = rows.Scan(&table, &tableTypeStr); err != nil {
+					return errors.Trace(err2)
+				}
+				for _, tbl := range tbls {
+					if tbl.Name == table {
+						tableType, err2 = ParseTableType(tableTypeStr)
+						if err2 != nil {
+							return errors.Trace(err2)
+						}
+						tbl.Type = tableType
+					}
+				}
+				return nil
+			}, query); err != nil {
+				return errors.Annotatef(err, "sql: %s", query)
+			}
+		}
+		return nil
+	default:
+		const queryTemplate = "SHOW TABLE STATUS FROM `%s`"
+		for schema, tbls := range dbTables {
+			query := fmt.Sprintf(queryTemplate, escapeString(schema))
+			rows, err := db.QueryContext(tctx, query)
+			if err != nil {
+				return errors.Annotatef(err, "sql: %s", query)
+			}
+			results, err := GetSpecifiedColumnValuesAndClose(rows, "NAME", "ENGINE", "AVG_ROW_LENGTH", "COMMENT")
+			if err != nil {
+				return errors.Annotatef(err, "sql: %s", query)
+			}
+			for _, oneRow := range results {
+				table, engine, avgRowLengthStr, comment := oneRow[0], oneRow[1], oneRow[2], oneRow[3]
+				for _, tbl := range tbls {
+					if tbl.Name == table {
+						if avgRowLengthStr != "" {
+							avgRowLength, err = strconv.ParseUint(avgRowLengthStr, 10, 64)
+							if err != nil {
+								return errors.Annotatef(err, "sql: %s", query)
+							}
+						} else {
+							avgRowLength = 0
+						}
+						tbl.AvgRowLength = avgRowLength
+						tableType = TableTypeBase
+						if engine == "" && (comment == "" || comment == TableTypeViewStr) {
+							tableType = TableTypeView
+						} else if engine == "" {
+							tctx.L().Warn("invalid table without engine found", zap.String("database", schema), zap.String("table", table))
+							continue
+						}
+						tbl.Type = tableType
+					}
+				}
+			}
+		}
+		return nil
+	}
 }
 
 // ListAllDatabasesTables lists all the databases and tables from the database
@@ -642,7 +756,7 @@ func ShowMasterStatus(db *sql.Conn) ([]string, error) {
 		}
 		fieldNum := len(cols)
 		oneRow = make([]string, fieldNum)
-		addr := make([]interface{}, fieldNum)
+		addr := make([]any, fieldNum)
 		for i := range oneRow {
 			addr[i] = &oneRow[i]
 		}
@@ -664,7 +778,7 @@ func GetSpecifiedColumnValueAndClose(rows *sql.Rows, columnName string) ([]strin
 	defer rows.Close()
 	var strs []string
 	columns, _ := rows.Columns()
-	addr := make([]interface{}, len(columns))
+	addr := make([]any, len(columns))
 	oneRow := make([]sql.NullString, len(columns))
 	fieldIndex := -1
 	for i, col := range columns {
@@ -699,7 +813,7 @@ func GetSpecifiedColumnValuesAndClose(rows *sql.Rows, columnName ...string) ([][
 	if err != nil {
 		return strs, errors.Trace(err)
 	}
-	addr := make([]interface{}, len(columns))
+	addr := make([]any, len(columns))
 	oneRow := make([]sql.NullString, len(columns))
 	fieldIndexMp := make(map[int]int)
 	for i, col := range columns {
@@ -833,10 +947,10 @@ func isUnknownSystemVariableErr(err error) bool {
 
 // resetDBWithSessionParams will return a new sql.DB as a replacement for input `db` with new session parameters.
 // If returned error is nil, the input `db` will be closed.
-func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Config, params map[string]interface{}) (*sql.DB, error) {
-	support := make(map[string]interface{})
+func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Config, params map[string]any) (*sql.DB, error) {
+	support := make(map[string]any)
 	for k, v := range params {
-		var pv interface{}
+		var pv any
 		if str, ok := v.(string); ok {
 			if pvi, err := strconv.ParseInt(str, 10, 64); err == nil {
 				pv = pvi
@@ -851,7 +965,9 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Con
 		s := fmt.Sprintf("SET SESSION %s = ?", k)
 		_, err := db.ExecContext(tctx, s, pv)
 		if err != nil {
-			if isUnknownSystemVariableErr(err) {
+			if k == snapshotVar {
+				err = errors.Annotate(err, "fail to set snapshot for tidb, please set --consistency=none/--consistency=lock or fix snapshot problem")
+			} else if isUnknownSystemVariableErr(err) {
 				tctx.L().Info("session variable is not supported by db", zap.String("variable", k), zap.Reflect("value", v))
 				continue
 			}
@@ -876,6 +992,9 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Con
 		}
 		cfg.Params[k] = s
 	}
+	failpoint.Inject("SkipResetDB", func(_ failpoint.Value) {
+		failpoint.Return(db, nil)
+	})
 
 	db.Close()
 	c, err := mysql.NewConnector(cfg)
@@ -1087,7 +1206,7 @@ func buildOrderByClauseString(handleColNames []string) string {
 	return fmt.Sprintf("ORDER BY %s", strings.Join(quotaCols, separator))
 }
 
-func buildLockTablesSQL(allTables DatabaseTables, blockList map[string]map[string]interface{}) string {
+func buildLockTablesSQL(allTables DatabaseTables, blockList map[string]map[string]any) string {
 	// ,``.`` READ has 11 bytes, "LOCK TABLE" has 10 bytes
 	estimatedCap := len(allTables)*11 + 10
 	s := bytes.NewBuffer(make([]byte, 0, estimatedCap))
@@ -1133,7 +1252,7 @@ func simpleQuery(conn *sql.Conn, query string, handleOneRow func(*sql.Rows) erro
 	return simpleQueryWithArgs(context.Background(), conn, handleOneRow, query)
 }
 
-func simpleQueryWithArgs(ctx context.Context, conn *sql.Conn, handleOneRow func(*sql.Rows) error, query string, args ...interface{}) error {
+func simpleQueryWithArgs(ctx context.Context, conn *sql.Conn, handleOneRow func(*sql.Rows) error, query string, args ...any) error {
 	var (
 		rows *sql.Rows
 		err  error
@@ -1224,7 +1343,7 @@ func detectEstimateRows(tctx *tcontext.Context, db *BaseConn, query string, fiel
 		if err != nil {
 			return errors.Trace(err)
 		}
-		addr := make([]interface{}, len(columns))
+		addr := make([]any, len(columns))
 		oneRow = make([]sql.NullString, len(columns))
 		fieldIndex = -1
 	found:
@@ -1429,10 +1548,9 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 		}
 		last := len(schemas) - 1
 		if last < 0 || schemas[last].Name.O != tableSchema {
-			schemas = append(schemas, &model.DBInfo{
-				Name:   model.CIStr{O: tableSchema},
-				Tables: make([]*model.TableInfo, 0, len(tables[tableSchema])),
-			})
+			dbInfo := &model.DBInfo{Name: model.CIStr{O: tableSchema}}
+			dbInfo.Deprecated.Tables = make([]*model.TableInfo, 0, len(tables[tableSchema]))
+			schemas = append(schemas, dbInfo)
 			last++
 		}
 		var partition *model.PartitionInfo
@@ -1447,7 +1565,7 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 				}
 			}
 		}
-		schemas[last].Tables = append(schemas[last].Tables, &model.TableInfo{
+		schemas[last].Deprecated.Tables = append(schemas[last].Deprecated.Tables, &model.TableInfo{
 			ID:        tidbTableID,
 			Name:      model.CIStr{O: tableName},
 			Partition: partition,
@@ -1459,19 +1577,19 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 
 // GetRegionInfos get region info including regionID, start key, end key from database sql interface.
 // start key, end key includes information to help split table
-func GetRegionInfos(db *sql.Conn) (*helper.RegionsInfo, error) {
+func GetRegionInfos(db *sql.Conn) (*pd.RegionsInfo, error) {
 	const tableRegionSQL = "SELECT REGION_ID,START_KEY,END_KEY FROM INFORMATION_SCHEMA.TIKV_REGION_STATUS ORDER BY START_KEY;"
 	var (
 		regionID         int64
 		startKey, endKey string
 	)
-	regionsInfo := &helper.RegionsInfo{Regions: make([]helper.RegionInfo, 0)}
+	regionsInfo := &pd.RegionsInfo{Regions: make([]pd.RegionInfo, 0)}
 	err := simpleQuery(db, tableRegionSQL, func(rows *sql.Rows) error {
 		err := rows.Scan(&regionID, &startKey, &endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		regionsInfo.Regions = append(regionsInfo.Regions, helper.RegionInfo{
+		regionsInfo.Regions = append(regionsInfo.Regions, pd.RegionInfo{
 			ID:       regionID,
 			StartKey: startKey,
 			EndKey:   endKey,

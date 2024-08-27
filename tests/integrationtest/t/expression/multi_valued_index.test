@@ -1,0 +1,525 @@
+# TestMultiValuedIndexDDL
+drop table if exists t;
+create table t(a json);
+-- error 1235
+select cast(a as signed array) from t;
+-- error 1235
+select json_extract(cast(a as signed array), '$[0]') from t;
+-- error 1235
+select * from t where cast(a as signed array);
+-- error 1235
+select cast('[1,2,3]' as unsigned array);
+drop table t;
+-- error 1235
+CREATE TABLE t(x INT, KEY k ((1 AND CAST(JSON_ARRAY(x) AS UNSIGNED ARRAY))));
+-- error 1235
+CREATE TABLE t1 (f1 json, key mvi((cast(cast(f1 as unsigned array) as unsigned array))));
+-- error 1235
+CREATE TABLE t1 (f1 json, primary key mvi((cast(cast(f1 as unsigned array) as unsigned array))));
+-- error 3146
+CREATE TABLE t1 (f1 json, key mvi((cast(f1->>'$[*]' as unsigned array))));
+-- error 1235
+CREATE TABLE t1 (f1 json, key mvi((cast(f1->'$[*]' as year array))));
+-- error 1235
+CREATE TABLE t1 (f1 json, key mvi((cast(f1->'$[*]' as json array))));
+-- error 1235
+CREATE TABLE t1 (f1 json, key mvi((cast(f1->'$[*]' as char(10) charset gbk array))));
+-- error 1235
+create table t(j json, gc json as ((concat(cast(j->'$[*]' as unsigned array),"x"))));
+-- error 1235
+create table t(j json, gc json as (cast(j->'$[*]' as unsigned array)));
+-- error 1235
+create table t1(j json, key i1((cast(j->"$" as char array))));
+-- error 1235
+create table t1(j json, key i1((cast(j->"$" as binary array))));
+-- error 1235
+create table t1(j json, key i1((cast(j->"$" as float array))));
+-- error 1235
+create table t1(j json, key i1((cast(j->"$" as decimal(4,2) array))));
+-- error 1235
+create view v as select cast('[1,2,3]' as unsigned array);
+create table t(a json, index idx((cast(a as signed array))));
+drop table t;
+create table t(a json, index idx(((cast(a as signed array)))));
+drop table t;
+create table t(j json, key i1((cast(j->"$" as double array))));
+drop table t;
+-- error 1235
+create table t(a json, b int, index idx(b, (cast(a as signed array)), (cast(a as signed array))));
+create table t(a json, b int);
+-- error 1235
+create index idx on t (b, (cast(a as signed array)), (cast(a as signed array)));
+-- error 1235
+alter table t add index idx(b, (cast(a as signed array)), (cast(a as signed array)));
+create index idx1 on t (b, (cast(a as signed array)));
+alter table t add index idx2(b, (cast(a as signed array)));
+drop table t;
+create table t(a json, b int, index idx3(b, (cast(a as signed array))));
+drop table t;
+set names gbk;
+create table t(a json, b int, index idx3(b, (cast(a as char(10) array))));
+CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);
+-- error 1072
+CREATE TABLE t (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON, FOREIGN KEY fk_user_id ((cast(doc->'$[*]' as signed array))) REFERENCES users(id));
+
+set names default;
+
+# TestMultiValuedIndexDML
+set @@sql_mode='';
+drop table if exists t;
+create table t(a json, index idx((cast(a as unsigned array))));
+insert into t values ('[1,2,3]');
+-- error 3752
+insert into t values ('[-1]');
+-- error 3903
+insert into t values ('["1"]');
+-- error 3903
+insert into t values ('["a"]');
+-- error 3903
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as signed array))));
+insert into t values ('[1,2,3]');
+insert into t values ('[-1]');
+-- error 3903
+insert into t values ('["1"]');
+-- error 3903
+insert into t values ('["a"]');
+-- error 3903
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as char(1) array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+insert into t values ('["1"]');
+insert into t values ('["a"]');
+-- error 3907
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as char(2) array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+insert into t values ('["1"]');
+insert into t values ('["a"]');
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as binary(1) array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+insert into t values ('["1"]');
+insert into t values ('["a"]');
+-- error 3907
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as binary(2) array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+insert into t values ('["1"]');
+insert into t values ('["a"]');
+-- error 3907
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as date array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+-- error 3903
+insert into t values ('["1"]');
+-- error 3903
+insert into t values ('["a"]');
+-- error 3903
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as time array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+-- error 3903
+insert into t values ('["1"]');
+-- error 3903
+insert into t values ('["a"]');
+-- error 3903
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as datetime array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+-- error 3903
+insert into t values ('["1"]');
+-- error 3903
+insert into t values ('["a"]');
+-- error 3903
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as double array))));
+insert into t values ('[1,2,3]');
+insert into t values ('[-1]');
+-- error 3903
+insert into t values ('["1"]');
+-- error 3903
+insert into t values ('["a"]');
+-- error 3903
+insert into t values ('["汉字"]');
+insert into t values ('[1.2]');
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+set @@sql_mode=default;
+drop table if exists t;
+create table t(a json, index idx((cast(a as unsigned array))));
+insert into t values ('[1,2,3]');
+-- error 3752
+insert into t values ('[-1]');
+-- error 3903
+insert into t values ('["1"]');
+-- error 3903
+insert into t values ('["a"]');
+-- error 3903
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as signed array))));
+insert into t values ('[1,2,3]');
+insert into t values ('[-1]');
+-- error 3903
+insert into t values ('["1"]');
+-- error 3903
+insert into t values ('["a"]');
+-- error 3903
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as char(1) array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+insert into t values ('["1"]');
+insert into t values ('["a"]');
+-- error 3907
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as char(2) array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+insert into t values ('["1"]');
+insert into t values ('["a"]');
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as binary(1) array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+insert into t values ('["1"]');
+insert into t values ('["a"]');
+-- error 3907
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as binary(2) array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+insert into t values ('["1"]');
+insert into t values ('["a"]');
+-- error 3907
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as date array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+-- error 3903
+insert into t values ('["1"]');
+-- error 3903
+insert into t values ('["a"]');
+-- error 3903
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as time array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+-- error 3903
+insert into t values ('["1"]');
+-- error 3903
+insert into t values ('["a"]');
+-- error 3903
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as datetime array))));
+-- error 3903
+insert into t values ('[1,2,3]');
+-- error 3903
+insert into t values ('[-1]');
+-- error 3903
+insert into t values ('["1"]');
+-- error 3903
+insert into t values ('["a"]');
+-- error 3903
+insert into t values ('["汉字"]');
+-- error 3903
+insert into t values ('[1.2]');
+-- error 3903
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+drop table if exists t;
+create table t(a json, index idx((cast(a as double array))));
+insert into t values ('[1,2,3]');
+insert into t values ('[-1]');
+-- error 3903
+insert into t values ('["1"]');
+-- error 3903
+insert into t values ('["a"]');
+-- error 3903
+insert into t values ('["汉字"]');
+insert into t values ('[1.2]');
+insert into t values ('[1.0]');
+-- error 3903
+insert into t values (json_array(cast("11:00:00" as time)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02" as date)));
+-- error 3903
+insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
+-- error 3903
+insert into t values (json_array(cast('{"a":1}' as json)));
+
+set sql_mode=default;
+
+# TestMultiValuedIndexInCompoundIndex
+drop table if exists t;
+create table t (j json not null, str varchar(5),  KEY `idx` ((cast(`j` as unsigned array)),`str`));
+insert into t values ('1', 'abcde');
+drop table t;
+create table t (j json not null, str varchar(5) collate utf8mb4_unicode_ci,  KEY `idx` ((cast(`j` as unsigned array)),`str`));
+insert into t values ('1', 'abcde');
+drop table t;
+create table t (j json not null, str varchar(5) collate gbk_chinese_ci,  KEY `idx` ((cast(`j` as unsigned array)),`str`));
+insert into t values ('1', 'abcde');
+drop table t;

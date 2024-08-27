@@ -1,0 +1,243 @@
+# TestGeneratedColumnDDL
+drop table if exists test_gv_ddl, table_with_gen_col_blanks, table_with_gen_col_latin1, table_with_gen_col_string;
+CREATE TABLE test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);
+DESC test_gv_ddl;
+show create table test_gv_ddl;
+create table table_with_gen_col_blanks (a int, b char(20) as (cast( 
+	 a 
+	as  char)), c int as (a+100));
+show create table table_with_gen_col_blanks;
+create table table_with_gen_col_latin1 (a int, b char(20) as (cast( 
+	 a 
+	as  char charset latin1)), c int as (a+100));
+show create table table_with_gen_col_latin1;
+create table table_with_gen_col_string (first_name varchar(10), last_name varchar(10), full_name varchar(255) AS (CONCAT(first_name,' ',last_name)));
+show create table table_with_gen_col_string;
+alter table table_with_gen_col_string modify column full_name varchar(255) GENERATED ALWAYS AS (CONCAT(last_name,' ' ,first_name) ) VIRTUAL;
+show create table table_with_gen_col_string;
+-- error 1582
+create table test_gv_incorrect_pc(a double, b int as (lower(a, 2)));
+-- error 1582
+create table test_gv_incorrect_pc(a double, b int as (lower(a, 2)) stored);
+-- error 3108
+alter table test_gv_ddl drop column a;
+-- error 3108
+alter table test_gv_ddl change column a anew int;
+-- error 3106
+alter table test_gv_ddl modify column b bigint;
+-- error 3106
+-- error 3106
+alter table test_gv_ddl change column c cnew bigint as (a+100);
+-- error 3107
+alter table test_gv_ddl modify column b int as (c+100);
+-- error 3108
+alter table test_gv_ddl change column b bnew int as (c+100);
+-- error 1054
+create table test_gv_ddl_bad (a int, b int as (c+8));
+-- error 3107
+create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1));
+-- error 3106
+create table test_gv_ddl_bad (a int, b int, c int as (a+b) primary key);
+-- error 3106
+create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(c));
+-- error 3106
+create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(a, c));
+-- error 3106
+alter table test_gv_ddl add column d int as (b+2) stored;
+-- error 3106
+alter table test_gv_ddl modify column b int as (a + 8) stored;
+-- error 1582
+alter table test_gv_ddl add column z int as (lower(a, 2));
+-- error 1582
+alter table test_gv_ddl add column z int as (lower(a, 2)) stored;
+-- error 1582
+alter table test_gv_ddl modify column b int as (lower(a, 2));
+-- error 1582
+alter table test_gv_ddl change column b b int as (lower(a, 2));
+-- error 3106
+alter table test_gv_ddl modify column c bigint as (b+200) stored;
+DESC test_gv_ddl;
+alter table test_gv_ddl change column c cnew bigint;
+DESC test_gv_ddl;
+# According to https://github.com/pingcap/tidb/issues/24321, this test case is not supported.
+# Although in MySQL this is a legal one.
+# alter table test_gv_ddl change column b b bigint as (a+100) virtual;
+# DESC test_gv_ddl;
+# `a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`;
+drop table if exists t;
+CREATE TABLE t(c0 TEXT AS ('\\'));
+insert into t values ();
+select * from t;
+drop table if exists t;
+CREATE TABLE t(c0 TEXT AS ('a\\b\\c\\'));
+insert into t values ();
+select * from t;
+
+# TestColumnModifyingDefaultValue
+drop table if exists t;
+create table t (a int default 1);
+alter table t change a a int default 0.00;
+show create table t;
+drop table if exists t;
+create table t (a int default 1.25);
+alter table t change a a int default 2.8;
+show create table t;
+drop table if exists t;
+create table t (a float default 1.25);
+alter table t change a a float default '0012.32';
+show create table t;
+
+# TestModifyGeneratedColumn
+# Modify column with single-col-index.
+drop table if exists t1;
+create table t1 (a int, b int as (a+1), index idx(b));
+insert into t1 set a=1;
+-- error 3106
+alter table t1 modify column b int as (a+2);
+drop index idx on t1;
+alter table t1 modify b int as (a+2);
+select * from t1;
+
+# Modify column with multi-col-index.
+drop table t1;
+create table t1 (a int, b int as (a+1), index idx(a, b));
+insert into t1 set a=1;
+-- error 3106
+alter table t1 modify column b int as (a+2);
+drop index idx on t1;
+alter table t1 modify b int as (a+2);
+select * from t1;
+
+# Modify column with stored status to a different expression.
+drop table t1;
+create table t1 (a int, b int as (a+1) stored);
+insert into t1 set a=1;
+-- error 3106
+alter table t1 modify column b int as (a+2) stored;
+
+# Modify column with stored status to the same expression.
+drop table t1;
+create table t1 (a int, b int as (a+1) stored);
+insert into t1 set a=1;
+alter table t1 modify column b bigint as (a+1) stored;
+alter table t1 modify column b bigint as (a + 1) stored;
+select * from t1;
+
+# Modify column with index to the same expression.
+drop table t1;
+create table t1 (a int, b int as (a+1), index idx(b));
+insert into t1 set a=1;
+alter table t1 modify column b bigint as (a+1);
+alter table t1 modify column b bigint as (a + 1);
+select * from t1;
+
+# Modify column from non-generated to stored generated.
+drop table t1;
+create table t1 (a int, b int);
+-- error 3106
+alter table t1 modify column b bigint as (a+1) stored;
+
+# Modify column from stored generated to non-generated.
+drop table t1;
+create table t1 (a int, b int as (a+1) stored);
+insert into t1 set a=1;
+alter table t1 modify column b int;
+select * from t1;
+
+# TestCheckColumnDefaultValue
+drop table if exists text_default_text;
+-- error 1101
+create table text_default_text(c1 text not null default '');
+-- error 1101
+create table text_default_text(c1 text not null default 'scds');
+drop table if exists text_default_json;
+-- error 1101
+create table text_default_json(c1 json not null default '');
+-- error 1101
+create table text_default_json(c1 json not null default 'dfew555');
+drop table if exists text_default_blob;
+-- error 1101
+create table text_default_blob(c1 blob not null default '');
+-- error 1101
+create table text_default_blob(c1 blob not null default 'scds54');
+set sql_mode='';
+create table text_default_text(c1 text not null default '');
+show create table text_default_text;
+create table text_default_blob(c1 blob not null default '');
+show create table text_default_blob;
+create table text_default_json(c1 json not null default '');
+show create table text_default_json;
+set sql_mode=default;
+
+# TestCheckConvertToCharacter
+drop table if exists t;
+create table t(a varchar(10) charset binary);
+-- error 8200
+alter table t modify column a varchar(10) charset utf8 collate utf8_bin;
+-- error 8200
+alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin;
+-- error 8200
+alter table t modify column a varchar(10) charset latin1 collate latin1_bin;
+show create table t;
+
+# TestAddMultiColumnsIndex
+drop database if exists ddl__column_modify2;
+create database ddl__column_modify2;
+use ddl__column_modify2;
+create table ddl__column_modify2.test (a int auto_increment primary key, b int);
+insert ddl__column_modify2.test values (1, 1);
+update ddl__column_modify2.test set b = b + 1 where a = 1;
+insert into ddl__column_modify2.test values (2, 2);
+insert into ddl__column_modify2.test (a) values (3);
+insert into ddl__column_modify2.test values (4, 4);
+insert into ddl__column_modify2.test (a) values (5);
+insert ddl__column_modify2.test values (6, 6);
+alter table ddl__column_modify2.test add index idx1 (a, b);
+admin check table test;
+use ddl__column_modify;
+
+# TestRenameColumn
+drop table if exists test_rename_column;
+create table test_rename_column (id int not null primary key auto_increment, col1 int);
+alter table test_rename_column rename column col1 to col1;
+show create table test_rename_column;
+alter table test_rename_column rename column col1 to col2;
+show create table test_rename_column;
+-- error 1054
+alter table test_rename_column rename column non_exist_col to col3;
+-- error 1060
+alter table test_rename_column rename column col2 to id;
+drop table test_rename_column;
+create table test_rename_column (id int, col1 int generated always as (id + 1));
+alter table test_rename_column rename column col1 to col2;
+show create table test_rename_column;
+alter table test_rename_column rename column col2 to col1;
+show create table test_rename_column;
+-- error 3108
+alter table test_rename_column rename column id to id1;
+drop table test_rename_column;
+create table test_rename_column (id int, col1 int);
+create view test_rename_column_view as select * from test_rename_column;
+alter table test_rename_column rename column col1 to col2;
+-- error 1356
+select * from test_rename_column_view;
+drop view test_rename_column_view;
+drop table test_rename_column;
+drop table if exists t;
+create table t (a int);
+# Test rename a non-exists column. See https://github.com/pingcap/tidb/issues/34811.
+-- error 1054
+alter table t rename column b to b;
+
+# TestColumnModifyingDefinition
+drop table if exists test2;
+create table test2 (c1 int, c2 int, c3 int default 1, index (c1));
+alter table test2 change c2 a int not null;
+show create table test2;
+drop table if exists test2;
+create table test2 (c1 int, c2 int, c3 int default 1, index (c1));
+insert into test2(c2) values (null);
+-- error 1265
+alter table test2 change c2 a int not null;
+-- error 1265
+alter table test2 change c1 a1 bigint not null;

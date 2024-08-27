@@ -1,0 +1,46 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "admin",
+    srcs = ["admin.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/admin",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/errno",
+        "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+        "//pkg/table",
+        "//pkg/tablecodec",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/dbterror",
+        "//pkg/util/logutil",
+        "//pkg/util/logutil/consistency",
+        "//pkg/util/rowDecoder",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "admin_test",
+    timeout = "short",
+    srcs = [
+        "admin_integration_test.go",
+        "main_test.go",
+    ],
+    embed = [":admin"],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/tablecodec",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

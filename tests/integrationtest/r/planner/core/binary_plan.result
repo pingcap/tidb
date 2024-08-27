@@ -1,0 +1,18 @@
+select tidb_decode_binary_plan('some random bytes');
+tidb_decode_binary_plan('some random bytes')
+
+show warnings;
+Level	Code	Message
+Warning	1105	illegal base64 data at input byte 4
+select tidb_decode_binary_plan('c29tZSByYW5kb20gYnl0ZXM=');
+tidb_decode_binary_plan('c29tZSByYW5kb20gYnl0ZXM=')
+
+show warnings;
+Level	Code	Message
+Warning	1105	snappy: corrupt input
+select tidb_decode_binary_plan('EUBzb21lIHJhbmRvbSBieXRlcw==');
+tidb_decode_binary_plan('EUBzb21lIHJhbmRvbSBieXRlcw==')
+
+show warnings;
+Level	Code	Message
+Warning	1105	proto: illegal wireType 7

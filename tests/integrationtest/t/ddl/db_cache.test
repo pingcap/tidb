@@ -1,0 +1,82 @@
+# TestAlterPartitionCache
+drop table if exists cache_partition_table;
+create table cache_partition_table (a int, b int) partition by hash(a) partitions 3;
+-- error 8242
+alter table cache_partition_table cache;
+drop table if exists cache_partition_range_table;
+create table cache_partition_range_table (c1 smallint(6) not null, c2 char(5) default null) partition by range ( c1 ) (
+	partition p0 values less than (10),
+	partition p1 values less than (20),
+	partition p2 values less than (30),
+	partition p3 values less than (MAXVALUE)
+);
+-- error 8242
+alter table cache_partition_range_table cache;
+drop table if exists partition_list_table;
+set @@session.tidb_enable_list_partition = ON;
+create table cache_partition_list_table (id int) partition by list  (id) (
+    partition p0 values in (1,2),
+    partition p1 values in (3,4),
+    partition p3 values in (5,null)
+);
+-- error 8242
+alter table cache_partition_list_table cache;
+drop table if exists cache_partition_list_table;
+drop table if exists cache_partition_range_table;
+drop table if exists cache_partition_table;
+set @@session.tidb_enable_list_partition = default;
+
+# TestAlterViewTableCache
+drop table if exists cache_view_t;
+create table cache_view_t (id int);
+create view v as select * from cache_view_t;
+-- error 1347
+alter table v cache;
+drop view v;
+
+# TestAlterTableNoCache
+drop table if exists nocache_t1;
+create table nocache_t1 ( n int auto_increment primary key);
+alter table nocache_t1 cache;
+show create table nocache_t1;
+alter table nocache_t1 nocache;
+show create table nocache_t1;
+drop table if exists t1;
+drop table if exists nocache_t;
+-- error 1146
+alter table nocache_t cache;
+create table nocache_t (a int);
+alter table nocache_t nocache;
+# Multiple no alter cache is okay
+alter table nocache_t nocache;
+alter table nocache_t nocache;
+
+# TestIndexOnCacheTable
+drop table if exists cache_index;
+create table cache_index (c1 int primary key, c2 int, c3 int, index ok2(c2));
+alter table cache_index cache;
+-- error 8242
+create index cache_c2 on cache_index(c2);
+-- error 8242
+alter table cache_index add index k2(c2);
+-- error 8242
+alter table cache_index drop index ok2;
+-- error 8242
+alter table cache_index rename index ok2 to ok;
+drop table if exists cache_index_1;
+create table cache_index_1 (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));
+alter table cache_index_1 cache;
+-- error 8242
+alter table cache_index_1 drop index i1, drop index i2;
+alter table cache_index_1 nocache;
+alter table cache_index nocache;
+drop table if exists cache_index;
+
+# TestIssue32692
+drop table if exists cache_t2;
+create table cache_t2 (c1 int);
+alter table cache_t2 cache;
+alter table cache_t2 nocache;
+alter table cache_t2 cache;
+show warnings;
+

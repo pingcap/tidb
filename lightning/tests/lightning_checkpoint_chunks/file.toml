@@ -1,0 +1,15 @@
+[lightning]
+region-concurrency = 1
+
+[tikv-importer]
+backend = "local"
+
+[checkpoint]
+enable = true
+schema = "tidb_lightning_checkpoint_test_cpch"
+driver = "file"
+dsn = "/tmp/lightning_test/cpch.pb"
+keep-after-success = true
+
+[post-restore]
+analyze = false

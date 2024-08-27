@@ -1,0 +1,367 @@
+# TestMultiSchemaChangeAddColumns
+drop table if exists t;
+create table t (a int);
+insert into t values (1);
+alter table t add column b int default 2, add column c int default 3;
+select * from t;
+drop table if exists t;
+create table t (a int);
+insert into t values (1);
+alter table t add column (b int default 2, c int default 3);
+select * from t;
+drop table if exists t;
+create table t (a int, b int, c int);
+insert into t values (1, 2, 3);
+alter table t add column (d int default 4, e int default 5);
+select * from t;
+drop table if exists t;
+create table t (a int);
+insert into t values (1);
+alter table t add column (index i(a), index i1(a));
+select * from t use index (i, i1);
+drop table if exists t;
+create table t (a int);
+insert into t values (1);
+alter table t add column (b int default 2, index i(a), primary key (a));
+select * from t use index (i, primary);
+drop table if exists t;
+create table t (a int);
+insert into t values (1);
+alter table t add column (index i(a));
+select * from t use index (i);
+drop table if exists t;
+create table t (a int, b int, c int);
+insert into t values (1, 2, 3);
+alter table t add column (index i1(a, b, c), index i2(c, b, a), index i3((a + 1)), index i4((c - 1)));
+select * from t use index (i1, i2);
+admin check table t;
+drop table if exists t;
+create table t (a int default 1);
+insert into t values ();
+alter table t add column if not exists (b int default 2, c int default 3);
+select * from t;
+alter table t add column if not exists (c int default 3, d int default 4);
+show warnings;
+select * from t;
+drop table if exists t;
+create table t (a int);
+-- error 1054
+alter table t add column b int after a, add column c int after b;
+-- error 1054
+alter table t add column c int after b, add column b int;
+drop table if exists t;
+create table t (a int, b int, c int);
+insert into t values (1, 2, 3);
+alter table t
+        add column d int default 4 first,
+        add column e int default 5 after b,
+        add column f int default 6 after b;
+select * from t;
+drop table if exists t;
+create table t (a int default 1);
+insert into t values ();
+alter table t add column b int default 2, add column if not exists a int;
+show warnings;
+select * from t;
+drop table if exists t;
+create table t(a int, b int);
+insert into t values (1, 2);
+alter table t add column c double default 3.0, add column d double as (a + b);
+select * from t;
+drop table if exists t;
+create table t (a int default 1, c int default 4);
+-- error 8200
+alter table t add column b int default 2, add column b int default 3;
+drop table if exists t;
+create table t(a int, b int);
+insert into t values (1, 2);
+-- error 8200
+alter table t modify column b double, add column c double as (a + b);
+
+# TestMultiSchemaChangeDropColumns
+drop table if exists t;
+create table t (a int, b int);
+-- error 1090
+alter table t drop column a, drop column b;
+drop table if exists t;
+create table t (a int, b int, c int, d int, e int);
+insert into t values (1, 2, 3, 4, 5);
+alter table t drop column a, drop column d, drop column b;
+select * from t;
+drop table if exists t;
+create table t (a int default 1, c int default 4);
+-- error 8200
+alter table t drop column a, drop column a;
+drop table if exists t;
+create table t (a int default 1, b int default 2);
+insert into t values ();
+alter table t drop column if exists c, drop column a;
+show warnings;
+select * from t;
+drop table if exists t;
+create table t (a int default 1, b int default 2, c int default 3);
+insert into t values ();
+alter table t drop column a, drop column if exists d, drop column c;
+show warnings;
+select * from t;
+
+# TestMultiSchemaChangeAddDropColumns
+# [a, b] -> [+c, -a, +d, -b] -> [c, d]
+drop table if exists t;
+create table t (a int default 1, b int default 2);
+insert into t values ();
+alter table t add column c int default 3, drop column a, add column d int default 4, drop column b;
+select * from t;
+# [a, b] -> [-a, -b, +c, +d] -> [c, d]
+drop table if exists t;
+create table t (a int default 1, b int default 2);
+insert into t values ();
+alter table t drop column a, drop column b, add column c int default 3, add column d int default 4;
+select * from t;
+drop table if exists t;
+create table t (a int default 1, b int default 2);
+insert into t values ();
+-- error 8200
+alter table t add column c int default 3 after a, add column d int default 4 first, drop column a, drop column b;
+
+# TestMultiSchemaChangeAddIndexes
+drop table if exists t;
+create table t (a int, b int, c int);
+insert into t values (1, 2, 3);
+alter table t add index t(a, b), add index t1(a);
+alter table t add index t2(a), add index t3(a, b);
+select * from t use index (t, t1, t2, t3);
+admin check table t;
+drop table if exists t;
+create table t (a int, b int, c int);
+-- error 8200
+alter table t add index t(a), add index t(b);
+show index from t;
+drop table if exists t;
+create table t (a int, b int, c int);
+-- error 8200
+alter table t add index t(a), drop column a;
+-- error 8200
+alter table t add index t(a, b), drop column a;
+show index from t;
+drop table if exists t;
+create table t (a int, b int, c int);
+insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 1);
+-- error 1062
+alter table t add unique index i1(a), add unique index i2(a, b), add unique index i3(c);
+show index from t;
+alter table t add index i1(a), add index i2(a, b), add index i3(c);
+
+# TestMultiSchemaChangeDropIndexes
+drop table if exists t;
+create table t (a int, b int, c int, index t(a));
+-- error 8200
+alter table t drop index t, drop index t;
+drop table if exists t;
+create table t (id int, c1 int, c2 int, primary key(id) nonclustered, key i1(c1), key i2(c2), key i3(c1, c2));
+insert into t values (1, 2, 3);
+alter table t drop index i1, drop index i2;
+-- error 1176
+select * from t use index(i1);
+-- error 1176
+select * from t use index(i2);
+alter table t drop index i3, drop primary key;
+-- error 1176
+select * from t use index(primary);
+-- error 1176
+select * from t use index(i3);
+drop table if exists t;
+create table t (a int default 1, b int default 2, c int default 3, index t(a));
+insert into t values ();
+alter table t drop index t, drop column a;
+-- error 1176
+select * from t force index(t);
+
+# TestMultiSchemaChangeAddDropIndexes
+drop table if exists t;
+create table t (a int, b int, c int, index t(a));
+-- error 1061
+alter table t drop index t, add index t(b);
+drop table if exists t;
+create table t (a int, b int, c int, index t(a));
+-- error 1091
+alter table t add index t1(b), drop index t1;
+drop table if exists t;
+create table t (a int, b int, c int, index (a), index(b), index(c));
+insert into t values (1, 2, 3);
+alter table t add index xa(a), drop index a, add index xc(c), drop index b, drop index c, add index xb(b);
+select * from t use index(xa, xb, xc);
+-- error 1176
+select * from t use index(a);
+-- error 1176
+select * from t use index(b);
+-- error 1176
+select * from t use index(c);
+admin check table t;
+
+# TestMultiSchemaChangeModifyColumns
+drop table if exists t;
+create table t (a int default 1, b int default 2);
+insert into t values ();
+-- error 8200
+alter table t modify column a int default 2, modify column a bigint;
+drop table if exists t;
+create table t (a int default 1, b int default 2);
+insert into t values ();
+-- error 8200
+alter table t modify column b double, drop column b;
+drop table if exists t;
+create table t (a int default 1, b int default 2, c int default 3);
+insert into t values ();
+-- error 8200
+alter table t modify column b double after c, drop column c;
+drop table if exists t;
+create table t(a int, b int);
+insert into t values (1, 2);
+-- error 8200
+alter table t add index i(a), modify column a int null default 1 after a;
+drop table if exists t;
+create table t(a int, b int);
+insert into t values (1, 2);
+-- error 8200
+alter table t add primary key(a), modify column a int null default 1 after a;
+drop table if exists t;
+create table t(a int, b int);
+insert into t values (1, 2);
+-- error 8200
+alter table t modify column b double, add index idx((a + b));
+drop table if exists t;
+create table t (a int default 1, b int default 2);
+insert into t values ();
+alter table t modify column b double default 2 after a, add column c int default 3 after a;
+select * from t;
+drop table if exists t;
+create table t (a int, b int, c int);
+insert into t values (1, 2, 3);
+alter table t modify column a bigint, modify column b bigint;
+insert into t values (9223372036854775807, 9223372036854775807, 1);
+select * from t;
+drop table if exists t;
+create table t (a int, b int, c int, index i1(a), index i2(b), index i3(c), index i4(a, b), index i5(a, b, c));
+insert into t values (1, 2, 3);
+alter table t modify column a tinyint, modify column b tinyint, modify column c tinyint;
+select * from t;
+select * from t use index(i1, i2, i3, i4, i5);
+admin check table t;
+drop table if exists t;
+create table t (a int, b int, c int, index i1(a), index i2(b), index i3(c), index i4(a, b), index i5(a, b, c));
+insert into t values (1, 2, 3);
+alter table t modify column a tinyint after c, modify column b tinyint, modify column c tinyint first;
+select * from t;
+select * from t use index(i1, i2, i3, i4, i5);
+admin check table t;
+drop table if exists t;
+create table t (a int, b int, c int, index i1(a), index i2(c, b));
+insert into t values (1, 2, 3), (11, 22, 33);
+alter table t modify column b char(255) after c, modify column a bigint;
+select * from t;
+select * from t use index(i1, i2);
+admin check table t;
+drop table if exists t;
+create table t(a bigint null default '1761233443433596323', index t(a));
+insert into t set a = '-7184819032643664798';
+-- error 1292
+alter table t change column a b datetime null default '8972-12-24 10:56:03', rename index t to t1;
+drop table if exists t;
+create table t (a int, b double, index i(a, b));
+alter table t rename index i to i1, change column b c int;
+select count(*) from information_schema.TIDB_INDEXES where TABLE_SCHEMA='ddl__multi_schema_change' and TABLE_NAME='t' and COLUMN_NAME='c' and KEY_NAME='i1';
+drop table if exists t;
+create table t (a int, b double, index i(a, b), index _Idx$_i(a, b));
+alter table t rename index i to i1, change column b c int;
+select count(*) from information_schema.TIDB_INDEXES where TABLE_SCHEMA='ddl__multi_schema_change' and TABLE_NAME='t' and COLUMN_NAME='c' and KEY_NAME='i1';
+select count(*) from information_schema.TIDB_INDEXES where TABLE_SCHEMA='ddl__multi_schema_change' and TABLE_NAME='t' and COLUMN_NAME='c' and KEY_NAME='_Idx$_i';
+drop table if exists t;
+create table t (a int, _Col$_a double, index _Idx$_i(a, _Col$_a), index i(a, _Col$_a));
+alter table t modify column a tinyint;
+select count(distinct KEY_NAME) from information_schema.TIDB_INDEXES where TABLE_SCHEMA='ddl__multi_schema_change' and TABLE_NAME='t';
+drop table if exists t;
+create table t (a BIGINT NULL DEFAULT '-283977870758975838', b double);
+insert into t values (-283977870758975838, 0);
+-- error 1690
+alter table t change column a c tinyint null default '111' after b, modify column b time null default '13:51:02' FIRST;
+drop table if exists t;
+create table t(a int, b int);
+insert into t values (1, 2);
+-- error 1054
+alter table t add index i(b), modify column a int null default 1 after a;
+drop table if exists t;
+create table t(a char(3), b int, unique index i1(a), index i2(a, b));
+insert into t values ('aaa', 1), ('aa', 2);
+set @@sql_mode = '';
+-- error 1062
+alter table t modify column b tinyint, modify column a char(2);
+set @@sql_mode = default;
+
+# TestMultiSchemaChangeMix
+drop table if exists t;
+create table t (a int, b int, c int, index i1(c), index i2(c));
+insert into t values (1, 2, 3);
+alter table t add column d int default 4, add index i3(c), drop column a, drop column if exists z, add column if not exists e int default 5, drop index i2, add column f int default 6, drop column b, drop index i1, add column if not exists c int;
+select * from t;
+-- error 1176
+select * from t use index (i1);
+-- error 1176
+select * from t use index (i2);
+select * from t use index (i3);
+
+# TestMultiSchemaChangeTableOption
+drop table if exists t;
+create table t (a int auto_increment primary key, b int) auto_id_cache = 100;
+insert into t(b) values(1);
+alter table t modify column b tinyint, auto_increment = 200;
+insert into t (b) values (2);
+select * from t;
+drop table if exists t;
+create table t (a int auto_increment primary key, b int);
+alter table t auto_increment = 110, auto_increment = 90;
+show warnings;
+insert into t (b) values (1);
+select * from t;
+drop table if exists t;
+create table t (a int, b int) charset = utf8 shard_row_id_bits=2;
+alter table t modify column a tinyint, comment = 'abc', charset = utf8mb4;
+select TIDB_ROW_ID_SHARDING_INFO, TABLE_COMMENT, TABLE_COLLATION from information_schema.tables where TABLE_SCHEMA='ddl__multi_schema_change' and table_name = 't';
+
+# TestMultiSchemaChangeNonPublicDefaultValue
+drop table if exists t;
+create table t (a tinyint);
+insert into t set a = 10;
+alter table t add column b int not null, change column a c char(5) first;
+select * from t;
+
+# TestMultiSchemaChangeAlterIndexVisibility
+drop table if exists t;
+create table t (a int, b int, index idx(b));
+alter table t add index idx2(a), alter index idx visible;
+select * from t use index (idx, idx2);
+-- error 1176
+alter table t drop column b, alter index idx invisible;
+select a, b from t;
+
+# TestMultiSchemaChangeUnsupportedType
+drop table if exists t;
+create table t (a int, b int);
+-- error 8200
+alter table t add column c int, auto_id_cache = 10;
+
+# TestMultiSchemaChangeAddIndexChangeColumn
+drop table if exists t;
+CREATE TABLE t (a SMALLINT DEFAULT '30219', b TIME NULL DEFAULT '02:45:06', PRIMARY KEY (a));
+ALTER TABLE t ADD unique INDEX idx4 (b), change column a e MEDIUMINT DEFAULT '5280454' FIRST;
+insert ignore into t (e) values (5586359),(501788),(-5961048),(220083),(-4917129),(-7267211),(7750448);
+select * from t;
+admin check table t;
+
+# TestMultiSchemaChangeAddIndexOrder
+drop table if exists t;
+create table t (a int);
+insert into t values (123);
+alter table t add index i(a), add primary key (a);
+show create table t;
+

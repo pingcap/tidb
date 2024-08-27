@@ -28,10 +28,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -78,9 +80,11 @@ const (
 	flagSkipCheckPath     = "skip-check-path"
 	flagDryRun            = "dry-run"
 	// TODO used for local test, should be removed later
-	flagSkipAWS             = "skip-aws"
-	flagCloudAPIConcurrency = "cloud-api-concurrency"
-	flagWithSysTable        = "with-sys-table"
+	flagSkipAWS                       = "skip-aws"
+	flagUseFSR                        = "use-fsr"
+	flagCloudAPIConcurrency           = "cloud-api-concurrency"
+	flagWithSysTable                  = "with-sys-table"
+	flagOperatorPausedGCAndSchedulers = "operator-paused-gc-and-scheduler"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
@@ -91,12 +95,21 @@ const (
 	flagCipherKey     = "crypter.key"
 	flagCipherKeyFile = "crypter.key-file"
 
+	flagMetadataDownloadBatchSize    = "metadata-download-batch-size"
+	defaultMetadataDownloadBatchSize = 128
+
 	unlimited           = 0
 	crypterAES128KeyLen = 16
 	crypterAES192KeyLen = 24
 	crypterAES256KeyLen = 32
 
 	flagFullBackupType = "type"
+)
+
+const (
+	// Once TableInfoVersion updated. BR need to check compatibility with
+	// new TableInfoVersion. both snapshot restore and pitr need to be checked.
+	CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION = model.TableInfoVersion5
 )
 
 // FullBackupType type when doing full backup or restore
@@ -136,6 +149,24 @@ func (tls *TLSConfig) ToTLSConfig() (*tls.Config, error) {
 		return nil, errors.Trace(err)
 	}
 	return tlsConfig, nil
+}
+
+// Convert the TLS config to the PD security option.
+func (tls *TLSConfig) ToPDSecurityOption() pd.SecurityOption {
+	securityOption := pd.SecurityOption{}
+	securityOption.CAPath = tls.CA
+	securityOption.CertPath = tls.Cert
+	securityOption.KeyPath = tls.Key
+	return securityOption
+}
+
+// Convert the TLS config to the PD security option.
+func (tls *TLSConfig) ToKVSecurity() config.Security {
+	return config.Security{
+		ClusterSSLCA:   tls.CA,
+		ClusterSSLCert: tls.Cert,
+		ClusterSSLKey:  tls.Key,
+	}
 }
 
 // ParseFromFlags parses the TLS config from the flag set.
@@ -188,6 +219,7 @@ type Config struct {
 	TLS                 TLSConfig `json:"tls" toml:"tls"`
 	RateLimit           uint64    `json:"rate-limit" toml:"rate-limit"`
 	ChecksumConcurrency uint      `json:"checksum-concurrency" toml:"checksum-concurrency"`
+	TableConcurrency    uint      `json:"table-concurrency" toml:"table-concurrency"`
 	Concurrency         uint32    `json:"concurrency" toml:"concurrency"`
 	Checksum            bool      `json:"checksum" toml:"checksum"`
 	SendCreds           bool      `json:"send-credentials-to-tikv" toml:"send-credentials-to-tikv"`
@@ -232,6 +264,12 @@ type Config struct {
 
 	// whether there's explicit filter
 	ExplicitFilter bool `json:"-" toml:"-"`
+
+	// KeyspaceName is the name of the keyspace of the task
+	KeyspaceName string `json:"keyspace-name" toml:"keyspace-name"`
+
+	// Metadata download batch size, such as metadata for log restore
+	MetadataDownloadBatchSize uint `json:"metadata-download-batch-size" toml:"metadata-download-batch-size"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -242,19 +280,12 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagCA, "", "CA certificate path for TLS connection")
 	flags.String(flagCert, "", "Certificate path for TLS connection")
 	flags.String(flagKey, "", "Private key path for TLS connection")
-	flags.Uint(flagChecksumConcurrency, variable.DefChecksumTableConcurrency, "The concurrency of table checksumming")
-	_ = flags.MarkHidden(flagChecksumConcurrency)
+	flags.Uint(flagChecksumConcurrency, variable.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
 
 	flags.Uint64(flagRateLimit, unlimited, "The rate limit of the task, MB/s per node")
 	flags.Bool(flagChecksum, true, "Run checksum at end of task")
 	flags.Bool(flagRemoveTiFlash, true,
 		"Remove TiFlash replicas before backup or restore, for unsupported versions of TiFlash")
-
-	// Default concurrency is different for backup and restore.
-	// Leave it 0 and let them adjust the value.
-	flags.Uint32(flagConcurrency, 0, "The size of thread pool on each node that executes the task")
-	// It may confuse users , so just hide it.
-	_ = flags.MarkHidden(flagConcurrency)
 
 	flags.Uint64(flagRateLimitUnit, units.MiB, "The unit of rate limit")
 	_ = flags.MarkHidden(flagRateLimitUnit)
@@ -287,12 +318,18 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 			"by the hexadecimal string, eg: \"0123456789abcdef0123456789abcdef\"")
 	flags.String(flagCipherKeyFile, "", "FilePath, its content is used as the cipher-key")
 
+	flags.Uint(flagMetadataDownloadBatchSize, defaultMetadataDownloadBatchSize,
+		"the batch size of downloading metadata, such as log restore metadata for truncate or restore")
+
+	_ = flags.MarkHidden(flagMetadataDownloadBatchSize)
+
 	storage.DefineFlags(flags)
 }
 
 // HiddenFlagsForStream temporary hidden flags that stream cmd not support.
 func HiddenFlagsForStream(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagChecksum)
+	_ = flags.MarkHidden(flagLoadStats)
 	_ = flags.MarkHidden(flagChecksumConcurrency)
 	_ = flags.MarkHidden(flagRateLimit)
 	_ = flags.MarkHidden(flagRateLimitUnit)
@@ -303,6 +340,16 @@ func HiddenFlagsForStream(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagSwitchModeInterval)
 
 	storage.HiddenFlagsForStream(flags)
+}
+
+func DefaultConfig() Config {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	cfg := Config{}
+	if err := cfg.ParseFromFlags(fs); err != nil {
+		log.Panic("infallible operation failed.", zap.Error(err))
+	}
+	return cfg
 }
 
 // DefineDatabaseFlags defines the required --db flag for `db` subcommand.
@@ -368,12 +415,12 @@ func parseCipherType(t string) (encryptionpb.EncryptionMethod, error) {
 func checkCipherKey(cipherKey, cipherKeyFile string) error {
 	if (len(cipherKey) == 0) == (len(cipherKeyFile) == 0) {
 		return errors.Annotate(berrors.ErrInvalidArgument,
-			"exactly one of --crypter.key or --crypter.key-file should be provided")
+			"exactly one of cipher key or keyfile path should be provided")
 	}
 	return nil
 }
 
-func getCipherKeyContent(cipherKey, cipherKeyFile string) ([]byte, error) {
+func GetCipherKeyContent(cipherKey, cipherKeyFile string) ([]byte, error) {
 	if err := checkCipherKey(cipherKey, cipherKeyFile); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -433,7 +480,7 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	cfg.CipherInfo.CipherKey, err = getCipherKeyContent(key, keyFilePath)
+	cfg.CipherInfo.CipherKey, err = GetCipherKeyContent(key, keyFilePath)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -468,9 +515,7 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.NoCreds, err = flags.GetBool(flagNoCreds); err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.Concurrency, err = flags.GetUint32(flagConcurrency); err != nil {
-		return errors.Trace(err)
-	}
+
 	if cfg.Checksum, err = flags.GetBool(flagChecksum); err != nil {
 		return errors.Trace(err)
 	}
@@ -577,6 +622,10 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	if cfg.MetadataDownloadBatchSize, err = flags.GetUint(flagMetadataDownloadBatchSize); err != nil {
+		return errors.Trace(err)
+	}
+
 	return cfg.normalizePDURLs()
 }
 
@@ -593,8 +642,7 @@ func NewMgr(ctx context.Context,
 		tlsConf *tls.Config
 		err     error
 	)
-	pdAddress := strings.Join(pds, ",")
-	if len(pdAddress) == 0 {
+	if len(pds) == 0 {
 		return nil, errors.Annotate(berrors.ErrInvalidArgument, "pd address can not be empty")
 	}
 
@@ -611,7 +659,7 @@ func NewMgr(ctx context.Context,
 
 	// Is it necessary to remove `StoreBehavior`?
 	return conn.NewMgr(
-		ctx, g, pdAddress, tlsConf, securityOption, keepalive, util.SkipTiFlash,
+		ctx, g, pds, tlsConf, securityOption, keepalive, util.SkipTiFlash,
 		checkRequirements, needDomain, versionCheckerType,
 	)
 }
@@ -652,26 +700,25 @@ func ReadBackupMeta(
 	}
 	metaData, err := s.ReadFile(ctx, fileName)
 	if err != nil {
-		if gcsObjectNotFound(err) {
-			// change gcs://bucket/abc/def to gcs://bucket/abc and read defbackupmeta
-			oldPrefix := u.GetGcs().GetPrefix()
-			newPrefix, file := path.Split(oldPrefix)
-			newFileName := file + fileName
-			u.GetGcs().Prefix = newPrefix
-			s, err = storage.New(ctx, u, storageOpts(cfg))
-			if err != nil {
-				return nil, nil, nil, errors.Trace(err)
-			}
-			log.Info("retry load metadata in gcs", zap.String("newPrefix", newPrefix), zap.String("newFileName", newFileName))
-			metaData, err = s.ReadFile(ctx, newFileName)
-			if err != nil {
-				return nil, nil, nil, errors.Trace(err)
-			}
-			// reset prefix for tikv download sst file correctly.
-			u.GetGcs().Prefix = oldPrefix
-		} else {
+		if !gcsObjectNotFound(err) {
 			return nil, nil, nil, errors.Annotate(err, "load backupmeta failed")
 		}
+		// change gcs://bucket/abc/def to gcs://bucket/abc and read defbackupmeta
+		oldPrefix := u.GetGcs().GetPrefix()
+		newPrefix, file := path.Split(oldPrefix)
+		newFileName := file + fileName
+		u.GetGcs().Prefix = newPrefix
+		s, err = storage.New(ctx, u, storageOpts(cfg))
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		log.Info("retry load metadata in gcs", zap.String("newPrefix", newPrefix), zap.String("newFileName", newFileName))
+		metaData, err = s.ReadFile(ctx, newFileName)
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		// reset prefix for tikv download sst file correctly.
+		u.GetGcs().Prefix = oldPrefix
 	}
 
 	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid
@@ -737,6 +784,9 @@ func (cfg *Config) adjust() {
 	}
 	if cfg.ChecksumConcurrency == 0 {
 		cfg.ChecksumConcurrency = variable.DefChecksumTableConcurrency
+	}
+	if cfg.MetadataDownloadBatchSize == 0 {
+		cfg.MetadataDownloadBatchSize = defaultMetadataDownloadBatchSize
 	}
 }
 
