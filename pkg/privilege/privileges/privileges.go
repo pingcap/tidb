@@ -390,7 +390,7 @@ func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) 
 // MatchUserResourceGroupName implements the Manager interface.
 func (p *UserPrivileges) MatchUserResourceGroupName(resourceGroupName string) (u string, success bool) {
 	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.matchResoureGroup(resourceGroupName)
+	record := mysqlPriv.matchResourceGroup(resourceGroupName)
 	if record != nil {
 		return record.User, true
 	}
