@@ -107,7 +107,11 @@ func TestWeakConsistencyRead(t *testing.T) {
 		ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 			require.Equal(t, req.IsolationLevel, isolationLevel)
 		})
-		tk.Session().Execute(ctx, sql)
+		rss, err := tk.Session().Execute(ctx, sql)
+		require.Nil(t, err)
+		for _, rs := range rss {
+			rs.Close()
+		}
 		if rows != nil {
 			tk.MustQuery(sql).Check(rows)
 		}
