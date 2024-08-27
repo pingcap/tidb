@@ -29,6 +29,140 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestMultiSchemaDropUniqueIndex(t *testing.T) {
+	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
+	store := distCtx.Store
+	domOwner := distCtx.GetDomain(0)
+	domNonOwner := distCtx.GetDomain(1)
+	defer func() {
+		domOwner.Close()
+		domNonOwner.Close()
+		store.Close()
+	}()
+	if !domOwner.DDL().OwnerManager().IsOwner() {
+		domOwner, domNonOwner = domNonOwner, domOwner
+	}
+
+	ddlJobsSQL := `admin show ddl jobs where db_name = 'test' and table_name = 't' and job_type = 'drop index'`
+
+	seOwner, err := session.CreateSessionWithDomain(store, domOwner)
+	require.NoError(t, err)
+	seNonOwner, err := session.CreateSessionWithDomain(store, domNonOwner)
+	require.NoError(t, err)
+
+	tkOwner := testkit.NewTestKitWithSession(t, store, seOwner)
+	tkNonOwner := testkit.NewTestKitWithSession(t, store, seNonOwner)
+	tkDDL := testkit.NewTestKitWithSession(t, store, seOwner)
+	tkOwner.MustExec(`use test`)
+	tkNonOwner.MustExec(`use test`)
+	tkDDL.MustExec(`use test`)
+	tkDDL.MustExec(`create table t (a int primary key, b varchar(255), unique key uk_b (b))`)
+	domOwner.Reload()
+	domNonOwner.Reload()
+	verStart := domOwner.InfoSchema().SchemaMetaVersion()
+	alterChan := make(chan struct{})
+
+	// Add some rows to see if we can have duplicates even when we don't see the index
+	tkOwner.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9)`)
+
+	// Is it possible to only do this on a single DOM?
+	hookFunc := func(job *model.Job) {
+		alterChan <- struct{}{}
+		<-alterChan
+	}
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", hookFunc)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	go func() {
+		tkDDL.MustExec(`alter table t drop index uk_b`)
+		alterChan <- struct{}{}
+	}()
+	// Wait for the first state change to begin
+	<-alterChan
+	alterChan <- struct{}{}
+	// Doing the first State change
+	stateChange := int64(1)
+	<-alterChan
+	// Waiting before running the second State change
+	verCurr := domOwner.InfoSchema().SchemaMetaVersion()
+	require.Equal(t, stateChange, verCurr-verStart)
+	require.Equal(t, verStart, domNonOwner.InfoSchema().SchemaMetaVersion())
+	tkNonOwner.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  UNIQUE KEY `uk_b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	domNonOwner.Reload()
+	require.Equal(t, verCurr, domNonOwner.InfoSchema().SchemaMetaVersion())
+	tkNonOwner.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tkNonOwner.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"write only", "running"}})
+	tkOwner.MustContainErrMsg(`insert into t values (10,1)`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+	tkNonOwner.MustContainErrMsg(`insert into t values (10,1)`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+	alterChan <- struct{}{}
+	// doing second State change
+	stateChange++
+	<-alterChan
+	// Waiting before running the third State change
+	verCurr = domOwner.InfoSchema().SchemaMetaVersion()
+	require.Equal(t, stateChange, verCurr-verStart)
+	tkNonOwner.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"delete only", "running"}})
+	// Delete only from the uk_b unique index, cannot have errors
+	tkOwner.MustExec(`insert into t values (10,1)`)
+	tkOwner.MustExec(`insert into t values (11,11)`)
+	tkOwner.MustExec(`delete from t where a = 2`)
+	// Write only for uk_b, we cannot find anything through the index or read from the index, but still gives duplicate keys on insert/updates
+	// So we already have two duplicates of b = 1, but only one in the unique index uk_a, so here we cannot insert any.
+	tkNonOwner.MustContainErrMsg(`insert into t values (12,1)`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+	tkNonOwner.MustContainErrMsg(`update t set b = 1 where a = 9`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+	// Deleted from the index!
+	tkNonOwner.MustExec(`insert into t values (13,2)`)
+	tkNonOwner.MustContainErrMsg(`insert into t values (14,3)`, "[kv:1062]Duplicate entry '3' for key 't.uk_b'")
+	// b = 11 never written to the index!
+	tkNonOwner.MustExec(`insert into t values (15,11)`)
+	domNonOwner.Reload()
+	require.Equal(t, verCurr, domOwner.InfoSchema().SchemaMetaVersion())
+	tkNonOwner.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	alterChan <- struct{}{}
+	<-alterChan
+	stateChange++
+	verCurr = domOwner.InfoSchema().SchemaMetaVersion()
+	require.Equal(t, stateChange, verCurr-verStart)
+	domNonOwner.Reload()
+	require.Equal(t, verCurr, domNonOwner.InfoSchema().SchemaMetaVersion())
+	tkNonOwner.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tkNonOwner.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"delete reorganization", "running"}})
+	alterChan <- struct{}{}
+	<-alterChan
+	stateChange++
+	verCurr = domOwner.InfoSchema().SchemaMetaVersion()
+	require.Equal(t, stateChange, verCurr-verStart)
+	domNonOwner.Reload()
+	require.Equal(t, verCurr, domNonOwner.InfoSchema().SchemaMetaVersion())
+	tkNonOwner.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tkNonOwner.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"none", "synced"}})
+}
+
 func TestMultiSchemaVerPartitionBy(t *testing.T) {
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
