@@ -191,7 +191,8 @@ var DeriveStats4LogicalIndexScan func(lp base.LogicalPlan, selfSchema *expressio
 var DeriveStats4LogicalTableScan func(lp base.LogicalPlan) (_ *property.StatsInfo, err error)
 
 // AddPrefix4ShardIndexes will be called by LogicalSelection in logicalOp pkg.
-var AddPrefix4ShardIndexes func(lp base.LogicalPlan, sc base.PlanContext, conds []expression.Expression) []expression.Expression
+var AddPrefix4ShardIndexes func(lp base.LogicalPlan, sc base.PlanContext,
+	conds []expression.Expression) []expression.Expression
 
 // *************************************** physical op related *******************************************
 
