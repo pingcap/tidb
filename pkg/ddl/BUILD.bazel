@@ -97,6 +97,7 @@ go_library(
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/operator",
         "//pkg/domain/infosync",
+	"//pkg/domain/repository",
         "//pkg/errctx",
         "//pkg/expression",
         "//pkg/expression/exprctx",

@@ -19,10 +19,10 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -105,12 +105,9 @@ func (w *Worker) getSessionWithRetry() pools.Resource {
 }
 
 func (w *Worker) start(ctx context.Context) func() {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	return func() {
 		w.owner = w.newOwner(ownerKey, promptKey)
-		_sessctx := w.getSessionWithRetry()
-		defer w.sesspool.Put(_sessctx)
-
-		sess := _sessctx.(sessionctx.Context)
 		ticker := time.NewTicker(time.Second)
 		for {
 			select {
@@ -121,10 +118,12 @@ func (w *Worker) start(ctx context.Context) func() {
 			case <-ticker.C:
 				if w.owner.IsOwner() {
 					// create table if not exist
-					createTable(sess)
+					if err := w.createAllTables(ctx); err != nil {
+						logutil.BgLogger().Error("can't create workload repository tables", zap.Error(err), zap.Stack("stack"))
+					}
 				}
 				// check if table exists
-				if checkTableExists(sess) {
+				if w.checkTablesExists(ctx, nil) {
 					w.wg.RunWithRecover(w.startSample(ctx), func(err interface{}) {
 						logutil.BgLogger().Info("sample panic", zap.Any("err", err), zap.Stack("stack"))
 					}, "sample")
