@@ -46,6 +46,7 @@ type DDLEvent struct {
 	oldTableID int64
 	tp         model.ActionType
 
+	// todo: replace DDLEvent by SchemaChangeEvent gradually
 	SchemaChangeEvent util2.SchemaChangeEvent
 }
 
