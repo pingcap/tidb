@@ -150,7 +150,6 @@ func SortAndValidateFileRanges(
 	)
 
 	log.Info("start to merge ranges", zap.Uint64("kv size threshold", splitSizeBytes), zap.Uint64("kv count threshold", splitKeyCount))
-	// Notice that TiDB does not split partition even if the config `split-table` is on.
 	for _, table := range sortedPhysicalTables {
 		files := fileOfTable[table.OldPhysicalID]
 		for _, file := range files {
