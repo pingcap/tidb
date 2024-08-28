@@ -103,13 +103,18 @@ type TemporaryTableSupport interface {
 	AddTemporaryTableToTxn(tblInfo *model.TableInfo) (TemporaryTableHandler, bool)
 }
 
+// ExchangePartitionDMLSupport is used for DML operations when the table exchanging a partition.
+type ExchangePartitionDMLSupport interface {
+	// GetInfoSchemaToCheckExchangeConstraint is used by DML to get the exchanged table to check
+	// constraints when exchanging partition.
+	GetInfoSchemaToCheckExchangeConstraint() infoschema.MetaOnlyInfoSchema
+}
+
 // MutateContext is used to when mutating a table.
 type MutateContext interface {
 	AllocatorContext
 	// GetExprCtx returns the context to build or evaluate expressions
 	GetExprCtx() exprctx.ExprContext
-	// GetDomainInfoSchema returns the latest information schema in domain
-	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// ConnectionID returns the id of the current connection.
 	// If the current environment is not in a query from the client, the return value is 0.
 	ConnectionID() uint64
@@ -141,6 +146,9 @@ type MutateContext interface {
 	// GetTemporaryTableSupport returns a `TemporaryTableSupport` if the context supports it.
 	// If the context does not support temporary table, the second return value will be false.
 	GetTemporaryTableSupport() (TemporaryTableSupport, bool)
+	// GetExchangePartitionDMLSupport returns a `ExchangePartitionDMLSupport` if the context supports it.
+	// ExchangePartitionDMLSupport is used by DMLs when the table is exchanging a partition.
+	GetExchangePartitionDMLSupport() (ExchangePartitionDMLSupport, bool)
 }
 
 // AllocatorContext is used to provide context for method `table.Allocators`.

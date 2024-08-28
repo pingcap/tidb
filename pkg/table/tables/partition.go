@@ -1568,25 +1568,31 @@ func (t *partitionTableWithGivenSets) GetPartitionByRow(ctx expression.EvalConte
 
 // checkConstraintForExchangePartition is only used for ExchangePartition by partitionTable during write only state.
 // It check if rowData inserted or updated violate checkConstraints of non-partitionTable.
-func checkConstraintForExchangePartition(sctx table.MutateContext, row []types.Datum, partID, ntID int64) error {
+func checkConstraintForExchangePartition(ctx table.MutateContext, row []types.Datum, partID, ntID int64) error {
+	support, ok := ctx.GetExchangePartitionDMLSupport()
+	if !ok {
+		return errors.New("ctx does not support operations when exchanging a partition")
+	}
+
 	type InfoSchema interface {
 		TableByID(ctx stdctx.Context, id int64) (val table.Table, ok bool)
 	}
-	is, ok := sctx.GetDomainInfoSchema().(InfoSchema)
+
+	is, ok := support.GetInfoSchemaToCheckExchangeConstraint().(InfoSchema)
 	if !ok {
 		return errors.Errorf("exchange partition process assert inforSchema failed")
 	}
-	ctx := stdctx.Background()
-	nt, tableFound := is.TableByID(ctx, ntID)
+	gCtx := stdctx.Background()
+	nt, tableFound := is.TableByID(gCtx, ntID)
 	if !tableFound {
 		// Now partID is nt tableID.
-		nt, tableFound = is.TableByID(ctx, partID)
+		nt, tableFound = is.TableByID(gCtx, partID)
 		if !tableFound {
 			return errors.Errorf("exchange partition process table by id failed")
 		}
 	}
 
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	if err := table.CheckRowConstraintWithDatum(evalCtx, nt.WritableConstraint(), row); err != nil {
 		// TODO: make error include ExchangePartition info.
 		return err

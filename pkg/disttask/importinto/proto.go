@@ -17,6 +17,7 @@ package importinto
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -144,6 +145,14 @@ type importStepMinimalTask struct {
 	Plan       importer.Plan
 	Chunk      Chunk
 	SharedVars *SharedVars
+	panicked   *atomic.Bool
+}
+
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (t *importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+	return "encodeAndSortOperator", "RecoverArgs", func() {
+		t.panicked.Store(true)
+	}, false
 }
 
 func (t *importStepMinimalTask) String() string {

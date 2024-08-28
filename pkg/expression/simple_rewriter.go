@@ -63,13 +63,20 @@ func ParseSimpleExpr(ctx BuildContext, exprStr string, opts ...BuildOption) (Exp
 
 // FindFieldName finds the column name from NameSlice.
 func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
-	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
+	dbName, tblName, colName := astCol.Schema.L, astCol.Table.L, astCol.Name.L
 	idx := -1
+
 	for i, name := range names {
-		if !name.NotExplicitUsable && (dbName.L == "" || dbName.L == name.DBName.L) &&
-			(tblName.L == "" || tblName.L == name.TblName.L) &&
-			(colName.L == name.ColName.L) {
+		// Early continue if not usable or column name doesn't match
+		if name.NotExplicitUsable || name.ColName.L != colName {
+			continue
+		}
+
+		// Check database and table name match
+		if (dbName == "" || dbName == name.DBName.L) &&
+			(tblName == "" || tblName == name.TblName.L) {
 			if idx != -1 {
+				// Do not allow multiple non-redundant columns with the same name.
 				if names[idx].Redundant || name.Redundant {
 					if !name.Redundant {
 						idx = i
@@ -81,6 +88,7 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 			idx = i
 		}
 	}
+
 	return idx, nil
 }
 

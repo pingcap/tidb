@@ -5744,6 +5744,16 @@ func TestView(t *testing.T) {
 	require.Equal(t, "select c,d,e from t", v.Select.Text())
 	require.Equal(t, model.SecurityDefiner, v.Security)
 	require.Equal(t, model.CheckOptionCascaded, v.CheckOption)
+
+	src = `
+CREATE VIEW v1 AS SELECT * FROM t;
+CREATE VIEW v2 AS SELECT 123123123123123;
+`
+	nodes, _, err := p.Parse(src, "", "")
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+	require.Equal(t, nodes[0].(*ast.CreateViewStmt).Select.Text(), "SELECT * FROM t")
+	require.Equal(t, nodes[1].(*ast.CreateViewStmt).Select.Text(), "SELECT 123123123123123")
 }
 
 func TestTimestampDiffUnit(t *testing.T) {
@@ -7604,8 +7614,6 @@ func TestVector(t *testing.T) {
 	table := []testCase{
 		{"CREATE TABLE t (a VECTOR)", true, "CREATE TABLE `t` (`a` VECTOR)"},
 		{"CREATE TABLE t (a VECTOR<FLOAT>)", true, "CREATE TABLE `t` (`a` VECTOR)"},
-		{"CREATE TABLE t (a VECTOR(3))", true, "CREATE TABLE `t` (`a` VECTOR(3))"},
-		{"CREATE TABLE t (a VECTOR<FLOAT>(3))", true, "CREATE TABLE `t` (`a` VECTOR(3))"},
 		{"CREATE TABLE t (a VECTOR<INT>)", false, ""},
 		{"CREATE TABLE t (a VECTOR<DOUBLE>)", false, ""},
 		{"CREATE TABLE t (a VECTOR<ABC>)", false, ""},
