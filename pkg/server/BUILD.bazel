@@ -176,7 +176,6 @@ go_test(
         "//pkg/util/arena",
         "//pkg/util/chunk",
         "//pkg/util/dbterror/exeerrors",
-        "//pkg/util/plancodec",
         "//pkg/util/replayer",
         "//pkg/util/syncutil",
         "//pkg/util/topsql/state",
