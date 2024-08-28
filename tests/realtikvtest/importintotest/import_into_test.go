@@ -145,13 +145,14 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 			"6,test6,66"),
 	})
 	s.prepareAndUseDB("import_into")
+
 	// IMPORT INTO does not support subquery in SET
 	s.tk.MustExec("drop table if exists t")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 	sql := fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=(SELECT 'subquery') FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
 		with thread=1`, gcsEndpoint)
-	s.tk.MustQuery(sql)
-	s.tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("1 subquery 11", "2 subquery 22"))
+	err := s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "subquery is not supported in IMPORT INTO column assignment, index 0")
 
 	allData := []string{"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44", "5 test5 55", "6 test6 66"}
 	cases := []struct {

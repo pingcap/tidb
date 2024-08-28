@@ -4334,7 +4334,15 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		}
 		options = append(options, &loadDataOpt)
 	}
-	// TODO(lance6716): check ColumnAssignments and ColumnsAndUserVars?
+	// TODO(lance6716): check ColumnsAndUserVars
+	for i, a := range ld.ColumnAssignments {
+		_, ok := a.Expr.(*ast.SubqueryExpr)
+		if ok {
+			return nil, errors.Errorf(
+				"subquery is not supported in IMPORT INTO column assignment, index %d", i,
+			)
+		}
+	}
 	p := ImportInto{
 		Path:               ld.Path,
 		Format:             ld.Format,
