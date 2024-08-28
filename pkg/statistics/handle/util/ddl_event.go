@@ -17,6 +17,7 @@ package util
 import (
 	"fmt"
 
+	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -44,6 +45,8 @@ type DDLEvent struct {
 	// It applies when a table structure is being changed from partitioned to non-partitioned, or vice versa.
 	oldTableID int64
 	tp         model.ActionType
+
+	schemaChangeEvent util2.SchemaChangeEvent
 }
 
 // IsMemOrSysDB checks whether the table is in the memory or system database.
