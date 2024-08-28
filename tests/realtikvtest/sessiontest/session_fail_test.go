@@ -279,7 +279,7 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 4.*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:4.*", explain)
 
 	// Test for stale read.
 	tk.MustExec("insert into t values (1,1), (2,2);")
@@ -287,7 +287,7 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@stale_read_ts_var) where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: (3|4|5).*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:(3|4|5).*", explain)
 
 	// Test for tikv_client_read_timeout session variable.
 	tk.MustExec("set @@tikv_client_read_timeout=1;")
@@ -308,12 +308,12 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select * from t where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 4.*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:4.*", explain)
 
 	// Test for stale read.
 	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
 	rows = tk.MustQuery("explain analyze select * from t as of timestamp(@stale_read_ts_var) where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: (3|4|5).*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:(3|4|5).*", explain)
 }
