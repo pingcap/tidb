@@ -304,7 +304,12 @@ func (w *worker) doModifyColumn(
 		return updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, false)
 	}
 
-	if err := adjustTableInfoAfterModifyColumn(tblInfo, newCol, oldCol, pos); err != nil {
+	err := postCheckPartitionModifiableColumn(t, w, jobCtx, tblInfo, oldCol, newCol)
+	if err != nil {
+		return ver, err
+	}
+
+	if err = adjustTableInfoAfterModifyColumn(tblInfo, newCol, oldCol, pos); err != nil {
 		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
@@ -431,6 +436,11 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				return ver, err
 			}
+		}
+		// TODO: Should it be targetCol or changedCol?
+		err := postCheckPartitionModifiableColumn(t, w, jobCtx, tblInfo, oldCol, targetCol)
+		if err != nil {
+			return ver, err
 		}
 		// none -> delete only
 		updateChangingObjState(changingCol, changingIdxs, model.StateDeleteOnly)
@@ -656,6 +666,118 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 	return nil
 }
 
+func preCheckPartitionModifiableColumn(sctx sessionctx.Context, t table.Table, col, newCol *table.Column) error {
+	// Check that the column change does not affect the partitioning column
+	// It must keep the same type, int [unsigned], [var]char, date[time]
+	if t.Meta().Partition != nil {
+		pt, ok := t.(table.PartitionedTable)
+		if !ok {
+			// Should never happen!
+			return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
+		}
+		for _, name := range pt.GetPartitionColumnNames() {
+			if strings.EqualFold(name.L, col.Name.L) {
+				return checkPartitionColumnModifiable(sctx, t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
+			}
+		}
+	}
+	return nil
+}
+
+// err := postCheckPartitionModifiableColumn(w, t, jobCtx, tblInfo, oldCol, newCol)
+func postCheckPartitionModifiableColumn(t *meta.Meta, w *worker, jobCtx *jobContext, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	// Check that the column change does not affect the partitioning column
+	// It must keep the same type, int [unsigned], [var]char, date[time]
+	if tblInfo.Partition != nil {
+		// TODO: Handle column renames as well, i.e. update partitioning expression
+		partCols, err := extractPartitionColumns(tblInfo.Partition.Expr, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, partCol := range partCols {
+			if strings.EqualFold(partCol.Name.L, col.Name.L) {
+				sctx, err := w.sessPool.Get()
+				if err != nil {
+					return errors.Trace(err)
+				}
+				defer w.sessPool.Put(sctx)
+				return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
+			}
+		}
+	}
+	return nil
+}
+
+func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	// TODO: update the partitioning columns with new names if column is renamed
+	// Would be an extension from MySQL which does not support it.
+	if col.Name.L != newCol.Name.L {
+		return dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
+	}
+	if !isColTypeAllowedAsPartitioningCol(tblInfo.Partition.Type, newCol.FieldType) {
+		return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
+	}
+	pi := tblInfo.GetPartitionInfo()
+	if len(pi.Columns) == 0 {
+		// non COLUMNS partitioning, only checks INTs, not their actual range
+		// There are many edge cases, like when truncating SQL Mode is allowed
+		// which will change the partitioning expression value resulting in a
+		// different partition. Better be safe and not allow decreasing of length.
+		// TODO: Should we allow it in strict mode? Wait for a use case / request.
+		if newCol.FieldType.GetFlen() < col.FieldType.GetFlen() {
+			return dbterror.ErrUnsupportedModifyCollation.GenWithStack("Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+		}
+	}
+	// Basically only allow changes of the length/decimals for the column
+	// Note that enum is not allowed, so elems are not checked
+	// TODO: support partition by ENUM
+	if newCol.FieldType.EvalType() != col.FieldType.EvalType() ||
+		newCol.FieldType.GetFlag() != col.FieldType.GetFlag() ||
+		newCol.FieldType.GetCollate() != col.FieldType.GetCollate() ||
+		newCol.FieldType.GetCharset() != col.FieldType.GetCharset() {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
+	}
+	// Generate a new PartitionInfo and validate it together with the new column definition
+	// Checks if all partition definition values are compatible.
+	// Similar to what buildRangePartitionDefinitions would do in terms of checks.
+
+	newTblInfo := *tblInfo
+	// Replace col with newCol and see if we can generate a new SHOW CREATE TABLE
+	// and reparse it and build new partition definitions (which will do additional
+	// checks columns vs partition definition values
+	newCols := make([]*model.ColumnInfo, 0, len(newTblInfo.Columns))
+	for _, c := range newTblInfo.Columns {
+		if c.ID == col.ID {
+			newCols = append(newCols, newCol)
+			continue
+		}
+		newCols = append(newCols, c)
+	}
+	newTblInfo.Columns = newCols
+
+	var buf bytes.Buffer
+	AppendPartitionInfo(tblInfo.GetPartitionInfo(), &buf, mysql.ModeNone)
+	// Ignoring warnings
+	stmt, _, err := parser.New().ParseSQL("ALTER TABLE t " + buf.String())
+	if err != nil {
+		// Should never happen!
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
+	}
+	at, ok := stmt[0].(*ast.AlterTableStmt)
+	if !ok || len(at.Specs) != 1 || at.Specs[0].Partition == nil {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
+	}
+	pAst := at.Specs[0].Partition
+	_, err = buildPartitionDefinitionsInfo(
+		exprctx.CtxWithHandleTruncateErrLevel(sctx.GetExprCtx(), errctx.LevelError),
+		pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)),
+	)
+	if err != nil {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
+	}
+	return nil
+}
+
 // GetModifiableColumnJob returns a DDL job of model.ActionModifyColumn.
 func GetModifiableColumnJob(
 	ctx context.Context,
@@ -755,96 +877,11 @@ func GetModifiableColumnJob(
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if t.Meta().Partition != nil {
-			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
-		}
 	}
 
-	// Check that the column change does not affect the partitioning column
-	// It must keep the same type, int [unsigned], [var]char, date[time]
-	if t.Meta().Partition != nil {
-		pt, ok := t.(table.PartitionedTable)
-		if !ok {
-			// Should never happen!
-			return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
-		}
-		isPartitioningColumn := false
-		for _, name := range pt.GetPartitionColumnNames() {
-			if strings.EqualFold(name.L, col.Name.L) {
-				isPartitioningColumn = true
-				break
-			}
-		}
-		if isPartitioningColumn {
-			// TODO: update the partitioning columns with new names if column is renamed
-			// Would be an extension from MySQL which does not support it.
-			if col.Name.L != newCol.Name.L {
-				return nil, dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
-			}
-			if !isColTypeAllowedAsPartitioningCol(t.Meta().Partition.Type, newCol.FieldType) {
-				return nil, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
-			}
-			pi := pt.Meta().GetPartitionInfo()
-			if len(pi.Columns) == 0 {
-				// non COLUMNS partitioning, only checks INTs, not their actual range
-				// There are many edge cases, like when truncating SQL Mode is allowed
-				// which will change the partitioning expression value resulting in a
-				// different partition. Better be safe and not allow decreasing of length.
-				// TODO: Should we allow it in strict mode? Wait for a use case / request.
-				if newCol.FieldType.GetFlen() < col.FieldType.GetFlen() {
-					return nil, dbterror.ErrUnsupportedModifyCollation.GenWithStack("Unsupported modify column, decreasing length of int may result in truncation and change of partition")
-				}
-			}
-			// Basically only allow changes of the length/decimals for the column
-			// Note that enum is not allowed, so elems are not checked
-			// TODO: support partition by ENUM
-			if newCol.FieldType.EvalType() != col.FieldType.EvalType() ||
-				newCol.FieldType.GetFlag() != col.FieldType.GetFlag() ||
-				newCol.FieldType.GetCollate() != col.FieldType.GetCollate() ||
-				newCol.FieldType.GetCharset() != col.FieldType.GetCharset() {
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
-			}
-			// Generate a new PartitionInfo and validate it together with the new column definition
-			// Checks if all partition definition values are compatible.
-			// Similar to what buildRangePartitionDefinitions would do in terms of checks.
-
-			tblInfo := pt.Meta()
-			newTblInfo := *tblInfo
-			// Replace col with newCol and see if we can generate a new SHOW CREATE TABLE
-			// and reparse it and build new partition definitions (which will do additional
-			// checks columns vs partition definition values
-			newCols := make([]*model.ColumnInfo, 0, len(newTblInfo.Columns))
-			for _, c := range newTblInfo.Columns {
-				if c.ID == col.ID {
-					newCols = append(newCols, newCol.ColumnInfo)
-					continue
-				}
-				newCols = append(newCols, c)
-			}
-			newTblInfo.Columns = newCols
-
-			var buf bytes.Buffer
-			AppendPartitionInfo(tblInfo.GetPartitionInfo(), &buf, mysql.ModeNone)
-			// The parser supports ALTER TABLE ... PARTITION BY ... even if the ddl code does not yet :)
-			// Ignoring warnings
-			stmt, _, err := parser.New().ParseSQL("ALTER TABLE t " + buf.String())
-			if err != nil {
-				// Should never happen!
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
-			}
-			at, ok := stmt[0].(*ast.AlterTableStmt)
-			if !ok || len(at.Specs) != 1 || at.Specs[0].Partition == nil {
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
-			}
-			pAst := at.Specs[0].Partition
-			_, err = buildPartitionDefinitionsInfo(
-				exprctx.CtxWithHandleTruncateErrLevel(sctx.GetExprCtx(), errctx.LevelError),
-				pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)),
-			)
-			if err != nil {
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
-			}
-		}
+	err = preCheckPartitionModifiableColumn(sctx, t, col, newCol)
+	if err != nil {
+		return nil, err
 	}
 
 	// We don't support modifying column from not_auto_increment to auto_increment.
