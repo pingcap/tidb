@@ -1857,6 +1857,7 @@ func (e *vecGroupChecker) isExhausted() bool {
 func (e *vecGroupChecker) reset() {
 	if e.groupOffset != nil {
 		e.groupOffset = e.groupOffset[:0]
+		e.groupCount = 0
 	}
 	if e.sameGroup != nil {
 		e.sameGroup = e.sameGroup[:0]
