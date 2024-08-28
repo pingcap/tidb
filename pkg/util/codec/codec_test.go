@@ -17,7 +17,6 @@ package codec
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"hash"
 	"hash/crc32"
 	"hash/fnv"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
