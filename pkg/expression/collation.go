@@ -59,6 +59,7 @@ func (c *collationInfo) Hash64(h base.Hasher) {
 
 // Equals implements the base.Hasher.<1th> interface.
 func (c *collationInfo) Equals(other any) bool {
+	// the caller should care about c is nil or not.
 	if other == nil {
 		return false
 	}

@@ -449,11 +449,21 @@ func (col *Column) GetStaticType() *types.FieldType {
 
 // Hash64 implements HashEquals.<0th> interface.
 func (col *Column) Hash64(h base.Hasher) {
-	col.RetType.Hash64(h)
+	if col.RetType == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		col.RetType.Hash64(h)
+	}
 	h.HashInt64(col.ID)
 	h.HashInt64(col.UniqueID)
 	h.HashInt(col.Index)
-	//col.VirtualExpr.Hash64(h)
+	if col.VirtualExpr != nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		//col.VirtualExpr.Hash64(h)
+	}
 	h.HashString(col.OrigName)
 	h.HashBool(col.IsHidden)
 	h.HashBool(col.IsPrefix)
@@ -476,7 +486,10 @@ func (col *Column) Equals(other any) bool {
 	default:
 		return false
 	}
-	return col.RetType.Equal(col2.RetType) &&
+	// when step into here, we could ensure that col1.RetType and col2.RetType are same type.
+	// and we should ensure col1.RetType and col2.RetType is not nil ourselves.
+	ftEqual := col.RetType == nil && col2.RetType == nil || col.RetType != nil && col2.RetType != nil && col.RetType.Equal(col2.RetType)
+	return ftEqual &&
 		col.ID == col2.ID &&
 		col.UniqueID == col2.UniqueID &&
 		col.Index == col2.Index &&

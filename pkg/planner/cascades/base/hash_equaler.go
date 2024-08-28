@@ -44,6 +44,22 @@ type Hasher interface {
 	Sum64() uint64
 }
 
+// NilFlag and NotNilFlag are used to indicate whether a pointer/interface type field inside struct is nil or not.
+// like a structure:
+//
+//	type MyStruct struct {
+//		 a *OtherStruct
+//	}
+//
+// Once a is nil, we should hash the NilFlag, otherwise, we should hash the NotNilFlag
+// nil     : [0]
+// not nil : [1] [xxx]
+// the NotNilFlag should not be missed, otherwise, once [xxx] is []byte{0}, it will be treated as nil.
+const (
+	NilFlag    byte = 0
+	NotNilFlag byte = 1
+)
+
 // Hash64a is the type for the hash value.
 type Hash64a uint64
 
