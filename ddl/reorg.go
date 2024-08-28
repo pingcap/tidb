@@ -79,12 +79,6 @@ type reorgCtx struct {
 	}
 }
 
-<<<<<<< HEAD:ddl/reorg.go
-// nullableKey can store <nil> kv.Key.
-// Storing a nil object to atomic.Value can lead to panic. This is a workaround.
-type nullableKey struct {
-	key kv.Key
-=======
 // reorgFnResult records the DDL owner TS before executing reorg function, in order to help
 // receiver determine if the result is from reorg function of previous DDL owner in this instance.
 type reorgFnResult struct {
@@ -92,20 +86,10 @@ type reorgFnResult struct {
 	err     error
 }
 
-func newReorgExprCtx() exprctx.ExprContext {
-	evalCtx := contextstatic.NewStaticEvalContext(
-		contextstatic.WithSQLMode(mysql.ModeNone),
-		contextstatic.WithTypeFlags(types.DefaultStmtFlags),
-		contextstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
-	)
-
-	planCacheTracker := contextutil.NewPlanCacheTracker(contextutil.IgnoreWarn)
-
-	return contextstatic.NewStaticExprContext(
-		contextstatic.WithEvalCtx(evalCtx),
-		contextstatic.WithPlanCacheTracker(&planCacheTracker),
-	)
->>>>>>> aaca081cec3 (ddl: record get owner TS and compare it before runReorgJob quit (#55049)):pkg/ddl/reorg.go
+// nullableKey can store <nil> kv.Key.
+// Storing a nil object to atomic.Value can lead to panic. This is a workaround.
+type nullableKey struct {
+	key kv.Key
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
@@ -228,22 +212,13 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		if job.IsCancelling() {
 			return dbterror.ErrCancelledDDLJob
 		}
-<<<<<<< HEAD:ddl/reorg.go
+		beOwnerTS := w.ddlCtx.getOwnerTS()
 		rc = w.newReorgCtx(reorgInfo)
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
-			rc.doneCh <- f()
-=======
-
-		beOwnerTS := w.ddlCtx.reorgCtx.getOwnerTS()
-		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
-		w.wg.Add(1)
-		go func() {
-			defer w.wg.Done()
-			err := reorgFn()
+			err := f()
 			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, err: err}
->>>>>>> aaca081cec3 (ddl: record get owner TS and compare it before runReorgJob quit (#55049)):pkg/ddl/reorg.go
 		}()
 	}
 
@@ -261,10 +236,10 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 	select {
 	case res := <-rc.doneCh:
 		err := res.err
-		curTS := w.ddlCtx.reorgCtx.getOwnerTS()
+		curTS := w.ddlCtx.getOwnerTS()
 		if res.ownerTS != curTS {
-			d.removeReorgCtx(job.ID)
-			logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
+			d.removeReorgCtx(job)
+			logutil.BgLogger().Warn("owner ts mismatch, return timeout error and retry",
 				zap.Int64("prevTS", res.ownerTS),
 				zap.Int64("curTS", curTS))
 			return dbterror.ErrWaitReorgTimeout
