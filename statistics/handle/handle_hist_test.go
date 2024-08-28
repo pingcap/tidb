@@ -208,17 +208,21 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		task1, err1 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
-		select {
-		case <-stmtCtx1.StatsLoad.ResultCh:
-			t.Logf("stmtCtx1.ResultCh should not get anything")
-			t.FailNow()
-		case <-stmtCtx2.StatsLoad.ResultCh:
-			t.Logf("stmtCtx2.ResultCh should not get anything")
-			t.FailNow()
-		case <-task1.ResultCh:
-			t.Logf("task1.ResultCh should not get anything")
-			t.FailNow()
-		default:
+		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
+			select {
+			case <-resultCh:
+				t.Logf("stmtCtx1.ResultCh should not get anything")
+				t.FailNow()
+			default:
+			}
+		}
+		for _, resultCh := range stmtCtx2.StatsLoad.ResultCh {
+			select {
+			case <-resultCh:
+				t.Logf("stmtCtx1.ResultCh should not get anything")
+				t.FailNow()
+			default:
+			}
 		}
 
 		require.NoError(t, failpoint.Disable(fp.failPath))
@@ -226,16 +230,18 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		require.NoError(t, err3)
 		require.Nil(t, task3)
 
-		task, err3 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
-		require.NoError(t, err3)
-		require.Nil(t, task)
-
-		rs1, ok1 := <-stmtCtx1.StatsLoad.ResultCh
-		require.True(t, ok1)
-		require.Equal(t, neededColumns[0], rs1.Item)
-		rs2, ok2 := <-stmtCtx2.StatsLoad.ResultCh
-		require.True(t, ok2)
-		require.Equal(t, neededColumns[0], rs2.Item)
+		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
+			rs1, ok1 := <-resultCh
+			require.True(t, rs1.Shared)
+			require.True(t, ok1)
+			require.Equal(t, neededColumns[0].ID, rs1.Val.(stmtctx.StatsLoadResult).Item.ID)
+		}
+		for _, resultCh := range stmtCtx2.StatsLoad.ResultCh {
+			rs1, ok1 := <-resultCh
+			require.True(t, rs1.Shared)
+			require.True(t, ok1)
+			require.Equal(t, neededColumns[0].ID, rs1.Val.(stmtctx.StatsLoadResult).Item.ID)
+		}
 
 		stat = h.GetTableStats(tableInfo)
 		hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
@@ -312,11 +318,11 @@ func TestRetry(t *testing.T) {
 	result, err1 := h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 	require.NoError(t, err1)
 	require.Nil(t, result)
-	select {
-	case <-task1.ResultCh:
-	default:
-		t.Logf("task1.ResultCh should get nothing")
-		t.FailNow()
+	for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
+		rs1, ok1 := <-resultCh
+		require.True(t, rs1.Shared)
+		require.True(t, ok1)
+		require.Error(t, rs1.Val.(stmtctx.StatsLoadResult).Error)
 	}
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockReadStatsForOneFail"))
 }
