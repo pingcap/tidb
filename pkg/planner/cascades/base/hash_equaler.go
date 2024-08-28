@@ -63,7 +63,7 @@ const (
 // Hash64a is the type for the hash value.
 type Hash64a uint64
 
-// Hasher is a helper struct that's used for computing **fnv-1a** hash values and tell
+// hasher is a helper struct that's used for computing **fnv-1a** hash values and tell
 // the equivalence on expression/operators. To use, first call the init method, then
 // a series of hash methods. The final value is stored in the hash64a field.
 type hasher struct {
