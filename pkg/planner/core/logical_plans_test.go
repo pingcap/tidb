@@ -1927,11 +1927,11 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where a > 1 order by f",
-			result: "PRIMARY_KEY",
+			result: "PRIMARY_KEY,f,f_g",
 		},
 		{
 			sql:    "select * from t where f > 1",
-			result: "f,f_g",
+			result: "PRIMARY_KEY,f,f_g",
 		},
 		{
 			sql:    "select f from t where f > 1",

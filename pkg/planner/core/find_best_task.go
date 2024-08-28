@@ -1161,8 +1161,9 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 				}
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
-				if preferByVar || preferMerge || c.path.IsIntHandlePath ||
-					((c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) == 0) && prop.IsSortItemEmpty() || c.isMatchProp) {
+				equalPlan := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0
+				indexFilters := len(c.path.TableFilters) < len(c.path.IndexFilters)
+				if preferByVar || preferMerge || ((equalPlan || indexFilters) && prop.IsSortItemEmpty() || c.isMatchProp) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
