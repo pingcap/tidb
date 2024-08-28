@@ -293,7 +293,7 @@ func TestCluster(t *testing.T) {
 
 	logPrefix := fmt.Sprintf("[ddl] %s ownerManager %s", DDLOwnerKey, "useless id")
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
-	_, _, err = owner.GetOwnerKeyWithCreateRevision(context.Background(), logCtx, cliRW, DDLOwnerKey, "useless id")
+	_, _, err = owner.GetOwnerKeyInfo(context.Background(), logCtx, cliRW, DDLOwnerKey, "useless id")
 	require.Truef(t, terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), "get owner info result don't match, err %v", err)
 	op, err := owner.GetOwnerOpValue(context.Background(), cliRW, DDLOwnerKey, logPrefix)
 	require.Truef(t, terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), "get owner info result don't match, err %v", err)
@@ -326,7 +326,7 @@ func TestWatchOwner(t *testing.T) {
 	require.NoError(t, err)
 
 	// test the GetOwnerKeyWithCreateRevision()
-	ownerKey, createRevision, err := owner.GetOwnerKeyWithCreateRevision(ctx, context.TODO(), client, DDLOwnerKey, id)
+	ownerKey, createRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), client, DDLOwnerKey, id)
 	require.NoError(t, err)
 
 	// watch the ownerKey with the `DELETE` event.

@@ -302,7 +302,7 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 			continue
 		}
 
-		ownerKey, createRevision, err := GetOwnerKeyWithCreateRevision(campaignContext, logCtx, m.etcdCli, m.key, m.id)
+		ownerKey, createRevision, err := GetOwnerKeyInfo(campaignContext, logCtx, m.etcdCli, m.key, m.id)
 		if err != nil {
 			continue
 		}
@@ -365,8 +365,8 @@ func getOwnerInfo(ctx, logCtx context.Context, etcdCli *clientv3.Client, ownerPa
 	return string(resp.Kvs[0].Key), ownerID, op, resp.Kvs[0].CreateRevision, resp.Kvs[0].ModRevision, nil
 }
 
-// GetOwnerKeyWithCreateRevision gets the owner key and createRevision information.
-func GetOwnerKeyWithCreateRevision(
+// GetOwnerKeyInfo gets the owner key and createRevision.
+func GetOwnerKeyInfo(
 	ctx, logCtx context.Context,
 	etcdCli *clientv3.Client,
 	etcdKey, id string,
@@ -448,17 +448,19 @@ func GetOwnerOpValue(ctx context.Context, etcdCli *clientv3.Client, ownerPath, l
 
 // WatchOwnerForTest watches the ownerKey.
 // This function is used to test watchOwner().
-func WatchOwnerForTest(ctx context.Context, m Manager, etcdSession *concurrency.Session, key string, ownerRevision int64) {
+func WatchOwnerForTest(ctx context.Context, m Manager, etcdSession *concurrency.Session, key string, createRevison int64) {
 	if ownerManager, ok := m.(*ownerManager); ok {
-		ownerManager.watchOwner(ctx, etcdSession, key, ownerRevision)
+		ownerManager.watchOwner(ctx, etcdSession, key, createRevison)
 	}
 }
 
-func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.Session, key string, ownerRevision int64) {
+func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.Session, key string, createRevision int64) {
 	logPrefix := fmt.Sprintf("[%s] ownerManager %s watch owner key %v", m.prompt, m.id, key)
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
 	logutil.BgLogger().Debug(logPrefix)
-	watchCh := m.etcdCli.Watch(ctx, key, clientv3.WithRev(ownerRevision))
+	// we need to watch the ownerKey since createRevision + 1.
+	// It need't watch the event of createing key.
+	watchCh := m.etcdCli.Watch(ctx, key, clientv3.WithRev(createRevision+1))
 	for {
 		select {
 		case resp, ok := <-watchCh:
