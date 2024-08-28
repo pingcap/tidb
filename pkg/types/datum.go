@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -649,6 +650,48 @@ func (d *Datum) SetValue(val any, tp *types.FieldType) {
 	default:
 		d.SetInterface(x)
 	}
+}
+
+var Hash64ForDatum func(h base.Hasher, d *Datum)
+
+// Hash64 implements base.HashEquals<0th> interface.
+func (d *Datum) Hash64(h base.Hasher) {
+	Hash64ForDatum(h, d)
+}
+
+// Equals implements base.HashEquals.<1st> interface.
+func (d *Datum) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var d2 *Datum
+	switch x := other.(type) {
+	case *Datum:
+		d2 = x
+	case Datum:
+		d2 = &x
+	default:
+		return false
+	}
+	ok := d.k == d2.k &&
+		d.decimal == d2.decimal &&
+		d.length == d2.length &&
+		d.i == d2.i &&
+		d.collation == d2.collation &&
+		string(d.b) == string(d2.b)
+	if !ok {
+		return false
+	}
+	// compare x
+	switch d.k {
+	case KindMysqlDecimal:
+		return d.GetMysqlDecimal().Compare(d2.GetMysqlDecimal()) == 0
+	case KindMysqlTime:
+		return d.GetMysqlTime().Compare(d2.GetMysqlTime()) == 0
+	default:
+		return true
+	}
+
 }
 
 // Compare compares datum to another datum.
