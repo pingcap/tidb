@@ -1,18 +1,14 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package utils
+package snapsplit
 
 import (
 	"context"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"go.uber.org/zap"
 )
 
@@ -41,37 +37,15 @@ func (rs *RegionSplitter) SplitWaitAndScatter(ctx context.Context, region *split
 // note: all ranges and rewrite rules must have raw key.
 func (rs *RegionSplitter) ExecuteSplit(
 	ctx context.Context,
-	ranges []rtree.Range,
+	sortedSplitKeys [][]byte,
 ) error {
-	if len(ranges) == 0 {
-		log.Info("skip split regions, no range")
+	if len(sortedSplitKeys) == 0 {
+		log.Info("skip split regions, no split keys")
 		return nil
 	}
 
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("RegionSplitter.Split", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	// Sort the range for getting the min and max key of the ranges
-	// TODO: this sort may not needed if we sort tables after creatation outside.
-	sortedRanges, errSplit := SortRanges(ranges)
-	if errSplit != nil {
-		return errors.Trace(errSplit)
-	}
-	if len(sortedRanges) == 0 {
-		log.Info("skip split regions after sorted, no range")
-		return nil
-	}
-	sortedKeys := make([][]byte, 0, len(sortedRanges))
-	totalRangeSize := uint64(0)
-	for _, r := range sortedRanges {
-		sortedKeys = append(sortedKeys, r.EndKey)
-		totalRangeSize += r.Size
-	}
-	// the range size must be greater than 0 here
-	return rs.executeSplitByRanges(ctx, sortedKeys)
+	log.Info("execute split sorted keys", zap.Int("keys count", len(sortedSplitKeys)))
+	return rs.executeSplitByRanges(ctx, sortedSplitKeys)
 }
 
 func (rs *RegionSplitter) executeSplitByRanges(
@@ -150,21 +124,4 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 	defer cancel()
 	leftRegions, _ := rs.client.WaitRegionsScattered(ctx2, regionInfos)
 	return leftRegions
-}
-
-// SortRanges checks if the range overlapped and sort them.
-func SortRanges(ranges []rtree.Range) ([]rtree.Range, error) {
-	rangeTree := rtree.NewRangeTree()
-	for _, rg := range ranges {
-		if out := rangeTree.InsertRange(rg); out != nil {
-			log.Error("insert ranges overlapped",
-				logutil.Key("startKeyOut", out.StartKey),
-				logutil.Key("endKeyOut", out.EndKey),
-				logutil.Key("startKeyIn", rg.StartKey),
-				logutil.Key("endKeyIn", rg.EndKey))
-			return nil, errors.Annotatef(berrors.ErrInvalidRange, "ranges overlapped")
-		}
-	}
-	sortedRanges := rangeTree.GetSortedRanges()
-	return sortedRanges, nil
 }
