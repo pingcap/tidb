@@ -44,8 +44,8 @@ import (
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
-<<<<<<< HEAD:sessionctx/stmtctx/stmtctx.go
 	"golang.org/x/exp/slices"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -55,9 +55,6 @@ const (
 	WarnLevelWarning = "Warning"
 	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax.
 	WarnLevelNote = "Note"
-=======
-	"golang.org/x/sync/singleflight"
->>>>>>> cd90f818809 (statistics: support global singleflight for sync load (#52796)):pkg/sessionctx/stmtctx/stmtctx.go
 )
 
 var taskIDAlloc uint64
