@@ -2257,7 +2257,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 				pid, err = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
 			}
 		}
-	} else if bytes.Equal(reorg.currElement.TypeKey, meta.ColumnElementKey) {
+	} else if len(pi.DroppingDefinitions) == 0 {
 		// case 5
 		pid, err = findNextPartitionID(currPhysicalTableID, pi.Definitions)
 	} else {

@@ -482,7 +482,7 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 			case model.ActionReorganizePartition,
 				model.ActionRemovePartitioning,
 				model.ActionAlterTablePartitioning:
-			// Expected
+				// Expected
 			case model.ActionModifyColumn:
 				workType = typeUpdateColumnWorker
 			default:
