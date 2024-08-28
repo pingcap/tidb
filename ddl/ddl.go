@@ -489,16 +489,16 @@ func (dc *ddlCtx) jobContext(job *model.Job) *JobContext {
 	return NewJobContext()
 }
 
-func (r *ddlCtx) getOwnerTS() int64 {
-	r.reorgCtx.RLock()
-	defer r.reorgCtx.RUnlock()
-	return r.reorgCtx.beOwnerTS
+func (dc *ddlCtx) getOwnerTS() int64 {
+	dc.reorgCtx.RLock()
+	defer dc.reorgCtx.RUnlock()
+	return dc.reorgCtx.beOwnerTS
 }
 
-func (r *ddlCtx) setOwnerTS(ts int64) {
-	r.reorgCtx.Lock()
-	r.reorgCtx.beOwnerTS = ts
-	r.reorgCtx.Unlock()
+func (dc *ddlCtx) setOwnerTS(ts int64) {
+	dc.reorgCtx.Lock()
+	dc.reorgCtx.beOwnerTS = ts
+	dc.reorgCtx.Unlock()
 }
 
 func (dc *ddlCtx) getReorgCtx(job *model.Job) *reorgCtx {
