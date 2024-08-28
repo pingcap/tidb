@@ -481,7 +481,7 @@ func (e *ShowExec) fetchTableScheduleStateByTableID(ctx context.Context, schedul
 	if !ok {
 		return state, errors.Errorf("Table with ID '%d' not found", id)
 	}
-	return fetchTableScheduleState(ctx, scheduleState, table.Meta())
+	return fetchTablePartitionScheduleState(ctx, scheduleState, table.Meta(), state)
 }
 
 func fetchScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, id int64) (infosync.PlacementScheduleState, error) {
@@ -501,18 +501,11 @@ func fetchPartitionScheduleState(ctx context.Context, scheduleState map[int64]in
 	return fetchScheduleState(ctx, scheduleState, part.ID)
 }
 
-func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo) (infosync.PlacementScheduleState, error) {
-	state := infosync.PlacementScheduleStateScheduled
-
-	schedule, err := fetchScheduleState(ctx, scheduleState, table.ID)
-	if err != nil {
-		return state, err
-	}
-	state = accumulateState(state, schedule)
-	if state != infosync.PlacementScheduleStateScheduled {
-		return state, nil
-	}
-
+func fetchTablePartitionScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo, state infosync.PlacementScheduleState) (infosync.PlacementScheduleState, error) {
+	var (
+		schedule infosync.PlacementScheduleState
+		err      error
+	)
 	if table.GetPartitionInfo() != nil {
 		for _, part := range table.GetPartitionInfo().Definitions {
 			schedule, err = fetchScheduleState(ctx, scheduleState, part.ID)
@@ -527,6 +520,21 @@ func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosy
 	}
 
 	return schedule, nil
+}
+
+func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo) (infosync.PlacementScheduleState, error) {
+	state := infosync.PlacementScheduleStateScheduled
+
+	schedule, err := fetchScheduleState(ctx, scheduleState, table.ID)
+	if err != nil {
+		return state, err
+	}
+	state = accumulateState(state, schedule)
+	if state != infosync.PlacementScheduleStateScheduled {
+		return state, nil
+	}
+
+	return fetchTablePartitionScheduleState(ctx, scheduleState, table, state)
 }
 
 func accumulateState(curr, news infosync.PlacementScheduleState) infosync.PlacementScheduleState {
