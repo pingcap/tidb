@@ -6915,11 +6915,15 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 			switch y := x.SelectList.Selects[i].(type) {
 			case *ast.SelectStmt:
 				p, err = b.buildSelect(ctx, y)
-				b.handleHelper.popMap()
+				if err == nil {
+					b.handleHelper.popMap()
+				}
 				afterOpr = y.AfterSetOperator
 			case *ast.SetOprSelectList:
 				p, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: y, With: y.With})
-				b.handleHelper.popMap()
+				if err == nil {
+					b.handleHelper.popMap()
+				}
 				afterOpr = y.AfterSetOperator
 			}
 
