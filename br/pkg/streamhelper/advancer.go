@@ -20,8 +20,15 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+=======
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/redact"
+>>>>>>> 51ffa22365f (br: redact ak/sk in logging (#55622))
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -438,8 +445,17 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		}
 		log.Info("get global checkpoint", zap.Uint64("checkpoint", globalCheckpointTs))
 		c.lastCheckpoint = newCheckpointWithTS(globalCheckpointTs)
+<<<<<<< HEAD
 		log.Info("added event", zap.Stringer("task", e.Info),
 			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
+=======
+		p, err := c.env.BlockGCUntil(ctx, globalCheckpointTs)
+		if err != nil {
+			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
+		}
+		log.Info("added event", zap.Stringer("task", redact.TaskInfoRedacted{Info: e.Info}),
+			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)), zap.Uint64("current-checkpoint", p))
+>>>>>>> 51ffa22365f (br: redact ak/sk in logging (#55622))
 	case EventDel:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
