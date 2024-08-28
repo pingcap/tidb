@@ -22,6 +22,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -146,6 +147,8 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 	return allJobs, nil
 }
 
+
+
 // ScanHistoryDDLJobs get some of the done DDL jobs.
 // When the DDL history is quite large, GetAllHistoryDDLJobs() API can't work well, because it makes the server OOM.
 // The result is in descending order by job ID.
@@ -157,6 +160,14 @@ func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job
 		// if 'start_job_id' == 0 and 'limit' == 0(default value), get the last 1024 ddl history job by defaultly.
 		if limit == 0 {
 			limit = DefNumGetDDLHistoryJobs
+
+			failpoint.Inject("history-ddl-jobs-limit", func(val failpoint.Value) {
+				injectLimit, ok := val.(int)
+				if ok {
+					logutil.DDLLogger().Info("failpoint history-ddl-jobs-limit", zap.Int("limit", injectLimit))
+					limit = injectLimit
+				}
+			})
 		}
 		iter, err = m.GetLastHistoryDDLJobsIterator()
 	} else {
@@ -169,5 +180,6 @@ func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	return iter.GetLastJobs(limit, nil)
 }
