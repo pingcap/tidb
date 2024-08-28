@@ -231,6 +231,7 @@ go_test(
         "logical_plan_trace_test.go",
         "logical_plans_test.go",
         "main_test.go",
+        "memtable_infoschema_extractor_test.go",
         "optimizer_test.go",
         "partition_pruning_test.go",
         "physical_plan_test.go",

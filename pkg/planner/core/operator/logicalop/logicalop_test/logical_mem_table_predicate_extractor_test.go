@@ -1835,6 +1835,27 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		colPredicates map[string]set.StringSet
 	}{
 		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='test';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("test"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_name='t';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where tidb_table_id=111;`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"tidb_table_id": set.NewStringSet("111"),
+			},
+		},
+		{
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where lower(table_name)='T';`,
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
