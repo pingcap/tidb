@@ -1296,7 +1296,7 @@ func checkFieldCompatibility(
 	values []types.Datum,
 	logger log.Logger,
 ) bool {
-	se := kv.NewSessionCtx(&encode.SessionOptions{
+	se := kv.NewSession(&encode.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
 	}, logger)
 	for i, col := range tbl.Columns {
@@ -1307,7 +1307,7 @@ func checkFieldCompatibility(
 		if i >= len(values) {
 			break
 		}
-		_, err := table.CastValue(se, values[i], col, true, false)
+		_, err := table.CastColumnValue(se.GetExprCtx(), values[i], col, true, false)
 		if err != nil {
 			logger.Error("field value is not consistent with column type", zap.String("value", values[i].GetString()),
 				zap.Any("column_info", col), zap.Error(err))

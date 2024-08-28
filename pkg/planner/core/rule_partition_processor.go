@@ -107,7 +107,7 @@ func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 		// Only one partition, no union all.
 		p.SetChildren(ds)
 		return p, nil
-	case *LogicalCTE:
+	case *logicalop.LogicalCTE:
 		return lp, nil
 	default:
 		children := lp.Children()

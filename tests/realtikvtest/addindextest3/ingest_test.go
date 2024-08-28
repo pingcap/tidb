@@ -348,10 +348,10 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 	}
 	tk.MustQuery("split table t between (0) and (80000) regions 7;").Check(testkit.Rows("6 1"))
 
-	ddl.SetBackfillTaskChanSizeForTest(4)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/setLimitForLoadTableRanges", "return(4)")
 	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
-	ddl.SetBackfillTaskChanSizeForTest(7)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/setLimitForLoadTableRanges", "return(7)")
 	tk.MustExec("alter table t add index idx_2(b);")
 	tk.MustExec("admin check table t;")
 
@@ -361,10 +361,37 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
 	tk.MustQuery("split table t by (10000),(20000),(30000),(40000),(50000),(60000);").Check(testkit.Rows("6 1"))
-	ddl.SetBackfillTaskChanSizeForTest(4)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/setLimitForLoadTableRanges", "return(4)")
 	tk.MustExec("alter table t add unique index idx(b);")
 	tk.MustExec("admin check table t;")
-	ddl.SetBackfillTaskChanSizeForTest(1024)
+}
+
+func TestAddIndexLoadTableRangeError(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec(`set global tidb_enable_dist_task=off;`) // Use checkpoint manager.
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 8; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustQuery("split table t by (10000),(20000),(30000),(40000),(50000),(60000);").Check(testkit.Rows("6 1"))
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/setLimitForLoadTableRanges", "return(3)")
+	var batchCnt int
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadRangeFromPD", func(mockErr *bool) {
+		batchCnt++
+		if batchCnt == 2 {
+			*mockErr = true
+		}
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/forceSyncFlagForTest", "return")
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
 }
 
 func TestAddIndexMockFlushError(t *testing.T) {

@@ -81,18 +81,18 @@ func TestEscape(t *testing.T) {
 	}{
 		{
 			tp:  "select",
-			ds:  [][]types.Datum{d("key1'\";123`456")},
-			sql: "SELECT LOW_PRIORITY SQL_NO_CACHE `col1\"';123``456` FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` > 'key1\\'\\\";123`456' AND `time\"';123``456` < FROM_UNIXTIME(0)",
+			ds:  [][]types.Datum{d("key1'\";123`456\t\n\r")},
+			sql: "SELECT LOW_PRIORITY SQL_NO_CACHE `col1\"';123``456` FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` > 'key1\\'\\\";123`456\t\\n\\r' AND `time\"';123``456` < FROM_UNIXTIME(0)",
 		},
 		{
 			tp:  "delete",
-			ds:  [][]types.Datum{d("key2'\";123`456")},
-			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key2\\'\\\";123`456') AND `time\"';123``456` < FROM_UNIXTIME(0)",
+			ds:  [][]types.Datum{d("key2'\";123`456\t\n\r")},
+			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key2\\'\\\";123`456\t\\n\\r') AND `time\"';123``456` < FROM_UNIXTIME(0)",
 		},
 		{
 			tp:  "delete",
-			ds:  [][]types.Datum{d("key3'\";123`456"), d("key4'`\"")},
-			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key3\\'\\\";123`456', 'key4\\'`\\\"') AND `time\"';123``456` < FROM_UNIXTIME(0)",
+			ds:  [][]types.Datum{d("key3'\";123`456\t\n\r"), d("key4'`\"")},
+			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key3\\'\\\";123`456\t\\n\\r', 'key4\\'`\\\"') AND `time\"';123``456` < FROM_UNIXTIME(0)",
 		},
 	}
 

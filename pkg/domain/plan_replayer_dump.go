@@ -440,16 +440,17 @@ func dumpMeta(zw *zip.Writer) error {
 	return nil
 }
 
-func dumpTiFlashReplica(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
+func dumpTiFlashReplica(sctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
 	bf, err := zw.Create(PlanReplayerTiFlashReplicasFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
-	is := GetDomain(ctx).InfoSchema()
+	is := GetDomain(sctx).InfoSchema()
+	ctx := infoschema.WithRefillOption(context.Background(), false)
 	for pair := range pairs {
 		dbName := model.NewCIStr(pair.DBName)
 		tableName := model.NewCIStr(pair.TableName)
-		t, err := is.TableByName(context.Background(), dbName, tableName)
+		t, err := is.TableByName(ctx, dbName, tableName)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to find table info", zap.Error(err),
 				zap.String("dbName", dbName.L), zap.String("tableName", tableName.L))
@@ -496,11 +497,12 @@ func dumpSchemaMeta(zw *zip.Writer, tables map[tableNamePair]struct{}) error {
 func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain) error {
 	statsHandle := do.StatsHandle()
 	is := do.InfoSchema()
+	ctx := infoschema.WithRefillOption(context.Background(), false)
 	for pair := range pairs {
 		if pair.IsView {
 			continue
 		}
-		tbl, err := is.TableByName(context.Background(), model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+		tbl, err := is.TableByName(ctx, model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 		if err != nil {
 			return err
 		}

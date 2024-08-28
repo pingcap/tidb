@@ -452,6 +452,11 @@ func loadTableRanges(
 			zap.Int64("physicalTableID", t.GetPhysicalID()))
 		return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
 	}
+	failpoint.Inject("setLimitForLoadTableRanges", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			limit = v
+		}
+	})
 
 	rc := s.GetRegionCache()
 	maxSleep := 10000 // ms
@@ -466,6 +471,12 @@ func loadTableRanges(
 		if err != nil {
 			return false, errors.Trace(err)
 		}
+		var mockErr bool
+		failpoint.InjectCall("beforeLoadRangeFromPD", &mockErr)
+		if mockErr {
+			return false, kv.ErrTxnRetryable
+		}
+
 		ranges = make([]kv.KeyRange, 0, len(rs))
 		for _, r := range rs {
 			ranges = append(ranges, kv.KeyRange{StartKey: r.StartKey(), EndKey: r.EndKey()})
@@ -636,12 +647,7 @@ func makeupDecodeColMap(dbName model.CIStr, t table.Table) (map[int64]decoder.Co
 	return decodeColMap, nil
 }
 
-var backfillTaskChanSize = 128
-
-// SetBackfillTaskChanSizeForTest is only used for test.
-func SetBackfillTaskChanSizeForTest(n int) {
-	backfillTaskChanSize = n
-}
+const backfillTaskChanSize = 128
 
 func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	ctx context.Context,

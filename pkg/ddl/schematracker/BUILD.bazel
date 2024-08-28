@@ -30,7 +30,6 @@ go_library(
         "//pkg/store/mockstore",
         "//pkg/table",
         "//pkg/table/tables",
-        "//pkg/tidb-binlog/pump_client",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
         "@com_github_ngaut_pools//:pools",

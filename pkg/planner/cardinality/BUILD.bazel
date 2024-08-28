@@ -26,6 +26,7 @@ go_library(
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/planner/util/debugtrace",
+        "//pkg/planner/util/fixcontrol",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
         "//pkg/tablecodec",

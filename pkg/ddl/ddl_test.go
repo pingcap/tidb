@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -62,6 +63,17 @@ func (d *ddl) GetReorgCtx(jobID int64) *reorgCtx {
 // RemoveReorgCtx exports for testing.
 func (d *ddl) RemoveReorgCtx(id int64) {
 	d.removeReorgCtx(id)
+}
+
+func NewJobSubmitterForTest() *JobSubmitter {
+	syncMap := generic.NewSyncMap[int64, chan struct{}](8)
+	return &JobSubmitter{
+		ddlJobDoneChMap: &syncMap,
+	}
+}
+
+func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
+	return s.ddlJobDoneChMap
 }
 
 func createMockStore(t *testing.T) kv.Storage {
