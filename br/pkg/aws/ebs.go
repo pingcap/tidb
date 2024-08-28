@@ -20,10 +20,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/utils"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/util"
->>>>>>> 035f79e896b (br: fix get snapshot response pointer deref panic (#54510))
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
