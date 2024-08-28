@@ -14,6 +14,8 @@
 
 //go:build !codes
 
+//test merge ci
+
 package realtikvtest
 
 import (
