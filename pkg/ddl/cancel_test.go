@@ -242,8 +242,8 @@ func TestCancel(t *testing.T) {
 
 	// Change some configurations.
 	ddl.ReorgWaitTimeout = 10 * time.Millisecond
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 8")
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 8")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow", "return"))

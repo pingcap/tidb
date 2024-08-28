@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -851,4 +852,20 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			" PARTITION `p2` VALUES LESS THAN (3072),\n" +
 			" PARTITION `p3` VALUES LESS THAN (4096),\n" +
 			" PARTITION `p4` VALUES LESS THAN (7096))"))
+}
+
+func TestUpgradeWithCrossJoinDisabled(t *testing.T) {
+	session.SupportUpgradeHTTPOpVer--
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
+	backup := plannercore.AllowCartesianProduct.Load()
+	t.Cleanup(func() {
+		plannercore.AllowCartesianProduct.Store(backup)
+	})
+	plannercore.AllowCartesianProduct.Store(false)
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
 }

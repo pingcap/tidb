@@ -987,6 +987,11 @@ func (job *Job) NotStarted() bool {
 	return job.State == JobStateNone || job.State == JobStateQueueing
 }
 
+// Started returns true if the job is started.
+func (job *Job) Started() bool {
+	return !job.NotStarted()
+}
+
 // InFinalState returns whether the job is in a final state of job FSM.
 // TODO JobStateRollbackDone is not a final state, maybe we should add a JobStateRollbackSynced
 // state to diff between the entrance of JobStateRollbackDone and move the job to

@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreatePlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	policyInfo := &model.PolicyInfo{}
 	var orReplace bool
 	if err := job.DecodeArgs(policyInfo, &orReplace); err != nil {
@@ -46,7 +46,7 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 		return ver, errors.Trace(err)
 	}
 
-	existPolicy, err := getPlacementPolicyByName(d, t, policyInfo.Name)
+	existPolicy, err := getPlacementPolicyByName(jobCtx.infoCache, t, policyInfo.Name)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -66,7 +66,7 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 		}
 
 		job.SchemaID = replacePolicy.ID
-		ver, err = updateSchemaVersion(d, t, job)
+		ver, err = updateSchemaVersion(jobCtx, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -85,7 +85,7 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 		}
 		job.SchemaID = policyInfo.ID
 
-		ver, err = updateSchemaVersion(d, t, job)
+		ver, err = updateSchemaVersion(jobCtx, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -116,13 +116,13 @@ func getPolicyInfo(t *meta.Meta, policyID int64) (*model.PolicyInfo, error) {
 	return policy, nil
 }
 
-func getPlacementPolicyByName(d *ddlCtx, t *meta.Meta, policyName model.CIStr) (*model.PolicyInfo, error) {
+func getPlacementPolicyByName(infoCache *infoschema.InfoCache, t *meta.Meta, policyName model.CIStr) (*model.PolicyInfo, error) {
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return nil, err
 	}
 
-	is := d.infoCache.GetLatest()
+	is := infoCache.GetLatest()
 	if is != nil && is.SchemaMetaVersion() == currVer {
 		// Use cached policy.
 		policy, ok := is.PolicyByName(policyName)
@@ -181,13 +181,13 @@ func checkAllTablePlacementPoliciesExistAndCancelNonExistJob(t *meta.Meta, job *
 	return nil
 }
 
-func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropPlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	policyInfo, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	err = checkPlacementPolicyNotInUse(d, t, policyInfo)
+	err = checkPlacementPolicyNotInUse(jobCtx.infoCache, t, policyInfo)
 	if err != nil {
 		if dbterror.ErrPlacementPolicyInUse.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -203,7 +203,7 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ver, err = updateSchemaVersion(d, t, job)
+		ver, err = updateSchemaVersion(jobCtx, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -216,7 +216,7 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ver, err = updateSchemaVersion(d, t, job)
+		ver, err = updateSchemaVersion(jobCtx, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -227,7 +227,7 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if err = t.DropPolicy(policyInfo.ID); err != nil {
 			return ver, errors.Trace(err)
 		}
-		ver, err = updateSchemaVersion(d, t, job)
+		ver, err = updateSchemaVersion(jobCtx, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -239,7 +239,7 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	return ver, errors.Trace(err)
 }
 
-func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterPlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	alterPolicy := &model.PolicyInfo{}
 	if err := job.DecodeArgs(alterPolicy); err != nil {
 		job.State = model.JobStateCancelled
@@ -264,7 +264,7 @@ func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	ver, err = updateSchemaVersion(jobCtx, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -344,12 +344,12 @@ func updateExistPlacementPolicy(t *meta.Meta, policy *model.PolicyInfo) error {
 	return nil
 }
 
-func checkPlacementPolicyNotInUse(d *ddlCtx, t *meta.Meta, policy *model.PolicyInfo) error {
+func checkPlacementPolicyNotInUse(infoCache *infoschema.InfoCache, t *meta.Meta, policy *model.PolicyInfo) error {
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return err
 	}
-	is := d.infoCache.GetLatest()
+	is := infoCache.GetLatest()
 	if is != nil && is.SchemaMetaVersion() == currVer {
 		err = CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
 	} else {

@@ -428,6 +428,11 @@ type StatementContext struct {
 
 	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
 	MDLRelatedTableIDs map[int64]struct{}
+
+	// ForShareLockEnabledByNoop indicates whether the current statement contains `for share` clause
+	// and the `for share` execution is enabled by `tidb_enable_noop_functions`, no locks should be
+	// acquired in this case.
+	ForShareLockEnabledByNoop bool
 }
 
 // DefaultStmtErrLevels is the default error levels for statement

@@ -319,7 +319,8 @@ func updateIndexResult(
 	needCMS := cms != nil
 	respHist := statistics.HistogramFromProto(resp.Hist)
 	if job != nil {
-		UpdateAnalyzeJob(ctx, job, int64(respHist.TotalRowCount()))
+		statsHandle := domain.GetDomain(ctx).StatsHandle()
+		statsHandle.UpdateAnalyzeJobProgress(job, int64(respHist.TotalRowCount()))
 	}
 	hist, err = statistics.MergeHistograms(ctx.GetSessionVars().StmtCtx, hist, respHist, numBuckets, statsVer)
 	if err != nil {

@@ -8,7 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 11,
+    shard_count = 12,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
@@ -16,6 +16,7 @@ go_test(
         "//pkg/meta",
         "//pkg/parser/model",
         "//pkg/parser/terror",
+        "//pkg/planner/core",
         "//pkg/server/handler",
         "//pkg/session",  #keep
         "//pkg/session/types",

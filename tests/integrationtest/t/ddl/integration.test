@@ -89,21 +89,21 @@ drop table if exists t2;
 create table t2(a int not null, b int, primary key(a) nonclustered, unique idx_b(b));
 drop table if exists t3;
 set tidb_enable_global_index=1;
-create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b)) partition by hash(a) partitions 3;
+create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3;
 drop table if exists t4;
 create table t4(a int not null, b int, primary key(a)) partition by hash(a) partitions 3;
-alter table t partition by hash(a) partitions 3;
+alter table t partition by hash(a) partitions 3 update indexes (idx_b global);
 alter table t remove partitioning;
-alter table t partition by key() partitions 3;
+alter table t partition by key() partitions 3 update indexes (idx_b global);
 alter table t remove partitioning;
---error 1503
-alter table t partition by hash(b) partitions 3;
-alter table t2 partition by hash(b) partitions 3;
+-- error 1503
+alter table t partition by hash(b) partitions 3 update indexes (`primary` global);
+alter table t2 partition by hash(b) partitions 3 update indexes (`primary` global);
 alter table t2 remove partitioning;
 alter table t3 partition by key(a) partitions 3;
 alter table t3 remove partitioning;
---error 1503
-alter table t4 partition by hash(b) partitions 3;
+-- error 1503
+alter table t4 partition by hash(b) partitions 3 update indexes(`primary` global, idx_b local);
 set tidb_enable_global_index=0;
 -- error 1503
 alter table t partition by hash(a) partitions 3;
@@ -127,7 +127,7 @@ CREATE TABLE `members` (
   `lname` varchar(255) DEFAULT NULL,
   `dob` date DEFAULT NULL,
   `data` json DEFAULT NULL,
-  UNIQUE KEY `ui` (`id`)
+  UNIQUE KEY `ui` (`id`) GLOBAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (YEAR(`dob`))
 (PARTITION `pBefore1950` VALUES LESS THAN (1950),

@@ -1039,7 +1039,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				regionIDErrMsg += fmt.Sprintf("%d, ", regionIDsInOtherZones[i])
 			}
 			warningMsg += regionIDErrMsg + "etc"
-			appendWarning(errors.NewNoStackErrorf(warningMsg))
+			appendWarning(errors.NewNoStackError(warningMsg))
 		}
 
 		for _, task := range storeTaskMap {

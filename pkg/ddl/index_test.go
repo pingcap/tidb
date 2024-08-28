@@ -31,7 +31,6 @@ func TestDecodeAddIndexArgsCompatibility(t *testing.T) {
 		indexPartSpecifications [][]*ast.IndexPartSpecification
 		indexOptions            []*ast.IndexOption
 		hiddenCols              [][]*model.ColumnInfo
-		globals                 []bool
 	}{
 		{
 			raw: json.RawMessage(`[
@@ -74,7 +73,6 @@ false]`),
 			},
 			indexOptions: []*ast.IndexOption{nil},
 			hiddenCols:   [][]*model.ColumnInfo{{}},
-			globals:      []bool{false},
 		},
 		{
 			raw: json.RawMessage(`[
@@ -134,19 +132,17 @@ false]`),
 			},
 			indexOptions: []*ast.IndexOption{nil, nil},
 			hiddenCols:   [][]*model.ColumnInfo{{}, {}},
-			globals:      []bool{false, false},
 		},
 	}
 
 	for _, c := range cases {
 		job := &model.Job{RawArgs: c.raw}
-		uniques, indexNames, specs, indexOptions, hiddenCols, globals, err := decodeAddIndexArgs(job)
+		uniques, indexNames, specs, indexOptions, hiddenCols, err := decodeAddIndexArgs(job)
 		require.NoError(t, err)
 		require.Equal(t, c.uniques, uniques)
 		require.Equal(t, c.indexNames, indexNames)
 		require.Equal(t, c.indexPartSpecifications, specs)
 		require.Equal(t, c.indexOptions, indexOptions)
 		require.Equal(t, c.hiddenCols, hiddenCols)
-		require.Equal(t, c.globals, globals)
 	}
 }

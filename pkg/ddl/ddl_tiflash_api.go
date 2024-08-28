@@ -370,7 +370,7 @@ func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 			}
 		} else {
 			var ok bool
-			table, ok = schemas.TableByID(availableTableID.ID)
+			table, ok = schemas.TableByID(context.Background(), availableTableID.ID)
 			if !ok {
 				logutil.DDLLogger().Info("get table id failed, may be dropped or truncated",
 					zap.Int64("tableID", availableTableID.ID),
@@ -461,7 +461,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 	failpoint.Inject("waitForAddPartition", func(val failpoint.Value) {
 		for _, phyTable := range tableList {
 			is := d.infoCache.GetLatest()
-			_, ok := is.TableByID(phyTable.ID)
+			_, ok := is.TableByID(d.ctx, phyTable.ID)
 			if !ok {
 				tb, _, _ := is.FindTableByPartitionID(phyTable.ID)
 				if tb == nil {

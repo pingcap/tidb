@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"container/list"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 )
 
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
@@ -421,9 +421,8 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*Bi
 							PlanHint:  ssElement.planHint,
 							Charset:   ssElement.charset,
 							Collation: ssElement.collation,
-							Users:     make(map[string]struct{}),
+							Users:     maps.Clone(ssElement.authUsers),
 						}
-						maps.Copy(stmt.Users, ssElement.authUsers)
 						// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
 						// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
 						if ssElement.prepared {

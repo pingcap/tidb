@@ -304,7 +304,7 @@ func recordSingleTableRuntimeStats(sctx base.PlanContext, tblID int64) (stats *s
 	dom := domain.GetDomain(sctx)
 	statsHandle := dom.StatsHandle()
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	tbl, ok := is.TableByID(tblID)
+	tbl, ok := is.TableByID(context.Background(), tblID)
 	if !ok {
 		return nil, false, nil
 	}

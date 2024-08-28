@@ -17,6 +17,7 @@ package statistics
 import (
 	"cmp"
 	"fmt"
+	stdmaps "maps"
 	"slices"
 	"strings"
 
@@ -169,10 +170,10 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
-	mm.colInfoMap = maps.Clone(m.colInfoMap)
-	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
-	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
-	mm.idxInfoMap = maps.Clone(m.idxInfoMap)
+	mm.colInfoMap = stdmaps.Clone(m.colInfoMap)
+	mm.colAnalyzed = stdmaps.Clone(m.colAnalyzed)
+	mm.idxAnalyzed = stdmaps.Clone(m.idxAnalyzed)
+	mm.idxInfoMap = stdmaps.Clone(m.idxInfoMap)
 	return mm
 }
 
@@ -808,20 +809,23 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if t.Pseudo {
 		return nil, false, false
 	}
+	// when we use non-lite init stats, it cannot init the stats for common columns.
+	// so we need to foce to load the stats.
 	col, ok := t.columns[id]
+	if !ok {
+		return nil, true, true
+	}
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
 	if !hasAnalyzed {
 		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
-		if !ok {
-			// If we don't have this column. We skip it.
-			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
-			// We need to find a way to maintain it more correctly.
-			return nil, t.ColAndIdxExistenceMap.Has(id, false), false
-		}
+		// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
+		// We need to find a way to maintain it more correctly.
 		// Otherwise we don't need to load it.
-		return nil, false, false
+		result := t.ColAndIdxExistenceMap.Has(id, false)
+		// If the column is not in the ColAndIdxExistenceMap, we need to load it.
+		return nil, !result, !result
 	}
 
 	// Restore the condition from the simplified form:

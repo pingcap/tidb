@@ -18,38 +18,63 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	tikv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
-func (d *ddl) limitDDLJobs() {
-	defer util.Recover(metrics.LabelDDL, "limitDDLJobs", nil, true)
+// JobSubmitter collects the DDL jobs and submits them to job tables in batch, it's
+// also responsible allocating IDs for the jobs. when fast-create is enabled, it
+// will merge the create-table jobs to a single batch create-table job.
+// export for testing.
+type JobSubmitter struct {
+	ctx               context.Context
+	etcdCli           *clientv3.Client
+	ownerManager      owner.Manager
+	store             kv.Storage
+	serverStateSyncer serverstate.Syncer
+	ddlJobDoneChMap   *generic.SyncMap[int64, chan struct{}]
+
+	// init at ddl start.
+	sessPool          *sess.Pool
+	sysTblMgr         systable.Manager
+	minJobIDRefresher *systable.MinJobIDRefresher
+
+	limitJobCh chan *JobWrapper
+	// get notification if any DDL job submitted or finished.
+	ddlJobNotifyCh chan struct{}
+}
+
+func (s *JobSubmitter) submitLoop() {
+	defer util.Recover(metrics.LabelDDL, "submitLoop", nil, true)
 
 	jobWs := make([]*JobWrapper, 0, batchAddingJobs)
-	ch := d.limitJobCh
+	ch := s.limitJobCh
 	for {
 		select {
 		// the channel is never closed
@@ -61,15 +86,15 @@ func (d *ddl) limitDDLJobs() {
 			for i := 0; i < jobLen; i++ {
 				jobWs = append(jobWs, <-ch)
 			}
-			d.addBatchDDLJobs(jobWs)
-		case <-d.ctx.Done():
+			s.addBatchDDLJobs(jobWs)
+		case <-s.ctx.Done():
 			return
 		}
 	}
 }
 
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
-func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) {
+func (s *JobSubmitter) addBatchDDLJobs(jobWs []*JobWrapper) {
 	startTime := time.Now()
 	var (
 		err   error
@@ -87,9 +112,9 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) {
 				jobWs = newWs
 			}
 		}
-		err = d.addBatchDDLJobs2Table(jobWs)
+		err = s.addBatchDDLJobs2Table(jobWs)
 	} else {
-		err = d.addBatchDDLJobs2Queue(jobWs)
+		err = s.addBatchDDLJobs2Queue(jobWs)
 	}
 	var jobs string
 	for _, jobW := range jobWs {
@@ -103,13 +128,15 @@ func (d *ddl) addBatchDDLJobs(jobWs []*JobWrapper) {
 	}
 	if err != nil {
 		logutil.DDLLogger().Warn("add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
-	} else {
-		logutil.DDLLogger().Info("add DDL jobs",
-			zap.Int("batch count", len(jobWs)),
-			zap.String("jobs", jobs),
-			zap.Bool("table", toTable),
-			zap.Bool("fast_create", fastCreate))
+		return
 	}
+	// Notice worker that we push a new job and wait the job done.
+	s.notifyNewJobSubmitted()
+	logutil.DDLLogger().Info("add DDL jobs",
+		zap.Int("batch count", len(jobWs)),
+		zap.String("jobs", jobs),
+		zap.Bool("table", toTable),
+		zap.Bool("fast_create", fastCreate))
 }
 
 // mergeCreateTableJobs merges CreateTable jobs to CreateTables.
@@ -240,20 +267,20 @@ func mergeCreateTableJobsOfSameSchema(jobWs []*JobWrapper) (*model.Job, error) {
 }
 
 // addBatchDDLJobs2Table gets global job IDs and puts the DDL jobs in the DDL job table.
-func (d *ddl) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
+func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 	var err error
 
 	if len(jobWs) == 0 {
 		return nil
 	}
 
-	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
-	se, err := d.sessPool.Get()
+	ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnDDL)
+	se, err := s.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer d.sessPool.Put(se)
-	found, err := d.sysTblMgr.HasFlashbackClusterJob(ctx, d.minJobIDRefresher.GetCurrMinJobID())
+	defer s.sessPool.Put(se)
+	found, err := s.sysTblMgr.HasFlashbackClusterJob(ctx, s.minJobIDRefresher.GetCurrMinJobID())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -266,7 +293,7 @@ func (d *ddl) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		bdrRole = string(ast.BDRRoleNone)
 	)
 
-	err = kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 
 		bdrRole, err = t.GetBDRRole()
@@ -276,7 +303,7 @@ func (d *ddl) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		startTS = txn.StartTS()
 
 		if variable.DDLForce2Queue.Load() {
-			if err := d.checkFlashbackJobInQueue(t); err != nil {
+			if err := s.checkFlashbackJobInQueue(t); err != nil {
 				return err
 			}
 		}
@@ -308,7 +335,7 @@ func (d *ddl) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 
 		setJobStateToQueueing(job)
 
-		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
+		if s.serverStateSyncer.IsUpgradingState() && !hasSysDB(job) {
 			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
 				logutil.DDLUpgradingLogger().Warn("pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 				jobW.cacheErr = err
@@ -320,26 +347,16 @@ func (d *ddl) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	ddlSe := sess.NewSession(se)
-	if err = GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWs); err != nil {
+	if err = s.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWs); err != nil {
 		return errors.Trace(err)
-	}
-	for _, jobW := range jobWs {
-		d.initJobDoneCh(jobW.ID)
 	}
 
 	return nil
 }
 
-func (d *ddl) initJobDoneCh(jobID int64) {
-	d.ddlJobDoneChMap.Store(jobID, make(chan struct{}, 1))
-}
-
-func (d *ddl) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
+func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	// lock to reduce conflict
-	d.globalIDLock.Lock()
-	defer d.globalIDLock.Unlock()
-	return kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+	return kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 
 		count := getRequiredGIDCount(jobWs)
@@ -349,7 +366,7 @@ func (d *ddl) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 		}
 		assignGIDsForJobs(jobWs, ids)
 
-		if err := d.checkFlashbackJobInQueue(t); err != nil {
+		if err := s.checkFlashbackJobInQueue(t); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -378,7 +395,7 @@ func (d *ddl) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	})
 }
 
-func (*ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
+func (*JobSubmitter) checkFlashbackJobInQueue(t *meta.Meta) error {
 	jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
 	if err != nil {
 		return errors.Trace(err)
@@ -396,7 +413,8 @@ func (*ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
 // as we want to make sure DDL jobs are inserted in id order, then we can query from
 // a min job ID when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
 // so this function has side effect, it will set table/db/job id of 'jobs'.
-func GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
+func (s *JobSubmitter) GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
+	savedJobIDs := make([]int64, len(jobWs))
 	count := getRequiredGIDCount(jobWs)
 	return genGIDAndCallWithRetry(ctx, ddlSe, count, func(ids []int64) error {
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
@@ -406,21 +424,59 @@ func GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobW
 		})
 		assignGIDsForJobs(jobWs, ids)
 		injectModifyJobArgFailPoint(jobWs)
+		// job scheduler will start run them after txn commit, we want to make sure
+		// the channel exists before the jobs are submitted.
+		for i, jobW := range jobWs {
+			if savedJobIDs[i] > 0 {
+				// in case of retry
+				s.ddlJobDoneChMap.Delete(savedJobIDs[i])
+			}
+			s.ddlJobDoneChMap.Store(jobW.ID, make(chan struct{}, 1))
+			savedJobIDs[i] = jobW.ID
+		}
+		failpoint.Inject("mockGenGIDRetryableError", func() {
+			failpoint.Return(kv.ErrTxnRetryable)
+		})
 		return insertDDLJobs2Table(ctx, ddlSe, jobWs...)
 	})
+}
+
+type gidAllocator struct {
+	idx int
+	ids []int64
+}
+
+func (a *gidAllocator) next() int64 {
+	id := a.ids[a.idx]
+	a.idx++
+	return id
+}
+
+func (a *gidAllocator) assignIDsForTable(info *model.TableInfo) {
+	info.ID = a.next()
+	if partitionInfo := info.GetPartitionInfo(); partitionInfo != nil {
+		a.assignIDsForPartitionInfo(partitionInfo)
+	}
+}
+
+func (a *gidAllocator) assignIDsForPartitionInfo(partitionInfo *model.PartitionInfo) {
+	for i := range partitionInfo.Definitions {
+		partitionInfo.Definitions[i].ID = a.next()
+	}
+}
+
+func idCountForTable(info *model.TableInfo) int {
+	c := 1
+	if partitionInfo := info.GetPartitionInfo(); partitionInfo != nil {
+		c += len(partitionInfo.Definitions)
+	}
+	return c
 }
 
 // getRequiredGIDCount returns the count of required global IDs for the jobs. it's calculated
 // as: the count of jobs + the count of IDs for the jobs which do NOT have pre-allocated ID.
 func getRequiredGIDCount(jobWs []*JobWrapper) int {
 	count := len(jobWs)
-	idCountForTable := func(info *model.TableInfo) int {
-		c := 1
-		if partitionInfo := info.GetPartitionInfo(); partitionInfo != nil {
-			c += len(partitionInfo.Definitions)
-		}
-		return c
-	}
 	for _, jobW := range jobWs {
 		if jobW.IDAllocated {
 			continue
@@ -434,10 +490,27 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 			for _, info := range infos {
 				count += idCountForTable(info)
 			}
-		case model.ActionCreateSchema:
+		case model.ActionCreateSchema, model.ActionCreateResourceGroup:
 			count++
+		case model.ActionAlterTablePartitioning:
+			pInfo := jobW.Args[1].(*model.PartitionInfo)
+			// A new table ID would be needed for
+			// the global table, which cannot be the same as the current table id,
+			// since this table id will be removed in the final state when removing
+			// all the data with this table id.
+			count += 1 + len(pInfo.Definitions)
+		case model.ActionTruncateTablePartition:
+			count += len(jobW.Args[0].([]int64))
+		case model.ActionAddTablePartition:
+			pInfo := jobW.Args[0].(*model.PartitionInfo)
+			count += len(pInfo.Definitions)
+		case model.ActionReorganizePartition, model.ActionRemovePartitioning:
+			pInfo := jobW.Args[1].(*model.PartitionInfo)
+			count += len(pInfo.Definitions)
+		case model.ActionTruncateTable:
+			partCount := jobW.Args[3].(int)
+			count += 1 + partCount
 		}
-		// TODO support other type of jobs
 	}
 	return count
 }
@@ -445,44 +518,77 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 // assignGIDsForJobs should be used with getRequiredGIDCount, and len(ids) must equal
 // what getRequiredGIDCount returns.
 func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
-	idx := 0
-
-	assignIDsForTable := func(info *model.TableInfo) {
-		info.ID = ids[idx]
-		idx++
-		if partitionInfo := info.GetPartitionInfo(); partitionInfo != nil {
-			for i := range partitionInfo.Definitions {
-				partitionInfo.Definitions[i].ID = ids[idx]
-				idx++
-			}
-		}
-	}
+	alloc := &gidAllocator{ids: ids}
 	for _, jobW := range jobWs {
 		switch jobW.Type {
 		case model.ActionCreateView, model.ActionCreateSequence, model.ActionCreateTable:
 			info := jobW.Args[0].(*model.TableInfo)
 			if !jobW.IDAllocated {
-				assignIDsForTable(info)
+				alloc.assignIDsForTable(info)
 			}
 			jobW.TableID = info.ID
 		case model.ActionCreateTables:
 			if !jobW.IDAllocated {
 				infos := jobW.Args[0].([]*model.TableInfo)
 				for _, info := range infos {
-					assignIDsForTable(info)
+					alloc.assignIDsForTable(info)
 				}
 			}
 		case model.ActionCreateSchema:
 			dbInfo := jobW.Args[0].(*model.DBInfo)
 			if !jobW.IDAllocated {
-				dbInfo.ID = ids[idx]
-				idx++
+				dbInfo.ID = alloc.next()
 			}
 			jobW.SchemaID = dbInfo.ID
+		case model.ActionCreateResourceGroup:
+			if !jobW.IDAllocated {
+				rgInfo := jobW.Args[0].(*model.ResourceGroupInfo)
+				rgInfo.ID = alloc.next()
+			}
+		case model.ActionAlterTablePartitioning:
+			if !jobW.IDAllocated {
+				pInfo := jobW.Args[1].(*model.PartitionInfo)
+				alloc.assignIDsForPartitionInfo(pInfo)
+				pInfo.NewTableID = alloc.next()
+			}
+		case model.ActionTruncateTablePartition:
+			if !jobW.IDAllocated {
+				newIDs := make([]int64, len(jobW.Args[0].([]int64)))
+				for i := range newIDs {
+					newIDs[i] = alloc.next()
+				}
+				jobW.Args[1] = newIDs
+			}
+		case model.ActionAddTablePartition:
+			if !jobW.IDAllocated {
+				pInfo := jobW.Args[0].(*model.PartitionInfo)
+				alloc.assignIDsForPartitionInfo(pInfo)
+			}
+		case model.ActionReorganizePartition:
+			if !jobW.IDAllocated {
+				pInfo := jobW.Args[1].(*model.PartitionInfo)
+				alloc.assignIDsForPartitionInfo(pInfo)
+			}
+		case model.ActionRemovePartitioning:
+			// a special partition is used in this case, and we will use the ID
+			// of the partition as the new table ID.
+			pInfo := jobW.Args[1].(*model.PartitionInfo)
+			if !jobW.IDAllocated {
+				alloc.assignIDsForPartitionInfo(pInfo)
+			}
+			pInfo.NewTableID = pInfo.Definitions[0].ID
+		case model.ActionTruncateTable:
+			if !jobW.IDAllocated {
+				jobW.Args[0] = alloc.next()
+				partCount := jobW.Args[3].(int)
+				partIDs := make([]int64, partCount)
+				for i := range partIDs {
+					partIDs[i] = alloc.next()
+				}
+				jobW.Args[2] = partIDs
+			}
 		}
-		// TODO support other type of jobs
-		jobW.ID = ids[idx]
-		idx++
+		jobW.ID = alloc.next()
 	}
 }
 
@@ -525,6 +631,7 @@ func genGIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int,
 		if resErr != nil && kv.IsTxnRetryableError(resErr) {
 			logutil.DDLLogger().Warn("insert job meet retryable error", zap.Error(resErr))
 			kv.BackOff(i)
+			failpoint.InjectCall("onGenGIDRetry")
 			continue
 		}
 		break
@@ -637,33 +744,21 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	return nil
 }
 
-func (e *executor) notifyNewJobSubmitted(ch chan struct{}, etcdPath string, jobID int64, jobType string) {
-	// If the workers don't run, we needn't notify workers.
-	// TODO: It does not affect informing the backfill worker.
-	if !config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
+func (s *JobSubmitter) notifyNewJobSubmitted() {
+	if s.ownerManager.IsOwner() {
+		asyncNotify(s.ddlJobNotifyCh)
 		return
 	}
-	if e.ownerManager.IsOwner() {
-		asyncNotify(ch)
-	} else {
-		e.notifyNewJobByEtcd(etcdPath, jobID, jobType)
-	}
+	s.notifyNewJobByEtcd()
 }
 
-func (e *executor) notifyNewJobByEtcd(etcdPath string, jobID int64, jobType string) {
-	if e.etcdCli == nil {
+func (s *JobSubmitter) notifyNewJobByEtcd() {
+	if s.etcdCli == nil {
 		return
 	}
 
-	jobIDStr := strconv.FormatInt(jobID, 10)
-	timeStart := time.Now()
-	err := ddlutil.PutKVToEtcd(e.ctx, e.etcdCli, 1, etcdPath, jobIDStr)
+	err := ddlutil.PutKVToEtcd(s.ctx, s.etcdCli, 1, addingDDLJobNotifyKey, "0")
 	if err != nil {
-		logutil.DDLLogger().Info("notify handling DDL job failed",
-			zap.String("etcdPath", etcdPath),
-			zap.Int64("jobID", jobID),
-			zap.String("type", jobType),
-			zap.Error(err))
+		logutil.DDLLogger().Info("notify new DDL job failed", zap.Error(err))
 	}
-	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerNotifyDDLJob, jobType, metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 }

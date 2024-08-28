@@ -188,7 +188,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 	ch := is.ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
-			for _, key := range g.syncTimersForTable(ctx, se, model.NewCIStr(v.DBName), tblInfo) {
+			for _, key := range g.syncTimersForTable(ctx, se, v.DBName, tblInfo) {
 				currentTimerKeys[key] = struct{}{}
 			}
 		}

@@ -1577,7 +1577,7 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 		reidRules[downstreamID] = upstreamID
 	}
 	for upstreamID, downstreamID := range idrules {
-		newTable, ok := infoSchema.TableByID(downstreamID)
+		newTable, ok := infoSchema.TableByID(ctx, downstreamID)
 		if !ok {
 			// a dropped table
 			continue

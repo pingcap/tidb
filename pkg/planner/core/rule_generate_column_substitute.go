@@ -57,7 +57,7 @@ func (gc *GcSubstituter) Optimize(ctx context.Context, lp base.LogicalPlan, opt 
 // For the sake of simplicity, we don't collect the stored generate column because we can't get their expressions directly.
 // TODO: support stored generate column.
 func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
-	if _, ok := lp.(*LogicalCTE); ok {
+	if _, ok := lp.(*logicalop.LogicalCTE); ok {
 		return
 	}
 	for _, child := range lp.Children() {
@@ -186,7 +186,7 @@ func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 	var tp types.EvalType
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	switch x := lp.(type) {
-	case *LogicalSelection:
+	case *logicalop.LogicalSelection:
 		for _, cond := range x.Conditions {
 			substituteExpression(cond, lp, exprToColumn, x.Schema(), opt)
 		}
@@ -204,7 +204,7 @@ func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 				tryToSubstituteExpr(&x.ByItems[i].Expr, lp, candidateExpr, tp, x.Schema(), column, opt)
 			}
 		}
-	case *LogicalAggregation:
+	case *logicalop.LogicalAggregation:
 		for _, aggFunc := range x.AggFuncs {
 			for i := 0; i < len(aggFunc.Args); i++ {
 				tp = aggFunc.Args[i].GetType(ectx).EvalType()

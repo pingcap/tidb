@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -45,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -70,7 +68,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -96,6 +93,9 @@ var errCheckConstraintIsOff = errors.NewNoStackError(variable.TiDBEnableCheckCon
 
 // Executor is the interface for executing DDL statements.
 // it's mostly called by SQL executor.
+// DDL statements are converted into DDL jobs, JobSubmitter will submit the jobs
+// to DDL job table. Then jobScheduler will schedule them to run on workers
+// asynchronously in parallel. Executor will wait them to finish.
 type Executor interface {
 	CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error
 	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
@@ -174,19 +174,16 @@ type executor struct {
 	sessPool    *sess.Pool
 	statsHandle *handle.Handle
 
-	ctx             context.Context
-	uuid            string
-	store           kv.Storage
-	etcdCli         *clientv3.Client
-	autoidCli       *autoid.ClientDiscover
-	infoCache       *infoschema.InfoCache
-	limitJobCh      chan *JobWrapper
-	schemaLoader    SchemaLoader
-	lease           time.Duration // lease is schema lease, default 45s, see config.Lease.
-	ownerManager    owner.Manager
+	ctx        context.Context
+	uuid       string
+	store      kv.Storage
+	autoidCli  *autoid.ClientDiscover
+	infoCache  *infoschema.InfoCache
+	limitJobCh chan *JobWrapper
+	lease      time.Duration // lease is schema lease, default 45s, see config.Lease.
+	// ddlJobDoneChMap is used to notify the session that the DDL job is finished.
+	// jobID -> chan struct{}
 	ddlJobDoneChMap *generic.SyncMap[int64, chan struct{}]
-	ddlJobNotifyCh  chan struct{}
-	globalIDLock    *sync.Mutex
 }
 
 var _ Executor = (*executor)(nil)
@@ -417,7 +414,7 @@ func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount
 	cnt := uint32(0)
 	dbs := is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
 	for _, db := range dbs {
-		if util.IsMemOrSysDB(db.DBName) {
+		if util.IsMemOrSysDB(db.DBName.L) {
 			continue
 		}
 		for _, tbl := range db.TableInfos {
@@ -940,13 +937,43 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 	return nil
 }
 
-func (e *executor) assignPartitionIDs(defs []model.PartitionDefinition) error {
-	genIDs, err := e.genGlobalIDs(len(defs))
-	if err != nil {
-		return errors.Trace(err)
+// checkGlobalIndex check if the index is allowed to have global index
+func checkGlobalIndex(ctx sessionctx.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+	pi := tblInfo.GetPartitionInfo()
+	isPartitioned := pi != nil && pi.Type != model.PartitionTypeNone
+	if indexInfo.Global {
+		if !isPartitioned {
+			// Makes no sense with LOCAL/GLOBAL index for non-partitioned tables, since we don't support
+			// partitioning an index differently from the table partitioning.
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
+		}
+		if !ctx.GetSessionVars().EnableGlobalIndex {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption when tidb_enable_global_index is disabled")
+		}
+		// TODO: remove limitation
+		if !indexInfo.Unique {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption on non-unique index")
+		}
+		// TODO: remove limitation
+		// check that not all partitioned columns are included.
+		inAllPartitionColumns, err := checkPartitionKeysConstraint(pi, indexInfo.Columns, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if inAllPartitionColumns {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index including all columns in the partitioning expression")
+		}
 	}
-	for i := range defs {
-		defs[i].ID = genIDs[i]
+	return nil
+}
+
+// checkGlobalIndexes check if global index is supported.
+func checkGlobalIndexes(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+	for _, indexInfo := range tblInfo.Indices {
+		err := checkGlobalIndex(ctx, tblInfo, indexInfo)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1048,7 +1075,7 @@ func (e *executor) createTableWithInfoJob(
 		}
 	}
 
-	if err := checkTableInfoValidExtra(tbInfo); err != nil {
+	if err := checkTableInfoValidExtra(ctx, tbInfo); err != nil {
 		return nil, err
 	}
 
@@ -1508,7 +1535,6 @@ func (e *executor) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newE
 	return nil
 }
 
-// TODO we can unify this part with ddlCtx.
 func (e *executor) getAutoIDRequirement() autoid.Requirement {
 	return &asAutoIDRequirement{
 		store:     e.store,
@@ -2269,9 +2295,6 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 			return errors.Trace(err)
 		}
 	}
-	if err := e.assignPartitionIDs(partInfo.Definitions); err != nil {
-		return errors.Trace(err)
-	}
 
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
@@ -2428,73 +2451,18 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 		partNames = append(partNames, piOld.Definitions[0].Name.L)
 	}
 	newMeta := meta.Clone()
+
 	err = buildTablePartitionInfo(ctx, spec.Partition, newMeta)
 	if err != nil {
 		return err
 	}
-	newPartInfo := newMeta.Partition
 
-	for _, index := range newMeta.Indices {
-		if index.Unique {
-			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
-			if err != nil {
-				return err
-			}
-			if !ck {
-				indexTp := ""
-				if !ctx.GetSessionVars().EnableGlobalIndex {
-					if index.Primary {
-						indexTp = "PRIMARY KEY"
-					} else {
-						indexTp = "UNIQUE INDEX"
-					}
-				} else if t.Meta().IsCommonHandle {
-					indexTp = "CLUSTERED INDEX"
-				}
-				if indexTp != "" {
-					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
-				}
-				// Also mark the unique index as global index
-				index.Global = true
-			}
-		}
-	}
-	if newMeta.PKIsHandle {
-		// This case is covers when the Handle is the PK (only ints), since it would not
-		// have an entry in the tblInfo.Indices
-		indexCols := []*model.IndexColumn{{
-			Name:   newMeta.GetPkName(),
-			Length: types.UnspecifiedLength,
-		}}
-		ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), indexCols, newMeta)
-		if err != nil {
-			return err
-		}
-		if !ck {
-			if !ctx.GetSessionVars().EnableGlobalIndex {
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
-			}
-			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
-		}
-	}
+	newPartInfo := newMeta.Partition
 
 	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
 		return errors.Trace(err)
 	}
 
-	if err = e.assignPartitionIDs(newPartInfo.Definitions); err != nil {
-		return errors.Trace(err)
-	}
-	// A new table ID would be needed for
-	// the global index, which cannot be the same as the current table id,
-	// since this table id will be removed in the final state when removing
-	// all the data with this table id.
-	var newID []int64
-	newID, err = e.genGlobalIDs(1)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	newPartInfo.NewTableID = newID[0]
 	newPartInfo.DDLType = piOld.Type
 
 	job := &model.Job{
@@ -2550,9 +2518,6 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 	}
 	partInfo, err := BuildAddedPartitionInfo(ctx.GetExprCtx(), meta, spec)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = e.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkReorgPartitionDefs(ctx, model.ActionReorganizePartition, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
@@ -2619,14 +2584,10 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = e.assignPartitionIDs(partInfo.Definitions); err != nil {
-		return errors.Trace(err)
-	}
 	// TODO: check where the default placement comes from (i.e. table level)
 	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
 		return errors.Trace(err)
 	}
-	partInfo.NewTableID = partInfo.Definitions[0].ID
 
 	job := &model.Job{
 		SchemaID:       schema.ID,
@@ -2831,20 +2792,17 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 		pids = append(pids, pi.Definitions[i].ID)
 	}
 
-	genIDs, err := e.genGlobalIDs(len(pids))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	job := &model.Job{
-		SchemaID:       schema.ID,
-		TableID:        meta.ID,
-		SchemaName:     schema.Name.L,
-		SchemaState:    model.StatePublic,
-		TableName:      t.Meta().Name.L,
-		Type:           model.ActionTruncateTablePartition,
-		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{pids, genIDs},
+		SchemaID:    schema.ID,
+		TableID:     meta.ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: model.StatePublic,
+		TableName:   t.Meta().Name.L,
+		Type:        model.ActionTruncateTablePartition,
+		BinlogInfo:  &model.HistoryInfo{},
+		// the second item is the new partition IDs, we add a placeholder here,
+		// job submitter will fill it.
+		Args:           []any{pids, []int64{}},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
@@ -3887,7 +3845,7 @@ func (e *executor) AlterTableDropStatistics(ctx sessionctx.Context, ident ast.Id
 // UpdateTableReplicaInfo updates the table flash replica infos.
 func (e *executor) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
 	is := e.infoCache.GetLatest()
-	tb, ok := is.TableByID(physicalID)
+	tb, ok := is.TableByID(e.ctx, physicalID)
 	if !ok {
 		tb, _, _ = is.FindTableByPartitionID(physicalID)
 		if tb == nil {
@@ -4213,10 +4171,11 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if tb.Meta().IsView() || tb.Meta().IsSequence() {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name.O, tb.Meta().Name.O)
+	tblInfo := tb.Meta()
+	if tblInfo.IsView() || tblInfo.IsSequence() {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name.O, tblInfo.Name.O)
 	}
-	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
@@ -4226,47 +4185,30 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
 	}
 
-	ids := 1
-	if tb.Meta().Partition != nil {
-		ids += len(tb.Meta().Partition.Definitions)
+	var partCount int
+	if tblInfo.Partition != nil {
+		partCount = len(tblInfo.Partition.Definitions)
 	}
-	genIDs, err := e.genGlobalIDs(ids)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	newTableID := genIDs[0]
 	job := &model.Job{
-		SchemaID:       schema.ID,
-		TableID:        tb.Meta().ID,
-		SchemaName:     schema.Name.L,
-		TableName:      tb.Meta().Name.L,
-		Type:           model.ActionTruncateTable,
-		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{newTableID, fkCheck, genIDs[1:]},
+		SchemaID:   schema.ID,
+		TableID:    tblInfo.ID,
+		SchemaName: schema.Name.L,
+		TableName:  tblInfo.Name.L,
+		Type:       model.ActionTruncateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		// Args[0] is the new table ID, args[2] is the ids for table partitions, we
+		// add a placeholder here, they will be filled by job submitter.
+		// the last param is not required for execution, we need it to calculate
+		// number of new IDs to generate.
+		Args:           []any{int64(0), fkCheck, []int64{}, partCount},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok && config.TableLockEnabled() {
-		// AddTableLock here to avoid this ddl job was executed successfully but the session was been kill before return.
-		// The session will release all table locks it holds, if we don't add the new locking table id here,
-		// the session may forget to release the new locked table id when this ddl job was executed successfully
-		// but the session was killed before return.
-		ctx.AddTableLock([]model.TableLockTpInfo{{SchemaID: schema.ID, TableID: newTableID, Tp: tb.Meta().Lock.Tp}})
-	}
 	err = e.DoDDLJob(ctx, job)
 	if err != nil {
-		if config.TableLockEnabled() {
-			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
-		}
 		return errors.Trace(err)
 	}
 
-	if !config.TableLockEnabled() {
-		return nil
-	}
-	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
-		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
-	}
 	return nil
 }
 
@@ -4303,7 +4245,7 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		return nil
 	}
 
-	if tbl, ok := is.TableByID(tableID); ok {
+	if tbl, ok := is.TableByID(e.ctx, tableID); ok {
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
@@ -4351,7 +4293,7 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			return err
 		}
 
-		if t, ok := is.TableByID(tableID); ok {
+		if t, ok := is.TableByID(e.ctx, tableID); ok {
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
 			}
@@ -4543,7 +4485,6 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		return err
 	}
 
-	global := false
 	if tblInfo.GetPartitionInfo() != nil {
 		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
 		if err != nil {
@@ -4554,7 +4495,9 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
 			}
 			// index columns does not contain all partition columns, must set global
-			global = true
+			if indexOption == nil || !indexOption.Global {
+				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs("PRIMARY")
+			}
 		}
 	}
 
@@ -4568,6 +4511,9 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
+	// global is set to  'false' is just there to be backwards compatible,
+	// to avoid unmarshal issues, it is now part of indexOption.
+	global := false
 	job := &model.Job{
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
@@ -4688,7 +4634,19 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
-	global := false
+	globalIndex := false
+	if indexOption != nil && indexOption.Global {
+		globalIndex = true
+	}
+	if globalIndex {
+		if tblInfo.GetPartitionInfo() == nil {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
+		}
+		if !unique {
+			// TODO: remove this limitation
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on non-unique index")
+		}
+	}
 	if unique && tblInfo.GetPartitionInfo() != nil {
 		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
 		if err != nil {
@@ -4699,7 +4657,12 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 			// index columns does not contain all partition columns, must set global
-			global = true
+			if !globalIndex {
+				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName.O)
+			}
+		} else if globalIndex {
+			// TODO: remove this restriction
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on index including all columns in the partitioning expression")
 		}
 	}
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
@@ -4711,7 +4674,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	if indexOption != nil && indexOption.Tp == model.IndexTypeHypo { // for hypo-index
-		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique, global,
+		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err
@@ -4720,6 +4683,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	chs, coll := ctx.GetSessionVars().GetCharsetInfo()
+	// global is set to  'false' is just there to be backwards compatible,
+	// to avoid unmarshal issues, it is now part of indexOption.
+	global := false
 	job := &model.Job{
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
@@ -4755,6 +4721,12 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
 	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
 	reorgMeta.TargetScope = variable.ServiceScope.Load()
+	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
+		reorgMeta.Concurrency = variable.TidbOptInt(sv, 0)
+	}
+	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
+		reorgMeta.BatchSize = variable.TidbOptInt(sv, 0)
+	}
 
 	if reorgMeta.IsDistReorg && !reorgMeta.IsFastReorg {
 		return nil, dbterror.ErrUnsupportedDistTask
@@ -4770,6 +4742,17 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 			LastReorgMetaFastReorgDisabled = true
 		})
 	}
+
+	logutil.DDLLogger().Info("initialize reorg meta",
+		zap.String("jobSchema", job.SchemaName),
+		zap.String("jobTable", job.TableName),
+		zap.Stringer("jobType", job.Type),
+		zap.Bool("enableDistTask", reorgMeta.IsDistReorg),
+		zap.Bool("enableFastReorg", reorgMeta.IsFastReorg),
+		zap.String("targetScope", reorgMeta.TargetScope),
+		zap.Int("concurrency", reorgMeta.Concurrency),
+		zap.Int("batchSize", reorgMeta.BatchSize),
+	)
 	return reorgMeta, nil
 }
 
@@ -5291,7 +5274,7 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 		if !ok {
 			continue
 		}
-		tbl, ok := is.TableByID(t.TableID)
+		tbl, ok := is.TableByID(e.ctx, t.TableID)
 		if !ok {
 			continue
 		}
@@ -5776,11 +5759,6 @@ func (e *executor) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateReso
 	}
 
 	logutil.DDLLogger().Debug("create resource group", zap.String("name", groupName.O), zap.Stringer("resource group settings", groupInfo.ResourceGroupSettings))
-	groupIDs, err := e.genGlobalIDs(1)
-	if err != nil {
-		return err
-	}
-	groupInfo.ID = groupIDs[0]
 
 	job := &model.Job{
 		SchemaName:     groupName.L,
@@ -6241,22 +6219,6 @@ func (e *executor) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, co
 	return errors.Trace(err)
 }
 
-func (e *executor) genGlobalIDs(count int) ([]int64, error) {
-	var ret []int64
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	// lock to reduce conflict
-	e.globalIDLock.Lock()
-	defer e.globalIDLock.Unlock()
-	err := kv.RunInNewTxn(ctx, e.store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		var err error
-		ret, err = m.GenGlobalIDs(count)
-		return err
-	})
-
-	return ret, err
-}
-
 func (e *executor) genPlacementPolicyID() (int64, error) {
 	var ret int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
@@ -6281,7 +6243,7 @@ func (e *executor) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 // DoDDLJobWrapper submit DDL job and wait it finishes.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
-func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) error {
+func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
 	job := jobW.Job
 	job.TraceInfo = &model.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
@@ -6323,12 +6285,24 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 	sessVars.StmtCtx.IsDDLJobInQueue = true
 
 	ddlAction := job.Type
-	// Notice worker that we push a new job and wait the job done.
-	e.notifyNewJobSubmitted(e.ddlJobNotifyCh, addingDDLJobNotifyKey, jobID, ddlAction.String())
 	if result.merged {
 		logutil.DDLLogger().Info("DDL job submitted", zap.Int64("job_id", jobID), zap.String("query", job.Query), zap.String("merged", "true"))
 	} else {
 		logutil.DDLLogger().Info("DDL job submitted", zap.Stringer("job", job), zap.String("query", job.Query))
+	}
+
+	// lock tables works on table ID, for some DDLs which changes table ID, we need
+	// make sure the session still tracks it.
+	// we need add it here to avoid this ddl job was executed successfully but the
+	// session was killed before return. The session will release all table locks
+	// it holds, if we don't add the new locking table id here, the session may forget
+	// to release the new locked table id when this ddl job was executed successfully
+	// but the session was killed before return.
+	if config.TableLockEnabled() {
+		HandleLockTablesOnSuccessSubmit(ctx, jobW)
+		defer func() {
+			HandleLockTablesOnFinish(ctx, jobW, resErr)
+		}()
 	}
 
 	var historyJob *model.Job
@@ -6443,6 +6417,32 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) err
 			return errors.Trace(historyJob.Error)
 		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
+	}
+}
+
+// HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted
+// successfully. exported for testing purpose.
+func HandleLockTablesOnSuccessSubmit(ctx sessionctx.Context, jobW *JobWrapper) {
+	if jobW.Type == model.ActionTruncateTable {
+		if ok, lockTp := ctx.CheckTableLocked(jobW.TableID); ok {
+			newTableID := jobW.Args[0].(int64)
+			ctx.AddTableLock([]model.TableLockTpInfo{{SchemaID: jobW.SchemaID, TableID: newTableID, Tp: lockTp}})
+		}
+	}
+}
+
+// HandleLockTablesOnFinish handles the table lock for the job which is finished.
+// exported for testing purpose.
+func HandleLockTablesOnFinish(ctx sessionctx.Context, jobW *JobWrapper, ddlErr error) {
+	if jobW.Type == model.ActionTruncateTable {
+		if ddlErr != nil {
+			newTableID := jobW.Args[0].(int64)
+			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
+			return
+		}
+		if ok, _ := ctx.CheckTableLocked(jobW.TableID); ok {
+			ctx.ReleaseTableLockByTableIDs([]int64{jobW.TableID})
+		}
 	}
 }
 

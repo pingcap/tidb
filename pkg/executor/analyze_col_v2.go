@@ -473,6 +473,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 		results: make(map[int64]*statistics.AnalyzeResults, len(indexInfos)),
 	}
 	var err error
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for panicCnt < statsConcurrncy {
 		results, ok := <-resultsCh
 		if !ok {
@@ -480,13 +481,13 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 		}
 		if results.Err != nil {
 			err = results.Err
-			FinishAnalyzeJob(e.ctx, results.Job, err)
+			statsHandle.FinishAnalyzeJob(results.Job, err, statistics.TableAnalysisJob)
 			if isAnalyzeWorkerPanic(err) {
 				panicCnt++
 			}
 			continue
 		}
-		FinishAnalyzeJob(e.ctx, results.Job, nil)
+		statsHandle.FinishAnalyzeJob(results.Job, nil, statistics.TableAnalysisJob)
 		totalResult.results[results.Ars[0].Hist[0].ID] = results
 	}
 	if err != nil {
@@ -498,6 +499,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 // subIndexWorker receive the task for each index and return the result for them.
 func (e *AnalyzeColumnsExecV2) subIndexWorkerForNDV(taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults) {
 	var task *analyzeTask
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -514,7 +516,7 @@ func (e *AnalyzeColumnsExecV2) subIndexWorkerForNDV(taskCh chan *analyzeTask, re
 		if !ok {
 			break
 		}
-		StartAnalyzeJob(e.ctx, task.job)
+		statsHandle.StartAnalyzeJob(task.job)
 		if task.taskType != idxTask {
 			resultsCh <- &statistics.AnalyzeResults{
 				Err: errors.Errorf("incorrect analyze type"),
@@ -628,6 +630,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	for i := 0; i < l; i++ {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for {
 		data, ok := <-taskCh
 		if !ok {
@@ -649,7 +652,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 		// Update processed rows.
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
-		UpdateAnalyzeJob(e.ctx, e.job, subCollector.Base().Count)
+		statsHandle.UpdateAnalyzeJobProgress(e.job, subCollector.Base().Count)
 
 		// Print collect log.
 		oldRetCollectorSize := retCollector.Base().MemSize
