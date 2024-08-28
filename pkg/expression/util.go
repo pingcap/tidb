@@ -455,7 +455,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				flag := v.RetType.GetFlag()
 				var e Expression
 				if v.FuncName.L == ast.Cast {
-					e = BuildCastFunction(ctx, newArg, v.RetType)
+					e = BuildCastFunctionExplicitCharset(ctx, newArg, v.RetType)
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
 					e = v.Clone()
