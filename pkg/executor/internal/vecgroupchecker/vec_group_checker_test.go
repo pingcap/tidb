@@ -272,7 +272,7 @@ func TestVecGroupChecker(t *testing.T) {
 }
 
 func TestIssue53867(t *testing.T) {
-	checker := NewVecGroupChecker(nil, true, nil)
+	checker := NewVecGroupChecker(nil, nil)
 	checker.groupOffset = make([]int, 20)
 	checker.nextGroupID = 10
 	checker.groupCount = 15
