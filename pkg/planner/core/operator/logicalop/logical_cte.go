@@ -100,6 +100,16 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 	return
 }
 
+// SeedPartLogicalPlan is to get the seed part logical plan.
+func (cc *CTEClass) SeedPartLogicalPlan() base.LogicalPlan {
+	return cc.seedPartLogicalPlan
+}
+
+// RecursivePartLogicalPlan is to get the recursive part logical plan.
+func (cc *CTEClass) RecursivePartLogicalPlan() base.LogicalPlan {
+	return cc.recursivePartLogicalPlan
+}
+
 // *************************** start implementation of logicalPlan interface ***************************
 
 // HashCode inherits the BaseLogicalPlan.<0th> implementation.

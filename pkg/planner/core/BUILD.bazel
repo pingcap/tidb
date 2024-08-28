@@ -4,7 +4,6 @@ go_library(
     name = "core",
     srcs = [
         "access_object.go",
-        "collect_column_stats_usage.go",
         "common_plans.go",
         "core_init.go",
         "debugtrace.go",
@@ -59,7 +58,6 @@ go_library(
         "rule_aggregation_elimination.go",
         "rule_aggregation_push_down.go",
         "rule_aggregation_skew_rewrite.go",
-        "rule_collect_plan_stats.go",
         "rule_column_pruning.go",
         "rule_decorrelate.go",
         "rule_derive_topn_from_window.go",

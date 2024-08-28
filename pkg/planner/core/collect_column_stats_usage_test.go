@@ -82,7 +82,7 @@ func getStatsLoadItem(t *testing.T, is infoschema.InfoSchema, item model.StatsLo
 
 func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
 	var tblColIDs []model.TableItemID
-	tblColIDs, _, _ = CollectColumnStatsUsage(lp, false)
+	tblColIDs, _, _ = rule.CollectColumnStatsUsage(lp, false)
 	cols := make([]string, 0, len(tblColIDs))
 	for _, tblColID := range tblColIDs {
 		col := getColumnName(t, is, tblColID, comment)
@@ -94,7 +94,7 @@ func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, 
 
 func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
 	var loadItems []model.StatsLoadItem
-	_, loadItems, _ = CollectColumnStatsUsage(lp, true)
+	_, loadItems, _ = rule.CollectColumnStatsUsage(lp, true)
 	cols := make([]string, 0, len(loadItems))
 	for _, item := range loadItems {
 		col := getStatsLoadItem(t, is, item, comment)

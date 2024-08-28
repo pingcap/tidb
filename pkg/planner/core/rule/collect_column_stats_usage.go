@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package rule
 
 import (
 	"github.com/pingcap/failpoint"
@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -124,7 +125,7 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 	c.updateColMap(col, expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list))
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *DataSource) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *core.DataSource) {
 	// Skip all system tables.
 	if filter.IsSystemSchema(ds.DBName.L) {
 		return
@@ -178,7 +179,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 	}
 }
 
-func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
+func (c *columnStatsUsageCollector) addHistNeededColumns(ds *core.DataSource) {
 	c.visitedPhysTblIDs.Insert(int(ds.PhysicalTableID))
 	if c.collectMode&collectHistNeededColumns == 0 {
 		return
@@ -232,12 +233,12 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 	}
 	if c.collectMode&collectPredicateColumns != 0 {
 		switch x := lp.(type) {
-		case *DataSource:
+		case *core.DataSource:
 			c.collectPredicateColumnsForDataSource(x)
-		case *LogicalIndexScan:
+		case *core.LogicalIndexScan:
 			c.collectPredicateColumnsForDataSource(x.Source)
 			c.addPredicateColumnsFromExpressions(x.AccessConds)
-		case *LogicalTableScan:
+		case *core.LogicalTableScan:
 			c.collectPredicateColumnsForDataSource(x.Source)
 			c.addPredicateColumnsFromExpressions(x.AccessConds)
 		case *logicalop.LogicalProjection:
@@ -336,11 +337,11 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 	// Since c.visitedPhysTblIDs is also collected here and needs to be collected even collectHistNeededColumns is not set,
 	// so we do the c.collectMode check in addHistNeededColumns() after collecting c.visitedPhysTblIDs.
 	switch x := lp.(type) {
-	case *DataSource:
+	case *core.DataSource:
 		c.addHistNeededColumns(x)
-	case *LogicalIndexScan:
+	case *core.LogicalIndexScan:
 		c.addHistNeededColumns(x.Source)
-	case *LogicalTableScan:
+	case *core.LogicalTableScan:
 		c.addHistNeededColumns(x.Source)
 	}
 }
