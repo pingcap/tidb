@@ -1122,7 +1122,9 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
 		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
 		// If the command is from BRIE SQL, the ddl.EnableSplitTableRegion is TiDB config split-table.
-		kvConfigs.SplitRegionOnTable.Value || atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
+		// Notice that `split-region-on-table` configure from TiKV split on the region having data, it may trigger after restore done.
+		// It's recommended to enable TiDB configure `split-table` instead.
+		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
 		updateCh,
 	); err != nil {
 		return errors.Trace(err)

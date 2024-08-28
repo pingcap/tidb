@@ -313,7 +313,6 @@ func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, 
 	mergeRegionSize := cfg.MergeRegionSize
 	mergeRegionKeyCount := cfg.MergeRegionKeyCount
 	importGoroutines := cfg.ImportGoroutines
-	splitRegionOnTable := cfg.SplitRegionOnTable
 
 	if mergeRegionSize.Modified && mergeRegionKeyCount.Modified && importGoroutines.Modified {
 		log.Info("no need to retrieve the config from tikv if user has set the config")
@@ -324,17 +323,6 @@ func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, 
 		respBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return err
-		}
-		if !splitRegionOnTable.Modified {
-			splitTable, e := kvconfig.ParseSplitRegionOnTable(respBytes)
-			if e != nil {
-				log.Warn("Failed to parse split region on table from config", logutil.ShortError(e))
-				return e
-			}
-			if splitRegionOnTable.Value && !splitTable {
-				return errors.Errorf("the configure `split-region-on-table` from TiKVs are different")
-			}
-			splitRegionOnTable.Value = splitRegionOnTable.Value || splitTable
 		}
 		if !mergeRegionSize.Modified || !mergeRegionKeyCount.Modified {
 			size, keys, e := kvconfig.ParseMergeRegionSizeFromConfig(respBytes)
@@ -359,7 +347,6 @@ func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, 
 			}
 		}
 		// replace the value
-		cfg.SplitRegionOnTable = splitRegionOnTable
 		cfg.MergeRegionSize = mergeRegionSize
 		cfg.MergeRegionKeyCount = mergeRegionKeyCount
 		cfg.ImportGoroutines = importGoroutines
