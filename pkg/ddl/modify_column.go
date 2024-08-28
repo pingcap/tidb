@@ -304,7 +304,7 @@ func (w *worker) doModifyColumn(
 		return updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, false)
 	}
 
-	err := postCheckPartitionModifiableColumn(t, w, jobCtx, tblInfo, oldCol, newCol)
+	err := postCheckPartitionModifiableColumn(w, tblInfo, oldCol, newCol)
 	if err != nil {
 		return ver, err
 	}
@@ -438,7 +438,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 		// TODO: Should it be targetCol or changedCol?
-		err := postCheckPartitionModifiableColumn(t, w, jobCtx, tblInfo, oldCol, targetCol)
+		err := postCheckPartitionModifiableColumn(w, tblInfo, oldCol, targetCol)
 		if err != nil {
 			return ver, err
 		}
@@ -685,7 +685,7 @@ func preCheckPartitionModifiableColumn(sctx sessionctx.Context, t table.Table, c
 }
 
 // err := postCheckPartitionModifiableColumn(w, t, jobCtx, tblInfo, oldCol, newCol)
-func postCheckPartitionModifiableColumn(t *meta.Meta, w *worker, jobCtx *jobContext, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
 	// Check that the column change does not affect the partitioning column
 	// It must keep the same type, int [unsigned], [var]char, date[time]
 	if tblInfo.Partition != nil {
@@ -694,15 +694,20 @@ func postCheckPartitionModifiableColumn(t *meta.Meta, w *worker, jobCtx *jobCont
 		if err != nil {
 			return errors.Trace(err)
 		}
-		for _, partCol := range partCols {
-			if strings.EqualFold(partCol.Name.L, col.Name.L) {
-				sctx, err := w.sessPool.Get()
-				if err != nil {
-					return errors.Trace(err)
-				}
-				defer w.sessPool.Put(sctx)
-				return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
+		var partCol *model.ColumnInfo
+		for _, pc := range partCols {
+			if strings.EqualFold(pc.Name.L, col.Name.L) {
+				partCol = pc
+				break
 			}
+		}
+		if partCol != nil {
+			sctx, err := w.sessPool.Get()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer w.sessPool.Put(sctx)
+			return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
 		}
 	}
 	return nil
