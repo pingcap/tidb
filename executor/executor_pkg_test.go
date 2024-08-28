@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
@@ -508,6 +509,7 @@ func TestSortSpillDiskReturnErrAndClearFile(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/errInSortExecFetchRowChunks"))
 	}()
+	disk.InitializeTempDir() // Clear all files
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().MemQuota.MemQuotaQuery = 1
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
