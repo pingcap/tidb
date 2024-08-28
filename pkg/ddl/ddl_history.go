@@ -38,7 +38,7 @@ const (
 	DefNumHistoryJobs   = 10
 	batchNumHistoryJobs = 128
 	// DefNumGetDDLHistoryJobs is the max count for getting the ddl history once.
-	DefNumGetDDLHistoryJobs = 1024
+	DefNumGetDDLHistoryJobs = 2048
 )
 
 // AddHistoryDDLJob record the history job.

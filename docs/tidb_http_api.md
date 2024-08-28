@@ -571,7 +571,7 @@ timezone.*
      curl http://{TiDBIP}:10080/ddl/history
      ```
 
-     **Note**: When the DDL history is very very long, it may contains too many jobs. This interface will get 1024 history ddl jobs by default. If you want get more jobs, consider adding `start_job_id` and `limit`.
+     **Note**: When the DDL history is very very long, it may contains too many jobs. This interface will get a maximum of 2048 history ddl jobs by default. If you want get more jobs, consider adding `start_job_id` and `limit`.
 
 26. Get count {number} TiDB DDL job history information.
 
