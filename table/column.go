@@ -479,7 +479,6 @@ func (c *Column) IsCommonHandleColumn(tbInfo *model.TableInfo) bool {
 	return mysql.HasPriKeyFlag(c.GetFlag()) && tbInfo.IsCommonHandle
 }
 
-<<<<<<< HEAD
 // CheckNotNull checks if row has nil value set to a column with NotNull flag set.
 func CheckNotNull(cols []*Column, row []types.Datum) error {
 	for _, c := range cols {
@@ -488,10 +487,10 @@ func CheckNotNull(cols []*Column, row []types.Datum) error {
 		}
 	}
 	return nil
-=======
+}
+
 type getColOriginDefaultValue struct {
 	StrictSQLMode bool
->>>>>>> 79729c32d40 (executor: fix data race in the buildMemTableReader (#43431))
 }
 
 // GetColOriginDefaultValue gets default value of the column from original default value.
@@ -607,13 +606,8 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	return value, nil
 }
 
-<<<<<<< HEAD
-func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	if !mysql.HasNotNullFlag(col.GetFlag()) {
-=======
 func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo, args *getColOriginDefaultValue) (types.Datum, error) {
-	if !mysql.HasNotNullFlag(col.GetFlag()) && !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
->>>>>>> 79729c32d40 (executor: fix data race in the buildMemTableReader (#43431))
+	if !mysql.HasNotNullFlag(col.GetFlag()) {
 		return types.Datum{}, nil
 	}
 	if col.GetType() == mysql.TypeEnum {
