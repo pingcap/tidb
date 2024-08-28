@@ -4333,6 +4333,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		}
 		options = append(options, &loadDataOpt)
 	}
+	// TODO(lance6716): check ColumnAssignments and ColumnsAndUserVars?
 	p := ImportInto{
 		Path:               ld.Path,
 		Format:             ld.Format,
