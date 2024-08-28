@@ -46,7 +46,7 @@ type DDLEvent struct {
 	oldTableID int64
 	tp         model.ActionType
 
-	schemaChangeEvent util2.SchemaChangeEvent
+	SchemaChangeEvent util2.SchemaChangeEvent
 }
 
 // IsMemOrSysDB checks whether the table is in the memory or system database.

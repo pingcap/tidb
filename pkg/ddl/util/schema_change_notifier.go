@@ -14,6 +14,15 @@
 
 package util
 
+import "github.com/pingcap/tidb/pkg/parser/model"
+
+// SchemaChangeEvent stands for a schema change event. DDL will generate one event or multiple event (only for multi-schema change DDL).
+// The caller should check the Type field of SchemaChange and call the corresponding getter function to retrieve the needed information.
 type SchemaChangeEvent struct {
 	// todo: field and method will be added in the next few pr on demand
+	tp model.ActionType
+}
+
+func (s *SchemaChangeEvent) GetType() model.ActionType {
+	return s.tp
 }
