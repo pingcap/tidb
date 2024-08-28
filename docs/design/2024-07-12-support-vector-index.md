@@ -192,7 +192,7 @@ No need to add a DDL job type, just like renaming a general index operation. We 
 #### **Display**
 
 * Compatible with `admin show ddl` to display the progress of DDL operation execution
-    * The display way is considered the same as the general DDL display way, and the `ROWS_STABLE_INDEXED` information of the corresponding table of the `system. dt_local_indexes` table on TiFlash can be filled into the `ROW_COUNT` information of the DDL job.
+    * The display way is considered the same as the general DDL display way, and the `ROWS_STABLE_INDEXED` information of the corresponding table of the `information_schema.tiflash_indexes` table on TiFlash can be filled into the `ROW_COUNT` information of the DDL job.
 * Add or update relevant system table information
     * information\_schema tiflash\_tables (already supported)
     * information\_schema tiflash\_segments (already supported)
