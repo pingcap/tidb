@@ -52,17 +52,29 @@ func (e *ebsBackupRetryer) MaxRetries() int {
 	return e.delegate.MaxRetries()
 }
 
-func (e *ebsBackupRetryer) RetryRules(r *request.Request) time.Duration {
-	log.Warn("Retrying an operation.", logutil.ShortError(r.Error), zap.StackSkip("stack", 1))
+var backOffTimeOverride = map[string]time.Duration{
 	// From the SDK:
-	// const opCreateSnapshots = "CreateSnapshots"
 	// Sadly it seems there isn't an exported operation name...
+	// const opCreateSnapshots = "CreateSnapshots"
 	// The quota for create snapshots is 5 per minute.
 	// Back off for a longer time so we won't excced it.
-	if r.Operation.Name == "CreateSnapshots" {
-		return max(e.RetryRules(r), 20*time.Second)
+	"CreateSnapshots": 20 * time.Second,
+	// const opCreateVolume = "CreateVolume"
+	"CreateVolume": 20 * time.Second,
+}
+
+func (e *ebsBackupRetryer) RetryRules(r *request.Request) time.Duration {
+	backOff := e.delegate.RetryRules(r)
+	if override, ok := backOffTimeOverride[r.Operation.Name]; ok {
+		backOff = max(override, backOff)
 	}
-	return e.RetryRules(r)
+	log.Warn(
+		"Retrying an operation.",
+		logutil.ShortError(r.Error),
+		zap.Duration("backoff", backOff),
+		zap.StackSkip("stack", 1),
+	)
+	return backOff
 }
 
 func (e *ebsBackupRetryer) ShouldRetry(r *request.Request) bool {
