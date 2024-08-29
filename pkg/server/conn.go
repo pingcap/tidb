@@ -1310,10 +1310,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	sqlID := cc.ctx.GetSessionVars().AllocNewSQLID()
 	if topsqlstate.TopSQLEnabled() {
 		rawCtx := ctx
 		defer pprof.SetGoroutineLabels(rawCtx)
+		sqlID := cc.ctx.GetSessionVars().AllocNewSQLID()
 		ctx = profileprocess.AttachAndRegisterProcessInfo(ctx, cc.connectionID, sqlID)
 	}
 	if variable.EnablePProfSQLCPU.Load() {
