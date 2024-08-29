@@ -691,7 +691,6 @@ func (d *Datum) Equals(other any) bool {
 	default:
 		return true
 	}
-
 }
 
 // Compare compares datum to another datum.
