@@ -41,6 +41,8 @@ type Hasher interface {
 	HashByte(val byte)
 	HashBytes(val []byte)
 	Reset()
+	SetCache([]byte)
+	Cache() []byte
 	Sum64() uint64
 }
 
@@ -53,6 +55,9 @@ type Hash64a uint64
 type hasher struct {
 	// hash stores the hash value as it is incrementally computed.
 	hash64a Hash64a
+
+	// cache is the internal bytes slice that's will be reused for some special tmp encoding like datum.
+	cache []byte
 }
 
 // NewHashEqualer creates a new HashEqualer.
@@ -65,6 +70,17 @@ func NewHashEqualer() Hasher {
 // Reset resets the Hasher to its initial state, reusing the internal bytes slice.
 func (h *hasher) Reset() {
 	h.hash64a = offset64
+	h.cache = h.cache[:0]
+}
+
+// Cache returns the internal bytes slice for re-usage.
+func (h *hasher) Cache() []byte {
+	return h.cache
+}
+
+// SetCache sets the internal bytes slice for reu-sage.
+func (h *hasher) SetCache(cache []byte) {
+	h.cache = cache
 }
 
 func (h *hasher) Sum64() uint64 {
