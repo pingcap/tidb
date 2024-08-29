@@ -2597,7 +2597,7 @@ func upgradeToVer104(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `plan_digest` varchar(64)")
 }
 
-// For users that upgrade TiDB from a pre-6.0 version, we want to disable tidb cost pmodel.by default to keep plans unchanged.
+// For users that upgrade TiDB from a pre-6.0 version, we want to disable tidb cost model2 by default to keep plans unchanged.
 func upgradeToVer105(s sessiontypes.Session, ver int64) {
 	if ver >= version105 {
 		return
