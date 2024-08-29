@@ -4334,7 +4334,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		}
 		options = append(options, &loadDataOpt)
 	}
-	// TODO(lance6716): check used functions
+	// TODO(lance6716): check functions
 	neededVars := make(map[string]int)
 	for i, a := range ld.ColumnAssignments {
 		switch v := a.Expr.(type) {
@@ -4344,8 +4344,6 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			)
 		case *ast.VariableExpr:
 			neededVars[v.Name] = i
-		case *ast.FuncCallExpr:
-			//expression.GetOptionalEvalPropsForExpr(v)
 		}
 	}
 	for _, v := range ld.ColumnsAndUserVars {
