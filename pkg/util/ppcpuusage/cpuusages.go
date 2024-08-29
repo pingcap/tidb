@@ -81,6 +81,7 @@ func (c *CPUUsages) AllocNewSQLID() uint64 {
 	return c.sqlID
 }
 
+// ResetCPUTimes resets tidb/tikv cpu times to 0
 func (c *CPUUsages) ResetCPUTimes() {
 	c.Lock()
 	defer c.Unlock()
