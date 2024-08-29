@@ -17,6 +17,7 @@ package infoschema_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -212,7 +213,7 @@ func TestBasic(t *testing.T) {
 	require.Len(t, tblInfos, 1)
 	tbl, ok := is.TableByID(context.Background(), tblInfos[0].ID)
 	require.True(t, ok)
-	require.Same(t, tbl.Meta(), tblInfos[0])
+	require.Equal(t, tbl.Meta(), tblInfos[0]) // Equal but not Same
 
 	tblInfos, err = is.SchemaTableInfos(context.Background(), noexist)
 	require.NoError(t, err)
@@ -226,14 +227,22 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	txn, err = re.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: dbID, TableID: tbID, OldSchemaID: dbID})
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{
+		Type:        model.ActionRenameTable,
+		SchemaID:    dbID,
+		TableID:     tbID,
+		OldSchemaID: dbID,
+		Version:     is.SchemaMetaVersion() + 1,
+	})
 	require.NoError(t, err)
 	err = txn.Rollback()
 	require.NoError(t, err)
 	is = builder.Build(math.MaxUint64)
 	schema, ok = is.SchemaByID(dbID)
 	require.True(t, ok)
-	require.Equal(t, 1, len(schema.Deprecated.Tables))
+	tbls, err := is.SchemaTableInfos(context.Background(), schema.Name)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tbls))
 }
 
 func TestMockInfoSchema(t *testing.T) {
@@ -588,6 +597,55 @@ func TestBuildBundle(t *testing.T) {
 	assertBundle(is2, tbl1.Meta().ID, tb1Bundle)
 	assertBundle(is2, tbl2.Meta().ID, nil)
 	assertBundle(is2, p1.ID, p1Bundle)
+}
+
+func TestWithRefillOption(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_schema_cache_size = 512 * 1024 * 1024")
+
+	tk.MustExec("create table t1 (id int)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	ok, v2 := infoschema.IsV2(is)
+	require.True(t, ok)
+
+	hit := true
+	miss := false
+	testCases := []struct {
+		OP     string
+		ctx    context.Context
+		expect bool
+	}{
+		{"TableByName", context.Background(), hit},
+		{"TableByName", infoschema.WithRefillOption(context.Background(), true), hit},
+		{"TableByName", infoschema.WithRefillOption(context.Background(), false), miss},
+		{"TableByID", context.Background(), miss},
+		{"TableByID", infoschema.WithRefillOption(context.Background(), true), hit},
+		{"TableByID", infoschema.WithRefillOption(context.Background(), false), miss},
+	}
+
+	for i, testCase := range testCases {
+		// Mock t1 schema cache been evicted.
+		v2.EvictTable(model.NewCIStr("test"), model.NewCIStr("t1"))
+
+		// Test the API
+		switch testCase.OP {
+		case "TableByID":
+			_, found := is.TableByID(testCase.ctx, tblInfo.ID)
+			require.True(t, found)
+		case "TableByName":
+			_, err := is.TableByName(testCase.ctx, model.NewCIStr("test"), model.NewCIStr("t1"))
+			require.NoError(t, err)
+		}
+
+		got := v2.HasCache(tblInfo.ID, is.SchemaMetaVersion())
+		require.Equal(t, testCase.expect, got, fmt.Sprintf("case %d failed", i))
+	}
 }
 
 func TestLocalTemporaryTables(t *testing.T) {

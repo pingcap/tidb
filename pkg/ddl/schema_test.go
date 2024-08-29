@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -240,10 +239,10 @@ func TestSchema(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(t, store, tJob1.ID, true)
 	tbl1 := testGetTable(t, domain, tblInfo1.ID)
-	err = sessiontxn.NewTxn(context.Background(), tk.Session())
+	txn, err := newTxn(tk.Session())
 	require.NoError(t, err)
 	for i := 1; i <= 100; i++ {
-		_, err := tbl1.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(i, i, i))
+		_, err := tbl1.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
 	// create table t1 with 1034 records.
@@ -254,10 +253,10 @@ func TestSchema(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(t, store, tJob2.ID, true)
 	tbl2 := testGetTable(t, domain, tblInfo2.ID)
-	err = sessiontxn.NewTxn(context.Background(), tk2.Session())
+	txn, err = newTxn(tk.Session())
 	require.NoError(t, err)
 	for i := 1; i <= 1034; i++ {
-		_, err := tbl2.AddRecord(tk2.Session().GetTableCtx(), types.MakeDatums(i, i, i))
+		_, err := tbl2.AddRecord(tk2.Session().GetTableCtx(), txn, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
 	tk3 := testkit.NewTestKit(t, store)

@@ -1125,8 +1125,11 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ServeHTTP handles request of ddl jobs history.
 func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	var jobID, limitID int
-	var err error
+	var (
+		jobID   = 0
+		limitID = 0
+		err     error
+	)
 	if jobValue := req.FormValue(handler.JobID); len(jobValue) > 0 {
 		jobID, err = strconv.Atoi(jobValue)
 		if err != nil {
@@ -1144,8 +1147,9 @@ func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			handler.WriteError(w, err)
 			return
 		}
-		if limitID < 1 {
-			handler.WriteError(w, errors.New("ddl history limit must be greater than 0"))
+		if limitID < 1 || limitID > ddl.DefNumGetDDLHistoryJobs {
+			handler.WriteError(w,
+				errors.Errorf("ddl history limit must be greater than 0 and less than or equal to %v", ddl.DefNumGetDDLHistoryJobs))
 			return
 		}
 	}
@@ -1165,11 +1169,7 @@ func (h DDLHistoryJobHandler) getHistoryDDL(jobID, limit int) (jobs []*model.Job
 	}
 	txnMeta := meta.NewMeta(txn)
 
-	if jobID == 0 && limit == 0 {
-		jobs, err = ddl.GetAllHistoryDDLJobs(txnMeta)
-	} else {
-		jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
-	}
+	jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

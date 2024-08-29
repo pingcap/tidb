@@ -16,6 +16,7 @@ package sortexec
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -96,6 +97,13 @@ type SortExec struct {
 	enableTmpStorageOnOOM bool
 }
 
+// When fetcher and workers are not created, we need to initiatively close these channels
+func (e *SortExec) closeChannels() {
+	close(e.Parallel.resultChannel)
+	close(e.Parallel.chunkChannel)
+	close(e.Parallel.closeSync)
+}
+
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
 	// TopN not initializes `e.finishCh` but it will call the Close function
@@ -112,8 +120,7 @@ func (e *SortExec) Close() error {
 		}
 	} else if e.finishCh != nil {
 		if e.fetched.CompareAndSwap(false, true) {
-			close(e.Parallel.resultChannel)
-			close(e.Parallel.chunkChannel)
+			e.closeChannels()
 		} else {
 			for range e.Parallel.chunkChannel {
 				e.Parallel.fetcherAndWorkerSyncer.Done()
@@ -260,10 +267,15 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.fetched.CompareAndSwap(false, true) {
 		err := e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
 		if err != nil {
+			e.closeChannels()
 			return err
 		}
 
-		e.buildKeyColumns()
+		err = e.buildKeyColumns()
+		if err != nil {
+			e.closeChannels()
+			return err
+		}
 		err = e.fetchChunks(ctx)
 		if err != nil {
 			return err
@@ -752,6 +764,19 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 }
 
 func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) error {
+	var err error
+	failpoint.Inject("ParallelSortRandomFail", func(val failpoint.Value) {
+		if val.(bool) {
+			randNum := rand.Int31n(10000)
+			if randNum < 500 {
+				err = errors.NewNoStackError("return error by random failpoint")
+			}
+		}
+	})
+	if err != nil {
+		return err
+	}
+
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
 	for i := range e.ByItems {
 		keyType := e.ByItems[i].Expr.GetType(ctx)
@@ -763,12 +788,19 @@ func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) error {
 	return nil
 }
 
-func (e *SortExec) buildKeyColumns() {
+func (e *SortExec) buildKeyColumns() error {
 	e.keyColumns = make([]int, 0, len(e.ByItems))
 	for _, by := range e.ByItems {
-		col := by.Expr.(*expression.Column)
-		e.keyColumns = append(e.keyColumns, col.Index)
+		switch col := by.Expr.(type) {
+		case *expression.Column:
+			e.keyColumns = append(e.keyColumns, col.Index)
+		case *expression.Constant:
+			// Ignore constant as constant can not affect the sorted result
+		default:
+			return errors.NewNoStackError("Get unexpected expression")
+		}
 	}
+	return nil
 }
 
 func (e *SortExec) lessRow(rowI, rowJ chunk.Row) int {

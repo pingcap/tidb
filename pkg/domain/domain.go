@@ -87,6 +87,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/memoryusagealarm"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -209,11 +210,6 @@ type Domain struct {
 
 	mdlCheckTableInfo *mdlCheckTableInfo
 
-	analyzeMu struct {
-		sync.Mutex
-		sctxs map[sessionctx.Context]bool
-	}
-
 	mdlCheckCh        chan struct{}
 	stopAutoAnalyze   atomicutil.Bool
 	minJobIDRefresher *systable.MinJobIDRefresher
@@ -330,7 +326,6 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		oldIsV2, _ = infoschema.IsV2(oldInfoSchema)
 	}
 	useV2, isV1V2Switch := shouldUseV2(enableV2, oldIsV2, isSnapshot)
-	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data, useV2)
 
 	// TODO: tryLoadSchemaDiffs has potential risks of failure. And it becomes worse in history reading cases.
 	// It is only kept because there is no alternative diff/partial loading solution.
@@ -341,7 +336,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	// 4. No regenerated schema diff.
 	startTime := time.Now()
 	if !isV1V2Switch && currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(builder, m, currentSchemaVersion, neededSchemaVersion, startTS)
+		is, relatedChanges, diffTypes, err := do.tryLoadSchemaDiffs(useV2, m, currentSchemaVersion, neededSchemaVersion, startTS)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			isV2, _ := infoschema.IsV2(is)
@@ -377,6 +372,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	}
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
+	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data, useV2)
 	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -467,20 +463,22 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 const fetchSchemaConcurrency = 1
 
 func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
-	groupSize := (len(schemas) + fetchSchemaConcurrency - 1) / fetchSchemaConcurrency
-	if variable.SchemaCacheSize.Load() > 0 && len(schemas) > 1000 {
-		// TODO: Temporary solution to speed up when too many databases, will refactor it later.
-		groupSize = 8
-	}
-	splitted := make([][]*model.DBInfo, 0, fetchSchemaConcurrency)
+	groupCnt := fetchSchemaConcurrency
 	schemaCnt := len(schemas)
-	for i := 0; i < schemaCnt; i += groupSize {
-		end := i + groupSize
-		if end > schemaCnt {
-			end = schemaCnt
-		}
-		splitted = append(splitted, schemas[i:end])
+	if variable.SchemaCacheSize.Load() > 0 && schemaCnt > 1000 {
+		// TODO: Temporary solution to speed up when too many databases, will refactor it later.
+		groupCnt = 8
 	}
+
+	splitted := make([][]*model.DBInfo, 0, groupCnt)
+	groupSizes := mathutil.Divide2Batches(schemaCnt, groupCnt)
+
+	start := 0
+	for _, groupSize := range groupSizes {
+		splitted = append(splitted, schemas[start:start+groupSize])
+		start += groupSize
+	}
+
 	return splitted
 }
 
@@ -552,7 +550,7 @@ func shouldUseV2(enableV2 bool, oldIsV2 bool, isSnapshot bool) (useV2 bool, isV1
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-func (do *Domain) tryLoadSchemaDiffs(builder *infoschema.Builder, m *meta.Meta, usedVersion, newVersion int64, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
+func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m *meta.Meta, usedVersion, newVersion int64, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
@@ -587,6 +585,7 @@ func (do *Domain) tryLoadSchemaDiffs(builder *infoschema.Builder, m *meta.Meta, 
 		}
 	})
 
+	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data, useV2)
 	err := builder.InitWithOldInfoSchema(do.infoCache.GetLatest())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -2272,46 +2271,6 @@ func (do *Domain) SetStatsUpdating(val bool) {
 	}
 }
 
-// ReleaseAnalyzeExec returned extra exec for Analyze
-func (do *Domain) ReleaseAnalyzeExec(sctxs []sessionctx.Context) {
-	do.analyzeMu.Lock()
-	defer do.analyzeMu.Unlock()
-	for _, ctx := range sctxs {
-		do.analyzeMu.sctxs[ctx] = false
-	}
-}
-
-// FetchAnalyzeExec get needed exec for analyze
-func (do *Domain) FetchAnalyzeExec(need int) []sessionctx.Context {
-	if need < 1 {
-		return nil
-	}
-	count := 0
-	r := make([]sessionctx.Context, 0)
-	do.analyzeMu.Lock()
-	defer do.analyzeMu.Unlock()
-	for sctx, used := range do.analyzeMu.sctxs {
-		if used {
-			continue
-		}
-		r = append(r, sctx)
-		do.analyzeMu.sctxs[sctx] = true
-		count++
-		if count >= need {
-			break
-		}
-	}
-	return r
-}
-
-// SetupAnalyzeExec setups exec for Analyze Executor
-func (do *Domain) SetupAnalyzeExec(ctxs []sessionctx.Context) {
-	do.analyzeMu.sctxs = make(map[sessionctx.Context]bool)
-	for _, ctx := range ctxs {
-		do.analyzeMu.sctxs[ctx] = false
-	}
-}
-
 // LoadAndUpdateStatsLoop loads and updates stats info.
 func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx sessionctx.Context) error {
 	if err := do.UpdateTableStatsLoop(ctxs[0], initStatsCtx); err != nil {
@@ -3181,7 +3140,7 @@ func (do *Domain) planCacheMetricsAndVars() {
 // planCacheEvictTrigger triggers the plan cache eviction periodically.
 func (do *Domain) planCacheEvictTrigger() {
 	defer util.Recover(metrics.LabelDomain, "planCacheEvictTrigger", nil, false)
-	ticker := time.NewTicker(time.Second * 15) // 15s by default
+	ticker := time.NewTicker(time.Second * 30) // 30s by default
 	defer func() {
 		ticker.Stop()
 		logutil.BgLogger().Info("planCacheEvictTrigger exited.")
@@ -3191,7 +3150,13 @@ func (do *Domain) planCacheEvictTrigger() {
 		select {
 		case <-ticker.C:
 			// trigger the eviction
-			do.instancePlanCache.Evict()
+			begin := time.Now()
+			detailInfo, numEvicted := do.instancePlanCache.Evict()
+			metrics2.GetPlanCacheInstanceEvict().Set(float64(numEvicted))
+			logutil.BgLogger().Info("instance plan eviction",
+				zap.String("detail", detailInfo),
+				zap.Int64("num_evicted", int64(numEvicted)),
+				zap.Duration("time_spent", time.Since(begin)))
 		case <-do.exit:
 			return
 		}

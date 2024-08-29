@@ -82,7 +82,7 @@ go_test(
     ],
     embed = [":log_client"],
     flaky = True,
-    shard_count = 39,
+    shard_count = 40,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/gluetidb",
@@ -95,6 +95,7 @@ go_test(
         "//br/pkg/utils",
         "//br/pkg/utils/iter",
         "//br/pkg/utiltest",
+        "//pkg/domain",
         "//pkg/kv",
         "//pkg/store/pdtypes",
         "//pkg/tablecodec",

@@ -5618,9 +5618,12 @@ func TestBinding(t *testing.T) {
 		{"drop session binding for replace into t1 select * from t2 where t1.a=1", true, "DROP SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t1`.`a`=1"},
 		{"DROP GLOBAL BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", true, "DROP GLOBAL BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"},
 		{"DROP SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", true, "DROP SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"},
+		// Specify digest cases.
 		{"DROP SESSION BINDING FOR SQL DIGEST 'a'", true, "DROP SESSION BINDING FOR SQL DIGEST 'a'"},
 		{"drop global binding for sql digest 's'", true, "DROP GLOBAL BINDING FOR SQL DIGEST 's'"},
+		{"drop global binding for sql digest @a, @b, 'test1,test2', @c, 'test333'", true, "DROP GLOBAL BINDING FOR SQL DIGEST @`a`, @`b`, 'test1,test2', @`c`, 'test333'"},
 		{"create session binding from history using plan digest 'sss'", true, "CREATE SESSION BINDING FROM HISTORY USING PLAN DIGEST 'sss'"},
+		{"create session binding from history using plan digest @a, @b, 'test1,test2', @c, 'test333'", true, "CREATE SESSION BINDING FROM HISTORY USING PLAN DIGEST @`a`, @`b`, 'test1,test2', @`c`, 'test333'"},
 		{"CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'", true, "CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'"},
 		{"set binding enabled for sql digest '1'", true, "SET BINDING ENABLED FOR SQL DIGEST '1'"},
 		{"set binding disabled for sql digest '1'", true, "SET BINDING DISABLED FOR SQL DIGEST '1'"},
@@ -5741,6 +5744,16 @@ func TestView(t *testing.T) {
 	require.Equal(t, "select c,d,e from t", v.Select.Text())
 	require.Equal(t, model.SecurityDefiner, v.Security)
 	require.Equal(t, model.CheckOptionCascaded, v.CheckOption)
+
+	src = `
+CREATE VIEW v1 AS SELECT * FROM t;
+CREATE VIEW v2 AS SELECT 123123123123123;
+`
+	nodes, _, err := p.Parse(src, "", "")
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+	require.Equal(t, nodes[0].(*ast.CreateViewStmt).Select.Text(), "SELECT * FROM t")
+	require.Equal(t, nodes[1].(*ast.CreateViewStmt).Select.Text(), "SELECT 123123123123123")
 }
 
 func TestTimestampDiffUnit(t *testing.T) {
@@ -7601,8 +7614,6 @@ func TestVector(t *testing.T) {
 	table := []testCase{
 		{"CREATE TABLE t (a VECTOR)", true, "CREATE TABLE `t` (`a` VECTOR)"},
 		{"CREATE TABLE t (a VECTOR<FLOAT>)", true, "CREATE TABLE `t` (`a` VECTOR)"},
-		{"CREATE TABLE t (a VECTOR(3))", true, "CREATE TABLE `t` (`a` VECTOR(3))"},
-		{"CREATE TABLE t (a VECTOR<FLOAT>(3))", true, "CREATE TABLE `t` (`a` VECTOR(3))"},
 		{"CREATE TABLE t (a VECTOR<INT>)", false, ""},
 		{"CREATE TABLE t (a VECTOR<DOUBLE>)", false, ""},
 		{"CREATE TABLE t (a VECTOR<ABC>)", false, ""},

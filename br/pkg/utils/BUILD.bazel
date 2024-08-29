@@ -55,6 +55,7 @@ go_library(
         "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_google_grpc//keepalive",
         "@org_golang_google_grpc//status",
+        "@org_golang_x_term//:term",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",

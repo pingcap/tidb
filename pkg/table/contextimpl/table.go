@@ -17,6 +17,7 @@ package contextimpl
 import (
 	"github.com/pingcap/failpoint"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -177,6 +178,16 @@ func (ctx *TableContextImpl) GetTemporaryTableSupport() (context.TemporaryTableS
 	if ctx.vars().TxnCtx == nil {
 		return nil, false
 	}
+	return ctx, true
+}
+
+// GetInfoSchemaToCheckExchangeConstraint implements the ExchangePartitionDMLSupport interface.
+func (ctx *TableContextImpl) GetInfoSchemaToCheckExchangeConstraint() infoschema.MetaOnlyInfoSchema {
+	return ctx.Context.GetDomainInfoSchema()
+}
+
+// GetExchangePartitionDMLSupport implements the MutateContext interface.
+func (ctx *TableContextImpl) GetExchangePartitionDMLSupport() (context.ExchangePartitionDMLSupport, bool) {
 	return ctx, true
 }
 

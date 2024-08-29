@@ -3333,3 +3333,9 @@ B1
 D5
 FF
 drop table t, t2, t3;
+SELECT MID('abc',2,1);
+MID('abc',2,1)
+b
+SELECT MID('abc',2);
+MID('abc',2)
+bc

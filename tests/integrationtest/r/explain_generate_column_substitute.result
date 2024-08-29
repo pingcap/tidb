@@ -413,10 +413,10 @@ Projection	1.00	root		explain_generate_column_substitute.t.a, explain_generate_c
   └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false
 desc format = 'brief' select * from t where not (lower(b) >= "a");
 id	estRows	task	access object	operator info
-Projection	0.00	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b
-└─IndexLookUp	0.00	root		
-  ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:[-inf,"a"), keep order:false
-  └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false
+Projection	1.00	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b
+└─IndexLookUp	1.00	root		
+  ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:[-inf,"a"), keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false
 desc format = 'brief' select count(upper(b)) from t group by upper(b);
 id	estRows	task	access object	operator info
 StreamAgg	4.80	root		group by:upper(explain_generate_column_substitute.t.b), funcs:count(upper(explain_generate_column_substitute.t.b))->Column#7

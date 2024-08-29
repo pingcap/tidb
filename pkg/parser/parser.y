@@ -1325,6 +1325,8 @@ import (
 	StatementList                          "statement list"
 	StatsPersistentVal                     "stats_persistent value"
 	StatsType                              "stats type value"
+	StringLitOrUserVariable                "stringLit or user variable"
+	StringLitOrUserVariableList            "stringLit or user variable list"
 	BindingStatusType                      "binding status type value"
 	StringList                             "string list"
 	SubPartDefinition                      "SubPartition definition"
@@ -5000,8 +5002,8 @@ CreateViewStmt:
 	"CREATE" OrReplace ViewAlgorithm ViewDefiner ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" CreateViewSelectOpt ViewCheckOption
 	{
 		startOffset := parser.startOffset(&yyS[yypt-1])
+		endOffset := parser.yylval.offset
 		selStmt := $10.(ast.StmtNode)
-		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 		x := &ast.CreateViewStmt{
 			OrReplace: $2.(bool),
 			ViewName:  $7.(*ast.TableName),
@@ -5015,11 +5017,11 @@ CreateViewStmt:
 		}
 		if $11 != nil {
 			x.CheckOption = $11.(model.ViewCheckOption)
-			endOffset := parser.startOffset(&yyS[yypt])
-			selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+			endOffset = parser.startOffset(&yyS[yypt])
 		} else {
 			x.CheckOption = model.CheckOptionCascaded
 		}
+		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 		$$ = x
 	}
 
@@ -14027,14 +14029,34 @@ CreateBindingStmt:
 
 		$$ = x
 	}
-|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
+|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" StringLitOrUserVariableList
 	{
 		x := &ast.CreateBindingStmt{
 			GlobalScope: $2.(bool),
-			PlanDigest:  $9,
+			PlanDigests: $9.([]*ast.StringOrUserVar),
 		}
 
 		$$ = x
+	}
+
+StringLitOrUserVariableList:
+	StringLitOrUserVariable
+	{
+		$$ = []*ast.StringOrUserVar{$1.(*ast.StringOrUserVar)}
+	}
+|	StringLitOrUserVariableList ',' StringLitOrUserVariable
+	{
+		$$ = append($1.([]*ast.StringOrUserVar), $3.(*ast.StringOrUserVar))
+	}
+
+StringLitOrUserVariable:
+	stringLit
+	{
+		$$ = &ast.StringOrUserVar{StringLit: $1}
+	}
+|	UserVariable
+	{
+		$$ = &ast.StringOrUserVar{UserVar: $1.(*ast.VariableExpr)}
 	}
 
 /*******************************************************************
@@ -14077,11 +14099,11 @@ DropBindingStmt:
 
 		$$ = x
 	}
-|	"DROP" GlobalScope "BINDING" "FOR" "SQL" "DIGEST" stringLit
+|	"DROP" GlobalScope "BINDING" "FOR" "SQL" "DIGEST" StringLitOrUserVariableList
 	{
 		x := &ast.DropBindingStmt{
 			GlobalScope: $2.(bool),
-			SQLDigest:   $7,
+			SQLDigests:  $7.([]*ast.StringOrUserVar),
 		}
 
 		$$ = x

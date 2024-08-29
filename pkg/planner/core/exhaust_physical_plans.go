@@ -765,7 +765,7 @@ childLoop:
 		case *DataSource:
 			wrapper.ds = child
 			break childLoop
-		case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *LogicalAggregation:
+		case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
 			if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 				return nil
 			}
@@ -1036,14 +1036,14 @@ func constructInnerByZippedChildren(prop *property.PhysicalProperty, zippedChild
 			child = constructInnerProj(prop, x, child)
 		case *logicalop.LogicalSelection:
 			child = constructInnerSel(prop, x, child)
-		case *LogicalAggregation:
+		case *logicalop.LogicalAggregation:
 			child = constructInnerAgg(prop, x, child)
 		}
 	}
 	return child
 }
 
-func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *LogicalAggregation, child base.PhysicalPlan) base.PhysicalPlan {
+func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *logicalop.LogicalAggregation, child base.PhysicalPlan) base.PhysicalPlan {
 	if logicalAgg == nil {
 		return child
 	}
@@ -1239,7 +1239,7 @@ func constructInnerIndexScanTask(
 		cop.commonHandleCols = ds.CommonHandleCols
 	}
 	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.tablePlan != nil)
-	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens)
+	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
 	//
@@ -1337,10 +1337,10 @@ func constructInnerIndexScanTask(
 //
 // Step2: build other inner plan node to task
 func constructIndexJoinInnerSideTask(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, dsCopTask *CopTask, ds *DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
-	var la *LogicalAggregation
+	var la *logicalop.LogicalAggregation
 	var canPushAggToCop bool
 	if len(wrapper.zippedChildren) > 0 {
-		la, canPushAggToCop = wrapper.zippedChildren[len(wrapper.zippedChildren)-1].(*LogicalAggregation)
+		la, canPushAggToCop = wrapper.zippedChildren[len(wrapper.zippedChildren)-1].(*logicalop.LogicalAggregation)
 		if la != nil && la.HasDistinct() {
 			// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
 			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
@@ -2044,7 +2044,8 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 	return joins, true, nil
 }
 
-func exhaustPhysicalPlans4LogicalExpand(p *LogicalExpand, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalExpand)
 	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
 	if !prop.IsSortItemEmpty() {
 		// false, meaning we can add a sort enforcer.
@@ -2224,26 +2225,29 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 }
 
 // GetHashJoin is public for cascades planner.
-func GetHashJoin(la *LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
+func GetHashJoin(la *logicalop.LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
 	return getHashJoin(&la.LogicalJoin, prop, 1, false)
 }
 
-// ExhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
-func ExhaustPhysicalPlans4LogicalApply(la *LogicalApply, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+// exhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
+func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	la := lp.(*logicalop.LogicalApply)
 	if !prop.AllColsFromSchema(la.Children()[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
 	}
 	if !prop.IsSortItemEmpty() && la.SCtx().GetSessionVars().EnableParallelApply {
-		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Parallel Apply rejects the possible order properties of its outer child currently"))
+		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Parallel Apply rejects the possible order properties of its outer child currently"))
 		return nil, true, nil
 	}
 	disableAggPushDownToCop(la.Children()[0])
 	join := GetHashJoin(la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
-		columns = append(columns, &colColumn.Column)
+		// fix the liner warning.
+		tmp := colColumn
+		columns = append(columns, &tmp.Column)
 	}
 	cacheHitRatio := 0.0
 	if la.StatsInfo().RowCount != 0 {
@@ -2277,7 +2281,7 @@ func disableAggPushDownToCop(p base.LogicalPlan) {
 	for _, child := range p.Children() {
 		disableAggPushDownToCop(child)
 	}
-	if agg, ok := p.(*LogicalAggregation); ok {
+	if agg, ok := p.(*logicalop.LogicalAggregation); ok {
 		agg.NoCopPushDown = true
 	}
 }
@@ -2443,7 +2447,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 				// Once aggregation is pushed to cop, the cache data can't be use any more.
 				return false
 			}
-		case *LogicalUnionAll:
+		case *logicalop.LogicalUnionAll:
 			if storeTp != kv.TiFlash {
 				return false
 			}
@@ -2458,7 +2462,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 				return false
 			}
 			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
-		case *LogicalExpand:
+		case *logicalop.LogicalExpand:
 			// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
 			if storeTp != kv.TiFlash {
 				return false
@@ -2466,7 +2470,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
 		case *logicalop.LogicalTableDual:
 			return storeTp == kv.TiFlash && considerDual
-		case *LogicalAggregation, *logicalop.LogicalSelection, *logicalop.LogicalJoin, *logicalop.LogicalWindow:
+		case *logicalop.LogicalAggregation, *logicalop.LogicalSelection, *logicalop.LogicalJoin, *logicalop.LogicalWindow:
 			if storeTp != kv.TiFlash {
 				return false
 			}
@@ -2476,11 +2480,11 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			return false
 		case *logicalop.LogicalSequence:
 			return storeTp == kv.TiFlash
-		case *LogicalCTE:
+		case *logicalop.LogicalCTE:
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			if c.Cte.recursivePartLogicalPlan != nil || !c.Cte.seedPartLogicalPlan.CanPushToCop(storeTp) {
+			if c.Cte.RecursivePartLogicalPlan != nil || !c.Cte.SeedPartLogicalPlan.CanPushToCop(storeTp) {
 				return false
 			}
 			return true
@@ -2493,7 +2497,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 	return ret
 }
 
-func getEnforcedStreamAggs(la *LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
+func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	if prop.IsFlashProp() {
 		return nil
 	}
@@ -2538,21 +2542,8 @@ func getEnforcedStreamAggs(la *LogicalAggregation, prop *property.PhysicalProper
 	return enforcedAggs
 }
 
-func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
-	for _, aggFunc := range la.AggFuncs {
-		if aggFunc.HasDistinct {
-			for _, distinctArg := range aggFunc.Args {
-				if !expression.Contains(la.SCtx().GetExprCtx().GetEvalCtx(), la.GroupByItems, distinctArg) {
-					return false
-				}
-			}
-		}
-	}
-	return true
-}
-
 func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	la := lp.(*LogicalAggregation)
+	la := lp.(*logicalop.LogicalAggregation)
 	// TODO: support CopTiFlash task type in stream agg
 	if prop.IsFlashProp() {
 		return nil
@@ -2630,7 +2621,7 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 }
 
 // TODO: support more operators and distinct later
-func checkCanPushDownToMPP(la *LogicalAggregation) bool {
+func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
 	hasUnsupportedDistinct := false
 	for _, agg := range la.AggFuncs {
 		// MPP does not support distinct except count distinct now
@@ -2656,7 +2647,7 @@ func checkCanPushDownToMPP(la *LogicalAggregation) bool {
 	return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }
 
-func tryToGetMppHashAggs(la *LogicalAggregation, prop *property.PhysicalProperty) (hashAggs []base.PhysicalPlan) {
+func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) (hashAggs []base.PhysicalPlan) {
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
@@ -2804,7 +2795,7 @@ func tryToGetMppHashAggs(la *LogicalAggregation, prop *property.PhysicalProperty
 //
 // That is to say, the non-complete positive judgement of canPushDownToMPP/canPushDownToTiFlash/canPushDownToTiKV is not that for sure here.
 func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	la := lp.(*LogicalAggregation)
+	la := lp.(*logicalop.LogicalAggregation)
 	if !prop.IsSortItemEmpty() {
 		return nil
 	}
@@ -2862,6 +2853,32 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 		}
 	}
 	return hashAggs
+}
+
+func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	la := lp.(*logicalop.LogicalAggregation)
+	if la.PreferAggToCop {
+		if !la.CanPushToCop(kv.TiKV) {
+			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
+				"Optimizer Hint AGG_TO_COP is inapplicable")
+			la.PreferAggToCop = false
+		}
+	}
+	preferHash, preferStream := la.ResetHintIfConflicted()
+	hashAggs := getHashAggs(la, prop)
+	if hashAggs != nil && preferHash {
+		return hashAggs, true, nil
+	}
+	streamAggs := getStreamAggs(la, prop)
+	if streamAggs != nil && preferStream {
+		return streamAggs, true, nil
+	}
+	aggs := append(hashAggs, streamAggs...)
+
+	if streamAggs == nil && preferStream && !prop.IsSortItemEmpty() {
+		la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint STREAM_AGG is inapplicable")
+	}
+	return aggs, !(preferStream || preferHash), nil
 }
 
 func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
@@ -2935,7 +2952,8 @@ func exhaustPhysicalPlans4LogicalLock(lp base.LogicalPlan, prop *property.Physic
 	return []base.PhysicalPlan{lock}, true, nil
 }
 
-func exhaustUnionAllPhysicalPlans(p *LogicalUnionAll, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalUnionAll)
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
 	if !prop.IsSortItemEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
 		return nil, true, nil
@@ -2979,7 +2997,8 @@ func exhaustUnionAllPhysicalPlans(p *LogicalUnionAll, prop *property.PhysicalPro
 	return []base.PhysicalPlan{ua}, true, nil
 }
 
-func exhaustPartitionUnionAllPhysicalPlans(p *LogicalPartitionUnionAll, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalPartitionUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalPartitionUnionAll)
 	uas, flagHint, err := p.LogicalUnionAll.ExhaustPhysicalPlans(prop)
 	if err != nil {
 		return nil, false, err
@@ -3054,7 +3073,8 @@ func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.P
 	return []base.PhysicalPlan{mor}, true, nil
 }
 
-func exhaustPhysicalPlans4LogicalCTE(p *LogicalCTE, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalCTE)
 	pcte := PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {
 		pcte.storageSender = PhysicalExchangeSender{

@@ -470,7 +470,9 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 			fmt.Sprintf("(Table ID %d)", job.TableID),
 		)
 	}
-	return job, table.Meta(), nil
+	// Return the cloned meta here, since meta will be modified later.
+	// This may corrupt the infocache.
+	return job, table.Meta().Clone(), nil
 }
 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,

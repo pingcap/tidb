@@ -864,10 +864,6 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	info := b.infoSchema
 	info.schemaMetaVersion = schemaVersion
 
-	b.initBundleInfoBuilder()
-
-	b.initMisc(dbInfos, policies, resourceGroups)
-
 	if b.enableV2 {
 		// We must not clear the historial versions like b.infoData = NewData(), because losing
 		// the historial versions would cause applyDiff get db not exist error and fail, then
@@ -887,12 +883,17 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		b.infoData.resetBeforeFullLoad(schemaVersion)
 	}
 
+	b.initBundleInfoBuilder()
+
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di, tableFromMeta, schemaVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
+
+	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
+	b.initMisc(dbInfos, policies, resourceGroups)
 
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {
@@ -953,9 +954,9 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 	if b.enableV2 {
 		for name, id := range di.TableName2ID {
 			item := tableItem{
-				dbName:        di.Name.L,
+				dbName:        di.Name,
 				dbID:          di.ID,
-				tableName:     name,
+				tableName:     model.NewCIStr(name),
 				tableID:       id,
 				schemaVersion: schemaVersion,
 			}
@@ -983,9 +984,9 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
 	if b.enableV2 {
 		b.infoData.add(tableItem{
-			dbName:        di.Name.L,
+			dbName:        di.Name,
 			dbID:          di.ID,
-			tableName:     tblInfo.Name.L,
+			tableName:     tblInfo.Name,
 			tableID:       tblInfo.ID,
 			schemaVersion: schemaVersion,
 		}, tbl)
@@ -1018,9 +1019,7 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 		enableV2:     useV2,
 	}
 	schemaCacheSize := variable.SchemaCacheSize.Load()
-	if schemaCacheSize > 0 {
-		infoData.tableCache.SetCapacity(schemaCacheSize)
-	}
+	infoData.tableCache.SetCapacity(schemaCacheSize)
 	return builder
 }
 

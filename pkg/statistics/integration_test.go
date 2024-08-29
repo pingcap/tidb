@@ -618,7 +618,7 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 					PARTITION p1 VALUES LESS THAN (20),
 					PARTITION p2 VALUES LESS THAN (30),
 					PARTITION p3 VALUES LESS THAN (40))`)
-	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
+	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 	tk.MustExec("INSERT INTO t(a, b) values(1, 1), (2, 2), (3, 3), (15, 15), (25, 25), (35, 35)")
 
 	tblID := dom.MustGetTableID(t, "test", "t")
