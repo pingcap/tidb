@@ -1834,7 +1834,7 @@ DirectResourceGroupRunawayOption:
 			return 1
 		}
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp: ast.RunawayRule,
+			Tp: model.RunawayRule,
 			RuleOption: &ast.ResourceGroupRunawayRuleOption{
 				ExecElapsed: $3,
 			},
@@ -1843,7 +1843,7 @@ DirectResourceGroupRunawayOption:
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
 	{
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp:           ast.RunawayAction,
+			Tp:           model.RunawayAction,
 			ActionOption: $3.(*ast.ResourceGroupRunawayActionOption),
 		}
 	}
@@ -1861,7 +1861,7 @@ DirectResourceGroupRunawayOption:
 			}
 		}
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp: ast.RunawayWatch,
+			Tp: model.RunawayWatch,
 			WatchOption: &ast.ResourceGroupRunawayWatchOption{
 				Type:     $3.(model.RunawayWatchType),
 				Duration: dur,
