@@ -652,6 +652,7 @@ func (d *Datum) SetValue(val any, tp *types.FieldType) {
 	}
 }
 
+// Hash64ForDatum is a hash function for initialized by codec package.
 var Hash64ForDatum func(h base.Hasher, d *Datum)
 
 // Hash64 implements base.HashEquals<0th> interface.
