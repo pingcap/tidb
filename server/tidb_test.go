@@ -84,11 +84,26 @@ type tidbTestSuite struct {
 
 func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	cfg := newTestConfig()
-	cfg.Port = 0
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 0
-	cfg.Performance.TCPKeepAlive = true
 	return createTidbTestSuiteWithCfg(t, cfg)
+}
+
+// CreateTidbTestSuiteWithDDLLease creates a test suite with DDL lease for tidb.
+func CreateTidbTestSuiteWithDDLLease(t *testing.T, ddlLease string) *tidbTestSuite {
+	cfg := newTestConfig()
+	cfg.Lease = ddlLease
+	return createTidbTestSuiteWithCfg(t, cfg)
+}
+
+// parseDuration parses lease argument string.
+func parseDuration(lease string) (time.Duration, error) {
+	dur, err := time.ParseDuration(lease)
+	if err != nil {
+		dur, err = time.ParseDuration(lease + "s")
+	}
+	if err != nil || dur < 0 {
+		return 0, errors.Errorf("invalid lease duration: %v", lease)
+	}
+	return dur, nil
 }
 
 func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite {
@@ -99,6 +114,9 @@ func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite
 	ts.store, err = mockstore.NewMockStore()
 	session.DisableStats4Test()
 	require.NoError(t, err)
+	ddlLeaseDuration, err := parseDuration(cfg.Lease)
+	require.NoError(t, err)
+	session.SetSchemaLease(ddlLeaseDuration)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
@@ -3234,11 +3252,6 @@ func TestLoadData(t *testing.T) {
 	ts.runTestLoadDataReplaceNonclusteredPK(t)
 }
 
-func TestIssue53634(t *testing.T) {
-	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
-	ts.RunTestIssue53634(t, ts.Domain)
-}
-
 func TestAuthSocket(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/MockOSUserForAuthSocket", "return(true)"))
 	defer func() {
@@ -3312,4 +3325,9 @@ func TestAuthSocket(t *testing.T) {
 		rows := dbt.MustQuery("select current_user();")
 		ts.checkRows(t, rows, "u2@%")
 	})
+}
+
+func TestIssue53634(t *testing.T) {
+	ts := CreateTidbTestSuiteWithDDLLease(t, "20s")
+	ts.runTestIssue53634(t, ts, ts.domain)
 }

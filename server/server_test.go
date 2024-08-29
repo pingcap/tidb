@@ -16,6 +16,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -35,27 +36,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-<<<<<<< HEAD:server/server_test.go
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/versioninfo"
-=======
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testenv"
-	"github.com/pingcap/tidb/pkg/util/versioninfo"
-	dto "github.com/prometheus/client_model/go"
->>>>>>> 9aeaa76c5cb (*: fix a bug that update statement uses point get and update plan with different tblInfo (#54183)):pkg/server/internal/testserverclient/server_client.go
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -2550,7 +2539,6 @@ func (cli *testServerClient) runTestLoadDataReplace(t *testing.T) {
 	})
 }
 
-<<<<<<< HEAD:server/server_test.go
 func (cli *testServerClient) runTestLoadDataReplaceNonclusteredPK(t *testing.T) {
 	fp1, err := os.CreateTemp("", "a.dat")
 	require.NoError(t, err)
@@ -2676,9 +2664,9 @@ func (cli *testServerClient) RunTestStmtCountLimit(t *testing.T) {
 		require.Equal(t, 5, count)
 	})
 }
-=======
-func (cli *TestServerClient) getNewDB(t *testing.T, overrider configOverrider) *testkit.DBTestKit {
-	db, err := sql.Open("mysql", cli.GetDSN(overrider))
+
+func (cli *tidbTestSuite) getNewDB(t *testing.T, overrider configOverrider) *testkit.DBTestKit {
+	db, err := sql.Open("mysql", cli.getDSN(overrider))
 	require.NoError(t, err)
 
 	return testkit.NewDBTestKit(t, db)
@@ -2689,7 +2677,7 @@ func MustExec(ctx context.Context, t *testing.T, conn *sql.Conn, sql string) {
 	require.NoError(t, err)
 }
 
-func MustQuery(ctx context.Context, t *testing.T, cli *TestServerClient, conn *sql.Conn, sql string) {
+func MustQuery(ctx context.Context, t *testing.T, cli *tidbTestSuite, conn *sql.Conn, sql string) {
 	rs, err := conn.QueryContext(ctx, sql)
 	require.NoError(t, err)
 	if rs != nil {
@@ -2708,10 +2696,10 @@ type expectQuery struct {
 	rows []string
 }
 
-func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain) {
-	cli.RunTests(t, func(config *mysql.Config) {
+func (cli *testServerClient) runTestIssue53634(t *testing.T, ts *tidbTestSuite, dom *domain.Domain) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.MaxAllowedPacket = 1024
-	}, func(dbt *testkit.DBTestKit) {
+	}, "MDL", func(dbt *testkit.DBTestKit) {
 		ctx := context.Background()
 
 		conn, err := dbt.GetDB().Conn(ctx)
@@ -2740,14 +2728,14 @@ func (cli *TestServerClient) RunTestIssue53634(t *testing.T, dom *domain.Domain)
 		sqls[4] = sqlWithErr{nil, "commit"}
 		dropColumnSQL := "alter table stock drop column cct_1"
 		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
-		runTestInSchemaState(t, conn, cli, dom, model.StateWriteReorganization, true, dropColumnSQL, sqls, query)
+		runTestInSchemaState(t, conn, ts, dom, model.StateWriteReorganization, true, dropColumnSQL, sqls, query)
 	})
 }
 
 func runTestInSchemaState(
 	t *testing.T,
 	conn *sql.Conn,
-	cli *TestServerClient,
+	cli *tidbTestSuite,
 	dom *domain.Domain,
 	state model.SchemaState,
 	isOnJobUpdated bool,
@@ -2758,7 +2746,7 @@ func runTestInSchemaState(
 	ctx := context.Background()
 	MustExec(ctx, t, conn, "use test_db_state")
 
-	callback := &callback.TestDDLCallback{Do: dom}
+	callback := &ddl.TestDDLCallback{Do: dom}
 	prevState := model.StateNone
 	var checkErr error
 	dbt := cli.getNewDB(t, func(config *mysql.Config) {
@@ -2841,7 +2829,7 @@ func runTestInSchemaState(
 		if expectQuery.rows == nil {
 			require.Nil(t, rs)
 		} else {
-			cli.CheckRows(t, rs, expectQuery.rows[0])
+			cli.checkRows(t, rs, expectQuery.rows[0])
 		}
 	}
 	d.SetHook(originalCallback)
@@ -2854,6 +2842,3 @@ func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
 	}
 	return job.SchemaState
 }
-
-//revive:enable:exported
->>>>>>> 9aeaa76c5cb (*: fix a bug that update statement uses point get and update plan with different tblInfo (#54183)):pkg/server/internal/testserverclient/server_client.go

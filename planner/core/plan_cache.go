@@ -79,7 +79,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isGeneral
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
 	for i := 0; i < len(stmt.dbName); i++ {
-		_, ok := is.TableByID(stmt.tbls[i].Meta().ID)
+		tbl, ok := is.TableByID(stmt.tbls[i].Meta().ID)
 		if !ok {
 			tblByName, err := is.TableByName(stmt.dbName[i], stmt.tbls[i].Meta().Name)
 			if err != nil {
@@ -94,7 +94,12 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isGeneral
 			schemaNotMatch = true
 			continue
 		}
-		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
+		// The revision of tbl and newTbl may not be the same.
+		// Example:
+		// The version of stmt.tbls[i] is taken from the prepare statement and is revision v1.
+		// When stmt.tbls[i] is locked in MDL, the revision of newTbl is also v1.
+		// The revision of tbl is v2. The reason may have other statements trigger "tryLockMDLAndUpdateSchemaIfNecessary" before, leading to tbl revision update.
+		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision || (tbl != nil && tbl.Meta().Revision != newTbl.Meta().Revision) {
 			schemaNotMatch = true
 		}
 		stmt.tbls[i] = newTbl
