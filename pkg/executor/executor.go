@@ -415,9 +415,9 @@ type DDLJobRetriever struct {
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
-	ex, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaDDLExtractor)
 	if !ok {
-		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTablesExtractor", e.extractor)
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaDDLExtractor", e.extractor)
 	}
 
 	skipHistoryJobs := false

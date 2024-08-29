@@ -276,9 +276,31 @@ func NewInfoSchemaTablesExtractor() *InfoSchemaTablesExtractor {
 	return e
 }
 
+// InfoSchemaDDLExtractor is the predicate extractor for information_schema.ddl_jobs.
+type InfoSchemaDDLExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+//
+// Different from other extractor, input predicates will not be pruned.
+// For example, we will use state to determine whether to scan history ddl jobs,
+// but we will not use these predicates to do filtering.
+// So the Selection Operator is still needed.
+func (e *InfoSchemaDDLExtractor) Extract(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	c := predicates
+	e.InfoSchemaBaseExtractor.Extract(ctx, schema, names, predicates)
+	return c
+}
+
 // NewInfoSchemaTablesExtractor creates a new InfoSchemaTablesExtractor.
-func NewInfoSchemaDDLExtractor() *InfoSchemaTablesExtractor {
-	e := &InfoSchemaTablesExtractor{}
+func NewInfoSchemaDDLExtractor() *InfoSchemaDDLExtractor {
+	e := &InfoSchemaDDLExtractor{}
 	e.extractableColumns = extractableCols{
 		schema: DBName,
 		table:  TableName,

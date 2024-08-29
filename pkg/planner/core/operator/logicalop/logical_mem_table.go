@@ -15,8 +15,6 @@
 package logicalop
 
 import (
-	"strings"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -67,12 +65,6 @@ func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	// Because some filters are not fully utilized in extractor, Selection operator is still needed
-	if strings.ToUpper(p.TableInfo.Name.O) == infoschema.TableDDLJobs {
-		c := predicates
-		p.Extractor.Extract(p.SCtx(), p.Schema(), p.OutputNames(), predicates)
-		return c, p.Self()
-	}
 	if p.Extractor != nil {
 		failpoint.Inject("skipExtractor", func(_ failpoint.Value) {
 			failpoint.Return(predicates, p.Self())
