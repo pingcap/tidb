@@ -17,7 +17,6 @@ package ddl
 import (
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -146,9 +145,6 @@ func TestMergeCreateTableJobs(t *testing.T) {
 		}
 		newWs, err := mergeCreateTableJobs(jobWs)
 		require.NoError(t, err)
-		slices.SortFunc(newWs, func(a, b *JobWrapper) int {
-			return strings.Compare(a.SchemaName, b.SchemaName)
-		})
 		require.EqualValues(t, jobWs, newWs)
 	})
 
