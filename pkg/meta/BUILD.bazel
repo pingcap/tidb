@@ -34,7 +34,7 @@ go_test(
     ],
     embed = [":meta"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 16,
     deps = [
         "//pkg/ddl",
         "//pkg/infoschema",
