@@ -825,7 +825,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 		// Otherwise we don't need to load it.
 		result := t.ColAndIdxExistenceMap.Has(id, false)
 		// If the column is not in the ColAndIdxExistenceMap, we need to load it.
-		return nil, !result, false
+		return nil, !result, true
 	}
 
 	// Restore the condition from the simplified form:
