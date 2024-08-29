@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -46,7 +47,8 @@ func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql 
 	if inPrepare {
 		opts = append(opts, core.InPrepare)
 	}
-	err = core.Preprocess(context.Background(), ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(context.Background(), ctx, nodeW, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
 	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v", sql, err)
 }
 
@@ -402,7 +404,8 @@ func TestPreprocessCTE(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)
 
-		err = core.Preprocess(context.Background(), tk.Session(), stmts[0])
+		nodeW := resolve.NewNodeW(stmts[0])
+		err = core.Preprocess(context.Background(), tk.Session(), nodeW)
 		require.NoError(t, err)
 
 		var rs strings.Builder
