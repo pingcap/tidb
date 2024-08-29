@@ -812,9 +812,6 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	// when we use non-lite init stats, it cannot init the stats for common columns.
 	// so we need to foce to load the stats.
 	col, ok := t.columns[id]
-	if !ok {
-		return nil, true, true
-	}
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
@@ -823,9 +820,14 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 		// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
 		// We need to find a way to maintain it more correctly.
 		// Otherwise we don't need to load it.
-		result := t.ColAndIdxExistenceMap.Has(id, false)
+		if !ok {
+			// If we don't have this column. We skip it.
+			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
+			// We need to find a way to maintain it more correctly.
+			return nil, t.ColAndIdxExistenceMap.Has(id, false), false
+		}
 		// If the column is not in the ColAndIdxExistenceMap, we need to load it.
-		return nil, !result, !result
+		return nil, false, false
 	}
 
 	// Restore the condition from the simplified form:
