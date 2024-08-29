@@ -301,20 +301,20 @@ func (rc *SnapClient) RestoreTables(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("Merge ranges", zap.Duration("take", time.Since(start)))
+	log.Info("[Restore Stage Duration] Merge ranges", zap.Duration("take", time.Since(start)))
 
 	start = time.Now()
 	if err = rc.SplitPoints(ctx, sortedSplitKeys, updateCh, false); err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("Split regions", zap.Duration("take", time.Since(start)))
+	log.Info("[Restore Stage Duration] Split regions", zap.Duration("take", time.Since(start)))
 
 	start = time.Now()
 	if err = rc.RestoreSSTFiles(ctx, tableIDWithFilesGroup, updateCh); err != nil {
 		return errors.Trace(err)
 	}
 	elapsed := time.Since(start)
-	log.Info("Retore files", zap.Duration("take", elapsed))
+	log.Info("[Restore Stage Duration] Restore files", zap.Duration("take", elapsed))
 
 	summary.CollectSuccessUnit("files", len(allFiles), elapsed)
 	return nil
