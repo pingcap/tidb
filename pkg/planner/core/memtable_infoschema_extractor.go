@@ -298,7 +298,7 @@ func (e *InfoSchemaDDLExtractor) Extract(
 	return c
 }
 
-// NewInfoSchemaTablesExtractor creates a new InfoSchemaTablesExtractor.
+// NewInfoSchemaDDLExtractor creates a new InfoSchemaDDLExtractor.
 func NewInfoSchemaDDLExtractor() *InfoSchemaDDLExtractor {
 	e := &InfoSchemaDDLExtractor{}
 	e.extractableColumns = extractableCols{
