@@ -318,11 +318,11 @@ func TestRetry(t *testing.T) {
 	result, err1 := h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 	require.NoError(t, err1)
 	require.Nil(t, result)
-	select {
-	case <-task1.ResultCh:
-	default:
-		t.Logf("task1.ResultCh should get nothing")
-		t.FailNow()
+	for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
+		rs1, ok1 := <-resultCh
+		require.True(t, rs1.Shared)
+		require.True(t, ok1)
+		require.Error(t, rs1.Val.(stmtctx.StatsLoadResult).Error)
 	}
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockReadStatsForOneFail"))
 }
