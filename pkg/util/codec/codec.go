@@ -1590,7 +1590,8 @@ func ConvertByCollationStr(str string, tp *types.FieldType) string {
 // Hash64 is for datum hash64 calculation.
 func Hash64(h base.Hasher, d *types.Datum) {
 	// let h.cache to receive datum hash value, which is potentially expendable.
-	b := h.Cache()
+	// clean the cache before using it.
+	b := h.Cache()[:0]
 	b = HashCode(b, *d)
 	h.HashBytes(b)
 	h.SetCache(b)
