@@ -53,7 +53,7 @@ func Close() {
 
 // AttachAndRegisterProcessInfo attach the ProcessInfo into Goroutine labels.
 func AttachAndRegisterProcessInfo(ctx context.Context, connID uint64, sqlID uint64) context.Context {
-	processLabel := fmt.Sprintf("%d_%d", connID, sqlID)
+	processLabel := strconv.FormatUint(connID, 10) + "_" + strconv.FormatUint(sqlID, 10)
 	ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLUID, processLabel))
 	pprof.SetGoroutineLabels(ctx)
 	return ctx
