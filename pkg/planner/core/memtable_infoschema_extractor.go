@@ -66,6 +66,7 @@ const (
 	SequenceSchema   = "sequence_schema"
 	SequenceName     = "sequence_name"
 	ColumnName       = "column_name"
+	DDLStateName     = "state"
 )
 
 //revive:enable:exported
@@ -282,7 +283,7 @@ func NewInfoSchemaDDLExtractor() *InfoSchemaTablesExtractor {
 		schema: DBName,
 		table:  TableName,
 	}
-	e.colNames = []string{DBName, TableName}
+	e.colNames = []string{DBName, TableName, DDLStateName}
 	return e
 }
 

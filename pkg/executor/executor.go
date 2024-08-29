@@ -420,8 +420,19 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTablesExtractor", e.extractor)
 	}
 
+	skipHistoryJobs := false
+	if states, ok := ex.ColPredicates["state"]; ok {
+		skipHistoryJobs = true
+		states.IterateWith(func(s string) {
+			ss := strings.ToLower(s)
+			if ss == "cancelled" || ss == "synced" {
+				skipHistoryJobs = false
+			}
+		})
+	}
+
 	// build schema_ids filter
-	var schema_filter string
+	var schemaFilter string
 	schemaIDSet := set.NewInt64Set()
 	if sIDs := ex.ListSchemaIDs(e.is); len(sIDs) > 0 {
 		var builder strings.Builder
@@ -429,44 +440,27 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 			schemaIDSet.Insert(dbid)
 			builder.WriteString(fmt.Sprintf("schema_ids LIKE '%%%d%%' OR ", dbid))
 		}
-		schema_filter = builder.String()
-		schema_filter = schema_filter[:len(schema_filter)-4]
+		schemaFilter = builder.String()
+		schemaFilter = schemaFilter[:len(schemaFilter)-4]
 	} else {
-		schema_filter = "1"
+		schemaFilter = "1"
 	}
 
-	// build table_ids filter
-	var tableNames set.StringSet
-	var table_filter string
-	if tableNames, ok = ex.ColPredicates["table_name"]; ok && len(tableNames) > 0 {
-		var builder strings.Builder
-		_, tables, err := ex.ListSchemasAndTables(context.Background(), e.is)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for i := 0; i < len(tables); i++ {
-			builder.WriteString(fmt.Sprintf("table_ids LIKE '%%%d%%' OR ", tables[i].ID))
-		}
-		table_filter = builder.String()
-	}
-	if len(table_filter) > 0 {
-		table_filter = table_filter[:len(table_filter)-4]
-	} else {
-		table_filter = "1"
-	}
+	tableNames := ex.ColPredicates["table_name"]
 
-	filter := fmt.Sprintf("(%s) and (%s)", schema_filter, table_filter)
-	jobs, err := ddl.GetNeededDDLJobs(sess, filter)
-
-	m := meta.NewMeta(txn)
-	if err != nil {
-		return err
-	}
-	e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIteratorWithFilter(m, schemaIDSet, tableNames)
-	if err != nil {
-		return err
-	}
+	jobs, err := ddl.GetNeededDDLJobs(sess, schemaFilter)
 	e.runningJobs = jobs
+
+	if !skipHistoryJobs {
+		m := meta.NewMeta(txn)
+		if err != nil {
+			return err
+		}
+		e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIteratorWithFilter(m, schemaIDSet, tableNames)
+		if err != nil {
+			return err
+		}
+	}
 	e.cursor = 0
 	return nil
 }
@@ -834,7 +828,7 @@ func (e *ShowDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 
 	// Append history ddl jobs.
 	var err error
-	if count < req.Capacity() {
+	if count < req.Capacity() && e.historyJobIter != nil {
 		num := req.Capacity() - count
 		remainNum := e.jobNumber - (e.cursor - len(e.runningJobs))
 		num = min(num, remainNum)
