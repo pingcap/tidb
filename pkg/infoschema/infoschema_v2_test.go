@@ -328,6 +328,93 @@ func TestBundles(t *testing.T) {
 	require.Equal(t, policyInfo, getPolicyInfo)
 }
 
+func TestReferredFKInfo(t *testing.T) {
+	r := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		r.Store().Close()
+	}()
+
+	schemaName := model.NewCIStr("testDB")
+	tableName := model.NewCIStr("testTable")
+	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, 1)
+	require.NoError(t, err)
+	is := builder.Build(math.MaxUint64)
+	v2, ok := is.(*infoschemaV2)
+	require.True(t, ok)
+
+	// create database
+	dbInfo := internal.MockDBInfo(t, r.Store(), schemaName.O)
+	internal.AddDB(t, r.Store(), dbInfo)
+	txn, err := r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
+	require.NoError(t, err)
+
+	// check ReferredFKInfo after create table
+	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
+	tblInfo.ForeignKeys = []*model.FKInfo{{
+		ID:        1,
+		Name:      model.NewCIStr("fk_1"),
+		RefSchema: model.NewCIStr("t1"),
+		RefTable:  model.NewCIStr("parent"),
+		Version:   1,
+	}}
+	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	require.Equal(t, len(v2.referredForeignKeyMap), 1)
+	ref, ok := v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
+	require.True(t, ok)
+	require.Equal(t, len(ref), 1)
+	require.Equal(t, ref[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
+
+	// check ReferredFKInfo after add foreign key
+	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &model.FKInfo{
+		ID:        2,
+		Name:      model.NewCIStr("fk_2"),
+		RefSchema: model.NewCIStr("t1"),
+		RefTable:  model.NewCIStr("parent"),
+		Version:   1,
+	})
+	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAddForeignKey, Version: 3, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	require.Equal(t, len(v2.referredForeignKeyMap), 1)
+	ref, ok = v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
+	require.True(t, ok)
+	require.Equal(t, len(ref), 2)
+	require.Equal(t, ref[1].ChildFKName, tblInfo.ForeignKeys[1].Name)
+
+	// check ReferredFKInfo after drop foreign key
+	tblInfo.ForeignKeys = tblInfo.ForeignKeys[:1]
+	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionDropForeignKey, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	require.Equal(t, len(v2.referredForeignKeyMap), 1)
+	ref, ok = v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
+	require.True(t, ok)
+	require.Equal(t, len(ref), 1)
+	require.Equal(t, ref[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
+
+	// check ReferredFKInfo after drop table
+	internal.DropTable(t, r.Store(), dbInfo, tblInfo.ID, tblInfo.Name.L)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	require.Equal(t, len(v2.referredForeignKeyMap), 1)
+	ref, ok = v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
+	require.True(t, ok)
+	require.Equal(t, len(ref), 0)
+}
+
 func updateTableSpecialAttribute(t *testing.T, dbInfo *model.DBInfo, tblInfo *model.TableInfo, builder *Builder, r autoid.Requirement,
 	actionType model.ActionType, ver int64, filter specialAttributeFilter, add bool) *model.TableInfo {
 	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
