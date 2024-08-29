@@ -20,7 +20,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/mock"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -68,4 +71,73 @@ func TestUnSyncedJobTracker(t *testing.T) {
 	require.True(t, jt.isUnSynced(1))
 	jt.removeUnSynced(1)
 	require.False(t, jt.isUnSynced(1))
+}
+
+func TestUpdateClusterStateTicker(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ownerMgr := owner.NewMockManager(ctx, "owner_damen_test", nil, DDLOwnerKey)
+	stateSyncer := serverstate.NewMemSyncer()
+	stateSyncer.Init(ctx)
+
+	ddlCtx := ddlCtx{
+		ownerManager:      ownerMgr,
+		serverStateSyncer: stateSyncer,
+	}
+	scheCtx, cancelFunc := context.WithCancel(context.TODO())
+	defer cancelFunc()
+	s := &jobScheduler{
+		schCtx: scheCtx,
+		cancel: cancelFunc,
+		ddlCtx: &ddlCtx,
+	}
+
+	// run the ticker.
+	s.wg.RunWithLog(s.updateClusterStateTicker)
+
+	require.False(t, s.serverStateSyncer.IsUpgradingState())
+	opType, err := owner.GetOwnerOpValue(ctx, nil, DDLOwnerKey, "")
+	require.NoError(t, err)
+	require.Equal(t, opType, owner.OpNone)
+
+	// upgrading state
+	err = s.serverStateSyncer.UpdateGlobalState(ctx, serverstate.NewStateInfo(serverstate.StateUpgrading))
+	require.NoError(t, err)
+	require.True(t, s.serverStateSyncer.IsUpgradingState())
+
+	for {
+		if len(s.serverStateSyncer.WatchChan()) == 0 {
+			time.Sleep(time.Microsecond * 50)
+			break
+		}
+		time.Sleep(time.Microsecond * 50)
+	}
+
+	opType, err = owner.GetOwnerOpValue(ctx, nil, DDLOwnerKey, "")
+	require.NoError(t, err)
+	require.Equal(t, opType, owner.OpSyncUpgradingState)
+
+	// inject failpoint.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/failed-before-id-maps-saved", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/failed-before-id-maps-saved"))
+	}()
+
+	// normal state
+	err = s.serverStateSyncer.UpdateGlobalState(ctx, serverstate.NewStateInfo(serverstate.StateNormalRunning))
+	require.NoError(t, err)
+	require.False(t, s.serverStateSyncer.IsUpgradingState())
+
+	for {
+		if len(s.serverStateSyncer.WatchChan()) == 0 {
+			time.Sleep(time.Microsecond * 50)
+			break
+		}
+		time.Sleep(time.Microsecond * 50)
+	}
+
+	opType, err = owner.GetOwnerOpValue(ctx, nil, DDLOwnerKey, "")
+	require.NoError(t, err)
+	require.Equal(t, opType, owner.OpNone)
 }

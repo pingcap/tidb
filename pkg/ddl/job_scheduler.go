@@ -182,7 +182,7 @@ func (s *jobScheduler) start() {
 	s.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), jobTypeReorg)
 	s.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
 
-	s.wg.RunWithLog(s.updateClusterStateLoop)
+	s.wg.RunWithLog(s.updateClusterStateTicker)
 	s.wg.RunWithLog(s.scheduleLoop)
 	s.wg.RunWithLog(func() {
 		s.schemaVerSyncer.SyncJobSchemaVerLoop(s.schCtx)
@@ -333,18 +333,37 @@ func (s *jobScheduler) schedule() error {
 	}
 }
 
+// updateClusterStateTicker ticks updateClusterStateLoop().
+func (s *jobScheduler) updateClusterStateTicker() {
+	var retryInterval = time.Second
+	ticker := time.NewTicker(retryInterval)
+
+	defer tidbutil.Recover(metrics.LabelDDL, "updateClusterStateLoop", nil, true)
+
+	// server stateSyncer uses the scheduler context, so rewatch again with the scheduler context.
+	s.serverStateSyncer.Rewatch(s.schCtx)
+	for {
+		s.updateClusterStateLoop()
+
+		select {
+		case <-s.schCtx.Done():
+			logutil.DDLLogger().Warn("update cluster state loop finish", zap.Error(s.schCtx.Err()))
+			return
+		case <-ticker.C:
+			logutil.DDLLogger().Warn("try to check and update cluster state again")
+		}
+	}
+}
+
 // updateClusterStateLoop updates the cluster state in loop.
 func (s *jobScheduler) updateClusterStateLoop() {
 	var err error = nil
-
-	defer tidbutil.Recover(metrics.LabelDDL, "updateClusterStateLoop", nil, true)
-	// server stateSyncer uses the scheduler context, so rewatch again with the scheduler context.
-	s.serverStateSyncer.Rewatch(s.schCtx)
 
 	for {
 		err = s.checkAndUpdateClusterState()
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to check and update cluster state", zap.Error(err))
+			return
 		}
 
 		select {
@@ -370,6 +389,10 @@ func (s *jobScheduler) checkAndUpdateClusterState() error {
 	}
 	logutil.DDLLogger().Info("get global state and global state change",
 		zap.Bool("oldState", oldState), zap.Bool("currState", s.serverStateSyncer.IsUpgradingState()))
+
+	failpoint.Inject("failed-set-owner-op-value", func(val failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: failed set owner op value"))
+	})
 
 	ownerOp := owner.OpNone
 	if stateInfo.State == serverstate.StateUpgrading {
