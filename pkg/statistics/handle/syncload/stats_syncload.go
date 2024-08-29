@@ -338,7 +338,10 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		}
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
-		if loadNeeded && (!analyzed || !tbl.ColAndIdxExistenceMap.Has(item.ID, false)) {
+		if !tbl.ColAndIdxExistenceMap.Has(item.ID, false) {
+			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, wrapper.colInfo, false)
+		}
+		if loadNeeded && !analyzed {
 			wrapper.col = &statistics.Column{
 				PhysicalID: item.TableID,
 				Info:       wrapper.colInfo,
