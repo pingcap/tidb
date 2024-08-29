@@ -15,6 +15,7 @@
 package context
 
 import (
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -48,6 +49,7 @@ type DistSQLContext struct {
 	Location         *time.Location
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	SQLKiller        *sqlkiller.SQLKiller
+	CPUUsage         *ppcpuusage.CPUUsages
 	ErrCtx           errctx.Context
 
 	// TiFlash related configurations
@@ -104,6 +106,7 @@ func (dctx *DistSQLContext) Detach() *DistSQLContext {
 	// cursor, so that it's still good to provide at least one way to stop it.
 	// In the future, we should provide a more constant behavior for killing the cursor.
 	newCtx.SQLKiller = dctx.SQLKiller
+	newCtx.CPUUsage = dctx.CPUUsage
 	newCtx.KVVars = new(tikvstore.Variables)
 	*newCtx.KVVars = *dctx.KVVars
 	newCtx.KVVars.Killed = &newCtx.SQLKiller.Signal

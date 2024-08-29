@@ -42,9 +42,11 @@ type ExecDetails struct {
 	CopTime          time.Duration
 	BackoffTime      time.Duration
 	LockKeysDuration time.Duration
-	TidbCPUTime      time.Duration
-	TikvCPUTime      time.Duration
-	RequestCount     int
+	// TidbCPUTime is only used to pass info when log slow queries and statement summary
+	TidbCPUTime time.Duration
+	// TikvCPUTime is only used to pass info when log slow queries and statement summary
+	TikvCPUTime  time.Duration
+	RequestCount int
 }
 
 // DetailsNeedP90 contains execution detail information which need calculate P90.
@@ -416,8 +418,6 @@ func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *
 		s.execDetails.RequestCount++
 		s.mergeScanDetail(details.ScanDetail)
 		s.mergeTimeDetail(details.TimeDetail)
-		s.execDetails.TidbCPUTime += details.TidbCPUTime
-		s.execDetails.TikvCPUTime += details.TikvCPUTime
 		detail := &DetailsNeedP90{
 			BackoffSleep:  details.BackoffSleep,
 			BackoffTimes:  details.BackoffTimes,
@@ -451,20 +451,6 @@ func (s *SyncExecDetails) mergeScanDetail(scanDetail *util.ScanDetail) {
 func (s *SyncExecDetails) mergeTimeDetail(timeDetail util.TimeDetail) {
 	s.execDetails.TimeDetail.ProcessTime += timeDetail.ProcessTime
 	s.execDetails.TimeDetail.WaitTime += timeDetail.WaitTime
-}
-
-// MergeTikvCPUTime merges tikvCPU time into self.
-func (s *SyncExecDetails) MergeTikvCPUTime(d time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.execDetails.TikvCPUTime += d
-}
-
-// MergeTidbCPUTime merges tidbCPU time into self.
-func (s *SyncExecDetails) MergeTidbCPUTime(d time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.execDetails.TidbCPUTime += d
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.

@@ -1608,6 +1608,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
+	execDetail.TidbCPUTime, execDetail.TikvCPUTime = sessVars.SQLCPUUsages.GetAllCPUTime()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
@@ -1943,6 +1944,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
+	execDetail.TidbCPUTime, execDetail.TikvCPUTime = sessVars.SQLCPUUsages.GetAllCPUTime()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()

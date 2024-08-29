@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -42,13 +43,15 @@ type OOMAlarmVariablesInfo struct {
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	Time                  time.Time
-	ExpensiveLogTime      time.Time
-	ExpensiveTxnLogTime   time.Time
-	CurTxnCreateTime      time.Time
-	Plan                  any
-	CursorTracker         cursor.Tracker
-	StmtCtx               *stmtctx.StatementContext
+	Time                time.Time
+	ExpensiveLogTime    time.Time
+	ExpensiveTxnLogTime time.Time
+	CurTxnCreateTime    time.Time
+	Plan                any
+	CursorTracker       cursor.Tracker
+	StmtCtx             *stmtctx.StatementContext
+	// CPUUsage should be set nil for sleep command
+	CPUUsage              *ppcpuusage.CPUUsages
 	RefCountOfStmtCtx     *stmtctx.ReferenceCount
 	MemTracker            *memory.Tracker
 	DiskTracker           *disk.Tracker
@@ -144,15 +147,16 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	}
 
 	var affectedRows any
-	var tidbCPU float64
-	var tikvCPU float64
+	var tidbCPU time.Duration
+	var tikvCPU time.Duration
 	if pi.StmtCtx != nil {
 		affectedRows = pi.StmtCtx.AffectedRows()
-		tidbCPU = pi.StmtCtx.SyncExecDetails.GetExecDetails().TidbCPUTime.Seconds()
-		tikvCPU = pi.StmtCtx.SyncExecDetails.GetExecDetails().TikvCPUTime.Seconds()
+	}
+	if pi.CPUUsage != nil {
+		tidbCPU, tikvCPU = pi.CPUUsage.GetAllCPUTime()
 	}
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed,
-		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows, tidbCPU, tikvCPU)
+		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows, tidbCPU.Seconds(), tikvCPU.Seconds())
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.

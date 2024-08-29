@@ -1313,7 +1313,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	if topsqlstate.TopSQLEnabled() {
 		rawCtx := ctx
 		defer pprof.SetGoroutineLabels(rawCtx)
-		sqlID := cc.ctx.GetSessionVars().AllocNewSQLID()
+		sqlID := cc.ctx.GetSessionVars().SQLCPUUsages.AllocNewSQLID()
 		ctx = profileprocess.AttachAndRegisterProcessInfo(ctx, cc.connectionID, sqlID)
 	}
 	if variable.EnablePProfSQLCPU.Load() {
@@ -1354,9 +1354,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	vars := cc.ctx.GetSessionVars()
 	// reset killed for each request
 	vars.SQLKiller.Reset()
-	if sc := vars.StmtCtx; sc != nil {
-		sc.SyncExecDetails.Reset()
-	}
+	vars.SQLCPUUsages.ResetCPUTimes()
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
 	}

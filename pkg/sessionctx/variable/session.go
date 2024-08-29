@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -798,8 +799,8 @@ type SessionVars struct {
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
-	// SQLID is the unique id of sql
-	SQLID atomic.Uint64
+	// SQLCPUUsages records tidb/tikv cpu usages for current sql
+	SQLCPUUsages ppcpuusage.CPUUsages
 
 	// PlanID is the unique id of logical and physical plan.
 	PlanID atomic.Int32
@@ -1875,11 +1876,6 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 // AllocNewPlanID alloc new ID
 func (s *SessionVars) AllocNewPlanID() int {
 	return int(s.PlanID.Add(1))
-}
-
-// AllocNewSQLID alloc new ID, will restart from 0 when exceeds uint64 max limit
-func (s *SessionVars) AllocNewSQLID() uint64 {
-	return s.SQLID.Add(1)
 }
 
 // GetTotalCostDuration returns the total cost duration of the last statement in the current session.

@@ -168,7 +168,7 @@ func (e *BatchPointGetExec) Close() error {
 			sc.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 			timeDetail := e.stats.SnapshotRuntimeStats.GetTimeDetail()
 			if timeDetail != nil {
-				sc.SyncExecDetails.MergeTikvCPUTime(timeDetail.ProcessTime)
+				e.Ctx().GetSessionVars().SQLCPUUsages.MergeTikvCPUTime(timeDetail.ProcessTime)
 			}
 		}()
 	}

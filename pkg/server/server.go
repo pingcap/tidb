@@ -861,15 +861,12 @@ func (s *Server) UpdateProcessCPUTime(connID uint64, sqlID uint64, cpuTime time.
 	s.rwlock.RLock()
 	conn, ok := s.clients[connID]
 	s.rwlock.RUnlock()
-	if !ok || conn.ctx.GetSessionVars().SQLID.Load() != sqlID {
+	if !ok {
 		return
 	}
 	vars := conn.ctx.GetSessionVars()
 	if vars != nil {
-		sc := vars.StmtCtx
-		if sc != nil {
-			vars.StmtCtx.SyncExecDetails.MergeTidbCPUTime(cpuTime)
-		}
+		vars.SQLCPUUsages.MergeTidbCPUTime(sqlID, cpuTime)
 	}
 }
 
