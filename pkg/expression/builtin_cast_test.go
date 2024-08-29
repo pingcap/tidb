@@ -1694,7 +1694,7 @@ func TestCastArrayFunc(t *testing.T) {
 		},
 	}
 	for _, tt := range tbl {
-		f, err := BuildCastFunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp, false)
+		f, err := BuildCastFunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp, false, false)
 		if !tt.buildFuncSuccess {
 			require.Error(t, err, tt.input)
 			continue
