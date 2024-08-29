@@ -9,7 +9,7 @@ Vector Index refers to constructing a time and space efficient data structure fo
 
 ## **Motivation or Background**
 
-This document plans to support the same processing of vector indexes as ordinary indexes, corresponding to the requirements document [Support Vector and Vector index](https://pingcap-cn.feishu.cn/wiki/AklewIhg6i1MSUksGaNcLwkVnTY), its specific functions are as follows :
+This document plans to support the same processing of vector indexes as ordinary indexes, its specific functions are as follows :
 
 * Support adding and using vector indexes, including adding vector indexes during and after table creation.
 * Support dropping and renaming vector indexes.
@@ -74,7 +74,6 @@ The vector index only obtains the top n values through similarity. The following
 ```sql
 SELECT * 
 FROM foo 
-ORDER BY data <-> '[3,1,2]' 
 ORDER BY VEC_COSINE_DISTANCE(data, '[3,1,2]')
 LIMIT 5;
 ```
