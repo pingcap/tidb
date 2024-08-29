@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/config"
 	"math"
 	"sort"
 	"strconv"
@@ -237,6 +238,11 @@ type planCacheKey struct {
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
 
+	// status related to Txn
+	inTxn          bool
+	autoCommit     bool
+	pessAutoCommit bool
+
 	memoryUsage int64 // Do not include in hash
 	hash        []byte
 }
@@ -260,6 +266,9 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
+	if key == nil {
+		return nil
+	}
 	if len(key.hash) == 0 {
 		var (
 			dbBytes    = hack.Slice(key.database)
@@ -290,8 +299,18 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
+		key.hash = append(key.hash, bool2Byte(key.inTxn))
+		key.hash = append(key.hash, bool2Byte(key.autoCommit))
+		key.hash = append(key.hash, bool2Byte(key.pessAutoCommit))
 	}
 	return key.hash
+}
+
+func bool2Byte(flag bool) byte {
+	if flag {
+		return '1'
+	}
+	return '0'
 }
 
 const emptyPlanCacheKeySize = int64(unsafe.Sizeof(planCacheKey{}))
@@ -360,6 +379,9 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		inRestrictedSQL:          sessionVars.InRestrictedSQL,
 		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
 		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
+		inTxn:                    sessionVars.InTxn(),
+		autoCommit:               sessionVars.IsAutocommit(),
+		pessAutoCommit:           config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load(),
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
@@ -507,6 +529,9 @@ type PlanCacheStmt struct {
 	// dbName and tbls are used to add metadata lock.
 	dbName []model.CIStr
 	tbls   []table.Table
+
+	// the cache key for point-get statement, have to check whether the cache key changes before reusing this plan for safety.
+	planCacheKey kvcache.Key
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.

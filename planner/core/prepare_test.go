@@ -1252,9 +1252,12 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
 	tk.MustExec("begin")
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
+	cnt := pb.GetCounter().GetValue()
+	require.Equal(t, float64(0), cnt) // can't reuse the plan created outside the txn
+	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
 	err := counter.Write(pb)
 	require.NoError(t, err)
-	cnt := pb.GetCounter().GetValue()
+	cnt = pb.GetCounter().GetValue()
 	require.Equal(t, float64(1), cnt)
 	tk.MustExec("insert into t1 values(1)")
 	// Cached plan is invalid now, it is not chosen and removed.
@@ -1285,6 +1288,8 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	tk.MustExec("prepare stmt2 from 'select * from t1 left join t2 on true where t1.a > ?'")
 	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows())
 	tk.MustExec("begin")
+	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows())
+	require.Equal(t, float64(3), cnt) // can't reuse the plan created outside the txn
 	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows())
 	err = counter.Write(pb)
 	require.NoError(t, err)
