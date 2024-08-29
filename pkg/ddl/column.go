@@ -529,6 +529,10 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if pt, ok := t.(table.PartitionedTable); ok {
+			// Restart from first partition
+			reorgInfo.PhysicalTableID = pt.Meta().Partition.Definitions[0].ID
+		}
 	}
 
 	currentVer, err := getValidCurrentVersion(reorgInfo.jobCtx.store)
@@ -582,6 +586,10 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		err = w.addTableIndex(t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if pt, ok := t.(table.PartitionedTable); ok {
+			// Restart from first partition
+			reorgInfo.PhysicalTableID = pt.Meta().Partition.Definitions[0].ID
 		}
 	}
 	return nil
