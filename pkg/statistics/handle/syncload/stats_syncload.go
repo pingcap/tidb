@@ -338,9 +338,6 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		}
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
-		if !tbl.ColAndIdxExistenceMap.Has(item.ID, false) {
-			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, wrapper.colInfo, false)
-		}
 		if loadNeeded && !analyzed {
 			wrapper.col = &statistics.Column{
 				PhysicalID: item.TableID,
@@ -581,6 +578,8 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, idxHist.Info, true)
 			// All the objects shares the same stats version. Update it here.
 			tbl.StatsVer = statistics.Version0
+		} else {
+			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, idxHist.Info, false)
 		}
 	}
 	s.statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
