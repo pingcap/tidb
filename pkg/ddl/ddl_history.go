@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
 )
 
@@ -121,6 +122,15 @@ func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, e
 // GetLastHistoryDDLJobsIterator gets latest N history DDL jobs iterator.
 func GetLastHistoryDDLJobsIterator(m *meta.Meta) (meta.LastJobIterator, error) {
 	return m.GetLastHistoryDDLJobsIterator()
+}
+
+// GetLastHistoryDDLJobsIterator gets latest N history DDL jobs iterator.
+func GetLastHistoryDDLJobsIteratorWithFilter(
+	m *meta.Meta,
+	schemaIDs set.Int64Set,
+	tableNames set.StringSet,
+) (meta.LastJobIterator, error) {
+	return m.GetLastHistoryDDLJobsIteratorWithFilter(schemaIDs, tableNames)
 }
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.

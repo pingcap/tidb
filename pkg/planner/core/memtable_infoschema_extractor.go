@@ -59,6 +59,7 @@ const (
 	TidbPartitionID  = "tidb_partition_id"
 	IndexName        = "index_name"
 	SchemaName       = "schema_name"
+	DBName           = "db_name"
 	ConstraintSchema = "constraint_schema"
 	ConstraintName   = "constraint_name"
 	TableID          = "table_id"
@@ -108,6 +109,20 @@ func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []model.
 	for _, s := range schemas {
 		if n, ok := is.SchemaByName(s); ok {
 			ret = append(ret, n.Name)
+		}
+	}
+	return ret
+}
+
+// ListSchemaIDs lists all schema ids from predicate.
+// Used for ddl_jobs
+func (e *InfoSchemaBaseExtractor) ListSchemaIDs(is infoschema.InfoSchema) []int64 {
+	ec := e.extractableColumns
+	schemas := e.getSchemaObjectNames(ec.schema)
+	ret := make([]int64, 0, len(schemas))
+	for _, s := range schemas {
+		if n, ok := is.SchemaByName(s); ok {
+			ret = append(ret, n.ID)
 		}
 	}
 	return ret
@@ -257,6 +272,17 @@ func NewInfoSchemaTablesExtractor() *InfoSchemaTablesExtractor {
 		tableID: TidbTableID,
 	}
 	e.colNames = []string{TableSchema, TableName, TidbTableID}
+	return e
+}
+
+// NewInfoSchemaTablesExtractor creates a new InfoSchemaTablesExtractor.
+func NewInfoSchemaDDLExtractor() *InfoSchemaTablesExtractor {
+	e := &InfoSchemaTablesExtractor{}
+	e.extractableColumns = extractableCols{
+		schema: DBName,
+		table:  TableName,
+	}
+	e.colNames = []string{DBName, TableName}
 	return e
 }
 

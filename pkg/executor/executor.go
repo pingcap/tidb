@@ -82,6 +82,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -410,15 +411,58 @@ type DDLJobRetriever struct {
 	activeRoles    []*auth.RoleIdentity
 	cacheJobs      []*model.Job
 	TZLoc          *time.Location
+	extractor      base.MemTablePredicateExtractor
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTablesExtractor", e.extractor)
+	}
+
+	// build schema_ids filter
+	var schema_filter string
+	schemaIDSet := set.NewInt64Set()
+	if sIDs := ex.ListSchemaIDs(e.is); len(sIDs) > 0 {
+		var builder strings.Builder
+		for _, dbid := range sIDs {
+			schemaIDSet.Insert(dbid)
+			builder.WriteString(fmt.Sprintf("schema_ids LIKE '%%%d%%' OR ", dbid))
+		}
+		schema_filter = builder.String()
+		schema_filter = schema_filter[:len(schema_filter)-4]
+	} else {
+		schema_filter = "1"
+	}
+
+	// build table_ids filter
+	var tableNames set.StringSet
+	var table_filter string
+	if tableNames, ok = ex.ColPredicates["table_name"]; ok && len(tableNames) > 0 {
+		var builder strings.Builder
+		_, tables, err := ex.ListSchemasAndTables(context.Background(), e.is)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for i := 0; i < len(tables); i++ {
+			builder.WriteString(fmt.Sprintf("table_ids LIKE '%%%d%%' OR ", tables[i].ID))
+		}
+		table_filter = builder.String()
+	}
+	if len(table_filter) > 0 {
+		table_filter = table_filter[:len(table_filter)-4]
+	} else {
+		table_filter = "1"
+	}
+
+	filter := fmt.Sprintf("(%s) and (%s)", schema_filter, table_filter)
+	jobs, err := ddl.GetNeededDDLJobs(sess, filter)
+
 	m := meta.NewMeta(txn)
-	jobs, err := ddl.GetAllDDLJobs(sess)
 	if err != nil {
 		return err
 	}
-	e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIterator(m)
+	e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIteratorWithFilter(m, schemaIDSet, tableNames)
 	if err != nil {
 		return err
 	}

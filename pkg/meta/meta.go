@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/partialjson"
+	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 var (
@@ -1546,6 +1547,21 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	}, nil
 }
 
+// GetLastHistoryDDLJobsIteratorWithFilter gets latest N history ddl jobs iterator.
+func (m *Meta) GetLastHistoryDDLJobsIteratorWithFilter(
+	schemaIDs set.Int64Set,
+	tableNames set.StringSet) (LastJobIterator, error) {
+	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
+	if err != nil {
+		return nil, err
+	}
+	return &HLastJobIterator{
+		iter:       iter,
+		schemaIDs:  schemaIDs,
+		tableNames: tableNames,
+	}, nil
+}
+
 // GetHistoryDDLJobsIterator gets the jobs iterator begin with startJobID.
 func (m *Meta) GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, error) {
 	field := m.jobIDKey(startJobID)
@@ -1560,7 +1576,49 @@ func (m *Meta) GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, err
 
 // HLastJobIterator is the iterator for gets the latest history.
 type HLastJobIterator struct {
-	iter *structure.ReverseHashIterator
+	iter       *structure.ReverseHashIterator
+	schemaIDs  set.Int64Set
+	tableNames set.StringSet
+}
+
+// extractSchemaIDAndTableName extract schema_id and table_id from encoded Job structure
+func extractSchemaIDAndTableName(s string) (int64, string, error) {
+	pos := strings.Index(s, `"schema_id":`)
+	if pos == -1 {
+		return 0, "", fmt.Errorf("schema_id not found in model.Job json")
+	}
+
+	start := pos + len(`"schema_id":`)
+	substr := s[start:]
+	end := strings.Index(substr, ",")
+	if end == -1 {
+		end = len(substr)
+	}
+
+	schemaIDStr := strings.TrimSpace(substr[:end])
+	schemaID, err := strconv.ParseInt(schemaIDStr, 10, 64)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to parse table_id: %v", err)
+	}
+
+	pos = strings.Index(substr, `"table_name":`)
+	if pos == -1 {
+		return 0, "", fmt.Errorf("table_name not found in model.Job json")
+	}
+
+	start = pos + len(`"table_name":`)
+	substr = substr[start:]
+	end = strings.Index(substr, ",")
+	if end == -1 {
+		end = len(substr)
+	}
+
+	tableName := strings.TrimSpace(substr[:end])
+	if strings.HasPrefix(tableName, `"`) && strings.HasSuffix(tableName, `"`) {
+		tableName = tableName[1 : len(tableName)-1]
+	}
+
+	return schemaID, tableName, nil
 }
 
 // GetLastJobs gets last several jobs.
@@ -1572,6 +1630,22 @@ func (i *HLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job
 	iter := i.iter
 	for iter.Valid() && len(jobs) < num {
 		job := &model.Job{}
+
+		if len(i.tableNames) > 0 || len(i.schemaIDs) > 0 {
+			schemaID, tableName, err := extractSchemaIDAndTableName(string(hack.String(iter.Value())))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if (i.schemaIDs.Count() > 0 && !i.schemaIDs.Exist(schemaID)) ||
+				i.tableNames.Count() > 0 && !i.tableNames.Exist(tableName) {
+				err := iter.Next()
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				continue
+			}
+		}
+
 		err := job.Decode(iter.Value())
 		if err != nil {
 			return nil, errors.Trace(err)

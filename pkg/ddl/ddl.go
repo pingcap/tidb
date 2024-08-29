@@ -1391,6 +1391,11 @@ func GetAllDDLJobs(se sessionctx.Context) ([]*model.Job, error) {
 	return getJobsBySQL(sess.NewSession(se), JobTable, "1 order by job_id")
 }
 
+// GetNeededDDLJobs get DDL jobs using given predicates.
+func GetNeededDDLJobs(se sessionctx.Context, filter string) ([]*model.Job, error) {
+	return getJobsBySQL(sess.NewSession(se), JobTable, filter)
+}
+
 // IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
 // then iterates history DDL jobs until the `finishFn` return true or error.
 func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
