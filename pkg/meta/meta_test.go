@@ -966,7 +966,7 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	// create database
 	dbInfo := &model.DBInfo{
 		ID:      10001,
-		Name:    model.NewCIStr("sc"),
+		Name:    pmodel.NewCIStr("sc"),
 		Charset: "utf8",
 		Collate: "utf8_general_ci",
 		State:   model.StatePublic,
@@ -975,13 +975,13 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	// create table with partition info
 	tblInfo := &model.TableInfo{
 		ID:      10002,
-		Name:    model.NewCIStr("cs"),
+		Name:    pmodel.NewCIStr("cs"),
 		Charset: "latin1",
 		Collate: "latin1_bin",
 		State:   model.StatePublic,
 		Partition: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
-				{ID: 1, Name: model.NewCIStr("p1")},
+				{ID: 1, Name: pmodel.NewCIStr("p1")},
 			},
 			Enable: true,
 		},
@@ -1009,7 +1009,7 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
 
 	//byName, traverse byName and load from store,
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("sc"), model.NewCIStr("cs"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("sc"), pmodel.NewCIStr("cs"))
 	require.NoError(t, err)
 	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
 
@@ -1019,7 +1019,7 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
 
 	//schemaMap, traverse schemaMap find dbInfo
-	db, ok := is.SchemaByName(model.NewCIStr("sc"))
+	db, ok := is.SchemaByName(pmodel.NewCIStr("sc"))
 	require.True(t, ok)
 	require.Equal(t, db.ID, dbInfo.ID)
 
