@@ -1137,14 +1137,15 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 		}
 	}
 
-	preferByStats := ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount <= 1
-	preferByVar := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
+	// Limit range scan preferencing to pseudo and zero row tables
+	preferByVar := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() && (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount <= 1)
+	// If we've forced an index merge - we want to keep these plans
 	preferMerge := len(ds.IndexMergeHints) > 0 || fixcontrol.GetBoolWithDefault(
 		ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
 		fixcontrol.Fix52869,
 		false,
 	)
-	if (preferByVar || preferByStats) && len(candidates) > 1 {
+	if preferByVar && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path or MV index, we just keep them. For other candidate paths, if there exists
 		// any range scan path, we remove full scan paths and keep range scan paths.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
@@ -1161,9 +1162,10 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 				}
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
+				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 				equalPlan := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0
 				indexFilters := len(c.path.TableFilters) < len(c.path.IndexFilters)
-				if preferByVar || preferMerge || ((equalPlan || indexFilters) && prop.IsSortItemEmpty() || c.isMatchProp) {
+				if preferMerge || ((equalPlan || indexFilters) && prop.IsSortItemEmpty() || c.isMatchProp) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
