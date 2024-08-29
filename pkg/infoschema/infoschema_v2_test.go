@@ -461,8 +461,8 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	schemaName := model.NewCIStr("testDB")
-	tableName := model.NewCIStr("testTable")
+	schemaName := pmodel.NewCIStr("testDB")
+	tableName := pmodel.NewCIStr("testTable")
 	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
@@ -505,8 +505,8 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	require.Equal(t, v2.Data.pid2tid.Len(), 0)
 	tblInfo.Partition = &model.PartitionInfo{
 		Definitions: []model.PartitionDefinition{
-			{ID: 1, Name: model.NewCIStr("p1")},
-			{ID: 2, Name: model.NewCIStr("p2")},
+			{ID: 1, Name: pmodel.NewCIStr("p1")},
+			{ID: 2, Name: pmodel.NewCIStr("p2")},
 		},
 		Enable:   true,
 		DDLState: model.StatePublic,
