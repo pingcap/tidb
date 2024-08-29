@@ -486,7 +486,7 @@ func TestDeniedByBDR(t *testing.T) {
 			action: model.ActionAddPrimaryKey,
 			job: &model.Job{
 				Type: model.ActionAddPrimaryKey,
-				Args: []interface{}{true},
+				Args: []any{true},
 			},
 			expected: true,
 		},
@@ -495,7 +495,7 @@ func TestDeniedByBDR(t *testing.T) {
 			action: model.ActionAddIndex,
 			job: &model.Job{
 				Type: model.ActionAddIndex,
-				Args: []interface{}{true},
+				Args: []any{true},
 			},
 			expected: true,
 		},
@@ -504,7 +504,7 @@ func TestDeniedByBDR(t *testing.T) {
 			action: model.ActionAddIndex,
 			job: &model.Job{
 				Type: model.ActionAddIndex,
-				Args: []interface{}{false},
+				Args: []any{false},
 			},
 			expected: false,
 		},
