@@ -446,16 +446,16 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 		schemaFilter = "1"
 	}
 
-	tableNames := ex.ColPredicates["table_name"]
+	var err error
 
-	jobs, err := ddl.GetNeededDDLJobs(sess, schemaFilter)
-	e.runningJobs = jobs
+	e.runningJobs, err = ddl.GetNeededDDLJobs(sess, schemaFilter)
+	if err != nil {
+		return err
+	}
 
 	if !skipHistoryJobs {
 		m := meta.NewMeta(txn)
-		if err != nil {
-			return err
-		}
+		tableNames := ex.ColPredicates["table_name"]
 		e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIteratorWithFilter(m, schemaIDSet, tableNames)
 		if err != nil {
 			return err
