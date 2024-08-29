@@ -812,6 +812,9 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	// when we use non-lite init stats, it cannot init the stats for common columns.
 	// so we need to foce to load the stats.
 	col, ok := t.columns[id]
+	if !ok {
+		return nil, false, false
+	}
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
