@@ -813,7 +813,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	// so we need to foce to load the stats.
 	col, ok := t.columns[id]
 	if !ok {
-		return nil, false, false
+		return nil, true, true
 	}
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
@@ -823,14 +823,9 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 		// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
 		// We need to find a way to maintain it more correctly.
 		// Otherwise we don't need to load it.
-		if !ok {
-			// If we don't have this column. We skip it.
-			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
-			// We need to find a way to maintain it more correctly.
-			return nil, t.ColAndIdxExistenceMap.Has(id, false), false
-		}
+		result := t.ColAndIdxExistenceMap.Has(id, false)
 		// If the column is not in the ColAndIdxExistenceMap, we need to load it.
-		return nil, false, false
+		return nil, !result, !result
 	}
 
 	// Restore the condition from the simplified form:
