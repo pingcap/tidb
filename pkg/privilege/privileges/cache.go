@@ -438,8 +438,8 @@ func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
 // The server uses sorting rules that order rows with the most-specific Host values first.
 func (p *MySQLPrivilege) buildAndSortUserMap() {
 	userMap := make(map[string][]*UserRecord, len(p.User))
-	for _, record := range p.User {
-		userMap[record.User] = append(userMap[record.User], &record)
+	for i, record := range p.User {
+		userMap[record.User] = append(userMap[record.User], &p.User[i])
 	}
 	for userName, records := range userMap {
 		slices.SortFunc(records, compareUserRecord)
@@ -997,9 +997,8 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 		if records := p.UserMap[user]; len(records) > 0 {
 			for _, addr := range addrs {
 				for i := 0; i < len(records); i++ {
-					record := records[i]
-					if record.match(user, addr) {
-						return record
+					if records[i].match(user, addr) {
+						return records[i]
 					}
 				}
 			}
@@ -1012,9 +1011,8 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 func (p *MySQLPrivilege) matchResourceGroup(resourceGroupName string) *UserRecord {
 	for _, records := range p.UserMap {
 		for i := 0; i < len(records); i++ {
-			record := records[i]
-			if record.ResourceGroup == resourceGroupName {
-				return record
+			if records[i].ResourceGroup == resourceGroupName {
+				return records[i]
 			}
 		}
 	}

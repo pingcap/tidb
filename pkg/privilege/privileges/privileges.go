@@ -1047,38 +1047,38 @@ type PasswordLocking struct {
 }
 
 // ParseJSON parses information about PasswordLocking.
-func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.BinaryJSON) error {
+func (pl *PasswordLocking) ParseJSON(passwordLockingJSON types.BinaryJSON) error {
 	var err error
 
-	passwordLocking.FailedLoginAttempts, err =
+	pl.FailedLoginAttempts, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.failed_login_attempts")
 	if err != nil {
 		return err
 	}
-	passwordLocking.FailedLoginAttempts = min(passwordLocking.FailedLoginAttempts, math.MaxInt16)
-	passwordLocking.FailedLoginAttempts = mathutil.Max(passwordLocking.FailedLoginAttempts, 0)
+	pl.FailedLoginAttempts = min(pl.FailedLoginAttempts, math.MaxInt16)
+	pl.FailedLoginAttempts = mathutil.Max(pl.FailedLoginAttempts, 0)
 
-	passwordLocking.PasswordLockTimeDays, err =
+	pl.PasswordLockTimeDays, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
 	if err != nil {
 		return err
 	}
-	passwordLocking.PasswordLockTimeDays = min(passwordLocking.PasswordLockTimeDays, math.MaxInt16)
-	passwordLocking.PasswordLockTimeDays = mathutil.Max(passwordLocking.PasswordLockTimeDays, -1)
+	pl.PasswordLockTimeDays = min(pl.PasswordLockTimeDays, math.MaxInt16)
+	pl.PasswordLockTimeDays = mathutil.Max(pl.PasswordLockTimeDays, -1)
 
-	passwordLocking.FailedLoginCount, err =
+	pl.FailedLoginCount, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.failed_login_count")
 	if err != nil {
 		return err
 	}
 
-	passwordLocking.AutoLockedLastChanged, err =
+	pl.AutoLockedLastChanged, err =
 		extractTimeUnixFromJSON(passwordLockingJSON, "$.Password_locking.auto_locked_last_changed")
 	if err != nil {
 		return err
 	}
 
-	passwordLocking.AutoAccountLocked, err =
+	pl.AutoAccountLocked, err =
 		extractBoolFromJSON(passwordLockingJSON, "$.Password_locking.auto_account_locked")
 	if err != nil {
 		return err
@@ -1091,8 +1091,8 @@ func extractInt64FromJSON(json types.BinaryJSON, pathExpr string) (val int64, er
 	if err != nil {
 		return 0, err
 	}
-	if BJ, found := json.Extract([]types.JSONPathExpression{jsonPath}); found {
-		return BJ.GetInt64(), nil
+	if bj, found := json.Extract([]types.JSONPathExpression{jsonPath}); found {
+		return bj.GetInt64(), nil
 	}
 	return 0, nil
 }
@@ -1102,8 +1102,8 @@ func extractTimeUnixFromJSON(json types.BinaryJSON, pathExpr string) (int64, err
 	if err != nil {
 		return -1, err
 	}
-	if BJ, found := json.Extract([]types.JSONPathExpression{jsonPath}); found {
-		value, err := BJ.Unquote()
+	if bj, found := json.Extract([]types.JSONPathExpression{jsonPath}); found {
+		value, err := bj.Unquote()
 		if err != nil {
 			return -1, err
 		}
@@ -1121,8 +1121,8 @@ func extractBoolFromJSON(json types.BinaryJSON, pathExpr string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if BJ, found := json.Extract([]types.JSONPathExpression{jsonPath}); found {
-		value, err := BJ.Unquote()
+	if bj, found := json.Extract([]types.JSONPathExpression{jsonPath}); found {
+		value, err := bj.Unquote()
 		if err != nil {
 			return false, err
 		}
