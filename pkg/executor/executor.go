@@ -415,52 +415,61 @@ type DDLJobRetriever struct {
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
-	ex, ok := e.extractor.(*plannercore.InfoSchemaDDLExtractor)
-	if !ok {
-		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaDDLExtractor", e.extractor)
-	}
-
+	skipRunningJobs := false
 	skipHistoryJobs := false
-	if states, ok := ex.ColPredicates["state"]; ok {
-		skipHistoryJobs = true
-		states.IterateWith(func(s string) {
-			ss := strings.ToLower(s)
-			if ss == "cancelled" || ss == "synced" {
-				skipHistoryJobs = false
-			}
-		})
-	}
-
-	// build schema_ids filter
-	var schemaFilter string
+	schemaFilter := "1"
 	schemaIDSet := set.NewInt64Set()
-	if sIDs := ex.ListSchemaIDs(e.is); len(sIDs) > 0 {
-		var builder strings.Builder
-		for _, dbid := range sIDs {
-			schemaIDSet.Insert(dbid)
-			builder.WriteString(fmt.Sprintf("schema_ids LIKE '%%%d%%' OR ", dbid))
+	tableNames := set.NewStringSet()
+
+	ex, ok := e.extractor.(*plannercore.InfoSchemaDDLExtractor)
+	if ok {
+		if states, ok := ex.ColPredicates["state"]; ok {
+			skipHistoryJobs = true
+			skipRunningJobs = true
+			states.IterateWith(func(s string) {
+				ss := strings.ToLower(s)
+				if ss == "cancelled" || ss == "synced" {
+					skipHistoryJobs = false
+				} else {
+					skipRunningJobs = false
+				}
+			})
 		}
-		schemaFilter = builder.String()
-		schemaFilter = schemaFilter[:len(schemaFilter)-4]
-	} else {
-		schemaFilter = "1"
+
+		// build schema_ids filter
+		if sIDs, hasPredicates := ex.ListSchemaIDs(e.is); len(sIDs) > 0 {
+			var builder strings.Builder
+			for _, dbid := range sIDs {
+				schemaIDSet.Insert(dbid)
+				builder.WriteString(fmt.Sprintf("schema_ids LIKE '%%%d%%' OR ", dbid))
+			}
+			schemaFilter = builder.String()
+			schemaFilter = schemaFilter[:len(schemaFilter)-4]
+		} else if hasPredicates {
+			// This means all schemas in predicates are not found, just skip
+			skipRunningJobs = true
+			skipHistoryJobs = true
+		}
+		tableNames = ex.ColPredicates["table_name"]
 	}
 
 	var err error
 
-	e.runningJobs, err = ddl.GetNeededDDLJobs(sess, schemaFilter)
-	if err != nil {
-		return err
+	if !skipRunningJobs {
+		e.runningJobs, err = ddl.GetNeededDDLJobs(sess, schemaFilter)
+		if err != nil {
+			return err
+		}
 	}
 
 	if !skipHistoryJobs {
 		m := meta.NewMeta(txn)
-		tableNames := ex.ColPredicates["table_name"]
 		e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIteratorWithFilter(m, schemaIDSet, tableNames)
 		if err != nil {
 			return err
 		}
 	}
+
 	e.cursor = 0
 	return nil
 }

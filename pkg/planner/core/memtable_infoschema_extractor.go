@@ -117,7 +117,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []model.
 
 // ListSchemaIDs lists all schema ids from predicate.
 // Used for ddl_jobs
-func (e *InfoSchemaBaseExtractor) ListSchemaIDs(is infoschema.InfoSchema) []int64 {
+func (e *InfoSchemaBaseExtractor) ListSchemaIDs(is infoschema.InfoSchema) ([]int64, bool) {
 	ec := e.extractableColumns
 	schemas := e.getSchemaObjectNames(ec.schema)
 	ret := make([]int64, 0, len(schemas))
@@ -126,7 +126,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemaIDs(is infoschema.InfoSchema) []int6
 			ret = append(ret, n.ID)
 		}
 	}
-	return ret
+	return ret, len(schemas) > 0
 }
 
 // ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
