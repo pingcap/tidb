@@ -299,7 +299,6 @@ import (
 	varcharType       "VARCHAR"
 	varcharacter      "VARCHARACTER"
 	varying           "VARYING"
-	vectorType        "VECTOR"
 	virtual           "VIRTUAL"
 	when              "WHEN"
 	where             "WHERE"
@@ -679,6 +678,7 @@ import (
 	validation            "VALIDATION"
 	value                 "VALUE"
 	variables             "VARIABLES"
+	vectorType            "VECTOR"
 	view                  "VIEW"
 	visible               "VISIBLE"
 	wait                  "WAIT"
@@ -1637,6 +1637,8 @@ import (
 %precedence order
 %precedence lowerThanFunction
 %precedence function
+%precedence constraint
+%precedence vectorType
 
 /* A dummy token to force the priority of TableRef production in a join. */
 %left tableRefPriority
@@ -7098,6 +7100,7 @@ UnReservedKeyword:
 |	"OLTP_READ_WRITE"
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
+|	"VECTOR"
 |	"TPCH_10"
 |	"WITH_SYS_TABLE"
 |	"WAIT_TIFLASH_READY"
