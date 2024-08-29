@@ -4,7 +4,6 @@ go_library(
     name = "cascades",
     srcs = [
         "enforcer_rules.go",
-        "hash_equaler.go",
         "implementation_rules.go",
         "optimize.go",
         "stringer.go",
@@ -42,7 +41,6 @@ go_test(
     timeout = "short",
     srcs = [
         "enforcer_rules_test.go",
-        "hash_equaler_test.go",
         "main_test.go",
         "optimize_test.go",
         "stringer_test.go",
@@ -51,7 +49,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cascades"],
     flaky = True,
-    shard_count = 28,
+    shard_count = 25,
     deps = [
         "//pkg/domain",
         "//pkg/expression",
