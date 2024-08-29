@@ -15,7 +15,6 @@
 package context
 
 import (
-	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -25,6 +24,7 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
