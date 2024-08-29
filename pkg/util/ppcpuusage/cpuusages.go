@@ -56,7 +56,7 @@ func (c *CPUUsages) GetSQLID() uint64 {
 func (c *CPUUsages) GetAllCPUTime() (time.Duration, time.Duration) {
 	c.Lock()
 	defer c.Unlock()
-	return c.tidbCPUTime, c.tidbCPUTime
+	return c.tidbCPUTime, c.tikvCPUTime
 }
 
 // GetTidbCPUTime returns tidbCPU time
