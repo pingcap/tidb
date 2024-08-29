@@ -4344,6 +4344,8 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			)
 		case *ast.VariableExpr:
 			neededVars[v.Name] = i
+		case *ast.FuncCallExpr:
+			//expression.GetOptionalEvalPropsForExpr(v)
 		}
 	}
 	for _, v := range ld.ColumnsAndUserVars {
