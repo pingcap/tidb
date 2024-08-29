@@ -181,6 +181,8 @@ func (s *jobScheduler) start() {
 	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	s.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), jobTypeReorg)
 	s.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
+
+	s.wg.RunWithLog(s.updateClusterStateLoop)
 	s.wg.RunWithLog(s.scheduleLoop)
 	s.wg.RunWithLog(func() {
 		s.schemaVerSyncer.SyncJobSchemaVerLoop(s.schCtx)
@@ -292,9 +294,7 @@ func (s *jobScheduler) schedule() error {
 	if s.etcdCli != nil {
 		notifyDDLJobByEtcdCh = s.etcdCli.Watch(s.schCtx, addingDDLJobNotifyKey)
 	}
-	if err := s.checkAndUpdateClusterState(true); err != nil {
-		return errors.Trace(err)
-	}
+
 	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
 	s.mustReloadSchemas()
@@ -325,9 +325,7 @@ func (s *jobScheduler) schedule() error {
 		case <-s.schCtx.Done():
 			return s.schCtx.Err()
 		}
-		if err := s.checkAndUpdateClusterState(false); err != nil {
-			continue
-		}
+
 		failpoint.InjectCall("beforeLoadAndDeliverJobs")
 		if err := s.loadAndDeliverJobs(se); err != nil {
 			logutil.SampleLogger().Warn("load and deliver jobs failed", zap.Error(err))
@@ -335,21 +333,35 @@ func (s *jobScheduler) schedule() error {
 	}
 }
 
-// TODO make it run in a separate routine.
-func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
-	select {
-	case _, ok := <-s.serverStateSyncer.WatchChan():
-		if !ok {
-			// TODO serverStateSyncer should only be started when we are the owner, and use
-			// the context of scheduler, will refactor it later.
-			s.serverStateSyncer.Rewatch(s.ddlCtx.ctx)
+// updateClusterStateLoop updates the cluster state in loop.
+func (s *jobScheduler) updateClusterStateLoop() {
+	var err error = nil
+
+	defer tidbutil.Recover(metrics.LabelDDL, "updateClusterStateLoop", nil, true)
+	// server stateSyncer uses the scheduler context, so rewatch again with the scheduler context.
+	s.serverStateSyncer.Rewatch(s.schCtx)
+
+	for {
+		err = s.checkAndUpdateClusterState()
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to check and update cluster state", zap.Error(err))
 		}
-	default:
-		if !needUpdate {
-			return nil
+
+		select {
+		case <-s.schCtx.Done():
+			logutil.DDLLogger().Warn("update cluster state loop finish", zap.Error(s.schCtx.Err()))
+			return
+		case _, ok := <-s.serverStateSyncer.WatchChan():
+			if !ok {
+				logutil.DDLLogger().Warn("cluster state watch channel closed, rewatch again")
+				s.serverStateSyncer.Rewatch(s.schCtx)
+				continue
+			}
 		}
 	}
+}
 
+func (s *jobScheduler) checkAndUpdateClusterState() error {
 	oldState := s.serverStateSyncer.IsUpgradingState()
 	stateInfo, err := s.serverStateSyncer.GetGlobalState(s.schCtx)
 	if err != nil {
