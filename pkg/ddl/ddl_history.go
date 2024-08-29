@@ -124,7 +124,7 @@ func GetLastHistoryDDLJobsIterator(m *meta.Meta) (meta.LastJobIterator, error) {
 	return m.GetLastHistoryDDLJobsIterator()
 }
 
-// GetLastHistoryDDLJobsIterator gets latest N history DDL jobs iterator.
+// GetLastHistoryDDLJobsIteratorWithFilter gets latest N history DDL jobs iterator.
 func GetLastHistoryDDLJobsIteratorWithFilter(
 	m *meta.Meta,
 	schemaIDs set.Int64Set,
