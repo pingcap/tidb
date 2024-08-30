@@ -16,8 +16,6 @@ package common
 
 import (
 	"context"
-
-	"github.com/pingcap/tidb/pkg/lightning/log"
 )
 
 // Range contains a start key and an end key.
@@ -42,9 +40,11 @@ type Engine interface {
 	// duplicate detection is enabled, the keys in engine are encoded by duplicate
 	// detection but the returned keys should not be encoded.
 	GetKeyRange() (startKey []byte, endKey []byte, err error)
-	// SplitRanges splits the range [startKey, endKey) into multiple ranges. If the
-	// duplicate detection is enabled, the keys in engine are encoded by duplicate
-	// detection but the returned keys should not be encoded.
-	SplitRanges(startKey, endKey []byte, sizeLimit, keysLimit int64, logger log.Logger) ([]Range, error)
+	// GetRegionSplitKeys checks the KV distribution of the Engine and returns the
+	// keys that can be used as region split keys. If the duplicate detection is
+	// enabled, the keys stored in engine are encoded by duplicate detection but the
+	// returned keys should not be encoded.
+	GetRegionSplitKeys() ([][]byte, error)
+	// GetJobRanges returns the expected import job ranges.
 	Close() error
 }
