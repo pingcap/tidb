@@ -586,15 +586,12 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 			return true
 		}
 		tbl = tbl.Copy()
-		tbl.Pseudo = false
 		tbl.SetIdx(item.ID, idxHist)
 		// If the index is analyzed we refresh the map for the possible change.
 		if idxHist.IsAnalyzed() {
 			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, idxHist.Info, true)
 			// All the objects shares the same stats version. Update it here.
 			tbl.StatsVer = statistics.Version0
-		} else {
-			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, idxHist.Info, false)
 		}
 	}
 	s.statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
