@@ -453,3 +453,109 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	tblInfo.ForeignKeys = nil
 	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropForeignKey, 12, ForeignKeysAttribute, false)
 }
+
+func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
+	r := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		r.Store().Close()
+	}()
+
+	schemaName := model.NewCIStr("testDB")
+	tableName := model.NewCIStr("testTable")
+	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, 1)
+	require.NoError(t, err)
+	is := builder.Build(math.MaxUint64)
+	v2, ok := is.(*infoschemaV2)
+	require.True(t, ok)
+
+	// verify schema related fields after create database
+	dbInfo := internal.MockDBInfo(t, r.Store(), schemaName.O)
+	internal.AddDB(t, r.Store(), dbInfo)
+	txn, err := r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
+	require.NoError(t, err)
+	dbIDName, ok := v2.Data.schemaID2Name.Get(schemaIDName{id: dbInfo.ID, schemaVersion: 1})
+	require.True(t, ok)
+	require.Equal(t, dbIDName.name, dbInfo.Name)
+	dbItem, ok := v2.Data.schemaMap.Get(schemaItem{schemaVersion: 1, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
+	require.True(t, ok)
+	require.Equal(t, dbItem.dbInfo.ID, dbInfo.ID)
+
+	// verify table related fields after create table
+	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
+	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	tblItem, ok := v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 2})
+	require.True(t, ok)
+	require.Equal(t, tblItem.tableID, tblInfo.ID)
+	tblItem, ok = v2.Data.byID.Get(tableItem{tableID: tblInfo.ID, schemaVersion: 2})
+	require.True(t, ok)
+	require.Equal(t, tblItem.dbID, dbInfo.ID)
+	tbl, ok := v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 2})
+	require.True(t, ok)
+	require.Equal(t, tbl.Meta().Name, tblInfo.Name)
+
+	// verify partition related fields after add partition
+	require.Equal(t, v2.Data.pid2tid.Len(), 0)
+	tblInfo.Partition = &model.PartitionInfo{
+		Definitions: []model.PartitionDefinition{
+			{ID: 1, Name: model.NewCIStr("p1")},
+			{ID: 2, Name: model.NewCIStr("p2")},
+		},
+		Enable:   true,
+		DDLState: model.StatePublic,
+	}
+	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, PartitionAttribute, true)
+	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
+	require.Equal(t, v2.Data.pid2tid.Len(), 2)
+	tblInfoItem, ok := v2.Data.pid2tid.Get(partitionItem{partitionID: 2, schemaVersion: 3})
+	require.True(t, ok)
+	require.Equal(t, tblInfoItem.tableID, tblInfo.ID)
+
+	// verify partition related fields drop partition
+	tblInfo.Partition.Definitions = tblInfo.Partition.Definitions[:1]
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, PartitionAttribute, true)
+	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
+	require.Equal(t, v2.Data.pid2tid.Len(), 4)
+	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 1, schemaVersion: 4})
+	require.True(t, ok)
+	require.False(t, tblInfoItem.tomb)
+	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 2, schemaVersion: 4})
+	require.True(t, ok)
+	require.True(t, tblInfoItem.tomb)
+
+	// verify table and partition related fields after drop table
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	tblItem, ok = v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 5})
+	require.True(t, ok)
+	require.True(t, tblItem.tomb)
+	tblItem, ok = v2.Data.byID.Get(tableItem{tableID: tblInfo.ID, schemaVersion: 5})
+	require.True(t, ok)
+	require.True(t, tblItem.tomb)
+	tbl, ok = v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 5})
+	require.False(t, ok)
+	require.Equal(t, v2.Data.pid2tid.Len(), 5) // tomb partition info
+	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 1, schemaVersion: 5})
+	require.True(t, ok)
+	require.True(t, tblInfoItem.tomb)
+
+	// verify schema related fields after drop database
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionDropSchema, Version: 6, SchemaID: dbInfo.ID})
+	require.NoError(t, err)
+	dbIDName, ok = v2.Data.schemaID2Name.Get(schemaIDName{id: dbInfo.ID, schemaVersion: 6})
+	require.True(t, ok)
+	require.True(t, dbIDName.tomb)
+	dbItem, ok = v2.Data.schemaMap.Get(schemaItem{schemaVersion: 6, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
+	require.True(t, ok)
+	require.True(t, dbItem.tomb)
+}

@@ -54,6 +54,7 @@ import (
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
@@ -94,7 +95,7 @@ type ShowExec struct {
 
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName            model.CIStr
-	Table             *ast.TableName       // Used for showing columns.
+	Table             *resolve.TableNameW  // Used for showing columns.
 	Partition         model.CIStr          // Used for showing partition
 	Column            *ast.ColumnName      // Used for `desc table column`.
 	IndexName         model.CIStr          // Used for show table regions.

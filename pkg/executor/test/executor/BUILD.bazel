@@ -28,6 +28,7 @@ go_test(
         "//pkg/planner",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/resolve",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
