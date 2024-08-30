@@ -135,6 +135,8 @@ func (w *worker) GetRunningJobs() map[int64]struct{} {
 
 // GetMaxConcurrency returns the maximum concurrency for the worker.
 func (w *worker) GetMaxConcurrency() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	return w.maxConcurrency
 }
 
