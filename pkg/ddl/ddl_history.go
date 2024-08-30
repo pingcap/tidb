@@ -127,10 +127,10 @@ func GetLastHistoryDDLJobsIterator(m *meta.Meta) (meta.LastJobIterator, error) {
 // GetLastHistoryDDLJobsIteratorWithFilter gets latest N history DDL jobs iterator.
 func GetLastHistoryDDLJobsIteratorWithFilter(
 	m *meta.Meta,
-	schemaIDs set.Int64Set,
+	schemaNames set.StringSet,
 	tableNames set.StringSet,
 ) (meta.LastJobIterator, error) {
-	return m.GetLastHistoryDDLJobsIteratorWithFilter(schemaIDs, tableNames)
+	return m.GetLastHistoryDDLJobsIteratorWithFilter(schemaNames, tableNames)
 }
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.

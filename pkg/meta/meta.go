@@ -1549,16 +1549,16 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 
 // GetLastHistoryDDLJobsIteratorWithFilter gets latest N history ddl jobs iterator.
 func (m *Meta) GetLastHistoryDDLJobsIteratorWithFilter(
-	schemaIDs set.Int64Set,
+	schemaNames set.StringSet,
 	tableNames set.StringSet) (LastJobIterator, error) {
 	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
 	if err != nil {
 		return nil, err
 	}
 	return &HLastJobIterator{
-		iter:       iter,
-		schemaIDs:  schemaIDs,
-		tableNames: tableNames,
+		iter:        iter,
+		schemaNames: schemaNames,
+		tableNames:  tableNames,
 	}, nil
 }
 
@@ -1576,35 +1576,34 @@ func (m *Meta) GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, err
 
 // HLastJobIterator is the iterator for gets the latest history.
 type HLastJobIterator struct {
-	iter       *structure.ReverseHashIterator
-	schemaIDs  set.Int64Set
-	tableNames set.StringSet
+	iter        *structure.ReverseHashIterator
+	schemaNames set.StringSet
+	tableNames  set.StringSet
 }
 
-// extractSchemaIDAndTableName extract schema_id and table_id from encoded Job structure
+// extractSchemaAndTableName extract schema_name and table_name from encoded Job structure
 // Note, here we strongly rely on the order of fields in marshalled string, just like checkSubstringsInOrder
-func extractSchemaIDAndTableName(s string) (int64, string, error) {
-	pos := strings.Index(s, `"schema_id":`)
+func extractSchemaAndTableName(s string) (string, string, error) {
+	pos := strings.Index(s, `"schema_name":`)
 	if pos == -1 {
-		return 0, "", fmt.Errorf("schema_id not found in model.Job json")
+		return "", "", fmt.Errorf("schema_id not found in model.Job json")
 	}
 
-	start := pos + len(`"schema_id":`)
+	start := pos + len(`"schema_name":`)
 	substr := s[start:]
 	end := strings.Index(substr, ",")
 	if end == -1 {
 		end = len(substr)
 	}
 
-	schemaIDStr := strings.TrimSpace(substr[:end])
-	schemaID, err := strconv.ParseInt(schemaIDStr, 10, 64)
-	if err != nil {
-		return 0, "", fmt.Errorf("failed to parse table_id: %v", err)
+	schemaName := strings.TrimSpace(substr[:end])
+	if strings.HasPrefix(schemaName, `"`) && strings.HasSuffix(schemaName, `"`) {
+		schemaName = schemaName[1 : len(schemaName)-1]
 	}
 
 	pos = strings.Index(substr, `"table_name":`)
 	if pos == -1 {
-		return 0, "", fmt.Errorf("table_name not found in model.Job json")
+		return "", "", fmt.Errorf("table_name not found in model.Job json")
 	}
 
 	start = pos + len(`"table_name":`)
@@ -1619,7 +1618,7 @@ func extractSchemaIDAndTableName(s string) (int64, string, error) {
 		tableName = tableName[1 : len(tableName)-1]
 	}
 
-	return schemaID, tableName, nil
+	return schemaName, tableName, nil
 }
 
 // GetLastJobs gets last several jobs.
@@ -1632,12 +1631,12 @@ func (i *HLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job
 	for iter.Valid() && len(jobs) < num {
 		job := &model.Job{}
 
-		if len(i.tableNames) > 0 || len(i.schemaIDs) > 0 {
-			schemaID, tableName, err := extractSchemaIDAndTableName(string(hack.String(iter.Value())))
+		if len(i.tableNames) > 0 || len(i.schemaNames) > 0 {
+			schemaName, tableName, err := extractSchemaAndTableName(string(hack.String(iter.Value())))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if (i.schemaIDs.Count() > 0 && !i.schemaIDs.Exist(schemaID)) ||
+			if (i.schemaNames.Count() > 0 && !i.schemaNames.Exist(schemaName)) ||
 				i.tableNames.Count() > 0 && !i.tableNames.Exist(tableName) {
 				err := iter.Next()
 				if err != nil {

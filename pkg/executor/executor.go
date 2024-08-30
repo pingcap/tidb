@@ -414,11 +414,12 @@ type DDLJobRetriever struct {
 	extractor      base.MemTablePredicateExtractor
 }
 
-func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
+func (e *DDLJobRetriever) initial(ctx context.Context, txn kv.Transaction, sess sessionctx.Context) error {
 	skipRunningJobs := false
 	skipHistoryJobs := false
 	schemaFilter := "1"
-	schemaIDSet := set.NewInt64Set()
+	tableFilter := "1"
+	schemaNames := set.NewStringSet()
 	tableNames := set.NewStringSet()
 
 	ex, ok := e.extractor.(*plannercore.InfoSchemaDDLExtractor)
@@ -437,26 +438,46 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 		}
 
 		// build schema_ids filter
-		if sIDs, hasPredicates := ex.ListSchemaIDs(e.is); len(sIDs) > 0 {
+		if schemas, hasPredicates := ex.ListSchemas(e.is); len(schemas) > 0 {
 			var builder strings.Builder
-			for _, dbid := range sIDs {
-				schemaIDSet.Insert(dbid)
-				builder.WriteString(fmt.Sprintf("schema_ids LIKE '%%%d%%' OR ", dbid))
+			for _, dbinfo := range schemas {
+				schemaNames.Insert(dbinfo.Name.L)
+				builder.WriteString(fmt.Sprintf("schema_ids LIKE '%%%d%%' OR ", dbinfo.ID))
 			}
 			schemaFilter = builder.String()
 			schemaFilter = schemaFilter[:len(schemaFilter)-4]
 		} else if hasPredicates {
-			// This means all schemas in predicates are not found, just skip
+			// This means all schemas in predicates are not found, just skip running jobs
+			// Even though, we still need to search history jobs,
+			// because this schema was deleted.
 			skipRunningJobs = true
-			skipHistoryJobs = true
 		}
+
 		tableNames = ex.ColPredicates["table_name"]
+		if !skipRunningJobs && len(tableNames) > 0 {
+			_, tableInfos, err := ex.ListSchemasAndTables(ctx, e.is)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// TODO: shall we control the number of predicates?
+			// i.e. only do filtering when there are few match tables
+			if len(tableInfos) > 0 {
+				var builder strings.Builder
+				for _, tblInfo := range tableInfos {
+					builder.WriteString(fmt.Sprintf("table_ids LIKE '%%%d%%' OR ", tblInfo.ID))
+				}
+				tableFilter = builder.String()
+				tableFilter = tableFilter[:len(tableFilter)-4]
+			} else {
+				skipRunningJobs = true
+			}
+		}
 	}
 
 	var err error
 
 	if !skipRunningJobs {
-		e.runningJobs, err = ddl.GetNeededDDLJobs(sess, schemaFilter)
+		e.runningJobs, err = ddl.GetNeededDDLJobs(sess, fmt.Sprintf("(%s) and (%s)", schemaFilter, tableFilter))
 		if err != nil {
 			return err
 		}
@@ -464,7 +485,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 
 	if !skipHistoryJobs {
 		m := meta.NewMeta(txn)
-		e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIteratorWithFilter(m, schemaIDSet, tableNames)
+		e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIteratorWithFilter(m, schemaNames, tableNames)
 		if err != nil {
 			return err
 		}
@@ -813,7 +834,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 		return err
 	}
 	sess.GetSessionVars().SetInTxn(true)
-	err = e.DDLJobRetriever.initial(txn, sess)
+	err = e.DDLJobRetriever.initial(ctx, txn, sess)
 	return err
 }
 

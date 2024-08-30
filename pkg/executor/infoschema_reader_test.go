@@ -891,6 +891,17 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 
 	tk.MustExec("use d0")
 	tk.MustExec("alter table t0 add index (col2)")
+
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t1(id int)")
+	tk.MustExec("drop database test2")
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t1(id int)")
+	tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
+				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
+		"141|create table|public|138|140|t1|synced",
+		"136|create table|public|133|135|t1|synced",
+	))
 }
 
 func TestInfoSchemaConditionWorks(t *testing.T) {
