@@ -1583,12 +1583,13 @@ type HLastJobIterator struct {
 	tableNames  set.StringSet
 }
 
-// extractSchemaAndTableName extract schema_name and table_name from encoded Job structure
+// extractSchemaAndTableNameFromJob extract schema_name and table_name from encoded Job structure
 // Note, here we strongly rely on the order of fields in marshalled string, just like checkSubstringsInOrder
-func extractSchemaAndTableName(s string) (string, string, error) {
+// Exported for test
+func ExtractSchemaAndTableNameFromJob(s string) (schemaName, tableName string, err error) {
 	pos := strings.Index(s, `"schema_name":`)
 	if pos == -1 {
-		return "", "", fmt.Errorf("schema_id not found in model.Job json")
+		return "", "", fmt.Errorf("schema_name not found in model.Job json")
 	}
 
 	start := pos + len(`"schema_name":`)
@@ -1598,7 +1599,7 @@ func extractSchemaAndTableName(s string) (string, string, error) {
 		end = len(substr)
 	}
 
-	schemaName := strings.TrimSpace(substr[:end])
+	schemaName = strings.TrimSpace(substr[:end])
 	if strings.HasPrefix(schemaName, `"`) && strings.HasSuffix(schemaName, `"`) {
 		schemaName = schemaName[1 : len(schemaName)-1]
 	}
@@ -1615,12 +1616,12 @@ func extractSchemaAndTableName(s string) (string, string, error) {
 		end = len(substr)
 	}
 
-	tableName := strings.TrimSpace(substr[:end])
+	tableName = strings.TrimSpace(substr[:end])
 	if strings.HasPrefix(tableName, `"`) && strings.HasSuffix(tableName, `"`) {
 		tableName = tableName[1 : len(tableName)-1]
 	}
 
-	return schemaName, tableName, nil
+	return
 }
 
 // GetLastJobs gets last several jobs.
@@ -1634,7 +1635,7 @@ func (i *HLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job
 		job := &model.Job{}
 
 		if len(i.tableNames) > 0 || len(i.schemaNames) > 0 {
-			schemaName, tableName, err := extractSchemaAndTableName(string(hack.String(iter.Value())))
+			schemaName, tableName, err := ExtractSchemaAndTableNameFromJob(string(hack.String(iter.Value())))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
