@@ -834,7 +834,11 @@ stmtLoop:
 				} else if stmt, err := be.db.PrepareContext(ctx, query); err == nil {
 					prepStmt = stmt
 					be.stmtCacheMutex.Lock()
-					be.stmtCache.Put(key, stmt)
+					// check again if the key is already in the cache
+					// to avoid override existing stmt without closing it
+					if _, ok := be.stmtCache.Get(key); !ok {
+						be.stmtCache.Put(key, stmt)
+					}
 					be.stmtCacheMutex.Unlock()
 				} else {
 					return errors.Trace(err)
