@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -33,7 +34,7 @@ import (
 type worker struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sysproctrack.Tracker
-	wg             sync.WaitGroup
+	wg             util.WaitGroupWrapper
 	jobChan        chan priorityqueue.AnalysisJob
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -56,8 +57,7 @@ func NewWorker(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.T
 		runningJobs:    make(map[int64]struct{}),
 		maxConcurrency: maxConcurrency,
 	}
-	w.wg.Add(1)
-	go w.run()
+	w.wg.Run(w.run)
 	return w
 }
 
@@ -69,7 +69,6 @@ func (w *worker) UpdateConcurrency(newConcurrency int) {
 }
 
 func (w *worker) run() {
-	defer w.wg.Done()
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -83,14 +82,21 @@ func (w *worker) run() {
 				statslogutil.StatsLogger().Info("job is nil")
 				continue
 			}
-			w.wg.Add(1)
-			go w.processJob(job)
+			w.wg.RunWithRecover(
+				func() {
+					w.processJob(job)
+				},
+				func(r any) {
+					if r != nil {
+						statslogutil.StatsLogger().Error("Auto analyze job execution failed", zap.Any("recover", r), zap.Stack("stack"))
+					}
+				},
+			)
 		}
 	}
 }
 
 func (w *worker) processJob(job priorityqueue.AnalysisJob) {
-	defer w.wg.Done()
 	defer func() {
 		w.mu.Lock()
 		defer w.mu.Unlock()

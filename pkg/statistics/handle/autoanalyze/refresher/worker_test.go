@@ -129,4 +129,41 @@ func TestWorker(t *testing.T) {
 		require.Empty(t, w.GetRunningJobs())
 		w.Stop()
 	})
+
+	t.Run("PanicInJob", func(t *testing.T) {
+		w := refresher.NewWorker(handle, sysProcTracker, 1)
+		panicJob := &mockAnalysisJob{
+			tableID: 1,
+			analyze: func(statstypes.StatsHandle, sysproctrack.Tracker) error {
+				panic("simulated panic")
+			},
+		}
+
+		require.True(t, w.SubmitJob(panicJob))
+		w.WaitAutoAnalyzeFinishedForTest()
+		require.Empty(t, w.GetRunningJobs())
+		w.Stop()
+	})
+
+	t.Run("PanicInMultipleJobs", func(t *testing.T) {
+		w := refresher.NewWorker(handle, sysProcTracker, 2)
+		panicJob1 := &mockAnalysisJob{
+			tableID: 1,
+			analyze: func(statstypes.StatsHandle, sysproctrack.Tracker) error {
+				panic("simulated panic 1")
+			},
+		}
+		panicJob2 := &mockAnalysisJob{
+			tableID: 2,
+			analyze: func(statstypes.StatsHandle, sysproctrack.Tracker) error {
+				panic("simulated panic 2")
+			},
+		}
+
+		require.True(t, w.SubmitJob(panicJob1))
+		require.True(t, w.SubmitJob(panicJob2))
+		w.WaitAutoAnalyzeFinishedForTest()
+		require.Empty(t, w.GetRunningJobs())
+		w.Stop()
+	})
 }
