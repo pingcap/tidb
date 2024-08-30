@@ -31,7 +31,9 @@ import (
 	statsStorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 func (e *ShowExec) fetchShowStatsExtended(ctx context.Context) error {
@@ -143,7 +145,11 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 }
 
 func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string, statsTbl *statistics.Table) {
-	if statsTbl.Pseudo {
+	logutil.BgLogger().Info("appendTableForStatsMeta",
+		zap.Bool(" statsTbl.Pseudo", statsTbl.Pseudo),
+		zap.Int64("count", statsTbl.RealtimeCount),
+		zap.String("dbName", dbName), zap.String("tblName", tblName), zap.String("partitionName", partitionName))
+	if statsTbl.Pseudo && statsTbl.RealtimeCount == 0 {
 		return
 	}
 	if !statsTbl.IsAnalyzed() {

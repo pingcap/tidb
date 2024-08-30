@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	pkgutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -175,6 +176,7 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 		tbl.PhysicalID = pid
 		return tbl
 	}
+
 	tbl, ok := h.Get(pid)
 	if !ok {
 		if returnPseudo {
@@ -183,10 +185,13 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
 				h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 			}
+
 			return tbl
 		}
+		logutil.BgLogger().Info("fuck get stats cache nothong", zap.Int64("pd", pid))
 		return nil
 	}
+	logutil.BgLogger().Info("fuck get stats cache", zap.Int64("pd", pid), zap.Int64("Count", tbl.RealtimeCount))
 	return tbl
 }
 

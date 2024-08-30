@@ -173,6 +173,7 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
+	logutil.BgLogger().Info("fuckyouupdate")
 	return statsHandle.Update(ctx, infoSchema)
 }
 
