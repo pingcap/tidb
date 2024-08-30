@@ -53,6 +53,8 @@ func GetCompareFunc(tp *types.FieldType) CompareFunc {
 		return cmpBit
 	case mysql.TypeJSON:
 		return cmpJSON
+	case mysql.TypeTiDBVectorFloat32:
+		return cmpVectorFloat32
 	case mysql.TypeNull:
 		return cmpNullConst
 	}
@@ -175,6 +177,15 @@ func cmpNullConst(_ Row, _ int, _ Row, _ int) int {
 	return 0
 }
 
+func cmpVectorFloat32(l Row, lCol int, r Row, rCol int) int {
+	lNull, rNull := l.IsNull(lCol), r.IsNull(rCol)
+	if lNull || rNull {
+		return cmpNull(lNull, rNull)
+	}
+	lv, rv := l.GetVectorFloat32(lCol), r.GetVectorFloat32(rCol)
+	return lv.Compare(rv)
+}
+
 // Compare compares the value with ad.
 // We assume that the collation information of the column is the same with the datum.
 func Compare(row Row, colIdx int, ad *types.Datum) int {
@@ -218,6 +229,9 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 	case types.KindMysqlJSON:
 		l, r := row.GetJSON(colIdx), ad.GetMysqlJSON()
 		return types.CompareBinaryJSON(l, r)
+	case types.KindVectorFloat32:
+		l, r := row.GetVectorFloat32(colIdx), ad.GetVectorFloat32()
+		return l.Compare(r)
 	case types.KindMysqlTime:
 		l, r := row.GetTime(colIdx), ad.GetMysqlTime()
 		return l.Compare(r)

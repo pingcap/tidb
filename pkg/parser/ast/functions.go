@@ -356,6 +356,16 @@ const (
 	JSONKeys          = "json_keys"
 	JSONLength        = "json_length"
 
+	// vector functions (tidb extension)
+	VecDims                 = "vec_dims"
+	VecL1Distance           = "vec_l1_distance"
+	VecL2Distance           = "vec_l2_distance"
+	VecNegativeInnerProduct = "vec_negative_inner_product"
+	VecCosineDistance       = "vec_cosine_distance"
+	VecL2Norm               = "vec_l2_norm"
+	VecFromText             = "vec_from_text"
+	VecAsText               = "vec_as_text"
+
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
 	TiDBDecodeBase64Key = "tidb_decode_base64_key"
