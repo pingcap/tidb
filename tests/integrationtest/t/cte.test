@@ -680,3 +680,16 @@ SELECT col_4
           FROM product_detail
 ) a;
 
+# Tests for PR #55732
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 value(5,5);
+insert into t2 value(1,1);
+with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1;
+# This UPDATE should update t2.b to 2
+update t2 set b=2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
+select * from t2;
+# This DELETE should delete all rows in t2
+delete from t2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
+select * from t2;

@@ -1271,3 +1271,22 @@ FROM product_detail
 col_4
 Product A
 Product A
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 value(5,5);
+insert into t2 value(1,1);
+with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1;
+a
+1
+2
+3
+4
+5
+update t2 set b=2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
+select * from t2;
+a	b
+1	2
+delete from t2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
+select * from t2;
+a	b
