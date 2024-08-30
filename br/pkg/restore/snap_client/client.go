@@ -767,7 +767,7 @@ func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.
 	rem := tables
 	for len(rem) > 0 {
 		var thisRun []*metautil.Table
-		thisRun, rem = batchOfCreateTables(tables, rc.getDDLBatchSizeInBytes())
+		thisRun, rem = batchOfCreateTables(rem, rc.getDDLBatchSizeInBytes())
 		log.Info("create tables", zap.Int("num", len(thisRun)), zap.Int("remained", len(rem)))
 
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
