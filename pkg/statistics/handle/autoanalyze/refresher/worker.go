@@ -110,14 +110,14 @@ func (w *worker) processJob(job priorityqueue.AnalysisJob) {
 // It returns false if the job is not submitted due to concurrency limit.
 func (w *worker) SubmitJob(job priorityqueue.AnalysisJob) bool {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	if len(w.runningJobs) >= w.maxConcurrency {
+		w.mu.Unlock()
 		statslogutil.StatsLogger().Warn("Worker at maximum capacity, job discarded", zap.Stringer("job", job))
 		return false
 	}
-
 	w.runningJobs[job.GetTableID()] = struct{}{}
+	w.mu.Unlock()
+
 	w.jobChan <- job
 	return true
 }
