@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -72,9 +73,25 @@ const (
 
 var (
 	telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
+	// SuppressErrorTooLongKeyKey is used by SchemaTracker to suppress err too long key error
+	SuppressErrorTooLongKeyKey stringutil.StringerStr = "suppressErrorTooLongKeyKey"
 )
 
+<<<<<<< HEAD
 func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, bool, error) {
+=======
+func suppressErrorTooLongKeyForSchemaTracker(sctx sessionctx.Context) bool {
+	if sctx == nil {
+		return false
+	}
+	if suppress, ok := sctx.Value(SuppressErrorTooLongKeyKey).(bool); ok && suppress {
+		return true
+	}
+	return false
+}
+
+func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, error) {
+>>>>>>> 1211fb2156d (ddl: improve priority of suppressErrorTooLongKeyKey for DM (#55164) (#55772))
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
@@ -105,7 +122,7 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 		sumLength += indexColumnLength
 
 		// The sum of all lengths must be shorter than the max length for prefix.
-		if sumLength > maxIndexLength {
+		if !suppressErrorTooLongKeyForSchemaTracker(ctx) && sumLength > maxIndexLength {
 			// The multiple column index and the unique index in which the length sum exceeds the maximum size
 			// will return an error instead produce a warning.
 			if ctx == nil || ctx.GetSessionVars().StrictSQLMode || mysql.HasUniKeyFlag(col.GetFlag()) || len(indexPartSpecifications) > 1 {
@@ -217,9 +234,17 @@ func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumn
 	}
 	// Specified length must be shorter than the max length for prefix.
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
+<<<<<<< HEAD
 	if indexColumnLen > maxIndexLength && (ctx == nil || ctx.GetSessionVars().StrictSQLMode) {
 		// return error in strict sql mode
 		return dbterror.ErrTooLongKey.GenWithStackByArgs(indexColumnLen, maxIndexLength)
+=======
+	if indexColumnLen > maxIndexLength {
+		if ctx == nil || (ctx.GetSessionVars().StrictSQLMode && !suppressErrorTooLongKeyForSchemaTracker(ctx)) {
+			// return error in strict sql mode
+			return dbterror.ErrTooLongKey.GenWithStackByArgs(maxIndexLength)
+		}
+>>>>>>> 1211fb2156d (ddl: improve priority of suppressErrorTooLongKeyKey for DM (#55164) (#55772))
 	}
 	return nil
 }
