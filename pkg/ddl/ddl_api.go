@@ -4390,6 +4390,11 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	if err != nil {
 		return err
 	}
+	for _, idx := range newMeta.Indices {
+		if idx.Global {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL INDEX with ALTER TABLE PARTITION BY")
+		}
+	}
 	newPartInfo := newMeta.Partition
 
 	if err = d.assignPartitionIDs(newPartInfo.Definitions); err != nil {

@@ -628,6 +628,14 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 			index.Global = config.GetGlobalConfig().EnableGlobalIndex
 		}
 	}
+	if tbInfo.PKIsHandle {
+		for _, col := range tbInfo.Cols() {
+			if mysql.HasPriKeyFlag(col.FieldType.GetFlag()) &&
+				!checkUniqueKeyIncludePartKey(partCols, []*model.IndexColumn{{Name: col.Name, Offset: col.Offset, Length: types.UnspecifiedLength}}) {
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
+			}
+		}
+	}
 	return nil
 }
 
