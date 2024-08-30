@@ -4356,15 +4356,36 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		}
 		options = append(options, &loadDataOpt)
 	}
-	// TODO(lance6716): check ColumnsAndUserVars
+	// TODO(lance6716): check functions
+	neededVars := make(map[string]int)
 	for i, a := range ld.ColumnAssignments {
-		_, ok := a.Expr.(*ast.SubqueryExpr)
-		if ok {
+		switch v := a.Expr.(type) {
+		case *ast.SubqueryExpr:
 			return nil, errors.Errorf(
 				"subquery is not supported in IMPORT INTO column assignment, index %d", i,
 			)
+		case *ast.VariableExpr:
+			neededVars[v.Name] = i
 		}
 	}
+	for _, v := range ld.ColumnsAndUserVars {
+		userVar := v.UserVar
+		if userVar == nil {
+			continue
+		}
+		delete(neededVars, userVar.Name)
+	}
+	if len(neededVars) > 0 {
+		valuesStr := make([]string, 0, len(neededVars))
+		for _, v := range neededVars {
+			valuesStr = append(valuesStr, strconv.Itoa(v))
+		}
+		return nil, errors.Errorf(
+			"column assignment cannot use variables set outside IMPORT INTO statement, index %s",
+			strings.Join(valuesStr, ","),
+		)
+	}
+
 	tnW := b.resolveCtx.GetTableName(ld.Table)
 	p := ImportInto{
 		Path:               ld.Path,
