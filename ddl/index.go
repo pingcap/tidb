@@ -66,7 +66,7 @@ const (
 
 var (
 	telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
-	// SuppressErrorTooLongKey is used by SchemaTracker to suppress err too long key error
+	// SuppressErrorTooLongKeyKey is used by SchemaTracker to suppress err too long key error
 	SuppressErrorTooLongKeyKey stringutil.StringerStr = "suppressErrorTooLongKeyKey"
 )
 
