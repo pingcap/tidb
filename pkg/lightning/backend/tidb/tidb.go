@@ -774,11 +774,17 @@ func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, colu
 	}
 	is := insertStmt.String()
 	stmtTasks := make([]stmtTask, 0, len(rows))
+	var values []any
 	for _, row := range rows {
 		var finalInsertStmt strings.Builder
 		finalInsertStmt.WriteString(is)
-		finalInsertStmt.WriteString(row.insertStmt)
-		stmtTasks = append(stmtTasks, stmtTask{[]tidbRow{row}, finalInsertStmt.String(), []any{}})
+		if be.cachePrepStmts {
+			finalInsertStmt.WriteString(row.preparedInsertStmt)
+			values = append(values, row.values...)
+		} else {
+			finalInsertStmt.WriteString(row.insertStmt)
+		}
+		stmtTasks = append(stmtTasks, stmtTask{[]tidbRow{row}, finalInsertStmt.String(), values})
 	}
 	return be.execStmts(ctx, stmtTasks, tableName, false)
 }
@@ -825,7 +831,7 @@ stmtLoop:
 				be.stmtCacheMutex.RUnlock()
 				if ok {
 					prepStmt = stmt.(*sql.Stmt)
-				} else if stmt, err := be.db.Prepare(query); err == nil {
+				} else if stmt, err := be.db.PrepareContext(ctx, query); err == nil {
 					prepStmt = stmt
 					be.stmtCacheMutex.Lock()
 					be.stmtCache.Put(key, stmt)

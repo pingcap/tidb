@@ -78,6 +78,7 @@ const (
 	DefaultRegionSplitBatchSize       = 4096
 	defaultLogicalImportBatchSize     = 96 * units.KiB
 	defaultLogicalImportBatchRows     = 65536
+	defaultLogicalImportPrepStmt      = false
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName           = "lightning_metadata"
@@ -1498,6 +1499,7 @@ func NewConfig() *Config {
 			BlockSize:               16 * 1024,
 			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
 			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
+			LogicalImportPrepStmt:   defaultLogicalImportPrepStmt,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,

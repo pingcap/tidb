@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -51,9 +52,6 @@ const (
 	retryTimeout = 3 * time.Second
 
 	defaultMaxRetry = 3
-
-	// DefaultMaxIdleConns is the default value for sql.DB's MaxIdleConns.
-	defaultMaxIdleConns = 128
 )
 
 // MySQLConnectParam records the parameters needed to connect to a MySQL database.
@@ -148,7 +146,7 @@ func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
 	// The actual number of alive connections is controlled by the region concurrency
 	// The setting is required to avoid frequent connection creation and close
 	if db != nil {
-		db.SetMaxIdleConns(defaultMaxIdleConns)
+		db.SetMaxIdleConns(runtime.GOMAXPROCS(0))
 	}
 	return db, nil
 }
