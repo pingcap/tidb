@@ -68,11 +68,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 28,
-=======
-    shard_count = 33,
->>>>>>> 51ffa22365f (br: redact ak/sk in logging (#55622))
+    shard_count = 29,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
