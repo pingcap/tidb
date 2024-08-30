@@ -47,7 +47,7 @@ type DDLEvent struct {
 	tp         model.ActionType
 
 	// todo: replace DDLEvent by SchemaChangeEvent gradually
-	SchemaChangeEvent util2.SchemaChangeEvent
+	SchemaChangeEvent ddlutil.SchemaChangeEvent
 }
 
 // IsMemOrSysDB checks whether the table is in the memory or system database.
