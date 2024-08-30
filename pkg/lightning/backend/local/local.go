@@ -930,7 +930,6 @@ func (local *Backend) prepareAndSendJob(
 	return local.generateAndSendJob(
 		ctx,
 		engine,
-		regionSplitKeys,
 		regionSplitSize,
 		regionSplitKeyCnt,
 		jobToWorkerCh,
@@ -942,36 +941,10 @@ func (local *Backend) prepareAndSendJob(
 func (local *Backend) generateAndSendJob(
 	ctx context.Context,
 	engine common.Engine,
-	initialSplitRanges []common.Range,
 	regionSplitSize, regionSplitKeys int64,
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
-	logger := log.FromContext(ctx)
-	// for external engine, it will split into smaller data inside LoadIngestData
-	if localEngine, ok := engine.(*Engine); ok {
-		// when use dynamic region feature, the region may be very big, we need to split
-		// to smaller ranges to increase the concurrency.
-		//
-		// TODO(lance6716): Currently the region size will be increased to 256MB and
-		// local engine seems to have no problem with the new size, so I didn't bother to
-		// change below logic. If we want to unify the local engine with external engine,
-		// we can change the common.Engine interface to add GetJobKeys, GetSplitKeys.
-		if regionSplitSize > 2*int64(config.SplitRegionSize) {
-			start := initialSplitRanges[0].Start
-			end := initialSplitRanges[len(initialSplitRanges)-1].End
-			sizeLimit := int64(config.SplitRegionSize)
-			keysLimit := int64(config.SplitRegionKeys)
-			jrs, err := localEngine.SplitRanges(start, end, sizeLimit, keysLimit, logger)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			initialSplitRanges = jrs
-		}
-	}
-
-	logger.Debug("the ranges length write to tikv", zap.Int("length", len(initialSplitRanges)))
-
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	dataAndRangeCh := make(chan common.DataAndRange)
@@ -1025,7 +998,7 @@ func (local *Backend) generateAndSendJob(
 	}
 
 	eg.Go(func() error {
-		err := engine.LoadIngestData(egCtx, initialSplitRanges, dataAndRangeCh)
+		err := engine.LoadIngestData(egCtx, dataAndRangeCh)
 		if err != nil {
 			return errors.Trace(err)
 		}
