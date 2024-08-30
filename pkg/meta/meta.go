@@ -1582,6 +1582,7 @@ type HLastJobIterator struct {
 }
 
 // extractSchemaIDAndTableName extract schema_id and table_id from encoded Job structure
+// Note, here we strongly rely on the order of fields in marshalled string, just like checkSubstringsInOrder
 func extractSchemaIDAndTableName(s string) (int64, string, error) {
 	pos := strings.Index(s, `"schema_id":`)
 	if pos == -1 {

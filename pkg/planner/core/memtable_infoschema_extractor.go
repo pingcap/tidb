@@ -115,20 +115,6 @@ func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []model.
 	return ret
 }
 
-// ListSchemaIDs lists all schema ids from predicate.
-// Used for ddl_jobs
-func (e *InfoSchemaBaseExtractor) ListSchemaIDs(is infoschema.InfoSchema) ([]int64, bool) {
-	ec := e.extractableColumns
-	schemas := e.getSchemaObjectNames(ec.schema)
-	ret := make([]int64, 0, len(schemas))
-	for _, s := range schemas {
-		if n, ok := is.SchemaByName(s); ok {
-			ret = append(ret, n.ID)
-		}
-	}
-	return ret, len(schemas) > 0
-}
-
 // ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
 // If there is no error, returning schema slice and table slice are guaranteed to have the same length.
 func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
@@ -296,6 +282,19 @@ func (e *InfoSchemaDDLExtractor) Extract(
 	c := predicates
 	e.InfoSchemaBaseExtractor.Extract(ctx, schema, names, predicates)
 	return c
+}
+
+// ListSchemaIDs lists all schema ids from predicate.
+func (e *InfoSchemaDDLExtractor) ListSchemaIDs(is infoschema.InfoSchema) ([]int64, bool) {
+	ec := e.extractableColumns
+	schemas := e.getSchemaObjectNames(ec.schema)
+	ret := make([]int64, 0, len(schemas))
+	for _, s := range schemas {
+		if n, ok := is.SchemaByName(s); ok {
+			ret = append(ret, n.ID)
+		}
+	}
+	return ret, len(schemas) > 0
 }
 
 // NewInfoSchemaDDLExtractor creates a new InfoSchemaDDLExtractor.
