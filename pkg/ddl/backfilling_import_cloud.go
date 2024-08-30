@@ -83,7 +83,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		all.Merge(g)
 	}
 
-	// compatible with old version TiDB
+	// compatible with old version task meta
 	jobKeys := sm.RangeJobKeys
 	if jobKeys == nil {
 		jobKeys = sm.RangeSplitKeys
