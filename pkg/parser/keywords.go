@@ -623,7 +623,7 @@ var Keywords = []KeywordsType{
 	{"VALIDATION", false, "unreserved"},
 	{"VALUE", false, "unreserved"},
 	{"VARIABLES", false, "unreserved"},
-	{"VECTOR", false, "reserved"},
+	{"VECTOR", false, "unreserved"},
 	{"VIEW", false, "unreserved"},
 	{"VISIBLE", false, "unreserved"},
 	{"WAIT", false, "unreserved"},
