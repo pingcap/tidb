@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -785,7 +786,8 @@ func TestUnreasonablyClose(t *testing.T) {
 
 		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
 
-		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NotNil(t, p)
 
 		// This for loop level traverses the plan tree to get which operators are covered.
@@ -874,7 +876,8 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 		require.NoError(t, err, comment)
 
 		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
-		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		e := executorBuilder.Build(p)
 		chk := exec.NewFirstChunk(e)
 		require.NoError(t, exec.Open(context.Background(), e), comment)
@@ -1990,9 +1993,10 @@ func TestIsPointGet(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		nodeW := resolve.NewNodeW(stmtNode)
+		err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
 		ret := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx.GetSessionVars(), p)
 		require.Equal(t, result, ret)
@@ -2030,9 +2034,10 @@ func TestClusteredIndexIsPointGet(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		nodeW := resolve.NewNodeW(stmtNode)
+		err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
 		ret := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx.GetSessionVars(), p)
 		require.Equal(t, result, ret)

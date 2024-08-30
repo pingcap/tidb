@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -56,11 +57,12 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	require.NoError(t, err)
 	tk.Session().GetSessionVars().PlanID.Store(0)
 	tk.Session().GetSessionVars().PlanColumnID.Store(0)
-	err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 	require.NoError(t, err)
 	require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 	builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
-	p, err := builder.Build(context.TODO(), stmt)
+	p, err := builder.Build(context.TODO(), nodeW)
 	require.NoError(t, err)
 	logicalP, err := core.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(base.LogicalPlan))
 	require.NoError(t, err)

@@ -43,6 +43,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/resolve",
         "//pkg/plugin",
         "//pkg/privilege",
         "//pkg/privilege/conn",
