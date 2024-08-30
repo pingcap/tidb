@@ -637,28 +637,23 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
-	allDBs := schema.AllSchemaNames()
-	for _, db := range allDBs {
-		tbls, err := schema.SchemaTableInfos(context.Background(), db)
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-		for _, tbl := range tbls {
-			replicaInfos = h.getTiFlashReplicaInfo(tbl, replicaInfos)
+	schemas := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	for _, schema := range schemas {
+		for _, tbl := range schema.TableInfos {
+			replicaInfos = appendTiFlashReplicaInfo(replicaInfos, tbl)
 		}
 	}
 
-	dropedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash(schema)
+	droppedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash(schema)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
 	}
-	replicaInfos = append(replicaInfos, dropedOrTruncateReplicaInfos...)
+	replicaInfos = append(replicaInfos, droppedOrTruncateReplicaInfos...)
 	handler.WriteData(w, replicaInfos)
 }
 
-func (FlashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, replicaInfos []*TableFlashReplicaInfo) []*TableFlashReplicaInfo {
+func appendTiFlashReplicaInfo(replicaInfos []*TableFlashReplicaInfo, tblInfo *model.TableInfo) []*TableFlashReplicaInfo {
 	if tblInfo.TiFlashReplica == nil {
 		return replicaInfos
 	}
@@ -718,7 +713,7 @@ func (h FlashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 			return false, nil
 		}
 		uniqueIDMap[tblInfo.ID] = struct{}{}
-		replicaInfos = h.getTiFlashReplicaInfo(tblInfo, replicaInfos)
+		replicaInfos = appendTiFlashReplicaInfo(replicaInfos, tblInfo)
 		return false, nil
 	}
 	dom := domain.GetDomain(s)
