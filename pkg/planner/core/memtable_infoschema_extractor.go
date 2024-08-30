@@ -294,7 +294,7 @@ func (e *InfoSchemaDDLExtractor) Extract(
 	return predicates
 }
 
-// ListSchemaIDs lists all schema ids from predicate.
+// ListSchemas lists all schema ids from predicate.
 func (e *InfoSchemaDDLExtractor) ListSchemas(is infoschema.InfoSchema) ([]*model.DBInfo, bool) {
 	ec := e.extractableColumns
 	schemas := e.getSchemaObjectNames(ec.schema)

@@ -807,7 +807,7 @@ func TestNameExtractFromJob(t *testing.T) {
 		job.SchemaName = tc.schemaName
 		job.TableName = tc.tableName
 
-		b, err := json.Marshal(job)
+		b, err := job.Encode(true)
 		require.NoError(t, err)
 
 		schemaName, tableName, err := meta.ExtractSchemaAndTableNameFromJob(string(hack.String(b)))
