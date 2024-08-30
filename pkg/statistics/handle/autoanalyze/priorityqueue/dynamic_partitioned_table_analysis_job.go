@@ -90,7 +90,6 @@ func (j *DynamicPartitionedTableAnalysisJob) GetTableID() int64 {
 }
 
 // Analyze analyzes the partitions or partition indexes.
-// Analyze analyzes the partitions or partition indexes.
 func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
