@@ -1583,43 +1583,51 @@ type HLastJobIterator struct {
 	tableNames  set.StringSet
 }
 
-// extractSchemaAndTableNameFromJob extract schema_name and table_name from encoded Job structure
+func findNextNonEscapedQuote(s string) int {
+	findEscape := false
+	for i, ch := range s {
+		if ch == '\\' {
+			findEscape = true
+		} else {
+			if ch == '"' && !findEscape {
+				return i
+			}
+			findEscape = false
+		}
+	}
+
+	return -1
+}
+
+// ExtractSchemaAndTableNameFromJob extract schema_name and table_name from encoded Job structure
 // Note, here we strongly rely on the order of fields in marshalled string, just like checkSubstringsInOrder
 // Exported for test
 func ExtractSchemaAndTableNameFromJob(s string) (schemaName, tableName string, err error) {
 	pos := strings.Index(s, `"schema_name":`)
 	if pos == -1 {
-		return "", "", fmt.Errorf("schema_name not found in model.Job json")
+		return "", "", fmt.Errorf("schema_name field not found in model.Job json")
 	}
 
 	start := pos + len(`"schema_name":`)
-	substr := s[start:]
-	end := strings.Index(substr, ",")
+	substr := s[start+1:]
+	end := findNextNonEscapedQuote(substr)
 	if end == -1 {
-		end = len(substr)
+		return "", "", fmt.Errorf("can not extract schema_name in json")
 	}
-
-	schemaName = strings.TrimSpace(substr[:end])
-	if strings.HasPrefix(schemaName, `"`) && strings.HasSuffix(schemaName, `"`) {
-		schemaName = schemaName[1 : len(schemaName)-1]
-	}
+	schemaName = Unescape(substr[:end])
 
 	pos = strings.Index(substr, `"table_name":`)
 	if pos == -1 {
-		return "", "", fmt.Errorf("table_name not found in model.Job json")
+		return "", "", fmt.Errorf("table_name field not found in model.Job json")
 	}
 
 	start = pos + len(`"table_name":`)
-	substr = substr[start:]
-	end = strings.Index(substr, ",")
+	substr = substr[start+1:]
+	end = findNextNonEscapedQuote(substr)
 	if end == -1 {
-		end = len(substr)
+		return "", "", fmt.Errorf("can not extract table_name in json")
 	}
-
-	tableName = strings.TrimSpace(substr[:end])
-	if strings.HasPrefix(tableName, `"`) && strings.HasSuffix(tableName, `"`) {
-		tableName = tableName[1 : len(tableName)-1]
-	}
+	tableName = Unescape(substr[:end])
 
 	return
 }

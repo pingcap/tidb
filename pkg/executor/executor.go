@@ -414,7 +414,7 @@ type DDLJobRetriever struct {
 	extractor      base.MemTablePredicateExtractor
 }
 
-func (e *DDLJobRetriever) initial(ctx context.Context, txn kv.Transaction, sess sessionctx.Context) error {
+func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
 	skipRunningJobs := false
 	skipHistoryJobs := false
 	schemaNames := set.NewStringSet()
@@ -806,7 +806,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 		return err
 	}
 	sess.GetSessionVars().SetInTxn(true)
-	err = e.DDLJobRetriever.initial(ctx, txn, sess)
+	err = e.DDLJobRetriever.initial(txn, sess)
 	return err
 }
 

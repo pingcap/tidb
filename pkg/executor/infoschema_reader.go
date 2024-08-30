@@ -1497,7 +1497,7 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 		return err
 	}
 	sess.GetSessionVars().SetInTxn(true)
-	err = e.DDLJobRetriever.initial(ctx, txn, sess)
+	err = e.DDLJobRetriever.initial(txn, sess)
 	if err != nil {
 		return err
 	}
