@@ -29,6 +29,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// TestMultiSchemaDropUniqueIndex to show behavior when
+// dropping a unique index
 func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
@@ -102,6 +104,8 @@ func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tkNonOwner.MustQuery(ddlJobsSQL).CheckAt([]int{4, 11}, [][]any{{"write only", "running"}})
+	// So even if the session don't see the unique index, it is
+	// in effect for writing!
 	tkOwner.MustContainErrMsg(`insert into t values (10,1)`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 	tkNonOwner.MustContainErrMsg(`insert into t values (10,1)`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 	alterChan <- struct{}{}
@@ -312,8 +316,7 @@ func TestMultiSchemaVerAddPartition(t *testing.T) {
 		store.Close()
 	}()
 
-	isOwnerCorrect := domOwner.DDL().OwnerManager().IsOwner()
-	if !isOwnerCorrect {
+	if !domOwner.DDL().OwnerManager().IsOwner() {
 		domOwner, domNonOwner = domNonOwner, domOwner
 	}
 
@@ -409,8 +412,7 @@ func TestMultiSchemaVerAddPartition(t *testing.T) {
 	tkB.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 Matt", "2 Anne"))
 }
 
-func TestMultiSchemaVerDropPartition(t *testing.T) {
-	// Last domain will be the DDLOwner
+func TestMultiSchemaVerDropPartitionWithGlobalIndex(t *testing.T) {
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
 	domOwner := distCtx.GetDomain(0)
@@ -421,8 +423,7 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 		store.Close()
 	}()
 
-	isOwnerCorrect := domOwner.DDL().OwnerManager().IsOwner()
-	if !isOwnerCorrect {
+	if !domOwner.DDL().OwnerManager().IsOwner() {
 		domOwner, domNonOwner = domNonOwner, domOwner
 	}
 
@@ -440,67 +441,10 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 	tkNO := testkit.NewTestKitWithSession(t, store, seNonOwner)
 	tkNO.MustExec(`use test`)
 
-	// TODO: Create data so that each state can update and delete at least on row from each of the previous states.
-	// Why does it have to be from each of the previous states?'
-	// Is it not enough if it is rows from previous state/loop?
-	// Also test that it can find every row, through every index as well as full table scan.
-	// And check what happens on duplicate key for insert and delete.
-
-	// for SchemaVer - 1 test that:
-	// 1. all operations works for rows not touched by any of SchemaVer - 1 NOR SchemaVer (all should be fully visible)
-	// 2. all operations works for rows touched by SchemaVer - 1 (All should be fully visible)
-	// 3. all operations works for rows touched by SchemaVer (All should be fully visible, but expect some edge cases during deletion of old global index entries)
-	// for SchemaVer test that
-	// 1. all operations works for rows not touched by any of SchemaVer - 1 NOR SchemaVer (all should be fully visible)
-	// 2. all operations works for rows touched by SchemaVer (All should be fully visible)
-	// 3. all operations works for rows touched by SchemaVer - 1 (If part of dropped partition, it should not be seen, and not create duplicate errors)
-
-	// Special handling to check what happens during delete reorg, maybe have a before and after, as well as a specific failpoint?
-
 	states := []string{"start", "delete only", "delete reorganization", "done"}
 
 	offsetP1 := 1000000
-	// TODO: Use several maps, one per index?
-	// Or maybe just one per state?
-	// Columns:
-	// id - int
-	// secondary id (in reverse) - used for a second unique index
-	// partition
-	// inserted at state
-	// update history - Should be the full permutation of higher level states (i.e. from zero, some, to all)
-	/*
-		rows := make(map[string][][]string)
-		rowNr := 1
-		rows[states[0]] = [][]string{{"1", "999999", "p0", "0", ""}, {"1000001", "1999999", "p0", "0", ""}}
-		rowNr++
-		//             update state->curr state->start (false)
-		rangesUpdate := make(map[int]map[int]map[bool]int)
-		rangesDelete := make(map[int]map[int]map[bool]int)
-		for i := range states[1:] {
-			for j := 0; j <= i; j++ {
-				rowsToAdd := len(rows[states[j]])
-				rangesUpdate[j][i][false] = rowNr
-				s := strconv.Itoa(i)
-				for r := 0; r < rowsToAdd; r++ {
-					// For Update
-					rows[states[j]] = append(rows[states[j]], []string{strconv.Itoa(rowNr), strconv.Itoa(offsetP1 - rowNr), "p0", s, ""})
-					rows[states[j]] = append(rows[states[j]], []string{strconv.Itoa(rowNr + offsetP1), strconv.Itoa(2*offsetP1 - rowNr), "p1", s, ""})
-					rowNr++
-				}
-				rangesUpdate[j][i][true] = rowNr
-				rangesDelete[j][i][false] = rowNr
-				for r := 0; r < rowsToAdd; r++ {
-					// For Delete
-					rows[states[j]] = append(rows[states[j]], []string{strconv.Itoa(rowNr), strconv.Itoa(offsetP1 - rowNr), "p0", s, ""})
-					rows[states[j]] = append(rows[states[j]], []string{strconv.Itoa(rowNr + offsetP1), strconv.Itoa(2*offsetP1 - rowNr), "p1", s, ""})
-					rowNr++
-				}
-				rangesDelete[j][i][true] = rowNr
-			}
-		}
-
-	*/
-	tkDDLOwner.MustExec(`create table t (id int unsigned primary key nonclustered, b int, part varchar(10) not null, state int not null, history text) PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (` + strconv.Itoa(offsetP1) + `), PARTITION p1 VALUES LESS THAN (2000000))`)
+	tkDDLOwner.MustExec(`create table t (id int unsigned primary key nonclustered, b int, part varchar(10) not null, state int not null, history text, unique key uk_b (b) global) PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (` + strconv.Itoa(offsetP1) + `), PARTITION p1 VALUES LESS THAN (2000000))`)
 	domOwner.Reload()
 	domNonOwner.Reload()
 	dbRows := make(map[int][]string)
@@ -529,6 +473,7 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 	alterChan := make(chan struct{})
 	go func() {
 		tkDDLOwner.MustExec(`alter table t drop partition p0`)
+		logutil.BgLogger().Info("XXXXXXXXXXX drop partition done!")
 		alterChan <- struct{}{}
 	}()
 	// Skip the first state, since we want to compare before vs after in the loop
@@ -538,14 +483,29 @@ func TestMultiSchemaVerDropPartition(t *testing.T) {
 	for i := range states[1:] {
 		// Waiting for the next State change to be done (i.e. blocking the state after)
 		releaseHook := true
-		select {
-		case <-hookChan:
-		case <-alterChan:
-			releaseHook = false
+		for {
+			select {
+			case <-hookChan:
+			case <-alterChan:
+				releaseHook = false
+				logutil.BgLogger().Info("XXXXXXXXXXX release hook")
+				break
+			}
+			domOwner.Reload()
+			if domNonOwner.InfoSchema().SchemaMetaVersion() == domOwner.InfoSchema().SchemaMetaVersion() {
+				// looping over reorganize data/indexes
+				hookChan <- struct{}{}
+				continue
+			}
+			break
 		}
 		//tk.t.Logf("RefreshSession rand seed: %d", seed)
-		logutil.BgLogger().Info("XXXXXXXXXXX states loop", zap.String("prev state", states[i]), zap.String("curr state", states[i+1]), zap.Int64("verCurr", verCurr))
+		logutil.BgLogger().Info("XXXXXXXXXXX states loop", zap.String("prev state", states[i]), zap.String("curr state", states[i+1]), zap.Int64("verCurr", verCurr), zap.Int64("NonOwner ver", domNonOwner.InfoSchema().SchemaMetaVersion()), zap.Int64("Owner ver", domOwner.InfoSchema().SchemaMetaVersion()))
 		domOwner.Reload()
+		if domNonOwner.InfoSchema().SchemaMetaVersion() == domOwner.InfoSchema().SchemaMetaVersion() {
+			logutil.BgLogger().Info("XXXXXXXXXXX states loop continue", zap.String("prev state", states[i]), zap.String("curr state", states[i+1]), zap.Int64("verCurr", verCurr), zap.Int64("NonOwner ver", domNonOwner.InfoSchema().SchemaMetaVersion()), zap.Int64("Owner ver", domOwner.InfoSchema().SchemaMetaVersion()))
+			continue
+		}
 		if i >= 0 {
 			rows := tkO.MustQuery(`select id from t`).Sort().Rows()
 			logutil.BgLogger().Info("rows tkO Start", zap.Reflect("rows", rows))
