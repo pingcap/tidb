@@ -1624,6 +1624,19 @@ func ExtractSchemaAndTableNameFromJob(s string) (schemaName, tableName string, e
 	return
 }
 
+// IsJobMatch examines whether given job's table/schema name matches.
+func IsJobMatch(job []byte, schemaNames, tableNames set.StringSet) (match bool, err error) {
+	schemaName, tableName, err := ExtractSchemaAndTableNameFromJob(string(hack.String(job)))
+	if err != nil {
+		return
+	}
+	if (schemaNames.Count() == 0 || schemaNames.Exist(schemaName)) &&
+		tableNames.Count() == 0 || tableNames.Exist(tableName) {
+		match = true
+	}
+	return
+}
+
 // GetLastJobs gets last several jobs.
 func (i *HLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
 	if len(jobs) < num {
@@ -1632,24 +1645,21 @@ func (i *HLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job
 	jobs = jobs[:0]
 	iter := i.iter
 	for iter.Valid() && len(jobs) < num {
-		job := &model.Job{}
+		match, err := IsJobMatch(iter.Value(), i.schemaNames, i.tableNames)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 
-		if len(i.tableNames) > 0 || len(i.schemaNames) > 0 {
-			schemaName, tableName, err := ExtractSchemaAndTableNameFromJob(string(hack.String(iter.Value())))
+		if !match {
+			err := iter.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if (i.schemaNames.Count() > 0 && !i.schemaNames.Exist(schemaName)) ||
-				i.tableNames.Count() > 0 && !i.tableNames.Exist(tableName) {
-				err := iter.Next()
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				continue
-			}
+			continue
 		}
 
-		err := job.Decode(iter.Value())
+		job := &model.Job{}
+		err = job.Decode(iter.Value())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

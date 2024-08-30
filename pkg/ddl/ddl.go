@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
@@ -1391,9 +1392,10 @@ func GetAllDDLJobs(se sessionctx.Context) ([]*model.Job, error) {
 	return getJobsBySQL(sess.NewSession(se), JobTable, "1 order by job_id")
 }
 
-// GetNeededDDLJobs get DDL jobs using given predicates.
-func GetNeededDDLJobs(se sessionctx.Context, filter string) ([]*model.Job, error) {
-	return getJobsBySQL(sess.NewSession(se), JobTable, filter)
+// GetNeededDDLJobs get DDL jobs and sorts jobs by job.ID.
+// Additionally, the returning jobs will be filtered by input names.
+func GetNeededDDLJobs(se sessionctx.Context, schemaNames, tableNames set.StringSet) ([]*model.Job, error) {
+	return getJobsBySQLWithFilter(sess.NewSession(se), JobTable, "1 order by job_id", schemaNames, tableNames)
 }
 
 // IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,

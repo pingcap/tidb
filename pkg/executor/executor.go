@@ -417,13 +417,12 @@ type DDLJobRetriever struct {
 func (e *DDLJobRetriever) initial(ctx context.Context, txn kv.Transaction, sess sessionctx.Context) error {
 	skipRunningJobs := false
 	skipHistoryJobs := false
-	schemaFilter := "1"
-	tableFilter := "1"
 	schemaNames := set.NewStringSet()
 	tableNames := set.NewStringSet()
 
 	ex, ok := e.extractor.(*plannercore.InfoSchemaDDLExtractor)
 	if ok {
+		// Using state to determine whether we can skip checking running/history ddl jobs
 		if states, ok := ex.ColPredicates["state"]; ok {
 			skipHistoryJobs = true
 			skipRunningJobs = true
@@ -437,53 +436,26 @@ func (e *DDLJobRetriever) initial(ctx context.Context, txn kv.Transaction, sess 
 			})
 		}
 
-		// build schema_ids filter
-		if schemas, hasPredicates := ex.ListSchemas(e.is); len(schemas) > 0 {
-			var builder strings.Builder
-			for _, dbinfo := range schemas {
-				schemaNames.Insert(dbinfo.Name.L)
-				builder.WriteString(fmt.Sprintf("schema_ids LIKE '%%%d%%' OR ", dbinfo.ID))
-			}
-			schemaFilter = builder.String()
-			schemaFilter = schemaFilter[:len(schemaFilter)-4]
-		} else if hasPredicates {
-			// This means all schemas in predicates are not found, just skip running jobs
-			// Even though, we still need to search history jobs,
-			// because this schema was deleted.
-			skipRunningJobs = true
-		}
-
+		schemaNames = ex.ColPredicates["db_name"]
 		tableNames = ex.ColPredicates["table_name"]
-		if !skipRunningJobs && len(tableNames) > 0 {
-			_, tableInfos, err := ex.ListSchemasAndTables(ctx, e.is)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// TODO: shall we control the number of predicates?
-			// i.e. only do filtering when there are few match tables
-			if len(tableInfos) > 0 {
-				var builder strings.Builder
-				for _, tblInfo := range tableInfos {
-					builder.WriteString(fmt.Sprintf("table_ids LIKE '%%%d%%' OR ", tblInfo.ID))
-				}
-				tableFilter = builder.String()
-				tableFilter = tableFilter[:len(tableFilter)-4]
-			} else {
-				skipRunningJobs = true
-			}
-		}
 	}
 
 	var err error
 
 	if !skipRunningJobs {
-		e.runningJobs, err = ddl.GetNeededDDLJobs(sess, fmt.Sprintf("(%s) and (%s)", schemaFilter, tableFilter))
+		// We cannot use table_id and schema_id to construct predicates for the tidb_ddl_job table.
+		// For instance, in the case of the SQL like `create table t(id int)`,
+		// the tableInfo for 't' will not be available in the infoschema until the job is completed.
+		// As a result, we cannot retrieve its table_id.
+		// Therefore, the only choice is to scan the entire table and reduce the number of calls to unmarshal.
+		e.runningJobs, err = ddl.GetNeededDDLJobs(sess, schemaNames, tableNames)
 		if err != nil {
 			return err
 		}
 	}
 
 	if !skipHistoryJobs {
+		// For the similar reason, we can only use schema_name and table_name to do filtering here.
 		m := meta.NewMeta(txn)
 		e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIteratorWithFilter(m, schemaNames, tableNames)
 		if err != nil {
