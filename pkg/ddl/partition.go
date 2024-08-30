@@ -609,6 +609,22 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 
 	for _, index := range tbInfo.Indices {
 		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
+			indexTp := ""
+			if !config.GetGlobalConfig().EnableGlobalIndex {
+				if index.Primary {
+					indexTp = "PRIMARY KEY"
+					if tbInfo.IsCommonHandle {
+						indexTp = "CLUSTERED INDEX"
+					}
+				} else {
+					indexTp = "UNIQUE INDEX"
+				}
+			} else if index.Primary && tbInfo.IsCommonHandle {
+				indexTp = "CLUSTERED INDEX"
+			}
+			if indexTp != "" {
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
+			}
 			index.Global = config.GetGlobalConfig().EnableGlobalIndex
 		}
 	}
