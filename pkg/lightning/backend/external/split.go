@@ -57,60 +57,67 @@ func (h *exhaustedHeap) Pop() any {
 	return x
 }
 
-// RangeSplitter is used to split key ranges of an external engine. It will
-// return one group of ranges by invoking `SplitOneRangesGroup` once.
+// RangeSplitter is used to split key ranges of an external engine. Please see
+// NewRangeSplitter and SplitOneRangesGroup for more details.
 type RangeSplitter struct {
 	rangesGroupSize int64
 	rangesGroupKeys int64
-	rangeSize       int64
-	rangeKeys       int64
+
+	rangeJobSize   int64
+	rangeJobKeyCnt int64
+	rangeJobKeys   [][]byte
+
+	regionSplitSize   int64
+	regionSplitKeyCnt int64
+	regionSplitKeys   [][]byte
 
 	propIter      *MergePropIter
 	multiFileStat []MultipleFilesStat
 
 	// filename -> 2 level index in dataFiles/statFiles
-	activeDataFiles             map[string][2]int
-	activeStatFiles             map[string][2]int
-	curGroupSize                int64
-	curGroupKeys                int64
-	curRangeSize                int64
-	curRangeKeys                int64
-	recordSplitKeyAfterNextProp bool
-	lastDataFile                string
-	lastStatFile                string
-	lastRangeProperty           *rangeProperty
-	willExhaustHeap             exhaustedHeap
-
-	rangeSplitKeysBuf [][]byte
+	activeDataFiles                map[string][2]int
+	activeStatFiles                map[string][2]int
+	curGroupSize                   int64
+	curGroupKeyCnt                 int64
+	curRangeJobSize                int64
+	curRangeJobKeyCnt              int64
+	recordRangeJobAfterNextProp    bool
+	curRegionSplitSize             int64
+	curRegionSplitKeyCnt           int64
+	recordRegionSplitAfterNextProp bool
+	lastDataFile                   string
+	lastStatFile                   string
+	lastRangeProperty              *rangeProperty
+	willExhaustHeap                exhaustedHeap
 
 	logger *zap.Logger
 }
 
-// NewRangeSplitter creates a new RangeSplitter.
-// `rangesGroupSize` and `rangesGroupKeys` controls the total range group
-// size of one `SplitOneRangesGroup` invocation, while `rangeSize` and
-// `rangeKeys` controls the size of one range.
+// NewRangeSplitter creates a new RangeSplitter to process the stat files of
+// `multiFileStat` stored in `externalStorage`.
+//
+// `rangesGroupSize` and `rangesGroupKeyCnt` controls the total size and key
+// count limit of the ranges group returned by one `SplitOneRangesGroup`
+// invocation. The ranges group may contain multiple range jobs and region split
+// keys. The size and keys limit of one range job are controlled by
+// `rangeJobSize` and `rangeJobKeyCnt`. The size and keys limit of intervals of
+// region split keys are controlled by `regionSplitSize` and `regionSplitKeyCnt`.
 func NewRangeSplitter(
 	ctx context.Context,
 	multiFileStat []MultipleFilesStat,
 	externalStorage storage.ExternalStorage,
-	rangesGroupSize, rangesGroupKeys int64,
-	maxRangeSize, maxRangeKeys int64,
+	rangesGroupSize, rangesGroupKeyCnt int64,
+	rangeJobSize, rangeJobKeyCnt int64,
+	regionSplitSize, regionSplitKeyCnt int64,
 ) (*RangeSplitter, error) {
 	logger := logutil.Logger(ctx)
-	overlaps := make([]int64, 0, len(multiFileStat))
-	fileNums := make([]int, 0, len(multiFileStat))
-	for _, m := range multiFileStat {
-		overlaps = append(overlaps, m.MaxOverlappingNum)
-		fileNums = append(fileNums, len(m.Filenames))
-	}
 	logger.Info("create range splitter",
-		zap.Int64s("overlaps", overlaps),
-		zap.Ints("fileNums", fileNums),
 		zap.Int64("rangesGroupSize", rangesGroupSize),
-		zap.Int64("rangesGroupKeys", rangesGroupKeys),
-		zap.Int64("maxRangeSize", maxRangeSize),
-		zap.Int64("maxRangeKeys", maxRangeKeys),
+		zap.Int64("rangesGroupKeyCnt", rangesGroupKeyCnt),
+		zap.Int64("rangeJobSize", rangeJobSize),
+		zap.Int64("rangeJobKeyCnt", rangeJobKeyCnt),
+		zap.Int64("regionSplitSize", regionSplitSize),
+		zap.Int64("regionSplitKeyCnt", regionSplitKeyCnt),
 	)
 	propIter, err := NewMergePropIter(ctx, multiFileStat, externalStorage)
 	if err != nil {
@@ -119,15 +126,19 @@ func NewRangeSplitter(
 
 	return &RangeSplitter{
 		rangesGroupSize: rangesGroupSize,
-		rangesGroupKeys: rangesGroupKeys,
+		rangesGroupKeys: rangesGroupKeyCnt,
 		propIter:        propIter,
 		multiFileStat:   multiFileStat,
 		activeDataFiles: make(map[string][2]int),
 		activeStatFiles: make(map[string][2]int),
 
-		rangeSize:         maxRangeSize,
-		rangeKeys:         maxRangeKeys,
-		rangeSplitKeysBuf: make([][]byte, 0, 16),
+		rangeJobSize:   rangeJobSize,
+		rangeJobKeyCnt: rangeJobKeyCnt,
+		rangeJobKeys:   make([][]byte, 0, 16),
+
+		regionSplitSize:   regionSplitSize,
+		regionSplitKeyCnt: regionSplitKeyCnt,
+		regionSplitKeys:   make([][]byte, 0, 16),
 
 		logger: logger,
 	}, nil
@@ -140,21 +151,18 @@ func (r *RangeSplitter) Close() error {
 	return err
 }
 
-// GetRangeSplitSize returns the expected size of one range.
-func (r *RangeSplitter) GetRangeSplitSize() int64 {
-	return r.rangeSize
-}
-
-// SplitOneRangesGroup splits one group of ranges. `endKeyOfGroup` represents the
-// end key of the group, but it will be nil when the group is the last one.
-// `dataFiles` and `statFiles` are all the files that have overlapping key ranges
-// in this group.
-// `rangeSplitKeys` are the internal split keys of the ranges in this group.
+// SplitOneRangesGroup splits one ranges group may contain multiple range jobs
+// and region split keys. `endKeyOfGroup` represents the end key of the group,
+// but it will be nil when the group is the last one. `dataFiles` and `statFiles`
+// are all the files that have overlapping key ranges in this group.
+// `rangeJobKeys` are the boundary keys of the range jobs. `regionSplitKeys` are
+// the split keys that will be used later to split regions.
 func (r *RangeSplitter) SplitOneRangesGroup() (
 	endKeyOfGroup []byte,
 	dataFiles []string,
 	statFiles []string,
-	rangeSplitKeys [][]byte,
+	rangeJobKeys [][]byte,
+	regionSplitKeys [][]byte,
 	err error,
 ) {
 	var (
@@ -165,13 +173,15 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 
 	for r.propIter.Next() {
 		if err = r.propIter.Error(); err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 		prop := r.propIter.prop()
 		r.curGroupSize += int64(prop.size)
-		r.curRangeSize += int64(prop.size)
-		r.curGroupKeys += int64(prop.keys)
-		r.curRangeKeys += int64(prop.keys)
+		r.curRangeJobSize += int64(prop.size)
+		r.curRegionSplitSize += int64(prop.size)
+		r.curGroupKeyCnt += int64(prop.keys)
+		r.curRangeJobKeyCnt += int64(prop.keys)
+		r.curRegionSplitKeyCnt += int64(prop.keys)
 
 		// if this Next call will close the last reader
 		if *r.propIter.baseCloseReaderFlag {
@@ -208,24 +218,34 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 				delete(r.activeStatFiles, p)
 			}
 			exhaustedStatFiles = exhaustedStatFiles[:0]
-			return prop.firstKey, retDataFiles, retStatFiles, r.takeSplitKeys(), nil
+			return prop.firstKey, retDataFiles, retStatFiles, r.takeRangeJobKeys(), r.takeRegionSplitKeys(), nil
 		}
-		if r.recordSplitKeyAfterNextProp {
-			r.rangeSplitKeysBuf = append(r.rangeSplitKeysBuf, slices.Clone(prop.firstKey))
-			r.recordSplitKeyAfterNextProp = false
+		if r.recordRangeJobAfterNextProp {
+			r.rangeJobKeys = append(r.rangeJobKeys, slices.Clone(prop.firstKey))
+			r.recordRangeJobAfterNextProp = false
 		}
-
-		if r.curRangeSize >= r.rangeSize || r.curRangeKeys >= r.rangeKeys {
-			r.curRangeSize = 0
-			r.curRangeKeys = 0
-			r.recordSplitKeyAfterNextProp = true
+		if r.recordRegionSplitAfterNextProp {
+			r.regionSplitKeys = append(r.regionSplitKeys, slices.Clone(prop.firstKey))
+			r.recordRegionSplitAfterNextProp = false
 		}
 
-		if r.curGroupSize >= r.rangesGroupSize || r.curGroupKeys >= r.rangesGroupKeys {
+		if r.curRangeJobSize >= r.rangeJobSize || r.curRangeJobKeyCnt >= r.rangeJobKeyCnt {
+			r.curRangeJobSize = 0
+			r.curRangeJobKeyCnt = 0
+			r.recordRangeJobAfterNextProp = true
+		}
+
+		if r.curRegionSplitSize >= r.regionSplitSize || r.curRegionSplitKeyCnt >= r.regionSplitKeyCnt {
+			r.curRegionSplitSize = 0
+			r.curRegionSplitKeyCnt = 0
+			r.recordRegionSplitAfterNextProp = true
+		}
+
+		if r.curGroupSize >= r.rangesGroupSize || r.curGroupKeyCnt >= r.rangesGroupKeys {
 			retDataFiles, retStatFiles = r.cloneActiveFiles()
 
 			r.curGroupSize = 0
-			r.curGroupKeys = 0
+			r.curGroupKeyCnt = 0
 			returnAfterNextProp = true
 		}
 	}
@@ -233,7 +253,7 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 	retDataFiles, retStatFiles = r.cloneActiveFiles()
 	r.activeDataFiles = make(map[string][2]int)
 	r.activeStatFiles = make(map[string][2]int)
-	return nil, retDataFiles, retStatFiles, r.takeSplitKeys(), r.propIter.Error()
+	return nil, retDataFiles, retStatFiles, r.takeRangeJobKeys(), r.takeRegionSplitKeys(), r.propIter.Error()
 }
 
 func (r *RangeSplitter) cloneActiveFiles() (data []string, stat []string) {
@@ -264,9 +284,16 @@ func (r *RangeSplitter) cloneActiveFiles() (data []string, stat []string) {
 	return dataFiles, statFiles
 }
 
-func (r *RangeSplitter) takeSplitKeys() [][]byte {
-	ret := make([][]byte, len(r.rangeSplitKeysBuf))
-	copy(ret, r.rangeSplitKeysBuf)
-	r.rangeSplitKeysBuf = r.rangeSplitKeysBuf[:0]
+func (r *RangeSplitter) takeRangeJobKeys() [][]byte {
+	ret := make([][]byte, len(r.rangeJobKeys))
+	copy(ret, r.rangeJobKeys)
+	r.rangeJobKeys = r.rangeJobKeys[:0]
+	return ret
+}
+
+func (r *RangeSplitter) takeRegionSplitKeys() [][]byte {
+	ret := make([][]byte, len(r.regionSplitKeys))
+	copy(ret, r.regionSplitKeys)
+	r.regionSplitKeys = r.regionSplitKeys[:0]
 	return ret
 }
