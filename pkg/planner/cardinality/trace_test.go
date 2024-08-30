@@ -32,6 +32,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -81,7 +82,8 @@ func TestTraceCE(t *testing.T) {
 		stmtCtx.OptimizerCETrace = nil
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
-		_, _, err = plannercore.OptimizeAstNode(context.Background(), sctx, stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		_, _, err = plannercore.OptimizeAstNode(context.Background(), sctx, nodeW, is)
 		require.NoError(t, err)
 
 		traceResult := sctx.GetSessionVars().StmtCtx.OptimizerCETrace
@@ -205,9 +207,10 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), sctx, stmt, plannercore.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmt)
+		err = plannercore.Preprocess(context.Background(), sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
-		p, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, stmt, ret.InfoSchema)
+		p, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
 
 		sel := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)

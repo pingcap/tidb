@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -63,7 +64,8 @@ func TestGroupStringer(t *testing.T) {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 
-		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 		require.NoError(t, err)
 
 		logic, ok := plan.(base.LogicalPlan)

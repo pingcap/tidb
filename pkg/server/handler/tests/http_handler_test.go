@@ -16,6 +16,7 @@ package tests
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -1063,6 +1064,11 @@ func TestAllHistory(t *testing.T) {
 	data, err := ddl.GetAllHistoryDDLJobs(txnMeta)
 	require.NoError(t, err)
 	err = decoder.Decode(&jobs)
+	require.True(t, len(jobs) < ddl.DefNumGetDDLHistoryJobs)
+	// sort job.
+	slices.SortFunc(jobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.ID, j.ID)
+	})
 
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
