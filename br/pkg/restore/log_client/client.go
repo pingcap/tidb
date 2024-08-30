@@ -462,7 +462,7 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	if err != nil {
 		log.Fatal("failed to init snap file importer", zap.Error(err))
 	}
-	rc.restorer = sstfiles.NewSimpleFileRestorer(false, snapFileImporter, metaClient, rc.workerPool)
+	rc.restorer = sstfiles.NewSimpleFileRestorer(true, snapFileImporter, metaClient, rc.workerPool)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForLogRestore(ctx context.Context, taskName string, gcRatio string) (string, error) {
