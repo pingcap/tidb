@@ -354,7 +354,6 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 // MemoryIngestData.DecRef().
 func (e *Engine) LoadIngestData(
 	ctx context.Context,
-	regionRanges []common.Range,
 	outCh chan<- common.DataAndRange,
 ) error {
 	// try to make every worker busy for each batch

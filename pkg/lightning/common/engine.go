@@ -29,9 +29,8 @@ type Range struct {
 type Engine interface {
 	// ID is the identifier of an engine.
 	ID() string
-	// LoadIngestData sends DataAndRange to outCh. Implementation may choose smaller
-	// ranges than given regionRanges, and data is contained in its range.
-	LoadIngestData(ctx context.Context, regionRanges []Range, outCh chan<- DataAndRange) error
+	// LoadIngestData sends DataAndRange to outCh.
+	LoadIngestData(ctx context.Context, outCh chan<- DataAndRange) error
 	// KVStatistics returns the total kv size and total kv count.
 	KVStatistics() (totalKVSize int64, totalKVCount int64)
 	// ImportedStatistics returns the imported kv size and imported kv count.
@@ -45,6 +44,5 @@ type Engine interface {
 	// enabled, the keys stored in engine are encoded by duplicate detection but the
 	// returned keys should not be encoded.
 	GetRegionSplitKeys() ([][]byte, error)
-	// GetJobRanges returns the expected import job ranges.
 	Close() error
 }
