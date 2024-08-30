@@ -886,12 +886,21 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
 				"132|add index /* txn-merge */|write only|104|106|t0|running",
 			))
+			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
+				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
+				"132|add index /* txn-merge */|write only|104|106|t0|running",
+			))
+			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
+				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
+				"132|add index /* txn-merge */|write only|104|106|t0|running",
+			))
 		}
 	})
 
 	tk.MustExec("use d0")
 	tk.MustExec("alter table t0 add index (col2)")
 
+	// Test search history jobs
 	tk.MustExec("create database test2")
 	tk.MustExec("create table test2.t1(id int)")
 	tk.MustExec("drop database test2")

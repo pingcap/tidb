@@ -1547,10 +1547,12 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	}, nil
 }
 
-// GetLastHistoryDDLJobsIteratorWithFilter gets latest N history ddl jobs iterator.
+// GetLastHistoryDDLJobsIteratorWithFilter gets latest N history ddl jobs iterator
+// This iterator will filter jobs using given schemaNames and tableNames
 func (m *Meta) GetLastHistoryDDLJobsIteratorWithFilter(
 	schemaNames set.StringSet,
-	tableNames set.StringSet) (LastJobIterator, error) {
+	tableNames set.StringSet,
+) (LastJobIterator, error) {
 	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
 	if err != nil {
 		return nil, err
