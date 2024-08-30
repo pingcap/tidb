@@ -23,6 +23,7 @@ type SchemaChangeEvent struct {
 	tp model.ActionType
 }
 
+// GetType returns the type of the schema change event.
 func (s *SchemaChangeEvent) GetType() model.ActionType {
 	return s.tp
 }
