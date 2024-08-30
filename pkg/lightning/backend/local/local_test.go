@@ -1753,6 +1753,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 }
 
 func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
+	// TODO(lance6716): check why it passed?
 	ctx := context.Background()
 	local := &Backend{
 		splitCli: initTestSplitClient(

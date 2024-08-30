@@ -113,6 +113,9 @@ type Engine struct {
 	UUID         uuid.UUID
 	localWriters sync.Map
 
+	regionSplitSize int64
+	regionSplitKeys int64
+
 	// isImportingAtomic is an atomic variable indicating whether this engine is importing.
 	// This should not be used as a "spin lock" indicator.
 	isImportingAtomic atomic.Uint32
@@ -152,6 +155,8 @@ type Engine struct {
 
 	logger log.Logger
 }
+
+var _ common.Engine = (*Engine)(nil)
 
 func (e *Engine) setError(err error) {
 	if err != nil {
@@ -307,13 +312,13 @@ func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 	return firstLey, nextKey(lastKey), nil
 }
 
-// SplitRanges gets size properties from pebble and split ranges according to size/keys limit.
-func (e *Engine) SplitRanges(
-	startKey, endKey []byte,
-	sizeLimit, keysLimit int64,
-	logger log.Logger,
-) ([]common.Range, error) {
-	sizeProps, err := getSizePropertiesFn(logger, e.getDB(), e.keyAdapter)
+// GetRegionSplitKeys implements common.Engine.
+func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
+	sizeProps, err := getSizePropertiesFn(e.logger, e.getDB(), e.keyAdapter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	startKey, endKey, err := e.GetKeyRange()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -321,10 +326,15 @@ func (e *Engine) SplitRanges(
 	ranges := splitRangeBySizeProps(
 		common.Range{Start: startKey, End: endKey},
 		sizeProps,
-		sizeLimit,
-		keysLimit,
+		e.regionSplitSize,
+		e.regionSplitKeys,
 	)
-	return ranges, nil
+	keys := make([][]byte, 0, len(ranges)+1)
+	for _, r := range ranges {
+		keys = append(keys, r.Start)
+	}
+	keys = append(keys, ranges[len(ranges)-1].End)
+	return keys, nil
 }
 
 type rangeOffsets struct {

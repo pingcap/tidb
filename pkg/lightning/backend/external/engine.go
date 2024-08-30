@@ -127,6 +127,8 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
+var _ common.Engine = (*Engine)(nil)
+
 const (
 	memLimit       = 12 * units.GiB
 	smallBlockSize = units.MiB
@@ -430,13 +432,9 @@ func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 	return start, kv.Key(end).Next(), nil
 }
 
-// SplitRanges split the ranges by split keys provided by external engine.
-func (e *Engine) SplitRanges(
-	startKey, endKey []byte,
-	_, _ int64,
-	_ log.Logger,
-) ([]common.Range, error) {
-	splitKeys := e.splitKeys
+// GetRegionSplitKeys implements common.Engine.
+func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
+	splitKeys := make([][]byte, len(e.splitKeys))
 	for i, k := range e.splitKeys {
 		var err error
 		splitKeys[i], err = e.keyAdapter.Decode(nil, k)
@@ -444,18 +442,7 @@ func (e *Engine) SplitRanges(
 			return nil, err
 		}
 	}
-	ranges := make([]common.Range, 0, len(splitKeys)+1)
-	ranges = append(ranges, common.Range{Start: startKey})
-	for i := 0; i < len(splitKeys); i++ {
-		ranges[len(ranges)-1].End = splitKeys[i]
-		var endK []byte
-		if i < len(splitKeys)-1 {
-			endK = splitKeys[i+1]
-		}
-		ranges = append(ranges, common.Range{Start: splitKeys[i], End: endK})
-	}
-	ranges[len(ranges)-1].End = endKey
-	return ranges, nil
+	return splitKeys, nil
 }
 
 // Close implements common.Engine.
