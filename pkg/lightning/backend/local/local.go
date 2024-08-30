@@ -876,20 +876,20 @@ func getRegionSplitKeys(
 func (local *Backend) prepareAndSendJob(
 	ctx context.Context,
 	engine common.Engine,
-	initialSplitRanges [][]byte,
-	regionSplitSize, regionSplitKeys int64,
+	regionSplitKeys [][]byte,
+	regionSplitSize, regionSplitKeyCnt int64,
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
 	lfTotalSize, lfLength := engine.KVStatistics()
-	log.FromContext(ctx).Info("import engine ranges", zap.Int("count", len(initialSplitRanges)))
-	if len(initialSplitRanges) == 0 {
+	log.FromContext(ctx).Info("import engine ranges", zap.Int("len(regionSplitKeyCnt)", len(regionSplitKeys)))
+	if len(regionSplitKeys) == 0 {
 		return nil
 	}
 
 	// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 	// the table when table is created.
-	needSplit := len(initialSplitRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
+	needSplit := len(regionSplitKeys) > 2 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeyCnt
 	// split region by given ranges
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		needSplit = true
@@ -904,7 +904,7 @@ func (local *Backend) prepareAndSendJob(
 				failpoint.Break()
 			})
 
-			err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, maxBatchSplitRanges)
+			err = local.splitAndScatterRegionInBatches(ctx, regionSplitKeys, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
@@ -930,9 +930,9 @@ func (local *Backend) prepareAndSendJob(
 	return local.generateAndSendJob(
 		ctx,
 		engine,
-		initialSplitRanges,
-		regionSplitSize,
 		regionSplitKeys,
+		regionSplitSize,
+		regionSplitKeyCnt,
 		jobToWorkerCh,
 		jobWg,
 	)
@@ -1317,7 +1317,7 @@ func (local *Backend) ImportEngine(
 		}
 		defer localEngine.unlock()
 		localEngine.regionSplitSize = regionSplitSize
-		localEngine.regionSplitKeys = regionSplitKeys
+		localEngine.regionSplitKeyCnt = regionSplitKeys
 		e = localEngine
 	}
 	lfTotalSize, lfLength := e.KVStatistics()

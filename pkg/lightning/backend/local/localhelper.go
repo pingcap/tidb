@@ -43,34 +43,30 @@ var (
 	splitRegionBaseBackOffTime = time.Second
 )
 
-// SplitAndScatterRegionInBatches splits&scatter regions in batches.
+// splitAndScatterRegionInBatches splits&scatter regions in batches.
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
-func (local *Backend) SplitAndScatterRegionInBatches(
+func (local *Backend) splitAndScatterRegionInBatches(
 	ctx context.Context,
-	ranges []common.Range,
+	splitKeys [][]byte,
 	batchCnt int,
 ) error {
-	for i := 0; i < len(ranges); i += batchCnt {
-		batch := ranges[i:]
+	for i := 0; i < len(splitKeys); i += batchCnt {
+		batch := splitKeys[i:]
 		if len(batch) > batchCnt {
 			batch = batch[:batchCnt]
 		}
-		if err := local.SplitAndScatterRegionByRanges(ctx, batch); err != nil {
+		if err := local.splitAndScatterRegionByRanges(ctx, batch); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
 }
 
-// SplitAndScatterRegionByRanges include region split & scatter operation just like br.
-// we can simply call br function, but we need to change some function signature of br
-// When the ranges total size is small, we can skip the split to avoid generate empty regions.
-// TODO: remove this file and use br internal functions
-func (local *Backend) SplitAndScatterRegionByRanges(
+func (local *Backend) splitAndScatterRegionByRanges(
 	ctx context.Context,
-	ranges []common.Range,
+	splitKeys [][]byte,
 ) (err error) {
-	if len(ranges) == 0 {
+	if len(splitKeys) == 0 {
 		return nil
 	}
 
@@ -83,7 +79,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 		}()
 	}
 
-	scatterRegions, err := local.splitCli.SplitKeysAndScatter(ctx, getSplitKeysByRanges(ranges))
+	scatterRegions, err := local.splitCli.SplitKeysAndScatter(ctx, splitKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -109,19 +105,6 @@ func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, err
 		return false, err
 	}
 	return regionInfo != nil, nil
-}
-
-func getSplitKeysByRanges(ranges []common.Range) [][]byte {
-	checkKeys := make([][]byte, 0)
-	var lastEnd []byte
-	for _, rg := range ranges {
-		if !bytes.Equal(lastEnd, rg.Start) {
-			checkKeys = append(checkKeys, rg.Start)
-		}
-		checkKeys = append(checkKeys, rg.End)
-		lastEnd = rg.End
-	}
-	return checkKeys
 }
 
 func beforeEnd(key []byte, end []byte) bool {
