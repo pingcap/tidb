@@ -121,8 +121,6 @@ aliases:
     - Benjamin2037
     - gmhdbjd
     - lichunzhu
-<<<<<<< HEAD
-=======
   sig-approvers-planner: # approvers for planner module
     - AilinKid
     - Rustin170506
@@ -132,4 +130,3 @@ aliases:
     - qw4990
     - time-and-fate
     - winoros
->>>>>>> ad5a9fd96bc (owners: update after Rustin170506 changed GitHub ID (#55760))
