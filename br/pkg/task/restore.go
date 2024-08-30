@@ -177,6 +177,9 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(FlagBatchFlushInterval)
 	_ = flags.MarkHidden(FlagDdlBatchSize)
 	_ = flags.MarkHidden(flagUseFSR)
+	_ = flags.MarkDeprecated(FlagDdlBatchSize,
+		"A new algorithm based on TiKVs' configureation was used for batching create table requests. "+
+			"This flag will be ignored.")
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -547,7 +550,6 @@ func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, 
 	if cfg.NoSchema {
 		client.EnableSkipCreateSQL()
 	}
-	client.SetBatchDdlSize(cfg.DdlBatchSize)
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 	client.SetWithSysTable(cfg.WithSysTable)
 	client.SetRewriteMode(ctx)
@@ -786,6 +788,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	// using tikv config to set the concurrency-per-store for client.
 	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
+	client.SetBatchDDLSizeInBytes(kvConfigs.GetDDLBatchSize())
 	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)

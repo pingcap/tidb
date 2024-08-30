@@ -169,6 +169,34 @@ type Table struct {
 	TiFlashReplicas  int
 	Stats            *util.JSONTable
 	StatsFileIndexes []*backuppb.StatsFileIndex
+
+	CachedJSONSize int
+}
+
+type DiscardCount int
+
+func (dc *DiscardCount) Write(p []byte) (n int, err error) {
+	*(*int)(dc) += len(p)
+	return len(p), nil
+}
+
+func (tbl *Table) jsonSize() int {
+	// Note: maybe directly read while unmarshing metautil.Table.
+	dc := new(DiscardCount)
+	enc := json.NewEncoder(dc)
+	if err := enc.Encode(tbl.Info); err != nil {
+		log.Panic("Unreachable: marshaling a trivial object failed.", zap.Error(err))
+	}
+
+	return int(*dc)
+}
+
+// JSONSize returns the eslimated size of the metadata of this table.
+func (tbl *Table) JSONSize() int {
+	if tbl.CachedJSONSize <= 0 {
+		tbl.CachedJSONSize = tbl.jsonSize()
+	}
+	return tbl.CachedJSONSize
 }
 
 // NoChecksum checks whether the table has a calculated checksum.
@@ -458,6 +486,7 @@ func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
 	if err := json.Unmarshal(s.Db, dbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
+	tblJSONSize := len(s.Table)
 
 	var tableInfo *model.TableInfo
 	if s.Table != nil {
@@ -487,6 +516,7 @@ func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
 		TiFlashReplicas:  int(s.TiflashReplicas),
 		Stats:            stats,
 		StatsFileIndexes: statsFileIndexes,
+		CachedJSONSize:   tblJSONSize,
 	}, nil
 }
 

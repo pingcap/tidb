@@ -75,7 +75,6 @@ func TestConfigureRestoreClient(t *testing.T) {
 	ctx := context.Background()
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)
-	require.Equal(t, uint(128), client.GetBatchDdlSize())
 }
 
 func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {

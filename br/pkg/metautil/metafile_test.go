@@ -11,6 +11,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -265,4 +266,27 @@ func TestMetaFileSize(t *testing.T) {
 	needFlush = metafiles.append(&backuppb.File{Name: "meta4", Size_: 99999}, AppendMetaFile)
 	t.Logf("needFlush: %v, %+v", needFlush, metafiles)
 	require.True(t, needFlush)
+}
+
+func TestJSONSize(t *testing.T) {
+	// Create a sample Table instance
+	table := &Table{
+		DB: &model.DBInfo{
+			Name: model.CIStr{O: "test_db"},
+		},
+		Info: &model.TableInfo{
+			Name: model.CIStr{O: "test_table"},
+		},
+	}
+
+	// Call the JSONSize method
+	size := table.JSONSize()
+
+	// Verify the result
+	require.Greater(t, size, 0, "JSONSize should return a positive integer")
+	require.Equal(t, size, table.CachedJSONSize, "JSONSize should cache the result in CachedJSONSize")
+
+	// Call JSONSize again to ensure the cached value is used
+	cachedSize := table.JSONSize()
+	require.Equal(t, size, cachedSize, "JSONSize should return the cached value on subsequent calls")
 }

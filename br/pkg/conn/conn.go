@@ -346,12 +346,21 @@ func (mgr *Mgr) ProcessTiKVConfigs(ctx context.Context, cfg *kvconfig.KVConfig, 
 				importGoroutines.Value = threads * 8
 			}
 		}
+		maxBatchSize, err := kvconfig.ParseMaxRaftEntrySize(respBytes)
+		if err != nil {
+			log.Warn("Failed to parse max raft entry size from config", logutil.ShortError(err))
+			return err
+		}
+
 		// replace the value
+		cfg.RaftEntryMaxSize = maxBatchSize
 		cfg.MergeRegionSize = mergeRegionSize
 		cfg.MergeRegionKeyCount = mergeRegionKeyCount
 		cfg.ImportGoroutines = importGoroutines
+
 		return nil
 	})
+	log.Info("Loaded configuration from TiKV.", zap.Any("configuration", cfg))
 
 	if err != nil {
 		log.Warn("Failed to get config from TiKV; using default", logutil.ShortError(err))

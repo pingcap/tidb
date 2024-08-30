@@ -85,6 +85,7 @@ type SnapClient struct {
 	keepaliveConf       keepalive.ClientParameters
 	rateLimit           uint64
 	tlsConf             *tls.Config
+	ddlBatchSizeInBytes int
 
 	switchCh chan struct{}
 
@@ -126,8 +127,6 @@ type SnapClient struct {
 
 	// policy name -> policy info
 	policyMap *sync.Map
-
-	batchDdlSize uint
 
 	// if fullClusterRestore = true:
 	// - if there's system tables in the backup(backup data since br 5.1.0), the cluster should be a fresh cluster
@@ -233,14 +232,9 @@ func (rc *SnapClient) SetConcurrencyPerStore(c uint) {
 	rc.concurrencyPerStore = c
 }
 
-func (rc *SnapClient) SetBatchDdlSize(batchDdlsize uint) {
-	rc.batchDdlSize = batchDdlsize
+func (rc *SnapClient) SetBatchDDLSizeInBytes(size int) {
+	rc.ddlBatchSizeInBytes = size
 }
-
-func (rc *SnapClient) GetBatchDdlSize() uint {
-	return rc.batchDdlSize
-}
-
 func (rc *SnapClient) SetWithSysTable(withSysTable bool) {
 	rc.withSysTable = withSysTable
 }
@@ -681,7 +675,7 @@ func (rc *SnapClient) CreateTables(
 	rc.generateRebasedTables(tables)
 
 	// try to restore tables in batch
-	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
+	if rc.getDDLBatchSizeInBytes() > minBatchDdlSize && len(rc.dbPool) > 0 {
 		tables, err := rc.createTablesBatch(ctx, tables, newTS)
 		if err == nil {
 			return tables, nil
@@ -740,11 +734,29 @@ func (rc *SnapClient) createTables(
 	return cts, nil
 }
 
+func batchOfCreateTables(tables []*metautil.Table, targetSize int) (batch, rem []*metautil.Table) {
+	len := 0
+	for i := range tables {
+		thisLen := tables[i].JSONSize()
+		// Don't return when the batch is empty...
+		// Or we may enter an infinity loop.
+		// Just try send a batch greater than the target size.
+		if i > 0 && thisLen+len > targetSize {
+			return tables[:i], tables[i:]
+		}
+		len += thisLen
+	}
+	return tables, nil
+}
+
+func (rc *SnapClient) getDDLBatchSizeInBytes() int {
+	return rc.ddlBatchSizeInBytes
+}
+
 func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
-	numOfTables := len(tables)
 	createdTables := struct {
 		sync.Mutex
 		tables []*CreatedTable
@@ -752,14 +764,15 @@ func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.
 		tables: make([]*CreatedTable, 0, len(tables)),
 	}
 
-	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
-		end := min(lastSent+int(rc.batchDdlSize), len(tables))
-		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
+	rem := tables
+	for len(rem) > 0 {
+		var thisRun []*metautil.Table
+		thisRun, rem = batchOfCreateTables(tables, rc.getDDLBatchSizeInBytes())
+		log.Info("create tables", zap.Int("num", len(thisRun)), zap.Int("remained", len(rem)))
 
-		tableSlice := tables[lastSent:end]
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := rc.dbPool[id%uint64(len(rc.dbPool))]
-			cts, err := rc.createTables(ectx, db, tableSlice, newTS) // ddl job for [lastSent:i)
+			cts, err := rc.createTables(ectx, db, thisRun, newTS) // ddl job for [lastSent:i)
 			failpoint.Inject("restore-createtables-error", func(val failpoint.Value) {
 				if val.(bool) {
 					err = errors.New("sample error without extra message")
