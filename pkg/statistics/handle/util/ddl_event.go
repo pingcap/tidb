@@ -17,7 +17,7 @@ package util
 import (
 	"fmt"
 
-	util2 "github.com/pingcap/tidb/pkg/ddl/util"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
