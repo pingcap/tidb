@@ -285,6 +285,10 @@ func TestBundles(t *testing.T) {
 
 	// test create policy
 	policyInfo := internal.MockPolicyInfo(t, r.Store(), "test")
+	policyInfo.PlacementSettings = &model.PlacementSettings{
+		PrimaryRegion: "r1",
+		Regions:       "r1,r2",
+	}
 	internal.CreatePolicy(t, r.Store(), policyInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
@@ -300,6 +304,7 @@ func TestBundles(t *testing.T) {
 	// markTableBundleShouldUpdate
 	// test alter table placement
 	policyRefInfo := internal.MockPolicyRefInfo(t, r.Store(), "test")
+	policyRefInfo.ID = policyInfo.ID
 	tblInfo.PlacementPolicyRef = policyRefInfo
 	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err = r.Store().Begin()
@@ -311,10 +316,14 @@ func TestBundles(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, policyRefInfo, getTableInfo.Meta().PlacementPolicyRef)
 	require.NoError(t, txn.Rollback())
+	bundle, ok := is.PlacementBundleByPhysicalTableID(tblInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, bundle.Rules[0].LabelConstraints[0].Values[0], policyInfo.PrimaryRegion)
 
 	// markBundlesReferPolicyShouldUpdate
 	// test alter policy
 	policyInfo.State = model.StatePublic
+	policyInfo.PrimaryRegion = "r2"
 	internal.UpdatePolicy(t, r.Store(), policyInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
@@ -326,6 +335,34 @@ func TestBundles(t *testing.T) {
 	getPolicyInfo, ok = is.PolicyByName(getTableInfo.Meta().PlacementPolicyRef.Name)
 	require.True(t, ok)
 	require.Equal(t, policyInfo, getPolicyInfo)
+	bundle, ok = is.PlacementBundleByPhysicalTableID(tblInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, bundle.Rules[0].LabelConstraints[0].Values[0], policyInfo.PrimaryRegion)
+
+	// test alter table partition placement
+	tblInfo.Partition.Definitions[0].PlacementPolicyRef = policyRefInfo
+	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterTablePartitionPlacement, Version: 6, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build(math.MaxUint64)
+	bundle, ok = is.PlacementBundleByPhysicalTableID(tblInfo.Partition.Definitions[0].ID)
+	require.True(t, ok)
+	require.Equal(t, bundle.Rules[0].LabelConstraints[0].Values[0], policyInfo.PrimaryRegion)
+
+	// markPartitionBundleShouldUpdate
+	// test alter policy
+	policyInfo.PrimaryRegion = "r1"
+	internal.UpdatePolicy(t, r.Store(), policyInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterPlacementPolicy, Version: 6, SchemaID: policyInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build(math.MaxUint64)
+	bundle, ok = is.PlacementBundleByPhysicalTableID(tblInfo.Partition.Definitions[0].ID)
+	require.True(t, ok)
+	require.Equal(t, bundle.Rules[0].LabelConstraints[0].Values[0], policyInfo.PrimaryRegion)
 }
 
 func TestReferredFKInfo(t *testing.T) {
