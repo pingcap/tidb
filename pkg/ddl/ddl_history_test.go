@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -33,6 +34,10 @@ import (
 )
 
 func TestDDLHistoryBasic(t *testing.T) {
+	var (
+		ddlHistoryJobCount = 0
+	)
+
 	store := testkit.CreateMockStore(t)
 	rs := pools.NewResourcePool(func() (pools.Resource, error) {
 		newTk := testkit.NewTestKit(t, store)
@@ -78,8 +83,9 @@ func TestDDLHistoryBasic(t *testing.T) {
 
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-		_, err := ddl.GetAllHistoryDDLJobs(m)
+		jobs, err := ddl.GetAllHistoryDDLJobs(m)
 		require.NoError(t, err)
+		ddlHistoryJobCount = len(jobs)
 		return nil
 	})
 
@@ -96,4 +102,37 @@ func TestDDLHistoryBasic(t *testing.T) {
 	})
 
 	require.NoError(t, err)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/history-ddl-jobs-limit", "return(128)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/history-ddl-jobs-limit"))
+	}()
+
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		jobs, err := ddl.ScanHistoryDDLJobs(m, 0, 0)
+		require.NoError(t, err)
+		if ddlHistoryJobCount <= 128 {
+			require.Equal(t, ddlHistoryJobCount, len(jobs))
+		} else {
+			require.Equal(t, 128, len(jobs))
+		}
+		require.True(t, len(jobs) > 2)
+		require.Equal(t, int64(2), jobs[ddlHistoryJobCount-2].ID)
+		require.Equal(t, int64(1), jobs[ddlHistoryJobCount-1].ID)
+		return nil
+	})
+
+	require.NoError(t, err)
+}
+
+func TestScanHistoryDDLJobsWithErrorLimit(t *testing.T) {
+	var (
+		m                = &meta.Meta{}
+		startJobID int64 = 10
+		limit            = 0
+	)
+
+	_, err := ddl.ScanHistoryDDLJobs(m, startJobID, limit)
+	require.ErrorContains(t, err, "when 'start_job_id' is specified, it must work with a 'limit'")
 }
