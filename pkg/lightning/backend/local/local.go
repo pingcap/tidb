@@ -837,12 +837,12 @@ func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, si
 	return ranges
 }
 
-func readAndSplitIntoRange(
+func getRegionSplitKeys(
 	ctx context.Context,
 	engine common.Engine,
 	sizeLimit int64,
 	keysLimit int64,
-) ([]common.Range, error) {
+) ([][]byte, error) {
 	startKey, endKey, err := engine.GetKeyRange()
 	if err != nil {
 		return nil, err
@@ -854,17 +854,17 @@ func readAndSplitIntoRange(
 	engineFileTotalSize, engineFileLength := engine.KVStatistics()
 
 	if engineFileTotalSize <= sizeLimit && engineFileLength <= keysLimit {
-		ranges := []common.Range{{Start: startKey, End: endKey}}
-		return ranges, nil
+		return [][]byte{startKey, endKey}, nil
 	}
 
 	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
-	ranges, err := engine.SplitRanges(startKey, endKey, sizeLimit, keysLimit, logger)
+	keys, err := engine.GetRegionSplitKeys()
 	logger.Info("split engine key ranges",
-		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
+		zap.Int64("totalSize", engineFileTotalSize),
+		zap.Int64("totalCount", engineFileLength),
 		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey),
-		zap.Int("ranges", len(ranges)), zap.Error(err))
-	return ranges, err
+		zap.Int("len(keys)", len(keys)), zap.Error(err))
+	return keys, err
 }
 
 // prepareAndSendJob will read the engine to get estimated key range,
@@ -876,7 +876,7 @@ func readAndSplitIntoRange(
 func (local *Backend) prepareAndSendJob(
 	ctx context.Context,
 	engine common.Engine,
-	initialSplitRanges []common.Range,
+	initialSplitRanges [][]byte,
 	regionSplitSize, regionSplitKeys int64,
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
@@ -1294,25 +1294,6 @@ func (local *Backend) ImportEngine(
 	engineUUID uuid.UUID,
 	regionSplitSize, regionSplitKeys int64,
 ) error {
-	var e common.Engine
-	if externalEngine, ok := local.engineMgr.getExternalEngine(engineUUID); ok {
-		e = externalEngine
-	} else {
-		localEngine := local.engineMgr.lockEngine(engineUUID, importMutexStateImport)
-		if localEngine == nil {
-			// skip if engine not exist. See the comment of `CloseEngine` for more detail.
-			return nil
-		}
-		defer localEngine.unlock()
-		e = localEngine
-	}
-
-	lfTotalSize, lfLength := e.KVStatistics()
-	if lfTotalSize == 0 {
-		// engine is empty, this is likes because it's a index engine but the table contains no index
-		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
-		return nil
-	}
 	kvRegionSplitSize, kvRegionSplitKeys, err := GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)
 	if err == nil {
 		if kvRegionSplitSize > regionSplitSize {
@@ -1325,23 +1306,44 @@ func (local *Backend) ImportEngine(
 		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
 
+	var e common.Engine
+	if externalEngine, ok := local.engineMgr.getExternalEngine(engineUUID); ok {
+		e = externalEngine
+	} else {
+		localEngine := local.engineMgr.lockEngine(engineUUID, importMutexStateImport)
+		if localEngine == nil {
+			// skip if engine not exist. See the comment of `CloseEngine` for more detail.
+			return nil
+		}
+		defer localEngine.unlock()
+		localEngine.regionSplitSize = regionSplitSize
+		localEngine.regionSplitKeys = regionSplitKeys
+		e = localEngine
+	}
+	lfTotalSize, lfLength := e.KVStatistics()
+	if lfTotalSize == 0 {
+		// engine is empty, this is likes because it's a index engine but the table contains no index
+		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
+		return nil
+	}
+
 	// split sorted file into range about regionSplitSize per file
-	regionRanges, err := readAndSplitIntoRange(ctx, e, regionSplitSize, regionSplitKeys)
+	splitKeys, err := getRegionSplitKeys(ctx, e, regionSplitSize, regionSplitKeys)
 	if err != nil {
 		return err
 	}
 
-	if len(regionRanges) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+	if len(splitKeys) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
 		log.FromContext(ctx).Info("pause pd scheduler of table scope")
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
 		var startKey, endKey []byte
-		if len(regionRanges[0].Start) > 0 {
-			startKey = codec.EncodeBytes(nil, regionRanges[0].Start)
+		if len(splitKeys[0]) > 0 {
+			startKey = codec.EncodeBytes(nil, splitKeys[0])
 		}
-		if len(regionRanges[len(regionRanges)-1].End) > 0 {
-			endKey = codec.EncodeBytes(nil, regionRanges[len(regionRanges)-1].End)
+		if len(splitKeys[len(splitKeys)-1]) > 0 {
+			endKey = codec.EncodeBytes(nil, splitKeys[len(splitKeys)-1])
 		}
 		done, err := pdutil.PauseSchedulersByKeyRange(subCtx, local.pdHTTPCli, startKey, endKey)
 		if err != nil {
@@ -1353,14 +1355,14 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
-	if len(regionRanges) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
+	if len(splitKeys) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
 		log.FromContext(ctx).Info("switch import mode of ranges",
-			zap.String("startKey", hex.EncodeToString(regionRanges[0].Start)),
-			zap.String("endKey", hex.EncodeToString(regionRanges[len(regionRanges)-1].End)))
+			zap.String("startKey", hex.EncodeToString(splitKeys[0])),
+			zap.String("endKey", hex.EncodeToString(splitKeys[len(splitKeys)-1])))
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
-		done, err := local.SwitchModeByKeyRanges(subCtx, regionRanges)
+		done, err := local.switchModeBySplitKeys(subCtx, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1372,13 +1374,13 @@ func (local *Backend) ImportEngine(
 
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
-		zap.Int("region ranges", len(regionRanges)),
+		zap.Int("region ranges", len(splitKeys)),
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize))
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
-	err = local.doImport(ctx, e, regionRanges, regionSplitSize, regionSplitKeys)
+	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
 		importedSize, importedLength := e.ImportedStatistics()
 		log.FromContext(ctx).Info("import engine success",
@@ -1397,7 +1399,12 @@ var (
 	testJobWg         *sync.WaitGroup
 )
 
-func (local *Backend) doImport(ctx context.Context, engine common.Engine, regionRanges []common.Range, regionSplitSize, regionSplitKeys int64) error {
+func (local *Backend) doImport(
+	ctx context.Context,
+	engine common.Engine,
+	regionSplitKeys [][]byte,
+	regionSplitSize, regionSplitKeyCnt int64,
+) error {
 	/*
 	   [prepareAndSendJob]-----jobToWorkerCh--->[workers]
 	                        ^                       |
@@ -1497,9 +1504,9 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 		err := local.prepareAndSendJob(
 			workerCtx,
 			engine,
-			regionRanges,
-			regionSplitSize,
 			regionSplitKeys,
+			regionSplitSize,
+			regionSplitKeyCnt,
 			jobToWorkerCh,
 			&jobWg,
 		)
@@ -1591,47 +1598,43 @@ func (local *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterC
 	return local.engineMgr.localWriter(ctx, cfg, engineUUID)
 }
 
-// SwitchModeByKeyRanges will switch tikv mode for regions in the specific key range for multirocksdb.
-// This function will spawn a goroutine to keep switch mode periodically until the context is done.
-// The return done channel is used to notify the caller that the background goroutine is exited.
-func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common.Range) (<-chan struct{}, error) {
+// switchModeBySplitKeys will switch tikv mode for regions in the specific keys
+// for multirocksdb. This function will spawn a goroutine to keep switch mode
+// periodically until the context is done. The return done channel is used to
+// notify the caller that the background goroutine is exited.
+func (local *Backend) switchModeBySplitKeys(
+	ctx context.Context,
+	splitKeys [][]byte,
+) (<-chan struct{}, error) {
 	switcher := NewTiKVModeSwitcher(local.tls.TLSConfig(), local.pdHTTPCli, log.FromContext(ctx).Logger)
 	done := make(chan struct{})
 
-	keyRanges := make([]*sst.Range, 0, len(ranges))
-	for _, r := range ranges {
-		startKey := r.Start
-		if len(r.Start) > 0 {
-			startKey = codec.EncodeBytes(nil, r.Start)
-		}
-		endKey := r.End
-		if len(r.End) > 0 {
-			endKey = codec.EncodeBytes(nil, r.End)
-		}
-		keyRanges = append(keyRanges, &sst.Range{
-			Start: startKey,
-			End:   endKey,
-		})
+	keyRange := &sst.Range{}
+	if len(splitKeys[0]) > 0 {
+		keyRange.Start = codec.EncodeBytes(nil, splitKeys[0])
+	}
+	if len(splitKeys[len(splitKeys)-1]) > 0 {
+		keyRange.End = codec.EncodeBytes(nil, splitKeys[len(splitKeys)-1])
 	}
 
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(local.BackendConfig.RaftKV2SwitchModeDuration)
 		defer ticker.Stop()
-		switcher.ToImportMode(ctx, keyRanges...)
+		switcher.ToImportMode(ctx, keyRange)
 	loop:
 		for {
 			select {
 			case <-ctx.Done():
 				break loop
 			case <-ticker.C:
-				switcher.ToImportMode(ctx, keyRanges...)
+				switcher.ToImportMode(ctx, keyRange)
 			}
 		}
 		// Use a new context to avoid the context is canceled by the caller.
 		recoverCtx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 		defer cancel()
-		switcher.ToNormalMode(recoverCtx, keyRanges...)
+		switcher.ToNormalMode(recoverCtx, keyRange)
 	}()
 	return done, nil
 }
