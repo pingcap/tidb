@@ -26,11 +26,24 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB"
 
 filename=$(find $TEST_DIR/$DB -regex ".*.sst" | head -n 1)
 filename_temp=$filename"_temp"
+filename_bak=$filename"_bak"
 echo "corruption" > $filename_temp
 cat $filename >> $filename_temp
+
+# file lost
+mv $filename $filename_bak
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
+restore_fail=0
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" || restore_fail=1
+export GO_FAILPOINTS=""
+if [ $restore_fail -ne 1 ]; then
+    echo 'restore success' 
+    exit 1
+fi
+
+# file corruption
 mv $filename_temp $filename
 truncate --size=-11 $filename
-
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
 restore_fail=0
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" || restore_fail=1
