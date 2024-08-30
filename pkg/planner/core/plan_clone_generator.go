@@ -102,7 +102,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 							cloned.%v = *basePlan`, fieldName, fieldName)
 		case "baseimpl.Plan", "core.baseSchemaProducer":
 			c.write("cloned.%v = *op.%v.CloneWithNewCtx(newCtx)", f.Name, f.Name)
-		case "[]expression.Expression", "[]*ranger.Range", "[]*util.ByItems", "[]*expression.Column", "[]ast.CIStr",
+		case "[]expression.Expression", "[]*ranger.Range", "[]*util.ByItems", "[]*expression.Column", "[]model.CIStr",
 			"[]*expression.Constant", "[]*expression.ScalarFunction", "[]property.SortItem", "[]types.Datum",
 			"[]kv.Handle", "[]*expression.Assignment":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
