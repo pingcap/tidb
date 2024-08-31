@@ -139,7 +139,8 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		logutil.BgLogger().Info("fuck  update", zap.Int64("physicalID", physicalID),
+		logutil.BgLogger().Info("fuck update", zap.Int64("physicalID", physicalID),
+			zap.Bool("pseudo", tbl.Pseudo),
 			zap.Int64("ModifyCount", modifyCount), zap.Int64("RealtimeCount", count))
 		// It only occurs in the following situations:
 		// 1. The table has already been analyzed,
@@ -230,7 +231,15 @@ func (s *StatsCacheImpl) Get(tableID int64) (*statistics.Table, bool) {
 	failpoint.Inject("StatsCacheGetNil", func() {
 		failpoint.Return(nil, false)
 	})
-	return s.Load().Get(tableID)
+
+	result, ok := s.Load().Get(tableID)
+	if ok {
+		logutil.BgLogger().Info("fuck get stats", zap.Int64("tid", tableID), zap.Bool("pseudo", result.Pseudo))
+	} else {
+		logutil.BgLogger().Info("fuck get none stats", zap.Int64("tid", tableID))
+	}
+
+	return result, ok
 }
 
 // Put puts this table stats into the cache.

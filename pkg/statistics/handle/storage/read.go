@@ -609,8 +609,13 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		return nil
 	}
 	var colInfo *model.ColumnInfo
-	_, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(col.ID, true)
-	if !loadNeeded || !analyzed {
+	_, loadNeeded, analyzed, missing := tbl.ColumnIsLoadNeededOld(col.ID, true)
+	logutil.BgLogger().Info("fuck bug",
+		zap.Int64("tid", col.TableID),
+		zap.Bool("loadNeeded", loadNeeded),
+		zap.Bool("analyzed", analyzed),
+	)
+	if !loadNeeded || !analyzed || missing {
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
