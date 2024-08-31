@@ -2931,6 +2931,11 @@ error = '''
 Connections using insecure transport are prohibited while --require_secure_transport=ON.
 '''
 
+["server:8051"]
+error = '''
+unknown field type
+'''
+
 ["server:8052"]
 error = '''
 invalid sequence

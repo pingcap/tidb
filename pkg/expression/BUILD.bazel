@@ -81,6 +81,7 @@ go_library(
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/model",
+        "//pkg/param",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
