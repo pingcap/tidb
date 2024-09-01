@@ -16,11 +16,12 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/param"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
