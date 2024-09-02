@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/set"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -866,33 +865,6 @@ func getJobsBySQL(se *sess.Session, tbl, condition string) ([]*model.Job, error)
 		jobBinary := row.GetBytes(0)
 		job := model.Job{}
 		err := job.Decode(jobBinary)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		jobs = append(jobs, &job)
-	}
-	return jobs, nil
-}
-
-func getJobsBySQLWithFilter(se *sess.Session, tbl, condition string, schemaNames, tableNames set.StringSet) ([]*model.Job, error) {
-	rows, err := se.Execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	jobs := make([]*model.Job, 0, 16)
-	for _, row := range rows {
-		jobBinary := row.GetBytes(0)
-		match, err := meta.IsJobMatch(jobBinary, schemaNames, tableNames)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		if !match {
-			continue
-		}
-
-		job := model.Job{}
-		err = job.Decode(jobBinary)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

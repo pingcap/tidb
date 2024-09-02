@@ -294,19 +294,6 @@ func (e *InfoSchemaDDLExtractor) Extract(
 	return predicates
 }
 
-// ListSchemas lists all schema ids from predicate.
-func (e *InfoSchemaDDLExtractor) ListSchemas(is infoschema.InfoSchema) ([]*model.DBInfo, bool) {
-	ec := e.extractableColumns
-	schemas := e.getSchemaObjectNames(ec.schema)
-	ret := make([]*model.DBInfo, 0, len(schemas))
-	for _, s := range schemas {
-		if n, ok := is.SchemaByName(s); ok {
-			ret = append(ret, n)
-		}
-	}
-	return ret, len(schemas) > 0
-}
-
 // InfoSchemaViewsExtractor is the predicate extractor for information_schema.views.
 type InfoSchemaViewsExtractor struct {
 	InfoSchemaBaseExtractor

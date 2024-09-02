@@ -1583,12 +1583,13 @@ type HLastJobIterator struct {
 	tableNames  set.StringSet
 }
 
+var jobExtractFields = []string{"schema_name", "table_name"}
+
 // ExtractSchemaAndTableNameFromJob extract schema_name and table_name from encoded Job structure
 // Note, here we strongly rely on the order of fields in marshalled string, just like checkSubstringsInOrder
 // Exported for test
-func ExtractSchemaAndTableNameFromJob(s string) (schemaName, tableName string, err error) {
-	var extractFields = []string{"schema_name", "table_name"}
-	m, err := partialjson.ExtractTopLevelMembers([]byte(s[0:]), extractFields)
+func ExtractSchemaAndTableNameFromJob(data []byte) (schemaName, tableName string, err error) {
+	m, err := partialjson.ExtractTopLevelMembers(data, jobExtractFields)
 
 	schemaNameToken, ok := m["schema_name"]
 	if !ok || len(schemaNameToken) != 1 {
@@ -1612,7 +1613,7 @@ func ExtractSchemaAndTableNameFromJob(s string) (schemaName, tableName string, e
 
 // IsJobMatch examines whether given job's table/schema name matches.
 func IsJobMatch(job []byte, schemaNames, tableNames set.StringSet) (match bool, err error) {
-	schemaName, tableName, err := ExtractSchemaAndTableNameFromJob(string(hack.String(job)))
+	schemaName, tableName, err := ExtractSchemaAndTableNameFromJob(job)
 	if err != nil {
 		return
 	}

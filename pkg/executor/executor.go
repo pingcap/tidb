@@ -447,8 +447,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 		// For instance, in the case of the SQL like `create table t(id int)`,
 		// the tableInfo for 't' will not be available in the infoschema until the job is completed.
 		// As a result, we cannot retrieve its table_id.
-		// Therefore, the only choice is to scan the entire table and reduce the number of calls to unmarshal.
-		e.runningJobs, err = ddl.GetNeededDDLJobs(sess, schemaNames, tableNames)
+		e.runningJobs, err = ddl.GetAllDDLJobs(sess)
 		if err != nil {
 			return err
 		}
