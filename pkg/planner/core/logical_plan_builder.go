@@ -4115,7 +4115,7 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	pseudoStatsForOutdated = ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() && statsTbl.IsOutdated()
 	if pseudoStatsForUninitialized || pseudoStatsForOutdated {
 		tbl := *statsTbl
-		logutil.BgLogger().Info("change tbl into pseudo", zap.Int64("tblID", tblInfo.ID), zap.Int64("pid", pid), zap.Bool("pseudo", tbl.Pseudo))
+		//logutil.BgLogger().Info("change tbl into pseudo", zap.Int64("tblID", tblInfo.ID), zap.Int64("pid", pid), zap.Bool("pseudo", tbl.Pseudo))
 		tbl.Pseudo = true
 		statsTbl = &tbl
 		if pseudoStatsForUninitialized {
