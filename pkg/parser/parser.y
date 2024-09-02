@@ -748,6 +748,7 @@ import (
 	medium                "MEDIUM"
 	metadata              "METADATA"
 	min                   "MIN"
+	hnsw                  "HNSW"
 	next_row_id           "NEXT_ROW_ID"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
@@ -1131,9 +1132,11 @@ import (
 	ConnectionOption                       "single connection options"
 	ConnectionOptionList                   "connection options for CREATE USER statement"
 	ConnectionOptions                      "optional connection options for CREATE USER statement"
-	Constraint                             "table constraint"
+	Constraint                             "table constraint outwith vector index"
 	ConstraintElem                         "table constraint element"
 	ConstraintKeywordOpt                   "Constraint Keyword or empty"
+	ConstraintVectorIndex                  "vector index"
+	ConstraintWithVectorIndex              "table constraint with vector index"
 	CreateSequenceOptionListOpt            "create sequence list opt"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
@@ -1636,6 +1639,8 @@ import (
 %precedence order
 %precedence lowerThanFunction
 %precedence function
+%precedence constraint
+%precedence vectorType
 
 /* A dummy token to force the priority of TableRef production in a join. */
 %left tableRefPriority
@@ -2230,6 +2235,14 @@ AlterTableSpec:
 		}
 	}
 |	"ADD" Constraint
+	{
+		constraint := $2.(*ast.Constraint)
+		$$ = &ast.AlterTableSpec{
+			Tp:         ast.AlterTableAddConstraint,
+			Constraint: constraint,
+		}
+	}
+|	"ADD" ConstraintVectorIndex
 	{
 		constraint := $2.(*ast.Constraint)
 		$$ = &ast.AlterTableSpec{
@@ -4196,11 +4209,25 @@ CreateIndexStmt:
 				indexLockAndAlgorithm = nil
 			}
 		}
+
+		keyType := $2.(ast.IndexKeyType)
+     	if (keyType == ast.IndexKeyTypeVector && indexOption.Tp != model.IndexTypeHNSW) || (keyType != ast.IndexKeyTypeVector && indexOption.Tp == model.IndexTypeHNSW) {
+     		yylex.AppendError(ErrSyntax)
+     		return 1
+     	}
+     	partSpecs := $10.([]*ast.IndexPartSpecification)
+     	if keyType == ast.IndexKeyTypeVector {
+     		if len(partSpecs) != 1 || partSpecs[0].Expr == nil {
+     			yylex.AppendError(ErrSyntax)
+     			return 1
+     		}
+     	}
+
 		$$ = &ast.CreateIndexStmt{
 			IfNotExists:             $4.(bool),
 			IndexName:               $5,
 			Table:                   $8.(*ast.TableName),
-			IndexPartSpecifications: $10.([]*ast.IndexPartSpecification),
+			IndexPartSpecifications: partSpecs,
 			IndexOption:             indexOption,
 			KeyType:                 $2.(ast.IndexKeyType),
 			LockAlg:                 indexLockAndAlgorithm,
@@ -4284,6 +4311,10 @@ IndexKeyTypeOpt:
 |	"FULLTEXT"
 	{
 		$$ = ast.IndexKeyTypeFullText
+	}
+|	"VECTOR"
+	{
+		$$ = ast.IndexKeyTypeVector
 	}
 
 /**************************************AlterDatabaseStmt***************************************
@@ -6658,6 +6689,10 @@ IndexTypeName:
 	{
 		$$ = model.IndexTypeHypo
 	}
+|	"HNSW"
+	{
+		$$ = model.IndexTypeHNSW
+	}
 
 IndexInvisible:
 	"VISIBLE"
@@ -7124,6 +7159,7 @@ NotKeywordToken:
 |	"END_TIME"
 |	"GET_FORMAT"
 |	"GROUP_CONCAT"
+|	"HNSW"
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
@@ -12332,13 +12368,61 @@ Constraint:
 		$$ = cst
 	}
 
+// ConstraintVectorIndex does not put in Constraint to resolve syntax conflicts.
+ConstraintVectorIndex:
+	"VECTOR" "INDEX" IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
+	{
+		c := &ast.Constraint{
+			IfNotExists:  $3.(bool),
+			Tp:           ast.ConstraintVector,
+			Keys:         $6.([]*ast.IndexPartSpecification),
+			Name:         $4.([]interface{})[0].(*ast.NullString).String,
+			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
+		}
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
+		}
+
+		if indexType := $4.([]interface{})[1]; indexType != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = indexType.(model.IndexType)
+		}
+		if c.Option == nil || c.Option.Tp != model.IndexTypeHNSW {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+
+		if len(c.Keys) != 1 || c.Keys[0].Expr == nil {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = c
+	}
+
+ConstraintWithVectorIndex:
+	ConstraintKeywordOpt ConstraintElem
+	{
+		cst := $2.(*ast.Constraint)
+		if $1 != nil {
+			cst.Name = $1.(string)
+			cst.IsEmptyIndex = len(cst.Name) == 0
+		}
+		$$ = cst
+	}
+|	ConstraintVectorIndex
+	{
+		$$ = $1.(*ast.Constraint)
+	}
+
 CheckConstraintKeyword:
 	"CHECK"
 |	"CONSTRAINT"
 
 TableElement:
 	ColumnDef
-|	Constraint
+|	ConstraintWithVectorIndex
 
 TableElementList:
 	TableElement

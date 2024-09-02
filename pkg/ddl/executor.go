@@ -1809,6 +1809,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				} else {
 					err = e.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
 				}
+			case ast.ConstraintVector:
+				err = createVectorIndex()
 			default:
 				// Nothing to do now.
 			}
@@ -4537,6 +4539,10 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	return errors.Trace(err)
 }
 
+func createVectorIndex() error {
+	return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("not currently supported")
+}
+
 func (e *executor) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	return e.createIndex(ctx, ident, stmt.KeyType, model.NewCIStr(stmt.IndexName),
@@ -4570,6 +4576,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	// not support Spatial and FullText index
 	if keyType == ast.IndexKeyTypeFullText || keyType == ast.IndexKeyTypeSpatial {
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
+	}
+	if keyType == ast.IndexKeyTypeVector {
+		return createVectorIndex()
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
