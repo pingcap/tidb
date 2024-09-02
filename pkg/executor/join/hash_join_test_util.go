@@ -23,7 +23,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -254,7 +253,6 @@ func buildSchema(schemaTypes []*types.FieldType) *expression.Schema {
 }
 
 func executeHashJoinExec(t *testing.T, hashJoinExec *HashJoinV2Exec) []*chunk.Chunk {
-	log.Info("---------xzxdebug start to execute join exec---------")
 	tmpCtx := context.Background()
 	err := hashJoinExec.Open(tmpCtx)
 	require.NoError(t, err)

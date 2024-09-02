@@ -15,9 +15,6 @@
 package join
 
 import (
-	"bytes"
-	"encoding/binary"
-	"hash"
 	"hash/fnv"
 	"sync/atomic"
 	"unsafe"
@@ -606,11 +603,6 @@ type rowTableBuilder struct {
 	nullKeyVector []bool // nullKeyVector[i] = true if any of the key is null
 
 	rowNumberInCurrentRowTableSeg []int64
-
-	// When respilling a row, we need to recalculate the row's hash value.
-	// These are auxiliary utility for rehash.
-	hash      hash.Hash64
-	rehashBuf *bytes.Buffer
 }
 
 func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber uint, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
@@ -673,82 +665,6 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 
 	// 2. build rowtable
 	return b.appendToRowTable(chk, hashJoinCtx, workerID)
-}
-
-func (b *rowTableBuilder) regenerateHashValueAndPartIndex(hashValue uint64, partitionMaskOffset int) (uint64, int, error) {
-	b.rehashBuf.Reset()
-	err := binary.Write(b.rehashBuf, binary.LittleEndian, hashValue)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	b.hash.Reset()
-	b.hash.Write(b.rehashBuf.Bytes())
-	newHashVal := b.hash.Sum64()
-	return newHashVal, int(generatePartitionIndex(newHashVal, partitionMaskOffset)), nil
-}
-
-func (b *rowTableBuilder) initRehashUtil() {
-	if b.rehashBuf == nil {
-		b.hash = fnv.New64()
-		b.rehashBuf = new(bytes.Buffer)
-	}
-}
-
-func (b *rowTableBuilder) processOneRestoredChunk(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2, workerID int, partitionNumber int) error {
-	b.initRehashUtil()
-
-	rowNum := chk.NumRows()
-	fakePartIndex := uint64(0)
-	var newHashValue uint64
-	var partID int
-	var err error
-
-	for i := 0; i < rowNum; i++ {
-		if i%100 == 0 {
-			err := checkSQLKiller(&hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringRestoreBuild")
-			if err != nil {
-				return err
-			}
-		}
-
-		row := chk.GetRow(i)
-		validJoinKey := row.GetBytes(1)
-		oldHashValue := row.GetInt64(0)
-		rowData := row.GetBytes(2)
-
-		var hasValidJoinKey uint64
-		if validJoinKey[0] != byte(0) {
-			hasValidJoinKey = 1
-		} else {
-			hasValidJoinKey = 0
-		}
-
-		var seg *rowTableSegment
-		if hasValidJoinKey != 0 {
-			newHashValue, partID, err = b.regenerateHashValueAndPartIndex(uint64(oldHashValue), hashJoinCtx.partitionMaskOffset)
-			if err != nil {
-				return err
-			}
-			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true, b.firstSegRowSizeHint)
-			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
-		} else {
-			partID = int(fakePartIndex)
-			newHashValue = fakePartIndex
-			fakePartIndex = (fakePartIndex + 1) % uint64(partitionNumber)
-			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true, b.firstSegRowSizeHint)
-		}
-
-		seg.hashValues = append(seg.hashValues, newHashValue)
-		b.rowNumberInCurrentRowTableSeg[partID]++
-		seg.rowStartOffset = append(seg.rowStartOffset, uint64(len(seg.rawData)))
-		seg.rawData = append(seg.rawData, rowData...)
-
-		if b.rowNumberInCurrentRowTableSeg[partID] >= maxRowTableSegmentSize || len(seg.rawData) >= maxRowTableSegmentByteSize {
-			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, b, true)
-		}
-	}
-	return nil
 }
 
 func resizeSlice[T int | uint64 | bool](s []T, newSize int) []T {

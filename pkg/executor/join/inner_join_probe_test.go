@@ -269,7 +269,6 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		RUsed:                 rightUsed,
 		LUsedInOtherCondition: leftUsedByOtherCondition,
 		RUsedInOtherCondition: rightUsedByOtherCondition,
-		spillHelper:           newHashJoinSpillHelper(nil, partitionNumber, nil),
 	}
 	hashJoinCtx.SessCtx = mock.NewContext()
 	hashJoinCtx.JoinType = joinType
@@ -345,7 +344,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	}
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	checkRowLocationAlignment(t, hashJoinCtx.hashTableContext.rowTables[0])
-	hashJoinCtx.hashTableContext.mergeRowTablesToHashTable(int(hashJoinCtx.partitionNumber), nil)
+	hashJoinCtx.hashTableContext.mergeRowTablesToHashTable(int(hashJoinCtx.partitionNumber))
 	// build hash table
 	for i := 0; i < partitionNumber; i++ {
 		hashJoinCtx.hashTableContext.hashTable.buildHashTableForTest(i, 0, len(hashJoinCtx.hashTableContext.hashTable.tables[i].rowData.segments))

@@ -15,12 +15,10 @@
 package join
 
 import (
-	"fmt"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -31,10 +29,6 @@ type ProbeWorkerV2 struct {
 	// We build individual joinProbe for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	JoinProbe ProbeV2
-
-	// TODO delete them
-	totalOutputRowNum int
-	spilledRowNum     int
 }
 
 func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
@@ -44,10 +38,6 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
 		return nil
 	}
 
-	totalOutputRowNum := 0
-	defer func() {
-		log.Info(fmt.Sprintf("xzxdebug final worker totalOutputRowNum: %d", totalOutputRowNum))
-	}()
 	for !w.JoinProbe.IsScanRowTableDone() {
 		joinResult = w.JoinProbe.ScanRowTable(joinResult, &w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
 		if joinResult.err != nil {
@@ -60,7 +50,6 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
 				return err
 			}
 
-			totalOutputRowNum += joinResult.chk.NumRows()
 			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			if !ok {
@@ -71,9 +60,6 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
 	if joinResult == nil {
 		return nil
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		if joinResult.chk != nil {
-			totalOutputRowNum += joinResult.chk.NumRows()
-		}
 		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		w.joinChkResourceCh <- joinResult.chk
@@ -93,7 +79,6 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 		failpoint.Inject("processOneProbeChunkPanic", nil)
 		if joinResult.chk.IsFull() {
 			waitStart := time.Now()
-			w.totalOutputRowNum += joinResult.chk.NumRows()
 			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			waitTime += int64(time.Since(waitStart))
@@ -103,15 +88,6 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 		}
 	}
 	return true, waitTime, joinResult
-}
-
-func (w *ProbeWorkerV2) processOneRestoredProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
-	waitTime = 0
-	joinResult.err = w.JoinProbe.SetRestoredChunkForProbe(probeChunk)
-	if joinResult.err != nil {
-		return false, 0, joinResult
-	}
-	return w.probeAndSendResult(joinResult)
 }
 
 func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
@@ -145,17 +121,6 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 	if !ok {
 		return
 	}
-
-	defer func() {
-		spilledInfo := w.JoinProbe.GetSpilledRowNum()
-		info := ""
-		for partID, rowNum := range spilledInfo {
-			info = fmt.Sprintf("%s [%d %d]", info, partID, rowNum)
-		}
-
-		// log.Info(fmt.Sprintf("xzxdebug worker %d, totalOutputRowNum: %d", w.WorkerID, w.totalOutputRowNum))
-		// w.totalOutputRowNum = 0
-	}()
 
 	// Read and filter probeSideResult, and join the probeSideResult with the build side rows.
 	emptyProbeSideResult := &probeChkResource{
@@ -195,110 +160,16 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 		w.probeChkResourceCh <- emptyProbeSideResult
 	}
 
-	err := w.JoinProbe.SpillRemainingProbeChunks()
-	if err != nil {
-		handleError(w.HashJoinCtx.joinResultCh, &w.HashJoinCtx.finished, err)
-		return
-	}
-
-	spilledRowNum := w.JoinProbe.GetSpilledRowNum()
-
-	defer func() {
-		totalSpilledRowNum := 0
-		detail := ""
-		for partID, rowNum := range spilledRowNum {
-			detail = fmt.Sprintf("%s[%d %d], ", detail, partID, rowNum)
-			totalSpilledRowNum += rowNum
-		}
-	}()
-
 	// note joinResult.chk may be nil when getNewJoinResult fails in loops
 	if joinResult == nil {
 		return
 	} else if joinResult.err != nil {
 		handleError(w.HashJoinCtx.joinResultCh, &w.HashJoinCtx.finished, joinResult.err)
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
-		if joinResult.chk != nil {
-			w.totalOutputRowNum += joinResult.chk.NumRows()
-		}
 		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		w.joinChkResourceCh <- joinResult.chk
 	}
-}
-
-func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) error {
-	probeTime := int64(0)
-	if w.HashJoinCtx.stats != nil {
-		start := time.Now()
-		defer func() {
-			w.updateProbeStatistic(start, probeTime)
-		}()
-	}
-
-	ok, joinResult := w.getNewJoinResult()
-	if !ok {
-		return nil
-	}
-
-	// defer func() {
-	// 	log.Info(fmt.Sprintf("xzxdebug worker %d, output: %d", w.WorkerID, w.totalOutputRowNum))
-	// 	w.totalOutputRowNum = 0
-	// }()
-
-	chunkNum := inDisk.NumChunks()
-
-	for i := 0; i < chunkNum; i++ {
-		if w.HashJoinCtx.finished.Load() {
-			return nil
-		}
-		select {
-		case <-w.HashJoinCtx.closeCh:
-			return nil
-		default:
-		}
-		failpoint.Inject("ConsumeRandomPanic", nil)
-
-		// TODO reuse chunk
-		chk, err := inDisk.GetChunk(i)
-		if err != nil {
-			return err
-		}
-
-		err = triggerIntest(3)
-		if err != nil {
-			return err
-		}
-
-		start := time.Now()
-		waitTime := int64(0)
-		ok, waitTime, joinResult = w.processOneRestoredProbeChunk(chk, joinResult)
-		probeTime += int64(time.Since(start)) - waitTime
-		if !ok {
-			break
-		}
-	}
-
-	err := w.JoinProbe.SpillRemainingProbeChunks()
-	if err != nil {
-		return err
-	}
-
-	// note joinResult.chk may be nil when getNewJoinResult fails in loops
-	if joinResult == nil {
-		return nil
-	} else if joinResult.err != nil {
-		handleError(w.HashJoinCtx.joinResultCh, &w.HashJoinCtx.finished, joinResult.err)
-	} else if joinResult.chk != nil && joinResult.chk.NumRows() > 0 {
-		if joinResult.chk != nil {
-			w.totalOutputRowNum += joinResult.chk.NumRows()
-		}
-
-		w.HashJoinCtx.joinResultCh <- joinResult
-	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
-		w.joinChkResourceCh <- joinResult.chk
-	}
-	return nil
 }
 
 func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {

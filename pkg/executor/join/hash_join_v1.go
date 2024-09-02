@@ -220,7 +220,6 @@ func (e *HashJoinV1Exec) fetchAndProbeHashTable(ctx context.Context) {
 			func() bool {
 				return e.ProbeSideTupleFetcher.RowContainer.Len() == uint64(0)
 			},
-			func() bool { return false },
 			e.ProbeSideTupleFetcher.JoinType == logicalop.InnerJoin || e.ProbeSideTupleFetcher.JoinType == logicalop.SemiJoin,
 			false,
 			e.ProbeSideTupleFetcher.IsOuterJoin,

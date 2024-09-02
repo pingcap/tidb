@@ -65,25 +65,11 @@ func (j *outerJoinProbe) prepareIsNotMatchedRows() {
 		for i := 0; i < j.chunkRows; i++ {
 			j.isNotMatchedRows = append(j.isNotMatchedRows, true)
 		}
-
-		for _, spilledIdx := range j.spilledIdx {
-			j.isNotMatchedRows[spilledIdx] = false
-		}
 	}
 }
 
 func (j *outerJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
 	err = j.baseJoinProbe.SetChunkForProbe(chunk)
-	if err != nil {
-		return err
-	}
-
-	j.prepareIsNotMatchedRows()
-	return nil
-}
-
-func (j *outerJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
-	err := j.baseJoinProbe.SetRestoredChunkForProbe(chk)
 	if err != nil {
 		return err
 	}

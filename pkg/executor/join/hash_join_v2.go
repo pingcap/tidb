@@ -28,11 +28,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -73,37 +71,6 @@ func (htc *hashTableContext) reset() {
 	htc.rowTables = nil
 	htc.hashTable = nil
 	htc.memoryTracker.Detach()
-}
-
-func (htc *hashTableContext) getPartitionMemoryUsage(partID int) int64 {
-	totalMemoryUsage := int64(0)
-	for _, tables := range htc.rowTables {
-		if tables != nil && tables[partID] != nil {
-			totalMemoryUsage += tables[partID].getTotalUsedBytesInSegments()
-		}
-	}
-
-	return totalMemoryUsage
-}
-
-func (htc *hashTableContext) getSegmentsInRowTable(workerID, partitionID int) []*rowTableSegment {
-	if htc.rowTables[workerID] != nil && htc.rowTables[workerID][partitionID] != nil {
-		return htc.rowTables[workerID][partitionID].getSegments()
-	}
-
-	return nil
-}
-
-func (htc *hashTableContext) getAllSegmentsMemoryUsageInRowTable() int64 {
-	totalMemoryUsage := int64(0)
-	for _, tables := range htc.rowTables {
-		for _, table := range tables {
-			if table != nil {
-				totalMemoryUsage += table.getTotalMemoryUsage()
-			}
-		}
-	}
-	return totalMemoryUsage
 }
 
 func (htc *hashTableContext) clearAllSegmentsInRowTable() {
@@ -186,45 +153,7 @@ func (htc *hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable
 	return totalMemoryUsage, partitionsMemoryUsage
 }
 
-// In order to avoid the allocation of hash table, we pre-calculate the memory usage in advance
-// to know which hash tables need to be created.
-func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hashJoinSpillHelper) ([]*rowTable, error) {
-	totalMemoryUsage, partitionsMemoryUsage := htc.calculateHashTableMemoryUsage(rowTables)
-
-	// Pre-consume the memory usage
-	htc.memoryTracker.Consume(totalMemoryUsage)
-
-	if spillHelper != nil && spillHelper.isSpillNeeded() {
-		spillHelper.spillTriggeredBeforeBuildingHashTableForTest = true
-		err := spillHelper.spillRowTable()
-		if err != nil {
-			return nil, err
-		}
-
-		spilledPartition := spillHelper.getSpilledPartitions()
-		for _, partID := range spilledPartition {
-			// Clear spilled row tables
-			rowTables[partID].clearSegments()
-		}
-
-		// Some partitions have been spilled, we need to release their pre-consumed memory
-		totalReleasedMemoryUsage := int64(0)
-		for _, partID := range spilledPartition {
-			totalReleasedMemoryUsage += partitionsMemoryUsage[partID]
-		}
-
-		// Though some partitions have been spilled or are empty, their hash tables are still be created
-		// because probe rows in these partitions may access their hash tables.
-		// We need to consider these memory usage.
-		totalDefaultMemUsage := getHashTableMemoryUsage(minimalHashTableLen) * int64(len(spilledPartition))
-
-		htc.memoryTracker.Consume(totalDefaultMemUsage - totalReleasedMemoryUsage)
-	}
-
-	return rowTables, nil
-}
-
-func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spillHelper *hashJoinSpillHelper) (int, error) {
+func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int) (int, error) {
 	rowTables := make([]*rowTable, partitionNumber)
 	for i := 0; i < partitionNumber; i++ {
 		rowTables[i] = newRowTable()
@@ -237,12 +166,6 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int, spil
 			}
 			rowTables[partIdx].merge(rt)
 		}
-	}
-
-	var err error
-	rowTables, err = htc.tryToSpill(rowTables, spillHelper)
-	if err != nil {
-		return 0, err
 	}
 
 	for i := 0; i < partitionNumber; i++ {
@@ -282,10 +205,6 @@ type HashJoinCtxV2 struct {
 
 	// final worker wakes up build fetcher by this channel
 	finalSync chan struct{}
-
-	maxSpillRound int
-	spillHelper   *hashJoinSpillHelper
-	spillAction   *hashJoinSpillAction
 }
 
 // partitionNumber is always power of 2
@@ -341,16 +260,6 @@ func (hCtx *HashJoinCtxV2) initHashTableContext() {
 	hCtx.hashTableContext.memoryTracker = memory.NewTracker(memory.LabelForHashTableInHashJoinV2, -1)
 }
 
-func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
-	memoryUsage := hCtx.hashTableContext.getAllSegmentsMemoryUsageInRowTable()
-	hCtx.hashTableContext.clearAllSegmentsInRowTable()
-	hCtx.hashTableContext.memoryTracker.Consume(-memoryUsage)
-
-	memoryUsage, _, _ = hCtx.hashTableContext.getAllMemoryUsageInHashTableTest()
-	hCtx.hashTableContext.clearHashTable()
-	hCtx.hashTableContext.memoryTracker.Consume(-memoryUsage)
-}
-
 // ProbeSideTupleFetcherV2 reads tuples from ProbeSideExec and send them to ProbeWorkers.
 type ProbeSideTupleFetcherV2 struct {
 	probeSideTupleFetcherBase
@@ -371,14 +280,11 @@ type HashJoinV2Exec struct {
 
 	prepared bool
 
-	restoredProbeInDisk []*chunk.DataInDiskByChunks
-
 	isMemoryClearedForTest bool
 }
 
 // Close implements the Executor Close interface.
 func (e *HashJoinV2Exec) Close() error {
-	// log.Info("xzxdebug Closed is called")
 	if e.closeCh != nil {
 		close(e.closeCh)
 	}
@@ -422,7 +328,6 @@ func (e *HashJoinV2Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
-	e.spillHelper.close()
 	err := e.BaseExecutor.Close()
 
 	return err
@@ -460,13 +365,6 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 	}
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
-	e.spillHelper = newHashJoinSpillHelper(e, int(e.partitionNumber), e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes())
-
-	if variable.EnableTmpStorageOnOOM.Load() && e.partitionNumber > 1 {
-		e.initMaxSpillRound()
-		e.spillAction = newHashJoinSpillDiskAction(e.spillHelper)
-		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
-	}
 
 	e.waiterWg = util.WaitGroupWrapper{}
 	e.closeCh = make(chan struct{}, 1)
@@ -478,19 +376,6 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.stats.concurrent = int(e.Concurrency)
 	}
 	return nil
-}
-
-func (e *HashJoinV2Exec) initMaxSpillRound() {
-	e.maxSpillRound = 1
-	totalPartitionsNum := e.partitionNumber
-	for {
-		if totalPartitionsNum > 1024 {
-			break
-		}
-		totalPartitionsNum *= e.partitionNumber
-		e.maxSpillRound++
-	}
-	e.maxSpillRound = max(1, e.maxSpillRound-1)
 }
 
 func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
@@ -538,12 +423,10 @@ func (e *HashJoinV2Exec) startProbeWorkers(ctx context.Context, fetcherAndWorker
 		workerID := i
 		e.waiterWg.RunWithRecover(
 			func() {
-				// log.Info(fmt.Sprintf("xzxdebug start probe worker %d", workerID))
 				defer trace.StartRegion(ctx, "HashJoinWorker").End()
 				e.ProbeWorkers[workerID].runJoinWorker()
 			},
 			func(r any) {
-				// log.Info(fmt.Sprintf("xzxdebug leave probe worker %d...", workerID))
 				handleError(e.joinResultCh, &e.finished, r)
 				fetcherAndWorkerSyncer.Done()
 			},
@@ -554,43 +437,12 @@ func (e *HashJoinV2Exec) startProbeWorkers(ctx context.Context, fetcherAndWorker
 func (e *HashJoinV2Exec) startFinalWorker(syncer chan struct{}) {
 	e.waiterWg.RunWithRecover(
 		func() {
-			// log.Info("xzxdebug start final worker")
 			e.finalWorker(syncer)
 		},
 		func(r any) {
-			// log.Info("xzxdebug leave final worker...")
 			handleError(e.joinResultCh, &e.finished, r)
 		},
 	)
-}
-
-func (e *HashJoinV2Exec) startProbeWorkersForRestore(wg *sync.WaitGroup) {
-	workerNum := len(e.restoredProbeInDisk)
-	wg.Add(int(workerNum))
-	for i := 0; i < workerNum; i++ {
-		workerID := i
-		e.waiterWg.RunWithRecover(
-			func() {
-				err := e.ProbeWorkers[workerID].restoreAndProbe(e.restoredProbeInDisk[workerID])
-				if err != nil {
-					handleError(e.joinResultCh, &e.finished, err)
-				}
-			},
-			func(r any) {
-				handleError(e.joinResultCh, &e.finished, r)
-				wg.Done()
-			},
-		)
-	}
-}
-
-func (e *HashJoinV2Exec) restoreAndProbe(pfAndFWSync chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup) {
-	// before := e.memTracker.BytesConsumed()
-	e.startProbeWorkersForRestore(fetcherAndWorkerSyncer)
-	fetcherAndWorkerSyncer.Wait()
-	// after := e.memTracker.BytesConsumed()
-	// log.Info(fmt.Sprintf("xzxdebug probe before: %d, after: %d", before, after))
-	pfAndFWSync <- struct{}{}
 }
 
 func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
@@ -616,7 +468,6 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 		ctx,
 		e.MaxChunkSize(),
 		func() bool { return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty() },
-		func() bool { return e.spillHelper.isSpillTriggeredNoLock() },
 		e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty,
 		e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone,
 		e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize(),
@@ -629,27 +480,17 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 	// Wake up final worker
 	pfAndFWSync <- struct{}{}
 
-	for {
-		// We use buildFinished as the syncer between build task dispatcher and probe fetcher
-		<-e.hashJoinCtxBase.buildFinished
-
-		if e.hashJoinCtxBase.finished.Load() {
-			return
-		}
-
-		e.restoreAndProbe(pfAndFWSync, fetcherAndWorkerSyncer)
-	}
+	// We use buildFinished as the syncer between build task dispatcher and probe fetcher
+	<-e.hashJoinCtxBase.buildFinished
 }
 
 func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 	e.waiterWg.RunWithRecover(
 		func() {
-			// log.Info("xzxdebug start probe fetcher")
 			defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
 			e.startProbeFetcher(ctx)
 		},
 		func(r any) {
-			// log.Info("xzxdebug leave probe fetcher")
 			handleError(e.joinResultCh, &e.finished, r)
 		},
 	)
@@ -683,7 +524,6 @@ func (e *HashJoinV2Exec) finalWorker(syncer chan struct{}) {
 				workerID := i
 				e.waiterWg.RunWithRecover(
 					func() {
-						// log.Info(fmt.Sprintf("xzxdebug start final subworker %d", workerID))
 						// Error has been handled in the function
 						err := e.ProbeWorkers[workerID].scanRowTableAfterProbeDone(false)
 						if err != nil {
@@ -691,7 +531,6 @@ func (e *HashJoinV2Exec) finalWorker(syncer chan struct{}) {
 						}
 					},
 					func(r any) {
-						// log.Info(fmt.Sprintf("xzxdebug leave final subworker %d...", workerID))
 						handleError(e.joinResultCh, &e.finished, r)
 						wg.Done()
 					},
@@ -702,91 +541,6 @@ func (e *HashJoinV2Exec) finalWorker(syncer chan struct{}) {
 
 		e.finalSync <- struct{}{}
 	}
-}
-
-func (e *HashJoinV2Exec) getRestoredChunkNum(restoredPartition *restorePartition) int {
-	chunkNum := 0
-	for _, inDisk := range restoredPartition.buildSideChunks {
-		chunkNum += inDisk.NumChunks()
-	}
-	return chunkNum
-}
-
-func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh chan struct{}, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, doneCh <-chan struct{}, wg *sync.WaitGroup) {
-	defer func() {
-		close(syncCh)
-
-		// Tell workers that they can execute `appendRemainingRowLocations` function
-		close(waitForController)
-
-		hasError := false
-		if r := recover(); r != nil {
-			e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
-			hasError = true
-		}
-
-		// Wait for the finish of all pre-build workers
-		wg.Wait()
-
-		// Spill remaining rows
-		if !hasError && e.spillHelper.isSpillTriggeredNoLock() {
-			err := e.spillHelper.spillRemainingRows()
-			if err != nil {
-				handleError(e.joinResultCh, &e.finished, err)
-			}
-		}
-
-		// consume remaining data in `syncCh`
-		for range syncCh {
-			fetcherAndWorkerSyncer.Done()
-		}
-	}()
-
-	if e.stats != nil {
-		e.stats.fetchAndBuildStartTime = time.Now()
-	}
-
-	for i := 0; i < chunkNum; i++ {
-		err := checkSpillAndExecute(fetcherAndWorkerSyncer, e.spillHelper)
-		if err != nil {
-			handleError(e.joinResultCh, &e.finished, err)
-			return
-		}
-
-		err = triggerIntest(3)
-		if err != nil {
-			handleError(e.joinResultCh, &e.finished, err)
-			return
-		}
-
-		fetcherAndWorkerSyncer.Add(1)
-		select {
-		case <-doneCh:
-			fetcherAndWorkerSyncer.Done()
-			return
-		case <-e.hashJoinCtxBase.closeCh:
-			fetcherAndWorkerSyncer.Done()
-			return
-		case syncCh <- struct{}{}:
-		}
-	}
-}
-
-func (e *HashJoinV2Exec) restoreAndBuild(
-	restoredPartition *restorePartition,
-	fetcherAndWorkerSyncer *sync.WaitGroup,
-	preBuildWorkerWg *sync.WaitGroup,
-	buildFetcherAndDispatcherSyncChan chan struct{},
-) {
-	syncCh := make(chan struct{}, 1)
-	waitForController := make(chan struct{})
-	e.startPrebuildWorkersForRestore(restoredPartition, syncCh, waitForController, fetcherAndWorkerSyncer, preBuildWorkerWg)
-
-	chunkNum := e.getRestoredChunkNum(restoredPartition)
-
-	e.controlPrebuildWorkersForRestore(chunkNum, syncCh, waitForController, fetcherAndWorkerSyncer, e.buildFetcherFinishCh, preBuildWorkerWg)
-
-	buildFetcherAndDispatcherSyncChan <- struct{}{}
 }
 
 func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {
@@ -875,7 +629,7 @@ func (e *HashJoinV2Exec) dispatchBuildTasksImpl(syncer chan struct{}) (bool, err
 
 	e.startBuildWorkers(buildTaskCh, wg)
 
-	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(int(e.partitionNumber), e.spillHelper)
+	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(int(e.partitionNumber))
 	if err != nil {
 		return false, err
 	}
@@ -962,14 +716,6 @@ func (e *HashJoinV2Exec) dispatchBuildTasks(syncer chan struct{}) error {
 }
 
 func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
-	// log.Info("xzxdebug start build fetcher")
-	// defer func() {
-	// 	log.Info("xzxdebug leave build fetcher...")
-	// 	if r := recover(); r != nil {
-	// 		log.Info(fmt.Sprintf("xzxdebug panic in startBuildFetcher %s", util.GetRecoverError(r).Error()))
-	// 	}
-	// }()
-
 	if e.stats != nil {
 		e.stats.fetchAndBuildStartTime = time.Now()
 	}
@@ -998,7 +744,7 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 	// Actually we can directly return error by the function `fetchBuildSideRowsImpl`.
 	// However, `fetchBuildSideRowsImpl` is also used by hash join v1.
 	errCh := make(chan error, 1)
-	e.BuildWorkers[0].fetchBuildSideRowsImpl(ctx, &e.hashJoinCtxBase, fetcherAndWorkerSyncer, e.spillHelper, srcChkCh, errCh, e.buildFetcherFinishCh)
+	e.BuildWorkers[0].fetchBuildSideRowsImpl(ctx, &e.hashJoinCtxBase, fetcherAndWorkerSyncer, srcChkCh, errCh, e.buildFetcherFinishCh)
 
 	// Wait for the finish of prebuild workers
 	preBuildWorkerWg.Wait()
@@ -1013,58 +759,12 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 		return
 	}
 
-	if e.spillHelper.spillTriggered {
-		e.spillHelper.spillTriggedInBuildingStageForTest = true
-	}
-
 	// Wake up build task dispatcher
 	buildFetcherAndDispatcherSyncChan <- struct{}{}
 
-	lastRound := 0
-
-	for {
-		select {
-		case <-e.buildFetcherFinishCh: // executor may be closed in advance
-		case <-e.finalSync: // Wait for the wake-up from final worker
-		}
-
-		if e.finished.Load() {
-			return
-		}
-
-		e.spillHelper.spillRoundForTest = int(math.Max(float64(e.spillHelper.spillRoundForTest), float64(lastRound)))
-		err := e.spillHelper.prepareForRestoring(lastRound)
-		if err != nil {
-			handleError(e.joinResultCh, &e.finished, err)
-			return
-		}
-
-		restoredPartition := e.spillHelper.stack.pop()
-		if restoredPartition == nil {
-			// No more data to restore
-			e.finished.Store(true)
-			return
-		}
-
-		log.Info(fmt.Sprintf("xzxdebug start a restore round ------------ %d", e.memTracker.BytesConsumed()))
-
-		if e.memTracker.BytesConsumed() != 0 {
-			e.isMemoryClearedForTest = false
-		}
-
-		// Collect, so that we can close them in the end.
-		// We must collect them once they are popped from stack, or the resource may
-		// fail to be recycled because of the possible panic.
-		err = e.spillHelper.discardInDisks([][]*chunk.DataInDiskByChunks{restoredPartition.buildSideChunks, restoredPartition.probeSideChunks})
-		if err != nil {
-			handleError(e.joinResultCh, &e.finished, err)
-			return
-		}
-
-		lastRound = restoredPartition.round
-		e.restoredProbeInDisk = restoredPartition.probeSideChunks
-
-		e.restoreAndBuild(restoredPartition, fetcherAndWorkerSyncer, preBuildWorkerWg, buildFetcherAndDispatcherSyncChan)
+	select {
+	case <-e.buildFetcherFinishCh: // executor may be closed in advance
+	case <-e.finalSync: // Wait for the wake-up from final worker
 	}
 }
 
@@ -1075,29 +775,9 @@ func (e *HashJoinV2Exec) startPrebuildWorkers(srcChkCh chan *chunk.Chunk, fetche
 		workerID := i
 		e.waiterWg.RunWithRecover(
 			func() {
-				// log.Info(fmt.Sprintf("xzxdebug start prebuild worker %d", workerID))
 				e.BuildWorkers[workerID].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh, fetcherAndWorkerSyncer)
 			},
 			func(r any) {
-				// log.Info(fmt.Sprintf("xzxdebug leave prebuild worker %d...", workerID))
-				handleError(e.joinResultCh, &e.finished, r)
-				wg.Done()
-			},
-		)
-	}
-}
-
-func (e *HashJoinV2Exec) startPrebuildWorkersForRestore(restoredPartition *restorePartition, syncCh chan struct{}, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup) {
-	wg.Add(int(e.Concurrency))
-	for i := uint(0); i < e.Concurrency; i++ {
-		workerID := i
-		e.waiterWg.RunWithRecover(
-			func() {
-				// log.Info(fmt.Sprintf("xzxdebug start restore prebuild worker %d", workerID))
-				e.BuildWorkers[workerID].restoreAndPrebuild(restoredPartition.buildSideChunks[workerID], syncCh, waitForController, fetcherAndWorkerSyncer)
-			},
-			func(r any) {
-				// log.Info(fmt.Sprintf("xzxdebug leave restore prebuild worker %d...", workerID))
 				handleError(e.joinResultCh, &e.finished, r)
 				wg.Done()
 			},
@@ -1108,14 +788,12 @@ func (e *HashJoinV2Exec) startPrebuildWorkersForRestore(restoredPartition *resto
 func (e *HashJoinV2Exec) startBuildTaskDispatcher(syncer chan struct{}) {
 	e.waiterWg.RunWithRecover(
 		func() {
-			// log.Info("xzxdebug start dispatcher")
 			err := e.dispatchBuildTasks(syncer)
 			if err != nil {
 				handleError(e.joinResultCh, &e.finished, err)
 			}
 		},
 		func(r any) {
-			// log.Info("xzxdebug leave dispatcher...")
 			handleError(e.joinResultCh, &e.finished, r)
 		},
 	)
@@ -1127,20 +805,14 @@ func (e *HashJoinV2Exec) startBuildWorkers(buildTaskCh chan *buildTask, wg *sync
 		workerID := i
 		e.waiterWg.RunWithRecover(
 			func() {
-				// log.Info(fmt.Sprintf("xzxdebug start build worker %d", workerID))
 				e.BuildWorkers[workerID].buildHashTable(buildTaskCh)
 			},
 			func(r any) {
-				// log.Info(fmt.Sprintf("xzxdebug leave build worker %d", workerID))
 				handleError(e.joinResultCh, &e.finished, r)
 				wg.Done()
 			},
 		)
 	}
-}
-
-func (e *HashJoinV2Exec) isAllMemoryClearedForTest() bool {
-	return e.isMemoryClearedForTest
 }
 
 func handleError(joinResultCh chan *hashjoinWorkerResult, finished *atomic.Bool, r any) {

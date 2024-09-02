@@ -56,14 +56,6 @@ func NewJoinBuildWorkerV2(ctx *HashJoinCtxV2, workID uint, buildSideExec exec.Ex
 	return worker
 }
 
-func (b *BuildWorkerV2) getSegmentsInRowTable(partID int) []*rowTableSegment {
-	return b.HashJoinCtx.hashTableContext.getSegmentsInRowTable(int(b.WorkerID), partID)
-}
-
-func (b *BuildWorkerV2) clearSegmentsInRowTable(partID int) {
-	b.HashJoinCtx.hashTableContext.clearSegmentsInRowTable(int(b.WorkerID), partID)
-}
-
 // buildHashTableForList builds hash table from `list`.
 func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) {
 	cost := int64(0)
@@ -145,77 +137,6 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	if w.HashJoinCtx.finished.Load() {
 		return
 	}
-
-	start := time.Now()
-	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
-	cost += int64(time.Since(start))
-}
-
-func (w *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, cost *int64) error {
-	start := time.Now()
-	err := w.builder.processOneRestoredChunk(chk, w.HashJoinCtx, int(w.WorkerID), int(w.HashJoinCtx.partitionNumber))
-	if err != nil {
-		return err
-	}
-	*cost += int64(time.Since(start))
-	return nil
-}
-
-func (w *BuildWorkerV2) restoreAndPrebuildImpl(i int, inDisk *chunk.DataInDiskByChunks, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
-	defer func() {
-		fetcherAndWorkerSyncer.Done()
-	}()
-
-	if w.HashJoinCtx.finished.Load() {
-		return nil
-	}
-
-	// TODO reuse chunk
-	chk, err := inDisk.GetChunk(i)
-	if err != nil {
-		return err
-	}
-
-	err = triggerIntest(3)
-	if err != nil {
-		return err
-	}
-
-	err = w.processOneRestoredChunk(chk, cost)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (w *BuildWorkerV2) restoreAndPrebuild(inDisk *chunk.DataInDiskByChunks, syncCh chan struct{}, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup) {
-	cost := int64(0)
-	defer func() {
-		if w.HashJoinCtx.stats != nil {
-			w.updatePartitionData(cost)
-		}
-	}()
-
-	partitionNumber := w.HashJoinCtx.partitionNumber
-	hashJoinCtx := w.HashJoinCtx
-
-	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
-
-	chunkNum := inDisk.NumChunks()
-	for i := 0; i < chunkNum; i++ {
-		_, ok := <-syncCh
-		if !ok {
-			break
-		}
-
-		err := w.restoreAndPrebuildImpl(i, inDisk, fetcherAndWorkerSyncer, &cost)
-		if err != nil {
-			handleError(hashJoinCtx.joinResultCh, &hashJoinCtx.finished, err)
-		}
-	}
-
-	// Wait for command from the controller so that we can avoid data race with the spill executed in controller
-	<-waitForController
 
 	start := time.Now()
 	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
