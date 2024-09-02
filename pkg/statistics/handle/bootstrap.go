@@ -88,7 +88,7 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 	}
 }
 
-func (h *Handle) initStatsMeta(ctx context.Context, is infoschema.InfoSchema) (statstypes.StatsCache, error) {
+func (h *Handle) initStatsMeta(ctx context.Context) (statstypes.StatsCache, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
@@ -731,7 +731,7 @@ func (h *Handle) InitStatsLite(ctx context.Context, is infoschema.InfoSchema) (e
 		return err
 	}
 	failpoint.Inject("beforeInitStatsLite", func() {})
-	cache, err := h.initStatsMeta(ctx, is)
+	cache, err := h.initStatsMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
