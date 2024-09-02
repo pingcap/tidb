@@ -49,7 +49,7 @@ type DistSQLContext struct {
 	Location         *time.Location
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	SQLKiller        *sqlkiller.SQLKiller
-	CPUUsage         *ppcpuusage.CPUUsages
+	CPUUsage         *ppcpuusage.SQLCPUUsages
 	ErrCtx           errctx.Context
 
 	// TiFlash related configurations

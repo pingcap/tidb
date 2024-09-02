@@ -50,8 +50,8 @@ type ProcessInfo struct {
 	Plan                any
 	CursorTracker       cursor.Tracker
 	StmtCtx             *stmtctx.StatementContext
-	// CPUUsage should be set nil for sleep command
-	CPUUsage              *ppcpuusage.CPUUsages
+	// SQLCPUUsage should be set nil for sleep command
+	SQLCPUUsage           *ppcpuusage.SQLCPUUsages
 	RefCountOfStmtCtx     *stmtctx.ReferenceCount
 	MemTracker            *memory.Tracker
 	DiskTracker           *disk.Tracker
@@ -147,16 +147,15 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	}
 
 	var affectedRows any
-	var tidbCPU time.Duration
-	var tikvCPU time.Duration
+	var cpuUsages ppcpuusage.CPUUsages
 	if pi.StmtCtx != nil {
 		affectedRows = pi.StmtCtx.AffectedRows()
 	}
-	if pi.CPUUsage != nil {
-		tidbCPU, tikvCPU = pi.CPUUsage.GetAllCPUTime()
+	if pi.SQLCPUUsage != nil {
+		cpuUsages = pi.SQLCPUUsage.GetCPUUsages()
 	}
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed,
-		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows, tidbCPU.Seconds(), tikvCPU.Seconds())
+		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows, cpuUsages.TidbCPUTime.Seconds(), cpuUsages.TikvCPUTime.Seconds())
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.

@@ -42,11 +42,7 @@ type ExecDetails struct {
 	CopTime          time.Duration
 	BackoffTime      time.Duration
 	LockKeysDuration time.Duration
-	// TidbCPUTime is only used to pass info when log slow queries and statement summary
-	TidbCPUTime time.Duration
-	// TikvCPUTime is only used to pass info when log slow queries and statement summary
-	TikvCPUTime  time.Duration
-	RequestCount int
+	RequestCount     int
 }
 
 // DetailsNeedP90 contains execution detail information which need calculate P90.
@@ -182,10 +178,6 @@ const (
 	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 	// RocksdbBlockReadTimeStr means the time spent on rocksdb block read.
 	RocksdbBlockReadTimeStr = "Rocksdb_block_read_time"
-	// TidbCPUTimeStr represents the total CPU time spent in Tidb server.
-	TidbCPUTimeStr = "TidbCPU_time"
-	// TikvCPUTimeStr represents the total CPU time spent in Tikv server.
-	TikvCPUTimeStr = "TikvCPU_time"
 )
 
 // String implements the fmt.Stringer interface.
@@ -301,12 +293,6 @@ func (d ExecDetails) String() string {
 			parts = append(parts, RocksdbBlockReadTimeStr+": "+strconv.FormatFloat(scanDetail.RocksdbBlockReadDuration.Seconds(), 'f', 3, 64))
 		}
 	}
-	if d.TidbCPUTime > 0 {
-		parts = append(parts, TidbCPUTimeStr+": "+strconv.FormatFloat(d.TidbCPUTime.Seconds(), 'f', -1, 64))
-	}
-	if d.TikvCPUTime > 0 {
-		parts = append(parts, TikvCPUTimeStr+": "+strconv.FormatFloat(d.TikvCPUTime.Seconds(), 'f', -1, 64))
-	}
 	return strings.Join(parts, " ")
 }
 
@@ -390,12 +376,6 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 			fields = append(fields, zap.Int("txn_retry", commitDetails.TxnRetry))
 		}
 	}
-	if d.TidbCPUTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TidbCPUTimeStr), strconv.FormatFloat(d.TidbCPUTime.Seconds(), 'f', -1, 64)+"s"))
-	}
-	if d.TikvCPUTime > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TikvCPUTimeStr), strconv.FormatFloat(d.TikvCPUTime.Seconds(), 'f', -1, 64)+"s"))
-	}
 	return fields
 }
 
@@ -435,7 +415,7 @@ func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *
 	}
 }
 
-// mergeScanDetail merges scan details into self.
+// MergeScanDetail merges scan details into self.
 func (s *SyncExecDetails) mergeScanDetail(scanDetail *util.ScanDetail) {
 	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
 	if scanDetail == nil {

@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"container/list"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"maps"
 	"math"
 	"slices"
@@ -262,6 +263,7 @@ type StmtExecInfo struct {
 	KeyspaceID        uint32
 	ResourceGroupName string
 	RUDetail          *util.RUDetails
+	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
 }
@@ -914,8 +916,8 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
 	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
 	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
-	ssElement.sumTidbCPU += sei.ExecDetail.TidbCPUTime
-	ssElement.sumTikvCPU += sei.ExecDetail.TikvCPUTime
+	ssElement.sumTidbCPU += sei.CPUUsages.TidbCPUTime
+	ssElement.sumTikvCPU += sei.CPUUsages.TikvCPUTime
 
 	// request-units
 	ssElement.StmtRUSummary.Add(sei.RUDetail)

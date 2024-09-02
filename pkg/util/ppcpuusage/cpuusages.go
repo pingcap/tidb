@@ -19,62 +19,73 @@ import (
 	"time"
 )
 
-// CPUUsages is used to record tidb/tikv cpu usages
+// CPUUsages records tidb/tikv cpu usages
 type CPUUsages struct {
+	TidbCPUTime time.Duration
+	TikvCPUTime time.Duration
+}
+
+// SQLCPUUsages is used to record sqlID and its cpu usages
+type SQLCPUUsages struct {
 	sync.Mutex
-	sqlID       uint64
-	tidbCPUTime time.Duration
-	tikvCPUTime time.Duration
+	sqlID     uint64
+	cpuUsages CPUUsages
+}
+
+// Reset resets all cpu times to 0
+func (c *CPUUsages) Reset() {
+	c.TikvCPUTime = 0
+	c.TidbCPUTime = 0
 }
 
 // MergeTidbCPUTime merges tidbCPU time into self when sqlID matches
 // Checks sqlID here, because tidb cpu time can only be collected by profiler now, and updated in concurrent goroutines
-func (c *CPUUsages) MergeTidbCPUTime(sqlID uint64, d time.Duration) {
+func (c *SQLCPUUsages) MergeTidbCPUTime(sqlID uint64, d time.Duration) {
 	c.Lock()
 	defer c.Unlock()
 	if c.sqlID == sqlID {
-		c.tidbCPUTime += d
+		c.cpuUsages.TidbCPUTime += d
 	}
 }
 
 // MergeTikvCPUTime merges tikvCPU time into self.
 // Doesn't need to check sqlID here, because tikv cpu time is updated in executors now.
-func (c *CPUUsages) MergeTikvCPUTime(d time.Duration) {
+func (c *SQLCPUUsages) MergeTikvCPUTime(d time.Duration) {
 	c.Lock()
 	defer c.Unlock()
-	c.tikvCPUTime += d
+	c.cpuUsages.TikvCPUTime += d
 }
 
 // GetSQLID returns current SQLID
-func (c *CPUUsages) GetSQLID() uint64 {
+func (c *SQLCPUUsages) GetSQLID() uint64 {
 	c.Lock()
 	defer c.Unlock()
 	return c.sqlID
 }
 
-// GetAllCPUTime returns tidbCPU, tikvCPU time
-func (c *CPUUsages) GetAllCPUTime() (time.Duration, time.Duration) {
+// GetCPUUsages returns tidbCPU, tikvCPU time
+func (c *SQLCPUUsages) GetCPUUsages() CPUUsages {
 	c.Lock()
 	defer c.Unlock()
-	return c.tidbCPUTime, c.tikvCPUTime
+	return c.cpuUsages
 }
 
 // GetTidbCPUTime returns tidbCPU time
-func (c *CPUUsages) GetTidbCPUTime() time.Duration {
+func (c *SQLCPUUsages) GetTidbCPUTime() time.Duration {
 	c.Lock()
 	defer c.Unlock()
-	return c.tidbCPUTime
+	return c.cpuUsages.TidbCPUTime
 }
 
 // GetTikvCPUTime returns tikvCPU time
-func (c *CPUUsages) GetTikvCPUTime() time.Duration {
+func (c *SQLCPUUsages) GetTikvCPUTime() time.Duration {
 	c.Lock()
 	defer c.Unlock()
-	return c.tikvCPUTime
+	return c.cpuUsages.TikvCPUTime
 }
 
 // AllocNewSQLID alloc new ID, will restart from 0 when exceeds uint64 max limit
-func (c *CPUUsages) AllocNewSQLID() uint64 {
+func (c *SQLCPUUsages) AllocNewSQLID() uint64 {
 	c.Lock()
 	defer c.Unlock()
 	c.sqlID++
@@ -82,9 +93,8 @@ func (c *CPUUsages) AllocNewSQLID() uint64 {
 }
 
 // ResetCPUTimes resets tidb/tikv cpu times to 0
-func (c *CPUUsages) ResetCPUTimes() {
+func (c *SQLCPUUsages) ResetCPUTimes() {
 	c.Lock()
 	defer c.Unlock()
-	c.tidbCPUTime = 0
-	c.tikvCPUTime = 0
+	c.cpuUsages.Reset()
 }
