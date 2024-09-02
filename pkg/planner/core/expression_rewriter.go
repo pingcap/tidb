@@ -2664,6 +2664,10 @@ func encodeHandleFromRow(
 	if err != nil {
 		return nil, false, err
 	}
+	if !ctx.RequestVerification(dbName, tblName, "", mysql.AllPrivMask) {
+		// The arguments will be filled by caller.
+		return nil, false, plannererrors.ErrSpecificAccessDenied
+	}
 	if part := tbl.GetPartitionedTable(); part != nil {
 		pid, err := tables.FindPartitionByName(tbl.Meta(), partName)
 		if err != nil {
@@ -2755,6 +2759,10 @@ func encodeIndexKeyFromRow(
 	tblName, isNull, err := args[1].EvalString(ctx, row)
 	if err != nil || isNull {
 		return nil, isNull, err
+	}
+	if !ctx.RequestVerification(dbName, tblName, "", mysql.AllPrivMask) {
+		// The arguments will be filled by caller.
+		return nil, false, plannererrors.ErrSpecificAccessDenied
 	}
 	idxName, isNull, err := args[2].EvalString(ctx, row)
 	if err != nil || isNull {

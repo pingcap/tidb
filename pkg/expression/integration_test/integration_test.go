@@ -1129,6 +1129,20 @@ func TestTiDBEncodeKey(t *testing.T) {
 	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000006d5f728000000000000001');")
 	mvccInfo := rs.Rows()[0][0].(string)
 	require.NotEqual(t, mvccInfo, `{"info":{}}`)
+
+	tk.MustExec("create user 'alice'@'%';")
+	tk.MustExec("flush privileges;")
+	tk2 := testkit.NewTestKit(t, store)
+	err = tk2.Session().Auth(&auth.UserIdentity{Username: "alice", Hostname: "localhost"}, nil, nil, nil)
+	require.NoError(t, err)
+	err = tk2.QueryToErr("select tidb_mvcc_info('74800000000000006d5f728000000000000001');")
+	require.ErrorContains(t, err, "Access denied")
+	err = tk2.QueryToErr("select tidb_encode_record_key('test', 't1(p1)', 1);")
+	require.ErrorContains(t, err, "SELECT command denied")
+	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
+	require.ErrorContains(t, err, "SELECT command denied")
+	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("74800000000000006d5f728000000000000001"))
 }
 
 func TestIssue9710(t *testing.T) {

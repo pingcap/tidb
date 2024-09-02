@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tipb/go-tipb"
@@ -931,6 +932,9 @@ func (b *builtinTiDBMVCCInfoSig) Clone() builtinFunc {
 
 // evalString evals a builtinTiDBMVCCInfoSig.
 func (b *builtinTiDBMVCCInfoSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	if !ctx.RequestVerification("", "", "", mysql.SuperPriv) {
+		return "", false, plannererrors.ErrSpecificAccessDenied.FastGenByArgs("SUPER")
+	}
 	s, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -983,11 +987,13 @@ func (c *tidbEncodeRecordKeyClass) getFunction(ctx BuildContext, args []Expressi
 type builtinTiDBEncodeRecordKeySig struct {
 	baseBuiltinFunc
 	contextopt.InfoSchemaPropReader
+	contextopt.SessionVarsPropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
 func (b *builtinTiDBEncodeRecordKeySig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.InfoSchemaPropReader.RequiredOptionalEvalProps()
+	return b.InfoSchemaPropReader.RequiredOptionalEvalProps() |
+		b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinTiDBEncodeRecordKeySig) Clone() builtinFunc {
@@ -1007,6 +1013,17 @@ func (b *builtinTiDBEncodeRecordKeySig) evalString(ctx EvalContext, row chunk.Ro
 	}
 	recordKey, isNull, err := EncodeRecordKeyFromRow(ctx, is, b.args, row)
 	if isNull || err != nil {
+		if errors.ErrorEqual(err, plannererrors.ErrSpecificAccessDenied) {
+			sv, err2 := b.GetSessionVars(ctx)
+			if err2 != nil {
+				return "", isNull, err
+			}
+			tblName, isNull, err2 := b.args[1].EvalString(ctx, row)
+			if err2 != nil || isNull {
+				return "", isNull, err
+			}
+			return "", isNull, plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", sv.User.AuthUsername, sv.User.AuthHostname, tblName)
+		}
 		return "", isNull, err
 	}
 	return hex.EncodeToString(recordKey), false, nil
@@ -1036,11 +1053,13 @@ func (c *tidbEncodeIndexKeyClass) getFunction(ctx BuildContext, args []Expressio
 type builtinTiDBEncodeIndexKeySig struct {
 	baseBuiltinFunc
 	contextopt.InfoSchemaPropReader
+	contextopt.SessionVarsPropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
 func (b *builtinTiDBEncodeIndexKeySig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.InfoSchemaPropReader.RequiredOptionalEvalProps()
+	return b.InfoSchemaPropReader.RequiredOptionalEvalProps() |
+		b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinTiDBEncodeIndexKeySig) Clone() builtinFunc {
@@ -1060,6 +1079,17 @@ func (b *builtinTiDBEncodeIndexKeySig) evalString(ctx EvalContext, row chunk.Row
 	}
 	idxKey, isNull, err := EncodeIndexKeyFromRow(ctx, is, b.args, row)
 	if isNull || err != nil {
+		if errors.ErrorEqual(err, plannererrors.ErrSpecificAccessDenied) {
+			sv, err2 := b.GetSessionVars(ctx)
+			if err2 != nil {
+				return "", isNull, err
+			}
+			tblName, isNull, err2 := b.args[1].EvalString(ctx, row)
+			if err2 != nil || isNull {
+				return "", isNull, err
+			}
+			return "", isNull, plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", sv.User.AuthUsername, sv.User.AuthHostname, tblName)
+		}
 		return "", isNull, err
 	}
 	return hex.EncodeToString(idxKey), false, nil
