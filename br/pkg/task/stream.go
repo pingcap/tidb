@@ -1454,7 +1454,7 @@ func restoreStream(
 	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount+sstFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 
-		err = client.RestoreCompactedSsts(ctx, regionCompactedMap, importModeSwitcher, sstCheckpoints, sstCheckpointRunner, p.Inc)
+		err = client.RestoreCompactedSsts(ctx, regionCompactedMap, importModeSwitcher, sstCheckpoints, sstCheckpointRunner, p.Inc, logclient.RightDeriveSplit)
 		if err != nil {
 			return errors.Trace(err)
 		}

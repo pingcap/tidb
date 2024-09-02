@@ -75,6 +75,8 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+const RightDeriveSplit = true
+
 const MetaKVBatchSize = 64 * 1024 * 1024
 const maxSplitKeysOnce = 10240
 
@@ -174,9 +176,9 @@ func (rc *LogClient) CollectCompactedSsts(
 	ctx context.Context,
 	rules map[int64]*restoreutils.RewriteRules,
 	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
-) (int, map[uint64][]CompactedItem, error) {
+) (int, map[uint64]CompactedItems, error) {
 	sstFileCount := 0
-	regionCompactedMap := make(map[uint64][]CompactedItem)
+	regionCompactedMap := make(map[uint64]CompactedItems)
 	// read unorder files
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
@@ -217,95 +219,81 @@ func (rc *LogClient) CollectCompactedSsts(
 	return sstFileCount, regionCompactedMap, nil
 }
 
+func findSplitRanges(regionId uint64, items CompactedItems, rightDeriveSplit bool) ([]rtree.Range, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	splitRanges := make([]rtree.Range, 0, CompactedSSTSplitBatchSize)
+
+	keyFn := func(i CompactedItem) []byte {
+		return i.files.Files[0].EndKey
+	}
+
+	if rightDeriveSplit {
+		keyFn = func(i CompactedItem) []byte {
+			return i.files.Files[0].StartKey
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return bytes.Compare(keyFn(items[i]), keyFn(items[j])) < 0
+	})
+
+	// remove duplicate
+	uniqeItems := make([]CompactedItem, 0)
+	uniqeItems = append(uniqeItems, items[0])
+	for i := 1; i < len(items); i++ {
+		if !bytes.Equal(keyFn(items[i]), keyFn(items[i-1])) {
+			uniqeItems = append(uniqeItems, items[i])
+		}
+	}
+
+	log.Info("find split key for region",
+		zap.Uint64("region_id", regionId),
+		zap.Int("unique_items", len(uniqeItems)),
+		zap.Int("items", len(items)))
+	for i := 0; i < len(uniqeItems); i++ {
+		// build split ranges
+		tmpRng := rtree.Range{
+			StartKey: []byte(keyFn(uniqeItems[i])),
+			EndKey:   []byte(keyFn(uniqeItems[i])),
+		}
+		// only one range in the region should split
+		rg, err := restoreutils.RewriteRange(&tmpRng, uniqeItems[i].files.RewriteRules)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		splitRanges = append(splitRanges, *rg)
+	}
+
+	return splitRanges, nil
+}
+
 func (rc *LogClient) RestoreCompactedSsts(
 	ctx context.Context,
-	regionCompactedMap map[uint64][]CompactedItem,
+	regionCompactedMap map[uint64]CompactedItems,
 	importModeSwitcher *restore.ImportModeSwitcher,
 	checkpoints map[int64]struct{},
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType],
 	onProgress func(),
+	rightDeriveSplit bool,
 ) error {
 	// need to enter import mode before restore SST files
 	// it will set to noral mode whatever
 	importModeSwitcher.SwitchToImportMode(ctx)
 	defer importModeSwitcher.SwitchToNormalMode(ctx)
 
-	splitRanges := make([]rtree.Range, 0, CompactedSSTSplitBatchSize)
-
 	eg, eCtx := errgroup.WithContext(ctx)
 	// select split keys every `CompactedSSTSplitBatchSize` regions
-	cnt := 0
 	for regionId, CompactedItems := range regionCompactedMap {
 		if _, exists := checkpoints[int64(regionId)]; exists {
 			// already restored
 			continue
 		}
 		items := CompactedItems
-		// collect split keys every 1/8 files
-		// the default file size is 128MB, so we split region every 512MB
-		splitCount := len(items) / 8
-
-		if splitCount == 0 {
-			cnt += 1
-			if cnt >= CompactedSSTSplitBatchSize {
-				var regionSplitKey []byte
-				var splitKeyIndex int
-				for i, t := range items {
-					if len(regionSplitKey) == 0 || bytes.Compare(t.regionMinKey, regionSplitKey) < 0 {
-						regionSplitKey = t.regionMinKey
-						splitKeyIndex = i
-					}
-				}
-				log.Info("find min split key for region",
-					zap.Uint64("region_id", regionId),
-					zap.Int("split_key_index", splitKeyIndex),
-					logutil.Key("split_key", regionSplitKey))
-
-				// build split ranges
-				tmpRng := rtree.Range{
-					StartKey: []byte(items[splitKeyIndex].regionMinKey),
-					EndKey:   []byte(items[splitKeyIndex].regionMinKey),
-				}
-				// only one range in the region should split
-				rg, err := restoreutils.RewriteRange(&tmpRng, items[splitKeyIndex].files.RewriteRules)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				splitRanges = append(splitRanges, *rg)
-				cnt = 0
-			}
-		} else {
-			sort.Slice(items, func(i, j int) bool {
-				return bytes.Compare(items[i].regionMinKey, items[j].regionMinKey) < 0
-			})
-
-			// remove duplicate
-			uniqeItems := make([]CompactedItem, 0)
-			uniqeItems = append(uniqeItems, items[0])
-			for i := 1; i < len(items); i++ {
-				if !bytes.Equal(items[i].regionMinKey, items[i-1].regionMinKey) {
-					uniqeItems = append(uniqeItems, items[i])
-				}
-			}
-
-			log.Info("find min split key for region",
-				zap.Uint64("region_id", regionId),
-				zap.Int("split_count", splitCount),
-				zap.Int("unique_items", len(uniqeItems)),
-				zap.Int("items", len(items)))
-			for i := 0; i < splitCount && i < len(uniqeItems); i++ {
-				// build split ranges
-				tmpRng := rtree.Range{
-					StartKey: []byte(uniqeItems[i].regionMinKey),
-					EndKey:   []byte(uniqeItems[i].regionMinKey),
-				}
-				// only one range in the region should split
-				rg, err := restoreutils.RewriteRange(&tmpRng, uniqeItems[i].files.RewriteRules)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				splitRanges = append(splitRanges, *rg)
-			}
+		splitRanges, err := findSplitRanges(regionId, items, rightDeriveSplit)
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		if len(splitRanges) > 0 {
@@ -462,7 +450,7 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	if err != nil {
 		log.Fatal("failed to init snap file importer", zap.Error(err))
 	}
-	rc.restorer = sstfiles.NewSimpleFileRestorer(true, snapFileImporter, metaClient, rc.workerPool)
+	rc.restorer = sstfiles.NewSimpleFileRestorer(RightDeriveSplit, snapFileImporter, metaClient, rc.workerPool)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForLogRestore(ctx context.Context, taskName string, gcRatio string) (string, error) {
