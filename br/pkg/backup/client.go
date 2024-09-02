@@ -8,14 +8,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-<<<<<<< HEAD
 	"fmt"
 	"io"
 	"os"
-=======
-	"reflect"
 	"sort"
->>>>>>> eac80126da8 (backup: use history iterator to scan ddl jobs (#54100))
 	"strings"
 	"sync"
 	"time"

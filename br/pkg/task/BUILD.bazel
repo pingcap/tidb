@@ -17,7 +17,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/aws",
-        "//br/pkg/backup",
         "//br/pkg/backup/prepare_snap",
         "//br/pkg/checksum",
         "//br/pkg/common",
