@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -757,11 +758,12 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (base.Plan, er
 		return nil, errors.Errorf("generate foreign key cascade ast failed, %v", fkc.tp)
 	}
 	sctx := fkc.b.ctx
-	err := plannercore.Preprocess(ctx, sctx, stmtNode)
+	nodeW := resolve.NewNodeW(stmtNode)
+	err := plannercore.Preprocess(ctx, sctx, nodeW)
 	if err != nil {
 		return nil, err
 	}
-	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx.GetPlanCtx(), stmtNode, fkc.b.is)
+	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx.GetPlanCtx(), nodeW, fkc.b.is)
 	if err != nil {
 		return nil, err
 	}

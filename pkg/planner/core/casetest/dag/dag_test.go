@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -68,7 +69,8 @@ func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 		tk.Session().GetSessionVars().StmtCtx.OriginalSQL = tt
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -104,7 +106,8 @@ func TestDAGPlanBuilderJoin(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -141,7 +144,8 @@ func TestDAGPlanBuilderSubquery(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -171,7 +175,8 @@ func TestDAGPlanTopN(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -203,10 +208,10 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 		comment := fmt.Sprintf("input: %s", tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-
-		err = core.Preprocess(context.Background(), se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), se, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), se, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), se, nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -245,7 +250,8 @@ func TestDAGPlanBuilderUnion(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -280,7 +286,8 @@ func TestDAGPlanBuilderUnionScan(t *testing.T) {
 		require.NoError(t, err, comment)
 		dom := domain.GetDomain(tk.Session())
 		require.NoError(t, dom.Reload())
-		plan, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, dom.InfoSchema())
+		nodeW := resolve.NewNodeW(stmt)
+		plan, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -317,7 +324,8 @@ func TestDAGPlanBuilderAgg(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -349,7 +357,8 @@ func doTestDAGPlanBuilderWindow(t *testing.T, vars, input []string, output []str
 
 		err = sessiontxn.NewTxn(context.Background(), tk.Session())
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt

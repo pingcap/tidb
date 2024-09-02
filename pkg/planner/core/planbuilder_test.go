@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -701,12 +702,15 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 	}
-	tableName.TableInfo = &model.TableInfo{
-		Columns: columns,
+	tblNameW := &resolve.TableNameW{
+		TableName: tableName,
+		TableInfo: &model.TableInfo{
+			Columns: columns,
+		},
 	}
 
 	// Test case 1: AllColumns.
-	cols, _, err := pb.getFullAnalyzeColumnsInfo(tableName, model.AllColumns, nil, nil, nil, false, false)
+	cols, _, err := pb.getFullAnalyzeColumnsInfo(tblNameW, model.AllColumns, nil, nil, nil, false, false)
 	require.NoError(t, err)
 	require.Equal(t, columns, cols)
 
@@ -718,7 +722,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	// Test case 3: ColumnList.
 	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
 	mustAnalyzedCols.data[3] = struct{}{}
-	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tblNameW, model.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
 	require.NoError(t, err)
 	require.Equal(t, specifiedCols, cols)
 }

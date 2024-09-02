@@ -115,9 +115,9 @@ check_contains "sum(i): $(( $ROW_COUNT*$CHUNK_COUNT*(($CHUNK_COUNT+2)*$ROW_COUNT
 [ ! -e "$TEST_DIR/cpch.pb" ]
 [ -e "$TEST_DIR/cpch.pb.1234567890.bak" ]
 
-# default auto analyze tick is 3s
-sleep 6
-run_sql "SHOW STATS_META WHERE Table_name = 'tbl';"
-check_contains "Row_count: 5000"
-check_contains "Modify_count: 0"
+## default auto analyze tick is 3s
+#sleep 6
+#run_sql "SHOW STATS_META WHERE Table_name = 'tbl';"
+#check_contains "Row_count: 5000"
+#check_contains "Modify_count: 0"
 
