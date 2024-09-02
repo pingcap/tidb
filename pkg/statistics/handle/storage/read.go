@@ -591,7 +591,7 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 			_, loadNeeded = tbl.IndexIsLoadNeeded(item.ID)
 		} else {
 			var analyzed bool
-			_, loadNeeded, analyzed = tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
+			_, loadNeeded, analyzed, _ = tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
 			loadNeeded = loadNeeded && analyzed
 		}
 		if !loadNeeded {
@@ -609,7 +609,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		return nil
 	}
 	var colInfo *model.ColumnInfo
-	_, loadNeeded, analyzed, missing := tbl.ColumnIsLoadNeededOld(col.ID, true)
+	_, loadNeeded, analyzed, missing := tbl.ColumnIsLoadNeeded(col.ID, true)
 	logutil.BgLogger().Info("fuck bug",
 		zap.Int64("tid", col.TableID),
 		zap.Bool("loadNeeded", loadNeeded),

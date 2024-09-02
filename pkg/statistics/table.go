@@ -807,57 +807,7 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
 // The first bool is whether we have it in memory. The second bool is whether this column has stats in the system table or not.
-func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool) {
-	if t.Pseudo {
-		logutil.BgLogger().Info("fuck pseudo", zap.Int64("tableID", t.PhysicalID), zap.Stack("stack"))
-		return nil, false, false
-	}
-	// when we use non-lite init stats, it cannot init the stats for common columns.
-	// so we need to foce to load the stats.
-	col, ok := t.columns[id]
-	if !ok {
-		logutil.BgLogger().Info("fuck column not found in table", zap.Int64("columnID", id), zap.Int64("tableID", t.PhysicalID), zap.Stack("stack"))
-		return nil, true, true
-	}
-	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
-
-	// If it's not analyzed yet.
-	if !hasAnalyzed {
-		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
-		// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
-		// We need to find a way to maintain it more correctly.
-		// Otherwise we don't need to load it.
-		result := t.ColAndIdxExistenceMap.Has(id, false)
-		logutil.BgLogger().Info("fuck !hasAnalyzed column not found in table", zap.Bool("result", result), zap.Int64("columnID", id), zap.Int64("tableID", t.PhysicalID), zap.Stack("stack"))
-		// If the column is not in the ColAndIdxExistenceMap, we need to load it.
-		return nil, !result, !result
-	}
-
-	// Restore the condition from the simplified form:
-	// 1. !ok && hasAnalyzed => need load
-	// 2. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
-	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
-
-	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
-		return col, true, true
-	}
-
-	// Otherwise don't need load it.
-	logutil.BgLogger().Info("fuck load because of you",
-		zap.Bool("fullLoad", fullLoad),
-		zap.Bool("col.IsFullLoad()", col.IsFullLoad()),
-		zap.Bool(" col.statsInitialized", col.statsInitialized),
-		zap.Bool("ColAndIdxExistenceMap.Has", t.ColAndIdxExistenceMap.Has(id, false)),
-		zap.Int64("tableID", t.PhysicalID))
-	return col, false, true
-}
-
-// ColumnIsLoadNeeded checks whether the column needs trigger the async/sync load.
-// The Column should be visible in the table and really has analyzed statistics in the stroage.
-// Also, if the stats has been loaded into the memory, we also don't need to load it.
-// We return the Column together with the checking result, to avoid accessing the map multiple times.
-// The first bool is whether we have it in memory. The second bool is whether this column has stats in the system table or not.
-func (t *Table) ColumnIsLoadNeededOld(id int64, fullLoad bool) (*Column, bool, bool, bool) {
+func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool, bool) {
 	if t.Pseudo {
 		logutil.BgLogger().Info("fuck pseudo", zap.Int64("tableID", t.PhysicalID), zap.Stack("stack"))
 		return nil, false, false, false
