@@ -252,7 +252,8 @@ func TestOnBackupRegionErrorResponse(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
-=======
+}
+
 func TestGetHistoryDDLJobs(t *testing.T) {
 	s := createBackupSuite(t)
 
