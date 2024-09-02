@@ -313,6 +313,12 @@ func TestNewRegionJobs(t *testing.T) {
 		},
 		{
 
+			regionKeys:   [][]byte{{1}, {4}, {7}},
+			jobRangeKeys: [][]byte{{2}, {3}, {4}, {5}, {6}},
+			jobKeys:      [][]byte{{2}, {3}, {4}, {5}, {6}},
+		},
+		{
+
 			regionKeys:   [][]byte{{1}, {5}, {6}, {7}, {8}, {12}},
 			jobRangeKeys: [][]byte{{1}, {2}, {3}, {4}, {9}, {10}, {12}},
 			jobKeys:      [][]byte{{1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}, {10}, {12}},

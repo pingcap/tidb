@@ -15,6 +15,7 @@
 package local
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"fmt"
@@ -196,17 +197,8 @@ func newRegionJobs(
 	_, curRegionEnd, _ = codec.DecodeBytes(curRegion.EndKey, nil)
 
 	for _, jobRange := range sortedJobRanges {
-		// skip the region that are before the job range due to previous loop. Skip this:
-		// --region--)                or   -----region--)
-		//           [--job range--                         [--job range--
-		if !beforeEnd(jobRange.Start, curRegionEnd) {
-			curRegionIdx++
-			curRegion = sortedRegions[curRegionIdx].Region
-			_, curRegionStart, _ = codec.DecodeBytes(curRegion.StartKey, nil)
-			_, curRegionEnd, _ = codec.DecodeBytes(curRegion.EndKey, nil)
-		}
-
-		// when these the cases, build the job and move to next region:
+		// build the job and move to next region for these the cases:
+		//
 		// --region--)           or   -----region--)
 		// -------job range--)        --job range--)
 		for !beforeEnd(jobRange.End, curRegionEnd) {
@@ -229,10 +221,16 @@ func newRegionJobs(
 			_, curRegionEnd, _ = codec.DecodeBytes(curRegion.EndKey, nil)
 		}
 
-		// only need to handle the case that region has remaining part after above loop:
-		// ---------region--)
+		// now we can make sure
+		//
+		//               --region--)
 		// --job range--)
-		if beforeEnd(jobRange.End, curRegionEnd) {
+		//
+		// only need to handle the case that job range has remaining part after above loop:
+		//
+		//            [----region--)
+		// --job range--)
+		if bytes.Compare(curRegionStart, jobRange.End) < 0 {
 			ret = append(ret, newRegionJob(
 				sortedRegions[curRegionIdx],
 				data,
