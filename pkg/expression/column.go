@@ -515,7 +515,7 @@ func (col *Column) Equals(other any) bool {
 	// when step into here, we could ensure that col1.RetType and col2.RetType are same type.
 	// and we should ensure col1.RetType and col2.RetType is not nil ourselves.
 	ok := col.RetType == nil && col2.RetType == nil || col.RetType != nil && col2.RetType != nil && col.RetType.Equal(col2.RetType)
-	ok = ok && col.VirtualExpr == nil && col2.VirtualExpr == nil || col.VirtualExpr != nil && col2.VirtualExpr != nil && col.VirtualExpr.Equals(col2.VirtualExpr)
+	ok = ok && (col.VirtualExpr == nil && col2.VirtualExpr == nil || col.VirtualExpr != nil && col2.VirtualExpr != nil && col.VirtualExpr.Equals(col2.VirtualExpr))
 	return ok &&
 		col.ID == col2.ID &&
 		col.UniqueID == col2.UniqueID &&
