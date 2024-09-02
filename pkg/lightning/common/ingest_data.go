@@ -76,6 +76,6 @@ type ForwardIter interface {
 // DataAndRanges is a pair of IngestData and list of Range. Each Range will
 // become a regionJob, and the regionJob will read data from Data field.
 type DataAndRanges struct {
-	Data   IngestData
-	Ranges []Range
+	Data         IngestData
+	SortedRanges []Range
 }
