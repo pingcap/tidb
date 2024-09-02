@@ -29,8 +29,8 @@ type Range struct {
 type Engine interface {
 	// ID is the identifier of an engine.
 	ID() string
-	// LoadIngestData sends DataAndRange to outCh.
-	LoadIngestData(ctx context.Context, outCh chan<- DataAndRange) error
+	// LoadIngestData sends DataAndRanges to outCh.
+	LoadIngestData(ctx context.Context, outCh chan<- DataAndRanges) error
 	// KVStatistics returns the total kv size and total kv count.
 	KVStatistics() (totalKVSize int64, totalKVCount int64)
 	// ImportedStatistics returns the imported kv size and imported kv count.
