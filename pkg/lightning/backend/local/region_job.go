@@ -181,6 +181,7 @@ func newRegionJobs(
 	regionSplitKeys int64,
 	metrics *metric.Common,
 ) []*regionJob {
+	// TODO(lance6716): add test
 	var (
 		lenRegions   = len(sortedRegions)
 		lenJobRanges = len(sortedJobRanges)
@@ -196,7 +197,9 @@ func newRegionJobs(
 	_, curRegionEnd, _ = codec.DecodeBytes(curRegion.EndKey, nil)
 
 	for _, jobRange := range sortedJobRanges {
-		// skip the region that are before the job range due to previous loop
+		// skip the region that are before the job range due to previous loop. Skip this:
+		// --region--)                or   -----region--)
+		//           [--job range--                         [--job range--
 		if !beforeEnd(jobRange.Start, curRegionEnd) {
 			curRegionIdx++
 			curRegion = sortedRegions[curRegionIdx].Region
@@ -227,7 +230,7 @@ func newRegionJobs(
 			_, curRegionEnd, _ = codec.DecodeBytes(curRegion.EndKey, nil)
 		}
 
-		// only need to handle the region has remaining part after above loop
+		// only need to handle the case that region has remaining part after above loop:
 		// ---------region--)
 		// --job range--)
 		if beforeEnd(jobRange.End, curRegionEnd) {

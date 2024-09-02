@@ -26,11 +26,9 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -122,24 +120,6 @@ func insideRegion(region *metapb.Region, metas []*sst.SSTMeta) bool {
 
 func keyInsideRegion(region *metapb.Region, key []byte) bool {
 	return bytes.Compare(key, region.GetStartKey()) >= 0 && (beforeEnd(key, region.GetEndKey()))
-}
-
-func intersectRange(region *metapb.Region, rg common.Range) common.Range {
-	var startKey, endKey []byte
-	if len(region.StartKey) > 0 {
-		_, startKey, _ = codec.DecodeBytes(region.StartKey, []byte{})
-	}
-	if bytes.Compare(startKey, rg.Start) < 0 {
-		startKey = rg.Start
-	}
-	if len(region.EndKey) > 0 {
-		_, endKey, _ = codec.DecodeBytes(region.EndKey, []byte{})
-	}
-	if beforeEnd(rg.End, endKey) {
-		endKey = rg.End
-	}
-
-	return common.Range{Start: startKey, End: endKey}
 }
 
 func largerStartKey(a, b []byte) []byte {
