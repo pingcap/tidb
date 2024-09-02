@@ -167,14 +167,10 @@ func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64) {
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
 		metrics.UpdateCounter.Inc()
-		logutil.BgLogger().Info("fuck update table",
-			zap.Bool("pseudo", tbl.Pseudo),
-			zap.Int64("tid", id), zap.Int64("count", tbl.RealtimeCount), zap.Stack("stack"))
 		sc.c.Put(id, tbl)
 	}
 	for _, id := range deletedIDs {
 		metrics.DelCounter.Inc()
-		logutil.BgLogger().Info("fuck delete table", zap.Int64("tid", id))
 		sc.c.Del(id)
 	}
 
