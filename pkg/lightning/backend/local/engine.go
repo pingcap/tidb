@@ -1101,7 +1101,7 @@ func (e *Engine) Finish(totalBytes, totalCount int64) {
 // IngestData interface.
 func (e *Engine) LoadIngestData(
 	ctx context.Context,
-	outCh chan<- common.DataAndRange,
+	outCh chan<- common.DataAndRanges,
 ) (err error) {
 	jobRangeKeys := e.regionSplitKeysCache
 	// when the region is large, we need to split to smaller job ranges to increase
@@ -1122,9 +1122,9 @@ func (e *Engine) LoadIngestData(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case outCh <- common.DataAndRange{
-			Data:  e,
-			Range: common.Range{Start: prev, End: cur},
+		case outCh <- common.DataAndRanges{
+			Data:   e,
+			Ranges: []common.Range{{Start: prev, End: cur}},
 		}:
 		}
 		prev = cur

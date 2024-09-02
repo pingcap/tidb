@@ -947,7 +947,7 @@ func (local *Backend) generateAndSendJob(
 ) error {
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
-	dataAndRangeCh := make(chan common.DataAndRange)
+	dataAndRangeCh := make(chan common.DataAndRanges)
 	conn := local.WorkerConcurrency
 	if _, ok := engine.(*external.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
@@ -972,7 +972,7 @@ func (local *Backend) generateAndSendJob(
 						jobToWorkerCh <- &regionJob{}
 						time.Sleep(5 * time.Second)
 					})
-					jobs, err := local.generateJobForRange(egCtx, p.Data, p.Range, regionSplitSize, regionSplitKeys)
+					jobs, err := local.generateJobForRange(egCtx, p.Data, p.Ranges, regionSplitSize, regionSplitKeys)
 					if err != nil {
 						if common.IsContextCanceledError(err) {
 							return nil
@@ -1020,16 +1020,18 @@ var fakeRegionJobs map[[2]string]struct {
 func (local *Backend) generateJobForRange(
 	ctx context.Context,
 	data common.IngestData,
-	keyRange common.Range,
+	jobRanges []common.Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
+	startOffAllRanges, endOfAllRanges := jobRanges[0].Start, jobRanges[len(jobRanges)-1].End
+
 	failpoint.Inject("fakeRegionJobs", func() {
 		if ctx.Err() != nil {
 			failpoint.Return(nil, ctx.Err())
 		}
-		key := [2]string{string(keyRange.Start), string(keyRange.End)}
+		key := [2]string{string(startOffAllRanges), string(endOfAllRanges)}
 		injected := fakeRegionJobs[key]
-		// overwrite the stage to regionScanned, because some time same keyRange
+		// overwrite the stage to regionScanned, because some time same jobRanges
 		// will be generated more than once.
 		for _, job := range injected.jobs {
 			job.stage = regionScanned
@@ -1037,8 +1039,7 @@ func (local *Backend) generateJobForRange(
 		failpoint.Return(injected.jobs, injected.err)
 	})
 
-	start, end := keyRange.Start, keyRange.End
-	pairStart, pairEnd, err := data.GetFirstAndLastKey(start, end)
+	pairStart, pairEnd, err := data.GetFirstAndLastKey(startOffAllRanges, endOfAllRanges)
 	if err != nil {
 		return nil, err
 	}
@@ -1048,8 +1049,8 @@ func (local *Backend) generateJobForRange(
 			logFn = log.FromContext(ctx).Warn
 		}
 		logFn("There is no pairs in range",
-			logutil.Key("start", start),
-			logutil.Key("end", end))
+			logutil.Key("startOffAllRanges", startOffAllRanges),
+			logutil.Key("endOfAllRanges", endOfAllRanges))
 		// trigger cleanup
 		data.IncRef()
 		data.DecRef()
@@ -1079,7 +1080,7 @@ func (local *Backend) generateJobForRange(
 			zap.Reflect("peers", region.Region.GetPeers()))
 
 		jobs = append(jobs, &regionJob{
-			keyRange:        intersectRange(region.Region, common.Range{Start: start, End: end}),
+			keyRange:        intersectRange(region.Region, common.Range{Start: startOffAllRanges, End: endOfAllRanges}),
 			region:          region,
 			stage:           regionScanned,
 			ingestData:      data,
