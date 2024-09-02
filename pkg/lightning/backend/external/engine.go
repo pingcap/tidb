@@ -259,7 +259,7 @@ func getFilesReadConcurrency(
 	return result, startOffs, nil
 }
 
-func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byte, outCh chan<- common.DataAndRange) error {
+func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outCh chan<- common.DataAndRanges) error {
 	readAndSortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read_and_sort")
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_and_sort")
 	readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read")
@@ -267,6 +267,8 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	sortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("sort")
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
+	startKey := jobKeys[0]
+	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
 	readDtStartKey := e.keyAdapter.Encode(nil, startKey, common.MinRowID)
 	readDtEndKey := e.keyAdapter.Encode(nil, endKey, common.MinRowID)
@@ -331,21 +333,22 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	e.memKVsAndBuffers.memKVBuffers = nil
 	e.memKVsAndBuffers.size = 0
 
-	sendFn := func(dr common.DataAndRange) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case outCh <- dr:
-		}
-		return nil
+	ranges := make([]common.Range, 0, len(jobKeys)-1)
+	for i := 0; i < len(jobKeys)-1; i++ {
+		ranges = append(ranges, common.Range{
+			Start: jobKeys[i],
+			End:   jobKeys[i+1],
+		})
 	}
-	return sendFn(common.DataAndRange{
-		Data: data,
-		Range: common.Range{
-			Start: startKey,
-			End:   endKey,
-		},
-	})
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case outCh <- common.DataAndRanges{
+		Data:   data,
+		Ranges: ranges,
+	}:
+	}
+	return nil
 }
 
 // LoadIngestData loads the data from the external storage to memory in [start,
@@ -354,15 +357,16 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 // MemoryIngestData.DecRef().
 func (e *Engine) LoadIngestData(
 	ctx context.Context,
-	outCh chan<- common.DataAndRange,
+	outCh chan<- common.DataAndRanges,
 ) error {
 	// try to make every worker busy for each batch
 	regionBatchSize := e.workerConcurrency
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
 	})
-	for i := 0; i < len(regionRanges); i += regionBatchSize {
-		err := e.loadBatchRegionData(ctx, regionRanges[i].Start, regionRanges[min(i+regionBatchSize, len(regionRanges))-1].End, outCh)
+	for start := 0; start < len(e.jobKeys)-1; start += regionBatchSize {
+		end := min(1+start+regionBatchSize, len(e.jobKeys))
+		err := e.loadBatchRegionData(ctx, e.jobKeys[start:end], outCh)
 		if err != nil {
 			return err
 		}
