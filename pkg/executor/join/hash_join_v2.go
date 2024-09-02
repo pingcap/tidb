@@ -129,7 +129,6 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int) (int
 	}
 
 	for i := 0; i < partitionNumber; i++ {
-		// No tracker needs to be passed as memory has been consumed in `tryToSpill`
 		htc.hashTable.tables[i] = newSubTable(rowTables[i], nil)
 	}
 
@@ -681,7 +680,6 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 	// Build fetcher wakes up build workers with this channel
 	buildFetcherAndDispatcherSyncChan := make(chan struct{}, 1)
 
-	// It's useful when spill is triggered and the fetcher could know when workers finish their works.
 	fetcherAndWorkerSyncer := &sync.WaitGroup{}
 
 	defer func() {

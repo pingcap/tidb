@@ -126,36 +126,6 @@ func (rts *rowTableSegment) totalUsedBytes() int64 {
 	return ret
 }
 
-func (rts *rowTableSegment) getRowNum() int {
-	return len(rts.hashValues)
-}
-
-// This function is available to be used only when `rowStartOffset` has been initialized
-// The suffix `ForSpill` in function name means that `next_row_ptr` field will be reset.
-func (rts *rowTableSegment) getRowsBytesForSpill() [][]byte {
-	rowNum := rts.getRowNum()
-	startPos := int64(0)
-	rows := make([][]byte, 0)
-	for idx := 0; idx < rowNum; idx++ {
-		if idx == rowNum-1 {
-			rows = append(rows, rts.rawData[startPos:])
-			continue
-		}
-
-		rowByteLen := int64(rts.rowStartOffset[idx+1] - rts.rowStartOffset[idx])
-		end := startPos + rowByteLen
-
-		// set `next_ptr_row` to nil
-		nextPtrAddr := (unsafe.Pointer)(&rts.rawData[startPos])
-		*(*unsafe.Pointer)(nextPtrAddr) = nil
-
-		rows = append(rows, rts.rawData[startPos:end])
-		startPos = end
-	}
-
-	return rows
-}
-
 func (rts *rowTableSegment) getRowPointer(index int) unsafe.Pointer {
 	return unsafe.Pointer(&rts.rawData[rts.rowStartOffset[index]])
 }
@@ -293,20 +263,6 @@ func (rt *rowTable) getSegmentNum() int {
 	return len(rt.segments)
 }
 
-func (rt *rowTable) getTotalMemoryUsage() int64 {
-	totalMemoryUsage := int64(0)
-	for _, seg := range rt.segments {
-		if seg.finalized {
-			totalMemoryUsage += seg.totalUsedBytes()
-		}
-	}
-	return totalMemoryUsage
-}
-
-func (rt *rowTable) getSegments() []*rowTableSegment {
-	return rt.segments
-}
-
 func (rt *rowTable) clearSegments() {
 	rt.segments = nil
 }
@@ -332,16 +288,6 @@ func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 		startOffset += len(rt.segments[segIndex].rowStartOffset)
 	}
 	return -1
-}
-
-func (rt *rowTable) getTotalUsedBytesInSegments() int64 {
-	totalUsedBytes := int64(0)
-	for _, seg := range rt.segments {
-		if seg.finalized {
-			totalUsedBytes += seg.totalUsedBytes()
-		}
-	}
-	return totalUsedBytes
 }
 
 type keyProp struct {
@@ -845,14 +791,6 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		b.rowNumberInCurrentRowTableSeg[partIdx]++
 	}
 	return nil
-}
-
-func (rt *rowTable) getTotalRowNum() int {
-	totalRowNum := 0
-	for _, seg := range rt.segments {
-		totalRowNum += seg.getRowNum()
-	}
-	return totalRowNum
 }
 
 func (rt *rowTable) merge(other *rowTable) {

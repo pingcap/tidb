@@ -135,8 +135,6 @@ type baseJoinProbe struct {
 	rowIndexInfos []*matchedRowInfo
 	selected      []bool
 
-	probeSpillChkFieldTypes []*types.FieldType
-
 	probeCollision uint64
 }
 
@@ -526,11 +524,6 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		rUsedInOtherCondition: ctx.RUsedInOtherCondition,
 		rightAsBuildSide:      rightAsBuildSide,
 	}
-	probeSpillChkFieldTypes := make([]*types.FieldType, 0, len(probeChkFieldTypes)+2)
-	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, types.NewFieldType(mysql.TypeLonglong))
-	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))
-	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, probeChkFieldTypes...)
-	base.probeSpillChkFieldTypes = probeSpillChkFieldTypes
 
 	for i := range keyIndex {
 		if !mysql.HasNotNullFlag(base.keyTypes[i].GetFlag()) {

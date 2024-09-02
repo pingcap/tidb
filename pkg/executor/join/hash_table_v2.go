@@ -40,10 +40,6 @@ func (st *subTable) lookup(hashValue uint64) uintptr {
 	return st.hashTable[hashValue&st.posMask]
 }
 
-func (st *subTable) getTotalMemoryUsage() int64 {
-	return st.rowData.getTotalMemoryUsage() + getHashTableMemoryUsage(uint64(len(st.hashTable)))
-}
-
 func (st *subTable) getSegmentNum() int {
 	return st.rowData.getSegmentNum()
 }
@@ -131,27 +127,6 @@ func (st *subTable) build(startSegmentIndex int, endSegmentIndex int) {
 type hashTableV2 struct {
 	tables          []*subTable
 	partitionNumber uint64
-}
-
-func (ht *hashTableV2) getPartitionMemoryUsage(partID int) int64 {
-	if ht.tables[partID] != nil {
-		return ht.tables[partID].getTotalMemoryUsage()
-	}
-	return 0
-}
-
-func (ht *hashTableV2) getPartitionMemoryUsageTest(partID int) (int64, int64) {
-	if ht.tables[partID] != nil {
-		return ht.tables[partID].getTotalMemoryUsage(), getHashTableMemoryUsage(uint64(len(ht.tables[partID].hashTable)))
-	}
-	return 0, 0
-}
-
-func (ht *hashTableV2) clearPartitionSegments(partID int) {
-	if ht.tables[partID] != nil {
-		ht.tables[partID].rowData.clearSegments()
-		ht.tables[partID].hashTable = nil
-	}
 }
 
 type rowPos struct {
