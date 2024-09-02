@@ -17,7 +17,6 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/metrics",
-        "//pkg/parser/model",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
