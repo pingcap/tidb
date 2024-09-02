@@ -357,7 +357,7 @@ func (s *jobScheduler) updateClusterStateTicker() {
 
 // updateClusterStateLoop updates the cluster state in loop.
 func (s *jobScheduler) updateClusterStateLoop() {
-	var err error = nil
+	var err error
 
 	for {
 		err = s.checkAndUpdateClusterState()
@@ -390,7 +390,7 @@ func (s *jobScheduler) checkAndUpdateClusterState() error {
 	logutil.DDLLogger().Info("get global state and global state change",
 		zap.Bool("oldState", oldState), zap.Bool("currState", s.serverStateSyncer.IsUpgradingState()))
 
-	failpoint.Inject("failed-set-owner-op-value", func(val failpoint.Value) {
+	failpoint.Inject("failed-set-owner-op-value", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed set owner op value"))
 	})
 
