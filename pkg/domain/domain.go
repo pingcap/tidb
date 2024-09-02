@@ -2425,7 +2425,7 @@ func (do *Domain) initStats(ctx context.Context) {
 	initstats.InitStatsPercentage.Store(0)
 	var err error
 	if liteInitStats {
-		err = statsHandle.InitStatsLite(ctx, do.InfoSchema())
+		err = statsHandle.InitStatsLite(ctx)
 	} else {
 		err = statsHandle.InitStats(ctx, do.InfoSchema())
 	}
