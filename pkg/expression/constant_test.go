@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"sort"
 	"strings"
 	"testing"
@@ -66,6 +67,33 @@ func newFunction(ctx BuildContext, funcName string, args ...Expression) Expressi
 
 func newFunctionWithType(ctx BuildContext, funcName string, tp *types.FieldType, args ...Expression) Expression {
 	return NewFunctionInternal(ctx, funcName, tp, args...)
+}
+
+func TestConstantHashEquals(t *testing.T) {
+	// Test for Hash64 interface
+	cst1 := &Constant{Value: types.NewIntDatum(2333), RetType: newIntFieldType()}
+	cst2 := &Constant{Value: types.NewIntDatum(2333), RetType: newIntFieldType()}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	cst1.Hash64(hasher1)
+	cst2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, cst1.Equals(cst2))
+
+	// test cst2 datum changes.
+	cst2.Value = types.NewIntDatum(2334)
+	hasher2.Reset()
+	cst2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, cst1.Equals(cst2))
+
+	// test cst2 type changes.
+	cst2.Value = types.NewIntDatum(2333)
+	cst2.RetType = newStringFieldType()
+	hasher2.Reset()
+	cst2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, cst1.Equals(cst2))
 }
 
 func TestConstantPropagation(t *testing.T) {
