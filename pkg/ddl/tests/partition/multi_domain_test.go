@@ -32,6 +32,7 @@ import (
 // TestMultiSchemaDropUniqueIndex to show behavior when
 // dropping a unique index
 func TestMultiSchemaDropUniqueIndex(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
 	domOwner := distCtx.GetDomain(0)
@@ -168,6 +169,7 @@ func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 }
 
 func TestMultiSchemaVerPartitionBy(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
 	domOwner := distCtx.GetDomain(0)
@@ -306,6 +308,7 @@ func TestMultiSchemaVerPartitionBy(t *testing.T) {
 }
 
 func TestMultiSchemaVerAddPartition(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
 	domOwner := distCtx.GetDomain(0)
@@ -413,6 +416,7 @@ func TestMultiSchemaVerAddPartition(t *testing.T) {
 }
 
 func TestMultiSchemaVerDropPartitionWithGlobalIndex(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
 	domOwner := distCtx.GetDomain(0)
@@ -697,4 +701,118 @@ func step2(tk *testkit.TestKit, dbRows map[int][]string, keys []int, state int, 
 	delete(dbRows, keys[1])
 	// Check for the row A deleted
 	return lastRowID
+}
+
+func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn func(*testkit.TestKit), loopFn func(tO, tNO *testkit.TestKit)) {
+	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
+	store := distCtx.Store
+	domOwner := distCtx.GetDomain(0)
+	domNonOwner := distCtx.GetDomain(1)
+	defer func() {
+		domOwner.Close()
+		domNonOwner.Close()
+		store.Close()
+	}()
+
+	if !domOwner.DDL().OwnerManager().IsOwner() {
+		domOwner, domNonOwner = domNonOwner, domOwner
+	}
+
+	seOwner, err := session.CreateSessionWithDomain(store, domOwner)
+	require.NoError(t, err)
+	seNonOwner, err := session.CreateSessionWithDomain(store, domNonOwner)
+	require.NoError(t, err)
+
+	tkDDLOwner := testkit.NewTestKitWithSession(t, store, seOwner)
+	tkDDLOwner.MustExec(`use test`)
+	tkDDLOwner.MustExec(`set @@global.tidb_enable_global_index = 1`)
+	tkDDLOwner.MustExec(`set @@session.tidb_enable_global_index = 1`)
+	tkO := testkit.NewTestKitWithSession(t, store, seOwner)
+	tkO.MustExec(`use test`)
+	tkNO := testkit.NewTestKitWithSession(t, store, seNonOwner)
+	tkNO.MustExec(`use test`)
+
+	tkDDLOwner.MustExec(createSQL)
+	domOwner.Reload()
+	domNonOwner.Reload()
+	initFn(tkO)
+	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
+	hookChan := make(chan struct{})
+	hookFunc := func(job *model.Job) {
+		hookChan <- struct{}{}
+		logutil.BgLogger().Info("XXXXXXXXXXX Hook now waiting", zap.String("job.State", job.State.String()), zap.String("job.SchemaStage", job.SchemaState.String()))
+		<-hookChan
+		logutil.BgLogger().Info("XXXXXXXXXXX Hook released", zap.String("job.State", job.State.String()), zap.String("job.SchemaStage", job.SchemaState.String()))
+	}
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", hookFunc)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
+	alterChan := make(chan struct{})
+	go func() {
+		tkDDLOwner.MustExec(alterSQL)
+		logutil.BgLogger().Info("XXXXXXXXXXX drop partition done!")
+		alterChan <- struct{}{}
+	}()
+	// Skip the first state, since we want to compare before vs after in the loop
+	<-hookChan
+	hookChan <- struct{}{}
+	verCurr := verStart + 1
+	i := 0
+	for {
+		// Waiting for the next State change to be done (i.e. blocking the state after)
+		releaseHook := true
+		for {
+			select {
+			case <-hookChan:
+			case <-alterChan:
+				releaseHook = false
+				logutil.BgLogger().Info("XXXXXXXXXXX release hook")
+				break
+			}
+			domOwner.Reload()
+			if domNonOwner.InfoSchema().SchemaMetaVersion() == domOwner.InfoSchema().SchemaMetaVersion() {
+				// looping over reorganize data/indexes
+				hookChan <- struct{}{}
+				continue
+			}
+			break
+		}
+		//tk.t.Logf("RefreshSession rand seed: %d", seed)
+		logutil.BgLogger().Info("XXXXXXXXXXX states loop", zap.Int64("verCurr", verCurr), zap.Int64("NonOwner ver", domNonOwner.InfoSchema().SchemaMetaVersion()), zap.Int64("Owner ver", domOwner.InfoSchema().SchemaMetaVersion()))
+		domOwner.Reload()
+		require.Equal(t, verCurr-1, domNonOwner.InfoSchema().SchemaMetaVersion())
+		require.Equal(t, verCurr, domOwner.InfoSchema().SchemaMetaVersion())
+		loopFn(tkO, tkNO)
+		domNonOwner.Reload()
+		verCurr++
+		i++
+		if releaseHook {
+			// Continue to next state
+			hookChan <- struct{}{}
+		} else {
+			// Alter done!
+			break
+		}
+	}
+	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
+	postFn(tkO)
+}
+
+func TestMultiSchemaVerDropPartitionWithGlobalIndexGeneric(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
+	createSQL := `CREATE TABLE t (a int, b int, c varchar(255), d datetime, e binary(16), primary key (a), key i_b (b), key i_cb (c,b), unique index ui_bd (b,d) global, unique index ui_e (e) global) PARTITION BY RANGE (a) (partition p0 values less than (1000000), partition p1 values less than (2000000), partition p2 values less than (3000000))`
+	alterSQL := `alter table t drop partition p0`
+	i := 1
+	initFn := func(tkO *testkit.TestKit) {
+		tkO.MustExec(`insert into t values (1,1,1,now(),uuid_to_bin(uuid()))`)
+	}
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
+		i++
+		tkO.MustExec(`insert into t values (?,?,?,now(),uuid_to_bin(uuid()))`, i, i, i)
+		i++
+		tkNO.MustExec(`insert into t values (?,?,?,now(),uuid_to_bin(uuid()))`, i, i, i)
+	}
+	postFn := func(tkO *testkit.TestKit) {
+		tkO.MustQuery(`select * from t`).CheckAt([]int{0, 1, 2}, testkit.Rows("2 2 2", "4 4 4", "5 5 5", "6 6 6", "7 7 7"))
+	}
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
 }
