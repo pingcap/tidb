@@ -161,7 +161,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 			continue
 		}
 		// If we enable lite stats init or we just found out the meta info of the column is missed, we need to register columns for async load.
-		_, isLoadNeeded, _ := ds.StatisticTable.ColumnIsLoadNeeded(col.ID, false)
+		_, isLoadNeeded, _, _ := ds.StatisticTable.ColumnIsLoadNeeded(col.ID, false)
 		if isLoadNeeded {
 			asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
 				TableID:          ds.TableInfo.ID,
