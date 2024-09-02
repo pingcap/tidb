@@ -972,7 +972,7 @@ func (local *Backend) generateAndSendJob(
 						jobToWorkerCh <- &regionJob{}
 						time.Sleep(5 * time.Second)
 					})
-					jobs, err := local.generateJobForRange(egCtx, p.Data, p.Ranges, regionSplitSize, regionSplitKeys)
+					jobs, err := local.generateJobForRange(egCtx, p.Data, p.SortedRanges, regionSplitSize, regionSplitKeys)
 					if err != nil {
 						if common.IsContextCanceledError(err) {
 							return nil
@@ -1020,10 +1020,10 @@ var fakeRegionJobs map[[2]string]struct {
 func (local *Backend) generateJobForRange(
 	ctx context.Context,
 	data common.IngestData,
-	jobRanges []common.Range,
+	sortedJobRanges []common.Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
-	startOffAllRanges, endOfAllRanges := jobRanges[0].Start, jobRanges[len(jobRanges)-1].End
+	startOffAllRanges, endOfAllRanges := sortedJobRanges[0].Start, sortedJobRanges[len(sortedJobRanges)-1].End
 
 	failpoint.Inject("fakeRegionJobs", func() {
 		if ctx.Err() != nil {
@@ -1031,7 +1031,7 @@ func (local *Backend) generateJobForRange(
 		}
 		key := [2]string{string(startOffAllRanges), string(endOfAllRanges)}
 		injected := fakeRegionJobs[key]
-		// overwrite the stage to regionScanned, because some time same jobRanges
+		// overwrite the stage to regionScanned, because some time same sortedJobRanges
 		// will be generated more than once.
 		for _, job := range injected.jobs {
 			job.stage = regionScanned
@@ -1068,28 +1068,7 @@ func (local *Backend) generateJobForRange(
 		return nil, err
 	}
 
-	jobs := make([]*regionJob, 0, len(regions))
-	for _, region := range regions {
-		log.FromContext(ctx).Debug("get region",
-			zap.Binary("startKey", startKey),
-			zap.Binary("endKey", endKey),
-			zap.Uint64("id", region.Region.GetId()),
-			zap.Stringer("epoch", region.Region.GetRegionEpoch()),
-			zap.Binary("start", region.Region.GetStartKey()),
-			zap.Binary("end", region.Region.GetEndKey()),
-			zap.Reflect("peers", region.Region.GetPeers()))
-
-		jobs = append(jobs, &regionJob{
-			keyRange:        intersectRange(region.Region, common.Range{Start: startOffAllRanges, End: endOfAllRanges}),
-			region:          region,
-			stage:           regionScanned,
-			ingestData:      data,
-			regionSplitSize: regionSplitSize,
-			regionSplitKeys: regionSplitKeys,
-			metrics:         local.metrics,
-		})
-	}
-	return jobs, nil
+	return newRegionJobs(regions, data, sortedJobRanges, regionSplitSize, regionSplitKeys, local.metrics), nil
 }
 
 // startWorker creates a worker that reads from the job channel and processes.
@@ -1123,7 +1102,7 @@ func (local *Backend) startWorker(
 				jobs, err2 := local.generateJobForRange(
 					ctx,
 					job.ingestData,
-					job.keyRange,
+					[]common.Range{job.keyRange},
 					job.regionSplitSize,
 					job.regionSplitKeys,
 				)
