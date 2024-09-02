@@ -31,8 +31,8 @@ type ProbeWorkerV2 struct {
 	JoinProbe ProbeV2
 }
 
-func (w *ProbeWorkerV2) scanRowTableAfterProbeDone(inSpillMode bool) error {
-	w.JoinProbe.InitForScanRowTable(inSpillMode)
+func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() error {
+	w.JoinProbe.InitForScanRowTable()
 	ok, joinResult := w.getNewJoinResult()
 	if !ok {
 		return nil

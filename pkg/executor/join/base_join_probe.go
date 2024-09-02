@@ -65,7 +65,7 @@ type ProbeV2 interface {
 	// NeedScanRowTable returns true if current join need to scan row table after all the probe side chunks are handled
 	NeedScanRowTable() bool
 	// InitForScanRowTable do some pre-work before ScanRowTable, it must be called before ScanRowTable
-	InitForScanRowTable(inSpillMode bool)
+	InitForScanRowTable()
 	// Return probe collsion
 	GetProbeCollision() uint64
 	// Reset probe collsion
@@ -596,7 +596,7 @@ func (*mockJoinProbe) NeedScanRowTable() bool {
 	panic("not supported")
 }
 
-func (*mockJoinProbe) InitForScanRowTable(bool) {
+func (*mockJoinProbe) InitForScanRowTable() {
 	panic("not supported")
 }
 

@@ -17,7 +17,6 @@ package join
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"math/rand"
 	"runtime/trace"
@@ -83,33 +82,6 @@ func (htc *hashTableContext) clearAllSegmentsInRowTable() {
 	}
 }
 
-func (htc *hashTableContext) clearSegmentsInRowTable(workerID, partitionID int) {
-	if htc.rowTables[workerID] != nil && htc.rowTables[workerID][partitionID] != nil {
-		htc.rowTables[workerID][partitionID].clearSegments()
-	}
-}
-
-func (htc *hashTableContext) getAllMemoryUsageInHashTableTest() (int64, int64, string) {
-	partNum := len(htc.hashTable.tables)
-	totalMemoryUsage := int64(0)
-	totalHashLenMemUsage := int64(0)
-	info := ""
-	for i := 0; i < partNum; i++ {
-		mem1, mem2 := htc.hashTable.getPartitionMemoryUsageTest(i)
-		totalMemoryUsage += mem1
-		totalHashLenMemUsage += mem2
-		info = fmt.Sprintf("%s [%d %d]", info, i, mem2)
-	}
-	return totalMemoryUsage, totalHashLenMemUsage, info
-}
-
-func (htc *hashTableContext) clearHashTable() {
-	partNum := len(htc.hashTable.tables)
-	for i := 0; i < partNum; i++ {
-		htc.hashTable.clearPartitionSegments(i)
-	}
-}
-
 func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
 	if htc.rowTables[workerID][partitionID] == nil {
 		htc.rowTables[workerID][partitionID] = newRowTable()
@@ -139,18 +111,6 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	if needConsume {
 		htc.memoryTracker.Consume(seg.totalUsedBytes())
 	}
-}
-
-func (htc *hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable) (int64, []int64) {
-	totalMemoryUsage := int64(0)
-	partitionsMemoryUsage := make([]int64, 0)
-	for _, table := range rowTables {
-		hashTableLength := getHashTableLength(table)
-		memoryUsage := getHashTableMemoryUsage(hashTableLength)
-		partitionsMemoryUsage = append(partitionsMemoryUsage, memoryUsage)
-		totalMemoryUsage += memoryUsage
-	}
-	return totalMemoryUsage, partitionsMemoryUsage
 }
 
 func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber int) (int, error) {
@@ -503,44 +463,42 @@ func (e *HashJoinV2Exec) finalWorker(syncer chan struct{}) {
 		close(e.finalSync)
 	}()
 
-	for {
-		// Wait for the wake-up from probe fetcher
-		<-syncer
+	// Wait for the wake-up from probe fetcher
+	<-syncer
 
-		if e.stats != nil {
-			for _, prober := range e.ProbeWorkers {
-				e.stats.hashStat.probeCollision += int64(prober.JoinProbe.GetProbeCollision())
-			}
+	if e.stats != nil {
+		for _, prober := range e.ProbeWorkers {
+			e.stats.hashStat.probeCollision += int64(prober.JoinProbe.GetProbeCollision())
 		}
-
-		if e.finished.Load() {
-			return
-		}
-
-		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
-			wg := &sync.WaitGroup{}
-			wg.Add(int(e.Concurrency))
-			for i := uint(0); i < e.Concurrency; i++ {
-				workerID := i
-				e.waiterWg.RunWithRecover(
-					func() {
-						// Error has been handled in the function
-						err := e.ProbeWorkers[workerID].scanRowTableAfterProbeDone(false)
-						if err != nil {
-							handleError(e.joinResultCh, &e.finished, err)
-						}
-					},
-					func(r any) {
-						handleError(e.joinResultCh, &e.finished, r)
-						wg.Done()
-					},
-				)
-			}
-			wg.Wait()
-		}
-
-		e.finalSync <- struct{}{}
 	}
+
+	if e.finished.Load() {
+		return
+	}
+
+	if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
+		wg := &sync.WaitGroup{}
+		wg.Add(int(e.Concurrency))
+		for i := uint(0); i < e.Concurrency; i++ {
+			workerID := i
+			e.waiterWg.RunWithRecover(
+				func() {
+					// Error has been handled in the function
+					err := e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
+					if err != nil {
+						handleError(e.joinResultCh, &e.finished, err)
+					}
+				},
+				func(r any) {
+					handleError(e.joinResultCh, &e.finished, r)
+					wg.Done()
+				},
+			)
+		}
+		wg.Wait()
+	}
+
+	e.finalSync <- struct{}{}
 }
 
 func (e *HashJoinV2Exec) fetchAndBuildHashTable(ctx context.Context) {

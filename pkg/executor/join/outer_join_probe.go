@@ -89,15 +89,11 @@ func (j *outerJoinProbe) IsScanRowTableDone() bool {
 	return j.rowIter.isEnd()
 }
 
-func (j *outerJoinProbe) InitForScanRowTable(inSpillMode bool) {
+func (j *outerJoinProbe) InitForScanRowTable() {
 	if !j.isOuterSideBuild {
 		panic("should not reach here")
 	}
 	totalRowCount := j.ctx.hashTableContext.hashTable.totalRowCount()
-	if inSpillMode {
-		j.rowIter = j.ctx.hashTableContext.hashTable.createRowIter(0, totalRowCount)
-		return
-	}
 
 	concurrency := j.ctx.Concurrency
 	workID := uint64(j.workID)
