@@ -2229,9 +2229,30 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 			panicSplitRegionClient{},
 		),
 	}
-	e := &Engine{}
+	e := &Engine{regionSplitKeysCache: initRegionKeys}
 	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
+}
+
+type recordScanRegionsHook struct {
+	beforeScanRegions [][2][]byte
+}
+
+func (r *recordScanRegionsHook) BeforeSplitRegion(ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte) (*split.RegionInfo, [][]byte) {
+	return regionInfo, keys
+}
+
+func (r *recordScanRegionsHook) AfterSplitRegion(ctx context.Context, info *split.RegionInfo, i [][]byte, infos []*split.RegionInfo, err error) ([]*split.RegionInfo, error) {
+	return infos, err
+}
+
+func (r *recordScanRegionsHook) BeforeScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]byte, []byte, int) {
+	r.beforeScanRegions = append(r.beforeScanRegions, [2][]byte{key, endKey})
+	return key, endKey, limit
+}
+
+func (r *recordScanRegionsHook) AfterScanRegions(infos []*split.RegionInfo, err error) ([]*split.RegionInfo, error) {
+	return infos, err
 }
 
 func TestExternalEngine(t *testing.T) {
@@ -2277,6 +2298,7 @@ func TestExternalEngine(t *testing.T) {
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
 	}
 	engineUUID := uuid.New()
+	hook := &recordScanRegionsHook{}
 	local := &Backend{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: 2,
@@ -2284,7 +2306,7 @@ func TestExternalEngine(t *testing.T) {
 		},
 		splitCli: initTestSplitClient([][]byte{
 			keys[0], keys[50], endKey,
-		}, nil),
+		}, hook),
 		pdCli: &mockPdClient{},
 	}
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
@@ -2344,7 +2366,12 @@ func TestExternalEngine(t *testing.T) {
 	}
 	require.Equal(t, 100, kvIdx)
 
-	// TODO(lance6716): check ScanRegion is correct
+	require.Equal(t, [][2][]byte{
+		{codec.EncodeBytes(nil, keys[0]), codec.EncodeBytes(nil, nextKey(keys[29]))},
+		{codec.EncodeBytes(nil, keys[30]), codec.EncodeBytes(nil, nextKey(keys[59]))},
+		{codec.EncodeBytes(nil, keys[60]), codec.EncodeBytes(nil, nextKey(keys[89]))},
+		{codec.EncodeBytes(nil, keys[90]), codec.EncodeBytes(nil, nextKey(keys[99]))},
+	}, hook.beforeScanRegions)
 }
 
 func TestCheckDiskAvail(t *testing.T) {
