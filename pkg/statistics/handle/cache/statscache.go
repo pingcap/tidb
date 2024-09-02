@@ -91,7 +91,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
 		snapshot := row.GetUint64(4)
-		logutil.BgLogger().Info("fuck we find tid", zap.Int64("physicalID", physicalID))
+
 		// Detect the context cancel signal, since it may take a long time for the loop.
 		// TODO: add context to TableInfoByID and remove this code block?
 		if ctx.Err() != nil {
@@ -100,7 +100,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 
 		table, ok := s.statsHandle.TableInfoByID(is, physicalID)
 		if !ok {
-			logutil.BgLogger().Info(
+			logutil.BgLogger().Debug(
 				"unknown physical ID in stats meta table, maybe it has been dropped",
 				zap.Int64("ID", physicalID),
 			)
@@ -112,8 +112,6 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 		if oldTbl, ok := s.Get(physicalID); ok &&
 			oldTbl.Version >= version &&
 			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
-			logutil.BgLogger().Info("fuck skip update", zap.Int64("physicalID", physicalID),
-				zap.Bool("oldTbl.Version >= version", oldTbl.Version >= version))
 			continue
 		}
 		tbl, err := s.statsHandle.TableStatsFromStorage(
@@ -139,9 +137,6 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		logutil.BgLogger().Info("fuck update", zap.Int64("physicalID", physicalID),
-			zap.Bool("pseudo", tbl.Pseudo),
-			zap.Int64("ModifyCount", modifyCount), zap.Int64("RealtimeCount", count))
 		// It only occurs in the following situations:
 		// 1. The table has already been analyzed,
 		//	but because the predicate columns feature is turned on, and it doesn't have any columns or indexes analyzed,
@@ -231,15 +226,7 @@ func (s *StatsCacheImpl) Get(tableID int64) (*statistics.Table, bool) {
 	failpoint.Inject("StatsCacheGetNil", func() {
 		failpoint.Return(nil, false)
 	})
-
-	result, ok := s.Load().Get(tableID)
-	if ok {
-		logutil.BgLogger().Info("fuck get stats", zap.Int64("tid", tableID), zap.Bool("pseudo", result.Pseudo))
-	} else {
-		logutil.BgLogger().Info("fuck get none stats", zap.Int64("tid", tableID))
-	}
-
-	return result, ok
+	return s.Load().Get(tableID)
 }
 
 // Put puts this table stats into the cache.
