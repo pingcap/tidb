@@ -149,7 +149,7 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 		zap.Bool(" statsTbl.Pseudo", statsTbl.Pseudo),
 		zap.Int64("count", statsTbl.RealtimeCount),
 		zap.String("dbName", dbName), zap.String("tblName", tblName), zap.String("partitionName", partitionName))
-	if statsTbl.Pseudo && statsTbl.RealtimeCount == 0 {
+	if statsTbl.Pseudo {
 		return
 	}
 	if !statsTbl.IsAnalyzed() {
