@@ -552,7 +552,7 @@ func TestIssue54688(t *testing.T) {
 		rs, err := tk.Exec("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a")
 		require.NoError(t, err)
 		context, cancel := context.WithCancel(context.Background())
-		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/executor/join/joinMatchedInnerRow2Chunk",
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/executor/join/joinMatchedInnerRow2Chunk",
 			func() {
 				cancel()
 			},
