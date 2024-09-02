@@ -150,18 +150,18 @@ func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
 func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
 	rowCount uint64, avgRowLength uint64, dataLength uint64, indexLength uint64) {
 
-	logutil.BgLogger().Info("Estimating data length",
+	logutil.BgLogger().Info("debug: Estimating data length",
 		zap.String("table", table.Name.L),
 		zap.Int64("tableID", table.ID))
 
 	rowCount = c.GetTableRows(table.ID)
-	logutil.BgLogger().Info("Got table rows",
+	logutil.BgLogger().Info("debug: Got table rows",
 		zap.String("table", table.Name.L),
 		zap.Int64("tableID", table.ID),
 		zap.Uint64("rowCount", rowCount))
 
 	dataLength, indexLength = c.GetDataAndIndexLength(table, table.ID, rowCount)
-	logutil.BgLogger().Info("Got data and index length",
+	logutil.BgLogger().Info("debug: Got data and index length",
 		zap.String("table", table.Name.L),
 		zap.Int64("tableID", table.ID),
 		zap.Uint64("dataLength", dataLength),
@@ -178,7 +178,7 @@ func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
 			dataLength += parDataLen
 			indexLength += parIndexLen
 
-			logutil.BgLogger().Info("Partition data calculated",
+			logutil.BgLogger().Info("debug: Partition data calculated",
 				zap.String("table", table.Name.L),
 				zap.Int64("partitionID", pi.ID),
 				zap.Uint64("partitionRowCount", piRowCnt),
@@ -191,7 +191,7 @@ func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
 	if rowCount != 0 {
 		avgRowLength = dataLength / rowCount
 	}
-	logutil.BgLogger().Info("Final estimated data length",
+	logutil.BgLogger().Info("debug: Final estimated data length",
 		zap.String("table", table.Name.L),
 		zap.Int64("tableID", table.ID),
 		zap.Uint64("rowCount", rowCount),
@@ -202,7 +202,7 @@ func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
 	if table.IsSequence() {
 		// sequence is always 1 row regardless of stats.
 		rowCount = 1
-		logutil.BgLogger().Info("Table is a sequence, setting rowCount to 1",
+		logutil.BgLogger().Info("debug: Table is a sequence, setting rowCount to 1",
 			zap.String("table", table.Name.L),
 			zap.Int64("tableID", table.ID))
 	}
@@ -278,25 +278,36 @@ func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physic
 	columnLength := make(map[string]uint64, len(info.Columns))
 	for _, col := range info.Columns {
 		if col.State != model.StatePublic {
+			logutil.BgLogger().Info("debug: Skipping non-public column",
+				zap.String("table", info.Name.L),
+				zap.Int64("tableID", info.ID),
+				zap.String("column", col.Name.L),
+				zap.String("state", col.State.String()))
 			continue
 		}
 		length := col.FieldType.StorageLength()
 		if length != types.VarStorageLen {
 			columnLength[col.Name.L] = rowCount * uint64(length)
+			logutil.BgLogger().Info("debug: Fixed storage length column",
+				zap.String("table", info.Name.L),
+				zap.Int64("tableID", info.ID),
+				zap.String("column", col.Name.L),
+				zap.Uint64("length", uint64(length)),
+				zap.Uint64("totalLength", columnLength[col.Name.L]))
 		} else {
 			length := c.GetColLength(tableHistID{tableID: physicalID, histID: col.ID})
 			columnLength[col.Name.L] = length
+			logutil.BgLogger().Info("debug: Variable storage length column",
+				zap.String("table", info.Name.L),
+				zap.Int64("tableID", info.ID),
+				zap.String("column", col.Name.L),
+				zap.Uint64("length", length))
 		}
-		logutil.BgLogger().Info("Column length calculated",
-			zap.String("table", info.Name.L),
-			zap.Int64("tableID", info.ID),
-			zap.String("column", col.Name.L),
-			zap.Uint64("length", columnLength[col.Name.L]))
 	}
 	for _, length := range columnLength {
 		dataLength += length
 	}
-	logutil.BgLogger().Info("Data length calculated",
+	logutil.BgLogger().Info("debug: Data length calculated",
 		zap.String("table", info.Name.L),
 		zap.Int64("tableID", info.ID),
 		zap.Uint64("dataLength", dataLength))
@@ -321,14 +332,14 @@ func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physic
 			} else {
 				indexLength += rowCount * uint64(col.Length)
 			}
-			logutil.BgLogger().Info("Index length calculated",
+			logutil.BgLogger().Info("debug: Index length calculated",
 				zap.String("table", info.Name.L),
 				zap.Int64("tableID", info.ID),
 				zap.String("indexColumn", col.Name.L),
 				zap.Uint64("indexLength", indexLength))
 		}
 	}
-	logutil.BgLogger().Info("Final lengths calculated",
+	logutil.BgLogger().Info("debug: Final lengths calculated",
 		zap.String("table", info.Name.L),
 		zap.Int64("tableID", info.ID),
 		zap.Uint64("dataLength", dataLength),
