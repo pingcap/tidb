@@ -17,7 +17,6 @@ package stmtsummary
 import (
 	"container/list"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +31,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
