@@ -96,6 +96,7 @@ func (ft *FieldType) Hash64(h IHasher) {
 }
 
 // Equals implements the cascades/base.Hasher.<1th> interface.
+// Equals is different from Equal, it rawly compares the basic elements of two tps
 func (ft *FieldType) Equals(other any) bool {
 	if other == nil {
 		return false

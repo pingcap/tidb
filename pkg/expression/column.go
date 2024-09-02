@@ -36,6 +36,7 @@ import (
 
 var (
 	_ base.HashEquals = &Column{}
+	_ base.HashEquals = &CorrelatedColumn{}
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -244,6 +245,31 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 		Column: *mapped,
 		Data:   col.Data,
 	}, nil
+}
+
+// Hash64 implements HashEquals.<0th> interface.
+func (col *CorrelatedColumn) Hash64(h base.Hasher) {
+	// correlatedColumn flag here is used to distinguish correlatedColumn and Column.
+	h.HashByte(correlatedColumn)
+	col.Column.Hash64(h)
+	// since col.Datum is filled in the runtime, we can't use it to calculate hash now, correlatedColumn flag + column is enough.
+}
+
+// Equals implements HashEquals.<1st> interface.
+func (col *CorrelatedColumn) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var col2 *CorrelatedColumn
+	switch x := other.(type) {
+	case CorrelatedColumn:
+		col2 = &x
+	case *CorrelatedColumn:
+		col2 = x
+	default:
+		return false
+	}
+	return col.Column.Equals(&col2.Column)
 }
 
 // Column represents a column.

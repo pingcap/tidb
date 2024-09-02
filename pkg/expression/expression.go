@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -41,6 +42,7 @@ const (
 	scalarFunctionFlag byte = 3
 	parameterFlag      byte = 4
 	ScalarSubQFlag     byte = 5
+	correlatedColumn   byte = 6
 )
 
 // EvalSimpleAst evaluates a simple ast expression directly.
@@ -169,6 +171,7 @@ const (
 type Expression interface {
 	VecExpr
 	CollationInfo
+	base.HashEquals
 
 	Traverse(TraverseAction) Expression
 

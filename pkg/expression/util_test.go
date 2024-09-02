@@ -16,6 +16,7 @@ package expression
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"testing"
 	"time"
 
@@ -661,3 +662,5 @@ func (m *MockExpr) MemoryUsage() (sum int64) {
 func (m *MockExpr) Traverse(action TraverseAction) Expression {
 	return action.Transform(m)
 }
+func (m *MockExpr) Hash64(_ base.Hasher) {}
+func (m *MockExpr) Equals(_ any) bool    { return false }
