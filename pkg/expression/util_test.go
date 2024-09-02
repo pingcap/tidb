@@ -510,6 +510,9 @@ func BenchmarkExtractColumns(b *testing.B) {
 	}
 	b.ReportAllocs()
 }
+func (m *MockExpr) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
 
 func BenchmarkExprFromSchema(b *testing.B) {
 	conditions := []Expression{
@@ -603,6 +606,12 @@ func (m *MockExpr) EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSO
 		return x, false, m.err
 	}
 	return types.BinaryJSON{}, m.i == nil, m.err
+}
+func (m *MockExpr) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (val types.VectorFloat32, isNull bool, err error) {
+	if x, ok := m.i.(types.VectorFloat32); ok {
+		return x, false, m.err
+	}
+	return types.ZeroVectorFloat32, m.i == nil, m.err
 }
 func (m *MockExpr) GetType(_ EvalContext) *types.FieldType { return m.t }
 

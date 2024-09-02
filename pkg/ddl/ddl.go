@@ -651,7 +651,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 
 	ddlJobDoneChMap := generic.NewSyncMap[int64, chan struct{}](10)
 	limitJobCh := make(chan *JobWrapper, batchAddingJobs)
-	var globalIDLock sync.Mutex
 
 	submitter := &JobSubmitter{
 		ctx:               d.ctx,
@@ -663,7 +662,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 
 		limitJobCh:     limitJobCh,
 		ddlJobNotifyCh: make(chan struct{}, 100),
-		globalIDLock:   &globalIDLock,
 	}
 	d.jobSubmitter = submitter
 
@@ -676,7 +674,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		limitJobCh:      limitJobCh,
 		lease:           d.lease,
 		ddlJobDoneChMap: &ddlJobDoneChMap,
-		globalIDLock:    &globalIDLock,
 	}
 	d.executor = e
 

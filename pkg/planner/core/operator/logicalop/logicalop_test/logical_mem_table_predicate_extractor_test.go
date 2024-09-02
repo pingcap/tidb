@@ -32,6 +32,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -48,7 +49,8 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 
 	ctx := context.Background()
 	builder, _ := plannercore.NewPlanBuilder().Init(se.GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
-	plan, err := builder.Build(ctx, stmt)
+	nodeW := resolve.NewNodeW(stmt)
+	plan, err := builder.Build(ctx, nodeW)
 	require.NoError(t, err)
 
 	logicalPlan, err := plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
@@ -1800,7 +1802,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		tk.MustExec(setStmt)
 		stmt, err := parser.ParseOneStmt(exec, "", "")
 		require.NoError(t, err)
-		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), stmt.(*ast.ExecuteStmt), dom.InfoSchema())
+		nodeW := resolve.NewNodeW(stmt)
+		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
@@ -1817,7 +1820,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			BinaryArgs: params,
 			PrepStmt:   prepStmt,
 		}
-		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), execStmt, dom.InfoSchema())
+		nodeW := resolve.NewNodeW(execStmt)
+		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
@@ -1834,6 +1838,27 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		skipRequest   bool
 		colPredicates map[string]set.StringSet
 	}{
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='test';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("test"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_name='t';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where tidb_table_id=111;`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"tidb_table_id": set.NewStringSet("111"),
+			},
+		},
 		{
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where lower(table_name)='T';`,
 			skipRequest: false,
@@ -2038,42 +2063,11 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	for _, ca := range cases {
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
-		var base *plannercore.InfoSchemaBaseExtractor
-		switch ex := logicalMemTable.Extractor.(type) {
-		case *plannercore.InfoSchemaBaseExtractor:
-			base = ex
-		case *plannercore.InfoSchemaTablesExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaPartitionsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaStatisticsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaSchemataExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaIndexesExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaIndexUsageExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaViewsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaKeyColumnUsageExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaTableConstraintsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaSequenceExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaCheckConstraintsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaReferConstExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaTiDBCheckConstraintsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaColumnsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		default:
-			require.Failf(t, "unexpected extractor type", "%T", ex)
-		}
-		require.Equal(t, ca.skipRequest, base.SkipRequest, "SQL: %v", ca.sql)
-		require.Equal(t, ca.colPredicates, base.ColPredicates, "SQL: %v", ca.sql)
+		ex, ok := logicalMemTable.Extractor.(interface {
+			GetBase() *plannercore.InfoSchemaBaseExtractor
+		})
+		require.True(t, ok)
+		require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
+		require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
 	}
 }

@@ -732,6 +732,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetMysqlEnum(types.Enum{}, col.GetCollate())
 	case mysql.TypeJSON:
 		d.SetMysqlJSON(types.CreateBinaryJSON(nil))
+	case mysql.TypeTiDBVectorFloat32:
+		d.SetVectorFloat32(types.ZeroVectorFloat32)
 	}
 	return d
 }

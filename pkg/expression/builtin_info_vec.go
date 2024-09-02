@@ -320,7 +320,7 @@ func (b *builtinBenchmarkSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 			}
 		}
 	default: // Should never go into here.
-		return errors.Errorf("EvalType %v not implemented for builtin BENCHMARK()", evalType)
+		return errors.Errorf("%s is not supported for BENCHMARK()", evalType)
 	}
 
 	// Return value of BENCHMARK() is always 0.

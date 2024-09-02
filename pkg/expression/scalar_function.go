@@ -109,6 +109,11 @@ func (sf *ScalarFunction) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, resul
 	return sf.Function.vecEvalJSON(ctx, input, result)
 }
 
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalVectorFloat32(ctx, input, result)
+}
+
 // GetArgs gets arguments of function.
 func (sf *ScalarFunction) GetArgs() []Expression {
 	return sf.Function.getArgs()
@@ -456,6 +461,8 @@ func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, e
 		res, isNull, err = sf.EvalDuration(ctx, row)
 	case types.ETJson:
 		res, isNull, err = sf.EvalJSON(ctx, row)
+	case types.ETVectorFloat32:
+		res, isNull, err = sf.EvalVectorFloat32(ctx, row)
 	case types.ETString:
 		var str string
 		str, isNull, err = sf.EvalString(ctx, row)
@@ -537,6 +544,11 @@ func (sf *ScalarFunction) EvalJSON(ctx EvalContext, row chunk.Row) (types.Binary
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalJSON(ctx, row)
+}
+
+// EvalVectorFloat32 implements Expression interface.
+func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	return sf.Function.evalVectorFloat32(ctx, row)
 }
 
 // HashCode implements Expression interface.

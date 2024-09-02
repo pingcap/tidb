@@ -637,28 +637,23 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
-	allDBs := schema.AllSchemaNames()
-	for _, db := range allDBs {
-		tbls, err := schema.SchemaTableInfos(context.Background(), db)
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-		for _, tbl := range tbls {
-			replicaInfos = h.getTiFlashReplicaInfo(tbl, replicaInfos)
+	schemas := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	for _, schema := range schemas {
+		for _, tbl := range schema.TableInfos {
+			replicaInfos = appendTiFlashReplicaInfo(replicaInfos, tbl)
 		}
 	}
 
-	dropedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash(schema)
+	droppedOrTruncateReplicaInfos, err := h.getDropOrTruncateTableTiflash(schema)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
 	}
-	replicaInfos = append(replicaInfos, dropedOrTruncateReplicaInfos...)
+	replicaInfos = append(replicaInfos, droppedOrTruncateReplicaInfos...)
 	handler.WriteData(w, replicaInfos)
 }
 
-func (FlashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, replicaInfos []*TableFlashReplicaInfo) []*TableFlashReplicaInfo {
+func appendTiFlashReplicaInfo(replicaInfos []*TableFlashReplicaInfo, tblInfo *model.TableInfo) []*TableFlashReplicaInfo {
 	if tblInfo.TiFlashReplica == nil {
 		return replicaInfos
 	}
@@ -718,7 +713,7 @@ func (h FlashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 			return false, nil
 		}
 		uniqueIDMap[tblInfo.ID] = struct{}{}
-		replicaInfos = h.getTiFlashReplicaInfo(tblInfo, replicaInfos)
+		replicaInfos = appendTiFlashReplicaInfo(replicaInfos, tblInfo)
 		return false, nil
 	}
 	dom := domain.GetDomain(s)
@@ -1125,8 +1120,11 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ServeHTTP handles request of ddl jobs history.
 func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	var jobID, limitID int
-	var err error
+	var (
+		jobID   = 0
+		limitID = 0
+		err     error
+	)
 	if jobValue := req.FormValue(handler.JobID); len(jobValue) > 0 {
 		jobID, err = strconv.Atoi(jobValue)
 		if err != nil {
@@ -1144,8 +1142,9 @@ func (h DDLHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			handler.WriteError(w, err)
 			return
 		}
-		if limitID < 1 {
-			handler.WriteError(w, errors.New("ddl history limit must be greater than 0"))
+		if limitID < 1 || limitID > ddl.DefNumGetDDLHistoryJobs {
+			handler.WriteError(w,
+				errors.Errorf("ddl history limit must be greater than 0 and less than or equal to %v", ddl.DefNumGetDDLHistoryJobs))
 			return
 		}
 	}
@@ -1165,11 +1164,7 @@ func (h DDLHistoryJobHandler) getHistoryDDL(jobID, limit int) (jobs []*model.Job
 	}
 	txnMeta := meta.NewMeta(txn)
 
-	if jobID == 0 && limit == 0 {
-		jobs, err = ddl.GetAllHistoryDDLJobs(txnMeta)
-	} else {
-		jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
-	}
+	jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

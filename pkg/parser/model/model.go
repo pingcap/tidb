@@ -834,6 +834,19 @@ func (t *TableInfo) Cols() []*ColumnInfo {
 	return publicColumns[0 : maxOffset+1]
 }
 
+// GetColumnByID finds the column by ID.
+func (t *TableInfo) GetColumnByID(id int64) *ColumnInfo {
+	for _, col := range t.Columns {
+		if col.State != StatePublic {
+			continue
+		}
+		if col.ID == id {
+			return col
+		}
+	}
+	return nil
+}
+
 // FindIndexByName finds index by name.
 func (t *TableInfo) FindIndexByName(idxName string) *IndexInfo {
 	for _, idx := range t.Indices {

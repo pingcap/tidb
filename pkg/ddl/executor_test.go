@@ -22,11 +22,13 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -249,4 +251,59 @@ func TestCreateDropCreateTable(t *testing.T) {
 	create1TS, dropTS, create0TS := finishTSs[0], finishTSs[1], finishTSs[2]
 	require.Less(t, create0TS, dropTS, "first create should finish before drop")
 	require.Less(t, dropTS, create1TS, "second create should finish after drop")
+}
+
+func TestHandleLockTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session().(sessionctx.Context)
+	require.False(t, se.HasLockedTables())
+
+	checkTableLocked := func(tblID int64, tp model.TableLockType) {
+		locked, lockType := se.CheckTableLocked(tblID)
+		require.True(t, locked)
+		require.Equal(t, tp, lockType)
+	}
+	jobW := ddl.NewJobWrapper(&model.Job{Type: model.ActionTruncateTable, TableID: 1, Args: []any{int64(2)}}, false)
+
+	t.Run("target table not locked", func(t *testing.T) {
+		se.ReleaseAllTableLocks()
+		ddl.HandleLockTablesOnSuccessSubmit(tk.Session(), jobW)
+		require.False(t, se.HasLockedTables())
+		ddl.HandleLockTablesOnFinish(se, jobW, errors.New("test error"))
+		require.False(t, se.HasLockedTables())
+
+		ddl.HandleLockTablesOnSuccessSubmit(tk.Session(), jobW)
+		require.False(t, se.HasLockedTables())
+		ddl.HandleLockTablesOnFinish(se, jobW, nil)
+		require.False(t, se.HasLockedTables())
+	})
+
+	t.Run("ddl success", func(t *testing.T) {
+		se.ReleaseAllTableLocks()
+		require.False(t, se.HasLockedTables())
+		se.AddTableLock([]model.TableLockTpInfo{{SchemaID: 1, TableID: 1, Tp: model.TableLockRead}})
+		ddl.HandleLockTablesOnSuccessSubmit(tk.Session(), jobW)
+		require.Len(t, se.GetAllTableLocks(), 2)
+		checkTableLocked(1, model.TableLockRead)
+		checkTableLocked(2, model.TableLockRead)
+
+		ddl.HandleLockTablesOnFinish(se, jobW, nil)
+		require.Len(t, se.GetAllTableLocks(), 1)
+		checkTableLocked(2, model.TableLockRead)
+	})
+
+	t.Run("ddl fail", func(t *testing.T) {
+		se.ReleaseAllTableLocks()
+		require.False(t, se.HasLockedTables())
+		se.AddTableLock([]model.TableLockTpInfo{{SchemaID: 1, TableID: 1, Tp: model.TableLockRead}})
+		ddl.HandleLockTablesOnSuccessSubmit(tk.Session(), jobW)
+		require.Len(t, se.GetAllTableLocks(), 2)
+		checkTableLocked(1, model.TableLockRead)
+		checkTableLocked(2, model.TableLockRead)
+
+		ddl.HandleLockTablesOnFinish(se, jobW, errors.New("test error"))
+		require.Len(t, se.GetAllTableLocks(), 1)
+		checkTableLocked(1, model.TableLockRead)
+	})
 }

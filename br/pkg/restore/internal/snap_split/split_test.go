@@ -1,17 +1,18 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package utils_test
+package snapsplit_test
 
 import (
+	"bytes"
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/tidb/br/pkg/restore/internal/utils"
+	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
@@ -20,13 +21,13 @@ func TestScanEmptyRegion(t *testing.T) {
 	mockPDCli := split.NewMockPDClientForSplit()
 	mockPDCli.SetRegions([][]byte{{}, {12}, {34}, {}})
 	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
-	ranges := initRanges()
-	// make ranges has only one
-	ranges = ranges[0:1]
-	regionSplitter := utils.NewRegionSplitter(client)
+	keys := initKeys()
+	// make keys has only one
+	keys = keys[0:1]
+	regionSplitter := snapsplit.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges)
+	err := regionSplitter.ExecuteSplit(ctx, keys)
 	// should not return error with only one range entry
 	require.NoError(t, err)
 }
@@ -35,7 +36,7 @@ func TestSplitEmptyRegion(t *testing.T) {
 	mockPDCli := split.NewMockPDClientForSplit()
 	mockPDCli.SetRegions([][]byte{{}, {12}, {34}, {}})
 	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
-	regionSplitter := utils.NewRegionSplitter(client)
+	regionSplitter := snapsplit.NewRegionSplitter(client)
 	err := regionSplitter.ExecuteSplit(context.Background(), nil)
 	require.NoError(t, err)
 }
@@ -53,17 +54,21 @@ func TestSplitAndScatter(t *testing.T) {
 	mockPDCli := split.NewMockPDClientForSplit()
 	mockPDCli.SetRegions(rangeBoundaries)
 	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
-	regionSplitter := utils.NewRegionSplitter(client)
+	regionSplitter := snapsplit.NewRegionSplitter(client)
 	ctx := context.Background()
 
 	ranges := initRanges()
 	rules := initRewriteRules()
-	for i, rg := range ranges {
+	splitKeys := make([][]byte, 0, len(ranges))
+	for _, rg := range ranges {
 		tmp, err := restoreutils.RewriteRange(&rg, rules)
 		require.NoError(t, err)
-		ranges[i] = *tmp
+		splitKeys = append(splitKeys, tmp.EndKey)
 	}
-	err := regionSplitter.ExecuteSplit(ctx, ranges)
+	sort.Slice(splitKeys, func(i, j int) bool {
+		return bytes.Compare(splitKeys[i], splitKeys[j]) < 0
+	})
+	err := regionSplitter.ExecuteSplit(ctx, splitKeys)
 	require.NoError(t, err)
 	regions := mockPDCli.Regions.ScanRange(nil, nil, 100)
 	expected := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbf"), []byte("bbh"), []byte("bbj"), []byte("cca"), []byte("xxe"), []byte("xxz"), []byte("")}
@@ -86,20 +91,15 @@ func encodeBytes(keys [][]byte) {
 
 func TestRawSplit(t *testing.T) {
 	// Fix issue #36490.
-	ranges := []rtree.Range{
-		{
-			StartKey: []byte{0},
-			EndKey:   []byte{},
-		},
-	}
+	splitKeys := [][]byte{{}}
 	ctx := context.Background()
 	rangeBoundaries := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
 	mockPDCli := split.NewMockPDClientForSplit()
 	mockPDCli.SetRegions(rangeBoundaries)
 	client := split.NewClient(mockPDCli, nil, nil, 100, 4, split.WithRawKV())
 
-	regionSplitter := utils.NewRegionSplitter(client)
-	err := regionSplitter.ExecuteSplit(ctx, ranges)
+	regionSplitter := snapsplit.NewRegionSplitter(client)
+	err := regionSplitter.ExecuteSplit(ctx, splitKeys)
 	require.NoError(t, err)
 
 	regions := mockPDCli.Regions.ScanRange(nil, nil, 100)
@@ -107,6 +107,16 @@ func TestRawSplit(t *testing.T) {
 	for i, region := range regions {
 		require.Equal(t, rangeBoundaries[i], region.Meta.StartKey)
 		require.Equal(t, rangeBoundaries[i+1], region.Meta.EndKey)
+	}
+}
+
+// keys: aae, aaz, ccf, ccj
+func initKeys() [][]byte {
+	return [][]byte{
+		[]byte("aae"),
+		[]byte("aaz"),
+		[]byte("ccf"),
+		[]byte("ccj"),
 	}
 }
 
@@ -144,91 +154,5 @@ func initRewriteRules() *restoreutils.RewriteRules {
 	}
 	return &restoreutils.RewriteRules{
 		Data: rules[:],
-	}
-}
-
-func TestSortRange(t *testing.T) {
-	dataRules := []*import_sstpb.RewriteRule{
-		{OldKeyPrefix: tablecodec.GenTableRecordPrefix(1), NewKeyPrefix: tablecodec.GenTableRecordPrefix(4)},
-		{OldKeyPrefix: tablecodec.GenTableRecordPrefix(2), NewKeyPrefix: tablecodec.GenTableRecordPrefix(5)},
-	}
-	rewriteRules := &restoreutils.RewriteRules{
-		Data: dataRules,
-	}
-	ranges1 := []rtree.Range{
-		{
-			StartKey: append(tablecodec.GenTableRecordPrefix(1), []byte("aaa")...),
-			EndKey:   append(tablecodec.GenTableRecordPrefix(1), []byte("bbb")...), Files: nil,
-		},
-	}
-	for i, rg := range ranges1 {
-		tmp, _ := restoreutils.RewriteRange(&rg, rewriteRules)
-		ranges1[i] = *tmp
-	}
-	rs1, err := utils.SortRanges(ranges1)
-	require.NoErrorf(t, err, "sort range1 failed: %v", err)
-	rangeEquals(t, rs1, []rtree.Range{
-		{
-			StartKey: append(tablecodec.GenTableRecordPrefix(4), []byte("aaa")...),
-			EndKey:   append(tablecodec.GenTableRecordPrefix(4), []byte("bbb")...), Files: nil,
-		},
-	})
-
-	ranges2 := []rtree.Range{
-		{
-			StartKey: append(tablecodec.GenTableRecordPrefix(1), []byte("aaa")...),
-			EndKey:   append(tablecodec.GenTableRecordPrefix(2), []byte("bbb")...), Files: nil,
-		},
-	}
-	for _, rg := range ranges2 {
-		_, err := restoreutils.RewriteRange(&rg, rewriteRules)
-		require.Error(t, err)
-		require.Regexp(t, "table id mismatch.*", err.Error())
-	}
-
-	ranges3 := []rtree.Range{
-		{StartKey: []byte("aaa"), EndKey: []byte("aae")},
-		{StartKey: []byte("aae"), EndKey: []byte("aaz")},
-		{StartKey: []byte("ccd"), EndKey: []byte("ccf")},
-		{StartKey: []byte("ccf"), EndKey: []byte("ccj")},
-	}
-	rewriteRules1 := &restoreutils.RewriteRules{
-		Data: []*import_sstpb.RewriteRule{
-			{
-				OldKeyPrefix: []byte("aa"),
-				NewKeyPrefix: []byte("xx"),
-			}, {
-				OldKeyPrefix: []byte("cc"),
-				NewKeyPrefix: []byte("bb"),
-			},
-		},
-	}
-	for i, rg := range ranges3 {
-		tmp, _ := restoreutils.RewriteRange(&rg, rewriteRules1)
-		ranges3[i] = *tmp
-	}
-	rs3, err := utils.SortRanges(ranges3)
-	require.NoErrorf(t, err, "sort range1 failed: %v", err)
-	rangeEquals(t, rs3, []rtree.Range{
-		{StartKey: []byte("bbd"), EndKey: []byte("bbf"), Files: nil},
-		{StartKey: []byte("bbf"), EndKey: []byte("bbj"), Files: nil},
-		{StartKey: []byte("xxa"), EndKey: []byte("xxe"), Files: nil},
-		{StartKey: []byte("xxe"), EndKey: []byte("xxz"), Files: nil},
-	})
-
-	// overlap ranges
-	ranges4 := []rtree.Range{
-		{StartKey: []byte("aaa"), EndKey: []byte("aae")},
-		{StartKey: []byte("aaa"), EndKey: []byte("aaz")},
-	}
-	_, err = utils.SortRanges(ranges4)
-	require.Error(t, err)
-}
-
-func rangeEquals(t *testing.T, obtained, expected []rtree.Range) {
-	require.Equal(t, len(expected), len(obtained))
-	for i := range obtained {
-		require.Equal(t, expected[i].StartKey, obtained[i].StartKey)
-		require.Equal(t, expected[i].EndKey, obtained[i].EndKey)
 	}
 }

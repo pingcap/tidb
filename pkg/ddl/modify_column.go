@@ -959,6 +959,8 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 			if types.IsBinaryStr(&oldCol.FieldType) {
 				return newCol.GetFlen() != oldCol.GetFlen()
 			}
+		case mysql.TypeTiDBVectorFloat32:
+			return newCol.GetFlen() != types.UnspecifiedLength && oldCol.GetFlen() != newCol.GetFlen()
 		}
 
 		return needTruncationOrToggleSign()
