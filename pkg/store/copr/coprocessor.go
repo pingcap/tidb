@@ -656,6 +656,7 @@ type copIterator struct {
 	req                  *kv.Request
 	concurrency          int
 	smallTaskConcurrency int
+	noConcurrent         bool
 	finishCh             chan struct{}
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
@@ -832,6 +833,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
 	if (it.concurrency + it.smallTaskConcurrency) > 1 {
+		it.noConcurrent = true
 		return
 	}
 	taskCh := make(chan *copTask, 1)
@@ -1053,11 +1055,13 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	})
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
-	if (it.concurrency + it.smallTaskConcurrency) <= 1 {
-		return it.sendReq(ctx)
-	}
 
-	if it.respChan != nil {
+	if it.noConcurrent {
+		resp = it.sendReq(ctx)
+		if resp == nil {
+			return nil, nil
+		}
+	} else if it.respChan != nil {
 		// Get next fetched resp from chan
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
@@ -1106,7 +1110,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
-func (it *copIterator) sendReq(ctx context.Context) (kv.ResultSubset, error) {
+func (it *copIterator) sendReq(ctx context.Context) *copResponse {
 	worker := &copIteratorWorker{
 		taskCh:          make(<-chan *copTask, 1),
 		wg:              &it.wg,
@@ -1134,7 +1138,7 @@ func (it *copIterator) sendReq(ctx context.Context) (kv.ResultSubset, error) {
 		tasks, err := worker.handleTaskOnce(bo, curTask, respCh)
 		if err != nil {
 			resp := &copResponse{err: errors.Trace(err)}
-			return resp, nil
+			return resp
 		}
 		if len(tasks) > 0 {
 			it.tasks = append(tasks, it.tasks[1:]...)
@@ -1143,12 +1147,12 @@ func (it *copIterator) sendReq(ctx context.Context) (kv.ResultSubset, error) {
 		}
 		select {
 		case resp := <-respCh:
-			return resp, nil
-		default:
-			return nil, nil
+			return resp
+		case <-ctx.Done():
+			return &copResponse{err: ctx.Err()}
 		}
 	}
-	return nil, nil
+	return nil
 }
 
 // HasUnconsumedCopRuntimeStats indicate whether has unconsumed CopRuntimeStats.
