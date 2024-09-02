@@ -445,20 +445,6 @@ func TestEngineLocalWriter(t *testing.T) {
 	testLocalWriter(t, true, true)
 }
 
-type mockSplitClient struct {
-	split.SplitClient
-}
-
-func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
-	return &split.RegionInfo{
-		Leader: &metapb.Peer{Id: 1},
-		Region: &metapb.Region{
-			Id:       1,
-			StartKey: key,
-		},
-	}, nil
-}
-
 type testIngester struct{}
 
 func (i testIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error) {
@@ -2285,7 +2271,8 @@ func TestExternalEngine(t *testing.T) {
 		StatFiles:     statFiles,
 		StartKey:      keys[0],
 		EndKey:        endKey,
-		SplitKeys:     [][]byte{keys[20], keys[30], keys[50], keys[60], keys[80], keys[90]},
+		JobKeys:       [][]byte{keys[0], keys[20], keys[30], keys[50], keys[60], keys[80], keys[90], endKey},
+		SplitKeys:     [][]byte{keys[0], keys[50], endKey},
 		TotalFileSize: int64(config.SplitRegionSize) + 1,
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
 	}
@@ -2309,7 +2296,7 @@ func TestExternalEngine(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 5; i++ {
+		for i := 0; i < 7; i++ {
 			jobs = append(jobs, <-jobToWorkerCh)
 			testJobWg.Done()
 		}
@@ -2335,10 +2322,12 @@ func TestExternalEngine(t *testing.T) {
 		return bytes.Compare(jobs[i].keyRange.Start, jobs[j].keyRange.Start) < 0
 	})
 	expectedKeyRanges := []common.Range{
-		{Start: keys[0], End: keys[30]},
+		{Start: keys[0], End: keys[20]},
+		{Start: keys[20], End: keys[30]},
 		{Start: keys[30], End: keys[50]},
 		{Start: keys[50], End: keys[60]},
-		{Start: keys[60], End: keys[90]},
+		{Start: keys[60], End: keys[80]},
+		{Start: keys[80], End: keys[90]},
 		{Start: keys[90], End: endKey},
 	}
 	kvIdx := 0
@@ -2354,6 +2343,8 @@ func TestExternalEngine(t *testing.T) {
 		require.NoError(t, iter.Close())
 	}
 	require.Equal(t, 100, kvIdx)
+
+	// TODO(lance6716): check ScanRegion is correct
 }
 
 func TestCheckDiskAvail(t *testing.T) {
