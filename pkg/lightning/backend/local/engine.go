@@ -1123,8 +1123,8 @@ func (e *Engine) LoadIngestData(
 		case <-ctx.Done():
 			return ctx.Err()
 		case outCh <- common.DataAndRanges{
-			Data:   e,
-			Ranges: []common.Range{{Start: prev, End: cur}},
+			Data:         e,
+			SortedRanges: []common.Range{{Start: prev, End: cur}},
 		}:
 		}
 		prev = cur

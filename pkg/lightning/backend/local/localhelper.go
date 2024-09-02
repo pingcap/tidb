@@ -142,6 +142,13 @@ func intersectRange(region *metapb.Region, rg common.Range) common.Range {
 	return common.Range{Start: startKey, End: endKey}
 }
 
+func largerStartKey(a, b []byte) []byte {
+	if bytes.Compare(a, b) > 0 {
+		return a
+	}
+	return b
+}
+
 // StoreWriteLimiter is used to limit the write rate of a store.
 type StoreWriteLimiter interface {
 	WaitN(ctx context.Context, storeID uint64, n int) error

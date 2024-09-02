@@ -344,8 +344,8 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	case <-ctx.Done():
 		return ctx.Err()
 	case outCh <- common.DataAndRanges{
-		Data:   data,
-		Ranges: ranges,
+		Data:         data,
+		SortedRanges: ranges,
 	}:
 	}
 	return nil
