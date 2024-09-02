@@ -1705,6 +1705,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		keyAdapter:           common.NoopKeyAdapter{},
 		logger:               log.L(),
 		regionSplitKeysCache: [][]byte{{1}, {11}},
+		regionSplitSize:      1 << 30,
 	}
 	f.db.Store(db)
 	// keys starts with 0 is meta keys, so we start with 1.
@@ -1727,12 +1728,18 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, jobCh, 10)
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 9; i++ {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
 		jobWg.Done()
 	}
+	// the end key of the last job is different, it's the nextKey of the last key
+	job := <-jobCh
+	require.Equal(t, []byte{10}, job.keyRange.Start)
+	require.Equal(t, []byte{10, 1, 0}, job.keyRange.End)
+	jobWg.Done()
+
 	jobWg.Wait()
 	require.NoError(t, f.Close())
 }
