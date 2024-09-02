@@ -325,17 +325,18 @@ func TestWatchOwner(t *testing.T) {
 	session, err := concurrency.NewSession(client)
 	require.NoError(t, err)
 
-	// test the GetOwnerKeyWithCreateRevision()
-	ownerKey, createRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), client, DDLOwnerKey, id)
+	// test the GetOwnerKeyInfo()
+	ownerKey, currRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), client, DDLOwnerKey, id)
 	require.NoError(t, err)
 
-	// watch the ownerKey with the `DELETE` event.
+	// watch the ownerKey.
 	ctx2, cancel2 := context.WithTimeout(ctx, time.Millisecond*300)
 	defer cancel2()
 	watchDone := make(chan bool)
 	watched := false
 	go func() {
-		owner.WatchOwnerForTest(ctx2, ownerManager, session, ownerKey, createRevision)
+		watchErr := owner.WatchOwnerForTest(ctx, ownerManager, session, ownerKey, currRevision)
+		require.NoError(t, watchErr)
 		watchDone <- true
 	}()
 
@@ -345,22 +346,62 @@ func TestWatchOwner(t *testing.T) {
 	}
 	require.False(t, watched)
 
-	// delete the owner, and can watch the event.
-	deleteLeader(client, DDLOwnerKey)
+	// delete the owner, and can watch the DELETE event.
+	err = deleteLeader(client, DDLOwnerKey)
 	require.NoError(t, err)
 	watched = <-watchDone
 	require.True(t, watched)
 
 	// the ownerKey has been deleted, watch ownerKey again, it can be watched.
-	ctx3, cancel3 := context.WithTimeout(ctx, time.Millisecond*300)
-	defer cancel3()
 	go func() {
-		owner.WatchOwnerForTest(ctx3, ownerManager, session, ownerKey, createRevision)
+		watchErr := owner.WatchOwnerForTest(ctx, ownerManager, session, ownerKey, currRevision)
+		require.NoError(t, watchErr)
 		watchDone <- true
 	}()
 
 	watched = <-watchDone
 	require.True(t, watched)
+}
+
+func TestWatchOwnerAfterDeleteOwnerKey(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	tInfo := newTestInfo(t)
+	client, d := tInfo.client, tInfo.ddl
+	defer tInfo.Close(t)
+	ownerManager := d.OwnerManager()
+	lis := &listener{}
+	ownerManager.SetListener(lis)
+	require.NoError(t, ownerManager.CampaignOwner())
+	isOwner := checkOwner(d, true)
+	require.True(t, isOwner)
+
+	// get the owner id.
+	ctx := context.Background()
+	id, err := ownerManager.GetOwnerID(ctx)
+	require.NoError(t, err)
+	session, err := concurrency.NewSession(client)
+	require.NoError(t, err)
+
+	// get the ownkey informations.
+	ownerKey, currRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), client, DDLOwnerKey, id)
+	require.NoError(t, err)
+
+	// delete the ownerkey
+	err = deleteLeader(client, DDLOwnerKey)
+	require.NoError(t, err)
+
+	// watch the ownerKey with the current revisoin.
+	watchDone := make(chan bool)
+	go func() {
+		watchErr := owner.WatchOwnerForTest(ctx, ownerManager, session, ownerKey, currRevision)
+		require.NoError(t, watchErr)
+		watchDone <- true
+	}()
+	<-watchDone
 }
 
 func checkOwner(d DDL, fbVal bool) (isOwner bool) {
