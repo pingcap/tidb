@@ -766,7 +766,7 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 		return err
 	}
 	failpoint.Inject("beforeInitStats", func() {})
-	cache, err := h.initStatsMeta(ctx, is)
+	cache, err := h.initStatsMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
