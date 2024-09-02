@@ -1738,7 +1738,6 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 }
 
 func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
-	// TODO(lance6716): check why it passed?
 	ctx := context.Background()
 	local := &Backend{
 		splitCli: initTestSplitClient(
@@ -1778,7 +1777,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		true,
 	)
 
-	jobCh := make(chan *regionJob, 10)
+	jobCh := make(chan *regionJob, 9)
 	jobWg := sync.WaitGroup{}
 	err = local.generateAndSendJob(
 		ctx,
@@ -1789,12 +1788,12 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		&jobWg,
 	)
 	require.NoError(t, err)
-	require.Len(t, jobCh, 10)
-	for i := 0; i < 10; i++ {
+	require.Len(t, jobCh, 9)
+	for i := 0; i < 9; i++ {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
-		firstKey, lastKey, err := job.ingestData.GetFirstAndLastKey(nil, nil)
+		firstKey, lastKey, err := job.ingestData.GetFirstAndLastKey(job.keyRange.Start, job.keyRange.End)
 		require.NoError(t, err)
 		require.Equal(t, []byte{byte(i + 1)}, firstKey)
 		require.Equal(t, []byte{byte(i + 1)}, lastKey)

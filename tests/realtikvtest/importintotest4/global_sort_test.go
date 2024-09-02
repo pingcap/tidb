@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -49,7 +48,6 @@ func urlEqual(t *testing.T, expected, actual string) {
 }
 
 func (s *mockGCSSuite) TestGlobalSortBasic() {
-	log.InitLogger(&log.Config{Level: "info"}, "")
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	s.server.CreateObject(fakestorage.Object{
