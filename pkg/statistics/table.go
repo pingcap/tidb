@@ -26,10 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
 
@@ -826,7 +824,6 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 		// We need to find a way to maintain it more correctly.
 		// Otherwise we don't need to load it.
 		result := t.ColAndIdxExistenceMap.Has(id, false)
-		logutil.BgLogger().Info("fuck !hasAnalyzed column not found in table", zap.Bool("result", result), zap.Int64("columnID", id), zap.Int64("tableID", t.PhysicalID), zap.Stack("stack"))
 		// If the column is not in the ColAndIdxExistenceMap, we need to load it.
 		return nil, !result, !result
 	}
@@ -835,18 +832,11 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	// 1. !ok && hasAnalyzed => need load
 	// 2. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
 	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
-
 	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
 		return col, true, true
 	}
 
 	// Otherwise don't need load it.
-	logutil.BgLogger().Info("fuck load because of you",
-		zap.Bool("fullLoad", fullLoad),
-		zap.Bool("col.IsFullLoad()", col.IsFullLoad()),
-		zap.Bool(" col.statsInitialized", col.statsInitialized),
-		zap.Bool("ColAndIdxExistenceMap.Has", t.ColAndIdxExistenceMap.Has(id, false)),
-		zap.Int64("tableID", t.PhysicalID))
 	return col, false, true
 }
 
@@ -857,7 +847,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 	idx, ok := t.indices[id]
 	// If the index is not in the memory, and we have its stats in the storage. We need to trigger the load.
-	if !ok && (t.ColAndIdxExistenceMap.HasAnalyzed(id, true) || !t.ColAndIdxExistenceMap.Has(id, true)) {
+	if !ok && t.ColAndIdxExistenceMap.HasAnalyzed(id, true) {
 		return nil, true
 	}
 	// If the index is in the memory, we check its embedded func.
@@ -1005,7 +995,6 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 // But there are exceptional cases. In such cases, we should pass allowTriggerLoading as true.
 // Such case could possibly happen in getStatsTable().
 func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHistMeta bool) *Table {
-	logutil.BgLogger().Info("fuck tbl into pseudo", zap.Int64("tableID", tblInfo.ID), zap.Stack("stack"))
 	pseudoHistColl := HistColl{
 		RealtimeCount:     PseudoRowCount,
 		PhysicalID:        tblInfo.ID,
