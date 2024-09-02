@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -28,12 +29,12 @@ import (
 
 // LogicalUnionAll represents LogicalUnionAll plan.
 type LogicalUnionAll struct {
-	logicalop.LogicalSchemaProducer
+	LogicalSchemaProducer
 }
 
 // Init initializes LogicalUnionAll.
 func (p LogicalUnionAll) Init(ctx base.PlanContext, offset int) *LogicalUnionAll {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypeUnion, &p, offset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeUnion, &p, offset)
 	return &p
 }
 
@@ -97,7 +98,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 				for j, col := range schema.Columns {
 					exprs[j] = col
 				}
-				proj := logicalop.LogicalProjection{Exprs: exprs}.Init(p.SCtx(), p.QueryBlockOffset())
+				proj := LogicalProjection{Exprs: exprs}.Init(p.SCtx(), p.QueryBlockOffset())
 				proj.SetSchema(schema)
 
 				proj.SetChildren(child)
@@ -114,14 +115,14 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
 func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	var topN *logicalop.LogicalTopN
+	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
-		topN = topNLogicalPlan.(*logicalop.LogicalTopN)
+		topN = topNLogicalPlan.(*LogicalTopN)
 	}
 	for i, child := range p.Children() {
-		var newTopN *logicalop.LogicalTopN
+		var newTopN *LogicalTopN
 		if topN != nil {
-			newTopN = logicalop.LogicalTopN{Count: topN.Count + topN.Offset, PreferLimitToCop: topN.PreferLimitToCop}.Init(p.SCtx(), topN.QueryBlockOffset())
+			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, PreferLimitToCop: topN.PreferLimitToCop}.Init(p.SCtx(), topN.QueryBlockOffset())
 			for _, by := range topN.ByItems {
 				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
 			}
@@ -169,7 +170,7 @@ func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSche
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return exhaustUnionAllPhysicalPlans(p, prop)
+	return utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll(p, prop)
 }
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
@@ -193,3 +194,13 @@ func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 // ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
+
+func appendNewTopNTraceStep(topN *LogicalTopN, union *LogicalUnionAll, opt *optimizetrace.LogicalOptimizeOp) {
+	reason := func() string {
+		return ""
+	}
+	action := func() string {
+		return fmt.Sprintf("%v_%v is added and pushed down across %v_%v", topN.TP(), topN.ID(), union.TP(), union.ID())
+	}
+	opt.AppendStepToCurrent(topN.ID(), topN.TP(), reason, action)
+}

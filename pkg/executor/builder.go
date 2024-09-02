@@ -926,6 +926,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 	e := &SimpleExec{
 		BaseExecutor:    base,
 		Statement:       v.Statement,
+		ResolveCtx:      v.ResolveCtx,
 		IsFromRemote:    v.IsFromRemote,
 		is:              b.is,
 		staleTxnStartTS: v.StaleTxnStartTS,
@@ -1201,6 +1202,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) exec.Executor {
 	t := &TraceExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmtNode:     v.StmtNode,
+		resolveCtx:   v.ResolveCtx,
 		builder:      b,
 		format:       v.Format,
 
@@ -2332,7 +2334,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 				retriever: &hugeMemTableRetriever{
 					table:              v.Table,
 					columns:            v.Columns,
-					extractor:          v.Extractor.(*plannercore.ColumnsTableExtractor),
+					extractor:          v.Extractor.(*plannercore.InfoSchemaColumnsExtractor),
 					viewSchemaMap:      make(map[int64]*expression.Schema),
 					viewOutputNamesMap: make(map[int64]types.NameSlice),
 				},
@@ -2881,7 +2883,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
 		SampleRate:   sampleRate,
 		SketchSize:   statistics.MaxSketchSize,
-		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false),
+		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false, false),
 		ColumnGroups: colGroups,
 	}
 	if task.TblInfo != nil {
@@ -3011,7 +3013,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:    MaxRegionSampleSize,
 		SketchSize:    statistics.MaxSketchSize,
-		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt(), false),
+		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt(), false, false),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}

@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"golang.org/x/exp/slices"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -342,6 +342,8 @@ func (ft *FieldType) EvalType() EvalType {
 		return ETDuration
 	case mysql.TypeJSON:
 		return ETJson
+	case mysql.TypeTiDBVectorFloat32:
+		return ETVectorFloat32
 	case mysql.TypeEnum, mysql.TypeSet:
 		if ft.flag&mysql.EnumSetAsIntFlag > 0 {
 			return ETInt

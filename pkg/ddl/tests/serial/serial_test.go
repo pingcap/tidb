@@ -54,7 +54,7 @@ import (
 
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
-	return ddl.GetRangeEndKey(ddl.NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
+	return ddl.GetRangeEndKey(ddl.NewReorgContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
 }
 
 func TestIssue23872(t *testing.T) {

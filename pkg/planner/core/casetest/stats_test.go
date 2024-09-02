@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -57,11 +58,12 @@ func TestGroupNDVs(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
 		builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)
 		p, err = core.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
@@ -81,10 +83,10 @@ func TestGroupNDVs(t *testing.T) {
 				join = v
 				lp = v.Children()[0]
 				stack = append(stack, v.Children()[1])
-			case *core.LogicalApply:
+			case *logicalop.LogicalApply:
 				lp = lp.Children()[0]
 				stack = append(stack, v.Children()[1])
-			case *core.LogicalUnionAll:
+			case *logicalop.LogicalUnionAll:
 				lp = lp.Children()[0]
 				for i := 1; i < len(v.Children()); i++ {
 					stack = append(stack, v.Children()[i])

@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package logicalop
 
 import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -28,7 +28,7 @@ type LogicalPartitionUnionAll struct {
 
 // Init initializes LogicalPartitionUnionAll.
 func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *LogicalPartitionUnionAll {
-	p.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ctx, plancodec.TypePartitionUnion, &p, offset)
+	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypePartitionUnion, &p, offset)
 	return &p
 }
 
@@ -36,7 +36,7 @@ func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *Logica
 
 // ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return exhaustPartitionUnionAllPhysicalPlans(p, prop)
+	return utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll(p, prop)
 }
 
 // *************************** end implementation of LogicalPlan interface ***************************

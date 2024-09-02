@@ -1683,7 +1683,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_packet_io_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"Out|read\"}[1m])) by (type)",
+          "expr": "sum(rate(tidb_server_packet_io_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"Out|write\"}[1m])) by (type)",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 1,
@@ -1802,7 +1802,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_packet_io_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"In|write\"}[1m])) by (type)",
+          "expr": "sum(rate(tidb_server_packet_io_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"In|read\"}[1m])) by (type)",
           "hide": false,
           "interval": "",
           "legendFormat": "Client -> TiDB",

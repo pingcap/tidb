@@ -16,6 +16,7 @@ package intset
 
 import (
 	"fmt"
+	"maps"
 	"math/rand"
 	"reflect"
 	"runtime"
@@ -25,7 +26,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/maps"
 	"golang.org/x/tools/container/intsets"
 )
 
@@ -95,8 +95,7 @@ func (is IntSet) Equals(target IntSet) bool {
 }
 
 func (is *IntSet) CopyFrom(target IntSet) {
-	*is = NewIntSetWithCap(len(target))
-	maps.Copy(*is, target)
+	*is = maps.Clone(target)
 }
 
 func (is IntSet) SortedArray() []int {
@@ -114,10 +113,6 @@ func (is IntSet) Insert(k int) {
 
 func NewIntSet() IntSet {
 	return make(map[int]struct{})
-}
-
-func NewIntSetWithCap(c int) IntSet {
-	return make(map[int]struct{}, c)
 }
 
 func TestFastIntSetBasic(t *testing.T) {

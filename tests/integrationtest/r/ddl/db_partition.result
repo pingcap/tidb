@@ -3220,9 +3220,13 @@ create table pt14 (id int not null, lname varchar(30), fname varchar(100) genera
 create table nt14 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);
 alter table pt14 exchange partition p0 with table nt14;
 ## unique index
-create table pt15 (id int not null, unique index uk_id (id) global) partition by hash(id) partitions 1;
+create table pt15 (id int not null, unique index uk_id (id)) partition by hash(id) partitions 1;
 create table nt15 (id int not null, index uk_id (id));
 alter table pt15 exchange partition p0 with table nt15;
+Error 1736 (HY000): Tables have different definitions
+create table pt15b (id int not null, a int, unique index uk_id (a) global) partition by hash(id) partitions 1;
+create table nt15b (id int not null, a int, unique index uk_id (a));
+alter table pt15b exchange partition p0 with table nt15b;
 Error 1731 (HY000): Non matching attribute 'global index: uk_id' between partition and table
 ## auto_increment
 create table pt16 (id int not null primary key auto_increment) partition by hash(id) partitions 1;

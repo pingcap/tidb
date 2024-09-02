@@ -446,7 +446,7 @@ func (a *AggregationPushDownSolver) Optimize(_ context.Context, p base.LogicalPl
 	return newLogicalPlan, planChanged, err
 }
 
-func (a *AggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAll, agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) error {
+func (a *AggregationPushDownSolver) tryAggPushDownForUnion(union *logicalop.LogicalUnionAll, agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) error {
 	for _, aggFunc := range agg.AggFuncs {
 		if !a.isDecomposableWithUnion(aggFunc) {
 			return nil
@@ -661,12 +661,12 @@ func (a *AggregationPushDownSolver) aggPushDown(p base.LogicalPlan, opt *optimiz
 					appendAggPushDownAcrossProjTraceStep(agg, proj, opt)
 				}
 			}
-			if union, ok1 := child.(*LogicalUnionAll); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
+			if union, ok1 := child.(*logicalop.LogicalUnionAll); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
 				err := a.tryAggPushDownForUnion(union, agg, opt)
 				if err != nil {
 					return nil, err
 				}
-			} else if union, ok1 := child.(*LogicalPartitionUnionAll); ok1 {
+			} else if union, ok1 := child.(*logicalop.LogicalPartitionUnionAll); ok1 {
 				err := a.tryAggPushDownForUnion(&union.LogicalUnionAll, agg, opt)
 				if err != nil {
 					return nil, err
@@ -737,7 +737,7 @@ func appendAggPushDownAcrossProjTraceStep(agg *logicalop.LogicalAggregation, pro
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
+func appendAggPushDownAcrossUnionTraceStep(union *logicalop.LogicalUnionAll, agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
 	evalCtx := union.SCtx().GetExprCtx().GetEvalCtx()
 	reason := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v functions[", agg.TP(), agg.ID()))

@@ -231,7 +231,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -420,7 +420,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),

@@ -65,7 +65,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB process rss memory usage. TiDB heap memory size in use ",
+          "description": "This panel visualizes the memory usage of TiDB processes, including both resident set size (RSS) and various components of memory",
           "editable": true,
           "error": false,
           "fill": 0,
@@ -76,6 +76,7 @@
             "x": 0,
             "y": 1
           },
+          "hiddenSeries": false,
           "id": 4,
           "legend": {
             "alignAsTable": false,
@@ -105,27 +106,57 @@
           "repeatDirection": "h",
           "seriesOverrides": [
             {
-              "alias": "alloc-from-os",
-              "fill": 3,
+              "$$hashKey": "object:91",
+              "alias": "rss",
+              "bars": false,
+              "color": "#37872D",
               "lines": true,
               "stack": false
             },
             {
-              "alias": "gc-threshold",
+              "$$hashKey": "object:92",
+              "alias": "tidb_server_memory_limit",
               "bars": false,
               "color": "#C4162A",
               "lines": true,
-              "linewidth": 2,
               "stack": false
             },
             {
-              "alias": "gc",
+              "$$hashKey": "object:215",
+              "alias": "heap_inuse",
+              "color": "#96D98D"
+            },
+            {
+              "$$hashKey": "object:247",
+              "alias": "stack_inuse",
+              "color": "#F2CC0C"
+            },
+            {
+              "$$hashKey": "object:261",
+              "alias": "heap_unused",
+              "color": "#3274D9"
+            },
+            {
+              "$$hashKey": "object:273",
+              "alias": "go_runtime_metadata",
+              "color": "#FF780A"
+            },
+            {
+              "$$hashKey": "object:283",
+              "alias": "other_memory",
+              "color": "#E02F44"
+            },
+            {
+              "$$hashKey": "object:297",
+              "alias": "free_mem_reserved_by_go",
+              "color": "rgb(112, 3, 166)"
+            },
+            {
+              "$$hashKey": "object:321",
+              "alias": "returned_to_os",
               "bars": false,
-              "color": "#C4162A",
-              "hideTooltip": true,
-              "legend": false,
-              "pointradius": 3,
-              "points": true,
+              "color": "#3274D9",
+              "lines": true,
               "stack": false
             }
           ],
@@ -134,76 +165,94 @@
           "steppedLine": false,
           "targets": [
             {
+              "exemplar": true,
               "expr": "process_resident_memory_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "hide": false,
+              "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "alloc-from-os",
+              "legendFormat": "rss",
               "refId": "A"
             },
             {
-              "expr": "go_memstats_next_gc_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / (1 + tidb_server_gogc{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / 100)",
+              "exemplar": true,
+              "expr": "go_memory_classes_heap_objects_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "hide": false,
+              "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "estimate-inuse",
-              "refId": "I"
-            },
-            {
-              "expr": "go_memstats_alloc_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
-              "format": "time_series",
-              "hide": false,
-              "intervalFactor": 1,
-              "legendFormat": "go-memstats-inuse",
-              "refId": "H"
-            },
-            {
-              "expr": "go_memstats_heap_alloc_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - go_memstats_next_gc_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / (1 + tidb_server_gogc{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} / 100)",
-              "format": "time_series",
-              "hide": false,
-              "intervalFactor": 1,
-              "legendFormat": "estimate-garbage",
-              "refId": "C"
-            },
-            {
-              "expr": "go_memstats_heap_idle_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - go_memstats_heap_released_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_heap_inuse_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} - go_memstats_heap_alloc_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
-              "format": "time_series",
-              "hide": false,
-              "intervalFactor": 1,
-              "legendFormat": "reserved-by-go",
+              "legendFormat": "heap_inuse",
               "refId": "B"
             },
             {
-              "expr": "go_memstats_stack_sys_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_mspan_sys_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_mcache_sys_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_buck_hash_sys_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_gc_sys_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"} + go_memstats_other_sys_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "exemplar": true,
+              "expr": "go_memory_classes_heap_stacks_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "hide": false,
+              "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "used-by-go",
+              "legendFormat": "stack_inuse",
+              "refId": "C"
+            },
+            {
+              "exemplar": true,
+              "expr": "go_memory_classes_heap_unused_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "heap_unused",
               "refId": "D"
             },
             {
-              "expr": "go_memstats_next_gc_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+              "exemplar": true,
+              "expr": "go_memory_classes_metadata_mcache_free_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}+go_memory_classes_metadata_mcache_inuse_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}+go_memory_classes_metadata_mspan_free_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}+go_memory_classes_metadata_mspan_inuse_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}+go_memory_classes_metadata_other_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "hide": false,
+              "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "gc-threshold",
+              "legendFormat": "go_runtime_metadata",
               "refId": "E"
             },
             {
-              "expr": "(clamp_max(idelta(go_memstats_last_gc_time_seconds{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]), 1) * go_memstats_next_gc_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) > 0",
+              "exemplar": true,
+              "expr": "go_memory_classes_os_stacks_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}+go_memory_classes_other_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}+go_memory_classes_profiling_buckets_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "hide": false,
+              "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "gc",
+              "legendFormat": "other_memory",
               "refId": "F"
             },
             {
-              "expr": "tidb_server_memory_quota_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "exemplar": true,
+              "expr": "go_memory_classes_heap_free_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
               "format": "time_series",
               "hide": false,
+              "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "quota",
+              "legendFormat": "free_mem_reserved_by_go",
               "refId": "G"
+            },
+            {
+              "exemplar": true,
+              "expr": "tidb_server_memory_quota_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "format": "time_series",
+              "hide": true,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "tidb_server_memory_limit",
+              "refId": "H"
+            },
+            {
+              "exemplar": true,
+              "expr": "go_memory_classes_heap_released_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "returned_to_os",
+              "refId": "I"
             }
           ],
           "thresholds": [],

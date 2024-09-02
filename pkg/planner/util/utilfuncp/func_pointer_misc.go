@@ -15,6 +15,8 @@
 package utilfuncp
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -101,13 +103,17 @@ var FindBestTask4LogicalShow func(lp base.LogicalPlan, prop *property.PhysicalPr
 var FindBestTask4LogicalShowDDLJobs func(lp base.LogicalPlan, prop *property.PhysicalProperty,
 	planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error)
 
-// ExhaustPhysicalPlans4LogicalSequence will be called by LogicalSequence in logicalOp pkg.
-var ExhaustPhysicalPlans4LogicalSequence func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
-	[]base.PhysicalPlan, bool, error)
+// FindBestTask4LogicalCTE will be called by LogicalCTE in logicalOp pkg.
+var FindBestTask4LogicalCTE func(lp base.LogicalPlan, prop *property.PhysicalProperty,
+	counter *base.PlanCounterTp, pop *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error)
 
 // FindBestTask4LogicalTableDual will be called by LogicalTableDual in logicalOp pkg.
 var FindBestTask4LogicalTableDual func(lp base.LogicalPlan, prop *property.PhysicalProperty,
 	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error)
+
+// ExhaustPhysicalPlans4LogicalSequence will be called by LogicalSequence in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalSequence func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
 
 // ExhaustPhysicalPlans4LogicalSort will be called by LogicalSort in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalSort func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
@@ -149,6 +155,26 @@ var ExhaustPhysicalPlans4LogicalJoin func(lp base.LogicalPlan, prop *property.Ph
 var ExhaustPhysicalPlans4LogicalAggregation func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
 	[]base.PhysicalPlan, bool, error)
 
+// ExhaustPhysicalPlans4LogicalApply will be called by LogicalApply in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalApply func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalPartitionUnionAll will be called by LogicalPartitionUnionAll in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalPartitionUnionAll func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalUnionAll will be called by LogicalUnionAll in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalUnionAll func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalExpand will be called by LogicalExpand in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalExpand func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
+// ExhaustPhysicalPlans4LogicalCTE will be called by LogicalCTE in logicalOp pkg.
+var ExhaustPhysicalPlans4LogicalCTE func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
+	[]base.PhysicalPlan, bool, error)
+
 // *************************************** physical op related *******************************************
 
 // GetEstimatedProbeCntFromProbeParents will be called by BasePhysicalPlan in physicalOp pkg.
@@ -165,3 +191,13 @@ var AttachPlan2Task func(p base.PhysicalPlan, t base.Task) base.Task
 // WindowIsTopN is used in DeriveTopNFromWindow rule.
 // todo: @arenatlx: remove it after logical_datasource is migrated to logicalop.
 var WindowIsTopN func(p base.LogicalPlan) (bool, uint64)
+
+// ****************************************** optimize portal *********************************************
+
+// DoOptimize is to optimize a logical plan.
+var DoOptimize func(
+	ctx context.Context,
+	sctx base.PlanContext,
+	flag uint64,
+	logic base.LogicalPlan,
+) (base.LogicalPlan, base.PhysicalPlan, float64, error)

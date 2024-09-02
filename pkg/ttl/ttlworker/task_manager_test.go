@@ -19,10 +19,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -76,10 +78,7 @@ func (m *taskManager) MeetTTLRunningTasks(count int, taskStatus cache.TaskStatus
 
 // ReportTaskFinished is an exported version of reportTaskFinished
 func (t *runningScanTask) SetResult(err error) {
-	t.result = &ttlScanTaskExecResult{
-		task: t.ttlScanTask,
-		err:  err,
-	}
+	t.result = t.ttlScanTask.result(err)
 }
 
 func TestResizeWorkers(t *testing.T) {
@@ -141,13 +140,58 @@ func TestResizeWorkers(t *testing.T) {
 		},
 	})
 
-	scanWorker2.curTaskResult = &ttlScanTaskExecResult{task: &ttlScanTask{tbl: tbl, TTLTask: &cache.TTLTask{
+	task := &ttlScanTask{tbl: tbl, TTLTask: &cache.TTLTask{
 		JobID:  "test-job-id",
 		ScanID: 1,
-	}}}
+	}}
+	scanWorker2.curTaskResult = task.result(nil)
 	assert.NoError(t, m.resizeScanWorkers(1))
 	scanWorker2.checkWorkerStatus(workerStatusStopped, false, nil)
 	assert.NotNil(t, m.runningTasks[0].result)
+}
+
+func TestTaskFinishedCondition(t *testing.T) {
+	tbl := newMockTTLTbl(t, "t1")
+	task := runningScanTask{
+		ttlScanTask: &ttlScanTask{
+			tbl: tbl,
+			TTLTask: &cache.TTLTask{
+				JobID:  "test-job-id",
+				ScanID: 1,
+			},
+			statistics: &ttlStatistics{},
+		},
+	}
+	logger := logutil.BgLogger()
+
+	// result == nil means it is not finished, even if all rows processed
+	require.Nil(t, task.result)
+	require.False(t, task.finished(logger))
+	task.statistics.TotalRows.Store(10)
+	task.statistics.SuccessRows.Store(10)
+	require.False(t, task.finished(logger))
+
+	for _, resultErr := range []error{nil, errors.New("mockErr")} {
+		// result != nil but not all rows processed means it is not finished
+		task.statistics.SuccessRows.Store(0)
+		task.statistics.ErrorRows.Store(0)
+		task.result = task.ttlScanTask.result(resultErr)
+		require.InDelta(t, task.result.time.Unix(), time.Now().Unix(), 5)
+		require.False(t, task.finished(logger))
+		task.statistics.SuccessRows.Store(8)
+		task.statistics.ErrorRows.Store(1)
+		require.False(t, task.finished(logger))
+
+		// result != nil but time out means it is finished
+		task.result = task.ttlScanTask.result(resultErr)
+		task.result.time = time.Now().Add(-waitTaskProcessRowsTimeout - time.Second)
+		require.True(t, task.finished(logger))
+
+		// result != nil and processed rows are more that total rows means it is finished
+		task.statistics.SuccessRows.Store(8)
+		task.statistics.ErrorRows.Store(3)
+		require.True(t, task.finished(logger))
+	}
 }
 
 type mockKVStore struct {

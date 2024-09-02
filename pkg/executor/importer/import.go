@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -1291,17 +1292,30 @@ func (p *Plan) IsGlobalSort() bool {
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
-func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, []contextutil.SQLWarn, error) {
+func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
+	_ []expression.Expression,
+	_ []contextutil.SQLWarn,
+	retErr error,
+) {
+	var (
+		i      int
+		assign *ast.Assignment
+	)
+	// TODO(lance6716): indeterministic function should also return error
+	defer tidbutil.Recover("load-data/import-into", "CreateColAssignExprs", func() {
+		retErr = errors.Errorf("can't use function at SET index %d", i)
+	}, false)
+
 	e.colAssignMu.Lock()
 	defer e.colAssignMu.Unlock()
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
 	allWarnings := []contextutil.SQLWarn{}
-	for _, assign := range e.ColumnAssignments {
-		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), assign.Expr, nil, nil, false)
+	for i, assign = range e.ColumnAssignments {
+		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(planCtx, assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
-		allWarnings = append(allWarnings, sctx.GetSessionVars().StmtCtx.GetWarnings()...)
-		sctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		allWarnings = append(allWarnings, planCtx.GetSessionVars().StmtCtx.GetWarnings()...)
+		planCtx.GetSessionVars().StmtCtx.SetWarnings(nil)
 		if err != nil {
 			return nil, nil, err
 		}

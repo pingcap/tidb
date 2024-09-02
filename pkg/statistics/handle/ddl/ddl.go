@@ -198,6 +198,12 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	case model.ActionFlashbackCluster:
 		return h.statsWriter.UpdateStatsVersion()
 	}
+
+	//revive:disable:empty-block
+	switch t.SchemaChangeEvent.GetType() {
+	// todo: we will replace the DDLEvent with SchemaChangeEvent, gradually move above switch-case logical to here
+	}
+	//revive:enable:empty-block
 	return nil
 }
 

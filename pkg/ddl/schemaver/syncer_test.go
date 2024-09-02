@@ -138,7 +138,7 @@ func TestSyncerSimple(t *testing.T) {
 
 	// for CheckAllVersions
 	childCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-	require.Error(t, d.SchemaSyncer().OwnerCheckAllVersions(childCtx, 0, currentVer))
+	require.Error(t, d.SchemaSyncer().WaitVersionSynced(childCtx, 0, currentVer))
 	cancel()
 
 	// for UpdateSelfVersion
@@ -151,12 +151,12 @@ func TestSyncerSimple(t *testing.T) {
 	require.True(t, isTimeoutError(err))
 
 	// for CheckAllVersions
-	require.NoError(t, d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), 0, currentVer-1))
-	require.NoError(t, d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), 0, currentVer))
+	require.NoError(t, d.SchemaSyncer().WaitVersionSynced(context.Background(), 0, currentVer-1))
+	require.NoError(t, d.SchemaSyncer().WaitVersionSynced(context.Background(), 0, currentVer))
 
 	childCtx, cancel = context.WithTimeout(ctx, minInterval)
 	defer cancel()
-	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, 0, currentVer)
+	err = d.SchemaSyncer().WaitVersionSynced(childCtx, 0, currentVer)
 	require.True(t, isTimeoutError(err))
 
 	// for Close

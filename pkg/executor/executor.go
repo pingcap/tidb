@@ -1856,7 +1856,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.DiskTracker.Killer = &vars.SQLKiller
 	vars.SQLKiller.Reset()
-	vars.SQLKiller.ConnID = vars.ConnectionID
+	vars.SQLKiller.ConnID.Store(vars.ConnectionID)
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
@@ -2196,6 +2196,15 @@ func (e *FastCheckTableExec) Open(ctx context.Context) error {
 
 type checkIndexTask struct {
 	indexOffset int
+	err         *atomic.Pointer[error]
+}
+
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (c checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+	return "fast_check_table", "RecoverArgs", func() {
+		err := errors.Errorf("checkIndexTask panicked, indexOffset: %d", c.indexOffset)
+		c.err.CompareAndSwap(nil, &err)
+	}, false
 }
 
 type checkIndexWorker struct {
@@ -2619,7 +2628,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	e.wg.Add(len(e.indexInfos))
 	for i := range e.indexInfos {
-		workerPool.AddTask(checkIndexTask{indexOffset: i})
+		workerPool.AddTask(checkIndexTask{indexOffset: i, err: e.err})
 	}
 
 	e.wg.Wait()

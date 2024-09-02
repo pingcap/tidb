@@ -122,8 +122,8 @@ func (tk *TestKit) RefreshSession() {
 		seed := uint64(time.Now().UnixNano())
 		tk.t.Logf("RefreshSession rand seed: %d", seed)
 		rng := rand.New(rand.NewSource(int64(seed)))
-		if rng.Intn(10) >= 3 { // 70% chance to run infoschema v2
-			tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
+		if rng.Intn(10) < 3 { // 70% chance to run infoschema v2
+			tk.MustExec("set @@global.tidb_schema_cache_size = 0")
 		}
 	}
 
@@ -226,6 +226,12 @@ func (tk *TestKit) EventuallyMustQueryAndCheck(sql string, args []any,
 		res := tk.MustQueryWithContext(context.Background(), sql, args...)
 		return res.Equal(expected)
 	}, waitFor, tick)
+}
+
+// MustQueryToErr query the sql statement and must return Error.
+func (tk *TestKit) MustQueryToErr(sql string, args ...any) {
+	err := tk.QueryToErr(sql, args...)
+	tk.require.Error(err)
 }
 
 // MustQueryWithContext query the statements and returns result rows.

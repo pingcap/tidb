@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
@@ -42,7 +43,7 @@ func TestV2Basic(t *testing.T) {
 	internal.AddDB(t, r.Store(), dbInfo)
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
 	tblInfo.DBID = dbInfo.ID
-	is.Data.add(tableItem{schemaName.L, dbInfo.ID, tableName.L, tblInfo.ID, 2, false}, internal.MockTable(t, r.Store(), tblInfo))
+	is.Data.add(tableItem{schemaName, dbInfo.ID, tableName, tblInfo.ID, 2, false}, internal.MockTable(t, r.Store(), tblInfo))
 	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
 	is.base().schemaMetaVersion = 1
 	require.Equal(t, 1, len(is.AllSchemas()))
@@ -325,4 +326,236 @@ func TestBundles(t *testing.T) {
 	getPolicyInfo, ok = is.PolicyByName(getTableInfo.Meta().PlacementPolicyRef.Name)
 	require.True(t, ok)
 	require.Equal(t, policyInfo, getPolicyInfo)
+}
+
+func updateTableSpecialAttribute(t *testing.T, dbInfo *model.DBInfo, tblInfo *model.TableInfo, builder *Builder, r autoid.Requirement,
+	actionType model.ActionType, ver int64, filter specialAttributeFilter, add bool) *model.TableInfo {
+	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err := r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: actionType, Version: ver, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	is := builder.Build(math.MaxUint64)
+	tblInfoRes := is.ListTablesWithSpecialAttribute(filter)
+	if add {
+		// add special attribute
+		require.Equal(t, 1, len(tblInfoRes))
+		require.Equal(t, 1, len(tblInfoRes[0].TableInfos))
+		return tblInfoRes[0].TableInfos[0]
+	}
+	require.Equal(t, 0, len(tblInfoRes))
+	return nil
+}
+
+func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
+	r := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		r.Store().Close()
+	}()
+
+	schemaName := model.NewCIStr("testDB")
+	tableName := model.NewCIStr("testTable")
+	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, 1)
+	require.NoError(t, err)
+	is := builder.Build(math.MaxUint64)
+	require.Equal(t, 2, len(is.AllSchemas()))
+
+	// create database
+	dbInfo := internal.MockDBInfo(t, r.Store(), schemaName.O)
+	internal.AddDB(t, r.Store(), dbInfo)
+	txn, err := r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build(math.MaxUint64)
+	require.Equal(t, 3, len(is.AllSchemas()))
+	require.NoError(t, txn.Rollback())
+
+	// create table
+	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
+	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build(math.MaxUint64)
+	tblInfos, err := is.SchemaTableInfos(context.Background(), dbInfo.Name)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tblInfos))
+	require.NoError(t, txn.Rollback())
+
+	// tests partition info correctness in schema change
+	tblInfo.Partition = &model.PartitionInfo{
+		Expr: "aa+1",
+		Columns: []model.CIStr{
+			model.NewCIStr("aa"),
+		},
+		Definitions: []model.PartitionDefinition{
+			{ID: 1, Name: model.NewCIStr("p1")},
+			{ID: 2, Name: model.NewCIStr("p2")},
+		},
+		Enable:   true,
+		DDLState: model.StatePublic,
+	}
+	// add partition
+	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, PartitionAttribute, true)
+	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
+	// drop partition
+	tblInfo.Partition.Definitions = tblInfo.Partition.Definitions[:1]
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, PartitionAttribute, true)
+	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
+
+	// test placement policy correctness in schema change
+	tblInfo.PlacementPolicyRef = &model.PolicyRefInfo{
+		ID:   1,
+		Name: model.NewCIStr("p3"),
+	}
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAlterTablePlacement, 5, PlacementPolicyAttribute, true)
+	require.Equal(t, tblInfo.PlacementPolicyRef, tblInfo1.PlacementPolicyRef)
+	tblInfo.PlacementPolicyRef = nil
+	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAlterTablePlacement, 6, PlacementPolicyAttribute, false)
+
+	// test tiflash replica correctness in schema change
+	tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:          1,
+		Available:      true,
+		LocationLabels: []string{"zone"},
+	}
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionSetTiFlashReplica, 7, TiFlashAttribute, true)
+	require.Equal(t, tblInfo.TiFlashReplica, tblInfo1.TiFlashReplica)
+	tblInfo.TiFlashReplica = nil
+	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionSetTiFlashReplica, 8, TiFlashAttribute, false)
+
+	// test table lock correctness in schema change
+	tblInfo.Lock = &model.TableLockInfo{
+		Tp:    model.TableLockRead,
+		State: model.TableLockStatePublic,
+		TS:    1,
+	}
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionLockTable, 9, TableLockAttribute, true)
+	require.Equal(t, tblInfo.Lock, tblInfo1.Lock)
+	tblInfo.Lock = nil
+	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionUnlockTable, 10, TableLockAttribute, false)
+
+	// test foreign key correctness in schema change
+	tblInfo.ForeignKeys = []*model.FKInfo{{
+		ID:        1,
+		Name:      model.NewCIStr("fk_1"),
+		RefSchema: model.NewCIStr("t"),
+		RefTable:  model.NewCIStr("t"),
+		RefCols:   []model.CIStr{model.NewCIStr("a")},
+		Cols:      []model.CIStr{model.NewCIStr("t_a")},
+		State:     model.StateWriteOnly,
+	}}
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddForeignKey, 11, ForeignKeysAttribute, true)
+	require.Equal(t, tblInfo.ForeignKeys, tblInfo1.ForeignKeys)
+	tblInfo.ForeignKeys = nil
+	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropForeignKey, 12, ForeignKeysAttribute, false)
+}
+
+func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
+	r := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		r.Store().Close()
+	}()
+
+	schemaName := model.NewCIStr("testDB")
+	tableName := model.NewCIStr("testTable")
+	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, 1)
+	require.NoError(t, err)
+	is := builder.Build(math.MaxUint64)
+	v2, ok := is.(*infoschemaV2)
+	require.True(t, ok)
+
+	// verify schema related fields after create database
+	dbInfo := internal.MockDBInfo(t, r.Store(), schemaName.O)
+	internal.AddDB(t, r.Store(), dbInfo)
+	txn, err := r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
+	require.NoError(t, err)
+	dbIDName, ok := v2.Data.schemaID2Name.Get(schemaIDName{id: dbInfo.ID, schemaVersion: 1})
+	require.True(t, ok)
+	require.Equal(t, dbIDName.name, dbInfo.Name)
+	dbItem, ok := v2.Data.schemaMap.Get(schemaItem{schemaVersion: 1, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
+	require.True(t, ok)
+	require.Equal(t, dbItem.dbInfo.ID, dbInfo.ID)
+
+	// verify table related fields after create table
+	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
+	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	tblItem, ok := v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 2})
+	require.True(t, ok)
+	require.Equal(t, tblItem.tableID, tblInfo.ID)
+	tblItem, ok = v2.Data.byID.Get(tableItem{tableID: tblInfo.ID, schemaVersion: 2})
+	require.True(t, ok)
+	require.Equal(t, tblItem.dbID, dbInfo.ID)
+	tbl, ok := v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 2})
+	require.True(t, ok)
+	require.Equal(t, tbl.Meta().Name, tblInfo.Name)
+
+	// verify partition related fields after add partition
+	require.Equal(t, v2.Data.pid2tid.Len(), 0)
+	tblInfo.Partition = &model.PartitionInfo{
+		Definitions: []model.PartitionDefinition{
+			{ID: 1, Name: model.NewCIStr("p1")},
+			{ID: 2, Name: model.NewCIStr("p2")},
+		},
+		Enable:   true,
+		DDLState: model.StatePublic,
+	}
+	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, PartitionAttribute, true)
+	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
+	require.Equal(t, v2.Data.pid2tid.Len(), 2)
+	tblInfoItem, ok := v2.Data.pid2tid.Get(partitionItem{partitionID: 2, schemaVersion: 3})
+	require.True(t, ok)
+	require.Equal(t, tblInfoItem.tableID, tblInfo.ID)
+
+	// verify partition related fields drop partition
+	tblInfo.Partition.Definitions = tblInfo.Partition.Definitions[:1]
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, PartitionAttribute, true)
+	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
+	require.Equal(t, v2.Data.pid2tid.Len(), 4)
+	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 1, schemaVersion: 4})
+	require.True(t, ok)
+	require.False(t, tblInfoItem.tomb)
+	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 2, schemaVersion: 4})
+	require.True(t, ok)
+	require.True(t, tblInfoItem.tomb)
+
+	// verify table and partition related fields after drop table
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	tblItem, ok = v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 5})
+	require.True(t, ok)
+	require.True(t, tblItem.tomb)
+	tblItem, ok = v2.Data.byID.Get(tableItem{tableID: tblInfo.ID, schemaVersion: 5})
+	require.True(t, ok)
+	require.True(t, tblItem.tomb)
+	tbl, ok = v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 5})
+	require.False(t, ok)
+	require.Equal(t, v2.Data.pid2tid.Len(), 5) // tomb partition info
+	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 1, schemaVersion: 5})
+	require.True(t, ok)
+	require.True(t, tblInfoItem.tomb)
+
+	// verify schema related fields after drop database
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionDropSchema, Version: 6, SchemaID: dbInfo.ID})
+	require.NoError(t, err)
+	dbIDName, ok = v2.Data.schemaID2Name.Get(schemaIDName{id: dbInfo.ID, schemaVersion: 6})
+	require.True(t, ok)
+	require.True(t, dbIDName.tomb)
+	dbItem, ok = v2.Data.schemaMap.Get(schemaItem{schemaVersion: 6, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
+	require.True(t, ok)
+	require.True(t, dbItem.tomb)
 }

@@ -1239,7 +1239,7 @@ func constructInnerIndexScanTask(
 		cop.commonHandleCols = ds.CommonHandleCols
 	}
 	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.tablePlan != nil)
-	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens)
+	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
 	//
@@ -2044,7 +2044,8 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 	return joins, true, nil
 }
 
-func exhaustPhysicalPlans4LogicalExpand(p *LogicalExpand, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalExpand)
 	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
 	if !prop.IsSortItemEmpty() {
 		// false, meaning we can add a sort enforcer.
@@ -2224,26 +2225,29 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 }
 
 // GetHashJoin is public for cascades planner.
-func GetHashJoin(la *LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
+func GetHashJoin(la *logicalop.LogicalApply, prop *property.PhysicalProperty) *PhysicalHashJoin {
 	return getHashJoin(&la.LogicalJoin, prop, 1, false)
 }
 
-// ExhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
-func ExhaustPhysicalPlans4LogicalApply(la *LogicalApply, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+// exhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
+func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	la := lp.(*logicalop.LogicalApply)
 	if !prop.AllColsFromSchema(la.Children()[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true, nil
 	}
 	if !prop.IsSortItemEmpty() && la.SCtx().GetSessionVars().EnableParallelApply {
-		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Parallel Apply rejects the possible order properties of its outer child currently"))
+		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Parallel Apply rejects the possible order properties of its outer child currently"))
 		return nil, true, nil
 	}
 	disableAggPushDownToCop(la.Children()[0])
 	join := GetHashJoin(la, prop)
 	var columns = make([]*expression.Column, 0, len(la.CorCols))
 	for _, colColumn := range la.CorCols {
-		columns = append(columns, &colColumn.Column)
+		// fix the liner warning.
+		tmp := colColumn
+		columns = append(columns, &tmp.Column)
 	}
 	cacheHitRatio := 0.0
 	if la.StatsInfo().RowCount != 0 {
@@ -2443,7 +2447,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 				// Once aggregation is pushed to cop, the cache data can't be use any more.
 				return false
 			}
-		case *LogicalUnionAll:
+		case *logicalop.LogicalUnionAll:
 			if storeTp != kv.TiFlash {
 				return false
 			}
@@ -2458,7 +2462,7 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 				return false
 			}
 			ret = ret && canPushToCopImpl(&c.BaseLogicalPlan, storeTp, considerDual)
-		case *LogicalExpand:
+		case *logicalop.LogicalExpand:
 			// Expand itself only contains simple col ref and literal projection. (always ok, check its child)
 			if storeTp != kv.TiFlash {
 				return false
@@ -2476,11 +2480,11 @@ func canPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType, considerDual bo
 			return false
 		case *logicalop.LogicalSequence:
 			return storeTp == kv.TiFlash
-		case *LogicalCTE:
+		case *logicalop.LogicalCTE:
 			if storeTp != kv.TiFlash {
 				return false
 			}
-			if c.Cte.recursivePartLogicalPlan != nil || !c.Cte.seedPartLogicalPlan.CanPushToCop(storeTp) {
+			if c.Cte.RecursivePartLogicalPlan != nil || !c.Cte.SeedPartLogicalPlan.CanPushToCop(storeTp) {
 				return false
 			}
 			return true
@@ -2948,7 +2952,8 @@ func exhaustPhysicalPlans4LogicalLock(lp base.LogicalPlan, prop *property.Physic
 	return []base.PhysicalPlan{lock}, true, nil
 }
 
-func exhaustUnionAllPhysicalPlans(p *LogicalUnionAll, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalUnionAll)
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
 	if !prop.IsSortItemEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
 		return nil, true, nil
@@ -2992,7 +2997,8 @@ func exhaustUnionAllPhysicalPlans(p *LogicalUnionAll, prop *property.PhysicalPro
 	return []base.PhysicalPlan{ua}, true, nil
 }
 
-func exhaustPartitionUnionAllPhysicalPlans(p *LogicalPartitionUnionAll, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalPartitionUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalPartitionUnionAll)
 	uas, flagHint, err := p.LogicalUnionAll.ExhaustPhysicalPlans(prop)
 	if err != nil {
 		return nil, false, err
@@ -3067,7 +3073,8 @@ func exhaustPhysicalPlans4LogicalMaxOneRow(lp base.LogicalPlan, prop *property.P
 	return []base.PhysicalPlan{mor}, true, nil
 }
 
-func exhaustPhysicalPlans4LogicalCTE(p *LogicalCTE, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+func exhaustPhysicalPlans4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	p := lp.(*logicalop.LogicalCTE)
 	pcte := PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {
 		pcte.storageSender = PhysicalExchangeSender{

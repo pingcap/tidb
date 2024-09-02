@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -149,11 +148,11 @@ func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue any, h
 
 func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
 	// DeleteOnlyTable: insert t values (4, 4);
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err := newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = delOnlyTbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(4, 4))
+	_, err = delOnlyTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(4, 4))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -163,7 +162,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	}
 
 	// WriteOnlyTable: insert t values (5, 5);
-	_, err = writeOnlyTbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(5, 5))
+	_, err = writeOnlyTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(5, 5))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -173,7 +172,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	}
 
 	// WriteOnlyTable: update t set c2 = 1 where c1 = 4 and c2 = 4
-	err = writeOnlyTbl.UpdateRecord(ctx.GetTableCtx(), kv.IntHandle(4), types.MakeDatums(4, 4), types.MakeDatums(4, 1), touchedSlice(writeOnlyTbl))
+	err = writeOnlyTbl.UpdateRecord(ctx.GetTableCtx(), txn, kv.IntHandle(4), types.MakeDatums(4, 4), types.MakeDatums(4, 1), touchedSlice(writeOnlyTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -183,7 +182,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	}
 
 	// DeleteOnlyTable: update t set c2 = 3 where c1 = 4 and c2 = 1
-	err = delOnlyTbl.UpdateRecord(ctx.GetTableCtx(), kv.IntHandle(4), types.MakeDatums(4, 1), types.MakeDatums(4, 3), touchedSlice(writeOnlyTbl))
+	err = delOnlyTbl.UpdateRecord(ctx.GetTableCtx(), txn, kv.IntHandle(4), types.MakeDatums(4, 1), types.MakeDatums(4, 3), touchedSlice(writeOnlyTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -199,7 +198,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	}
 
 	// WriteOnlyTable: delete t where c1 = 4 and c2 = 3
-	err = writeOnlyTbl.RemoveRecord(ctx.GetTableCtx(), kv.IntHandle(4), types.MakeDatums(4, 3))
+	err = writeOnlyTbl.RemoveRecord(ctx.GetTableCtx(), txn, kv.IntHandle(4), types.MakeDatums(4, 3))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -209,7 +208,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	}
 
 	// DeleteOnlyTable: delete t where c1 = 5
-	err = delOnlyTbl.RemoveRecord(ctx.GetTableCtx(), kv.IntHandle(5), types.MakeDatums(5, 5))
+	err = delOnlyTbl.RemoveRecord(ctx.GetTableCtx(), txn, kv.IntHandle(5), types.MakeDatums(5, 5))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -223,11 +222,11 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
 	var err1 error
 	// WriteOnlyTable: insert t values (6, 6)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err := newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeTbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(6, 6))
+	_, err = writeTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(6, 6))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -240,7 +239,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	// PublicTable: insert t values (7, 7)
-	_, err = publicTbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(7, 7))
+	_, err = publicTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(7, 7))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -250,7 +249,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 	}
 
 	// WriteOnlyTable: update t set c2 = 5 where c1 = 7 and c2 = 7
-	err = writeTbl.UpdateRecord(ctx.GetTableCtx(), kv.IntHandle(7), types.MakeDatums(7, 7), types.MakeDatums(7, 5), touchedSlice(writeTbl))
+	err = writeTbl.UpdateRecord(ctx.GetTableCtx(), txn, kv.IntHandle(7), types.MakeDatums(7, 7), types.MakeDatums(7, 5), touchedSlice(writeTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -271,7 +270,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	// WriteOnlyTable: delete t where c1 = 6
-	err = writeTbl.RemoveRecord(ctx.GetTableCtx(), kv.IntHandle(6), types.MakeDatums(6, 6))
+	err = writeTbl.RemoveRecord(ctx.GetTableCtx(), txn, kv.IntHandle(6), types.MakeDatums(6, 6))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -304,20 +303,16 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 			return errors.Trace(err)
 		}
 	}
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	return txn.Commit(context.Background())
 }
 
 func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table) error {
 	// WriteOnlyTable insert t values (8, 8)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err := newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeTbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(8, 8))
+	_, err = writeTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(8, 8))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -328,7 +323,7 @@ func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table)
 	}
 
 	// WriteOnlyTable update t set c2 = 7 where c1 = 8 and c2 = 8
-	err = writeTbl.UpdateRecord(ctx.GetTableCtx(), kv.IntHandle(8), types.MakeDatums(8, 8), types.MakeDatums(8, 7), touchedSlice(writeTbl))
+	err = writeTbl.UpdateRecord(ctx.GetTableCtx(), txn, kv.IntHandle(8), types.MakeDatums(8, 8), types.MakeDatums(8, 7), touchedSlice(writeTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -339,7 +334,7 @@ func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table)
 	}
 
 	// WriteOnlyTable delete t where c1 = 8
-	err = writeTbl.RemoveRecord(ctx.GetTableCtx(), kv.IntHandle(8), types.MakeDatums(8, 7))
+	err = writeTbl.RemoveRecord(ctx.GetTableCtx(), txn, kv.IntHandle(8), types.MakeDatums(8, 7))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -348,20 +343,16 @@ func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	return txn.Commit(context.Background())
 }
 
 func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) error {
 	// WriteOnlyTable insert t values (9, 9)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err := newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeTbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(9, 9))
+	_, err = writeTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(9, 9))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -372,7 +363,7 @@ func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) e
 	}
 
 	// DeleteOnlyTable insert t values (10, 10)
-	_, err = delTbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(10, 10))
+	_, err = delTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(10, 10))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -383,7 +374,7 @@ func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) e
 	}
 
 	// DeleteOnlyTable update t set c2 = 10 where c1 = 9
-	err = delTbl.UpdateRecord(ctx.GetTableCtx(), kv.IntHandle(9), types.MakeDatums(9, 9), types.MakeDatums(9, 10), touchedSlice(delTbl))
+	err = delTbl.UpdateRecord(ctx.GetTableCtx(), txn, kv.IntHandle(9), types.MakeDatums(9, 9), types.MakeDatums(9, 10), touchedSlice(delTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -394,10 +385,6 @@ func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) e
 	}
 
 	err = checkIndexExists(ctx, writeTbl, 10, 9, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	txn, err := ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}

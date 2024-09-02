@@ -489,6 +489,187 @@ func TestTiFlashSystemTableWithTiFlashV640(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
+func TestTablesTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	type tableMeta struct {
+		schema string
+		table  string
+		id     string
+	}
+	toString := func(tm *tableMeta) string {
+		return fmt.Sprintf("%s %s %s", tm.schema, tm.table, tm.id)
+	}
+
+	// prepare data
+	tableMetas := []*tableMeta{}
+	schemaNames := []string{"db1", "db2"}
+	tableNames := []string{"t1", "t2"}
+	tk.MustExec("create database db1")
+	tk.MustExec("create database db2")
+	for _, schemaName := range schemaNames {
+		for _, tableName := range tableNames {
+			tk.MustExec(fmt.Sprintf("create table %s.%s (a int)", schemaName, tableName))
+			res := tk.MustQuery(fmt.Sprintf("select tidb_table_id from information_schema.tables where table_schema = '%s' and table_name = '%s'", schemaName, tableName))
+			// [db1 t1 id0, db1 t2 id1, db2 t1 id2, db2 t2 id3]
+			tableMetas = append(tableMetas, &tableMeta{schema: schemaName, table: tableName, id: res.String()})
+		}
+	}
+
+	// Predicates are extracted in CNF, so we separate the test cases by the number of disjunctions in the predicate.
+
+	// predicate covers one disjunction
+	tk.MustQuery(`select table_schema, table_name, tidb_table_id from information_schema.tables
+		where table_schema = 'db1'`).Sort().Check(testkit.Rows(toString(tableMetas[0]), toString(tableMetas[1])))
+	tk.MustQuery(`select table_schema, table_name, tidb_table_id from information_schema.tables
+		where table_name = 't2'`).Sort().Check(testkit.Rows(toString(tableMetas[1]), toString(tableMetas[3])))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where tidb_table_id = %s", tableMetas[2].id)).Check(
+		testkit.Rows(toString(tableMetas[2])))
+
+	// cover two disjunctions
+	tk.MustQuery(`select table_schema, table_name, tidb_table_id from information_schema.tables
+		where table_schema = 'db1' and table_name = 't2'`).Check(testkit.Rows(toString(tableMetas[1])))
+	tk.MustQuery(`select table_schema, table_name, tidb_table_id from information_schema.tables
+		where table_schema in ('db1', 'db2') and table_name = 't2'`).Sort().Check(testkit.Rows(toString(tableMetas[1]), toString(tableMetas[3])))
+	tk.MustQuery(`select table_schema, table_name, tidb_table_id from information_schema.tables
+		where (table_schema = 'db1' or table_schema = 'db2' ) and table_name = 't2'`).Sort().Check(testkit.Rows(toString(tableMetas[1]), toString(tableMetas[3])))
+	tk.MustQuery(`select table_schema, table_name, tidb_table_id from information_schema.tables
+		where (table_schema = 'db1' or table_schema = 'db2' ) and table_name = 't3'`).Check(testkit.Rows())
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'db1' and tidb_table_id = %s", tableMetas[0].id)).Check(
+		testkit.Rows(toString(tableMetas[0])))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_name = 't2' and tidb_table_id = %s", tableMetas[1].id)).Check(
+		testkit.Rows(toString(tableMetas[1])))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'db2' and tidb_table_id = %s", tableMetas[1].id)).Check(
+		testkit.Rows())
+
+	// cover three disjunctions
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'db1' and table_name = 't1' and tidb_table_id = %s", tableMetas[0].id)).Check(
+		testkit.Rows(toString(tableMetas[0])))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'db1' and table_name = 't1' and tidb_table_id = %s", tableMetas[1].id)).Check(
+		testkit.Rows())
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'db1' and table_name = 't1' and tidb_table_id in (%s,%s)", tableMetas[0].id, tableMetas[1].id)).Check(
+		testkit.Rows(toString(tableMetas[0])))
+}
+
+func TestColumnTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tbl1(col_1 int primary key, col_2 int, col_4 int);")
+	tk.MustExec("create table tbl2(col_1 int primary key, col_2 int, col_3 int);")
+	tk.MustExec("create view view1 as select min(col_1), col_2, max(col_4) as max4 from tbl1 group by col_2;")
+
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = 'test';").Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_1",
+			"test|tbl1|col_2",
+			"test|tbl1|col_4",
+			"test|tbl2|col_1",
+			"test|tbl2|col_2",
+			"test|tbl2|col_3",
+			"test|view1|min(col_1)",
+			"test|view1|col_2",
+			"test|view1|max4"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_NAME = 'view1' or TABLE_NAME = 'tbl1'`).Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_1",
+			"test|tbl1|col_2",
+			"test|tbl1|col_4",
+			"test|view1|min(col_1)",
+			"test|view1|col_2",
+			"test|view1|max4"))
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where COLUMN_NAME = \"col_2\";").Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_2",
+			"test|tbl2|col_2",
+			"test|view1|col_2"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'tbl2';`).Check(
+		testkit.RowsWithSep("|",
+			"test|tbl2|col_1",
+			"test|tbl2|col_2",
+			"test|tbl2|col_3"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_SCHEMA = 'test' and COLUMN_NAME = 'col_4'`).Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_4"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_NAME = 'view1' and COLUMN_NAME like 'm%%';`).Check(
+		testkit.RowsWithSep("|",
+			"test|view1|min(col_1)",
+			"test|view1|max4"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'tbl1' and COLUMN_NAME = 'col_2';`).Check(
+		testkit.RowsWithSep("|",
+			"test|tbl1|col_2"))
+	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
+		testkit.RowsWithSep("|", "4923"))
+}
+
+func TestIndexUsageTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table idt1(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_3(col_1, col_2));")
+	tk.MustExec("create table idt2(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_4(col_2, col_1));")
+
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_1",
+			"test|idt1|idx_2",
+			"test|idt1|idx_3",
+			"test|idt2|idx_1",
+			"test|idt2|idx_2",
+			"test|idt2|idx_4"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1'`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_1",
+			"test|idt1|idx_2",
+			"test|idt1|idx_3"))
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3'").Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_3"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt1';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_1",
+			"test|idt1|idx_2",
+			"test|idt1|idx_3"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and INDEX_NAME = 'idx_2';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_2",
+			"test|idt2|idx_2"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_NAME = 'idt1' and INDEX_NAME = 'idx_1';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt1|idx_1"))
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt2' and INDEX_NAME = 'idx_4';`).Check(
+		testkit.RowsWithSep("|",
+			"test|idt2|idx_4"))
+	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage;`).Check(
+		testkit.RowsWithSep("|", "72"))
+
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_NAME = 'idt3';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where INDEX_NAME = 'IDX_5';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt0';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test1' and INDEX_NAME = 'idx_2';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_NAME = 'idt2' and INDEX_NAME = 'idx_3';`).Check(testkit.Rows())
+	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
+				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'idt1' and INDEX_NAME = 'idx_4';`).Check(testkit.Rows())
+}
+
 // https://github.com/pingcap/tidb/issues/32459.
 func TestJoinSystemTableContainsView(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -500,7 +681,7 @@ func TestJoinSystemTableContainsView(t *testing.T) {
 	// This is used by grafana when TiDB is specified as the data source.
 	// See https://github.com/grafana/grafana/blob/e86b6662a187c77656f72bef3b0022bf5ced8b98/public/app/plugins/datasource/mysql/meta_query.ts#L31
 	for i := 0; i < 10; i++ {
-		tk.MustQuery(`
+		tk.MustQueryWithContext(context.Background(), `
 SELECT
     table_name as table_name,
     ( SELECT

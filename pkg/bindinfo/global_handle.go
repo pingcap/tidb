@@ -312,7 +312,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 			failpoint.Inject("CreateGlobalBindingNthFail", func(val failpoint.Value) {
 				n := val.(int)
 				if n == i {
-					err = errors.NewNoStackErrorf("An injected error")
+					err = errors.NewNoStackError("An injected error")
 				}
 			})
 			if err != nil {

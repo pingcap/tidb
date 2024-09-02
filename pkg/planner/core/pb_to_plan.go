@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -131,6 +132,8 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (base.PhysicalPlan, erro
 		p.Extractor = extractor
 	case infoschema.ClusterTableStatementsSummary, infoschema.ClusterTableStatementsSummaryHistory:
 		p.Extractor = &StatementsSummaryExtractor{}
+	case infoschema.ClusterTableTiDBIndexUsage:
+		p.Extractor = NewInfoSchemaTiDBIndexUsageExtractor()
 	}
 	return p, nil
 }
@@ -265,7 +268,7 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 		ConnectionID: e.Kill.ConnID,
 		Query:        e.Kill.Query,
 	}
-	simple := Simple{Statement: node, IsFromRemote: true}
+	simple := Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 

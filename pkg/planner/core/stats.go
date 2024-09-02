@@ -229,7 +229,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			path.IsSingleScan = true
 		} else {
 			ds.deriveIndexPathStats(path, ds.PushedDownConds, false)
-			path.IsSingleScan = ds.isSingleScan(path.FullIdxCols, path.FullIdxColLens)
+			path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
 		}
 		// step: 3
 		// Try some heuristic rules to select access path.

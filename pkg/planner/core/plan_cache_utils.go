@@ -35,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -108,7 +110,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	ret := &PreprocessorReturn{InfoSchema: is} // is can be nil, and
-	err := Preprocess(ctx, sctx, paramStmt, InPrepare, WithPreprocessorReturn(ret))
+	nodeW := resolve.NewNodeW(paramStmt)
+	err := Preprocess(ctx, sctx, nodeW, InPrepare, WithPreprocessorReturn(ret))
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -152,7 +155,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		}
 
 		if !cacheable {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))
 		}
 	}
 
@@ -169,16 +172,16 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	var p base.Plan
 	destBuilder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
-	p, err = destBuilder.Build(ctx, paramStmt)
+	p, err = destBuilder.Build(ctx, nodeW)
 	if err != nil {
 		return nil, nil, 0, err
 	}
 
-	if cacheable && destBuilder.optFlag&flagPartitionProcessor > 0 {
+	if cacheable && destBuilder.optFlag&rule.FlagPartitionProcessor > 0 {
 		// dynamic prune mode is not used, could be that global statistics not yet available!
 		cacheable = false
 		reason = "static partition prune mode used"
-		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))
 	}
 
 	// Collect information for metadata lock.
@@ -203,6 +206,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
+		ResolveCtx:          nodeW.GetResolveContext(),
 		StmtDB:              vars.CurrentDB,
 		StmtText:            paramSQL,
 		VisitInfos:          destBuilder.GetVisitInfo(),
@@ -527,6 +531,7 @@ type PointGetExecutorCache struct {
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
+	ResolveCtx  *resolve.Context
 	StmtDB      string // which DB the statement will be processed over
 	VisitInfos  []visitInfo
 	Params      []ast.ParamMarkerExpr

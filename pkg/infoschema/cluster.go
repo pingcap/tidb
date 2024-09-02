@@ -108,8 +108,9 @@ func init() {
 	}
 }
 
-// isClusterTableByName used to check whether the table is a cluster memory table.
-func isClusterTableByName(dbName, tableName string) bool {
+// IsClusterTableByName used to check whether the table is a cluster memory table.
+// Export for PhysicalTableScan.ExplainID
+func IsClusterTableByName(dbName, tableName string) bool {
 	dbName = strings.ToUpper(dbName)
 	switch dbName {
 	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:
