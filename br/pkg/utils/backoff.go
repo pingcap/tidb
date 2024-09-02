@@ -175,8 +175,8 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
 			case codes.Canceled:
-					bo.delayTime = 0
-					bo.attempt = 0
+				bo.delayTime = 0
+				bo.attempt = 0
 			default:
 				// Unexpected error
 				bo.delayTime = 0
