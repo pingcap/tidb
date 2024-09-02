@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"go.uber.org/zap"
 )
 
 // TableRowStatsCache is the cache of table row count.
@@ -147,8 +149,24 @@ func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
 // Returns row count, average row length, total data length, and all indexed column length.
 func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
 	rowCount uint64, avgRowLength uint64, dataLength uint64, indexLength uint64) {
+
+	logutil.BgLogger().Info("Estimating data length",
+		zap.String("table", table.Name.L),
+		zap.Int64("tableID", table.ID))
+
 	rowCount = c.GetTableRows(table.ID)
+	logutil.BgLogger().Info("Got table rows",
+		zap.String("table", table.Name.L),
+		zap.Int64("tableID", table.ID),
+		zap.Uint64("rowCount", rowCount))
+
 	dataLength, indexLength = c.GetDataAndIndexLength(table, table.ID, rowCount)
+	logutil.BgLogger().Info("Got data and index length",
+		zap.String("table", table.Name.L),
+		zap.Int64("tableID", table.ID),
+		zap.Uint64("dataLength", dataLength),
+		zap.Uint64("indexLength", indexLength))
+
 	if table.GetPartitionInfo() != nil {
 		// For partition table, data only stores in partition level.
 		// Keep `indexLength` for global index.
@@ -159,16 +177,34 @@ func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
 			parDataLen, parIndexLen := c.GetDataAndIndexLength(table, pi.ID, piRowCnt)
 			dataLength += parDataLen
 			indexLength += parIndexLen
+
+			logutil.BgLogger().Info("Partition data calculated",
+				zap.String("table", table.Name.L),
+				zap.Int64("partitionID", pi.ID),
+				zap.Uint64("partitionRowCount", piRowCnt),
+				zap.Uint64("partitionDataLength", parDataLen),
+				zap.Uint64("partitionIndexLength", parIndexLen))
 		}
 	}
+
 	avgRowLength = uint64(0)
 	if rowCount != 0 {
 		avgRowLength = dataLength / rowCount
 	}
+	logutil.BgLogger().Info("Final estimated data length",
+		zap.String("table", table.Name.L),
+		zap.Int64("tableID", table.ID),
+		zap.Uint64("rowCount", rowCount),
+		zap.Uint64("avgRowLength", avgRowLength),
+		zap.Uint64("dataLength", dataLength),
+		zap.Uint64("indexLength", indexLength))
 
 	if table.IsSequence() {
 		// sequence is always 1 row regardless of stats.
 		rowCount = 1
+		logutil.BgLogger().Info("Table is a sequence, setting rowCount to 1",
+			zap.String("table", table.Name.L),
+			zap.Int64("tableID", table.ID))
 	}
 	return
 }
@@ -251,16 +287,26 @@ func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physic
 			length := c.GetColLength(tableHistID{tableID: physicalID, histID: col.ID})
 			columnLength[col.Name.L] = length
 		}
+		logutil.BgLogger().Info("Column length calculated",
+			zap.String("table", info.Name.L),
+			zap.Int64("tableID", info.ID),
+			zap.String("column", col.Name.L),
+			zap.Uint64("length", columnLength[col.Name.L]))
 	}
 	for _, length := range columnLength {
 		dataLength += length
 	}
+	logutil.BgLogger().Info("Data length calculated",
+		zap.String("table", info.Name.L),
+		zap.Int64("tableID", info.ID),
+		zap.Uint64("dataLength", dataLength))
+
 	for _, idx := range info.Indices {
 		if idx.State != model.StatePublic {
 			continue
 		}
 		if info.GetPartitionInfo() != nil {
-			// Global indexes calcuated in table level.
+			// Global indexes calculated in table level.
 			if idx.Global && info.ID != physicalID {
 				continue
 			}
@@ -275,7 +321,17 @@ func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physic
 			} else {
 				indexLength += rowCount * uint64(col.Length)
 			}
+			logutil.BgLogger().Info("Index length calculated",
+				zap.String("table", info.Name.L),
+				zap.Int64("tableID", info.ID),
+				zap.String("indexColumn", col.Name.L),
+				zap.Uint64("indexLength", indexLength))
 		}
 	}
+	logutil.BgLogger().Info("Final lengths calculated",
+		zap.String("table", info.Name.L),
+		zap.Int64("tableID", info.ID),
+		zap.Uint64("dataLength", dataLength),
+		zap.Uint64("indexLength", indexLength))
 	return dataLength, indexLength
 }
