@@ -361,14 +361,6 @@ func closeConn(cc *clientConn, connections int) error {
 				// This is because closeConn() might be called after a connection read-timeout.
 				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
 			}
-			if cc.bufReadConn != nil {
-				err = cc.bufReadConn.Close()
-				if err != nil {
-					// We need to expect connection might have already disconnected.
-					// This is because closeConn() might be called after a connection read-timeout.
-					logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
-				}
-			}
 			// Close statements and session
 			// This will release advisory locks, row locks, etc.
 			if ctx := cc.getCtx(); ctx != nil {

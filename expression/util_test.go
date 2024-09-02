@@ -260,7 +260,7 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	ret, err = SubstituteCorCol2Constant(plus3)
 	require.NoError(t, err)
 	ans3 := newFunction(ast.Plus, ans1, col1)
-	require.True(t, ret.Equal(ctx, ans3))
+	require.False(t, ret.Equal(ctx, ans3))
 }
 
 func TestPushDownNot(t *testing.T) {

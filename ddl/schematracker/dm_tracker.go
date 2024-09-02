@@ -45,13 +45,14 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
-var _ ddl.DDL = SchemaTracker{}
-
-// SchemaTracker is used to track schema changes by DM. It implements DDL interface and by applying DDL, it updates the
-// table structure to keep tracked with upstream changes.
-// It embeds an InfoStore which stores DBInfo and TableInfo. The DBInfo and TableInfo can be treated as immutable, so
-// after reading them by SchemaByName or TableByName, later modifications made by SchemaTracker will not change them.
-// SchemaTracker is not thread-safe.
+// SchemaTracker is used to track schema changes by DM. It implements DDL
+// interface and by applying DDL, it updates the table structure to keep tracked
+// with upstream changes.
+//
+// It embeds an InfoStore which stores DBInfo and TableInfo. The DBInfo and
+// TableInfo can be treated as immutable, so after reading them by SchemaByName
+// or TableByName, later modifications made by SchemaTracker will not change
+// them. SchemaTracker is not thread-safe.
 type SchemaTracker struct {
 	*InfoStore
 }
@@ -182,13 +183,12 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 	// suppress ErrTooLongKey
-	strictSQLModeBackup := ctx.GetSessionVars().StrictSQLMode
-	ctx.GetSessionVars().StrictSQLMode = false
+	ctx.SetValue(ddl.SuppressErrorTooLongKeyKey, true)
 	// support drop PK
 	enableClusteredIndexBackup := ctx.GetSessionVars().EnableClusteredIndex
 	ctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
 	defer func() {
-		ctx.GetSessionVars().StrictSQLMode = strictSQLModeBackup
+		ctx.ClearValue(ddl.SuppressErrorTooLongKeyKey)
 		ctx.GetSessionVars().EnableClusteredIndex = enableClusteredIndexBackup
 	}()
 
