@@ -809,14 +809,12 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 // The first bool is whether we have it in memory. The second bool is whether this column has stats in the system table or not.
 func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool, bool) {
 	if t.Pseudo {
-		logutil.BgLogger().Info("fuck pseudo", zap.Int64("tableID", t.PhysicalID), zap.Stack("stack"))
 		return nil, false, false, false
 	}
 	// when we use non-lite init stats, it cannot init the stats for common columns.
 	// so we need to foce to load the stats.
 	col, ok := t.columns[id]
 	if !ok {
-		logutil.BgLogger().Info("fuck column not found in table", zap.Int64("columnID", id), zap.Int64("tableID", t.PhysicalID), zap.Stack("stack"))
 		return nil, true, true, true
 	}
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
