@@ -188,10 +188,10 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 			}
 			return tbl
 		}
-		logutil.BgLogger().Info("fuck get stats cache nothong", zap.Int64("pd", pid))
+		//logutil.BgLogger().Info("fuck get stats cache nothong", zap.Int64("pd", pid))
 		return nil
 	}
-	logutil.BgLogger().Info("fuck get stats cache", zap.Bool("pseudo", tbl.Pseudo), zap.Int64("pd", pid), zap.Int64("Count", tbl.RealtimeCount))
+	//logutil.BgLogger().Info("fuck get stats cache", zap.Bool("pseudo", tbl.Pseudo), zap.Int64("pd", pid), zap.Int64("Count", tbl.RealtimeCount))
 	return tbl
 }
 
