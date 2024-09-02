@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -808,7 +807,7 @@ func TestNameExtractFromJob(t *testing.T) {
 		b, err := job.Encode(true)
 		require.NoError(t, err)
 
-		schemaName, tableName, err := meta.ExtractSchemaAndTableNameFromJob(string(hack.String(b)))
+		schemaName, tableName, err := meta.ExtractSchemaAndTableNameFromJob(b)
 		require.NoError(t, err)
 
 		require.Equal(t, tc.schemaName, schemaName)

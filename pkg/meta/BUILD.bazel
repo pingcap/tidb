@@ -50,7 +50,6 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/util",
         "//pkg/util/dbterror",
-        "//pkg/util/hack",
         "//pkg/util/intest",
         "//pkg/util/mock",
         "@com_github_pingcap_errors//:errors",
