@@ -1085,7 +1085,6 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 		State:         model.StatePublic,
 		TempTableType: model.TempTableLocal,
 	}
-
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).CreatePolicy(policy)
@@ -1106,12 +1105,11 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer dom.Close()
-
 	is := dom.InfoSchema()
 	tbl, ok := is.TableByID(context.Background(), 10002)
 	require.True(t, ok)
 	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
-	// policy
+	// placement policy
 	policy1 := is.AllPlacementPolicies()
 	require.Equal(t, len(policy1), 1)
 	require.Equal(t, policy1[0].Name, policy.Name)
