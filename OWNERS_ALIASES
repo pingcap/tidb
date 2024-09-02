@@ -125,10 +125,10 @@ aliases:
     - lichunzhu
   sig-approvers-planner: # approvers for planner module
     - AilinKid
+    - Rustin170506
     - elsa0520
     - fixdb
     - hawkingrei
-    - hi-rustin
     - qw4990
     - time-and-fate
     - winoros

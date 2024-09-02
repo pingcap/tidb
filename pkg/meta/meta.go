@@ -1013,7 +1013,7 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
-var checkSubstringsInOrder = [7]string{
+var checkAttributesInOrder = []string{
 	`"fk_info":null`,
 	`"partition":null`,
 	`"Lock":null`,
@@ -1023,15 +1023,14 @@ var checkSubstringsInOrder = [7]string{
 	`"ttl_info":null`,
 }
 
-// IsTableInfoMustLoad checks the above substrings in a table info's json representing.
-// When a table contains one of them, tidb must load the table info during schema full load.
-// hasSpecialAttributes() is a subset of it, the difference is that:
-// If a table need to be resident in-memory, its table info MUST be loaded.
-// If a table info is loaded, it's NOT NECESSARILY to be keep in-memory.
-// Exported for testing.
-func IsTableInfoMustLoad(json []byte) bool {
+// isTableInfoMustLoad checks whether the table info needs to be loaded.
+// If the byte representation contains all the given attributes,
+// then it does not need to be loaded and this function will return false.
+// Otherwise, it will return true, indicating that the table info should be loaded.
+// Since attributes are checked in sequence, it's important to choose the order carefully.
+func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
 	idx := 0
-	for _, substr := range checkSubstringsInOrder {
+	for _, substr := range filterAttrs {
 		idx = bytes.Index(json, hack.Slice(substr))
 		if idx == -1 {
 			return true
@@ -1039,6 +1038,12 @@ func IsTableInfoMustLoad(json []byte) bool {
 		json = json[idx:]
 	}
 	return false
+}
+
+// IsTableInfoMustLoad checks whether the table info needs to be loaded.
+// Exported for testing.
+func IsTableInfoMustLoad(json []byte) bool {
+	return isTableInfoMustLoad(json, checkAttributesInOrder...)
 }
 
 // NameExtractRegexp is exported for testing.
@@ -1053,6 +1058,10 @@ func Unescape(s string) string {
 
 // GetAllNameToIDAndTheMustLoadedTableInfo gets all the fields and values and table info for special attributes in a hash.
 // It's used to get some infos for information schema cache in a faster way.
+// If a table contains any of the attributes listed in checkSubstringsInOrder, it must be loaded during schema full load.
+// hasSpecialAttributes() is a subset of it, the difference is that:
+// If a table need to be resident in-memory, its table info MUST be loaded.
+// If a table info is loaded, it's NOT NECESSARILY to be keep in-memory.
 func GetAllNameToIDAndTheMustLoadedTableInfo(m *Meta, dbID int64) (map[string]int64, []*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -1079,7 +1088,7 @@ func GetAllNameToIDAndTheMustLoadedTableInfo(m *Meta, dbID int64) (map[string]in
 
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
-		if IsTableInfoMustLoad(value) {
+		if isTableInfoMustLoad(value, checkAttributesInOrder...) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1092,6 +1101,35 @@ func GetAllNameToIDAndTheMustLoadedTableInfo(m *Meta, dbID int64) (map[string]in
 	})
 
 	return res, tableInfos, errors.Trace(err)
+}
+
+// GetTableInfoWithAttributes retrieves all the table infos for a given db.
+// The filterAttrs are used to filter out any table that is not needed.
+func GetTableInfoWithAttributes(m *Meta, dbID int64, filterAttrs ...string) ([]*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tableInfos := make([]*model.TableInfo, 0)
+	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
+		if !strings.HasPrefix(string(hack.String(field)), "Table") {
+			return nil
+		}
+
+		if isTableInfoMustLoad(value, filterAttrs...) {
+			tbInfo := &model.TableInfo{}
+			err := json.Unmarshal(value, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tbInfo.DBID = dbID
+			tableInfos = append(tableInfos, tbInfo)
+		}
+		return nil
+	})
+
+	return tableInfos, errors.Trace(err)
 }
 
 // ListTables shows all tables in database.
