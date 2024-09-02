@@ -883,9 +883,6 @@ func (local *Backend) prepareAndSendJob(
 ) error {
 	lfTotalSize, lfLength := engine.KVStatistics()
 	log.FromContext(ctx).Info("import engine ranges", zap.Int("len(regionSplitKeyCnt)", len(regionSplitKeys)))
-	if len(regionSplitKeys) == 0 {
-		return nil
-	}
 
 	// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 	// the table when table is created.

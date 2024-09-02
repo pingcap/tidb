@@ -1951,7 +1951,7 @@ func TestDoImport(t *testing.T) {
 			WorkerConcurrency: 2,
 		},
 	}
-	e := &Engine{}
+	e := &Engine{regionSplitKeysCache: initRegionKeys}
 	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.NoError(t, err)
 	for _, v := range fakeRegionJobs {
