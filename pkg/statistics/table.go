@@ -790,13 +790,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 
 	// If it's not analyzed yet.
 	if !hasAnalyzed {
-		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
-		// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
-		// We need to find a way to maintain it more correctly.
-		// Otherwise we don't need to load it.
-		result := t.ColAndIdxExistenceMap.Has(id, false)
-		// If the column is not in the ColAndIdxExistenceMap, we need to load it.
-		return nil, !result, !result
+		return nil, false, false
 	}
 
 	// Restore the condition from the simplified form:
