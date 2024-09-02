@@ -19,7 +19,6 @@ import (
 	"cmp"
 	"container/list"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"maps"
 	"math"
 	"slices"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 )

@@ -17,7 +17,6 @@ package stmtsummary
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"math"
 	"strings"
 	"sync"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/util"
