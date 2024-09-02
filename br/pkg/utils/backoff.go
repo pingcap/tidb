@@ -174,17 +174,9 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			case codes.Unavailable, codes.Aborted:
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
-<<<<<<< HEAD
-=======
 			case codes.Canceled:
-				if isGRPCCancel(lastErr) {
-					bo.delayTime = 2 * bo.delayTime
-					bo.attempt--
-				} else {
 					bo.delayTime = 0
 					bo.attempt = 0
-				}
->>>>>>> c12bf3fa024 (br: fix backoffer can't handle multierrs (#54084))
 			default:
 				// Unexpected error
 				bo.delayTime = 0
