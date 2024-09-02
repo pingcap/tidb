@@ -415,7 +415,7 @@ func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *
 	}
 }
 
-// MergeScanDetail merges scan details into self.
+// mergeScanDetail merges scan details into self.
 func (s *SyncExecDetails) mergeScanDetail(scanDetail *util.ScanDetail) {
 	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
 	if scanDetail == nil {
