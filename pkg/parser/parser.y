@@ -1136,7 +1136,7 @@ import (
 	ConstraintElem                         "table constraint element"
 	ConstraintKeywordOpt                   "Constraint Keyword or empty"
 	ConstraintVectorIndex                  "vector index"
-	ConstraintWithVectorIndex			   "table constraint with vector index"
+	ConstraintWithVectorIndex              "table constraint with vector index"
 	CreateSequenceOptionListOpt            "create sequence list opt"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
