@@ -29,12 +29,18 @@ set names DEFAULT;
 
 # TestCharsetFeatureCollation
 drop table if exists t;
-create table t(ascii_char char(10) character set ascii,gbk_char char(10) character set gbk collate gbk_bin,latin_char char(10) character set latin1,utf8mb4_char char(10) character set utf8mb4);
-insert into t values ('a', 'a', 'a', 'a'), ('a', '啊', '€', 'ㅂ');
+create table t(ascii_char char(10) character set ascii,gbk_char char(10) character set gbk collate gbk_bin,latin_char char(10) character set latin1,utf8mb4_char char(10) character set utf8mb4, gb18030_char char(10) character set gb18030);
+insert into t values ('a', 'a', 'a', 'a', 'a'), ('a', '啊', '€', 'ㅂ', '🀁');
 select collation(concat(ascii_char, gbk_char)) from t;
 select collation(concat(gbk_char, ascii_char)) from t;
 select collation(concat(utf8mb4_char, gbk_char)) from t;
 select collation(concat(gbk_char, utf8mb4_char)) from t;
+select collation(concat(utf8mb4_char, gb18030_char)) from t;
+select collation(concat(gb18030_char, utf8mb4_char)) from t;
+--error 1267
+select collation(concat(gbk_char, gb18030_char)) from t;
+--error 1267
+select collation(concat(gb18030_char, gbk_char)) from t;
 select collation(concat('啊', convert('啊' using gbk) collate gbk_bin));
 select collation(concat(_latin1 'a', convert('啊' using gbk) collate gbk_bin));
 -- error 1267
@@ -79,3 +85,202 @@ set global collation_server = 'utf8_roman_ci';
 set global collation_database = 'utf8_roman_ci';
 -- error 1273
 set global collation_connection = 'utf8_roman_ci';
+
+# TestGB8030
+
+select upper(convert('àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ' using gb18030));
+select lower(convert('àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ' using gb18030));
+select convert(0x1e2 using gb18030);
+select char(0x1234 using gb18030);
+select char(0xd2 using gb18030);
+
+drop table if exists t;
+create table t (a char(20) charset gb18030);
+drop table if exists t1;
+create table t1 (a binary(20));
+drop table if exists t2;
+create table t2 (a char(20) charset gb18030, b char(20) charset gb18030);
+
+insert into t values ('a'), ('一二三');
+select hex(a) from t;
+select hex('ㅂ');
+select ascii(a) from t;
+select ascii('ㅂ');
+select concat(a, 0x3f) from t;
+select concat_ws("你", a, a) from t;
+select length(a), octet_length(a), bit_length(a) from t;
+select to_base64(a) from t;
+select lower(a), upper(a) from t;
+select upper("abcABC一二三abcABC"), lower("abcABC一二三abcABC");
+select ord(a) from t;
+select aes_encrypt(a, 'key') from t;
+select aes_decrypt(aes_encrypt(a, 'key'), 'key'), hex(a) from t;
+select encode(a, "key") from t;
+select decode(encode(a, "key"), "key"), hex(a) from t;
+select md5(a) from t;
+select password(a) from t;
+select compress(a) from t;
+select uncompress(compress(a)), a from t;
+select sha1(a), sha2(a, "key") from t;
+select hex(a) from t where hex(a) = "D2BBB6FEC8FD";
+select length(a) from t where length(a) = 6;
+select bit_length(a) from t where bit_length(a) = 48;
+select ascii(a) from t where ascii(a) = 210;
+select concat(a, 0x3f) from t where concat(a, 0x3f) = "一二三?";
+select md5(a) from t where md5(a) = "a45d4af7b243e7f393fa09bed72ac73e";
+select sha1(a) from t where sha1(a) = "30cda4eed59a2ff592f2881f39d42fed6e10cad8";
+
+insert into t1 values (0xe2e2);
+select convert(a using gb18030) from t1;
+
+insert into t2 values ("abc", "abc"), ("abc", "xyz"), ("abc", "qwe"), ("abc","234");
+insert into t2 values ("一二三", "一"), ("一二三", "二"), ("一二三", "三"), ("一二三","四");
+select a, b, rank() over (partition by a order by b) as x from t2 order by a, b;
+
+# TestGB18030FromMysqlTest
+
+# Test some string funcs
+SELECT LOCATE(convert(0x8140 using gb18030), convert(0x814181408142 using gb18030));
+SELECT HEX(SUBSTRING(convert(0x81308131813081328130813381308134 using gb18030), 1, 2));
+SELECT HEX(SUBSTRING(convert(0x81308131813081328130813381308134 using gb18030), -3, 2));
+SELECT HEX(TRIM(convert(0x20202081408141208144202020 using gb18030)));
+
+# From gbk test, ALTER TABLE affects other columns
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (c1 TEXT not null, c2 TEXT not null) CHARACTER SET gb18030;
+ALTER TABLE t1 CHANGE c1 c1 MEDIUMTEXT CHARACTER SET gb18030 NOT NULL;
+SHOW CREATE TABLE t1;
+DROP TABLE t1;
+
+# CJK chars test
+SET collation_connection='gb18030_chinese_ci';
+CREATE TABLE t1(C VARCHAR(100) CHARACTER SET gb18030, KEY(c(20)));
+INSERT INTO t1 VALUES(0xC4EEC5ABBDBFA1A4B3E0B1DABBB3B9C520A1A4CBD5B6ABC6C2);
+INSERT INTO t1 VALUES(0xB4F3BDADB6ABC8A5A3ACC0CBCCD4BEA1A1A2C7A7B9C5B7E7C1F7C8CBCEEFA1A3);
+INSERT INTO t1 VALUES(0xB9CAC0DDCEF7B1DFA3ACC8CBB5C0CAC7A1A2C8FDB9FAD6DCC0C9B3E0B1DAA1A3);
+INSERT INTO t1 VALUES(0xC2D2CAAFB1C0D4C6A3ACBEAACCCEC1D1B0B6A3ACBEEDC6F0C7A7B6D1D1A9A1A3);
+INSERT INTO t1 VALUES(0xBDADC9BDC8E7BBADA3ACD2BBCAB1B6E0C9D9BAC0BDDCA3A1);
+INSERT INTO t1 VALUES(0xD2A3CFEBB9ABE8AAB5B1C4EAA3ACD0A1C7C7B3F5BCDEC1CBA3ACD0DBD7CBD3A2B7A2A1A3);
+INSERT INTO t1 VALUES(0xD3F0C9C8C2DABDEDA3ACCCB8D0A6BCE4A1A2E9C9E9D6BBD2B7C9D1CCC3F0A1A3);
+INSERT INTO t1 VALUES(0xB9CAB9FAC9F1D3CEA3ACB6E0C7E9D3A6D0A6CED2A1A2D4E7C9FABBAAB7A2A1A3);
+INSERT INTO t1 VALUES(0xC8CBBCE4C8E7C3CEA3ACD2BBE9D7BBB9F5AABDADD4C2A1A3);
+SELECT c, HEX(c), CONVERT(c USING utf8mb4) FROM t1;
+SELECT HEX(c), CONVERT(c USING utf8mb4) FROM t1 ORDER BY c;
+SELECT HEX(c), CONVERT(c USING utf8mb4) FROM t1 WHERE c LIKE CONCAT('%', convert(0xD2BB using gb18030), '%');
+SELECT HEX(c), CONVERT(c USING utf8mb4) FROM t1 WHERE c LIKE CONCAT('%', convert(0xC8CB using gb18030), '%');
+SELECT HEX(c), CONVERT(c USING utf8mb4) FROM t1 WHERE c > 0xD2A3;
+TRUNCATE TABLE t1;
+
+INSERT INTO t1 VALUES(0x5373547483329330);
+INSERT INTO t1 VALUES(0x8239AB318239AB358239AF3583308132833087348335EB39);
+INSERT INTO t1 VALUES(0x97339631973396339733A6359831C0359831C536);
+INSERT INTO t1 VALUES(0x9835CF329835CE359835F336);
+INSERT INTO t1 VALUES(0x833988318339883283398539);
+INSERT INTO t1 VALUES(0x823398318233973582339A3882348A32);
+INSERT INTO t1 VALUES(0x8134D5318134D6328134D832);
+INSERT INTO t1 VALUES(0x4A7320204B82339A35646566);
+INSERT INTO t1 VALUES(0x8130883281308833);
+INSERT INTO t1 VALUES(0xE05FE06A777682339230);
+INSERT INTO t1 VALUES(0x814081418139FE30);
+INSERT INTO t1 VALUES(0x81308130FEFE);
+INSERT INTO t1 VALUES(0xE3329A35E3329A34);
+SELECT c, HEX(c), CONVERT(c USING utf8mb4) FROM t1;
+SELECT c, HEX(c), CONVERT(c USING utf8mb4) FROM t1 WHERE c LIKE CONCAT('%', convert(0x9835CE35 using gb18030), '%');
+SELECT c, HEX(c), CONVERT(c USING utf8mb4) FROM t1 WHERE c = 0x8130883281308833;
+SELECT c, HEX(c), CONVERT(c USING utf8mb4) FROM t1 WHERE c > 0xE040 AND c < 0x8239AB31;
+SELECT c, HEX(c), CONVERT(c USING utf8mb4) FROM t1 ORDER BY c;
+
+# insert invalid character
+TRUNCATE TABLE t1;
+-- error 1366
+INSERT INTO t1 VALUES(0x8139818F);
+-- error 1366
+INSERT INTO t1 VALUES(0x8431A530);
+-- error 1366
+INSERT INTO t1 VALUES(0x9030813089398130);
+-- error 1366
+INSERT INTO t1 VALUES(0xE3329A36);
+-- error 1366
+INSERT INTO t1 VALUES(0xA6A78586E3329A38);
+-- error 1366
+INSERT INTO t1 VALUES(0xA69C8041);
+-- error 1366
+INSERT INTO t1 VALUES(0xA9C6FEFF);
+-- error 1366
+INSERT INTO t1 VALUES(0xFFFF);
+-- error 1366
+INSERT INTO t1 VALUES(0x81408139);
+-- error 1366
+INSERT INTO t1 VALUES(0x962B);
+-- error 1366
+INSERT INTO t1 VALUES(0x9F37823881308156);
+-- error 1366
+INSERT INTO t1 VALUES(0xFE35FF30);
+-- error 1366
+INSERT INTO t1 VALUES(0x814281309CA4);
+-- error 1366
+INSERT INTO t1 VALUES(0xE3329A36);
+-- error 1366
+INSERT INTO t1 VALUES(0xFE39FE39FE39FE38);
+
+# Test for PINYIN collation
+# 𠬣𠨵㭋玤䂜蚌𢜗𢮏䖫傍棒棓谤塝
+# 拨波癷𩧯玻剝剥哱盋砵袚𧙄钵饽紴缽菠袰
+INSERT INTO t1 VALUES(0x9534A337), (0x8959), (0xB0F9), (0xB0F4), (0x95348B39), (0x9794), (0x8231AC35);
+INSERT INTO t1 VALUES(0xB0F8), (0xAB67), (0x8232B632), (0x9630ED37), (0x9539F933), (0xB0F6), (0x8233B931);
+INSERT INTO t1 VALUES(0xD143), (0xB2A4), (0xC08F), (0xBC9E), (0xB2A6), (0xB2A8), (0xB069);
+INSERT INTO t1 VALUES(0x9833A533), (0xE2C4), (0xB2A7), (0x97368632), (0xB2A3), (0x8483), (0xB0FE);
+INSERT INTO t1 VALUES(0x865C), (0xD093), (0xB36A), (0xB143);
+SELECT c, HEX(c) FROM t1 ORDER BY c;
+SELECT c, HEX(c) FROM t1 WHERE c >= 0x8483 and c < 0xE2C4 ORDER BY c;
+SELECT c, HEX(c) FROM t1 WHERE c LIKE 0xB0FE;
+TRUNCATE TABLE t1;
+
+INSERT INTO t1 VALUES(0xA2E3), (0x81308130), (0x81308132);
+INSERT INTO t1 VALUES('A'), ('a'), ('1'), ('2');
+INSERT INTO t1 VALUES(0xCDF5), (0xC0EE), (0xD5C5), (0xC1F5), (0xB3C2), (0xD1EE), (0xBBC6);
+INSERT INTO t1 VALUES(0xCEE2), (0xD5D4), (0xD6DC), (0xD0EC), (0xCBEF), (0xC2ED), (0xD6EC);
+INSERT INTO t1 VALUES(0xBAFA), (0xC1D6), (0xB9F9), (0xBACE), (0xB8DF), (0xC2DE), (0xD6A3);
+INSERT INTO t1 VALUES(0xE3329A35), (0xE3329A34);
+SELECT c, HEX(c) FROM t1 ORDER BY c;
+DROP TABLE t1;
+
+# Test for alter table, data type etc.
+CREATE TABLE t1 (c CHAR(1) CHARACTER SET gb18030, v VARCHAR(100) CHARACTER SET gb18030);
+INSERT INTO t1 VALUES(0x8140, 0x81308132A6C9A6A9);
+SELECT HEX(c), c, HEX(v), v FROM t1;
+ALTER TABLE t1 ADD COLUMN t TEXT CHARACTER SET gb18030;
+INSERT INTO t1 VALUES(0xBC81, 0x8235813240414281308135, 0x84678578);
+SELECT HEX(c), c, HEX(v), v, HEX(t), t FROM t1;
+DROP TABLE t1;
+
+# Test for LIKE for 2/4-byte gb18030
+CREATE TABLE t1 (c VARCHAR(10) CHARACTER SET gb18030);
+INSERT INTO t1 VALUES(0x81308A3181308A3181308A3181308A3181308732);
+INSERT INTO t1 VALUES(0x81308A3181308A318130873281308A31);
+INSERT INTO t1 VALUES(0x81308A318130873281309636);
+INSERT INTO t1 VALUES(0x81308A318130873281309637);
+INSERT INTO t1 VALUES(0x81308A31813087328130963781309636);
+INSERT INTO t1 VALUES(0x8130963681308A31);
+INSERT INTO t1 VALUES(0xA8A581308D35);
+INSERT INTO t1 VALUES(0x81308D35A8A5);
+INSERT INTO t1 VALUES(0x81308D35A8A5A8A5);
+SELECT HEX(c) FROM t1;
+SELECT HEX(c) FROM t1 WHERE c LIKE CONCAT('%', convert(0x81308A31 using gb18030));
+SELECT HEX(c) FROM t1 WHERE c LIKE CONCAT('%', convert(0x8130873281308A31 using gb18030), '%');
+SELECT HEX(c) FROM t1 WHERE c LIKE CONCAT('%', convert(0x8130873281309636 using gb18030));
+SELECT HEX(c) FROM t1 WHERE c LIKE CONCAT('%', convert(0x8130963781309636 using gb18030));
+SELECT HEX(c) FROM t1 WHERE c LIKE CONCAT(convert(0x81309636 using gb18030), '%');
+SELECT HEX(c) FROM t1 WHERE c LIKE CONCAT(convert(0xA8A5 using gb18030), '%');
+SELECT HEX(c) FROM t1 WHERE c LIKE CONCAT(convert(0xA8A5 using gb18030), '_');
+SELECT HEX(c) FROM t1 WHERE c LIKE CONCAT(convert(0xA8A5 using gb18030), '_', convert(0x81308D35 using gb18030));
+SELECT HEX(c) FROM t1 WHERE c LIKE CONCAT('%_', convert(0xA8A5 using gb18030));
+DROP TABLE t1;
+
+# Test for group by
+CREATE TABLE t1 (c VARCHAR(10) CHARACTER SET gb18030);
+INSERT INTO t1 VALUES (0x8BF5819AEDC3), (0x99CC), (0x90459958), (0xAA95C0E59E509AED), (0xCCE7), (0x9068), (0x90459958);
+# Because of the COLLATE, the uniqueness of HEX(c) per group is not
+# guaranteed, hence ANY_VALUE is used.
+SELECT ANY_VALUE(HEX(c)), COUNT(c) FROM t1 GROUP BY c COLLATE gb18030_chinese_ci;
+DROP TABLE t1;
