@@ -181,7 +181,6 @@ func newRegionJobs(
 	regionSplitKeys int64,
 	metrics *metric.Common,
 ) []*regionJob {
-	// TODO(lance6716): add test
 	var (
 		lenRegions   = len(sortedRegions)
 		lenJobRanges = len(sortedJobRanges)
