@@ -49,7 +49,7 @@ func PrepareSlowLogfile(t *testing.T, slowLogFileName string) {
 # Optimize_time: 0.00000001
 # Wait_TS: 0.000000003
 # LockKeys_time: 1.71 Request_count: 1 Prewrite_time: 0.19 Wait_prewrite_binlog_time: 0.21 Commit_time: 0.01 Commit_backoff_time: 0.18 Backoff_types: [txnLock] Resolve_lock_time: 0.03 Write_keys: 15 Write_size: 480 Prewrite_region: 1 Txn_retry: 8
-# Cop_time: 0.3824278 Process_time: 0.161 Request_count: 1 Total_keys: 100001 Process_keys: 100000 TidbCPU_time: 0.1 TikvCPU_time: 0.32
+# Cop_time: 0.3824278 Process_time: 0.161 Request_count: 1 Total_keys: 100001 Process_keys: 100000
 # Rocksdb_delete_skipped_count: 100 Rocksdb_key_skipped_count: 10 Rocksdb_block_cache_hit_count: 10 Rocksdb_block_read_count: 10 Rocksdb_block_read_byte: 100
 # Wait_time: 0.101
 # Backoff_time: 0.092
@@ -98,6 +98,8 @@ select * from t_slim;
 # Resource_group: rg1
 # Request_unit_read: 96.66703066666668
 # Request_unit_write: 3182.424414062492
+# Tidb_cpu_usage: 0.01
+# Tikv_cpu_usage: 0.021
 INSERT INTO ...;
 `)
 	require.NoError(t, f.Close())
