@@ -27,6 +27,7 @@ go_library(
         "//pkg/lightning/worker",
         "//pkg/parser",
         "//pkg/parser/ast",
+        "//pkg/parser/charset",
         "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
