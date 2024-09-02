@@ -26,6 +26,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -107,7 +108,8 @@ func TestGroupFingerPrint(t *testing.T) {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
 	}()
-	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
+	nodeW := resolve.NewNodeW(stmt1)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
 	require.NoError(t, err)
 	logic1, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
@@ -240,7 +242,8 @@ func TestBuildKeyInfo(t *testing.T) {
 	// case 1: primary key has constant constraint
 	stmt1, err := p.ParseOneStmt("select a from t where a = 10", "", "")
 	require.NoError(t, err)
-	p1, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
+	nodeW1 := resolve.NewNodeW(stmt1)
+	p1, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW1, is)
 	require.NoError(t, err)
 	logic1, ok := p1.(base.LogicalPlan)
 	require.True(t, ok)
@@ -252,7 +255,8 @@ func TestBuildKeyInfo(t *testing.T) {
 	// case 2: group by column is key
 	stmt2, err := p.ParseOneStmt("select b, sum(a) from t group by b", "", "")
 	require.NoError(t, err)
-	p2, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt2, is)
+	nodeW2 := resolve.NewNodeW(stmt2)
+	p2, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, nodeW2, is)
 	require.NoError(t, err)
 	logic2, ok := p2.(base.LogicalPlan)
 	require.True(t, ok)

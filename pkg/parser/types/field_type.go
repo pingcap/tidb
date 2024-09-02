@@ -40,6 +40,21 @@ var (
 	TiDBStrictIntegerDisplayWidth bool
 )
 
+// IHasher is internal usage represent cascades/base.Hasher
+type IHasher interface {
+	HashBool(val bool)
+	HashInt(val int)
+	HashInt64(val int64)
+	HashUint64(val uint64)
+	HashFloat64(val float64)
+	HashRune(val rune)
+	HashString(val string)
+	HashByte(val byte)
+	HashBytes(val []byte)
+	Reset()
+	Sum64() uint64
+}
+
 // FieldType records field type information.
 type FieldType struct {
 	// tp is type of the field
@@ -59,6 +74,68 @@ type FieldType struct {
 	elemsIsBinaryLit []bool
 	array            bool
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
+}
+
+// Hash64 implements the cascades/base.Hasher.<0th> interface.
+func (ft *FieldType) Hash64(h IHasher) {
+	h.HashByte(ft.tp)
+	h.HashUint64(uint64(ft.flag))
+	h.HashInt(ft.flen)
+	h.HashInt(ft.decimal)
+	h.HashString(ft.charset)
+	h.HashString(ft.collate)
+	h.HashInt(len(ft.elems))
+	for _, elem := range ft.elems {
+		h.HashString(elem)
+	}
+	h.HashInt(len(ft.elemsIsBinaryLit))
+	for _, elem := range ft.elemsIsBinaryLit {
+		h.HashBool(elem)
+	}
+	h.HashBool(ft.array)
+}
+
+// Equals implements the cascades/base.Hasher.<1th> interface.
+func (ft *FieldType) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var ft2 *FieldType
+	switch x := other.(type) {
+	case *FieldType:
+		ft2 = x
+	case FieldType:
+		ft2 = &x
+	default:
+		return false
+	}
+	ok := ft.tp == ft2.tp &&
+		ft.flag == ft2.flag &&
+		ft.flen == ft2.flen &&
+		ft.decimal == ft2.decimal &&
+		ft.charset == ft2.charset &&
+		ft.collate == ft2.collate &&
+		ft.array == ft2.array
+	if !ok {
+		return false
+	}
+	if len(ft.elems) != len(ft2.elems) {
+		return false
+	}
+	for i, one := range ft.elems {
+		if one != ft2.elems[i] {
+			return false
+		}
+	}
+	if len(ft.elemsIsBinaryLit) != len(ft2.elemsIsBinaryLit) {
+		return false
+	}
+	for i, one := range ft.elemsIsBinaryLit {
+		if one != ft2.elemsIsBinaryLit[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // NewFieldType returns a FieldType,

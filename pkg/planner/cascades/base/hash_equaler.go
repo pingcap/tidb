@@ -41,18 +41,39 @@ type Hasher interface {
 	HashByte(val byte)
 	HashBytes(val []byte)
 	Reset()
+	SetCache([]byte)
+	Cache() []byte
 	Sum64() uint64
 }
+
+// NilFlag and NotNilFlag are used to indicate whether a pointer/interface type field inside struct is nil or not.
+// like a structure:
+//
+//	type MyStruct struct {
+//		 a *OtherStruct
+//	}
+//
+// Once a is nil, we should hash the NilFlag, otherwise, we should hash the NotNilFlag
+// nil     : [0]
+// not nil : [1] [xxx]
+// the NotNilFlag should not be missed, otherwise, once [xxx] is []byte{0}, it will be treated as nil.
+const (
+	NilFlag    byte = 0
+	NotNilFlag byte = 1
+)
 
 // Hash64a is the type for the hash value.
 type Hash64a uint64
 
-// Hasher is a helper struct that's used for computing **fnv-1a** hash values and tell
+// hasher is a helper struct that's used for computing **fnv-1a** hash values and tell
 // the equivalence on expression/operators. To use, first call the init method, then
 // a series of hash methods. The final value is stored in the hash64a field.
 type hasher struct {
 	// hash stores the hash value as it is incrementally computed.
 	hash64a Hash64a
+
+	// cache is the internal bytes slice that's will be reused for some special tmp encoding like datum.
+	cache []byte
 }
 
 // NewHashEqualer creates a new HashEqualer.
@@ -65,6 +86,17 @@ func NewHashEqualer() Hasher {
 // Reset resets the Hasher to its initial state, reusing the internal bytes slice.
 func (h *hasher) Reset() {
 	h.hash64a = offset64
+	h.cache = h.cache[:0]
+}
+
+// Cache returns the internal bytes slice for re-usage.
+func (h *hasher) Cache() []byte {
+	return h.cache
+}
+
+// SetCache sets the internal bytes slice for reu-sage.
+func (h *hasher) SetCache(cache []byte) {
+	h.cache = cache
 }
 
 func (h *hasher) Sum64() uint64 {

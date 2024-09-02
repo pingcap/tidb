@@ -338,11 +338,42 @@ func cleanDataColumns(tk *testkit.TestKit) {
 	tk.MustExec("drop database schema_columns2")
 }
 
-func TestMemtableInfoschemaExtractor(t *testing.T) {
+func testMemtableInfoschemaExtractor(t *testing.T, tcs []testCase) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set global tidb_enable_check_constraint = true")
+	countSQL := 0
+	for _, tc := range tcs {
+		names := tc.prepareData(tk)
+		conditions := []string{}
+		for i := len(names) - 1; i >= 0; i-- {
+			all := names[i].enumerateAll()
+			if len(conditions) == 0 {
+				conditions = all
+			} else {
+				newConditions := []string{}
+				for _, a := range all {
+					for _, b := range conditions {
+						newConditions = append(newConditions, fmt.Sprintf("%s and %s", a, b))
+					}
+				}
+				conditions = newConditions
+			}
+		}
+
+		countSQL += len(conditions)
+		for _, c := range conditions {
+			sql := fmt.Sprintf("select * from information_schema.%s where %s", tc.memTableName, c)
+			tk.MustQuery(sql)
+		}
+
+		tc.cleanData(tk)
+	}
+	fmt.Printf("Total SQLs: %d\n", countSQL)
+}
+
+func TestMemtableInfoschemaExtractorPart1(t *testing.T) {
 	tcs := []testCase{
 		{
 			memTableName: infoschema.TableTiDBIndexes,
@@ -374,6 +405,12 @@ func TestMemtableInfoschemaExtractor(t *testing.T) {
 			prepareData:  prepareDataPartitions,
 			cleanData:    cleanDataPartitions,
 		},
+	}
+	testMemtableInfoschemaExtractor(t, tcs)
+}
+
+func TestMemtableInfoschemaExtractorPart2(t *testing.T) {
+	tcs := []testCase{
 		{
 			memTableName: infoschema.TableStatistics,
 			prepareData:  prepareDataStatistics,
@@ -405,33 +442,5 @@ func TestMemtableInfoschemaExtractor(t *testing.T) {
 			cleanData:    cleanDataStatistics,
 		},
 	}
-
-	countSQL := 0
-	for _, tc := range tcs {
-		names := tc.prepareData(tk)
-		conditions := []string{}
-		for i := len(names) - 1; i >= 0; i-- {
-			all := names[i].enumerateAll()
-			if len(conditions) == 0 {
-				conditions = all
-			} else {
-				newConditions := []string{}
-				for _, a := range all {
-					for _, b := range conditions {
-						newConditions = append(newConditions, fmt.Sprintf("%s and %s", a, b))
-					}
-				}
-				conditions = newConditions
-			}
-		}
-
-		countSQL += len(conditions)
-		for _, c := range conditions {
-			sql := fmt.Sprintf("select * from information_schema.%s where %s", tc.memTableName, c)
-			tk.MustQuery(sql)
-		}
-
-		tc.cleanData(tk)
-	}
-	fmt.Printf("Total SQLs: %d\n", countSQL)
+	testMemtableInfoschemaExtractor(t, tcs)
 }

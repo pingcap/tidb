@@ -203,6 +203,13 @@ func WithParamList(params *variable.PlanCacheParamList) StaticEvalCtxOption {
 	}
 }
 
+// WithEnableRedactLog sets the value of the 'tidb_redact_log' system variable.
+func WithEnableRedactLog(enableRedactLog string) StaticEvalCtxOption {
+	return func(s *staticEvalCtxState) {
+		s.enableRedactLog = enableRedactLog
+	}
+}
+
 var defaultSQLMode = func() mysql.SQLMode {
 	mode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
 	if err != nil {
@@ -387,4 +394,69 @@ func (ctx *StaticEvalContext) GetParamValue(idx int) (types.Datum, error) {
 		return types.Datum{}, exprctx.ErrParamIndexExceedParamCounts
 	}
 	return ctx.paramList[idx], nil
+}
+
+var _ exprctx.StaticConvertibleEvalContext = &StaticEvalContext{}
+
+// AllParamValues implements context.StaticConvertibleEvalContext.
+func (ctx *StaticEvalContext) AllParamValues() []types.Datum {
+	return ctx.paramList
+}
+
+// GetDynamicPrivCheckFn implements context.StaticConvertibleEvalContext.
+func (ctx *StaticEvalContext) GetDynamicPrivCheckFn() func(privName string, grantable bool) bool {
+	return ctx.requestDynamicVerificationFn
+}
+
+// GetRequestVerificationFn implements context.StaticConvertibleEvalContext.
+func (ctx *StaticEvalContext) GetRequestVerificationFn() func(db string, table string, column string, priv mysql.PrivilegeType) bool {
+	return ctx.requestVerificationFn
+}
+
+// GetWarnHandler implements context.StaticConvertibleEvalContext.
+func (ctx *StaticEvalContext) GetWarnHandler() contextutil.WarnHandler {
+	return ctx.warnHandler
+}
+
+// MakeEvalContextStatic converts the `exprctx.StaticConvertibleEvalContext` to `StaticEvalContext`.
+func MakeEvalContextStatic(ctx exprctx.StaticConvertibleEvalContext) *StaticEvalContext {
+	typeCtx := ctx.TypeCtx()
+	errCtx := ctx.ErrCtx()
+
+	// TODO: at least provide some optional eval prop provider which is suitable to be used in the static context.
+	props := make([]exprctx.OptionalEvalPropProvider, 0, exprctx.OptPropsCnt)
+
+	params := variable.NewPlanCacheParamList()
+	for _, param := range ctx.AllParamValues() {
+		params.Append(param)
+	}
+
+	// TODO: use a more structural way to replace the closure.
+	// These closure makes sure the fields which may be changed in the execution of the next statement will not be embedded into them, to make
+	// sure it's safe to call them after the session continues to execute other statements.
+	staticCtx := NewStaticEvalContext(
+		WithWarnHandler(ctx.GetWarnHandler()),
+		WithSQLMode(ctx.SQLMode()),
+		WithTypeFlags(typeCtx.Flags()),
+		WithLocation(typeCtx.Location()),
+		WithErrLevelMap(errCtx.LevelMap()),
+		WithCurrentDB(ctx.CurrentDB()),
+		WithCurrentTime(func() func() (time.Time, error) {
+			currentTime, currentTimeErr := ctx.CurrentTime()
+
+			return func() (time.Time, error) {
+				return currentTime, currentTimeErr
+			}
+		}()),
+		WithMaxAllowedPacket(ctx.GetMaxAllowedPacket()),
+		WithDefaultWeekFormatMode(ctx.GetDefaultWeekFormatMode()),
+		WithDivPrecisionIncrement(ctx.GetDivPrecisionIncrement()),
+		WithPrivCheck(ctx.GetRequestVerificationFn()),
+		WithDynamicPrivCheck(ctx.GetDynamicPrivCheckFn()),
+		WithParamList(params),
+		WithOptionalProperty(props...),
+		WithEnableRedactLog(ctx.GetTiDBRedactLog()),
+	)
+
+	return staticCtx
 }
