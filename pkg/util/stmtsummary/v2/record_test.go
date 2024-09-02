@@ -60,8 +60,8 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.RUDetail.WRU(), record1.SumWRU)
 	require.Equal(t, info.RUDetail.RUWaitDuration(), record1.MaxRUWaitDuration)
 	require.Equal(t, info.RUDetail.RUWaitDuration(), record1.SumRUWaitDuration)
-	require.Equal(t, info.ExecDetail.TidbCPUTime, record1.SumTidbCPU)
-	require.Equal(t, info.ExecDetail.TikvCPUTime, record1.SumTikvCPU)
+	require.Equal(t, info.CPUUsages.TidbCPUTime, record1.SumTidbCPU)
+	require.Equal(t, info.CPUUsages.TikvCPUTime, record1.SumTikvCPU)
 
 	record2 := NewStmtRecord(info)
 	record2.Add(info)
@@ -75,6 +75,6 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.RUDetail.RRU()*2, record2.SumRRU)
 	require.Equal(t, info.RUDetail.WRU()*2, record2.SumWRU)
 	require.Equal(t, info.RUDetail.RUWaitDuration()*2, record2.SumRUWaitDuration)
-	require.Equal(t, info.ExecDetail.TidbCPUTime*2, record2.SumTidbCPU)
-	require.Equal(t, info.ExecDetail.TikvCPUTime*2, record2.SumTikvCPU)
+	require.Equal(t, info.CPUUsages.TidbCPUTime*2, record2.SumTidbCPU)
+	require.Equal(t, info.CPUUsages.TikvCPUTime*2, record2.SumTikvCPU)
 }
