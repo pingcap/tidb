@@ -484,11 +484,11 @@ func (col *Column) Hash64(h base.Hasher) {
 	h.HashInt64(col.ID)
 	h.HashInt64(col.UniqueID)
 	h.HashInt(col.Index)
-	if col.VirtualExpr != nil {
+	if col.VirtualExpr == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
-		//col.VirtualExpr.Hash64(h)
+		col.VirtualExpr.Hash64(h)
 	}
 	h.HashString(col.OrigName)
 	h.HashBool(col.IsHidden)
@@ -514,12 +514,12 @@ func (col *Column) Equals(other any) bool {
 	}
 	// when step into here, we could ensure that col1.RetType and col2.RetType are same type.
 	// and we should ensure col1.RetType and col2.RetType is not nil ourselves.
-	ftEqual := col.RetType == nil && col2.RetType == nil || col.RetType != nil && col2.RetType != nil && col.RetType.Equal(col2.RetType)
-	return ftEqual &&
+	ok := col.RetType == nil && col2.RetType == nil || col.RetType != nil && col2.RetType != nil && col.RetType.Equal(col2.RetType)
+	ok = ok && col.VirtualExpr == nil && col2.VirtualExpr == nil || col.VirtualExpr != nil && col2.VirtualExpr != nil && col.VirtualExpr.Equals(col2.VirtualExpr)
+	return ok &&
 		col.ID == col2.ID &&
 		col.UniqueID == col2.UniqueID &&
 		col.Index == col2.Index &&
-		//col.VirtualExpr.Equals(col2.VirtualExpr) &&
 		col.OrigName == col2.OrigName &&
 		col.IsHidden == col2.IsHidden &&
 		col.IsPrefix == col2.IsPrefix &&

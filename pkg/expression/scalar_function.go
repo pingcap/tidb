@@ -680,12 +680,14 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 func (sf *ScalarFunction) Hash64(h base.Hasher) {
 	h.HashByte(scalarFunctionFlag)
 	h.HashString(sf.FuncName.L)
-	if sf.RetType != nil {
+	if sf.RetType == nil {
 		h.HashByte(base.NilFlag)
 	} else {
 		h.HashByte(base.NotNilFlag)
 		sf.RetType.Hash64(h)
 	}
+	// hash the arg length to avoid hash collision.
+	h.HashInt(len(sf.GetArgs()))
 	for _, arg := range sf.GetArgs() {
 		arg.Hash64(h)
 	}
@@ -707,8 +709,11 @@ func (sf *ScalarFunction) Equals(other any) bool {
 	}
 	ok := sf.FuncName.L == sf2.FuncName.L
 	ok = ok && (sf.RetType == nil && sf2.RetType == nil || sf.RetType != nil && sf2.RetType != nil && sf.RetType.Equals(sf2.RetType))
-	for _, arg := range sf.GetArgs() {
-		ok = ok && arg.Equals(arg)
+	if len(sf.GetArgs()) != len(sf2.GetArgs()) {
+		return false
+	}
+	for i, arg := range sf.GetArgs() {
+		ok = ok && arg.Equals(sf2.GetArgs()[i])
 		if !ok {
 			return false
 		}
