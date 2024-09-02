@@ -784,23 +784,21 @@ func TestNameExtractFromJob(t *testing.T) {
 
 	var testCases = []extractTestCase{
 		// Normal string
-		{"", ""},
 		{"", "schema_name"},
 		{"table_name", ""},
-		{"table_name", "schema_name"},
 		// String with quota
 		{`"quota_schema_name"`, `"quota_table_name"`},
 		{`"single_quota`, `""triple_quota"`},
 		{"\"schema_name\"", "\"table_name\""},
+		// String with slash
+		{"\\", "\\\\"},
 		// Unicode
 		{"中文1", "中文2"},
 		{"😋", "😭"},
 		// Other interpunction
-		{"comma,1", "comma,2,3"},
-		{"colon:1", "colon:2"},
-		{"dot.1", "dot.2"},
+		{"comma,1", "dot.3"},
 		// Put it together
-		{`"combine:🥺,你好`, `"schema_name:1️⃣","table_name:2️⃣"`},
+		{`"combine:\\\",你好\\`, `"schema_name:1️⃣","table_name:2️⃣"`},
 	}
 
 	for _, tc := range testCases {

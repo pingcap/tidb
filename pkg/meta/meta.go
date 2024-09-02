@@ -1583,52 +1583,30 @@ type HLastJobIterator struct {
 	tableNames  set.StringSet
 }
 
-func findNextNonEscapedQuote(s string) int {
-	findEscape := false
-	for i, ch := range s {
-		if ch == '\\' {
-			findEscape = true
-		} else {
-			if ch == '"' && !findEscape {
-				return i
-			}
-			findEscape = false
-		}
-	}
-
-	return -1
-}
-
 // ExtractSchemaAndTableNameFromJob extract schema_name and table_name from encoded Job structure
 // Note, here we strongly rely on the order of fields in marshalled string, just like checkSubstringsInOrder
 // Exported for test
 func ExtractSchemaAndTableNameFromJob(s string) (schemaName, tableName string, err error) {
-	pos := strings.Index(s, `"schema_name":`)
-	if pos == -1 {
-		return "", "", fmt.Errorf("schema_name field not found in model.Job json")
+	var extractFields = []string{"schema_name", "table_name"}
+	m, err := partialjson.ExtractTopLevelMembers([]byte(s[0:]), extractFields)
+
+	schemaNameToken, ok := m["schema_name"]
+	if !ok || len(schemaNameToken) != 1 {
+		return "", "", errors.New("name field not found in JSON")
+	}
+	schemaName, ok = schemaNameToken[0].(string)
+	if !ok {
+		return "", "", errors.Errorf("unexpected name field in JSON, %v", schemaNameToken)
 	}
 
-	start := pos + len(`"schema_name":`)
-	substr := s[start+1:]
-	end := findNextNonEscapedQuote(substr)
-	if end == -1 {
-		return "", "", fmt.Errorf("can not extract schema_name in json")
+	tableNameToken, ok := m["table_name"]
+	if !ok || len(tableNameToken) != 1 {
+		return "", "", errors.New("name field not found in JSON")
 	}
-	schemaName = Unescape(substr[:end])
-
-	pos = strings.Index(substr, `"table_name":`)
-	if pos == -1 {
-		return "", "", fmt.Errorf("table_name field not found in model.Job json")
+	tableName, ok = tableNameToken[0].(string)
+	if !ok {
+		return "", "", errors.Errorf("unexpected name field in JSON, %v", tableNameToken)
 	}
-
-	start = pos + len(`"table_name":`)
-	substr = substr[start+1:]
-	end = findNextNonEscapedQuote(substr)
-	if end == -1 {
-		return "", "", fmt.Errorf("can not extract table_name in json")
-	}
-	tableName = Unescape(substr[:end])
-
 	return
 }
 
