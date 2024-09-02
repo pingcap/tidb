@@ -719,7 +719,7 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalM
 // 1. Basic stats meta data is loaded.(count, modify count, etc.)
 // 2. Column/index stats are loaded. (only histogram)
 // 3. TopN, Bucket, FMSketch are not loaded.
-func (h *Handle) InitStatsLite(ctx context.Context, is infoschema.InfoSchema) (err error) {
+func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 	defer func() {
 		_, err1 := util.Exec(h.initStatsCtx, "commit")
 		if err == nil && err1 != nil {
