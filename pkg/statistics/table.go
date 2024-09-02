@@ -807,15 +807,15 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
 // The first bool is whether we have it in memory. The second bool is whether this column has stats in the system table or not.
-func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool, bool) {
+func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool) {
 	if t.Pseudo {
-		return nil, false, false, false
+		return nil, false, false
 	}
 	// when we use non-lite init stats, it cannot init the stats for common columns.
 	// so we need to foce to load the stats.
 	col, ok := t.columns[id]
 	if !ok {
-		return nil, true, true, true
+		return nil, true, true
 	}
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
@@ -828,7 +828,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 		result := t.ColAndIdxExistenceMap.Has(id, false)
 		logutil.BgLogger().Info("fuck !hasAnalyzed column not found in table", zap.Bool("result", result), zap.Int64("columnID", id), zap.Int64("tableID", t.PhysicalID), zap.Stack("stack"))
 		// If the column is not in the ColAndIdxExistenceMap, we need to load it.
-		return nil, !result, !result, true
+		return nil, !result, !result
 	}
 
 	// Restore the condition from the simplified form:
@@ -837,7 +837,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
 
 	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
-		return col, true, true, false
+		return col, true, true
 	}
 
 	// Otherwise don't need load it.
@@ -847,7 +847,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 		zap.Bool(" col.statsInitialized", col.statsInitialized),
 		zap.Bool("ColAndIdxExistenceMap.Has", t.ColAndIdxExistenceMap.Has(id, false)),
 		zap.Int64("tableID", t.PhysicalID))
-	return col, false, true, false
+	return col, false, true
 }
 
 // IndexIsLoadNeeded checks whether the index needs trigger the async/sync load.

@@ -591,7 +591,7 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 			_, loadNeeded = tbl.IndexIsLoadNeeded(item.ID)
 		} else {
 			var analyzed bool
-			_, loadNeeded, analyzed, _ = tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
+			_, loadNeeded, analyzed = tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
 			loadNeeded = loadNeeded && analyzed
 		}
 		if !loadNeeded {
@@ -609,13 +609,13 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		return nil
 	}
 	var colInfo *model.ColumnInfo
-	_, loadNeeded, analyzed, missing := tbl.ColumnIsLoadNeeded(col.ID, true)
+	_, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(col.ID, true)
 	logutil.BgLogger().Info("fuck bug",
 		zap.Int64("tid", col.TableID),
 		zap.Bool("loadNeeded", loadNeeded),
 		zap.Bool("analyzed", analyzed),
 	)
-	if !loadNeeded || !analyzed || missing {
+	if !loadNeeded || !analyzed {
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
@@ -630,6 +630,10 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			return nil
 		}
 		colInfo = tblInfo.Meta().GetColumnByID(col.ID)
+		if colInfo == nil {
+			asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+			return nil
+		}
 		isUpdateColAndIdxExistenceMap = true
 	}
 	hg, _, statsVer, _, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
