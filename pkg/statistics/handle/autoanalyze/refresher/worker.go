@@ -65,6 +65,11 @@ func NewWorker(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.T
 func (w *worker) UpdateConcurrency(newConcurrency int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	statslogutil.StatsLogger().Info(
+		"Update concurrency",
+		zap.Int("newConcurrency", newConcurrency),
+		zap.Int("oldConcurrency", w.maxConcurrency),
+	)
 	w.maxConcurrency = newConcurrency
 }
 
@@ -79,7 +84,7 @@ func (w *worker) run() {
 				return
 			}
 			if job == nil {
-				statslogutil.StatsLogger().Info("job is nil")
+				statslogutil.StatsLogger().Warn("job is nil")
 				continue
 			}
 			w.wg.RunWithRecover(
@@ -125,6 +130,7 @@ func (w *worker) SubmitJob(job priorityqueue.AnalysisJob) bool {
 	w.mu.Unlock()
 
 	w.jobChan <- job
+	statslogutil.StatsLogger().Info("Job submitted", zap.Stringer("job", job))
 	return true
 }
 
