@@ -38,6 +38,7 @@ go_test(
     embed = [":checksum"],
     flaky = True,
     deps = [
+        "//br/pkg/backup",
         "//br/pkg/metautil",
         "//br/pkg/mock",
         "//kv",

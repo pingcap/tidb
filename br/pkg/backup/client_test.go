@@ -131,7 +131,6 @@ func TestGetTS(t *testing.T) {
 	require.Equal(t, backupts, ts)
 }
 
-<<<<<<< HEAD
 func TestBuildTableRangeIntHandle(t *testing.T) {
 	type Case struct {
 		ids []int64
@@ -311,7 +310,6 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 	checkFn(lastTS2, ts, 9)
 	checkFn(lastTS1, lastTS2, 2)
 	checkFn(lastTS3, ts, 1)
->>>>>>> eac80126da8 (backup: use history iterator to scan ddl jobs (#54100))
 }
 
 func TestSkipUnsupportedDDLJob(t *testing.T) {
