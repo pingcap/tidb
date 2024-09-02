@@ -17,6 +17,7 @@ package stmtsummary
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"math"
 	"strings"
 	"sync"
@@ -419,8 +420,8 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.SumPDTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.WaitPDRespDuration))
 	r.SumBackoffTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.BackoffDuration))
 	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
-	r.SumTidbCPU += info.ExecDetail.TidbCPUTime
-	r.SumTikvCPU += info.ExecDetail.TikvCPUTime
+	r.SumTidbCPU += info.CPUUsages.TidbCPUTime
+	r.SumTikvCPU += info.CPUUsages.TikvCPUTime
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail)
 }
@@ -683,8 +684,6 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 				},
 				CalleeAddress: "129",
 			},
-			TidbCPUTime: 20,
-			TikvCPUTime: 10000,
 		},
 		StmtCtx:           sc,
 		MemMax:            10000,
@@ -695,6 +694,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		KeyspaceID:        1,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
+		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
