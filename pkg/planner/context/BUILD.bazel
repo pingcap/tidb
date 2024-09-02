@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "context",
@@ -16,5 +16,19 @@ go_library(
         "//pkg/util/context",
         "//pkg/util/ranger/context",
         "//pkg/util/sqlexec",
+    ],
+)
+
+go_test(
+    name = "context_test",
+    timeout = "short",
+    srcs = ["context_test.go"],
+    embed = [":context"],
+    flaky = True,
+    deps = [
+        "//pkg/expression/contextstatic",
+        "//pkg/util/context",
+        "//pkg/util/deeptest",
+        "@com_github_stretchr_testify//require",
     ],
 )

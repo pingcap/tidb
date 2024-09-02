@@ -3548,3 +3548,27 @@ func TestIssue43527(t *testing.T) {
 		"SELECT @total := @total + d FROM (SELECT d FROM test) AS temp, (SELECT @total := b FROM test) AS T1 where @total >= 100",
 	).Check(testkit.Rows("200", "300", "400", "500"))
 }
+
+func TestIssue51842(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t0(c0 DOUBLE);")
+	tk.MustExec("REPLACE INTO t0(c0) VALUES (0.40194983109852933);")
+	tk.MustExec("CREATE VIEW v0(c0) AS SELECT CAST(')' AS TIME) FROM t0 WHERE '0.030417148673465677';")
+	res := tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> 1292367147;").String() // test int
+	require.Equal(t, 0, len(res))
+	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast(123988.42132 as real);").String() // test real
+	require.Equal(t, 0, len(res))
+	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast(123988.42132 as decimal);").String() // test decimal
+	require.Equal(t, 0, len(res))
+	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast('fdasge' as char);").String() // test string
+	require.Equal(t, 0, len(res))
+	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast('10:10:10' as time);").String() // test time
+	require.Equal(t, 0, len(res))
+	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast(2024 as year);").String() // test year
+	require.Equal(t, 0, len(res))
+	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast('2024-1-1 10:10:10' as datetime);").String() // test datetime
+	require.Equal(t, 0, len(res))
+}

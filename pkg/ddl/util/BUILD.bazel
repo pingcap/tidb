@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "dead_table_lock_checker.go",
         "mock.go",
+        "schema_change_notifier.go",
         "util.go",
         "watcher.go",
     ],
