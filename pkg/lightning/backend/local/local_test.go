@@ -2194,7 +2194,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 			WorkerConcurrency: 1,
 		},
 	}
-	e := &Engine{}
+	e := &Engine{regionSplitKeysCache: initRegionKeys}
 	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
