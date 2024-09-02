@@ -83,28 +83,11 @@ func (e *PipelinedWindowExec) Close() error {
 
 // Open implements the Executor Open interface
 func (e *PipelinedWindowExec) Open(ctx context.Context) (err error) {
-<<<<<<< HEAD:executor/pipelined_window.go
-	e.rowToConsume = 0
-	e.done = false
-	e.accumulated = 0
-	e.dropped = 0
-	e.data = make([]dataInfo, 0)
-	e.dataIdx = 0
-	e.slidingWindowFuncs = make([]aggfuncs.SlidingWindowAggFunc, len(e.windowFuncs))
-	for i, windowFunc := range e.windowFuncs {
-		if slidingWindowAggFunc, ok := windowFunc.(aggfuncs.SlidingWindowAggFunc); ok {
-			e.slidingWindowFuncs[i] = slidingWindowAggFunc
-		}
-	}
-	e.rows = make([]chunk.Row, 0)
-	return e.baseExecutor.Open(ctx)
-=======
 	e.done, e.newPartition, e.whole, e.initializedSlidingWindow = false, false, false, false
 	e.dataIdx, e.curRowIdx, e.dropped, e.rowToConsume, e.accumulated = 0, 0, 0, 0, 0
 	e.lastStartRow, e.lastEndRow, e.stagedStartRow, e.stagedEndRow, e.rowStart, e.rowCnt = 0, 0, 0, 0, 0, 0
 	e.rows, e.data = make([]chunk.Row, 0), make([]dataInfo, 0)
-	return e.BaseExecutor.Open(ctx)
->>>>>>> a541a4f6af1 (pkg/executor,tests: reset params in the PipelineWindow.Open (#54709)):pkg/executor/pipelined_window.go
+	return e.baseExecutor.Open(ctx)
 }
 
 func (e *PipelinedWindowExec) firstResultChunkNotReady() bool {
