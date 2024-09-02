@@ -1222,7 +1222,7 @@ func (bc *Client) handleFineGrained(
 type timeoutRecv struct {
 	wg        sync.WaitGroup
 	parentCtx context.Context
-	cancel    context.CancelCauseFunc
+	cancel    context.CancelFunc
 
 	refresh chan struct{}
 }
@@ -1258,13 +1258,13 @@ func (trecv *timeoutRecv) loop(timeout time.Duration) {
 			}
 		case <-ticker.C:
 			log.Warn("receive a backup response timeout")
-			trecv.cancel(errors.Errorf("receive a backup response timeout"))
+			trecv.cancel()
 		}
 	}
 }
 
 func StartTimeoutRecv(ctx context.Context, timeout time.Duration) (context.Context, *timeoutRecv) {
-	cctx, cancel := context.WithCancelCause(ctx)
+	cctx, cancel := context.WithCancel(ctx)
 	trecv := &timeoutRecv{
 		parentCtx: ctx,
 		cancel:    cancel,
