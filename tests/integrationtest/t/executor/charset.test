@@ -282,5 +282,6 @@ CREATE TABLE t1 (c VARCHAR(10) CHARACTER SET gb18030);
 INSERT INTO t1 VALUES (0x8BF5819AEDC3), (0x99CC), (0x90459958), (0xAA95C0E59E509AED), (0xCCE7), (0x9068), (0x90459958);
 # Because of the COLLATE, the uniqueness of HEX(c) per group is not
 # guaranteed, hence ANY_VALUE is used.
+--sorted_result
 SELECT ANY_VALUE(HEX(c)), COUNT(c) FROM t1 GROUP BY c COLLATE gb18030_chinese_ci;
 DROP TABLE t1;
