@@ -179,12 +179,6 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 
 // removeHistLoadedColumns removed having-hist columns based on neededColumns and statsCache.
 func (s *statsSyncLoad) removeHistLoadedColumns(neededItems []model.StatsLoadItem) []model.StatsLoadItem {
-	se, err := s.statsHandle.SPool().Get()
-	if err != nil {
-		return nil
-	}
-	sctx := se.(sessionctx.Context)
-	defer s.statsHandle.SPool().Put(se)
 	remainedItems := make([]model.StatsLoadItem, 0, len(neededItems))
 	for _, item := range neededItems {
 		tbl, ok := s.statsHandle.Get(item.TableID)
@@ -198,17 +192,10 @@ func (s *statsSyncLoad) removeHistLoadedColumns(neededItems []model.StatsLoadIte
 			}
 			continue
 		}
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		tblInfo, ok := s.statsHandle.TableInfoByID(is, item.TableID)
-		if !ok {
-			return nil
-		}
-
 		_, loadNeeded, _ := tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
 		if loadNeeded {
 			remainedItems = append(remainedItems, item)
 		}
-		logutil.BgLogger().Info("fuck ColumnIsLoadNeeded", zap.Int64("tid", item.TableID), zap.String("table", tblInfo.Meta().Name.String()), zap.Bool("loadNeeded", loadNeeded))
 	}
 	return remainedItems
 }
@@ -569,7 +556,6 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 			return false
 		}
 		tbl = tbl.Copy()
-		tbl.Pseudo = false
 		tbl.SetCol(item.ID, colHist)
 
 		// All the objects shares the same stats version. Update it here.
