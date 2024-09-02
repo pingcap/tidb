@@ -427,7 +427,7 @@ func (s *SyncExecDetails) mergeScanDetail(scanDetail *util.ScanDetail) {
 	s.execDetails.ScanDetail.Merge(scanDetail)
 }
 
-// mergeTimeDetail merges time details into self.
+// MergeTimeDetail merges time details into self.
 func (s *SyncExecDetails) mergeTimeDetail(timeDetail util.TimeDetail) {
 	s.execDetails.TimeDetail.ProcessTime += timeDetail.ProcessTime
 	s.execDetails.TimeDetail.WaitTime += timeDetail.WaitTime
