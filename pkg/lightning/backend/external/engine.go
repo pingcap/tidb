@@ -270,15 +270,13 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
-	readDtStartKey := e.keyAdapter.Encode(nil, startKey, common.MinRowID)
-	readDtEndKey := e.keyAdapter.Encode(nil, endKey, common.MinRowID)
 	err := readAllData(
 		ctx,
 		e.storage,
 		e.dataFiles,
 		e.statsFiles,
-		readDtStartKey,
-		readDtEndKey,
+		startKey,
+		endKey,
 		e.smallBlockBufPool,
 		e.largeBlockBufPool,
 		&e.memKVsAndBuffers,
@@ -334,12 +332,40 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	e.memKVsAndBuffers.size = 0
 
 	ranges := make([]common.Range, 0, len(jobKeys)-1)
-	for i := 0; i < len(jobKeys)-1; i++ {
-		ranges = append(ranges, common.Range{
-			Start: jobKeys[i],
-			End:   jobKeys[i+1],
-		})
+	prev, err2 := e.keyAdapter.Decode(nil, jobKeys[0])
+	if err2 != nil {
+		return err
 	}
+	for i := 1; i < len(jobKeys)-1; i++ {
+		cur, err3 := e.keyAdapter.Decode(nil, jobKeys[i])
+		if err3 != nil {
+			return err3
+		}
+		ranges = append(ranges, common.Range{
+			Start: prev,
+			End:   cur,
+		})
+		prev = cur
+	}
+	// last range key may be a nextKey so we should try to remove the trailing 0 before decode
+	nextKey := false
+	lastKey := jobKeys[len(jobKeys)-1]
+	cur, err4 := e.keyAdapter.Decode(nil, lastKey)
+	if err4 != nil && lastKey[len(lastKey)-1] == 0 {
+		nextKey = true
+		cur, err4 = e.keyAdapter.Decode(nil, lastKey[:len(lastKey)-1])
+	}
+	if err4 != nil {
+		return err4
+	}
+	if nextKey {
+		cur = kv.Key(cur).Next()
+	}
+	ranges = append(ranges, common.Range{
+		Start: prev,
+		End:   cur,
+	})
+
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
