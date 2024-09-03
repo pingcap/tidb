@@ -15,7 +15,6 @@
 package join
 
 import (
-	"fmt"
 	"sync/atomic"
 	"unsafe"
 
@@ -34,9 +33,6 @@ type subTable struct {
 }
 
 func (st *subTable) lookup(hashValue uint64) uintptr {
-	if len(st.hashTable) == 0 || st.posMask == 0 {
-		fmt.Sprintln("123")
-	}
 	return st.hashTable[hashValue&st.posMask]
 }
 

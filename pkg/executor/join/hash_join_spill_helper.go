@@ -98,7 +98,11 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	helper.spilledPartitions = make([]bool, partitionNum)
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
-	helper.validJoinKeysBuffer = make([][]byte, hashJoinExec.Concurrency)
+
+	// hashJoinExec may be nill in ut
+	if hashJoinExec != nil {
+		helper.validJoinKeysBuffer = make([][]byte, hashJoinExec.Concurrency)
+	}
 
 	helper.probeSpilledRowIdx = make([]int, 0, len(helper.probeFieldTypes)-1)
 	for i := 1; i < len(helper.probeFieldTypes); i++ {

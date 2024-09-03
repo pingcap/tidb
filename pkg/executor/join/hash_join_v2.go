@@ -612,7 +612,7 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 		close(pfAndFWSync)
 	}()
 
-	e.ProbeSideTupleFetcher.fetchProbeSideChunksImpl(
+	e.ProbeSideTupleFetcher.fetchProbeSideChunks(
 		ctx,
 		e.MaxChunkSize(),
 		func() bool { return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty() },
