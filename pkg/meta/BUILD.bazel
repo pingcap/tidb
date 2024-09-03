@@ -9,12 +9,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/meta",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/domain/resourcegroup",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/resourcegroup",
         "//pkg/structure",
         "//pkg/util/dbterror",
         "//pkg/util/hack",
