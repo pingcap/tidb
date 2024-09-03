@@ -1049,12 +1049,12 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 
 	dbInfo := &model.DBInfo{
 		ID:    10001,
-		Name:  model.NewCIStr("sc"),
+		Name:  pmodel.NewCIStr("sc"),
 		State: model.StatePublic,
 	}
 	policy := &model.PolicyInfo{
 		ID:   2,
-		Name: model.NewCIStr("policy_1"),
+		Name: pmodel.NewCIStr("policy_1"),
 		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion: "r1",
 			Regions:       "r1,r2",
@@ -1062,17 +1062,17 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	}
 	group := &model.ResourceGroupInfo{
 		ID:   3,
-		Name: model.NewCIStr("groupName_1"),
+		Name: pmodel.NewCIStr("groupName_1"),
 	}
 	tblInfo := &model.TableInfo{
 		ID:    10002,
-		Name:  model.NewCIStr("cs"),
+		Name:  pmodel.NewCIStr("cs"),
 		State: model.StatePublic,
 		ForeignKeys: []*model.FKInfo{{
 			ID:        1,
-			Name:      model.NewCIStr("fk_1"),
-			RefSchema: model.NewCIStr("t1"),
-			RefTable:  model.NewCIStr("parent"),
+			Name:      pmodel.NewCIStr("fk_1"),
+			RefSchema: pmodel.NewCIStr("t1"),
+			RefTable:  pmodel.NewCIStr("parent"),
 			Version:   1,
 		}},
 		PlacementPolicyRef: &model.PolicyRefInfo{
@@ -1082,7 +1082,7 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	}
 	tblInfo1 := &model.TableInfo{
 		ID:            10003,
-		Name:          model.NewCIStr("cs"),
+		Name:          pmodel.NewCIStr("cs"),
 		State:         model.StatePublic,
 		TempTableType: model.TempTableLocal,
 	}
