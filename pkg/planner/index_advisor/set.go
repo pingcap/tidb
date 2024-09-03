@@ -40,6 +40,7 @@ type setImpl[T SetKey] struct {
 	s map[string]T
 }
 
+// NewSet creates a new set.
 func NewSet[T SetKey]() Set[T] {
 	return new(setImpl[T])
 }
