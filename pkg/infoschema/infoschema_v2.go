@@ -648,8 +648,8 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 
 // TableItem is exported from tableItem.
 type TableItem struct {
-	DBName    model.CIStr
-	TableName model.CIStr
+	DBName    pmodel.CIStr
+	TableName pmodel.CIStr
 }
 
 // IterateAllTableItems is used for special performance optimization.
