@@ -37,3 +37,38 @@ go_test(
         "@com_github_stretchr_testify//require",
     ],
 )
+
+go_library(
+    name = "indexadvisor",
+    srcs = [
+        "model.go",
+        "optimizer.go",
+        "set.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/indexadvisor",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/infoschema",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/planner/util/fixcontrol",
+        "//pkg/sessionctx",
+        "//pkg/types",
+    ],
+)
+
+go_test(
+    name = "indexadvisor_test",
+    srcs = [
+        "optimizer_test.go",
+        "set_test.go",
+    ],
+    embed = [":indexadvisor"],
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)
