@@ -85,8 +85,19 @@ type Table struct {
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
 type ColAndIdxExistenceMap struct {
+	checked     bool
 	colAnalyzed map[int64]bool
 	idxAnalyzed map[int64]bool
+}
+
+// Checked returns whether the map has been checked.
+func (m *ColAndIdxExistenceMap) Checked() bool {
+	return m.checked
+}
+
+// Checked returns whether the map has been checked.
+func (m *ColAndIdxExistenceMap) SetChecked() {
+	m.checked = true
 }
 
 // HasAnalyzed checks whether a column/index stats exists and it has stats.
