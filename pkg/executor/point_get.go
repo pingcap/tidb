@@ -637,17 +637,6 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		// fallthrough to snapshot get.
 	}
 
-	lock := e.tblInfo.Lock
-	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
-		if e.Ctx().GetSessionVars().EnablePointGetCache {
-			cacheDB := e.Ctx().GetStore().GetMemCache()
-			val, err = cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
-			if err != nil {
-				return nil, err
-			}
-			return val, nil
-		}
-	}
 	// if not read lock or table was unlock then snapshot get
 	return e.snapshot.Get(ctx, key)
 }
