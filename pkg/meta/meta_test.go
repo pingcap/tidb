@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -1036,4 +1037,94 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	require.NotNil(t, tbl)
 	require.NotNil(t, db)
 	require.NotNil(t, pDef)
+}
+
+func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	dbInfo := &model.DBInfo{
+		ID:    10001,
+		Name:  model.NewCIStr("sc"),
+		State: model.StatePublic,
+	}
+	policy := &model.PolicyInfo{
+		ID:   2,
+		Name: model.NewCIStr("policy_1"),
+		PlacementSettings: &model.PlacementSettings{
+			PrimaryRegion: "r1",
+			Regions:       "r1,r2",
+		},
+	}
+	group := &model.ResourceGroupInfo{
+		ID:   3,
+		Name: model.NewCIStr("groupName_1"),
+	}
+	tblInfo := &model.TableInfo{
+		ID:    10002,
+		Name:  model.NewCIStr("cs"),
+		State: model.StatePublic,
+		ForeignKeys: []*model.FKInfo{{
+			ID:        1,
+			Name:      model.NewCIStr("fk_1"),
+			RefSchema: model.NewCIStr("t1"),
+			RefTable:  model.NewCIStr("parent"),
+			Version:   1,
+		}},
+		PlacementPolicyRef: &model.PolicyRefInfo{
+			ID:   policy.ID,
+			Name: policy.Name,
+		},
+	}
+	tblInfo1 := &model.TableInfo{
+		ID:            10003,
+		Name:          model.NewCIStr("cs"),
+		State:         model.StatePublic,
+		TempTableType: model.TempTableLocal,
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := m.CreatePolicy(policy)
+		require.NoError(t, err)
+		err = m.AddResourceGroup(group)
+		require.NoError(t, err)
+		err = m.CreateDatabase(dbInfo)
+		require.NoError(t, err)
+		err = m.CreateTableOrView(dbInfo.ID, tblInfo)
+		require.NoError(t, err)
+		err = m.CreateTableOrView(dbInfo.ID, tblInfo1)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	// bootstrap
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+	is := dom.InfoSchema()
+	tbl, ok := is.TableByID(context.Background(), 10002)
+	require.True(t, ok)
+	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
+	// placement policy
+	policy1 := is.AllPlacementPolicies()
+	require.Equal(t, len(policy1), 1)
+	require.Equal(t, policy1[0].Name, policy.Name)
+	// resource group
+	group1 := is.AllResourceGroups()
+	require.Equal(t, len(group1), 2)
+	sort.Slice(group1, func(i, j int) bool {
+		return group1[i].Name.L < group1[j].Name.L
+	})
+	require.Equal(t, group1[1].Name, group.Name)
+	// referred foreign key
+	referredFk := is.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
+	require.Equal(t, len(referredFk), 1)
+	require.Equal(t, referredFk[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
+	// temp table
+	require.True(t, is.HasTemporaryTable())
 }
