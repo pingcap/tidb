@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -502,11 +503,51 @@ func TestBuildExpression(t *testing.T) {
 	require.Equal(t, types.KindInt64, v.Kind())
 	require.Equal(t, int64(7), v.GetInt64())
 
+	// user variable needs required option
+	_, err = buildExpr(t, ctx, "@a")
+	require.EqualError(t, err, "rewriting user variable requires 'OptPropSessionVars' in evalCtx")
+	_, err = buildExpr(t, ctx, "@a := 1")
+	require.EqualError(t, err, "rewriting user variable requires 'OptPropSessionVars' in evalCtx")
+
+	// reading user var
+	vars := variable.NewSessionVars(nil)
+	vars.TimeZone = evalCtx.Location()
+	vars.StmtCtx.SetTimeZone(vars.Location())
+	evalCtx = evalCtx.Apply(contextstatic.WithOptionalProperty(
+		contextopt.NewSessionVarsProvider(vars),
+	))
+	ctx = ctx.Apply(contextstatic.WithEvalCtx(evalCtx))
+	vars.SetUserVarVal("a", types.NewStringDatum("abc"))
+	getVarExpr, err := buildExpr(t, ctx, "@a")
+	require.NoError(t, err)
+	v, err = getVarExpr.Eval(evalCtx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.KindString, v.Kind())
+	require.Equal(t, "abc", v.GetString())
+
+	// writing user var
+	expr, err = buildExpr(t, ctx, "@a := 'def'")
+	require.NoError(t, err)
+	v, err = expr.Eval(evalCtx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.KindString, v.Kind())
+	require.Equal(t, "def", v.GetString())
+	v, err = getVarExpr.Eval(evalCtx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.KindString, v.Kind())
+	require.Equal(t, "def", v.GetString())
+
 	// should report error for default expr when source table not provided
 	_, err = buildExpr(t, ctx, "default(b)", expression.WithInputSchemaAndNames(schema, names, nil))
 	require.EqualError(t, err, "Unsupported expr *ast.DefaultExpr when source table not provided")
 
 	// subquery not supported
 	_, err = buildExpr(t, ctx, "a + (select b from t)", expression.WithTableInfo("", tbl))
-	require.EqualError(t, err, "node '*ast.SubqueryExpr' is not allowed when building an expression without planner")
+	require.EqualError(t, err, "planCtx is required when rewriting node: '*ast.SubqueryExpr'")
+
+	// system variables are not supported
+	_, err = buildExpr(t, ctx, "@@tidb_enable_async_commit")
+	require.EqualError(t, err, "planCtx is required when rewriting node: '*ast.VariableExpr', accessing system variable requires plan context")
+	_, err = buildExpr(t, ctx, "@@global.tidb_enable_async_commit")
+	require.EqualError(t, err, "planCtx is required when rewriting node: '*ast.VariableExpr', accessing system variable requires plan context")
 }

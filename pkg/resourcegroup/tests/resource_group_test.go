@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package resourcegrouptest_test
+package tests
 
 import (
 	"context"
@@ -288,9 +288,9 @@ func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name stri
 }
 
 func TestResourceGroupRunaway(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/FastRunawayGC", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/FastRunawayGC"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -361,23 +361,23 @@ func TestResourceGroupRunaway(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest"))
 
 	tk.MustExec("create resource group rg4 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprAfterReq", fmt.Sprintf("return(%d)", 50)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/sleepCoprAfterReq", fmt.Sprintf("return(%d)", 50)))
 	tk.MustQuery("select /*+ resource_group(rg4) */ * from t").Check(testkit.Rows("1"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprAfterReq"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/sleepCoprAfterReq"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprAfterReq", fmt.Sprintf("return(%d)", 60)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/sleepCoprAfterReq", fmt.Sprintf("return(%d)", 60)))
 	err = tk.QueryToErr("select /*+ resource_group(rg4) */ * from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
 	tk.MustGetErrCode("select /*+ resource_group(rg4) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch", nil,
 		testkit.Rows("rg3 select /*+ resource_group(rg3) */ * from t", "rg4 select /*+ resource_group(rg4) */ * from t"), maxWaitDuration, tryInterval)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprAfterReq"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/sleepCoprAfterReq"))
 }
 
 func TestResourceGroupRunawayExceedTiDBSide(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/FastRunawayGC", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/FastRunawayGC"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)

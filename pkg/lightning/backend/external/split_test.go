@@ -64,11 +64,12 @@ func TestGeneralProperties(t *testing.T) {
 	require.NoError(t, err)
 	multiFileStat := mockOneMultiFileStat(dataFiles, statFiles)
 	splitter, err := NewRangeSplitter(
-		ctx, multiFileStat, memStore, 1000, 30, 1000, 1,
+		ctx, multiFileStat, memStore, 1000, 30, 1000, 1, 35, 1000,
 	)
+	require.NoError(t, err)
 	var lastEndKey []byte
 notExhausted:
-	endKey, dataFiles, statFiles, splitKeys, err := splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 
 	// endKey should be strictly greater than lastEndKey
@@ -82,19 +83,25 @@ notExhausted:
 	lenStatFiles := len(statFiles)
 	require.Equal(t, lenDataFiles, lenStatFiles)
 	require.Greater(t, lenDataFiles, 0)
-	if len(splitKeys) > 0 {
-		// splitKeys should be strictly increasing
-		for i := 1; i < len(splitKeys); i++ {
-			cmp := bytes.Compare(splitKeys[i], splitKeys[i-1])
-			require.Equal(t, 1, cmp, "splitKeys: %v", splitKeys)
-		}
-		// first splitKeys should be strictly greater than lastEndKey
-		cmp := bytes.Compare(splitKeys[0], lastEndKey)
-		require.Equal(t, 1, cmp, "splitKeys: %v, lastEndKey: %v", splitKeys, lastEndKey)
-		// last splitKeys should be strictly less than endKey
-		if endKey != nil {
-			cmp = bytes.Compare(splitKeys[len(splitKeys)-1], endKey)
-			require.Equal(t, -1, cmp, "splitKeys: %v, endKey: %v", splitKeys, endKey)
+
+	for _, toCheck := range []struct {
+		varName string
+		keys    [][]byte
+	}{{"rangeJobKeys", rangeJobKeys}, {"regionSplitKeys", regionSplitKeys}} {
+		if len(toCheck.keys) > 0 {
+			// keys should be strictly increasing
+			for i := 1; i < len(toCheck.keys); i++ {
+				cmp := bytes.Compare(toCheck.keys[i], toCheck.keys[i-1])
+				require.Equal(t, 1, cmp, "%s: %v", toCheck.varName, toCheck.keys)
+			}
+			// first splitKeys should be strictly greater than lastEndKey
+			cmp := bytes.Compare(toCheck.keys[0], lastEndKey)
+			require.Equal(t, 1, cmp, "%s: %v, lastEndKey: %v", toCheck.varName, toCheck.keys, lastEndKey)
+			// last splitKeys should be strictly less than endKey
+			if endKey != nil {
+				cmp = bytes.Compare(toCheck.keys[len(toCheck.keys)-1], endKey)
+				require.Equal(t, -1, cmp, "%s: %v, endKey: %v", toCheck.varName, toCheck.keys, endKey)
+			}
 		}
 	}
 
@@ -124,27 +131,29 @@ func TestOnlyOneGroup(t *testing.T) {
 	multiFileStat := mockOneMultiFileStat(dataFiles, statFiles)
 
 	splitter, err := NewRangeSplitter(
-		ctx, multiFileStat, memStore, 1000, 30, 1000, 10,
+		ctx, multiFileStat, memStore, 1000, 30, 1000, 10, int64(math.MaxInt64), int64(math.MaxInt64),
 	)
 	require.NoError(t, err)
-	endKey, dataFiles, statFiles, splitKeys, err := splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
 	require.Len(t, dataFiles, 1)
 	require.Len(t, statFiles, 1)
-	require.Len(t, splitKeys, 0)
+	require.Len(t, rangeJobKeys, 0)
+	require.Len(t, regionSplitKeys, 0)
 	require.NoError(t, splitter.Close())
 
 	splitter, err = NewRangeSplitter(
-		ctx, multiFileStat, memStore, 1000, 30, 1000, 1,
+		ctx, multiFileStat, memStore, 1000, 30, 1000, 1, int64(math.MaxInt64), int64(math.MaxInt64),
 	)
 	require.NoError(t, err)
-	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
 	require.Len(t, dataFiles, 1)
 	require.Len(t, statFiles, 1)
-	require.Equal(t, [][]byte{{2}}, splitKeys)
+	require.Equal(t, [][]byte{{2}}, rangeJobKeys)
+	require.Len(t, regionSplitKeys, 0)
 	require.NoError(t, splitter.Close())
 }
 
@@ -170,12 +179,12 @@ func TestSortedData(t *testing.T) {
 
 	multiFileStat := mockOneMultiFileStat(dataFiles, statFiles)
 	splitter, err := NewRangeSplitter(
-		ctx, multiFileStat, memStore, 1000, int64(rangesGroupKV), 1000, 10,
+		ctx, multiFileStat, memStore, 1000, int64(rangesGroupKV), 1000, 10, int64(math.MaxInt64), int64(math.MaxInt64),
 	)
 	require.NoError(t, err)
 
 notExhausted:
-	endKey, dataFiles, statFiles, _, err := splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, _, _, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.LessOrEqual(t, len(dataFiles), groupFileNumUpperBound)
 	require.LessOrEqual(t, len(statFiles), groupFileNumUpperBound)
@@ -254,60 +263,66 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	multiFileStat := []MultipleFilesStat{multi[0], multi2[0]}
 	// group keys = 2, region keys = 1
 	splitter, err := NewRangeSplitter(
-		ctx, multiFileStat, memStore, 1000, 2, 1000, 1,
+		ctx, multiFileStat, memStore, 1000, 2, 1000, 1, 1000, 1,
 	)
 	require.NoError(t, err)
 
 	// [key01, key03), split at key02
-	endKey, dataFiles, statFiles, splitKeys, err := splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key03"), endKey)
 	require.Equal(t, []string{"/mock-test/1/0", "/mock-test/2/0"}, dataFiles)
 	require.Equal(t, []string{"/mock-test/1_stat/0", "/mock-test/2_stat/0"}, statFiles)
-	require.Equal(t, [][]byte{[]byte("key02")}, splitKeys)
+	require.Equal(t, [][]byte{[]byte("key02")}, rangeJobKeys)
+	require.Equal(t, [][]byte{[]byte("key02")}, regionSplitKeys)
 
 	// [key03, key12), split at key11
-	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key12"), endKey)
 	require.Equal(t, []string{"/mock-test/1/0", "/mock-test/2/0", "/mock-test/3/0"}, dataFiles)
 	require.Equal(t, []string{"/mock-test/1_stat/0", "/mock-test/2_stat/0", "/mock-test/3_stat/0"}, statFiles)
-	require.Equal(t, [][]byte{[]byte("key11")}, splitKeys)
+	require.Equal(t, [][]byte{[]byte("key11")}, rangeJobKeys)
+	require.Equal(t, [][]byte{[]byte("key11")}, regionSplitKeys)
 
 	// [key12, key21), split at key13. the last key of "/mock-test/1/0" is "key11",
 	// so it's not used
-	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key21"), endKey)
 	require.Equal(t, []string{"/mock-test/2/0", "/mock-test/3/0"}, dataFiles)
 	require.Equal(t, []string{"/mock-test/2_stat/0", "/mock-test/3_stat/0"}, statFiles)
-	require.Equal(t, [][]byte{[]byte("key13")}, splitKeys)
+	require.Equal(t, [][]byte{[]byte("key13")}, rangeJobKeys)
+	require.Equal(t, [][]byte{[]byte("key13")}, regionSplitKeys)
 
 	// [key21, key23), split at key22.
 	// the last key of "/mock-test/2/0" is "key12", and the last key of "/mock-test/3/0" is "key13",
 	// so they are not used
-	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key23"), endKey)
 	require.Equal(t, []string{"/mock-test/1/1", "/mock-test/2/1"}, dataFiles)
 	require.Equal(t, []string{"/mock-test/1_stat/1", "/mock-test/2_stat/1"}, statFiles)
-	require.Equal(t, [][]byte{[]byte("key22")}, splitKeys)
+	require.Equal(t, [][]byte{[]byte("key22")}, rangeJobKeys)
+	require.Equal(t, [][]byte{[]byte("key22")}, regionSplitKeys)
 
 	// [key23, nil), no split key
-	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
 	require.Equal(t, []string{"/mock-test/3/1"}, dataFiles)
 	require.Equal(t, []string{"/mock-test/3_stat/1"}, statFiles)
-	require.Len(t, splitKeys, 0)
+	require.Len(t, rangeJobKeys, 0)
+	require.Len(t, regionSplitKeys, 0)
 
 	// read after drain all data
-	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
 	require.Len(t, dataFiles, 0)
 	require.Len(t, statFiles, 0)
-	require.Len(t, splitKeys, 0)
+	require.Len(t, rangeJobKeys, 0)
+	require.Len(t, regionSplitKeys, 0)
 	require.NoError(t, splitter.Close())
 }
 
@@ -337,27 +352,29 @@ func TestExactlyKeyNum(t *testing.T) {
 
 	// maxRangeKeys = 3
 	splitter, err := NewRangeSplitter(
-		ctx, multiFileStat, memStore, 1000, 100, 1000, 3,
+		ctx, multiFileStat, memStore, 1000, 100, 1000, 3, 1000, 3,
 	)
 	require.NoError(t, err)
-	endKey, splitDataFiles, splitStatFiles, splitKeys, err := splitter.SplitOneRangesGroup()
+	endKey, splitDataFiles, splitStatFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
 	require.Equal(t, dataFiles, splitDataFiles)
 	require.Equal(t, statFiles, splitStatFiles)
-	require.Len(t, splitKeys, 0)
+	require.Len(t, rangeJobKeys, 0)
+	require.Len(t, regionSplitKeys, 0)
 
 	// rangesGroupKeys = 3
 	splitter, err = NewRangeSplitter(
-		ctx, multiFileStat, memStore, 1000, 3, 1000, 1,
+		ctx, multiFileStat, memStore, 1000, 3, 1000, 1, 1000, 2,
 	)
 	require.NoError(t, err)
-	endKey, splitDataFiles, splitStatFiles, splitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, splitDataFiles, splitStatFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
 	require.Equal(t, dataFiles, splitDataFiles)
 	require.Equal(t, statFiles, splitStatFiles)
-	require.Equal(t, [][]byte{[]byte("key001"), []byte("key002")}, splitKeys)
+	require.Equal(t, [][]byte{[]byte("key001"), []byte("key002")}, rangeJobKeys)
+	require.Equal(t, [][]byte{[]byte("key002")}, regionSplitKeys)
 }
 
 func Test3KFilesRangeSplitter(t *testing.T) {
@@ -481,11 +498,13 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 		int64(math.MaxInt64),
 		int64(config.SplitRegionSize),
 		int64(config.SplitRegionKeys),
+		int64(math.MaxInt64),
+		int64(math.MaxInt64),
 	)
 	require.NoError(t, err)
 	var lastEndKey []byte
 	for {
-		endKey, _, statFiles, _, err := splitter.SplitOneRangesGroup()
+		endKey, _, statFiles, _, _, err := splitter.SplitOneRangesGroup()
 		require.NoError(t, err)
 		require.Greater(t, len(statFiles), 0)
 		if endKey == nil {

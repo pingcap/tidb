@@ -768,13 +768,13 @@ func (b *builtinCastRealAsIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 		}
 
 		if !unsigned {
-			i64s[i], err = types.ConvertFloatToInt(f64s[i], types.IntergerSignedLowerBound(mysql.TypeLonglong), types.IntergerSignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+			i64s[i], err = types.ConvertFloatToInt(f64s[i], types.IntegerSignedLowerBound(mysql.TypeLonglong), types.IntegerSignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		} else if b.inUnion && f64s[i] < 0 {
 			i64s[i] = 0
 		} else {
 			var uintVal uint64
 			tc := typeCtx(ctx)
-			uintVal, err = types.ConvertFloatToUint(tc.Flags(), f64s[i], types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+			uintVal, err = types.ConvertFloatToUint(tc.Flags(), f64s[i], types.IntegerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 			i64s[i] = int64(uintVal)
 		}
 		if types.ErrOverflow.Equal(err) {

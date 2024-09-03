@@ -19,18 +19,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -855,4 +858,273 @@ func benchFastJSONTableNameInfo(b *testing.B, sql string) {
 		intest.Assert(tbInfo.ID == 1)
 		intest.Assert(tbInfo.Name.L == "t")
 	}
+}
+
+func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	// create database
+	dbInfo := &model.DBInfo{
+		ID:    10001,
+		Name:  model.NewCIStr("sc"),
+		State: model.StatePublic,
+	}
+
+	// create table with special attributes
+	tblInfo := &model.TableInfo{
+		ID:    10002,
+		Name:  model.NewCIStr("cs"),
+		State: model.StatePublic,
+		Partition: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{
+				{ID: 11, Name: model.NewCIStr("p1")},
+				{ID: 22, Name: model.NewCIStr("p2")},
+			},
+			Enable: true,
+		},
+		ForeignKeys: []*model.FKInfo{{
+			ID:       1,
+			Name:     model.NewCIStr("fk"),
+			RefTable: model.NewCIStr("t"),
+			RefCols:  []model.CIStr{model.NewCIStr("a")},
+			Cols:     []model.CIStr{model.NewCIStr("t_a")},
+		}},
+		TiFlashReplica: &model.TiFlashReplicaInfo{
+			Count:          0,
+			LocationLabels: []string{"a,b,c"},
+			Available:      true,
+		},
+		Lock: &model.TableLockInfo{
+			Tp:    model.TableLockRead,
+			State: model.TableLockStatePreLock,
+			TS:    0,
+		},
+		PlacementPolicyRef: &model.PolicyRefInfo{
+			ID:   1,
+			Name: model.NewCIStr("r1"),
+		},
+		TTLInfo: &model.TTLInfo{
+			IntervalExprStr:  "1",
+			IntervalTimeUnit: int(ast.TimeUnitDay),
+			Enable:           true,
+			JobInterval:      "1h",
+		},
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		require.NoError(t, err)
+		err = meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	// bootstrap
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+
+	// verify partition info correctness
+	tblInfoRes := dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.Partition, tblInfoRes[0].TableInfos[0].Partition)
+	// foreign key info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.ForeignKeysAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.ForeignKeys, tblInfoRes[0].TableInfos[0].ForeignKeys)
+	// tiflash replica info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.TiFlashReplica, tblInfoRes[0].TableInfos[0].TiFlashReplica)
+	// lock info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TableLockAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.Lock, tblInfoRes[0].TableInfos[0].Lock)
+	// placement policy
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PlacementPolicyAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.PlacementPolicyRef, tblInfoRes[0].TableInfos[0].PlacementPolicyRef)
+	// ttl info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.TTLInfo, tblInfoRes[0].TableInfos[0].TTLInfo)
+}
+
+func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	// create database
+	dbInfo := &model.DBInfo{
+		ID:      10001,
+		Name:    model.NewCIStr("sc"),
+		Charset: "utf8",
+		Collate: "utf8_general_ci",
+		State:   model.StatePublic,
+	}
+
+	// create table with partition info
+	tblInfo := &model.TableInfo{
+		ID:      10002,
+		Name:    model.NewCIStr("cs"),
+		Charset: "latin1",
+		Collate: "latin1_bin",
+		State:   model.StatePublic,
+		Partition: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{
+				{ID: 1, Name: model.NewCIStr("p1")},
+			},
+			Enable: true,
+		},
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		require.NoError(t, err)
+		err = meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	// bootstrap
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+
+	is := dom.InfoSchema()
+	//byID, traverse byID and load from store
+	tbl, ok := is.TableByID(context.Background(), 10002)
+	require.True(t, ok)
+	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
+
+	//byName, traverse byName and load from store,
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("sc"), model.NewCIStr("cs"))
+	require.NoError(t, err)
+	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
+
+	//tableCache, table info exists in cache now, just use id to seek
+	tbl, ok = is.TableByID(context.Background(), 10002)
+	require.True(t, ok)
+	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
+
+	//schemaMap, traverse schemaMap find dbInfo
+	db, ok := is.SchemaByName(model.NewCIStr("sc"))
+	require.True(t, ok)
+	require.Equal(t, db.ID, dbInfo.ID)
+
+	//schemaID2Name, traverse schemaID2Name find dbInfo
+	db, ok = is.SchemaByID(dbInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, db.ID, dbInfo.ID)
+
+	//pid2tid, traverse pid2tid find tblInfo, dbInfo and partition info
+	tbl, ok = is.TableByID(context.Background(), 10002)
+	require.True(t, ok)
+	require.Equal(t, len(tbl.Meta().GetPartitionInfo().Definitions), 1)
+	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
+	tbl, db, pDef := is.FindTableByPartitionID(pid)
+	require.NotNil(t, tbl)
+	require.NotNil(t, db)
+	require.NotNil(t, pDef)
+}
+
+func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	dbInfo := &model.DBInfo{
+		ID:    10001,
+		Name:  model.NewCIStr("sc"),
+		State: model.StatePublic,
+	}
+	policy := &model.PolicyInfo{
+		ID:   2,
+		Name: model.NewCIStr("policy_1"),
+		PlacementSettings: &model.PlacementSettings{
+			PrimaryRegion: "r1",
+			Regions:       "r1,r2",
+		},
+	}
+	group := &model.ResourceGroupInfo{
+		ID:   3,
+		Name: model.NewCIStr("groupName_1"),
+	}
+	tblInfo := &model.TableInfo{
+		ID:    10002,
+		Name:  model.NewCIStr("cs"),
+		State: model.StatePublic,
+		ForeignKeys: []*model.FKInfo{{
+			ID:        1,
+			Name:      model.NewCIStr("fk_1"),
+			RefSchema: model.NewCIStr("t1"),
+			RefTable:  model.NewCIStr("parent"),
+			Version:   1,
+		}},
+		PlacementPolicyRef: &model.PolicyRefInfo{
+			ID:   policy.ID,
+			Name: policy.Name,
+		},
+	}
+	tblInfo1 := &model.TableInfo{
+		ID:            10003,
+		Name:          model.NewCIStr("cs"),
+		State:         model.StatePublic,
+		TempTableType: model.TempTableLocal,
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := m.CreatePolicy(policy)
+		require.NoError(t, err)
+		err = m.AddResourceGroup(group)
+		require.NoError(t, err)
+		err = m.CreateDatabase(dbInfo)
+		require.NoError(t, err)
+		err = m.CreateTableOrView(dbInfo.ID, tblInfo)
+		require.NoError(t, err)
+		err = m.CreateTableOrView(dbInfo.ID, tblInfo1)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	// bootstrap
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+	is := dom.InfoSchema()
+	tbl, ok := is.TableByID(context.Background(), 10002)
+	require.True(t, ok)
+	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
+	// placement policy
+	policy1 := is.AllPlacementPolicies()
+	require.Equal(t, len(policy1), 1)
+	require.Equal(t, policy1[0].Name, policy.Name)
+	// resource group
+	group1 := is.AllResourceGroups()
+	require.Equal(t, len(group1), 2)
+	sort.Slice(group1, func(i, j int) bool {
+		return group1[i].Name.L < group1[j].Name.L
+	})
+	require.Equal(t, group1[1].Name, group.Name)
+	// referred foreign key
+	referredFk := is.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
+	require.Equal(t, len(referredFk), 1)
+	require.Equal(t, referredFk[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
+	// temp table
+	require.True(t, is.HasTemporaryTable())
 }

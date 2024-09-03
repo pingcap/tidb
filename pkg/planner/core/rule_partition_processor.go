@@ -1211,7 +1211,7 @@ func minCmp(ctx base.PlanContext, lowVal []types.Datum, columnsPruner *rangeColu
 							return false
 						}
 					} else {
-						if con.Value.GetInt64() == types.IntergerSignedLowerBound(col.GetStaticType().GetType()) {
+						if con.Value.GetInt64() == types.IntegerSignedLowerBound(col.GetStaticType().GetType()) {
 							return false
 						}
 					}
