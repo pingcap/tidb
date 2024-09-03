@@ -90,7 +90,7 @@ func mapTableToFiles(files []*backuppb.File) (map[int64][]*backuppb.File, int) {
 	return result, maxSplitKeyCount
 }
 
-// fileterOutFiles filter out files that exists in the checkpoint set.
+// filterOutFiles filters out files that exist in the checkpoint set.
 func filterOutFiles(checkpointSet map[string]struct{}, files []*backuppb.File, updateCh glue.Progress) []*backuppb.File {
 	progress := int(0)
 	totalKVs := uint64(0)
@@ -119,6 +119,8 @@ func filterOutFiles(checkpointSet map[string]struct{}, files []*backuppb.File, u
 	return newFiles
 }
 
+// If there are many tables with only a few rows, the number of merged SSTs will be too large.
+// So set a threshold to avoid it.
 const MergedRangeCountThreshold = 1536
 
 // SortAndValidateFileRanges sort, merge and validate files by tables and yields tables with range.
@@ -301,20 +303,20 @@ func (rc *SnapClient) RestoreTables(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("[Restore Stage Duration] Merge ranges", zap.Duration("take", time.Since(start)))
+	log.Info("Restore Stage Duration", zap.String("stage", "merge ranges"), zap.Duration("take", time.Since(start)))
 
 	start = time.Now()
 	if err = rc.SplitPoints(ctx, sortedSplitKeys, updateCh, false); err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("[Restore Stage Duration] Split regions", zap.Duration("take", time.Since(start)))
+	log.Info("Restore Stage Duration", zap.String("stage", "split regions"), zap.Duration("take", time.Since(start)))
 
 	start = time.Now()
 	if err = rc.RestoreSSTFiles(ctx, tableIDWithFilesGroup, updateCh); err != nil {
 		return errors.Trace(err)
 	}
 	elapsed := time.Since(start)
-	log.Info("[Restore Stage Duration] Restore files", zap.Duration("take", elapsed))
+	log.Info("Restore Stage Duration", zap.String("stage", "restore files"), zap.Duration("take", elapsed))
 
 	summary.CollectSuccessUnit("files", len(allFiles), elapsed)
 	return nil
