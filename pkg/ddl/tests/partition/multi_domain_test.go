@@ -190,3 +190,44 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
 	postFn(tkO)
 }
+
+// TODO: Test that TRUNCATE PARTITION without global index is a single state change!
+
+// TestMultiSchemaTruncatePartitionWithGlobalIndex to show behavior when
+// truncating a partition with a global index
+func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
+	createSQL := `create table t (a int primary key, b varchar(255), unique key uk_b (b) global) partition by hash (a) partitions 2`
+	initFn := func(tkO *testkit.TestKit) {
+		tkO.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4)`)
+	}
+	alterSQL := `alter table t truncate partition p1`
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
+		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
+		schemaState := res.Rows()[0][0].(string)
+		switch schemaState {
+		case "delete only":
+			// Still in Schema version before ALTER, not affected
+			tkNO.MustExec(`insert into t values (5,5)`)
+			// now in Schema state "delete only"
+			// OK with duplicate key, but otherwise it should allow any insert!
+			// TODO: FIXME
+			tkO.MustContainErrMsg(`insert into t values (5,5)`, "[ddl:8210]the partition is in not in public")
+			tkO.MustContainErrMsg(`insert into t values (7,7)`, "[ddl:8210]the partition is in not in public")
+			// TODO: Add tests for update/delete as well as index lookup and table scan!
+		case "delete reorganization":
+			tkNO.MustContainErrMsg(`insert into t values (5,5)`, "[ddl:8210]the partition is in not in public")
+			tkO.MustContainErrMsg(`insert into t values (5,5)`, "[ddl:8210]the partition is in not in public")
+			tkNO.MustContainErrMsg(`insert into t values (9,9)`, "[ddl:8210]the partition is in not in public")
+			tkO.MustContainErrMsg(`insert into t values (11,11)`, "[ddl:8210]the partition is in not in public")
+		case "none":
+			tkNO.MustContainErrMsg(`insert into t values (5,5)`, "[ddl:8210]the partition is in not in public")
+			tkO.MustExec(`insert into t values (5,5)`)
+			tkNO.MustContainErrMsg(`insert into t values (13,13)`, "[ddl:8210]the partition is in not in public")
+			tkO.MustExec(`insert into t values (15,15)`)
+		default:
+			require.Failf(t, "unhandled schema state '%s'", schemaState)
+		}
+	}
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, func(kit *testkit.TestKit) {}, loopFn)
+}
