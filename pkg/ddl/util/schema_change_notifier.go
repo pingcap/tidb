@@ -28,10 +28,10 @@ import (
 // to retrieve the needed information.
 type SchemaChangeEvent struct {
 	// todo: field and method will be added in the next few pr on demand
-	tp model.ActionType
-
 	newTableInfo *model.TableInfo
 	oldTableInfo *model.TableInfo
+
+	tp model.ActionType
 }
 
 // String implements fmt.Stringer interface.
