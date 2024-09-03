@@ -759,16 +759,6 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	}
 
 	skipMissingPartitionStats := sc.GetSessionVars().SkipMissingPartitionStats
-	if sc.GetSessionVars().InRestrictedSQL {
-		// For AutoAnalyze and HandleDDLEvent(ActionDropTablePartition), we need to use @@global.tidb_skip_missing_partition_stats
-		val, err1 := sc.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
-		if err1 != nil {
-			logutil.BgLogger().Error("loading tidb_skip_missing_partition_stats failed", zap.Error(err1))
-			err = err1
-			return
-		}
-		skipMissingPartitionStats = variable.TiDBOptOn(val)
-	}
 	for _, def := range globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
 		h.mu.Lock()
@@ -886,7 +876,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 
 		// Update NDV of global-level stats
 		globalStats.Fms[i] = allFms[i][0].Copy()
-		for j := 1; j < partitionNum; j++ {
+		for j := 1; j < len(allFms[i]); j++ {
 			if globalStats.Fms[i] == nil {
 				globalStats.Fms[i] = allFms[i][j].Copy()
 			} else {
