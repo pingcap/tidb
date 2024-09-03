@@ -832,7 +832,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
-	if (it.concurrency + it.smallTaskConcurrency) > 1 {
+	if (it.concurrency + it.smallTaskConcurrency) <= 1 {
 		it.noConcurrent = true
 		return
 	}
