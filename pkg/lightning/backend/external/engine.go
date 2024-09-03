@@ -391,6 +391,7 @@ func (e *Engine) LoadIngestData(
 		regionBatchSize = val.(int)
 	})
 	for start := 0; start < len(e.jobKeys)-1; start += regionBatchSize {
+		// want to generate N ranges, so we need N+1 keys
 		end := min(1+start+regionBatchSize, len(e.jobKeys))
 		err := e.loadBatchRegionData(ctx, e.jobKeys[start:end], outCh)
 		if err != nil {

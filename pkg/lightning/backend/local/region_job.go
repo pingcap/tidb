@@ -148,7 +148,7 @@ func newRegionJob(
 	regionSplitKeys int64,
 	metrics *metric.Common,
 ) *regionJob {
-	log.L().Debug("get region",
+	log.L().Debug("new region job",
 		zap.Binary("jobStart", jobStart),
 		zap.Binary("jobEnd", jobEnd),
 		zap.Uint64("id", region.Region.GetId()),
