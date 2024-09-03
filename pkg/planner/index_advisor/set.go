@@ -66,7 +66,7 @@ func (s *setImpl[T]) ToList() []T {
 	if s == nil {
 		return nil
 	}
-	var list []T
+	list := make([]T, 0, len(s.s))
 	for _, v := range s.s {
 		list = append(list, v)
 	}
@@ -94,7 +94,7 @@ func (s *setImpl[T]) Clone() Set[T] {
 }
 
 func (s *setImpl[T]) String() string {
-	var items []string
+	items := make([]string, 0, len(s.s))
 	for _, item := range s.s {
 		items = append(items, item.Key())
 	}

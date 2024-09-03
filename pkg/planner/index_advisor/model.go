@@ -43,12 +43,13 @@ type Column struct {
 
 // NewColumn creates a new column.
 func NewColumn(schemaName, tableName, columnName string) Column {
-	return Column{SchemaName: strings.ToLower(schemaName), TableName: strings.ToLower(tableName), ColumnName: strings.ToLower(columnName)}
+	return Column{SchemaName: strings.ToLower(schemaName),
+		TableName: strings.ToLower(tableName), ColumnName: strings.ToLower(columnName)}
 }
 
 // NewColumns creates new columns.
 func NewColumns(schemaName, tableName string, columnNames ...string) []Column {
-	var cols []Column
+	cols := make([]Column, 0, len(columnNames))
 	for _, col := range columnNames {
 		cols = append(cols, NewColumn(schemaName, tableName, col))
 	}
@@ -70,7 +71,8 @@ type Index struct {
 
 // NewIndex creates a new index.
 func NewIndex(schemaName, tableName, indexName string, columns ...string) Index {
-	return Index{SchemaName: strings.ToLower(schemaName), TableName: strings.ToLower(tableName), IndexName: strings.ToLower(indexName), Columns: NewColumns(schemaName, tableName, columns...)}
+	return Index{SchemaName: strings.ToLower(schemaName), TableName: strings.ToLower(tableName),
+		IndexName: strings.ToLower(indexName), Columns: NewColumns(schemaName, tableName, columns...)}
 }
 
 // NewIndexWithColumns creates a new index with columns.
@@ -84,7 +86,7 @@ func NewIndexWithColumns(indexName string, columns ...Column) Index {
 
 // Key returns the key of the index.
 func (i Index) Key() string {
-	var names []string
+	names := make([]string, 0, len(i.Columns))
 	for _, col := range i.Columns {
 		names = append(names, col.ColumnName)
 	}
@@ -130,20 +132,19 @@ func (c IndexSetCost) Less(other IndexSetCost) bool {
 		return c.TotalNumberOfIndexColumns < other.TotalNumberOfIndexColumns
 	}
 
-	// if they have the same cost and the same number of columns, then use the IndexKeysStr to compare to make the result stable.
+	// to make the result stable.
 	return c.IndexKeysStr < other.IndexKeysStr
 }
 
 // ImpactedQuery represents the impacted query.
 type ImpactedQuery struct {
-	Query            string
-	Improvement      float64
-	CostSavingPerMon float64
+	Query       string
+	Improvement float64
 }
 
+// WorkloadImpact represents the workload impact.
 type WorkloadImpact struct {
-	WorkloadImprovement  float64
-	WorkloadSavingPerMon float64
+	WorkloadImprovement float64
 }
 
 // IndexAdvisorResult represents the result of the index advisor.
