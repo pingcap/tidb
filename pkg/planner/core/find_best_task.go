@@ -1138,7 +1138,7 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 	}
 
 	// Limit range scan preferencing to pseudo and zero row tables
-	preferByVar := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() && (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount <= 1)
+	preferByVar := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() && (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1)
 	// If we've forced an index merge - we want to keep these plans
 	preferMerge := len(ds.IndexMergeHints) > 0 || fixcontrol.GetBoolWithDefault(
 		ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
