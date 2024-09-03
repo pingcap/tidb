@@ -456,7 +456,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 	if !skipHistoryJobs {
 		// For the similar reason, we can only use schema_name and table_name to do filtering here.
 		m := meta.NewMeta(txn)
-		e.historyJobIter, err = ddl.GetLastHistoryDDLJobsIteratorWithFilter(m, schemaNames, tableNames)
+		e.historyJobIter, err = m.GetLastHistoryDDLJobsIteratorWithFilter(schemaNames, tableNames)
 		if err != nil {
 			return err
 		}
