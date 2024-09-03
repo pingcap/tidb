@@ -2,6 +2,8 @@ module github.com/pingcap/tidb
 
 go 1.21
 
+replace github.com/pingcap/kvproto => github.com/JmPotato/kvproto v0.0.0-20240902075629-a78bb9432b34
+
 require (
 	cloud.google.com/go/storage v1.38.0
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.12.0

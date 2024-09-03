@@ -781,6 +781,7 @@ import (
 	substring             "SUBSTRING"
 	sum                   "SUM"
 	survivalPreferences   "SURVIVAL_PREFERENCES"
+	switchGroup           "SWITCH_GROUP"
 	target                "TARGET"
 	taskTypes             "TASK_TYPES"
 	tidbJson              "TIDB_JSON"
@@ -1818,6 +1819,13 @@ ResourceGroupRunawayActionOption:
 |	"KILL"
 	{
 		$$ = &ast.ResourceGroupRunawayActionOption{Type: model.RunawayActionKill}
+	}
+|	"SWITCH_GROUP" '(' ResourceGroupName ')'
+	{
+		$$ = &ast.ResourceGroupRunawayActionOption{
+			Type:            model.RunawayActionSwitchGroup,
+			SwitchGroupName: model.NewCIStr($3),
+		}
 	}
 
 DirectResourceGroupRunawayOption:
@@ -7209,6 +7217,7 @@ NotKeywordToken:
 |	"EXEC_ELAPSED"
 |	"DRYRUN"
 |	"COOLDOWN"
+|	"SWITCH_GROUP"
 |	"WATCH"
 |	"SIMILAR"
 |	"QUERY_LIMIT"

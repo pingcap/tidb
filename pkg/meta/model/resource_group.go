@@ -26,6 +26,7 @@ import (
 type ResourceGroupRunawaySettings struct {
 	ExecElapsedTimeMs uint64                  `json:"exec_elapsed_time_ms"`
 	Action            model.RunawayActionType `json:"action"`
+	SwitchGroupName   string                  `json:"switch_group_name"`
 	WatchType         model.RunawayWatchType  `json:"watch_type"`
 	WatchDurationMs   int64                   `json:"watch_duration_ms"`
 }
