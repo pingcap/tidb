@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -568,12 +569,12 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	truncateTableEvent := statsutil.NewTruncateTableEvent(
-		job.SchemaID,
-		tblInfo,
-		oldTblInfo,
-	)
-	asyncNotifyEvent(jobCtx, truncateTableEvent)
+	if !tidb_util.IsMemOrSysDB(job.SchemaName) {
+		truncateTableEvent := &statsutil.DDLEvent{
+			SchemaChangeEvent: util.NewTruncateTableEvent(tblInfo, oldTblInfo),
+		}
+		asyncNotifyEvent(jobCtx, truncateTableEvent)
+	}
 	startKey := tablecodec.EncodeTablePrefix(tableID)
 	job.Args = []any{startKey, oldPartitionIDs}
 	return ver, nil
