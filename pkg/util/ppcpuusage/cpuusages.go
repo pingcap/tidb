@@ -38,6 +38,13 @@ func (c *CPUUsages) Reset() {
 	c.TidbCPUTime = 0
 }
 
+// SetCPUUsages sets cpu usages value
+func (c *SQLCPUUsages) SetCPUUsages(usage CPUUsages) {
+	c.Lock()
+	defer c.Unlock()
+	c.cpuUsages = usage
+}
+
 // MergeTidbCPUTime merges tidbCPU time into self when sqlID matches
 // Checks sqlID here, because tidb cpu time can only be collected by profiler now, and updated in concurrent goroutines
 func (c *SQLCPUUsages) MergeTidbCPUTime(sqlID uint64, d time.Duration) {

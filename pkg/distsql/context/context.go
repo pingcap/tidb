@@ -106,7 +106,9 @@ func (dctx *DistSQLContext) Detach() *DistSQLContext {
 	// cursor, so that it's still good to provide at least one way to stop it.
 	// In the future, we should provide a more constant behavior for killing the cursor.
 	newCtx.SQLKiller = dctx.SQLKiller
-	newCtx.CPUUsage = dctx.CPUUsage
+	newCPUUsages := new(ppcpuusage.SQLCPUUsages)
+	newCPUUsages.SetCPUUsages(dctx.CPUUsage.GetCPUUsages())
+	newCtx.CPUUsage = newCPUUsages
 	newCtx.KVVars = new(tikvstore.Variables)
 	*newCtx.KVVars = *dctx.KVVars
 	newCtx.KVVars.Killed = &newCtx.SQLKiller.Signal
