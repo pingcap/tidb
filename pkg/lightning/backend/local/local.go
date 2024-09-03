@@ -1020,13 +1020,13 @@ func (local *Backend) generateJobForRange(
 	sortedJobRanges []common.Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
-	startOffAllRanges, endOfAllRanges := sortedJobRanges[0].Start, sortedJobRanges[len(sortedJobRanges)-1].End
+	startOfAllRanges, endOfAllRanges := sortedJobRanges[0].Start, sortedJobRanges[len(sortedJobRanges)-1].End
 
 	failpoint.Inject("fakeRegionJobs", func() {
 		if ctx.Err() != nil {
 			failpoint.Return(nil, ctx.Err())
 		}
-		key := [2]string{string(startOffAllRanges), string(endOfAllRanges)}
+		key := [2]string{string(startOfAllRanges), string(endOfAllRanges)}
 		injected := fakeRegionJobs[key]
 		// overwrite the stage to regionScanned, because some time same sortedJobRanges
 		// will be generated more than once.
@@ -1036,7 +1036,7 @@ func (local *Backend) generateJobForRange(
 		failpoint.Return(injected.jobs, injected.err)
 	})
 
-	pairStart, pairEnd, err := data.GetFirstAndLastKey(startOffAllRanges, endOfAllRanges)
+	pairStart, pairEnd, err := data.GetFirstAndLastKey(startOfAllRanges, endOfAllRanges)
 	if err != nil {
 		return nil, err
 	}
@@ -1046,7 +1046,7 @@ func (local *Backend) generateJobForRange(
 			logFn = log.FromContext(ctx).Warn
 		}
 		logFn("There is no pairs in range",
-			logutil.Key("startOffAllRanges", startOffAllRanges),
+			logutil.Key("startOfAllRanges", startOfAllRanges),
 			logutil.Key("endOfAllRanges", endOfAllRanges))
 		// trigger cleanup
 		data.IncRef()
@@ -1068,7 +1068,7 @@ func (local *Backend) generateJobForRange(
 	jobs := newRegionJobs(regions, data, sortedJobRanges, regionSplitSize, regionSplitKeys, local.metrics)
 	log.FromContext(ctx).Info("generate region jobs",
 		zap.Int("len(jobs)", len(jobs)),
-		zap.String("startOfAllRanges", hex.EncodeToString(startOffAllRanges)),
+		zap.String("startOfAllRanges", hex.EncodeToString(startOfAllRanges)),
 		zap.String("endOfAllRanges", hex.EncodeToString(endOfAllRanges)),
 		zap.String("startKeyOfFirstRegion", hex.EncodeToString(regions[0].Region.GetStartKey())),
 		zap.String("endKeyOfLastRegion", hex.EncodeToString(regions[len(regions)-1].Region.GetEndKey())),
