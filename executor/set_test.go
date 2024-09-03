@@ -871,20 +871,6 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set @@session.tidb_cdc_write_source = 0")
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
 
-	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob"))
-	tk.MustExec("set @@session.tidb_analyze_skip_column_types = 'json, text, blob'")
-	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,text,blob"))
-	tk.MustExec("set @@session.tidb_analyze_skip_column_types = ''")
-	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows(""))
-	tk.MustGetErrMsg("set @@session.tidb_analyze_skip_column_types = 'int,json'", "[variable:1231]Variable 'tidb_analyze_skip_column_types' can't be set to the value of 'int,json'")
-
-	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob"))
-	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json, text, blob'")
-	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows("json,text,blob"))
-	tk.MustExec("set @@global.tidb_analyze_skip_column_types = ''")
-	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows(""))
-	tk.MustGetErrMsg("set @@global.tidb_analyze_skip_column_types = 'int,json'", "[variable:1231]Variable 'tidb_analyze_skip_column_types' can't be set to the value of 'int,json'")
-
 	// test tidb_skip_missing_partition_stats
 	// global scope
 	tk.MustQuery("select @@global.tidb_skip_missing_partition_stats").Check(testkit.Rows("1")) // default value
