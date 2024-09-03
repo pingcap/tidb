@@ -363,11 +363,14 @@ func NewTiDBBackend(
 		log.FromContext(ctx).Warn("unsupported conflict strategy for TiDB backend, overwrite with `error`")
 		onDuplicate = config.ErrorOnDup
 	}
-	stmtCache := kvcache.NewSimpleLRUCache(prepStmtCacheSize, 0, 0)
-	stmtCache.SetOnEvict(func(_ kvcache.Key, value kvcache.Value) {
-		stmt := value.(*sql.Stmt)
-		stmt.Close()
-	})
+	var stmtCache *kvcache.SimpleLRUCache
+	if cfg.TikvImporter.LogicalImportPrepStmt {
+		stmtCache = kvcache.NewSimpleLRUCache(prepStmtCacheSize, 0, 0)
+		stmtCache.SetOnEvict(func(_ kvcache.Key, value kvcache.Value) {
+			stmt := value.(*sql.Stmt)
+			stmt.Close()
+		})
+	}
 	return &tidbBackend{
 		db:             db,
 		conflictCfg:    conflict,
