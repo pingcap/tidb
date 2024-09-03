@@ -199,7 +199,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 	testkit.SkipIfFailpointDisabled(t)
 	createSQL := `create table t (a int primary key, b varchar(255), c varchar(255) default 'Filler', unique key uk_b (b) global) partition by hash (a) partitions 2`
 	initFn := func(tkO *testkit.TestKit) {
-		tkO.MustExec(`insert into t (a,b) values (1,1),(2,2),(3,3),(4,4)`)
+		tkO.MustExec(`insert into t (a,b) values (1,1),(2,2),(3,3),(4,4),(51,51),(53,53),(55,55)`)
 	}
 	alterSQL := `alter table t truncate partition p1`
 	loopFn := func(tkO, tkNO *testkit.TestKit) {
@@ -240,14 +240,23 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 		case "delete reorganization":
 			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 			tkO.MustExec(`insert into t values (1,1,"OK")`)
+			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate")`, "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
+			// TODO: This should not be allowed :(
+			// OK, so we cannot just remove duplicates, we do need to read them first!!!
+			tkO.MustExec(`insert into t values (3,1,"Duplicate")`)
+			//tkO.MustContainErrMsg(`insert into t values (3,1,"Duplicate")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 			tkO.MustContainErrMsg(`insert into t values (10,7,"Duplicate key")`, "[kv:1062]Duplicate entry '7' for key 't.uk_b'")
 			tkNO.MustExec(`insert into t values (11,11,"OK")`)
 			tkNO.MustContainErrMsg(`insert into t values (12,9,"Duplicate key")`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
 			tkNO.MustContainErrMsg(`insert into t values (9,9,"Duplicate key")`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
 			tkNO.MustContainErrMsg(`insert into t values (11,11,"Duplicate key")`, "[kv:1062]Duplicate entry '11' for key 't.uk_b'")
 			tkO.MustExec(`insert into t values (13,13,"OK")`)
-			// This should not be allowed!!!
 			tkO.MustContainErrMsg(`insert into t values (14,13,"Duplicate key")`, "[kv:1062]Duplicate entry '13' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`update t set b = 51 where a = 11`, "[kv:1062]Duplicate entry '51' for key 't.uk_b'")
+			tkNO.MustExec(`update t set a = 51 where b = 11`)
+			// TODO: This should be possible!
+			//tkO.MustExec(`update t set b = 53 where a = 13`)
+			tkO.MustExec(`update t set a = 53 where b = 13`)
 		case "none":
 			tkNO.MustExec(`insert into t values (5,5,"OK")`)
 			tkO.MustContainErrMsg(`insert into t values (5,5,"Duplicate key")`, "[kv:1062]Duplicate entry '5' for key 't.uk_b'")
