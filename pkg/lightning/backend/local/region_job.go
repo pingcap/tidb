@@ -197,7 +197,7 @@ func newRegionJobs(
 	_, curRegionEnd, _ = codec.DecodeBytes(curRegion.EndKey, nil)
 
 	for _, jobRange := range sortedJobRanges {
-		// build the job and move to next region for these the cases:
+		// build the job and move to next region for these cases:
 		//
 		// --region--)           or   -----region--)
 		// -------job range--)        --job range--)

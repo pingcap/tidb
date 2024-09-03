@@ -347,7 +347,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 		})
 		prev = cur
 	}
-	// last range key may be a nextKey so we should try to remove the trailing 0 before decode
+	// last range key may be a nextKey so we should try to remove the trailing 0 if decoding failed
 	nextKey := false
 	lastKey := jobKeys[len(jobKeys)-1]
 	cur, err4 := e.keyAdapter.Decode(nil, lastKey)
