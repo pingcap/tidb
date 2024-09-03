@@ -322,6 +322,26 @@ func (t *TableInfo) FindIndexByName(idxName string) *IndexInfo {
 	return nil
 }
 
+// FindColumnByID finds ColumnInfo by id.
+func (t *TableInfo) FindColumnByID(id int64) *ColumnInfo {
+	for _, col := range t.Columns {
+		if col.ID == id {
+			return col
+		}
+	}
+	return nil
+}
+
+// FindIndexByID finds index by id.
+func (t *TableInfo) FindIndexByID(id int64) *IndexInfo {
+	for _, idx := range t.Indices {
+		if idx.ID == id {
+			return idx
+		}
+	}
+	return nil
+}
+
 // FindPublicColumnByName finds the public column by name.
 func (t *TableInfo) FindPublicColumnByName(colNameL string) *ColumnInfo {
 	for _, col := range t.Cols() {

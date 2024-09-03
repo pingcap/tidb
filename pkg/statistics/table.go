@@ -90,6 +90,16 @@ type ColAndIdxExistenceMap struct {
 	idxAnalyzed map[int64]bool
 }
 
+// DeleteColAnalyzed deletes the column with the given id.
+func (m *ColAndIdxExistenceMap) DeleteColAnalyzed(id int64) {
+	delete(m.colAnalyzed, id)
+}
+
+// DeleteIdxAnalyzed deletes the index with the given id.
+func (m *ColAndIdxExistenceMap) DeleteIdxAnalyzed(id int64) {
+	delete(m.idxAnalyzed, id)
+}
+
 // Checked returns whether the map has been checked.
 func (m *ColAndIdxExistenceMap) Checked() bool {
 	return m.checked
@@ -342,6 +352,15 @@ func (coll *HistColl) StableOrderColSlice() []*Column {
 	return cols
 }
 
+// GetColSlice returns a slice of columns without order.
+func (coll *HistColl) GetColSlice() []*Column {
+	cols := make([]*Column, 0, len(coll.columns))
+	for _, col := range coll.columns {
+		cols = append(cols, col)
+	}
+	return cols
+}
+
 // StableOrderIdxSlice returns a slice of indices in stable order.
 func (coll *HistColl) StableOrderIdxSlice() []*Index {
 	idxs := make([]*Index, 0, len(coll.indices))
@@ -351,6 +370,15 @@ func (coll *HistColl) StableOrderIdxSlice() []*Index {
 	slices.SortFunc(idxs, func(i1, i2 *Index) int {
 		return cmp.Compare(i1.ID, i2.ID)
 	})
+	return idxs
+}
+
+// GetIdxSlice returns a slice of indices without order.
+func (coll *HistColl) GetIdxSlice() []*Index {
+	idxs := make([]*Index, 0, len(coll.indices))
+	for _, idx := range coll.indices {
+		idxs = append(idxs, idx)
+	}
 	return idxs
 }
 
@@ -797,6 +825,9 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if !ok {
 		return nil, true, true
 	}
+	if t.ColAndIdxExistenceMap.Checked() {
+		return nil, true, true
+	}
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
@@ -823,7 +854,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 	idx, ok := t.indices[id]
 	// If the index is not in the memory, and we have its stats in the storage. We need to trigger the load.
-	if !ok && t.ColAndIdxExistenceMap.HasAnalyzed(id, true) {
+	if !ok && (t.ColAndIdxExistenceMap.HasAnalyzed(id, true) || !t.ColAndIdxExistenceMap.Checked()) {
 		return nil, true
 	}
 	// If the index is in the memory, we check its embedded func.

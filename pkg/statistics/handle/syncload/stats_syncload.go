@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -332,11 +333,6 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		} else {
 			// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
 			// so we have to get the column info from the domain.
-			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-			tblInfo, ok = s.statsHandle.TableInfoByID(is, item.TableID)
-			if !ok {
-				return nil
-			}
 			wrapper.colInfo = tblInfo.Meta().GetColumnByID(item.ID)
 		}
 		// If this column is not analyzed yet and we don't have it in memory.
@@ -348,7 +344,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 				Histogram:  *statistics.NewHistogram(item.ID, 0, 0, 0, &wrapper.colInfo.FieldType, 0, 0),
 				IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
 			}
-			s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+			s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 			return nil
 		}
 	}
@@ -369,7 +365,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 	if needUpdate {
-		s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+		s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 	}
 	return nil
 }
@@ -542,7 +538,7 @@ func (*statsSyncLoad) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, r
 }
 
 // updateCachedItem updates the column/index hist to global statsCache.
-func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
+func (s *statsSyncLoad) updateCachedItem(tblInfo table.Table, item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
 	s.StatsLoad.Lock()
 	defer s.StatsLoad.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
@@ -550,6 +546,22 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 	tbl, ok := s.statsHandle.Get(item.TableID)
 	if !ok {
 		return false
+	}
+	if !tbl.ColAndIdxExistenceMap.Checked() {
+		tbl = tbl.Copy()
+		for _, col := range tbl.HistColl.GetColSlice() {
+			if tblInfo.Meta().FindColumnByID(col.ID) == nil {
+				tbl.HistColl.DelCol(col.ID)
+				tbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
+			}
+		}
+		for _, idx := range tbl.HistColl.GetIdxSlice() {
+			if tblInfo.Meta().FindIndexByID(idx.ID) == nil {
+				tbl.HistColl.DelIdx(idx.ID)
+				tbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
+			}
+		}
+		tbl.ColAndIdxExistenceMap.SetChecked()
 	}
 	if !item.IsIndex && colHist != nil {
 		c := tbl.GetCol(item.ID)
