@@ -326,7 +326,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 
 	e.waiterWg = util.WaitGroupWrapper{}
-	e.closeCh = make(chan struct{}, 1)
+	e.closeCh = make(chan struct{})
 	e.buildFetcherFinishCh = make(chan struct{}, 1)
 	e.finished.Store(false)
 
