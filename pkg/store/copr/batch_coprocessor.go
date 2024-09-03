@@ -16,7 +16,6 @@ package copr
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -114,7 +113,7 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 	return rs.respTime
 }
 
-func deepCopyStoreTaskMap(storeTaskMap map[uint64]*batchCopTask) map[uint64]*batchCopTask {
+func deepCopyStoreTaskMap(storeTaskMap map[uint64]*batchCopTask, avgRegionsNum int) map[uint64]*batchCopTask {
 	storeTasks := make(map[uint64]*batchCopTask)
 	for storeID, task := range storeTaskMap {
 		t := batchCopTask{
@@ -122,7 +121,7 @@ func deepCopyStoreTaskMap(storeTaskMap map[uint64]*batchCopTask) map[uint64]*bat
 			cmdType:   task.cmdType,
 			ctx:       task.ctx,
 		}
-		t.regionInfos = make([]RegionInfo, len(task.regionInfos))
+		t.regionInfos = make([]RegionInfo, len(task.regionInfos), len(task.regionInfos)+avgRegionsNum)
 		copy(t.regionInfos, task.regionInfos)
 		storeTasks[storeID] = &t
 	}
@@ -146,25 +145,24 @@ const (
 // If selected[i] is true, candidateRegionInfos[i] has been selected and should be skip.
 // storeID2RegionIndex is a map that key is storeID and value is a region index slice.
 // selectRegion use storeID2RegionIndex to find RegionInfos that belong to storeID efficiently.
-func selectRegion(storeID uint64, candidateRegionInfos []RegionInfo, selected []bool, storeID2RegionIndex map[uint64][]int, cnt int64) []RegionInfo {
+func selectRegion(storeID uint64, candidateRegionInfos []RegionInfo, selected []bool, storeID2RegionIndex map[uint64][]int, cnt int64, regionInfosBuffer []RegionInfo) []RegionInfo {
 	regionIndexes, ok := storeID2RegionIndex[storeID]
 	if !ok {
 		logutil.BgLogger().Error("selectRegion: storeID2RegionIndex not found", zap.Uint64("storeID", storeID))
 		return nil
 	}
-	var regionInfos []RegionInfo
 	i := 0
-	for ; i < len(regionIndexes) && len(regionInfos) < int(cnt); i++ {
+	for ; i < len(regionIndexes) && len(regionInfosBuffer) < int(cnt); i++ {
 		idx := regionIndexes[i]
 		if selected[idx] {
 			continue
 		}
 		selected[idx] = true
-		regionInfos = append(regionInfos, candidateRegionInfos[idx])
+		regionInfosBuffer = append(regionInfosBuffer, candidateRegionInfos[idx])
 	}
 	// Remove regions that has been selected.
 	storeID2RegionIndex[storeID] = regionIndexes[i:]
-	return regionInfos
+	return regionInfosBuffer
 }
 
 // Higher scores mean more balance: (100 - unblance percentage)
@@ -206,7 +204,7 @@ func checkBatchCopTaskBalance(storeTasks map[uint64]*batchCopTask, balanceContin
 // balanceBatchCopTaskWithContinuity try to balance `continuous regions` between TiFlash Stores.
 // In fact, not absolutely continuous is required, regions' range are closed to store in a TiFlash segment is enough for internal read optimization.
 //
-// First, sort candidateRegionInfos by their key ranges.
+// First, the caller should guarantee the candidateRegionInfos is ordered.
 // Second, build a storeID2RegionIndex data structure to fastly locate regions of a store (avoid scanning candidateRegionInfos repeatedly).
 // Third, each store will take balanceContinuousRegionCount from the sorted candidateRegionInfos. These regions are stored very close to each other in TiFlash.
 // Fourth, if the region count is not balance between TiFlash, it may fallback to the original balance logic.
@@ -216,17 +214,7 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 	}
 	funcStart := time.Now()
 	regionCount := regionTotalCount(storeTaskMap, candidateRegionInfos)
-	storeTasks := deepCopyStoreTaskMap(storeTaskMap)
-
-	// Sort regions by their key ranges.
-	slices.SortFunc(candidateRegionInfos, func(i, j RegionInfo) int {
-		// Special case: Sort empty ranges to the end.
-		if i.Ranges.Len() < 1 || j.Ranges.Len() < 1 {
-			return cmp.Compare(j.Ranges.Len(), i.Ranges.Len())
-		}
-		// StartKey0 < StartKey1
-		return bytes.Compare(i.Ranges.At(0).StartKey, j.Ranges.At(0).StartKey)
-	})
+	storeTasks := deepCopyStoreTaskMap(storeTaskMap, len(candidateRegionInfos)/len(storeTaskMap))
 
 	balanceStart := time.Now()
 	// Build storeID -> region index slice index and we can fastly locate regions of a store.
@@ -243,16 +231,17 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 
 	// If selected[i] is true, candidateRegionInfos[i] is selected by a store and should skip it in selectRegion.
 	selected := make([]bool, len(candidateRegionInfos))
+	regionInfosBuffer := make([]RegionInfo, 0, balanceContinuousRegionCount)
 	for {
 		totalCount := 0
 		selectCountThisRound := 0
 		for storeID, task := range storeTasks {
 			// Each store select balanceContinuousRegionCount regions from candidateRegionInfos.
 			// Since candidateRegionInfos is sorted, it is very likely that these regions are close to each other in TiFlash.
-			regionInfo := selectRegion(storeID, candidateRegionInfos, selected, storeID2RegionIndex, balanceContinuousRegionCount)
-			task.regionInfos = append(task.regionInfos, regionInfo...)
+			regionInfosBuffer = selectRegion(storeID, candidateRegionInfos, selected, storeID2RegionIndex, balanceContinuousRegionCount, regionInfosBuffer[:0])
+			task.regionInfos = append(task.regionInfos, regionInfosBuffer...)
 			totalCount += len(task.regionInfos)
-			selectCountThisRound += len(regionInfo)
+			selectCountThisRound += len(regionInfosBuffer)
 		}
 		if totalCount >= regionCount {
 			break
@@ -304,7 +293,7 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 //
 // The second balance strategy: Not only consider the region count between TiFlash stores, but also try to make the regions' range continuous(stored in TiFlash closely).
 // If balanceWithContinuity is true, the second balance strategy is enable.
-func balanceBatchCopTask(aliveStores []*tikv.Store, originalTasks []*batchCopTask, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
+func balanceBatchCopTask(aliveStores []*tikv.Store, originalTasks []*batchCopTask, balanceWithContinuity bool, balanceContinuousRegionCount int64, allRegionInfos []RegionInfo) []*batchCopTask {
 	if len(originalTasks) == 0 {
 		log.Info("Batch cop task balancer got an empty task set.")
 		return originalTasks
@@ -324,47 +313,45 @@ func balanceBatchCopTask(aliveStores []*tikv.Store, originalTasks []*batchCopTas
 		}
 	}
 
-	var candidateRegionInfos []RegionInfo
-	for _, task := range originalTasks {
-		for _, ri := range task.regionInfos {
-			// for each region, figure out the valid store num
-			validStoreNum := 0
-			var validStoreID uint64
-			for _, storeID := range ri.AllStores {
-				if _, ok := storeTaskMap[storeID]; ok {
-					validStoreNum++
-					// original store id might be invalid, so we have to set it again.
-					validStoreID = storeID
-				}
+	var candidateRegionInfos []RegionInfo = make([]RegionInfo, 0, len(allRegionInfos))
+	for _, ri := range allRegionInfos {
+		// for each region, figure out the valid store num
+		validStoreNum := 0
+		var validStoreID uint64
+		for _, storeID := range ri.AllStores {
+			if _, ok := storeTaskMap[storeID]; ok {
+				validStoreNum++
+				// original store id might be invalid, so we have to set it again.
+				validStoreID = storeID
 			}
-			if validStoreNum == 0 {
-				logutil.BgLogger().Warn("Meet regions that don't have an available store. Give up balancing")
-				return originalTasks
-			} else if validStoreNum == 1 {
-				// if only one store is valid, just put it to storeTaskMap
-				storeTaskMap[validStoreID].regionInfos = append(storeTaskMap[validStoreID].regionInfos, ri)
-			} else {
-				// if more than one store is valid, put the region
-				// to store candidate map
-				totalRegionCandidateNum += validStoreNum
-				totalRemainingRegionNum++
-				candidateRegionInfos = append(candidateRegionInfos, ri)
-				taskKey := ri.Region.String()
-				for _, storeID := range ri.AllStores {
-					if _, validStore := storeTaskMap[storeID]; !validStore {
-						continue
-					}
-					if _, ok := storeCandidateRegionMap[storeID]; !ok {
-						candidateMap := make(map[string]RegionInfo)
-						storeCandidateRegionMap[storeID] = candidateMap
-					}
-					if _, duplicateRegion := storeCandidateRegionMap[storeID][taskKey]; duplicateRegion {
-						// duplicated region, should not happen, just give up balance
-						logutil.BgLogger().Warn("Meet duplicated region info during when trying to balance batch cop task, give up balancing")
-						return originalTasks
-					}
-					storeCandidateRegionMap[storeID][taskKey] = ri
+		}
+		if validStoreNum == 0 {
+			logutil.BgLogger().Warn("Meet regions that don't have an available store. Give up balancing")
+			return originalTasks
+		} else if validStoreNum == 1 {
+			// if only one store is valid, just put it to storeTaskMap
+			storeTaskMap[validStoreID].regionInfos = append(storeTaskMap[validStoreID].regionInfos, ri)
+		} else {
+			// if more than one store is valid, put the region
+			// to store candidate map
+			totalRegionCandidateNum += validStoreNum
+			totalRemainingRegionNum++
+			candidateRegionInfos = append(candidateRegionInfos, ri)
+			taskKey := ri.Region.String()
+			for _, storeID := range ri.AllStores {
+				if _, validStore := storeTaskMap[storeID]; !validStore {
+					continue
 				}
+				if _, ok := storeCandidateRegionMap[storeID]; !ok {
+					candidateMap := make(map[string]RegionInfo)
+					storeCandidateRegionMap[storeID] = candidateMap
+				}
+				if _, duplicateRegion := storeCandidateRegionMap[storeID][taskKey]; duplicateRegion {
+					// duplicated region, should not happen, just give up balance
+					logutil.BgLogger().Warn("Meet duplicated region info during when trying to balance batch cop task, give up balancing")
+					return originalTasks
+				}
+				storeCandidateRegionMap[storeID][taskKey] = ri
 			}
 		}
 	}
@@ -929,6 +916,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 
 	for {
 		var tasks []*copTask
+		var tasksForPartitions [][]*copTask = make([][]*copTask, len(rangesForEachPhysicalTable))
 		rangesLen = 0
 		for i, ranges := range rangesForEachPhysicalTable {
 			rangesLen += ranges.Len()
@@ -936,14 +924,32 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			tasksForPartitions[i] = make([]*copTask, 0, len(locations))
 			for _, lo := range locations {
-				tasks = append(tasks, &copTask{
+				tasksForPartitions[i] = append(tasksForPartitions[i], &copTask{
 					region:         lo.Location.Region,
 					ranges:         lo.Ranges,
 					cmdType:        cmdType,
 					storeType:      storeType,
 					partitionIndex: int64(i),
 				})
+			}
+		}
+		if len(tasksForPartitions) == 1 {
+			tasks = tasksForPartitions[0]
+		} else {
+			slices.SortFunc(tasksForPartitions, func(a, b []*copTask) int {
+				if len(a) == 0 {
+					return -1
+				}
+				if len(b) == 0 {
+					return 1
+				}
+				return a[0].ranges.RefAt(0).StartKey.Cmp(b[0].ranges.RefAt(0).StartKey)
+			})
+			// The ranges corresponding to each partiton do not intersect, so we can merge tasks directly
+			for _, tasksForPartition := range tasksForPartitions {
+				tasks = append(tasks, tasksForPartition...)
 			}
 		}
 
@@ -999,6 +1005,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		var batchTasks []*batchCopTask
 		var regionIDsInOtherZones []uint64
 		var regionInfosNeedReloadOnSendFail []RegionInfo
+		var allRegionInfos []RegionInfo
 		storeTaskMap := make(map[string]*batchCopTask)
 		storeIDsUnionSetForAllTasks := make(map[uint64]struct{})
 		for idx, task := range tasks {
@@ -1022,6 +1029,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			for _, storeID := range regionInfo.AllStores {
 				storeIDsUnionSetForAllTasks[storeID] = struct{}{}
 			}
+			allRegionInfos = append(allRegionInfos, regionInfo)
 		}
 
 		if len(regionIDsInOtherZones) != 0 {
@@ -1051,7 +1059,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				storesUnionSetForAllTasks = append(storesUnionSetForAllTasks, store)
 			}
 		}
-		batchTasks = balanceBatchCopTask(storesUnionSetForAllTasks, batchTasks, balanceWithContinuity, balanceContinuousRegionCount)
+		batchTasks = balanceBatchCopTask(storesUnionSetForAllTasks, batchTasks, balanceWithContinuity, balanceContinuousRegionCount, allRegionInfos)
 		balanceElapsed := time.Since(balanceStart)
 		if log.GetLevel() <= zap.DebugLevel {
 			msg := "After region balance:"

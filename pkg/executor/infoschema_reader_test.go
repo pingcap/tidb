@@ -489,6 +489,69 @@ func TestTiFlashSystemTableWithTiFlashV640(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
+func TestTablesTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	type tableMeta struct {
+		schema string
+		table  string
+		id     string
+	}
+	toString := func(tm *tableMeta) string {
+		return fmt.Sprintf("%s %s %s", tm.schema, tm.table, tm.id)
+	}
+
+	// prepare data
+	tableMetas := []*tableMeta{}
+	schemaNames := []string{"db1", "db2"}
+	tableNames := []string{"t1", "t2"}
+	tk.MustExec("create database db1")
+	tk.MustExec("create database db2")
+	for _, schemaName := range schemaNames {
+		for _, tableName := range tableNames {
+			tk.MustExec(fmt.Sprintf("create table %s.%s (a int)", schemaName, tableName))
+			res := tk.MustQuery(fmt.Sprintf("select tidb_table_id from information_schema.tables where table_schema = '%s' and table_name = '%s'", schemaName, tableName))
+			// [db1 t1 id0, db1 t2 id1, db2 t1 id2, db2 t2 id3]
+			tableMetas = append(tableMetas, &tableMeta{schema: schemaName, table: tableName, id: res.String()})
+		}
+	}
+
+	// Predicates are extracted in CNF, so we separate the test cases by the number of disjunctions in the predicate.
+
+	// predicate covers one disjunction
+	tk.MustQuery(`select table_schema, table_name, tidb_table_id from information_schema.tables
+		where table_schema = 'db1'`).Sort().Check(testkit.Rows(toString(tableMetas[0]), toString(tableMetas[1])))
+	tk.MustQuery(`select table_schema, table_name, tidb_table_id from information_schema.tables
+		where table_name = 't2'`).Sort().Check(testkit.Rows(toString(tableMetas[1]), toString(tableMetas[3])))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where tidb_table_id = %s", tableMetas[2].id)).Check(
+		testkit.Rows(toString(tableMetas[2])))
+
+	// cover two disjunctions
+	tk.MustQuery(`select table_schema, table_name, tidb_table_id from information_schema.tables
+		where table_schema = 'db1' and table_name = 't2'`).Check(testkit.Rows(toString(tableMetas[1])))
+	tk.MustQuery(`select table_schema, table_name, tidb_table_id from information_schema.tables
+		where table_schema in ('db1', 'db2') and table_name = 't2'`).Sort().Check(testkit.Rows(toString(tableMetas[1]), toString(tableMetas[3])))
+	tk.MustQuery(`select table_schema, table_name, tidb_table_id from information_schema.tables
+		where (table_schema = 'db1' or table_schema = 'db2' ) and table_name = 't2'`).Sort().Check(testkit.Rows(toString(tableMetas[1]), toString(tableMetas[3])))
+	tk.MustQuery(`select table_schema, table_name, tidb_table_id from information_schema.tables
+		where (table_schema = 'db1' or table_schema = 'db2' ) and table_name = 't3'`).Check(testkit.Rows())
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'db1' and tidb_table_id = %s", tableMetas[0].id)).Check(
+		testkit.Rows(toString(tableMetas[0])))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_name = 't2' and tidb_table_id = %s", tableMetas[1].id)).Check(
+		testkit.Rows(toString(tableMetas[1])))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'db2' and tidb_table_id = %s", tableMetas[1].id)).Check(
+		testkit.Rows())
+
+	// cover three disjunctions
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'db1' and table_name = 't1' and tidb_table_id = %s", tableMetas[0].id)).Check(
+		testkit.Rows(toString(tableMetas[0])))
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'db1' and table_name = 't1' and tidb_table_id = %s", tableMetas[1].id)).Check(
+		testkit.Rows())
+	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'db1' and table_name = 't1' and tidb_table_id in (%s,%s)", tableMetas[0].id, tableMetas[1].id)).Check(
+		testkit.Rows(toString(tableMetas[0])))
+}
+
 func TestColumnTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

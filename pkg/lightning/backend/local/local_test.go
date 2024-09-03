@@ -1788,7 +1788,6 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		[]byte{1},
 		[]byte{10},
 		[][]byte{{1}, {11}},
-		1<<30,
 		common.NoopKeyAdapter{},
 		false,
 		nil,
