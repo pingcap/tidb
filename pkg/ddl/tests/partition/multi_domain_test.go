@@ -218,11 +218,25 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkO.MustContainErrMsg(`insert into t values (6,7,"Duplicate key")`, "[kv:1062]Duplicate entry '7' for key 't.uk_b'")
 			tkO.MustExec(`insert into t values (9,9,"OK")`)
 			tkNO.MustContainErrMsg(`insert into t values (8,9,"Duplicate key")`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
-			// TODO: Add tests for update/delete as well as index lookup and table scan!
-			tkNO.MustExec(`update t set a = 10 where b = 9`)
-			tkO.MustExec(`update t set a = 9 where b = 9`)
-			tkNO.MustExec(`update t set b = 10 where a = 9`)
+			tkNO.MustQuery(`select count(*) from t where b = 9`).Check(testkit.Rows("1"))
+			tkNO.MustQuery(`select b from t where b = 9`).Check(testkit.Rows("9"))
+			// TODO: How to handle this inconsistency?
+			tkNO.MustQuery(`select * from t where b = 9`).Check(testkit.Rows())
+			// OK, since not found!
+			tkNO.MustExec(`update t set a = 2 where b = 9`)
+			require.Equal(t, uint64(0), tkNO.Session().GetSessionVars().LastFoundRows)
+			tkO.MustQuery(`select count(*) from t where b = 7`).Check(testkit.Rows("0"))
+			tkO.MustExec(`update t set a = 2 where b = 7`)
+			require.Equal(t, uint64(0), tkNO.Session().GetSessionVars().LastFoundRows)
+			tkNO.MustQuery(`select count(*) from t where a = 7`).Check(testkit.Rows("1"))
+			tkNO.MustQuery(`select * from t where a = 7`).Check(testkit.Rows("7 7 OK"))
+			tkNO.MustExec(`update t set b = 10 where a = 7`)
+			require.Equal(t, uint64(1), tkNO.Session().GetSessionVars().LastFoundRows)
+			tkNO.MustExec(`update t set b = 7 where a = 7`)
+			require.Equal(t, uint64(1), tkNO.Session().GetSessionVars().LastFoundRows)
 			tkO.MustExec(`update t set b = 9 where a = 9`)
+			require.Equal(t, uint64(1), tkNO.Session().GetSessionVars().LastFoundRows)
+			// TODO: Add tests for delete as well as index lookup and table scan!
 		case "delete reorganization":
 			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 			tkO.MustExec(`insert into t values (1,1,"OK")`)
@@ -232,6 +246,8 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkNO.MustContainErrMsg(`insert into t values (9,9,"Duplicate key")`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
 			tkNO.MustContainErrMsg(`insert into t values (11,11,"Duplicate key")`, "[kv:1062]Duplicate entry '11' for key 't.uk_b'")
 			tkO.MustExec(`insert into t values (13,13,"OK")`)
+			// This should not be allowed!!!
+			tkO.MustContainErrMsg(`insert into t values (14,13,"Duplicate key")`, "[kv:1062]Duplicate entry '13' for key 't.uk_b'")
 		case "none":
 			tkNO.MustExec(`insert into t values (5,5,"OK")`)
 			tkO.MustContainErrMsg(`insert into t values (5,5,"Duplicate key")`, "[kv:1062]Duplicate entry '5' for key 't.uk_b'")
