@@ -262,12 +262,12 @@ func NewInfoSchemaTablesExtractor() *InfoSchemaTablesExtractor {
 
 // HasTableName returns true if table name is specified in predicates.
 func (e *InfoSchemaTablesExtractor) HasTableName(name string) bool {
-	return !e.filter(_tableName, name)
+	return !e.filter(TableName, name)
 }
 
 // HasTableSchema returns true if table schema is specified in predicates.
 func (e *InfoSchemaTablesExtractor) HasTableSchema(name string) bool {
-	return !e.filter(_tableSchema, name)
+	return !e.filter(TableSchema, name)
 }
 
 // InfoSchemaViewsExtractor is the predicate extractor for information_schema.views.
