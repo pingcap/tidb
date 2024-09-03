@@ -197,9 +197,9 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn
 // truncating a partition with a global index
 func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 	testkit.SkipIfFailpointDisabled(t)
-	createSQL := `create table t (a int primary key, b varchar(255), unique key uk_b (b) global) partition by hash (a) partitions 2`
+	createSQL := `create table t (a int primary key, b varchar(255), c varchar(255) default 'Filler', unique key uk_b (b) global) partition by hash (a) partitions 2`
 	initFn := func(tkO *testkit.TestKit) {
-		tkO.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4)`)
+		tkO.MustExec(`insert into t (a,b) values (1,1),(2,2),(3,3),(4,4)`)
 	}
 	alterSQL := `alter table t truncate partition p1`
 	loopFn := func(tkO, tkNO *testkit.TestKit) {
@@ -208,31 +208,35 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 		switch schemaState {
 		case "delete only":
 			// Still in Schema version before ALTER, not affected
-			tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 			// now in Schema state "delete only"
 			// OK with duplicate key, but otherwise it should allow any insert!
-			tkO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
-			tkNO.MustExec(`insert into t values (5,5)`)
-			tkNO.MustExec(`insert into t values (7,7)`)
-			tkO.MustContainErrMsg(`insert into t values (5,5)`, "[kv:1062]Duplicate entry '5' for key 't.uk_b'")
-			tkO.MustContainErrMsg(`insert into t values (6,7)`, "[kv:1062]Duplicate entry '7' for key 't.uk_b'")
-			tkO.MustExec(`insert into t values (9,9)`)
-			tkNO.MustContainErrMsg(`insert into t values (8,9)`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
+			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			tkNO.MustExec(`insert into t values (5,5,"OK")`)
+			tkNO.MustExec(`insert into t values (7,7,"OK")`)
+			tkO.MustContainErrMsg(`insert into t values (5,5,"Duplicate key")`, "[kv:1062]Duplicate entry '5' for key 't.uk_b'")
+			tkO.MustContainErrMsg(`insert into t values (6,7,"Duplicate key")`, "[kv:1062]Duplicate entry '7' for key 't.uk_b'")
+			tkO.MustExec(`insert into t values (9,9,"OK")`)
+			tkNO.MustContainErrMsg(`insert into t values (8,9,"Duplicate key")`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
 			// TODO: Add tests for update/delete as well as index lookup and table scan!
+			tkNO.MustExec(`update t set a = 10 where b = 9`)
+			tkO.MustExec(`update t set a = 9 where b = 9`)
+			tkNO.MustExec(`update t set b = 10 where a = 9`)
+			tkO.MustExec(`update t set b = 9 where a = 9`)
 		case "delete reorganization":
-			tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
-			tkO.MustExec(`insert into t values (1,1)`)
-			tkO.MustContainErrMsg(`insert into t values (10,7)`, "[kv:1062]Duplicate entry '7' for key 't.uk_b'")
-			tkNO.MustExec(`insert into t values (11,11)`)
-			tkNO.MustContainErrMsg(`insert into t values (12,9)`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
-			tkNO.MustContainErrMsg(`insert into t values (9,9)`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
-			tkNO.MustContainErrMsg(`insert into t values (11,11)`, "[kv:1062]Duplicate entry '11' for key 't.uk_b'")
-			tkO.MustExec(`insert into t values (13,13)`)
+			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			tkO.MustExec(`insert into t values (1,1,"OK")`)
+			tkO.MustContainErrMsg(`insert into t values (10,7,"Duplicate key")`, "[kv:1062]Duplicate entry '7' for key 't.uk_b'")
+			tkNO.MustExec(`insert into t values (11,11,"OK")`)
+			tkNO.MustContainErrMsg(`insert into t values (12,9,"Duplicate key")`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`insert into t values (9,9,"Duplicate key")`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`insert into t values (11,11,"Duplicate key")`, "[kv:1062]Duplicate entry '11' for key 't.uk_b'")
+			tkO.MustExec(`insert into t values (13,13,"OK")`)
 		case "none":
-			tkNO.MustExec(`insert into t values (5,5)`)
-			tkO.MustContainErrMsg(`insert into t values (5,5)`, "[kv:1062]Duplicate entry '5' for key 't.uk_b'")
-			tkNO.MustExec(`insert into t values (15,15)`)
-			tkO.MustExec(`insert into t values (17,17)`)
+			tkNO.MustExec(`insert into t values (5,5,"OK")`)
+			tkO.MustContainErrMsg(`insert into t values (5,5,"Duplicate key")`, "[kv:1062]Duplicate entry '5' for key 't.uk_b'")
+			tkNO.MustExec(`insert into t values (15,15,"OK")`)
+			tkO.MustExec(`insert into t values (17,17,"OK")`)
 		default:
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}

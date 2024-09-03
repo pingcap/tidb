@@ -957,25 +957,24 @@ func (t *TableCommon) getRecordID(txn kv.Transaction, r []types.Datum, opt *tabl
 	if len(r) > len(cols) && !opt.IsUpdate() {
 		// The last value is _tidb_rowid.
 		return kv.IntHandle(r[len(r)-1].GetInt64()), nil
-	} else {
-		tblInfo := t.Meta()
-		txn.CacheTableInfo(t.physicalTableID, tblInfo)
-		if tblInfo.PKIsHandle {
-			return kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64()), nil
-		} else if tblInfo.IsCommonHandle {
-			pkIdx := FindPrimaryIndex(tblInfo)
-			pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
-			for _, idxCol := range pkIdx.Columns {
-				pkDts = append(pkDts, r[idxCol.Offset])
-			}
-			tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
-			handleBytes, err := codec.EncodeKey(loc, nil, pkDts...)
-			err = ec.HandleError(err)
-			if err != nil {
-				return nil, err
-			}
-			return kv.NewCommonHandle(handleBytes)
+	}
+	tblInfo := t.Meta()
+	txn.CacheTableInfo(t.physicalTableID, tblInfo)
+	if tblInfo.PKIsHandle {
+		return kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64()), nil
+	} else if tblInfo.IsCommonHandle {
+		pkIdx := FindPrimaryIndex(tblInfo)
+		pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
+		for _, idxCol := range pkIdx.Columns {
+			pkDts = append(pkDts, r[idxCol.Offset])
 		}
+		tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
+		handleBytes, err := codec.EncodeKey(loc, nil, pkDts...)
+		err = ec.HandleError(err)
+		if err != nil {
+			return nil, err
+		}
+		return kv.NewCommonHandle(handleBytes)
 	}
 	return nil, nil
 }
