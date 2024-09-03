@@ -38,6 +38,9 @@ type DDLEvent struct {
 	oldTableInfo *model.TableInfo
 	oldPartInfo  *model.PartitionInfo
 	columnInfos  []*model.ColumnInfo
+	// todo: replace DDLEvent by SchemaChangeEvent gradually
+	SchemaChangeEvent *ddlutil.SchemaChangeEvent
+	
 	// schemaID is the ID of the schema that the table belongs to.
 	// Used to filter out the system or memory tables.
 	schemaID int64
@@ -45,9 +48,6 @@ type DDLEvent struct {
 	// It applies when a table structure is being changed from partitioned to non-partitioned, or vice versa.
 	oldTableID int64
 	tp         model.ActionType
-
-	// todo: replace DDLEvent by SchemaChangeEvent gradually
-	SchemaChangeEvent *ddlutil.SchemaChangeEvent
 }
 
 // IsMemOrSysDB checks whether the table is in the memory or system database.
