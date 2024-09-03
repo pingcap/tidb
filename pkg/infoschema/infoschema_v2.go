@@ -748,7 +748,7 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	return getTableInfo(tbl), ok
 }
 
-// SchemaTableInfos implements MetaOnlyInfoSchema, non-public schema will not be retrieved.
+// SchemaTableInfos implements MetaOnlyInfoSchema.
 func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableInfo, error) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
@@ -765,7 +765,7 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema model.CIStr
 
 retry:
 	dbInfo, ok := is.SchemaByName(schema)
-	if !ok || dbInfo.State != model.StatePublic {
+	if !ok {
 		return nil, nil
 	}
 	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
