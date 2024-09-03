@@ -95,7 +95,7 @@ func (m *ColAndIdxExistenceMap) Checked() bool {
 	return m.checked
 }
 
-// Checked returns whether the map has been checked.
+// SetChecked set the map as checked.
 func (m *ColAndIdxExistenceMap) SetChecked() {
 	m.checked = true
 }
