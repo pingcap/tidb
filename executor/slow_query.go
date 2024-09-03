@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"math"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"go.uber.org/zap"
@@ -588,7 +588,7 @@ func splitByColon(line string) (fields []string, values []string) {
 					current++
 				}
 			}
-			values = append(values, line[start:math.Min(current, len(line))])
+			values = append(values, line[start:mathutil.Min(current, len(line))])
 			parseKey = true
 		}
 	}
