@@ -16,6 +16,9 @@ package planner
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/index_advisor"
+	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"math"
 	"math/rand"
 	"sync"
@@ -623,9 +626,24 @@ func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tb
 	}
 }
 
+// queryPlanCost returns the plan cost of this node, which is mainly for the Index Advisor.
+func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) {
+	nodeW := resolve.NewNodeW(stmt)
+	plan, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return 0, err
+	}
+	pp, ok := plan.(base.PhysicalPlan)
+	if !ok {
+		return 0, errors.Errorf("plan is not a physical plan: %T", plan)
+	}
+	return core.GetPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+}
+
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
+	index_advisor.QueryPlanCostHook = queryPlanCost
 	bindinfo.GetGlobalBindingHandle = func(sctx sessionctx.Context) bindinfo.GlobalBindingHandle {
 		return domain.GetDomain(sctx).BindHandle()
 	}
