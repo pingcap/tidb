@@ -1146,12 +1146,8 @@ func (it *copIterator) sendReq(ctx context.Context) *copResponse {
 		} else {
 			it.tasks = it.tasks[1:]
 		}
-		select {
-		case resp := <-respCh:
-			return resp
-		case <-ctx.Done():
-			return &copResponse{err: ctx.Err()}
-		}
+		resp, _, _ := it.recvFromRespCh(ctx, respCh)
+		return resp
 	}
 	return nil
 }
