@@ -1318,7 +1318,7 @@ func (pi *PartitionInfo) GCPartitionStates() {
 	pi.States = newStates
 }
 
-// HasTruncatingPartitionID checks whether the pid is truncating.
+// GetTruncatingPartitionIdx returns the index of the truncated partitions or -1 if no match.
 func (pi *PartitionInfo) GetTruncatingPartitionIdx(pid int64) int {
 	for i := range pi.NewPartitionIDs {
 		if pi.NewPartitionIDs[i] == pid {
