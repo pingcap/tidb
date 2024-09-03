@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -83,8 +84,10 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	table, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	plan, err := importer.NewImportPlan(ctx, tk.Session(), plannercore.ImportInto{
-		Table: &ast.TableName{
-			Name: model.NewCIStr("t"),
+		Table: &resolve.TableNameW{
+			TableName: &ast.TableName{
+				Name: model.NewCIStr("t"),
+			},
 			DBInfo: &model.DBInfo{
 				Name: model.NewCIStr("test"),
 				ID:   dbInfo.ID,

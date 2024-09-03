@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "context",
@@ -18,5 +18,26 @@ go_library(
         "//pkg/util/topsql/stmtstats",
         "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//tikvrpc",
+    ],
+)
+
+go_test(
+    name = "context_test",
+    timeout = "short",
+    srcs = ["context_test.go"],
+    embed = [":context"],
+    flaky = True,
+    deps = [
+        "//pkg/errctx",
+        "//pkg/kv",
+        "//pkg/parser/mysql",
+        "//pkg/util/context",
+        "//pkg/util/deeptest",
+        "//pkg/util/execdetails",
+        "//pkg/util/memory",
+        "//pkg/util/sqlkiller",
+        "//pkg/util/tiflash",
+        "//pkg/util/topsql/stmtstats",
+        "@com_github_tikv_client_go_v2//kv",
     ],
 )

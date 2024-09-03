@@ -589,15 +589,15 @@ func checkDatabaseHasForeignKeyReferred(ctx context.Context, is infoschema.InfoS
 	if !fkCheck {
 		return nil
 	}
-	tables, err := is.SchemaTableInfos(ctx, schema)
+	tableNameInfos, err := is.SchemaSimpleTableInfos(ctx, schema)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tableNames := make([]ast.Ident, len(tables))
-	for i := range tables {
-		tableNames[i] = ast.Ident{Schema: schema, Name: tables[i].Name}
+	tableNames := make([]ast.Ident, len(tableNameInfos))
+	for i := range tableNameInfos {
+		tableNames[i] = ast.Ident{Schema: schema, Name: tableNameInfos[i].Name}
 	}
-	for _, tbl := range tables {
+	for _, tbl := range tableNameInfos {
 		if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tbl.Name.L, tableNames, fkCheck); referredFK != nil {
 			return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tbl.Name, referredFK.ChildFKName, referredFK.ChildTable))
 		}

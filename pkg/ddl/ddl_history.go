@@ -22,6 +22,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -37,6 +38,8 @@ import (
 const (
 	DefNumHistoryJobs   = 10
 	batchNumHistoryJobs = 128
+	// DefNumGetDDLHistoryJobs is the max count for getting the ddl history once.
+	DefNumGetDDLHistoryJobs = 2048
 )
 
 // AddHistoryDDLJob record the history job.
@@ -150,9 +153,23 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job, error) {
 	var iter meta.LastJobIterator
 	var err error
+
 	if startJobID == 0 {
+		// if 'start_job_id' == 0 and 'limit' == 0(default value), get the last 1024 ddl history job by defaultly.
+		if limit == 0 {
+			limit = DefNumGetDDLHistoryJobs
+
+			failpoint.Inject("history-ddl-jobs-limit", func(val failpoint.Value) {
+				injectLimit, ok := val.(int)
+				if ok {
+					logutil.DDLLogger().Info("failpoint history-ddl-jobs-limit", zap.Int("limit", injectLimit))
+					limit = injectLimit
+				}
+			})
+		}
 		iter, err = m.GetLastHistoryDDLJobsIterator()
 	} else {
+		// if 'start_job_id' > 0, it must set value to 'limit'
 		if limit == 0 {
 			return nil, errors.New("when 'start_job_id' is specified, it must work with a 'limit'")
 		}
@@ -161,5 +178,6 @@ func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	return iter.GetLastJobs(limit, nil)
 }

@@ -33,6 +33,7 @@ var (
 	_ AggFunc = (*countOriginal4Time)(nil)
 	_ AggFunc = (*countOriginal4Duration)(nil)
 	_ AggFunc = (*countOriginal4JSON)(nil)
+	_ AggFunc = (*countOriginal4VectorFloat32)(nil)
 	_ AggFunc = (*countOriginal4String)(nil)
 	_ AggFunc = (*countOriginalWithDistinct4Int)(nil)
 	_ AggFunc = (*countOriginalWithDistinct4Real)(nil)
@@ -61,6 +62,7 @@ var (
 	_ AggFunc = (*firstRow4Float32)(nil)
 	_ AggFunc = (*firstRow4Float64)(nil)
 	_ AggFunc = (*firstRow4JSON)(nil)
+	_ AggFunc = (*firstRow4VectorFloat32)(nil)
 	_ AggFunc = (*firstRow4Enum)(nil)
 	_ AggFunc = (*firstRow4Set)(nil)
 
@@ -74,6 +76,7 @@ var (
 	_ AggFunc = (*maxMin4Time)(nil)
 	_ AggFunc = (*maxMin4Duration)(nil)
 	_ AggFunc = (*maxMin4JSON)(nil)
+	_ AggFunc = (*maxMin4VectorFloat32)(nil)
 	_ AggFunc = (*maxMin4Enum)(nil)
 	_ AggFunc = (*maxMin4Set)(nil)
 
