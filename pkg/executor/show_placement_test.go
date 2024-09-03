@@ -378,12 +378,16 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 	tk.MustExec("create database db2")
 	defer tk.MustExec("drop database db2")
 
+	tk.MustQuery("show placement").Check(testkit.Rows())
+
 	// prepare policy
 	tk.MustExec("create placement policy p1 " +
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1,cn-east-2\"" +
 		"SCHEDULE=\"EVEN\"")
 	defer tk.MustExec("drop placement policy p1")
+
+	tk.MustQuery("show placement").Check(testkit.Rows("POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL"))
 
 	tk.MustExec("create placement policy p2 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\" FOLLOWERS=4")
 	defer tk.MustExec("drop placement policy p2")
