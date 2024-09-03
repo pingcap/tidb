@@ -1111,6 +1111,9 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 func (it *copIterator) sendReq(ctx context.Context) *copResponse {
+	if len(it.tasks) == 0 {
+		return nil
+	}
 	worker := &copIteratorWorker{
 		//taskCh: make(<-chan *copTask, 1),
 		wg:    &it.wg,
@@ -1146,8 +1149,12 @@ func (it *copIterator) sendReq(ctx context.Context) *copResponse {
 		} else {
 			it.tasks = it.tasks[1:]
 		}
-		resp, _, _ := it.recvFromRespCh(ctx, respCh)
-		return resp
+		select {
+		case resp := <-respCh:
+			return resp
+		default:
+			continue
+		}
 	}
 	return nil
 }
