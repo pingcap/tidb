@@ -29,6 +29,8 @@ import (
 
 // DDLEvent contains the information of a ddl event that is used to update stats.
 type DDLEvent struct {
+	// todo: replace DDLEvent by SchemaChangeEvent gradually
+	SchemaChangeEvent *ddlutil.SchemaChangeEvent
 	// For different ddl types, the following fields are used.
 	// They have different meanings for different ddl types.
 	// Please do **not** use these fields directly, use the corresponding
@@ -38,8 +40,6 @@ type DDLEvent struct {
 	oldTableInfo *model.TableInfo
 	oldPartInfo  *model.PartitionInfo
 	columnInfos  []*model.ColumnInfo
-	// todo: replace DDLEvent by SchemaChangeEvent gradually
-	SchemaChangeEvent *ddlutil.SchemaChangeEvent
 
 	// schemaID is the ID of the schema that the table belongs to.
 	// Used to filter out the system or memory tables.
