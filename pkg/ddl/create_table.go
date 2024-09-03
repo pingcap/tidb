@@ -1163,6 +1163,10 @@ func BuildTableInfo(
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
+		if constr.Tp == ast.ConstraintVector {
+			return nil, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("not currently supported")
+		}
+
 		// Build hidden columns if necessary.
 		hiddenCols, err := buildHiddenColumnInfoWithCheck(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
 		if err != nil {

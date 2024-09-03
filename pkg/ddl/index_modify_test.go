@@ -1058,3 +1058,17 @@ func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
 	require.Less(t, int(ddl.ResultCounterForTest.Load()), 6)
 	ddl.ResultCounterForTest = nil
 }
+
+func TestAddVectorIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustContainErrMsg("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW);",
+		"Unsupported add vector index: not currently supported")
+	tk.MustExec("create table t (a int, b vector(3));")
+	tk.MustContainErrMsg("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';",
+		"Unsupported add vector index: not currently supported")
+	tk.MustContainErrMsg("create vector index idx on t ((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';",
+		"Unsupported add vector index: not currently supported")
+}
