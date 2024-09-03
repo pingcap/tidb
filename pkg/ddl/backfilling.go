@@ -168,9 +168,10 @@ type backfillCtx struct {
 
 func newBackfillCtx(id int, rInfo *reorgInfo,
 	schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isDistributed bool) (*backfillCtx, error) {
-	sessCtx, err := newSessCtx(rInfo.jobCtx.store, rInfo.ReorgMeta)
-	if err != nil {
-		return nil, err
+	// TODO: remove newReorgSessCtx
+	sessCtx := newReorgSessCtx(rInfo.jobCtx.store)
+	if err := initSessCtx(sessCtx, rInfo.ReorgMeta); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if isDistributed {
