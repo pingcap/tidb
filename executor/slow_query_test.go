@@ -498,8 +498,8 @@ func TestSplitbyColon(t *testing.T) {
 		},
 		{
 			"123a",
-			[]string{},
 			[]string{"123a"},
+			[]string{},
 		},
 		{
 			"1a: 2b",
@@ -515,6 +515,36 @@ func TestSplitbyColon(t *testing.T) {
 			"1a: [2b,3c] 4d: 5e",
 			[]string{"1a", "4d"},
 			[]string{"[2b,3c]", "5e"},
+		},
+		{
+			"1a: [2b,[3c: 3cc]] 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"[2b,[3c: 3cc]]", "5e"},
+		},
+		{
+			"1a: {2b 3c} 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"{2b 3c}", "5e"},
+		},
+		{
+			"1a: {2b,3c} 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"{2b,3c}", "5e"},
+		},
+		{
+			"1a: {2b,{3c: 3cc}} 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"{2b,{3c: 3cc}}", "5e"},
+		},
+		{
+			"1a: {{{2b,{3c: 3cc}} 4d: 5e",
+			nil,
+			nil,
+		},
+		{
+			"1a: [2b,[3c: 3cc]]]] 4d: 5e",
+			nil,
+			nil,
 		},
 		{
 
