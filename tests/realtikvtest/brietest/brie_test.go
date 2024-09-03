@@ -160,7 +160,7 @@ func TestExistedTables(t *testing.T) {
 	done = make(chan struct{})
 	go func() {
 		defer close(done)
-		restoreQuery := fmt.Sprintf("RESTORE DATABASE test FROM 'local://%s/full'", sqlTmp)
+		restoreQuery := fmt.Sprintf("RESTORE DATABASE * FROM 'local://%s/full'", sqlTmp)
 		res, err := tk.Exec(restoreQuery)
 		require.NoError(t, err)
 
@@ -189,7 +189,7 @@ func TestExistedTables(t *testing.T) {
 	done = make(chan struct{})
 	go func() {
 		defer close(done)
-		restoreQuery := fmt.Sprintf("Restore DATABASE * FROM 'local://%s/db'", sqlTmp)
+		restoreQuery := fmt.Sprintf("Restore DATABASE test FROM 'local://%s/db'", sqlTmp)
 		res, err := tk.Exec(restoreQuery)
 		require.NoError(t, err)
 
