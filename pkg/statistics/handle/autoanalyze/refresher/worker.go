@@ -15,7 +15,6 @@
 package refresher
 
 import (
-	"context"
 	"sync"
 	"time"
 
@@ -35,9 +34,6 @@ type worker struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sysproctrack.Tracker
 	wg             util.WaitGroupWrapper
-	jobChan        chan priorityqueue.AnalysisJob
-	ctx            context.Context
-	cancel         context.CancelFunc
 
 	mu sync.Mutex
 	// mu is used to protect the following fields.
@@ -47,17 +43,12 @@ type worker struct {
 
 // NewWorker creates a new worker.
 func NewWorker(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker, maxConcurrency int) *worker {
-	ctx, cancel := context.WithCancel(context.Background())
 	w := &worker{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
-		jobChan:        make(chan priorityqueue.AnalysisJob, 10),
-		ctx:            ctx,
-		cancel:         cancel,
 		runningJobs:    make(map[int64]struct{}),
 		maxConcurrency: maxConcurrency,
 	}
-	w.wg.Run(w.run)
 	return w
 }
 
@@ -73,32 +64,29 @@ func (w *worker) UpdateConcurrency(newConcurrency int) {
 	w.maxConcurrency = newConcurrency
 }
 
-func (w *worker) run() {
-	for {
-		select {
-		case <-w.ctx.Done():
-			return
-		case job, ok := <-w.jobChan:
-			if !ok {
-				statslogutil.StatsLogger().Info("job channel closed")
-				return
-			}
-			if job == nil {
-				statslogutil.StatsLogger().Warn("job is nil")
-				continue
-			}
-			w.wg.RunWithRecover(
-				func() {
-					w.processJob(job)
-				},
-				func(r any) {
-					if r != nil {
-						statslogutil.StatsLogger().Error("Auto analyze job execution failed", zap.Any("recover", r), zap.Stack("stack"))
-					}
-				},
-			)
-		}
+// SubmitJob submits a job to the worker.
+// It returns false if the job is not submitted due to concurrency limit.
+func (w *worker) SubmitJob(job priorityqueue.AnalysisJob) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.runningJobs) >= w.maxConcurrency {
+		statslogutil.StatsLogger().Warn("Worker at maximum capacity, job discarded", zap.Stringer("job", job))
+		return false
 	}
+	w.runningJobs[job.GetTableID()] = struct{}{}
+
+	w.wg.RunWithRecover(
+		func() {
+			w.processJob(job)
+		},
+		func(r any) {
+			if r != nil {
+				statslogutil.StatsLogger().Error("Auto analyze job execution failed", zap.Any("recover", r), zap.Stack("stack"))
+			}
+		},
+	)
+	statslogutil.StatsLogger().Info("Job submitted", zap.Stringer("job", job))
+	return true
 }
 
 func (w *worker) processJob(job priorityqueue.AnalysisJob) {
@@ -115,23 +103,6 @@ func (w *worker) processJob(job priorityqueue.AnalysisJob) {
 			zap.Error(err),
 		)
 	}
-}
-
-// SubmitJob submits a job to the worker.
-// It returns false if the job is not submitted due to concurrency limit.
-func (w *worker) SubmitJob(job priorityqueue.AnalysisJob) bool {
-	w.mu.Lock()
-	if len(w.runningJobs) >= w.maxConcurrency {
-		w.mu.Unlock()
-		statslogutil.StatsLogger().Warn("Worker at maximum capacity, job discarded", zap.Stringer("job", job))
-		return false
-	}
-	w.runningJobs[job.GetTableID()] = struct{}{}
-	w.mu.Unlock()
-
-	w.jobChan <- job
-	statslogutil.StatsLogger().Info("Job submitted", zap.Stringer("job", job))
-	return true
 }
 
 // GetRunningJobs returns the running jobs.
@@ -154,8 +125,6 @@ func (w *worker) GetMaxConcurrency() int {
 
 // Stop stops the worker.
 func (w *worker) Stop() {
-	w.cancel()
-	close(w.jobChan)
 	w.wg.Wait()
 }
 
