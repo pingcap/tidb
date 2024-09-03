@@ -175,6 +175,9 @@ func (r *Checker) BeforeCopRequest(req *tikvrpc.Request) error {
 		case rmpb.RunawayAction_CoolDown:
 			req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
 			return nil
+		case rmpb.RunawayAction_SwitchGroup:
+			req.ResourceControlContext.ResourceGroupName = r.settings.SwitchGroupName
+			return nil
 		default:
 			return nil
 		}

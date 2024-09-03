@@ -3087,7 +3087,7 @@ func upgradeToVer211(s sessiontypes.Session, ver int64) {
 }
 
 func upgradeToVer212(s sessiontypes.Session, ver int64) {
-	if ver >= version211 {
+	if ver >= version212 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD COLUMN `switch_group_name` VARCHAR(32) DEFAULT '' AFTER `action`;", infoschema.ErrColumnExists)
