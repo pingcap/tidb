@@ -1319,13 +1319,13 @@ func (pi *PartitionInfo) GCPartitionStates() {
 }
 
 // HasTruncatingPartitionID checks whether the pid is truncating.
-func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
+func (pi *PartitionInfo) GetTruncatingPartitionIdx(pid int64) int {
 	for i := range pi.NewPartitionIDs {
 		if pi.NewPartitionIDs[i] == pid {
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
 }
 
 // ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.

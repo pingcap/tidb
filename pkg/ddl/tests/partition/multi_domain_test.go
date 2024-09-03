@@ -208,23 +208,27 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 		switch schemaState {
 		case "delete only":
 			// Still in Schema version before ALTER, not affected
-			tkNO.MustExec(`insert into t values (5,5)`)
+			tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 			// now in Schema state "delete only"
 			// OK with duplicate key, but otherwise it should allow any insert!
-			// TODO: FIXME
-			tkO.MustContainErrMsg(`insert into t values (5,5)`, "[ddl:8210]the partition is in not in public")
-			tkO.MustContainErrMsg(`insert into t values (7,7)`, "[ddl:8210]the partition is in not in public")
+			tkO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			tkNO.MustExec(`insert into t values (5,5)`)
+			tkNO.MustExec(`insert into t values (7,7)`)
+			tkO.MustContainErrMsg(`insert into t values (5,5)`, "[kv:1062]Duplicate entry '5' for key 't.uk_b'")
+			tkO.MustExec(`insert into t values (9,9)`)
 			// TODO: Add tests for update/delete as well as index lookup and table scan!
 		case "delete reorganization":
-			tkNO.MustContainErrMsg(`insert into t values (5,5)`, "[ddl:8210]the partition is in not in public")
-			tkO.MustContainErrMsg(`insert into t values (5,5)`, "[ddl:8210]the partition is in not in public")
-			tkNO.MustContainErrMsg(`insert into t values (9,9)`, "[ddl:8210]the partition is in not in public")
-			tkO.MustContainErrMsg(`insert into t values (11,11)`, "[ddl:8210]the partition is in not in public")
+			tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			tkO.MustExec(`insert into t values (1,1)`)
+			tkNO.MustExec(`insert into t values (11,11)`)
+			tkNO.MustContainErrMsg(`insert into t values (9,9)`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`insert into t values (11,11)`, "[kv:1062]Duplicate entry '11' for key 't.uk_b'")
+			tkO.MustExec(`insert into t values (13,13)`)
 		case "none":
-			tkNO.MustContainErrMsg(`insert into t values (5,5)`, "[ddl:8210]the partition is in not in public")
-			tkO.MustExec(`insert into t values (5,5)`)
-			tkNO.MustContainErrMsg(`insert into t values (13,13)`, "[ddl:8210]the partition is in not in public")
-			tkO.MustExec(`insert into t values (15,15)`)
+			tkNO.MustExec(`insert into t values (5,5)`)
+			tkO.MustContainErrMsg(`insert into t values (5,5)`, "[kv:1062]Duplicate entry '5' for key 't.uk_b'")
+			tkNO.MustExec(`insert into t values (15,15)`)
+			tkO.MustExec(`insert into t values (17,17)`)
 		default:
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}

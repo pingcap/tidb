@@ -2440,7 +2440,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	// When table has global index, public->deleteOnly->deleteReorg->none schema changes should be handled.
 	switch job.SchemaState {
 	case model.StatePublic:
-		// Step1: generate new partition ids
+		// Step1: use the new partition ids
 		truncatingDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
 		for i, oldID := range oldIDs {
 			for j := 0; j < len(pi.Definitions); j++ {
@@ -2452,16 +2452,21 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 				}
 			}
 		}
+		// This should work as a flag to insert/update/delete to also update the old partitions!
 		pi.DroppingDefinitions = truncatingDefinitions
 		pi.NewPartitionIDs = newIDs[:]
+		pi.DDLState = model.StateDeleteOnly
 
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	case model.StateDeleteOnly:
-		// This state is not a real 'DeleteOnly' state, because tidb does not maintaining the state check in partitionDefinition.
-		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
-		// so that no new data will be inserted into old partitions when reorganizing.
+		// Now we don't see the old partitions, but other sessions may still use them.
+		// So to keep the Global Index consistent, we will still keep it up-to-date with
+		// the old partitions, as well as the new partitions.
+		// We can remove the flag to update the old partitions.
+		// TODO: How to remove the flag, what is the flag?
 		job.SchemaState = model.StateDeleteReorganization
+		pi.DDLState = model.StateDeleteReorganization
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	case model.StateDeleteReorganization:
 		// Step2: clear global index rows.
@@ -2552,6 +2557,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		// Step4: clear DroppingDefinitions and finish job.
 		tblInfo.Partition.DroppingDefinitions = nil
 		tblInfo.Partition.NewPartitionIDs = nil
+		tblInfo.Partition.DDLState = model.StateNone
 
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newPartitions)
 

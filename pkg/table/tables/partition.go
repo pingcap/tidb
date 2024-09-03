@@ -1617,8 +1617,46 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 			return nil, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-	if t.Meta().Partition.HasTruncatingPartitionID(pid) {
-		return nil, errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
+	if idx := t.Meta().Partition.GetTruncatingPartitionIdx(pid); idx >= 0 && t.Meta().Partition.DDLState == model.StateDeleteReorganization {
+		// Delete the record from the old partition, to keep the Global Index consistent.
+		// During StateDeleteOnly, we will allow Duplicate Key errors.
+		pi := t.Meta().Partition
+		if len(pi.DroppingDefinitions) < idx {
+			return nil, errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("Cannot find old dropped/truncated partition to delete record from"))
+		}
+		oldPid := pi.DroppingDefinitions[idx].ID
+		oldTbl := t.getPartition(oldPid)
+		if oldTbl == nil {
+			return nil, errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("Cannot find old dropped/truncated partition to delete record from"))
+		}
+		evalCtx := ctx.GetExprCtx().GetEvalCtx()
+		tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+		recordID, err = t.getRecordID(txn, r, opt, tc.Location(), ec)
+		// flag that non-existing rows is OK
+		// Since the table id is encoded in the recordID it will not affect current, new partition
+		key := oldTbl.RecordKey(recordID)
+		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, tblIdx := range oldTbl.Indices() {
+			k, err := tblIdx.FetchValues(r, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			idxKey, _, err := tblIdx.GenIndexKey(ec, tc.Location(), k, recordID, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			err = txn.SetAssertion(idxKey, kv.SetAssertUnknown)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		err = oldTbl.RemoveRecord(ctx, txn, recordID, r)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == pid &&
@@ -1753,9 +1791,13 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
-	if t.Meta().Partition.HasTruncatingPartitionID(to) {
-		return errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
-	}
+	// TODO: FIXME!
+	/*
+		if t.Meta().Partition.HasTruncatingPartitionID(to) {
+			return errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
+		}
+
+	*/
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == to &&
 		variable.EnableCheckConstraint.Load() {

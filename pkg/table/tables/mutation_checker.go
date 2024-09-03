@@ -80,6 +80,7 @@ func CheckDataConsistency(
 	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle,
 ) error {
 	if t.Meta().GetPartitionInfo() != nil {
+		// TODO: Support check for partitions as well
 		return nil
 	}
 	if txn.IsPipelined() {
