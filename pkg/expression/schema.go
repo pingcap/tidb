@@ -19,11 +19,40 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
 type KeyInfo []*Column
+
+// Hash64 implements the HashEquals.<0th> interface.
+func (ki KeyInfo) Hash64(h base.Hasher) {
+	h.HashInt(len(ki))
+	for _, col := range ki {
+		col.Hash64(h)
+	}
+}
+
+// Equals implements the HashEquals.<1st> interface.
+func (ki KeyInfo) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	otherKey, ok := other.(KeyInfo)
+	if !ok {
+		return false
+	}
+	if len(ki) != len(otherKey) {
+		return false
+	}
+	for i, col := range ki {
+		if !col.Equals(otherKey[i]) {
+			return false
+		}
+	}
+	return true
+}
 
 // Clone copies the entire UniqueKey.
 func (ki KeyInfo) Clone() KeyInfo {
@@ -50,6 +79,63 @@ type Schema struct {
 	// UniqueKeys stores those unique indexes that allow null values, but Keys does not allow null values.
 	// since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
 	UniqueKeys []KeyInfo
+}
+
+// Hash64 implements the HashEquals.<0th> interface.
+func (s *Schema) Hash64(h base.Hasher) {
+	h.HashInt(len(s.Columns))
+	for _, col := range s.Columns {
+		col.Hash64(h)
+	}
+	h.HashInt(len(s.Keys))
+	for _, key := range s.Keys {
+		key.Hash64(h)
+	}
+	h.HashInt(len(s.UniqueKeys))
+	for _, key := range s.UniqueKeys {
+		key.Hash64(h)
+	}
+}
+
+// Equals implements the HashEquals.<1st> interface.
+func (s *Schema) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var s2 *Schema
+	switch x := other.(type) {
+	case *Schema:
+		s2 = x
+	case Schema:
+		s2 = &x
+	default:
+		return false
+	}
+	if len(s.Columns) != len(s2.Columns) {
+		return false
+	}
+	for i, col := range s.Columns {
+		if !col.Equals(s2.Columns[i]) {
+			return false
+		}
+	}
+	if len(s.Keys) != len(s2.Keys) {
+		return false
+	}
+	for i, key := range s.Keys {
+		if !key.Equals(s2.Keys[i]) {
+			return false
+		}
+	}
+	if len(s.UniqueKeys) != len(s2.UniqueKeys) {
+		return false
+	}
+	for i, key := range s.UniqueKeys {
+		if !key.Equals(s2.UniqueKeys[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // String implements fmt.Stringer interface.
