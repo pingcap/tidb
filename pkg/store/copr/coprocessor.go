@@ -1112,11 +1112,11 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 func (it *copIterator) sendReq(ctx context.Context) *copResponse {
 	worker := &copIteratorWorker{
-		taskCh:          make(<-chan *copTask, 1),
-		wg:              &it.wg,
-		store:           it.store,
-		req:             it.req,
-		respChan:        it.respChan,
+		//taskCh: make(<-chan *copTask, 1),
+		wg:    &it.wg,
+		store: it.store,
+		req:   it.req,
+		//respChan:        it.respChan,
 		finishCh:        it.finishCh,
 		vars:            it.vars,
 		kvclient:        txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
@@ -1134,6 +1134,7 @@ func (it *copIterator) sendReq(ctx context.Context) *copResponse {
 	for len(it.tasks) > 0 {
 		curTask := it.tasks[0]
 		respCh := make(chan *copResponse, 2)
+		curTask.respChan = respCh
 		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
 		tasks, err := worker.handleTaskOnce(bo, curTask, respCh)
 		if err != nil {
