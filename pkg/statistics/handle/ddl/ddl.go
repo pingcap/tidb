@@ -58,7 +58,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 
 	// ActionFlashbackCluster will not create any new stats info
 	// and it's SchemaID alwayws equals to 0, so skip check it.
-	if t.GetType() != model.ActionFlashbackCluster {
+	if t.GetType() != model.ActionFlashbackCluster && t.SchemaChangeEvent == nil {
 		if isSysDB, err := t.IsMemOrSysDB(sctx.(sessionctx.Context)); err != nil {
 			return err
 		} else if isSysDB {
