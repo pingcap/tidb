@@ -560,7 +560,7 @@ func TestColumnTable(t *testing.T) {
 	tk.MustExec("create table tbl2(col_1 int primary key, col_2 int, col_3 int);")
 	tk.MustExec("create view view1 as select min(col_1), col_2, max(col_4) as max4 from tbl1 group by col_2;")
 
-	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = 'test';").Check(
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = 'test';").Sort().Check(
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_1",
 			"test|tbl1|col_2",
@@ -568,9 +568,9 @@ func TestColumnTable(t *testing.T) {
 			"test|tbl2|col_1",
 			"test|tbl2|col_2",
 			"test|tbl2|col_3",
-			"test|view1|min(col_1)",
 			"test|view1|col_2",
-			"test|view1|max4"))
+			"test|view1|max4",
+			"test|view1|min(col_1)"))
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns
 				where TABLE_NAME = 'view1' or TABLE_NAME = 'tbl1'`).Check(
 		testkit.RowsWithSep("|",
@@ -580,7 +580,7 @@ func TestColumnTable(t *testing.T) {
 			"test|view1|min(col_1)",
 			"test|view1|col_2",
 			"test|view1|max4"))
-	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where COLUMN_NAME = \"col_2\";").Check(
+	tk.MustQuery("select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where COLUMN_NAME = \"col_2\";").Sort().Check(
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_2",
 			"test|tbl2|col_2",
@@ -803,7 +803,7 @@ func TestReferencedTableSchemaWithForeignKey(t *testing.T) {
 	tk.MustExec("create table test.t1(id int primary key);")
 	tk.MustExec("create table test2.t2(i int, id int, foreign key (id) references test.t1(id));")
 
-	tk.MustQuery(`SELECT column_name, referenced_column_name, referenced_table_name, table_schema, referenced_table_schema 
+	tk.MustQuery(`SELECT column_name, referenced_column_name, referenced_table_name, table_schema, referenced_table_schema
 	FROM information_schema.key_column_usage
 	WHERE table_name = 't2' AND table_schema = 'test2';`).Check(testkit.Rows(
 		"id id t1 test2 test"))

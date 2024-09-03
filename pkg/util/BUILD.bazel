@@ -27,7 +27,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
-        "//pkg/domain/resourcegroup",
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/model",
@@ -37,6 +36,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/resourcegroup",
         "//pkg/session/cursor",
         "//pkg/session/txninfo",
         "//pkg/sessionctx/stmtctx",

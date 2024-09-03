@@ -625,6 +625,10 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			return nil
 		}
 		colInfo = tblInfo.Meta().GetColumnByID(col.ID)
+		if colInfo == nil {
+			asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+			return nil
+		}
 		isUpdateColAndIdxExistenceMap = true
 	}
 	hg, _, statsVer, _, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
