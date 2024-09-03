@@ -307,3 +307,9 @@ select * from information_schema.table_constraints where table_schema = 'executo
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and table_name = 'non_exist';
 --sorted_result
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and CONSTRAINT_NAME = 'c1';
+
+drop table if exists t;
+create table t (c text);
+alter table t add index idx_t (c(16));
+select SUB_PART from information_schema.statistics where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 't';
+
