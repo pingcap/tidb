@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"math"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -587,7 +588,7 @@ func splitByColon(line string) (fields []string, values []string) {
 					current++
 				}
 			}
-			values = append(values, line[start:min(current, len(line))])
+			values = append(values, line[start:math.Min(current, len(line))])
 			parseKey = true
 		}
 	}
