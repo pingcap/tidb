@@ -40,7 +40,7 @@ type DDLEvent struct {
 	columnInfos  []*model.ColumnInfo
 	// todo: replace DDLEvent by SchemaChangeEvent gradually
 	SchemaChangeEvent *ddlutil.SchemaChangeEvent
-	
+
 	// schemaID is the ID of the schema that the table belongs to.
 	// Used to filter out the system or memory tables.
 	schemaID int64
