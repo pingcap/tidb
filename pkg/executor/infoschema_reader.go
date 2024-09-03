@@ -689,15 +689,25 @@ func (e *memtableRetriever) setDataFromOneTable(
 	return rows, nil
 }
 
-func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
-	useStatsCache := e.updateStatsCacheIfNeed()
-	checker := privilege.GetPrivilegeManager(sctx)
-
-	var rows [][]types.Datum
-	loc := sctx.GetSessionVars().TimeZone
-	if loc == nil {
-		loc = time.Local
+func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
+	if len(columns) <= 3 {
+		for _, colInfo := range columns {
+			switch colInfo.Name.L {
+			case "table_schema":
+			case "table_name":
+			case "table_catalog":
+			default:
+				return false
+			}
+		}
+		return true
 	}
+	return false
+}
+
+func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
+	var rows [][]types.Datum
+	checker := privilege.GetPrivilegeManager(sctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
 	if !ok {
 		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTablesExtractor", e.extractor)
@@ -706,9 +716,81 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		return nil
 	}
 
+	// Special optimize for queries on infoschema v2 like:
+	//     select count(table_schema) from INFORMATION_SCHEMA.TABLES
+	//     select count(*) from INFORMATION_SCHEMA.TABLES
+	//     select table_schema, table_name from INFORMATION_SCHEMA.TABLES
+	// column pruning in general is not supported here.
+	if onlySchemaOrTableColumns(e.columns) {
+		is := e.is
+		if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+			is = raw.InfoSchema
+		}
+		v2, ok := is.(interface {
+			IterateAllTableItems(visit func(infoschema.TableItem) bool)
+		})
+		if ok {
+			if x := ctx.Value("cover-check"); x != nil {
+				// The interface assertion is too tricky, so we add test to cover here.
+				// To ensure that if implementation changes one day, we can catch it.
+				slot := x.(*bool)
+				*slot = true
+			}
+			v2.IterateAllTableItems(func(t infoschema.TableItem) bool {
+				if !ex.HasTableName(t.TableName.L) {
+					return true
+				}
+				if !ex.HasTableSchema(t.DBName.L) {
+					return true
+				}
+				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, t.DBName.L, t.TableName.L, "", mysql.SelectPriv) {
+					return true
+				}
+
+				record := types.MakeDatums(
+					infoschema.CatalogVal, // TABLE_CATALOG
+					t.DBName.O,            // TABLE_SCHEMA
+					t.TableName.O,         // TABLE_NAME
+					nil,                   // TABLE_TYPE
+					nil,                   // ENGINE
+					nil,                   // VERSION
+					nil,                   // ROW_FORMAT
+					nil,                   // TABLE_ROWS
+					nil,                   // AVG_ROW_LENGTH
+					nil,                   // DATA_LENGTH
+					nil,                   // MAX_DATA_LENGTH
+					nil,                   // INDEX_LENGTH
+					nil,                   // DATA_FREE
+					nil,                   // AUTO_INCREMENT
+					nil,                   // CREATE_TIME
+					nil,                   // UPDATE_TIME
+					nil,                   // CHECK_TIME
+					nil,                   // TABLE_COLLATION
+					nil,                   // CHECKSUM
+					nil,                   // CREATE_OPTIONS
+					nil,                   // TABLE_COMMENT
+					nil,                   // TIDB_TABLE_ID
+					nil,                   // TIDB_ROW_ID_SHARDING_INFO
+					nil,                   // TIDB_PK_TYPE
+					nil,                   // TIDB_PLACEMENT_POLICY_NAME
+				)
+				rows = append(rows, record)
+				return true
+			})
+			e.rows = rows
+			return nil
+		}
+	}
+
+	// Normal code path.
 	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	useStatsCache := e.updateStatsCacheIfNeed()
+	loc := sctx.GetSessionVars().TimeZone
+	if loc == nil {
+		loc = time.Local
 	}
 	for i, table := range tables {
 		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows, useStatsCache)
