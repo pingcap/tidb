@@ -17,6 +17,7 @@ package ddl
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -109,6 +110,12 @@ func TestMergeCreateTableJobs(t *testing.T) {
 		newWs, err := mergeCreateTableJobs(jobWs)
 		require.NoError(t, err)
 		require.Len(t, newWs, 2)
+		slices.SortFunc(newWs, func(a, b *JobWrapper) int {
+			if a.Type != b.Type {
+				return int(a.Type - b.Type)
+			}
+			return 0
+		})
 		require.Equal(t, model.ActionAddColumn, newWs[0].Type)
 		require.Equal(t, model.ActionCreateTables, newWs[1].Type)
 	})
@@ -121,6 +128,12 @@ func TestMergeCreateTableJobs(t *testing.T) {
 				Args: []any{&model.TableInfo{Name: pmodel.NewCIStr("t2")}, false}}},
 		}
 		newWs, err := mergeCreateTableJobs(jobWs)
+		slices.SortFunc(newWs, func(a, b *JobWrapper) int {
+			if aName, bName := a.Args[0].(*model.TableInfo).Name.L, b.Args[0].(*model.TableInfo).Name.L; aName != bName {
+				return strings.Compare(aName, bName)
+			}
+			return 0
+		})
 		require.NoError(t, err)
 		require.EqualValues(t, jobWs, newWs)
 	})
@@ -133,6 +146,12 @@ func TestMergeCreateTableJobs(t *testing.T) {
 				Args: []any{&model.TableInfo{Name: pmodel.NewCIStr("t2")}, false}}},
 		}
 		newWs, err := mergeCreateTableJobs(jobWs)
+		slices.SortFunc(newWs, func(a, b *JobWrapper) int {
+			if aName, bName := a.Args[0].(*model.TableInfo).Name.L, b.Args[0].(*model.TableInfo).Name.L; aName != bName {
+				return strings.Compare(aName, bName)
+			}
+			return 0
+		})
 		require.NoError(t, err)
 		require.EqualValues(t, jobWs, newWs)
 	})
@@ -145,6 +164,12 @@ func TestMergeCreateTableJobs(t *testing.T) {
 				Args: []any{&model.TableInfo{Name: pmodel.NewCIStr("t2")}, false}}},
 		}
 		newWs, err := mergeCreateTableJobs(jobWs)
+		slices.SortFunc(newWs, func(a, b *JobWrapper) int {
+			if aName, bName := a.SchemaName, b.SchemaName; aName != bName {
+				return strings.Compare(aName, bName)
+			}
+			return 0
+		})
 		require.NoError(t, err)
 		require.EqualValues(t, jobWs, newWs)
 	})
@@ -168,6 +193,21 @@ func TestMergeCreateTableJobs(t *testing.T) {
 		jobWs = append(jobWs, NewJobWrapper(&model.Job{SchemaName: "dbxxx", Type: model.ActionCreateTable,
 			Args: []any{&model.TableInfo{ForeignKeys: []*model.FKInfo{{}}}, false}}, false))
 		newWs, err := mergeCreateTableJobs(jobWs)
+		slices.SortFunc(newWs, func(a, b *JobWrapper) int {
+			if a.Type != b.Type {
+				return int(b.Type - a.Type)
+			}
+			if aName, bName := a.SchemaName, b.SchemaName; aName != bName {
+				return strings.Compare(aName, bName)
+			}
+			aTableInfo, aOK := a.Args[0].(*model.TableInfo)
+			bTableInfo, bOK := b.Args[0].(*model.TableInfo)
+			if aOK && bOK && aTableInfo.Name.L != bTableInfo.Name.L {
+				return strings.Compare(aTableInfo.Name.L, bTableInfo.Name.L)
+			}
+
+			return 0
+		})
 		require.NoError(t, err)
 		// 3 non-mergeable + 2 + 1 + 3
 		require.Len(t, newWs, 9)
