@@ -112,6 +112,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	// compatible with old version task meta
 	jobKeys := sm.RangeJobKeys
 	if jobKeys == nil {
+		// TODO(lance6716): we have changed the encoding requirement, can it really be compatible?
 		jobKeys = sm.RangeSplitKeys
 	}
 	err = local.CloseEngine(ctx, &backend.EngineConfig{

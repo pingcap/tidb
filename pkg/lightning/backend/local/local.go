@@ -1065,7 +1065,15 @@ func (local *Backend) generateJobForRange(
 		return nil, err
 	}
 
-	return newRegionJobs(regions, data, sortedJobRanges, regionSplitSize, regionSplitKeys, local.metrics), nil
+	jobs := newRegionJobs(regions, data, sortedJobRanges, regionSplitSize, regionSplitKeys, local.metrics)
+	log.FromContext(ctx).Info("generate region jobs",
+		zap.Int("len(jobs)", len(jobs)),
+		zap.String("startOfAllRanges", hex.EncodeToString(startOffAllRanges)),
+		zap.String("endOfAllRanges", hex.EncodeToString(endOfAllRanges)),
+		zap.String("startKeyOfFirstRegion", hex.EncodeToString(regions[0].Region.GetStartKey())),
+		zap.String("endKeyOfLastRegion", hex.EncodeToString(regions[len(regions)-1].Region.GetEndKey())),
+	)
+	return jobs, nil
 }
 
 // startWorker creates a worker that reads from the job channel and processes.
