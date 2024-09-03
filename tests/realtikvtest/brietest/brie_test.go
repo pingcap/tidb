@@ -144,10 +144,11 @@ func TestExistedTables(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into %s(v) values %s;", tableName, strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",")))
 	}
 
+	// full backup
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		backupQuery := fmt.Sprintf("BACKUP DATABASE * TO 'local://%s'", sqlTmp)
+		backupQuery := fmt.Sprintf("BACKUP DATABASE * TO 'local://%s/full'", sqlTmp)
 		_ = tk.MustQuery(backupQuery)
 	}()
 	select {
@@ -159,7 +160,36 @@ func TestExistedTables(t *testing.T) {
 	done = make(chan struct{})
 	go func() {
 		defer close(done)
-		restoreQuery := fmt.Sprintf("RESTORE DATABASE * FROM 'local://%s'", sqlTmp)
+		restoreQuery := fmt.Sprintf("RESTORE DATABASE test FROM 'local://%s/full'", sqlTmp)
+		res, err := tk.Exec(restoreQuery)
+		require.NoError(t, err)
+
+		_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), res)
+		require.ErrorContains(t, err, "table already exists")
+	}()
+	select {
+	case <-time.After(20 * time.Second):
+		t.Fatal("Restore operation exceeded")
+	case <-done:
+	}
+
+	// db level backup
+	done = make(chan struct{})
+	go func() {
+		defer close(done)
+		backupQuery := fmt.Sprintf("BACKUP DATABASE test TO 'local://%s/db'", sqlTmp)
+		_ = tk.MustQuery(backupQuery)
+	}()
+	select {
+	case <-time.After(20 * time.Second):
+		t.Fatal("Backup operation exceeded")
+	case <-done:
+	}
+
+	done = make(chan struct{})
+	go func() {
+		defer close(done)
+		restoreQuery := fmt.Sprintf("Restore DATABASE * FROM 'local://%s/db'", sqlTmp)
 		res, err := tk.Exec(restoreQuery)
 		require.NoError(t, err)
 
@@ -178,6 +208,7 @@ func TestExistedTables(t *testing.T) {
 	}
 }
 
+// full backup * -> incremental backup * -> restore full backup * -> restore incremental backup *
 func TestExistedTablesOfIncremental(t *testing.T) {
 	tk := initTestKit(t)
 	tmp := makeTempDirForBackup(t)
@@ -225,7 +256,8 @@ func TestExistedTablesOfIncremental(t *testing.T) {
 	}
 }
 
-func TestExistedTablesOfPartialRestore(t *testing.T) {
+// full backup * -> incremental backup * -> restore full backup `test` -> restore incremental backup `test`
+func TestExistedTablesOfIncremental_1(t *testing.T) {
 	tk := initTestKit(t)
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
@@ -272,7 +304,8 @@ func TestExistedTablesOfPartialRestore(t *testing.T) {
 	}
 }
 
-func TestExistedTablesOfDatabaseBackup(t *testing.T) {
+// full backup `test` -> incremental backup `test` -> restore full backup * -> restore incremental backup *
+func TestExistedTablesOfIncremental_2(t *testing.T) {
 	tk := initTestKit(t)
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
