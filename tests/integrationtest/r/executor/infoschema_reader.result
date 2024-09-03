@@ -420,8 +420,6 @@ select * from information_schema.table_constraints where table_schema = 'executo
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and CONSTRAINT_NAME = 'c1';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
-def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t	PRIMARY KEY
-def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_int	PRIMARY KEY
 drop table if exists t;
 create table t (c text);
 alter table t add index idx_t (c(16));
