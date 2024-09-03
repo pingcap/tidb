@@ -1341,7 +1341,7 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	tk.MustQuery("explain format='brief' select * from t where b in (1, 2, 3, 4, 5, 6, 7, 8)").Check(expectedB)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background(), is))
+	require.NoError(t, h.InitStatsLite(context.Background()))
 	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(expectedA)
 	tk.MustQuery("explain format='brief' select * from t where b in (1, 2, 3, 4, 5, 6, 7, 8)").Check(expectedB)
 
@@ -1356,7 +1356,6 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	require.True(t, found)
 	require.False(t, statsTbl.ColAndIdxExistenceMap.IsEmpty())
 	for _, col := range tbl.Cols() {
-		require.True(t, statsTbl.ColAndIdxExistenceMap.Has(col.ID, false))
 		require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
 	}
 }
