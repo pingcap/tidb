@@ -64,7 +64,7 @@ func NewTableKVEncoder(
 	}
 	// we need a non-nil TxnCtx to avoid panic when evaluating set clause
 	baseKVEncoder.SessionCtx.SetTxnCtxNotNil()
-	colAssignExprs, _, err := ti.CreateColAssignExprs(baseKVEncoder.SessionCtx.GetPlanCtx())
+	colAssignExprs, _, err := ti.CreateColAssignSimpleExprs(baseKVEncoder.SessionCtx.GetExprCtx())
 	if err != nil {
 		return nil, err
 	}

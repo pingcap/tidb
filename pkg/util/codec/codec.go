@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -1584,6 +1585,20 @@ func ConvertByCollation(raw []byte, tp *types.FieldType) []byte {
 func ConvertByCollationStr(str string, tp *types.FieldType) string {
 	collator := collate.GetCollator(tp.GetCollate())
 	return string(hack.String(collator.Key(str)))
+}
+
+// Hash64 is for datum hash64 calculation.
+func Hash64(h base.Hasher, d *types.Datum) {
+	// let h.cache to receive datum hash value, which is potentially expendable.
+	// clean the cache before using it.
+	b := h.Cache()[:0]
+	b = HashCode(b, *d)
+	h.HashBytes(b)
+	h.SetCache(b)
+}
+
+func init() {
+	types.Hash64ForDatum = Hash64
 }
 
 // HashCode encodes a Datum into a unique byte slice.

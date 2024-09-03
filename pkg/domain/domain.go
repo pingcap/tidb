@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
@@ -64,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -194,8 +194,7 @@ type Domain struct {
 	logBackupAdvancer        *daemon.OwnerDaemon
 	historicalStatsWorker    *HistoricalStatsWorker
 	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
-	runawayManager           *resourcegroup.RunawayManager
-	runawaySyncer            *runawaySyncer
+	runawayManager           *runaway.Manager
 	resourceGroupsController *rmclient.ResourceGroupsController
 
 	serverID             uint64
@@ -2073,7 +2072,7 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 }
 
 // RunawayManager returns the runaway manager.
-func (do *Domain) RunawayManager() *resourcegroup.RunawayManager {
+func (do *Domain) RunawayManager() *runaway.Manager {
 	return do.runawayManager
 }
 

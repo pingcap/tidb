@@ -447,7 +447,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	startKey := kvMeta.StartKey
 	var endKey kv.Key
 	for {
-		endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
 		if err != nil {
 			return nil, err
 		}
@@ -472,7 +472,8 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			}},
 			DataFiles:      dataFiles,
 			StatFiles:      statFiles,
-			RangeSplitKeys: rangeSplitKeys,
+			RangeJobKeys:   rangeJobKeys,
+			RangeSplitKeys: regionSplitKeys,
 			TS:             ts,
 		}
 		if eleID > 0 {
@@ -596,16 +597,16 @@ func getRangeSplitter(
 	rangeGroupSize := totalSize / instanceCnt
 	rangeGroupKeys := int64(math.MaxInt64)
 
-	var maxSizePerRange = int64(config.SplitRegionSize)
-	var maxKeysPerRange = int64(config.SplitRegionKeys)
+	var regionSplitSize = int64(config.SplitRegionSize)
+	var regionSplitKeys = int64(config.SplitRegionKeys)
 	if store != nil {
 		pdCli := store.GetPDClient()
 		tls, err := ingest.NewDDLTLS()
 		if err == nil {
 			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
 			if err == nil {
-				maxSizePerRange = max(maxSizePerRange, size)
-				maxKeysPerRange = max(maxKeysPerRange, keys)
+				regionSplitSize = max(regionSplitSize, size)
+				regionSplitKeys = max(regionSplitKeys, keys)
 			} else {
 				logger.Warn("fail to get region split keys and size", zap.Error(err))
 			}
@@ -614,8 +615,11 @@ func getRangeSplitter(
 		}
 	}
 
+	// no matter region split size and keys, we always split range jobs by 96MB
 	return external.NewRangeSplitter(ctx, multiFileStat, extStore,
-		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange)
+		rangeGroupSize, rangeGroupKeys,
+		int64(config.SplitRegionSize), int64(config.SplitRegionKeys),
+		regionSplitSize, regionSplitKeys)
 }
 
 func forEachBackfillSubtaskMeta(

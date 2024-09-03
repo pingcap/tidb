@@ -103,11 +103,10 @@ func WithCastExprTo(targetFt *types.FieldType) BuildOption {
 // This function is used to build some "simple" expressions with limited context.
 // The below expressions are not supported:
 //   - Subquery
-//   - Param marker (e.g. `?`)
-//   - Variable (e.g. `@a`)
+//   - System Variables (e.g. `@tidb_enable_async_commit`)
 //   - Window functions
 //   - Aggregate functions
-//   - Other special functions such as `GROUPING`
+//   - Other special functions used in some specified queries such as `GROUPING`, `VALUES` ...
 //
 // If you want to build a more complex expression, you should use `EvalAstExprWithPlanCtx` or `RewriteAstExprWithPlanCtx`
 // in `github.com/pingcap/tidb/pkg/planner/util`. They are more powerful but need planner context to build expressions.

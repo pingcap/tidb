@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -122,7 +123,7 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 
 // Preprocess resolves table names of the node, and checks some statements' validation.
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
-func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
+func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, preprocessOpt ...PreprocessOpt) error {
 	defer tracing.StartRegion(ctx, "planner.Preprocess").End()
 	v := preprocessor{
 		ctx:                ctx,
@@ -130,6 +131,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, pre
 		tableAliasInJoin:   make([]map[string]any, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
+		resolveCtx:         node.GetResolveContext(),
 	}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
@@ -138,7 +140,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, pre
 	if v.PreprocessorReturn == nil {
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
-	node.Accept(&v)
+	node.Node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
 	return errors.Trace(v.err)
@@ -236,6 +238,8 @@ type preprocessor struct {
 	// values that may be returned
 	*PreprocessorReturn
 	err error
+
+	resolveCtx *resolve.Context
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -541,7 +545,8 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	tblNames := ExtractTableList(originNode, false)
+	nodeW := resolve.NewNodeWWithCtx(originNode, p.resolveCtx)
+	tblNames := ExtractTableList(nodeW, false)
 	for _, tn := range tblNames {
 		tbl, err := p.tableByName(tn)
 		if err != nil {
@@ -559,8 +564,11 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 		}
 		tableInfo := tbl.Meta()
 		dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), tableInfo)
-		tn.TableInfo = tableInfo
-		tn.DBInfo = dbInfo
+		p.resolveCtx.AddTableName(&resolve.TableNameW{
+			TableName: tn,
+			DBInfo:    dbInfo,
+			TableInfo: tableInfo,
+		})
 	}
 
 	originSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()), false)
@@ -1625,8 +1633,11 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 	}
-	tn.TableInfo = tableInfo
-	tn.DBInfo = dbInfo
+	p.resolveCtx.AddTableName(&resolve.TableNameW{
+		TableName: tn,
+		DBInfo:    dbInfo,
+		TableInfo: tableInfo,
+	})
 }
 
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {

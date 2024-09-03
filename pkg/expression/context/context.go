@@ -31,7 +31,11 @@ import (
 type PlanColumnIDAllocator interface {
 	// AllocPlanColumnID allocates column id for plan.
 	AllocPlanColumnID() int64
+	// GetLastPlanColumnID returns the last column id.
+	GetLastPlanColumnID() int64
 }
+
+var _ PlanColumnIDAllocator = &SimplePlanColumnIDAllocator{}
 
 // SimplePlanColumnIDAllocator implements PlanColumnIDAllocator
 type SimplePlanColumnIDAllocator struct {
@@ -48,6 +52,11 @@ func NewSimplePlanColumnIDAllocator(offset int64) *SimplePlanColumnIDAllocator {
 // AllocPlanColumnID allocates column id for plan.
 func (a *SimplePlanColumnIDAllocator) AllocPlanColumnID() int64 {
 	return a.id.Add(1)
+}
+
+// GetLastPlanColumnID returns the last column id.
+func (a *SimplePlanColumnIDAllocator) GetLastPlanColumnID() int64 {
+	return a.id.Load()
 }
 
 // EvalContext is used to evaluate an expression
@@ -233,4 +242,23 @@ func AssertLocationWithSessionVars(ctxLoc *time.Location, vars *variable.Session
 		"location mismatch, ctxLoc: %s, varsLoc: %s, stmtLoc: %s",
 		ctxLocStr, varsLocStr, stmtLocStr,
 	)
+}
+
+// StaticConvertibleExprContext provides more methods to implement the clone of a `ExprContext`
+type StaticConvertibleExprContext interface {
+	ExprContext
+
+	GetStaticConvertibleEvalContext() StaticConvertibleEvalContext
+	GetPlanCacheTracker() *contextutil.PlanCacheTracker
+	GetLastPlanColumnID() int64
+}
+
+// StaticConvertibleEvalContext provides more methods to implement the clone of a `EvalContext`
+type StaticConvertibleEvalContext interface {
+	EvalContext
+
+	AllParamValues() []types.Datum
+	GetWarnHandler() contextutil.WarnHandler
+	GetRequestVerificationFn() func(db, table, column string, priv mysql.PrivilegeType) bool
+	GetDynamicPrivCheckFn() func(privName string, grantable bool) bool
 }

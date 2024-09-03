@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
@@ -726,6 +726,9 @@ type HookContext interface {
 type SessionVarsProvider interface {
 	GetSessionVars() *SessionVars
 }
+
+// SessionVars should implement `SessionVarsProvider`
+var _ SessionVarsProvider = &SessionVars{}
 
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
@@ -1655,6 +1658,11 @@ type SessionVars struct {
 	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
 	// `select for update` statements which do acquire pessimsitic locks.
 	SharedLockPromotion bool
+}
+
+// GetSessionVars implements the `SessionVarsProvider` interface.
+func (s *SessionVars) GetSessionVars() *SessionVars {
+	return s
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

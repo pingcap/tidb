@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -64,10 +65,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 
 	// Do preprocess and validate.
 	ret := &plannercore.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmtNode)
 	err = plannercore.Preprocess(
 		ctx,
 		c.Ctx,
-		stmtNode,
+		nodeW,
 		plannercore.WithPreprocessorReturn(ret),
 		plannercore.InitTxnContextProvider,
 	)
@@ -96,7 +98,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		}
 	}
 	// Build the final physical plan.
-	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, nodeW, is)
 	if err != nil {
 		return nil, err
 	}
@@ -106,9 +108,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	})
 
 	if preparedObj != nil {
-		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
+		CountStmtNode(preparedObj.PreparedAst.Stmt, preparedObj.ResolveCtx, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	} else {
-		CountStmtNode(stmtNode, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
+		CountStmtNode(stmtNode, nodeW.GetResolveContext(), sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
@@ -185,7 +187,7 @@ func isPhysicalPlanNeedLowerPriority(p base.PhysicalPlan) bool {
 }
 
 // CountStmtNode records the number of statements with the same type.
-func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool, resourceGroup string) {
+func CountStmtNode(stmtNode ast.StmtNode, resolveCtx *resolve.Context, inRestrictedSQL bool, resourceGroup string) {
 	if inRestrictedSQL {
 		return
 	}
@@ -193,7 +195,7 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool, resourceGroup st
 	typeLabel := ast.GetStmtLabel(stmtNode)
 
 	if config.GetGlobalConfig().Status.RecordQPSbyDB || config.GetGlobalConfig().Status.RecordDBLabel {
-		dbLabels := getStmtDbLabel(stmtNode)
+		dbLabels := getStmtDbLabel(stmtNode, resolveCtx)
 		switch {
 		case config.GetGlobalConfig().Status.RecordQPSbyDB:
 			for dbLabel := range dbLabels {
@@ -209,7 +211,7 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool, resourceGroup st
 	}
 }
 
-func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
+func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[string]struct{} {
 	dbLabelSet := make(map[string]struct{})
 
 	switch x := stmtNode.(type) {
@@ -231,12 +233,12 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 	case *ast.InsertStmt:
 		var dbLabels []string
 		if x.Table != nil {
-			dbLabels = getDbFromResultNode(x.Table.TableRefs)
+			dbLabels = getDbFromResultNode(x.Table.TableRefs, resolveCtx)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
 		}
-		dbLabels = getDbFromResultNode(x.Select)
+		dbLabels = getDbFromResultNode(x.Select, resolveCtx)
 		for _, db := range dbLabels {
 			dbLabelSet[db] = struct{}{}
 		}
@@ -289,25 +291,25 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			}
 		}
 	case *ast.SelectStmt:
-		dbLabels := getDbFromResultNode(x)
+		dbLabels := getDbFromResultNode(x, resolveCtx)
 		for _, db := range dbLabels {
 			dbLabelSet[db] = struct{}{}
 		}
 	case *ast.SetOprStmt:
-		dbLabels := getDbFromResultNode(x)
+		dbLabels := getDbFromResultNode(x, resolveCtx)
 		for _, db := range dbLabels {
 			dbLabelSet[db] = struct{}{}
 		}
 	case *ast.UpdateStmt:
 		if x.TableRefs != nil {
-			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs)
+			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs, resolveCtx)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
 		}
 	case *ast.DeleteStmt:
 		if x.TableRefs != nil {
-			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs)
+			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs, resolveCtx)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
@@ -403,7 +405,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			} else {
 				resNode = nil
 			}
-			dbLabels := getDbFromResultNode(resNode)
+			dbLabels := getDbFromResultNode(resNode, resolveCtx)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
@@ -424,7 +426,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			} else {
 				resNode = nil
 			}
-			dbLabels := getDbFromResultNode(resNode)
+			dbLabels := getDbFromResultNode(resNode, resolveCtx)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
@@ -448,7 +450,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			} else {
 				resNode = nil
 			}
-			dbLabels := getDbFromResultNode(resNode)
+			dbLabels := getDbFromResultNode(resNode, resolveCtx)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
@@ -469,7 +471,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			} else {
 				resNode = nil
 			}
-			dbLabels := getDbFromResultNode(resNode)
+			dbLabels := getDbFromResultNode(resNode, resolveCtx)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
@@ -493,7 +495,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			} else {
 				resNode = nil
 			}
-			dbLabels := getDbFromResultNode(resNode)
+			dbLabels := getDbFromResultNode(resNode, resolveCtx)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
@@ -515,7 +517,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			} else {
 				resNode = nil
 			}
-			dbLabels := getDbFromResultNode(resNode)
+			dbLabels := getDbFromResultNode(resNode, resolveCtx)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
@@ -530,7 +532,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 	return dbLabelSet
 }
 
-func getDbFromResultNode(resultNode ast.ResultSetNode) []string { // may have duplicate db name
+func getDbFromResultNode(resultNode ast.ResultSetNode, resolveCtx *resolve.Context) []string { // may have duplicate db name
 	var dbLabels []string
 
 	if resultNode == nil {
@@ -539,25 +541,26 @@ func getDbFromResultNode(resultNode ast.ResultSetNode) []string { // may have du
 
 	switch x := resultNode.(type) {
 	case *ast.TableSource:
-		return getDbFromResultNode(x.Source)
+		return getDbFromResultNode(x.Source, resolveCtx)
 	case *ast.SelectStmt:
 		if x.From != nil {
-			return getDbFromResultNode(x.From.TableRefs)
+			return getDbFromResultNode(x.From.TableRefs, resolveCtx)
 		}
 	case *ast.TableName:
-		if x.DBInfo != nil {
-			dbLabels = append(dbLabels, x.DBInfo.Name.O)
+		xW := resolveCtx.GetTableName(x)
+		if xW != nil {
+			dbLabels = append(dbLabels, xW.DBInfo.Name.O)
 		}
 	case *ast.Join:
 		if x.Left != nil {
-			dbs := getDbFromResultNode(x.Left)
+			dbs := getDbFromResultNode(x.Left, resolveCtx)
 			if dbs != nil {
 				dbLabels = append(dbLabels, dbs...)
 			}
 		}
 
 		if x.Right != nil {
-			dbs := getDbFromResultNode(x.Right)
+			dbs := getDbFromResultNode(x.Right, resolveCtx)
 			if dbs != nil {
 				dbLabels = append(dbLabels, dbs...)
 			}
