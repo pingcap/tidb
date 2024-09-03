@@ -1406,6 +1406,22 @@ var PlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) b
 	return false
 }
 
+// AllPlacementPolicyAttribute is the Placement Policy attribute filter used by ListTablesWithSpecialAttribute.
+// Different from PlacementPolicyAttribute, Partition.Enable flag will be ignored.
+var AllPlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+	if t.PlacementPolicyRef != nil {
+		return true
+	}
+	if t.Partition != nil {
+		for _, def := range t.Partition.Definitions {
+			if def.PlacementPolicyRef != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // TableLockAttribute is the Table Lock attribute filter used by ListTablesWithSpecialAttribute.
 var TableLockAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.Lock != nil

@@ -45,6 +45,7 @@ go_library(
         "//pkg/planner/core/constraint",
         "//pkg/planner/core/cost",
         "//pkg/planner/core/operator/baseimpl",
+        "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule/util",
         "//pkg/planner/funcdep",
         "//pkg/planner/property",
