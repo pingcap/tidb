@@ -1401,7 +1401,7 @@ func TestInitStatsLite(t *testing.T) {
 	checkAllEvicted(t, statsTbl0)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background(), is))
+	require.NoError(t, h.InitStatsLite(context.Background()))
 	statsTbl1 := h.GetTableStats(tblInfo)
 	checkAllEvicted(t, statsTbl1)
 	{
