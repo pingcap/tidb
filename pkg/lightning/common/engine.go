@@ -18,7 +18,8 @@ import (
 	"context"
 )
 
-// Range contains a start key and an end key.
+// Range contains a start key and an end key. The Range's key should not be
+// encoded by duplicate detection.
 type Range struct {
 	Start []byte
 	End   []byte // end is always exclusive except import_sstpb.SSTMeta
