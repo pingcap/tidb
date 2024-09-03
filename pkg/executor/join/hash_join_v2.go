@@ -438,9 +438,6 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 
 	// Wake up final worker
 	pfAndFWSync <- struct{}{}
-
-	// We use buildFinished as the syncer between build task dispatcher and probe fetcher
-	<-e.hashJoinCtxBase.buildFinished
 }
 
 func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
