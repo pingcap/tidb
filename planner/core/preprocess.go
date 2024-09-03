@@ -1417,21 +1417,22 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			}
 		}
 	case mysql.TypeNewDecimal:
-		if tp.GetDecimal() > mysql.MaxDecimalScale {
-			return types.ErrTooBigScale.GenWithStackByArgs(tp.GetDecimal(), colDef.Name.Name.O, mysql.MaxDecimalScale)
+		tpFlen := tp.GetFlen()
+		tpDecimal := tp.GetDecimal()
+		if tpDecimal > mysql.MaxDecimalScale {
+			return types.ErrTooBigScale.GenWithStackByArgs(tpDecimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
 		}
-
-		if tp.GetFlen() > mysql.MaxDecimalWidth {
-			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.GetFlen(), colDef.Name.Name.O, mysql.MaxDecimalWidth)
+		if tpFlen > mysql.MaxDecimalWidth {
+			return types.ErrTooBigPrecision.GenWithStackByArgs(tpFlen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
-
-		if tp.GetFlen() < tp.GetDecimal() {
+		if tpFlen < tpDecimal {
 			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 		}
 		// If decimal and flen all equals 0, just set flen to default value.
-		if tp.GetDecimal() == 0 && tp.GetFlen() == 0 {
+		if tpFlen == 0 && (tpDecimal == 0 || tpDecimal == types.UnspecifiedLength) {
 			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNewDecimal)
 			tp.SetFlen(defaultFlen)
+			tp.SetDecimal(0)
 		}
 	case mysql.TypeBit:
 		if tp.GetFlen() <= 0 {
