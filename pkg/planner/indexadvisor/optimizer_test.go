@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package index_advisor_test
+package indexadvisor_test
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/index_advisor"
+	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -32,36 +32,36 @@ func TestOptimizerColumnType(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int, b float, c varchar(255))`)
 	tk.MustExec(`create table t2 (a int, b decimal(10,2), c varchar(1024))`)
-	opt := index_advisor.NewOptimizer(tk.Session())
+	opt := indexadvisor.NewOptimizer(tk.Session())
 
-	tp, err := opt.ColumnType(index_advisor.Column{SchemaName: "test", TableName: "t1", ColumnName: "a"})
+	tp, err := opt.ColumnType(indexadvisor.Column{SchemaName: "test", TableName: "t1", ColumnName: "a"})
 	require.NoError(t, err)
 	require.Equal(t, mysql.TypeLong, tp.GetType())
 
-	tp, err = opt.ColumnType(index_advisor.Column{SchemaName: "test", TableName: "t1", ColumnName: "b"})
+	tp, err = opt.ColumnType(indexadvisor.Column{SchemaName: "test", TableName: "t1", ColumnName: "b"})
 	require.NoError(t, err)
 	require.Equal(t, mysql.TypeFloat, tp.GetType())
 
-	tp, err = opt.ColumnType(index_advisor.Column{SchemaName: "test", TableName: "t1", ColumnName: "c"})
+	tp, err = opt.ColumnType(indexadvisor.Column{SchemaName: "test", TableName: "t1", ColumnName: "c"})
 	require.NoError(t, err)
 	require.Equal(t, mysql.TypeVarchar, tp.GetType())
 
-	tp, err = opt.ColumnType(index_advisor.Column{SchemaName: "test", TableName: "t2", ColumnName: "a"})
+	tp, err = opt.ColumnType(indexadvisor.Column{SchemaName: "test", TableName: "t2", ColumnName: "a"})
 	require.NoError(t, err)
 	require.Equal(t, mysql.TypeLong, tp.GetType())
 
-	tp, err = opt.ColumnType(index_advisor.Column{SchemaName: "test", TableName: "t2", ColumnName: "b"})
+	tp, err = opt.ColumnType(indexadvisor.Column{SchemaName: "test", TableName: "t2", ColumnName: "b"})
 	require.NoError(t, err)
 	require.Equal(t, mysql.TypeNewDecimal, tp.GetType())
 
-	tp, err = opt.ColumnType(index_advisor.Column{SchemaName: "test", TableName: "t2", ColumnName: "c"})
+	tp, err = opt.ColumnType(indexadvisor.Column{SchemaName: "test", TableName: "t2", ColumnName: "c"})
 	require.NoError(t, err)
 	require.Equal(t, mysql.TypeVarchar, tp.GetType())
 
-	_, err = opt.ColumnType(index_advisor.Column{SchemaName: "test", TableName: "t2", ColumnName: "d"})
+	_, err = opt.ColumnType(indexadvisor.Column{SchemaName: "test", TableName: "t2", ColumnName: "d"})
 	require.Error(t, err)
 
-	_, err = opt.ColumnType(index_advisor.Column{SchemaName: "test", TableName: "t3", ColumnName: "a"})
+	_, err = opt.ColumnType(indexadvisor.Column{SchemaName: "test", TableName: "t3", ColumnName: "a"})
 	require.Error(t, err)
 }
 
@@ -71,10 +71,10 @@ func TestOptimizerPrefixContainIndex(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int, b int, c int, d int, key(a), key(b, c))`)
 	tk.MustExec(`create table t2 (a int, b int, c int, d int, key(a, b, c, d), key(d, c, b, a))`)
-	opt := index_advisor.NewOptimizer(tk.Session())
+	opt := indexadvisor.NewOptimizer(tk.Session())
 
 	check := func(expected bool, tableName string, columns ...string) {
-		ok, err := opt.PrefixContainIndex(index_advisor.NewIndex("test", tableName, "idx", columns...))
+		ok, err := opt.PrefixContainIndex(indexadvisor.NewIndex("test", tableName, "idx", columns...))
 		require.NoError(t, err)
 		require.Equal(t, expected, ok)
 	}
@@ -103,7 +103,7 @@ func TestOptimizerPossibleColumns(t *testing.T) {
 	tk.MustExec(`create table t1 (a int, b int, c int, d int)`)
 	tk.MustExec(`create table t2 (a int, b int, c int, d int)`)
 	tk.MustExec(`create table t3 (c int, d int, e int, f int)`)
-	opt := index_advisor.NewOptimizer(tk.Session())
+	opt := indexadvisor.NewOptimizer(tk.Session())
 
 	check := func(schema, colName string, expected []string) {
 		cols, err := opt.PossibleColumns(schema, colName)
@@ -132,7 +132,7 @@ func TestOptimizerTableColumns(t *testing.T) {
 	tk.MustExec(`create table t1 (a int, b int, c int, d int)`)
 	tk.MustExec(`create table t2 (a int, b int, c int, d int)`)
 	tk.MustExec(`create table t3 (c int, d int, e int, f int)`)
-	opt := index_advisor.NewOptimizer(tk.Session())
+	opt := indexadvisor.NewOptimizer(tk.Session())
 
 	check := func(schemaName, tableName string, columns []string) {
 		cols, err := opt.TableColumns(schemaName, tableName)
@@ -158,7 +158,7 @@ func TestOptimizerIndexNameExist(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int, b int, c int, d int, index ka(a), index kbc(b, c))`)
 	tk.MustExec(`create table t2 (a int, b int, c int, d int, index ka(a), index kbc(b, c))`)
-	opt := index_advisor.NewOptimizer(tk.Session())
+	opt := indexadvisor.NewOptimizer(tk.Session())
 
 	check := func(schema, table, indexName string, expected bool) {
 		ok, err := opt.IndexNameExist(schema, table, indexName)
@@ -180,7 +180,7 @@ func TestOptimizerEstIndexSize(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b varchar(64))`)
-	opt := index_advisor.NewOptimizer(tk.Session())
+	opt := indexadvisor.NewOptimizer(tk.Session())
 
 	s, err := opt.EstIndexSize("test", "t", "a")
 	require.NoError(t, err)
@@ -235,25 +235,25 @@ func TestOptimizerQueryPlanCost(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t0 (a int, b int, c int)`)
 
-	opt := index_advisor.NewOptimizer(tk.Session())
+	opt := indexadvisor.NewOptimizer(tk.Session())
 	cost1, err := opt.QueryPlanCost("select a, b from t0 where a=1 and b=1")
 	require.NoError(t, err)
 
-	cost2, err := opt.QueryPlanCost("select a, b from t0 where a=1 and b=1", index_advisor.Index{
+	cost2, err := opt.QueryPlanCost("select a, b from t0 where a=1 and b=1", indexadvisor.Index{
 		SchemaName: "test",
 		TableName:  "t0",
 		IndexName:  "idx_a",
-		Columns: []index_advisor.Column{
+		Columns: []indexadvisor.Column{
 			{SchemaName: "test", TableName: "t0", ColumnName: "a"}},
 	})
 	require.NoError(t, err)
 	require.True(t, cost2 < cost1)
 
-	cost3, err := opt.QueryPlanCost("select a, b from t0 where a=1 and b=1", index_advisor.Index{
+	cost3, err := opt.QueryPlanCost("select a, b from t0 where a=1 and b=1", indexadvisor.Index{
 		SchemaName: "test",
 		TableName:  "t0",
 		IndexName:  "idx_a",
-		Columns: []index_advisor.Column{
+		Columns: []indexadvisor.Column{
 			{SchemaName: "test", TableName: "t0", ColumnName: "a"},
 			{SchemaName: "test", TableName: "t0", ColumnName: "b"}},
 	})
