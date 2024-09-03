@@ -215,12 +215,16 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkNO.MustExec(`insert into t values (5,5)`)
 			tkNO.MustExec(`insert into t values (7,7)`)
 			tkO.MustContainErrMsg(`insert into t values (5,5)`, "[kv:1062]Duplicate entry '5' for key 't.uk_b'")
+			tkO.MustContainErrMsg(`insert into t values (6,7)`, "[kv:1062]Duplicate entry '7' for key 't.uk_b'")
 			tkO.MustExec(`insert into t values (9,9)`)
+			tkNO.MustContainErrMsg(`insert into t values (8,9)`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
 			// TODO: Add tests for update/delete as well as index lookup and table scan!
 		case "delete reorganization":
 			tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 			tkO.MustExec(`insert into t values (1,1)`)
+			tkO.MustContainErrMsg(`insert into t values (10,7)`, "[kv:1062]Duplicate entry '7' for key 't.uk_b'")
 			tkNO.MustExec(`insert into t values (11,11)`)
+			tkNO.MustContainErrMsg(`insert into t values (12,9)`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
 			tkNO.MustContainErrMsg(`insert into t values (9,9)`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
 			tkNO.MustContainErrMsg(`insert into t values (11,11)`, "[kv:1062]Duplicate entry '11' for key 't.uk_b'")
 			tkO.MustExec(`insert into t values (13,13)`)

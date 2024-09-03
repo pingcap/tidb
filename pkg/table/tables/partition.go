@@ -1632,6 +1632,9 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 		evalCtx := ctx.GetExprCtx().GetEvalCtx()
 		tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
 		recordID, err = t.getRecordID(txn, r, opt, tc.Location(), ec)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		// flag that non-existing rows is OK
 		// Since the table id is encoded in the recordID it will not affect current, new partition
 		key := oldTbl.RecordKey(recordID)

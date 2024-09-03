@@ -6,9 +6,10 @@ go_test(
     srcs = [
         "db_partition_test.go",
         "main_test.go",
+        "multi_domain_test.go",
     ],
     flaky = True,
-    shard_count = 49,
+    shard_count = 50,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
@@ -36,6 +37,7 @@ go_test(
         "//pkg/types",
         "//pkg/util/codec",
         "//pkg/util/dbterror",
+        "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
