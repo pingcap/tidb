@@ -2371,7 +2371,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 				DDLJobRetriever: ddlJobRetriever,
 			}
 		case strings.ToLower(infoschema.TableTiFlashTables),
-			strings.ToLower(infoschema.TableTiFlashSegments):
+			strings.ToLower(infoschema.TableTiFlashSegments),
+			strings.ToLower(infoschema.TableTiFlashIndexes):
 			return &MemTableReaderExec{
 				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
