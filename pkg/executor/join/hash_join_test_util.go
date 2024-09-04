@@ -256,6 +256,7 @@ func buildSchema(schemaTypes []*types.FieldType) *expression.Schema {
 func executeHashJoinExec(t *testing.T, hashJoinExec *HashJoinV2Exec) []*chunk.Chunk {
 	log.Info("---------xzxdebug start to execute join exec---------")
 	tmpCtx := context.Background()
+	hashJoinExec.isMemoryClearedForTest = true
 	err := hashJoinExec.Open(tmpCtx)
 	require.NoError(t, err)
 	results := make([]*chunk.Chunk, 0)
