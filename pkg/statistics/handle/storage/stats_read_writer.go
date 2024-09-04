@@ -25,7 +25,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -100,7 +101,7 @@ func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.
 					}
 				} else {
 					// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-					if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, %?)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
+					if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, GREATEST(%?, 0))", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
 						return err
 					}
 					value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
@@ -638,7 +639,7 @@ func (s *statsReadWriter) LoadStatsFromJSONConcurrently(
 // LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
 func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema,
 	jsonTbl *util.JSONTable, concurrencyForPartition int) error {
-	table, err := is.TableByName(context.Background(), model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
+	table, err := is.TableByName(context.Background(), pmodel.NewCIStr(jsonTbl.DatabaseName), pmodel.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -70,56 +70,57 @@ func NewRefresher(
 	return r
 }
 
-// PickOneTableAndAnalyzeByPriority picks one table and analyzes it by priority.
-func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
+// AnalyzeHighestPriorityTables picks tables with the highest priority and analyzes them.
+func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	if !r.autoAnalysisTimeWindow.isWithinTimeWindow(time.Now()) {
 		return false
 	}
 
 	se, err := r.statsHandle.SPool().Get()
 	if err != nil {
-		statslogutil.StatsLogger().Error(
-			"Get session context failed",
-			zap.Error(err),
-		)
+		statslogutil.StatsLogger().Error("Failed to get session context", zap.Error(err))
 		return false
 	}
 	defer r.statsHandle.SPool().Put(se)
+
 	sctx := se.(sessionctx.Context)
-	// Pick the table with the highest weight.
-	for r.Jobs.Len() > 0 {
+	var wg util.WaitGroupWrapper
+	defer wg.Wait()
+
+	maxConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
+	analyzedCount := 0
+
+	for r.Jobs.Len() > 0 && analyzedCount < maxConcurrency {
 		job := r.Jobs.Pop()
-		if valid, failReason := job.IsValidToAnalyze(
-			sctx,
-		); !valid {
+		if valid, failReason := job.IsValidToAnalyze(sctx); !valid {
 			statslogutil.SingletonStatsSamplerLogger().Info(
-				"Table is not ready to analyze",
-				zap.String("failReason", failReason),
+				"Table not ready for analysis",
+				zap.String("reason", failReason),
 				zap.Stringer("job", job),
 			)
 			continue
 		}
-		statslogutil.StatsLogger().Info(
-			"Auto analyze triggered",
-			zap.Stringer("job", job),
-		)
-		err = job.Analyze(
-			r.statsHandle,
-			r.sysProcTracker,
-		)
-		if err != nil {
-			statslogutil.StatsLogger().Error(
-				"Execute auto analyze job failed",
-				zap.Stringer("job", job),
-				zap.Error(err),
-			)
-		}
-		// Only analyze one table each time.
+
+		statslogutil.StatsLogger().Info("Auto analyze triggered", zap.Stringer("job", job))
+
+		wg.Run(func() {
+			if err := job.Analyze(r.statsHandle, r.sysProcTracker); err != nil {
+				statslogutil.StatsLogger().Error(
+					"Auto analyze job execution failed",
+					zap.Stringer("job", job),
+					zap.Error(err),
+				)
+			}
+		})
+
+		analyzedCount++
+	}
+
+	if analyzedCount > 0 {
 		return true
 	}
-	statslogutil.SingletonStatsSamplerLogger().Info(
-		"No table to analyze",
-	)
+
+	statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
 	return false
 }
 

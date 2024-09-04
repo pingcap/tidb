@@ -26,15 +26,19 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -334,7 +338,7 @@ type exprRewriterPlanCtx struct {
 	// of the "INSERT" statement.
 	insertPlan *Insert
 
-	rollExpand *LogicalExpand
+	rollExpand *logicalop.LogicalExpand
 }
 
 type expressionRewriter struct {
@@ -504,9 +508,12 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 	return np, hintFlags, nil
 }
 
-func (er *expressionRewriter) requirePlanCtx(inNode ast.Node) (ctx *exprRewriterPlanCtx, err error) {
+func (er *expressionRewriter) requirePlanCtx(inNode ast.Node, detail string) (ctx *exprRewriterPlanCtx, err error) {
 	if ctx = er.planCtx; ctx == nil {
-		err = errors.Errorf("node '%T' is not allowed when building an expression without planner", inNode)
+		if detail != "" {
+			detail = ", " + detail
+		}
+		err = errors.Errorf("planCtx is required when rewriting node: '%T'%s", inNode, detail)
 	}
 	return
 }
@@ -514,7 +521,7 @@ func (er *expressionRewriter) requirePlanCtx(inNode ast.Node) (ctx *exprRewriter
 // Enter implements Visitor interface.
 func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	enterWithPlanCtx := func(fn func(*exprRewriterPlanCtx) (ast.Node, bool)) (ast.Node, bool) {
-		planCtx, err := er.requirePlanCtx(inNode)
+		planCtx, err := er.requirePlanCtx(inNode, "")
 		if err != nil {
 			er.err = err
 			return inNode, true
@@ -814,7 +821,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 // it will be rewrote to t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np base.LogicalPlan, useMin bool, cmpFunc string, all, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
-	plan4Agg := LogicalAggregation{}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
+	plan4Agg := logicalop.LogicalAggregation{}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
 		plan4Agg.PreferAggType = hintinfo.PreferAggType
 		plan4Agg.PreferAggToCop = hintinfo.PreferAggToCop
@@ -849,7 +856,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 }
 
 // buildQuantifierPlan adds extra condition for any / all subquery.
-func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, plan4Agg *LogicalAggregation, cond, lexpr, rexpr expression.Expression, all, markNoDecorrelate bool) {
+func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, plan4Agg *logicalop.LogicalAggregation, cond, lexpr, rexpr expression.Expression, all, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
 	innerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr)
 	outerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), lexpr)
@@ -912,7 +919,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	}
 	// If we treat the result as a scalar value, we will add a projection with a extra column to output true, false or null.
 	outerSchemaLen := planCtx.plan.Schema().Len()
-	planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, plan4Agg, InnerJoin, markNoDecorrelate)
+	planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, plan4Agg, logicalop.InnerJoin, markNoDecorrelate)
 	joinSchema := planCtx.plan.Schema()
 	proj := logicalop.LogicalProjection{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
@@ -951,7 +958,7 @@ func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, r
 		er.err = err
 		return
 	}
-	plan4Agg := LogicalAggregation{
+	plan4Agg := logicalop.LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(sctx, planCtx.builder.getSelectOffset())
 	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
@@ -994,7 +1001,7 @@ func (er *expressionRewriter) handleEQAll(planCtx *exprRewriterPlanCtx, lexpr, r
 		er.err = err
 		return
 	}
-	plan4Agg := LogicalAggregation{
+	plan4Agg := logicalop.LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(sctx, planCtx.builder.getSelectOffset())
 	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
@@ -1120,7 +1127,7 @@ out:
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
 		case *logicalop.LogicalProjection, *logicalop.LogicalSort:
 			p = p.Children()[0]
-		case *LogicalAggregation:
+		case *logicalop.LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {
 				p = logicalop.LogicalTableDual{RowCount: 1}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 				break out
@@ -1227,9 +1234,9 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// and don't need to append a scalar value, we can rewrite it to inner join.
 	if planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag {
 		// We need to try to eliminate the agg and the projection produced by this operation.
-		planCtx.builder.optFlag |= flagEliminateAgg
-		planCtx.builder.optFlag |= flagEliminateProjection
-		planCtx.builder.optFlag |= flagJoinReOrder
+		planCtx.builder.optFlag |= rule.FlagEliminateAgg
+		planCtx.builder.optFlag |= rule.FlagEliminateProjection
+		planCtx.builder.optFlag |= rule.FlagJoinReOrder
 		// Build distinct for the inner query.
 		agg, err := planCtx.builder.buildDistinct(np, np.Schema().Len())
 		if err != nil {
@@ -1237,7 +1244,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 			return v, true
 		}
 		// Build inner join above the aggregation.
-		join := LogicalJoin{JoinType: InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
+		join := logicalop.LogicalJoin{JoinType: logicalop.InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 		join.SetChildren(planCtx.plan, agg)
 		join.SetSchema(expression.MergeSchema(planCtx.plan.Schema(), agg.Schema()))
 		join.SetOutputNames(make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len()))
@@ -1283,7 +1290,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	}
 
 	if planCtx.builder.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
-		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, LeftOuterJoin, noDecorrelate)
+		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, logicalop.LeftOuterJoin, noDecorrelate)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
 			for _, col := range np.Schema().Columns {
@@ -1375,7 +1382,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 }
 
 func hasCTEConsumerInSubPlan(p base.LogicalPlan) bool {
-	if _, ok := p.(*LogicalCTE); ok {
+	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return true
 	}
 	for _, child := range p.Children() {
@@ -1415,8 +1422,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		inNode = er.preprocess(inNode)
 	}
 
-	withPlanCtx := func(fn func(*exprRewriterPlanCtx)) {
-		planCtx, err := er.requirePlanCtx(inNode)
+	withPlanCtx := func(fn func(*exprRewriterPlanCtx), detail string) {
+		planCtx, err := er.requirePlanCtx(inNode, detail)
 		if err != nil {
 			er.err = err
 			return
@@ -1445,29 +1452,21 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
-		withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
-			var value *expression.Constant
-			value, er.err = expression.ParamMarkerExpression(planCtx.builder.ctx, v, false)
-			if er.err != nil {
-				return
-			}
-			initConstantRepertoire(er.sctx.GetEvalCtx(), value)
-			er.adjustUTF8MB4Collation(value.RetType)
-			if er.err != nil {
-				return
-			}
-			er.ctxStackAppend(value, types.EmptyName)
-		})
+		er.toParamMarker(v)
 	case *ast.VariableExpr:
-		withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
-			er.rewriteVariable(planCtx, v)
-		})
+		if v.IsSystem {
+			withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
+				er.rewriteSystemVariable(planCtx, v)
+			}, "accessing system variable requires plan context")
+		} else {
+			er.rewriteUserVariable(v)
+		}
 	case *ast.FuncCallExpr:
 		switch v.FnName.L {
 		case ast.Grouping:
 			withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
 				er.funcCallToExpressionWithPlanCtx(planCtx, v)
-			})
+			}, "grouping function requires plan context")
 		default:
 			if _, ok := expression.TryFoldFunctions[v.FnName.L]; ok {
 				er.tryFoldCounter--
@@ -1547,7 +1546,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.PositionExpr:
 		withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
 			er.positionToScalarFunc(planCtx, v)
-		})
+		}, "")
 	case *ast.IsNullExpr:
 		er.isNullToExpression(v)
 	case *ast.IsTruthExpr:
@@ -1662,37 +1661,52 @@ func (er *expressionRewriter) useCache() bool {
 	return er.sctx.IsUseCache()
 }
 
-func (er *expressionRewriter) rewriteVariable(planCtx *exprRewriterPlanCtx, v *ast.VariableExpr) {
+func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 	stkLen := len(er.ctxStack)
 	name := strings.ToLower(v.Name)
-	sessionVars := planCtx.builder.ctx.GetSessionVars()
-	if !v.IsSystem {
-		if v.Value != nil {
-			tp := er.ctxStack[stkLen-1].GetType(er.sctx.GetEvalCtx())
-			er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
-				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0),
-				er.ctxStack[stkLen-1])
-			er.ctxNameStk[stkLen-1] = types.EmptyName
-			// Store the field type of the variable into SessionVars.UserVarTypes.
-			// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
-			// GetVar has not been executed to fill the SessionVars.Users.
-			sessionVars.SetUserVarType(name, tp)
-			return
-		}
-		tp, ok := sessionVars.GetUserVarType(name)
-		if !ok {
-			tp = types.NewFieldType(mysql.TypeVarString)
-			tp.SetFlen(mysql.MaxFieldVarCharLength)
-		}
-		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
-		if err != nil {
-			er.err = err
-			return
-		}
-		f.SetCoercibility(expression.CoercibilityImplicit)
-		er.ctxStackAppend(f, types.EmptyName)
+	evalCtx := er.sctx.GetEvalCtx()
+	if !evalCtx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+		er.err = errors.Errorf("rewriting user variable requires '%s' in evalCtx", exprctx.OptPropSessionVars.String())
 		return
 	}
+
+	sessionVars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(evalCtx)
+	if err != nil {
+		er.err = err
+		return
+	}
+
+	intest.Assert(er.planCtx == nil || sessionVars == er.planCtx.builder.ctx.GetSessionVars())
+
+	if v.Value != nil {
+		tp := er.ctxStack[stkLen-1].GetType(er.sctx.GetEvalCtx())
+		er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
+			expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0),
+			er.ctxStack[stkLen-1])
+		er.ctxNameStk[stkLen-1] = types.EmptyName
+		// Store the field type of the variable into SessionVars.UserVarTypes.
+		// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
+		// GetVar has not been executed to fill the SessionVars.Users.
+		sessionVars.SetUserVarType(name, tp)
+		return
+	}
+	tp, ok := sessionVars.GetUserVarType(name)
+	if !ok {
+		tp = types.NewFieldType(mysql.TypeVarString)
+		tp.SetFlen(mysql.MaxFieldVarCharLength)
+	}
+	f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
+	if err != nil {
+		er.err = err
+		return
+	}
+	f.SetCoercibility(expression.CoercibilityImplicit)
+	er.ctxStackAppend(f, types.EmptyName)
+}
+
+func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx, v *ast.VariableExpr) {
+	name := strings.ToLower(v.Name)
+	sessionVars := planCtx.builder.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
 		er.err = variable.ErrUnknownSystemVar.FastGenByArgs(name)
@@ -2342,7 +2356,7 @@ func (er *expressionRewriter) funcCallToExpressionWithPlanCtx(planCtx *exprRewri
 				return
 			}
 			// resolve grouping args in group by items or not.
-			resolvedCols, err := planCtx.rollExpand.resolveGroupingFuncArgsInGroupBy(args)
+			resolvedCols, err := planCtx.rollExpand.ResolveGroupingFuncArgsInGroupBy(args)
 			if err != nil {
 				er.err = err
 				er.ctxStackAppend(nil, types.EmptyName)
@@ -2407,6 +2421,20 @@ func (er *expressionRewriter) toTable(v *ast.TableName) {
 	er.ctxStackAppend(val, types.EmptyName)
 }
 
+func (er *expressionRewriter) toParamMarker(v *driver.ParamMarkerExpr) {
+	var value *expression.Constant
+	value, er.err = expression.ParamMarkerExpression(er.sctx, v, false)
+	if er.err != nil {
+		return
+	}
+	initConstantRepertoire(er.sctx.GetEvalCtx(), value)
+	er.adjustUTF8MB4Collation(value.RetType)
+	if er.err != nil {
+		return
+	}
+	er.ctxStackAppend(value, types.EmptyName)
+}
+
 func (er *expressionRewriter) clause() clauseCode {
 	if er.planCtx != nil {
 		return er.planCtx.builder.curClause
@@ -2427,6 +2455,16 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 		er.ctxStackAppend(column, er.names[idx])
+		return
+	} else if er.planCtx == nil && er.sourceTable != nil &&
+		(v.Table.L == "" || er.sourceTable.Name.L == v.Table.L) {
+		colInfo := er.sourceTable.FindPublicColumnByName(v.Name.L)
+		if colInfo == nil || colInfo.Hidden {
+			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
+			return
+		}
+		er.ctxStackAppend(&expression.Column{RetType: &colInfo.FieldType, ID: colInfo.ID, UniqueID: colInfo.ID},
+			&types.FieldName{ColName: v.Name})
 		return
 	}
 
@@ -2457,7 +2495,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
-	if _, ok := planCtx.plan.(*LogicalUnionAll); ok && v.Table.O != "" {
+	if _, ok := planCtx.plan.(*logicalop.LogicalUnionAll); ok && v.Table.O != "" {
 		er.err = plannererrors.ErrTablenameNotAllowedHere.GenWithStackByArgs(v.Table.O, "SELECT", clauseMsg[planCtx.builder.curClause])
 		return
 	}
@@ -2469,9 +2507,9 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 
 func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, err error) {
 	switch x := p.(type) {
-	case *logicalop.LogicalLimit, *LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
+	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
-	case *LogicalJoin:
+	case *logicalop.LogicalJoin:
 		if x.FullSchema != nil {
 			idx, err := expression.FindFieldName(x.FullNames, v)
 			if err != nil {
@@ -2536,7 +2574,7 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 	dbName := name.DBName
 	if dbName.O == "" {
 		// if database name is not specified, use current database name
-		dbName = model.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
+		dbName = pmodel.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
 	}
 	if name.OrigTblName.O == "" {
 		// column is evaluated by some expressions, for example:

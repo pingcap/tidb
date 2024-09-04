@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -257,7 +257,7 @@ func generateNonPartitionPlan(
 		return nil, errors.Trace(err)
 	}
 
-	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
+	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.store, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
 	if startKey == nil && endKey == nil {
 		// Empty table.
 		return nil, nil
@@ -294,7 +294,7 @@ func generateNonPartitionPlan(
 			return true, nil
 		}
 
-		regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
 			end := i + regionBatch
@@ -329,7 +329,8 @@ func generateNonPartitionPlan(
 	return subTaskMetas, nil
 }
 
-func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
+// CalculateRegionBatch is exported for test.
+func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
 	failpoint.Inject("mockRegionBatch", func(val failpoint.Value) {
 		failpoint.Return(val.(int))
 	})
@@ -446,7 +447,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	startKey := kvMeta.StartKey
 	var endKey kv.Key
 	for {
-		endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
 		if err != nil {
 			return nil, err
 		}
@@ -471,7 +472,8 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			}},
 			DataFiles:      dataFiles,
 			StatFiles:      statFiles,
-			RangeSplitKeys: rangeSplitKeys,
+			RangeJobKeys:   rangeJobKeys,
+			RangeSplitKeys: regionSplitKeys,
 			TS:             ts,
 		}
 		if eleID > 0 {
@@ -595,16 +597,16 @@ func getRangeSplitter(
 	rangeGroupSize := totalSize / instanceCnt
 	rangeGroupKeys := int64(math.MaxInt64)
 
-	var maxSizePerRange = int64(config.SplitRegionSize)
-	var maxKeysPerRange = int64(config.SplitRegionKeys)
+	var regionSplitSize = int64(config.SplitRegionSize)
+	var regionSplitKeys = int64(config.SplitRegionKeys)
 	if store != nil {
 		pdCli := store.GetPDClient()
 		tls, err := ingest.NewDDLTLS()
 		if err == nil {
 			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
 			if err == nil {
-				maxSizePerRange = max(maxSizePerRange, size)
-				maxKeysPerRange = max(maxKeysPerRange, keys)
+				regionSplitSize = max(regionSplitSize, size)
+				regionSplitKeys = max(regionSplitKeys, keys)
 			} else {
 				logger.Warn("fail to get region split keys and size", zap.Error(err))
 			}
@@ -613,8 +615,11 @@ func getRangeSplitter(
 		}
 	}
 
+	// no matter region split size and keys, we always split range jobs by 96MB
 	return external.NewRangeSplitter(ctx, multiFileStat, extStore,
-		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange)
+		rangeGroupSize, rangeGroupKeys,
+		int64(config.SplitRegionSize), int64(config.SplitRegionKeys),
+		regionSplitSize, regionSplitKeys)
 }
 
 func forEachBackfillSubtaskMeta(

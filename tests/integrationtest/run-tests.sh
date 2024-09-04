@@ -88,7 +88,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@17b728effac3dd2f347bf508d4920657860ef719
+    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@7750e728f5c2649b7cfa08d680bcf98cfbfcf148
     mv src mysql_tester
 }
 

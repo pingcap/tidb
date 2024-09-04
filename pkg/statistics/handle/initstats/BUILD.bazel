@@ -12,6 +12,7 @@ go_library(
         "//pkg/config",
         "//pkg/util",
         "//pkg/util/logutil",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )

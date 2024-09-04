@@ -68,6 +68,29 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 	return true, false
 }
 
+// ValidCompareConstantPredicate checks if the predicate is an expression like [column '>'|'>='|'<'|'<='|'=' constant].
+// return param1: return true, if the predicate is a compare constant predicate.
+// return param2: return the column side of predicate.
+func ValidCompareConstantPredicate(ctx EvalContext, candidatePredicate Expression) bool {
+	scalarFunction, ok := candidatePredicate.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	if scalarFunction.FuncName.L != ast.GT && scalarFunction.FuncName.L != ast.GE &&
+		scalarFunction.FuncName.L != ast.LT && scalarFunction.FuncName.L != ast.LE &&
+		scalarFunction.FuncName.L != ast.EQ {
+		return false
+	}
+	column, _ := ValidCompareConstantPredicateHelper(ctx, scalarFunction, true)
+	if column == nil {
+		column, _ = ValidCompareConstantPredicateHelper(ctx, scalarFunction, false)
+	}
+	if column == nil {
+		return false
+	}
+	return true
+}
+
 // ValidCompareConstantPredicateHelper checks if the predicate is a compare constant predicate, like "Column xxx Constant"
 func ValidCompareConstantPredicateHelper(ctx EvalContext, eq *ScalarFunction, colIsLeft bool) (*Column, *Constant) {
 	var col *Column

@@ -312,7 +312,7 @@ func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalWindow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustLogicalWindowPhysicalPlans(p, prop)
+	return utilfuncp.ExhaustPhysicalPlans4LogicalWindow(p, prop)
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -297,7 +297,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	var idxInfo *model.IndexInfo
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if idxInfo == nil {
-			tbl, _ := dom.InfoSchema().TableByID(job.TableID)
+			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 			tblInfo = tbl.Meta()
 			if len(tblInfo.Indices) == 0 {
 				return

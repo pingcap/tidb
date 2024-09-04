@@ -353,4 +353,12 @@ var funcName2Alias = map[string]string{
 	"json_depth":                 ast.JSONDepth,
 	"json_keys":                  ast.JSONKeys,
 	"json_length":                ast.JSONLength,
+	"vec_dims":                   ast.VecDims,
+	"vec_l1_distance":            ast.VecL1Distance,
+	"vec_l2_distance":            ast.VecL2Distance,
+	"vec_negative_inner_product": ast.VecNegativeInnerProduct,
+	"vec_cosine_distance":        ast.VecCosineDistance,
+	"vec_l2_norm":                ast.VecL2Norm,
+	"vec_from_text":              ast.VecFromText,
+	"vec_as_text":                ast.VecAsText,
 }

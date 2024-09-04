@@ -27,7 +27,7 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -68,7 +68,7 @@ type txnBackfillScheduler struct {
 	tp           backfillerType
 	tbl          table.PhysicalTable
 	decodeColMap map[int64]decoder.Column
-	jobCtx       *JobContext
+	jobCtx       *ReorgContext
 
 	workers []*backfillWorker
 	wg      sync.WaitGroup
@@ -80,11 +80,12 @@ type txnBackfillScheduler struct {
 
 func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.Pool,
 	tp backfillerType, tbl table.PhysicalTable,
-	jobCtx *JobContext) (backfillScheduler, error) {
+	jobCtx *ReorgContext) (backfillScheduler, error) {
 	decColMap, err := makeupDecodeColMap(info.dbInfo.Name, tbl)
 	if err != nil {
 		return nil, err
 	}
+	workerCnt := info.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	return &txnBackfillScheduler{
 		ctx:          ctx,
 		reorgInfo:    info,
@@ -93,7 +94,7 @@ func newTxnBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *ses
 		tbl:          tbl,
 		decodeColMap: decColMap,
 		jobCtx:       jobCtx,
-		workers:      make([]*backfillWorker, 0, variable.GetDDLReorgWorkerCounter()),
+		workers:      make([]*backfillWorker, 0, workerCnt),
 		taskCh:       make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:     make(chan *backfillResult, backfillTaskChanSize),
 	}, nil
@@ -230,8 +231,8 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	}
 }
 
-func (*txnBackfillScheduler) expectedWorkerSize() (size int) {
-	workerCnt := int(variable.GetDDLReorgWorkerCounter())
+func (b *txnBackfillScheduler) expectedWorkerSize() (size int) {
+	workerCnt := b.reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	return min(workerCnt, maxBackfillWorkerSize)
 }
 
@@ -304,7 +305,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 		runner.wg = &b.wg
 		b.workers = append(b.workers, runner)
 		b.wg.Add(1)
-		go runner.run(reorgInfo.d, worker, job)
+		go runner.run(reorgInfo.jobCtx.oldDDLCtx, worker, job)
 	}
 	// Decrease the worker.
 	if len(b.workers) > workerCnt {

@@ -31,12 +31,60 @@ import (
 
 const sizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
 const sizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
-const usedFlagMaskBigEndian = uint32(1) << 31
-const usedFlagMaskLittleEndian = uint32(1) << 7
 const sizeOfUnsafePointer = int(unsafe.Sizeof(unsafe.Pointer(nil)))
 const sizeOfUintptr = int(unsafe.Sizeof(uintptr(0)))
 
-var fakeAddrPlaceHolder = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+var (
+	fakeAddrPlaceHolder = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+	usedFlagMask        uint32
+	bitMaskInUint32     [32]uint32
+)
+
+func init() {
+	// In nullmap, each bit represents a column in current row is null or not null. nullmap is designed to be read/write at the
+	// unit of byte(uint8). Some joins(for example, left outer join use left side to build) need an extra bit to represent if
+	// current row is matched or not. This bit is called used flag, and in the implementation, it actually use the first bit in
+	// nullmap as the used flag. There will be concurrent read/write for the used flag, so need to use atomic read/write when
+	// accessing the used flag. However, the minimum atomic read/write unit in go is uint32, so nullmap need to be read/write as
+	// uint32 in these cases. Read/write uint32 need to consider the endianess, for example, for a piece of memory containing
+	// continuous 32 bits, we want to set the first bit to 1, the memory after set should be
+	// 0x70 0x00 0x00 0x00
+	// when interprete the 32 bit as uint32
+	// in big endian system, it is 0x70000000
+	// in little endian system, it is 0x00000070
+	// useFlagMask and bitMaskInUint32 is used to hide these difference in big endian/small endian system
+	// and init function is used to init usedFlagMask and bitMaskInUint32 based on endianness of current env
+	endiannessTest := uint32(1) << 7
+	low8Value := *(*uint8)(unsafe.Pointer(&endiannessTest))
+	if uint32(low8Value) == endiannessTest {
+		// Little-endian system: the lowest byte (at the lowest address) stores the least significant byte (LSB) of the integer
+		initializeBitMasks(true)
+	} else {
+		// Big-endian system: the lowest byte (at the lowest address) stores the most significant byte (MSB) of the integer
+		initializeBitMasks(false)
+	}
+	usedFlagMask = bitMaskInUint32[0]
+}
+
+// initializeBitMasks encapsulates the bit-shifting logic to set the bitMaskInUint32 array based on endianness
+// The parameter isLittleEndian indicates the system's endianness
+//   - If the system is little-endian, the bit mask for each byte starts from the most significant bit (bit 7) and decrements sequentially
+//   - If the system is big-endian, the bit masks are set sequentially from the highest bit (bit 31) to the lowest bit (bit 0),
+//     ensuring that atomic operations can be performed correctly on different endian systems
+func initializeBitMasks(isLittleEndian bool) {
+	for i := 0; i < 32; i++ {
+		if isLittleEndian {
+			// On little-endian systems, bit masks are arranged in order from high to low within each byte
+			bitMaskInUint32[i] = uint32(1) << (7 - (i % 8) + (i/8)*8)
+		} else {
+			// On big-endian systems, bit masks are arranged from the highest bit (bit 31) to the lowest bit (bit 0)
+			bitMaskInUint32[i] = uint32(1) << (31 - i)
+		}
+	}
+}
+
+//go:linkname heapObjectsCanMove runtime.heapObjectsCanMove
+func heapObjectsCanMove() bool
 
 type rowTableSegment struct {
 	/*
@@ -68,6 +116,8 @@ type rowTableSegment struct {
 	rowStartOffset  []uint64 // the start address of each row
 	validJoinKeyPos []int    // the pos of rows that need to be inserted into hash table, used in hash table build
 	finalized       bool     // after finalized is set to true, no further modification is allowed
+	// taggedBits is the bit that can be used to tag for all pointer in rawData, it use the MSB to tag, so if the n MSB is all 0, the taggedBits is n
+	taggedBits uint8
 }
 
 func (rts *rowTableSegment) totalUsedBytes() int64 {
@@ -80,6 +130,14 @@ func (rts *rowTableSegment) totalUsedBytes() int64 {
 
 func (rts *rowTableSegment) getRowPointer(index int) unsafe.Pointer {
 	return unsafe.Pointer(&rts.rawData[rts.rowStartOffset[index]])
+}
+
+func (rts *rowTableSegment) initTaggedBits() {
+	startPtr := uintptr(0)
+	*(*unsafe.Pointer)(unsafe.Pointer(&startPtr)) = rts.getRowPointer(0)
+	endPtr := uintptr(0)
+	*(*unsafe.Pointer)(unsafe.Pointer(&endPtr)) = rts.getRowPointer(len(rts.rowStartOffset) - 1)
+	rts.taggedBits = getTaggedBitsFromUintptr(endPtr | startPtr)
 }
 
 const maxRowTableSegmentSize = 1024
@@ -104,18 +162,17 @@ func (rts *rowTableSegment) validKeyCount() uint64 {
 	return uint64(len(rts.validJoinKeyPos))
 }
 
-func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress unsafe.Pointer) {
-	// Save unsafe.Pointer into current Row header. Generally speaking it is unsafe or even illegal in go
-	// since after save the value of unsafe.Pointer into row header, it has no pointer semantics the value
-	// in the row header may become invalid after GC. It is ok to save unsafe.Pointer so far because
-	// 1. Go has a non-moving GC(https://tip.golang.org/doc/gc-guide), which means if the object is in heap, the address will not be changed after GC
-	// 2. `rowStart` only points to a valid address in `rawData`. `rawData` is a slice in `rowTableSegment`, and it will be used by multiple goroutines,
-	//    and its size will be runtime expanded, this kind of slice will always be allocated in heap
-	*(*unsafe.Pointer)(rowStart) = nextRowAddress
+func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress taggedPtr) {
+	*(*taggedPtr)(rowStart) = nextRowAddress
 }
 
-func getNextRowAddress(rowStart unsafe.Pointer) uintptr {
-	return uintptr(*(*unsafe.Pointer)(rowStart))
+func getNextRowAddress(rowStart unsafe.Pointer, tagHelper *tagPtrHelper, hashValue uint64) taggedPtr {
+	ret := *(*taggedPtr)(rowStart)
+	hashTagValue := tagHelper.getTaggedValue(hashValue)
+	if uint64(ret)&hashTagValue != hashTagValue {
+		return 0
+	}
+	return ret
 }
 
 // TableMeta is the join table meta used in hash join v2
@@ -153,9 +210,6 @@ type TableMeta struct {
 	keyMode keyMode
 	// offset to rowData, -1 for variable length, non-inlined key
 	rowDataOffset int
-
-	usedFlagMask uint32
-
 	// fakeKeyByte is used as the fake key when current join need keep invalid key rows
 	fakeKeyByte []byte
 }
@@ -164,6 +218,7 @@ func (meta *TableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
 	return *(*uint64)(unsafe.Add(rowStart, sizeOfNextPtr+meta.nullMapLength))
 }
 
+// used in tests
 func (meta *TableMeta) getKeyBytes(rowStart unsafe.Pointer) []byte {
 	switch meta.keyMode {
 	case OneInt64:
@@ -192,15 +247,20 @@ func (meta *TableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bo
 	return *(*uint8)(unsafe.Add(rowStart, sizeOfNextPtr+byteIndex))&(uint8(1)<<(7-bitIndex)) != uint8(0)
 }
 
-func (meta *TableMeta) setUsedFlag(rowStart unsafe.Pointer) {
+// for join that need to set UsedFlag during probe stage, read from nullMap is not thread safe for the first 32 bit of nullMap, atomic.LoadUint32 is used to avoid read-write conflict
+func (*TableMeta) isColumnNullThreadSafe(rowStart unsafe.Pointer, columnIndex int) bool {
+	return atomic.LoadUint32((*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)))&bitMaskInUint32[columnIndex+1] != uint32(0)
+}
+
+func (*TableMeta) setUsedFlag(rowStart unsafe.Pointer) {
 	addr := (*uint32)(unsafe.Add(rowStart, sizeOfNextPtr))
 	value := atomic.LoadUint32(addr)
-	value |= meta.usedFlagMask
+	value |= usedFlagMask
 	atomic.StoreUint32(addr, value)
 }
 
-func (meta *TableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
-	return (*(*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)) & meta.usedFlagMask) == meta.usedFlagMask
+func (*TableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
+	return (*(*uint32)(unsafe.Add(rowStart, sizeOfNextPtr)) & usedFlagMask) == usedFlagMask
 }
 
 type rowTable struct {
@@ -466,16 +526,6 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength + meta.joinKeysLength
 		}
 	}
-	if needUsedFlag {
-		test := usedFlagMaskBigEndian
-		test8High := *(*uint8)(unsafe.Pointer(&test))
-		if test8High == uint8(usedFlagMaskLittleEndian) {
-			// big endian
-			meta.usedFlagMask = usedFlagMaskBigEndian
-		} else {
-			meta.usedFlagMask = usedFlagMaskLittleEndian
-		}
-	}
 	if meta.isJoinKeysFixedLength && !meta.isJoinKeysInlined {
 		meta.fakeKeyByte = make([]byte, meta.joinKeysLength)
 	}
@@ -512,25 +562,6 @@ func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType
 		keepFilteredRows:              keepFilteredRows,
 	}
 	return builder
-}
-
-func (b *rowTableBuilder) initBuffer() {
-	b.serializedKeyVectorBuffer = make([][]byte, chunk.InitialCapacity)
-	b.partIdxVector = make([]int, 0, chunk.InitialCapacity)
-	b.hashValue = make([]uint64, 0, chunk.InitialCapacity)
-	if b.hasFilter {
-		b.filterVector = make([]bool, 0, chunk.InitialCapacity)
-	}
-	if b.hasNullableKey {
-		b.nullKeyVector = make([]bool, 0, chunk.InitialCapacity)
-		for i := 0; i < chunk.InitialCapacity; i++ {
-			b.nullKeyVector = append(b.nullKeyVector, false)
-		}
-	}
-	b.selRows = make([]int, 0, chunk.InitialCapacity)
-	for i := 0; i < chunk.InitialCapacity; i++ {
-		b.selRows = append(b.selRows, i)
-	}
 }
 
 func (b *rowTableBuilder) initHashValueAndPartIndexForOneChunk(partitionMaskOffset int, partitionNumber uint) {

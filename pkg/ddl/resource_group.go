@@ -25,11 +25,12 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	rg "github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	rg "github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -42,7 +43,7 @@ const (
 	alreadyExists = "already exists"
 )
 
-func onCreateResourceGroup(ctx context.Context, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	groupInfo := &model.ResourceGroupInfo{}
 	if err := job.DecodeArgs(groupInfo); err != nil {
 		job.State = model.JobStateCancelled
@@ -67,7 +68,7 @@ func onCreateResourceGroup(ctx context.Context, d *ddlCtx, t *meta.Meta, job *mo
 			return ver, errors.Trace(err)
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, defaultInfosyncTimeout)
+		ctx, cancel := context.WithTimeout(jobCtx.ctx, defaultInfosyncTimeout)
 		defer cancel()
 		err = infosync.AddResourceGroup(ctx, protoGroup)
 		if err != nil {
@@ -79,7 +80,7 @@ func onCreateResourceGroup(ctx context.Context, d *ddlCtx, t *meta.Meta, job *mo
 			}
 		}
 		job.SchemaID = groupInfo.ID
-		ver, err = updateSchemaVersion(d, t, job)
+		ver, err = updateSchemaVersion(jobCtx, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -91,7 +92,7 @@ func onCreateResourceGroup(ctx context.Context, d *ddlCtx, t *meta.Meta, job *mo
 	}
 }
 
-func onAlterResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	alterGroupInfo := &model.ResourceGroupInfo{}
 	if err := job.DecodeArgs(alterGroupInfo); err != nil {
 		job.State = model.JobStateCancelled
@@ -126,7 +127,7 @@ func onAlterResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	ver, err = updateSchemaVersion(jobCtx, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -146,7 +147,7 @@ func checkResourceGroupExist(t *meta.Meta, job *model.Job, groupID int64) (*mode
 	return nil, err
 }
 
-func onDropResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	groupInfo, err := checkResourceGroupExist(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -165,7 +166,7 @@ func onDropResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ver, err = updateSchemaVersion(d, t, job)
+		ver, err = updateSchemaVersion(jobCtx, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -262,16 +263,16 @@ func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGr
 	}
 	settings := resourceGroupSettings.Runaway
 	switch opt.Tp {
-	case ast.RunawayRule:
+	case pmodel.RunawayRule:
 		// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
 		dur, err := time.ParseDuration(opt.RuleOption.ExecElapsed)
 		if err != nil {
 			return err
 		}
 		settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
-	case ast.RunawayAction:
+	case pmodel.RunawayAction:
 		settings.Action = opt.ActionOption.Type
-	case ast.RunawayWatch:
+	case pmodel.RunawayWatch:
 		settings.WatchType = opt.WatchOption.Type
 		if dur := opt.WatchOption.Duration; len(dur) > 0 {
 			dur, err := time.ParseDuration(dur)

@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -80,7 +80,7 @@ func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, t
 // testTableInfo creates a test table with num int columns and with no index.
 func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, error) {
 	tblInfo := &model.TableInfo{
-		Name: model.NewCIStr(name),
+		Name: pmodel.NewCIStr(name),
 	}
 	genIDs, err := genGlobalIDs(store, 1)
 
@@ -92,7 +92,7 @@ func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, er
 	cols := make([]*model.ColumnInfo, num)
 	for i := range cols {
 		col := &model.ColumnInfo{
-			Name:         model.NewCIStr(fmt.Sprintf("c%d", i+1)),
+			Name:         pmodel.NewCIStr(fmt.Sprintf("c%d", i+1)),
 			Offset:       i,
 			DefaultValue: i + 1,
 			State:        model.StatePublic,
@@ -123,7 +123,7 @@ func genGlobalIDs(store kv.Storage, count int) ([]int64, error) {
 
 func testSchemaInfo(store kv.Storage, name string) (*model.DBInfo, error) {
 	dbInfo := &model.DBInfo{
-		Name: model.NewCIStr(name),
+		Name: pmodel.NewCIStr(name),
 	}
 
 	genIDs, err := genGlobalIDs(store, 1)
@@ -240,10 +240,10 @@ func TestSchema(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(t, store, tJob1.ID, true)
 	tbl1 := testGetTable(t, domain, tblInfo1.ID)
-	err = sessiontxn.NewTxn(context.Background(), tk.Session())
+	txn, err := newTxn(tk.Session())
 	require.NoError(t, err)
 	for i := 1; i <= 100; i++ {
-		_, err := tbl1.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(i, i, i))
+		_, err := tbl1.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
 	// create table t1 with 1034 records.
@@ -254,10 +254,10 @@ func TestSchema(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(t, store, tJob2.ID, true)
 	tbl2 := testGetTable(t, domain, tblInfo2.ID)
-	err = sessiontxn.NewTxn(context.Background(), tk2.Session())
+	txn, err = newTxn(tk.Session())
 	require.NoError(t, err)
 	for i := 1; i <= 1034; i++ {
-		_, err := tbl2.AddRecord(tk2.Session().GetTableCtx(), types.MakeDatums(i, i, i))
+		_, err := tbl2.AddRecord(tk2.Session().GetTableCtx(), txn, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
 	tk3 := testkit.NewTestKit(t, store)

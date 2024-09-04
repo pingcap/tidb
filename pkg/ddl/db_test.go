@@ -29,15 +29,15 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
@@ -134,7 +134,7 @@ func TestIssue22819(t *testing.T) {
 }
 
 func TestIssue22307(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -142,16 +142,14 @@ func TestIssue22307(t *testing.T) {
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("insert into t values(1, 1);")
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr1, checkErr2 error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
 		_, checkErr1 = tk.Exec("update t set a = 3 where b = 1;")
 		_, checkErr2 = tk.Exec("update t set a = 3 order by b;")
-	}
-	dom.DDL().SetHook(hook)
+	})
 	done := make(chan error, 1)
 	// test transaction on add column.
 	go backgroundExec(store, "test", "alter table t drop column b;", done)
@@ -324,7 +322,7 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			err := tk.ExecToErr(fmt.Sprintf("alter table `%s` cache", one))
 			if db == "MySQL" || db == "SYS" {
-				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(one))
+				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(one))
 				require.NoError(t, err1)
 				if tbl.Meta().View != nil {
 					require.ErrorIs(t, err, dbterror.ErrWrongObject)
@@ -507,7 +505,7 @@ func TestShowCountWarningsOrErrors(t *testing.T) {
 // Close issue #24172.
 // See https://github.com/pingcap/tidb/issues/24172
 func TestCancelJobWriteConflict(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -518,14 +516,9 @@ func TestCancelJobWriteConflict(t *testing.T) {
 
 	var cancelErr error
 	var rs []sqlexec.RecordSet
-	hook := &callback.TestDDLCallback{Do: dom}
-	d := dom.DDL()
-	originalHook := d.GetHook()
-	d.SetHook(hook)
-	defer d.SetHook(originalHook)
 
 	// Test when cancelling cannot be retried and adding index succeeds.
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
 			defer func() {
@@ -539,13 +532,13 @@ func TestCancelJobWriteConflict(t *testing.T) {
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
 			rs, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
-	}
+	})
 	tk1.MustExec("alter table t add index (id)")
 	require.EqualError(t, cancelErr, "mock failed admin command on ddl jobs")
 
 	// Test when cancelling is retried only once and adding index is cancelled in the end.
 	var jobID int64
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
 			jobID = job.ID
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
@@ -555,7 +548,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 			}()
 			rs, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
-	}
+	})
 	tk1.MustGetErrCode("alter table t add index (id)", errno.ErrCancelledDDLJob)
 	require.NoError(t, cancelErr)
 	result := tk2.ResultSetToResultWithCtx(context.Background(), rs[0], "cancel ddl job fails")
@@ -621,7 +614,7 @@ func TestSnapshotVersion(t *testing.T) {
 
 	dd := dom.DDL()
 	ddl.DisableTiFlashPoll(dd)
-	require.Equal(t, dbTestLease, dd.GetLease())
+	require.Equal(t, dbTestLease, dom.GetSchemaLease())
 
 	snapTS := oracle.GoTimeToTS(time.Now())
 	tk.MustExec("create database test2")
@@ -633,7 +626,7 @@ func TestSnapshotVersion(t *testing.T) {
 
 	// For updating the self schema version.
 	goCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err := dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, 0, is.SchemaMetaVersion())
+	err := dd.SchemaSyncer().WaitVersionSynced(goCtx, 0, is.SchemaMetaVersion())
 	cancel()
 	require.NoError(t, err)
 
@@ -643,7 +636,7 @@ func TestSnapshotVersion(t *testing.T) {
 
 	// Make sure that the self schema version doesn't be changed.
 	goCtx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, 0, is.SchemaMetaVersion())
+	err = dd.SchemaSyncer().WaitVersionSynced(goCtx, 0, is.SchemaMetaVersion())
 	cancel()
 	require.NoError(t, err)
 
@@ -655,10 +648,10 @@ func TestSnapshotVersion(t *testing.T) {
 	require.Equal(t, is.SchemaMetaVersion(), currSnapIs.SchemaMetaVersion())
 
 	// for GetSnapshotMeta
-	dbInfo, ok := currSnapIs.SchemaByName(model.NewCIStr("test2"))
+	dbInfo, ok := currSnapIs.SchemaByName(pmodel.NewCIStr("test2"))
 	require.True(t, ok)
 
-	tbl, err := currSnapIs.TableByName(context.Background(), model.NewCIStr("test2"), model.NewCIStr("t"))
+	tbl, err := currSnapIs.TableByName(context.Background(), pmodel.NewCIStr("test2"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 
 	m := dom.GetSnapshotMeta(snapTS)
@@ -681,7 +674,7 @@ func TestSchemaValidator(t *testing.T) {
 
 	dd := dom.DDL()
 	ddl.DisableTiFlashPoll(dd)
-	require.Equal(t, dbTestLease, dd.GetLease())
+	require.Equal(t, dbTestLease, dom.GetSchemaLease())
 
 	tk.MustExec("create table test.t(a int)")
 
@@ -931,15 +924,14 @@ func TestTiDBDownBeforeUpdateGlobalVersion(t *testing.T) {
 }
 
 func TestDDLBlockedCreateView(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	first := true
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
@@ -950,33 +942,30 @@ func TestDDLBlockedCreateView(t *testing.T) {
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
 		tk2.MustExec("create view v as select * from t")
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t modify column a char(10)")
 }
 
 func TestHashPartitionAddColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int) partition by hash(a) partitions 4")
 
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
 		tk2.MustExec("delete from t")
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t add column c int")
 }
 
 func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -985,8 +974,7 @@ func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
 	var wg sync.WaitGroup
 	var checkErr error
 	one := false
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState != model.StateDeleteOnly {
 			return
 		}
@@ -1001,8 +989,7 @@ func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
 			_, checkErr = tk2.Exec("alter table t alter column a set default 1")
 			wg.Done()
 		}()
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t modify column a text(100)")
 	wg.Wait()
 	require.EqualError(t, checkErr, "[ddl:1101]BLOB/TEXT/JSON column 'a' can't have a default value")

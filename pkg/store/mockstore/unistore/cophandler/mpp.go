@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
@@ -562,7 +562,7 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 	case tipb.ExecType_TypeExpand:
 		return b.buildExpand(exec.Expand)
 	default:
-		return nil, errors.Errorf(ErrExecutorNotSupportedMsg + exec.Tp.String())
+		return nil, errors.New(ErrExecutorNotSupportedMsg + exec.Tp.String())
 	}
 }
 
@@ -624,7 +624,7 @@ func (h *MPPTaskHandler) HandleEstablishConn(_ context.Context, req *mpp.Establi
 			return tunnel, nil
 		}
 		if err.Code == MPPErrMPPGatherIDMismatch {
-			return nil, errors.Errorf(err.Msg)
+			return nil, errors.New(err.Msg)
 		}
 		time.Sleep(time.Second)
 	}

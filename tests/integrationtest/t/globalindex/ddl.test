@@ -1,0 +1,76 @@
+set tidb_enable_global_index=OFF;
+-- error 8200
+create table t (a int, b int, unique index idx(a) global);
+-- error 8200
+create table t (a int, b int, index idx(a) global);
+-- error 1503
+create table t (a int, b int, unique index idx(a) global) partition by hash(b) partitions 3;
+-- error 8200
+create table t (a int, b int, index idx(a) global) partition by hash(b) partitions 3;
+-- error 1503
+create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3;
+-- error 1503
+create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3;
+create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3;
+-- error 1503
+alter table t partition by hash(b) partitions 3;
+-- error 1503
+alter table t partition by hash(b) partitions 3 update indexes (a global);
+-- error 8200
+alter table t add index idxErr (b) global;
+-- error 1503
+alter table t add unique index idxErr (b) global;
+-- error 8200
+create index idxErr on t (b) global;
+-- error 1503
+create unique index idxErr on t (b) global;
+alter table t remove partitioning;
+-- error 8200
+alter table t add index idxErr (b) global;
+-- error 8200
+alter table t add unique index idxErr (b) global;
+-- error 8200
+create index idxErr on t (b) global;
+-- error 8200
+create unique index idxErr on t (b) global;
+drop table t;
+
+set tidb_enable_global_index=ON;
+-- error 8200
+create table t (a int, b int, unique index idx(a) global);
+-- error 8200
+create table t (a int, b int, index idx(a) global);
+-- error 8200
+create table t (a int, b int, index idx(a) global) partition by hash(b) partitions 3;
+create table t (a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3;
+drop table t;
+-- error 1503
+create table t (a int key global, b int) partition by hash(b) partitions 3;
+-- error 8264
+create table t (a int unique, b int) partition by hash(b) partitions 3;
+-- error 8264
+create table t (a int unique key, b int) partition by hash(b) partitions 3;
+-- error 8264
+create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3;
+CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  `b` int(11) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */ /*T![global_index] GLOBAL */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`b`) PARTITIONS 3;
+show create table t;
+drop table t;
+create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3;
+-- error 8264
+alter table t partition by hash(b) partitions 3;
+alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL);
+-- error 8200
+alter table t add index idxErr (b) global;
+alter table t add unique index idxOK (a) global;
+-- error 8200
+alter table t add unique index idxErr (b) global;
+-- error 8200
+create index idxErr on t (b) global;
+create unique index idxOK2 on t (a) global;
+-- error 8200
+create unique index idxErr on t (b) global;

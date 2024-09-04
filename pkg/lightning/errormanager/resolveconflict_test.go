@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -67,7 +67,7 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -288,7 +288,7 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -456,7 +456,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -662,7 +662,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewStringDatum("x"),

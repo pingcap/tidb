@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -143,7 +143,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *Dat
 	c.addPredicateColumnsFromExpressions(ds.PushedDownConds)
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *LogicalJoin) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *logicalop.LogicalJoin) {
 	// The only schema change is merging two schemas so there is no new column.
 	// Assume statistics of all the columns in EqualConditions/LeftConditions/RightConditions/OtherConditions are needed.
 	exprs := make([]expression.Expression, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
@@ -162,7 +162,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForJoin(p *LogicalJoi
 	c.addPredicateColumnsFromExpressions(exprs)
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *LogicalUnionAll) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logicalop.LogicalUnionAll) {
 	// statistics of the ith column of UnionAll come from statistics of the ith column of each child.
 	schemas := make([]*expression.Schema, 0, len(p.Children()))
 	relatedCols := make([]*expression.Column, 0, len(p.Children()))
@@ -246,11 +246,11 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			for i, expr := range x.Exprs {
 				c.updateColMapFromExpressions(schema.Columns[i], []expression.Expression{expr})
 			}
-		case *LogicalSelection:
+		case *logicalop.LogicalSelection:
 			// Though the conditions in LogicalSelection are complex conditions which cannot be pushed down to DataSource, we still
 			// regard statistics of the columns in the conditions as needed.
 			c.addPredicateColumnsFromExpressions(x.Conditions)
-		case *LogicalAggregation:
+		case *logicalop.LogicalAggregation:
 			// Just assume statistics of all the columns in GroupByItems are needed.
 			c.addPredicateColumnsFromExpressions(x.GroupByItems)
 			// Schema change from children to self.
@@ -269,9 +269,9 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			for i, col := range windowColumns {
 				c.updateColMapFromExpressions(col, x.WindowFuncDescs[i].Args)
 			}
-		case *LogicalJoin:
+		case *logicalop.LogicalJoin:
 			c.collectPredicateColumnsForJoin(x)
-		case *LogicalApply:
+		case *logicalop.LogicalApply:
 			c.collectPredicateColumnsForJoin(&x.LogicalJoin)
 			// Assume statistics of correlated columns are needed.
 			// Correlated columns can be found in LogicalApply.Children()[0].Schema(). Since we already visit LogicalApply.Children()[0],
@@ -289,22 +289,22 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			for _, item := range x.ByItems {
 				c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
 			}
-		case *LogicalUnionAll:
+		case *logicalop.LogicalUnionAll:
 			c.collectPredicateColumnsForUnionAll(x)
-		case *LogicalPartitionUnionAll:
+		case *logicalop.LogicalPartitionUnionAll:
 			c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
-		case *LogicalCTE:
-			// Visit seedPartLogicalPlan and recursivePartLogicalPlan first.
-			c.collectFromPlan(x.Cte.seedPartLogicalPlan)
-			if x.Cte.recursivePartLogicalPlan != nil {
-				c.collectFromPlan(x.Cte.recursivePartLogicalPlan)
+		case *logicalop.LogicalCTE:
+			// Visit SeedPartLogicalPlan and RecursivePartLogicalPlan first.
+			c.collectFromPlan(x.Cte.SeedPartLogicalPlan)
+			if x.Cte.RecursivePartLogicalPlan != nil {
+				c.collectFromPlan(x.Cte.RecursivePartLogicalPlan)
 			}
 			// Schema change from seedPlan/recursivePlan to self.
 			columns := x.Schema().Columns
-			seedColumns := x.Cte.seedPartLogicalPlan.Schema().Columns
+			seedColumns := x.Cte.SeedPartLogicalPlan.Schema().Columns
 			var recursiveColumns []*expression.Column
-			if x.Cte.recursivePartLogicalPlan != nil {
-				recursiveColumns = x.Cte.recursivePartLogicalPlan.Schema().Columns
+			if x.Cte.RecursivePartLogicalPlan != nil {
+				recursiveColumns = x.Cte.RecursivePartLogicalPlan.Schema().Columns
 			}
 			relatedCols := make([]*expression.Column, 0, 2)
 			for i, col := range columns {

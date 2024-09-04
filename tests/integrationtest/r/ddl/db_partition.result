@@ -3205,6 +3205,10 @@ create table pt15 (id int not null, unique index uk_id (id)) partition by hash(i
 create table nt15 (id int not null, index uk_id (id));
 alter table pt15 exchange partition p0 with table nt15;
 Error 1736 (HY000): Tables have different definitions
+create table pt15b (id int not null, a int, unique index uk_id (a) global) partition by hash(id) partitions 1;
+create table nt15b (id int not null, a int, unique index uk_id (a));
+alter table pt15b exchange partition p0 with table nt15b;
+Error 1731 (HY000): Non matching attribute 'global index: uk_id' between partition and table
 ## auto_increment
 create table pt16 (id int not null primary key auto_increment) partition by hash(id) partitions 1;
 create table nt16 (id int not null primary key);
@@ -3285,7 +3289,7 @@ create temporary table nt34 (id int);
 alter table pt34 exchange partition p0 with table nt34;
 Error 1733 (HY000): Table to exchange with partition is temporary: 'nt34'
 ## global index
-create table pt35 (a int, b int, unique index(b)) partition by hash(a) partitions 1;
+create table pt35 (a int, b int, unique index(b) global) partition by hash(a) partitions 1;
 create table nt35 (a int, b int, unique index(b));
 alter table pt35 exchange partition p0 with table nt35;
 Error 1731 (HY000): Non matching attribute 'global index: b' between partition and table

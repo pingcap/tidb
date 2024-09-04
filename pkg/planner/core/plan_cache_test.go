@@ -26,11 +26,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -65,9 +66,10 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 		require.NoError(t, err)
 		stmt := stmts[0]
 		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), ctx, stmt, plannercore.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmt)
+		err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
 		return plannercore.ToString(p)
 	}
@@ -107,11 +109,12 @@ func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
 
 	stmt, err := p.ParseOneStmt("select avg(a),avg(b),avg(c) from t", "", "")
 	require.NoError(t, err)
-	err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+	nodeW := resolve.NewNodeW(stmt)
+	err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 	require.NoError(t, err) // no error
-	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+	_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 	require.NoError(t, err) // no error
-	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+	_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 	require.NoError(t, err) // no error
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 }
@@ -1152,9 +1155,10 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		nodeW := resolve.NewNodeW(stmtNode)
+		err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
-		_, _, err = planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
+		_, _, err = planner.Optimize(context.TODO(), ctx, nodeW, preprocessorReturn.InfoSchema)
 		require.NoError(t, err) // not panic
 	}
 }
@@ -1911,27 +1915,26 @@ func TestPlanCacheDirtyTables(t *testing.T) {
 }
 
 func TestInstancePlanCacheAcrossSession(t *testing.T) {
+	ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyEnableInstancePlanCache{}, true)
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec(`use test`)
 	tk1.MustExec(`create table t (a int)`)
 	tk1.MustExec(`insert into t values (1), (2), (3), (4), (5)`)
-	tk1.Session().GetSessionVars().EnableInstancePlanCache = true
-	tk1.MustExec(`prepare st from 'select a from t where a < ?'`)
-	tk1.MustExec(`set @a=2`)
-	tk1.MustQuery(`execute st using @a`).Sort().Check(testkit.Rows(`1`))
-	tk1.MustExec(`set @a=3`)
-	tk1.MustQuery(`execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`))
-	tk1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk1.MustExecWithContext(ctx, `prepare st from 'select a from t where a < ?'`)
+	tk1.MustExecWithContext(ctx, `set @a=2`)
+	tk1.MustQueryWithContext(ctx, `execute st using @a`).Sort().Check(testkit.Rows(`1`))
+	tk1.MustExecWithContext(ctx, `set @a=3`)
+	tk1.MustQueryWithContext(ctx, `execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`))
+	tk1.MustQueryWithContext(ctx, `select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	// session2 can share session1's cached plan
 	tk2 := testkit.NewTestKit(t, store)
-	tk2.Session().GetSessionVars().EnableInstancePlanCache = true
-	tk2.MustExec(`use test`)
-	tk2.MustExec(`prepare st from 'select a from t where a < ?'`)
-	tk2.MustExec(`set @a=4`)
-	tk2.MustQuery(`execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`, `3`))
-	tk2.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk2.MustExecWithContext(ctx, `use test`)
+	tk2.MustExecWithContext(ctx, `prepare st from 'select a from t where a < ?'`)
+	tk2.MustExecWithContext(ctx, `set @a=4`)
+	tk2.MustQueryWithContext(ctx, `execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`, `3`))
+	tk2.MustQueryWithContext(ctx, `select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestIssue54652(t *testing.T) {

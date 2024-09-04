@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -51,6 +52,7 @@ type ProcessInfo struct {
 	RefCountOfStmtCtx     *stmtctx.ReferenceCount
 	MemTracker            *memory.Tracker
 	DiskTracker           *disk.Tracker
+	RunawayChecker        resourcegroup.RunawayChecker
 	StatsInfo             func(any) map[string]uint64
 	RuntimeStatsColl      *execdetails.RuntimeStatsColl
 	User                  string
@@ -203,7 +205,7 @@ type SessionManager interface {
 	ShowProcessList() map[uint64]*ProcessInfo
 	ShowTxnList() []*txninfo.TxnInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
-	Kill(connectionID uint64, query bool, maxExecutionTime bool)
+	Kill(connectionID uint64, query bool, maxExecutionTime bool, runaway bool)
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
