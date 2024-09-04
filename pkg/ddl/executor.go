@@ -4186,24 +4186,35 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
 	}
 
-	var partCount int
+	var oldPartitionIDs []int64
 	if tblInfo.Partition != nil {
-		partCount = len(tblInfo.Partition.Definitions)
+		oldPartitionIDs = make([]int64, 0, len(tblInfo.Partition.Definitions))
+		for _, def := range tblInfo.Partition.Definitions {
+			oldPartitionIDs = append(oldPartitionIDs, def.ID)
+		}
 	}
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tblInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tblInfo.Name.L,
-		Type:       model.ActionTruncateTable,
-		BinlogInfo: &model.HistoryInfo{},
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        tblInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tblInfo.Name.L,
+		Type:           model.ActionTruncateTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	if job.Version == model.JobVersion1 {
 		// Args[0] is the new table ID, args[2] is the ids for table partitions, we
 		// add a placeholder here, they will be filled by job submitter.
 		// the last param is not required for execution, we need it to calculate
 		// number of new IDs to generate.
-		Args:           []any{int64(0), fkCheck, []int64{}, partCount},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
+		job.Args = []any{int64(0), fkCheck, []int64{}, len(oldPartitionIDs)}
+	} else if job.Version == model.JobVersion2 {
+		job.ArgsV2 = &model.TruncateTableArgs{
+			FKCheck:         fkCheck,
+			OldPartitionIDs: oldPartitionIDs,
+		}
 	}
 	err = e.DoDDLJob(ctx, job)
 	if err != nil {
@@ -6426,7 +6437,12 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 func HandleLockTablesOnSuccessSubmit(ctx sessionctx.Context, jobW *JobWrapper) {
 	if jobW.Type == model.ActionTruncateTable {
 		if ok, lockTp := ctx.CheckTableLocked(jobW.TableID); ok {
-			newTableID := jobW.Args[0].(int64)
+			var newTableID int64
+			if jobW.Version == model.JobVersion1 {
+				newTableID = jobW.Args[0].(int64)
+			} else {
+				newTableID = jobW.ArgsV2.(*model.TruncateTableArgs).NewTableID
+			}
 			ctx.AddTableLock([]model.TableLockTpInfo{{SchemaID: jobW.SchemaID, TableID: newTableID, Tp: lockTp}})
 		}
 	}
@@ -6437,7 +6453,12 @@ func HandleLockTablesOnSuccessSubmit(ctx sessionctx.Context, jobW *JobWrapper) {
 func HandleLockTablesOnFinish(ctx sessionctx.Context, jobW *JobWrapper, ddlErr error) {
 	if jobW.Type == model.ActionTruncateTable {
 		if ddlErr != nil {
-			newTableID := jobW.Args[0].(int64)
+			var newTableID int64
+			if jobW.Version == model.JobVersion1 {
+				newTableID = jobW.Args[0].(int64)
+			} else {
+				newTableID = jobW.ArgsV2.(*model.TruncateTableArgs).NewTableID
+			}
 			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
 			return
 		}

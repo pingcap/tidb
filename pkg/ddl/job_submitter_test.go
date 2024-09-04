@@ -212,10 +212,18 @@ func TestCombinedIDAllocation(t *testing.T) {
 	}
 
 	genTruncTblJob := func(partCnt int) *model.Job {
-		return &model.Job{
-			Type: model.ActionTruncateTable,
-			Args: []any{int64(0), false, []int64{}, partCnt},
+		j := &model.Job{
+			Version: model.GetJobVerInUse(),
+			Type:    model.ActionTruncateTable,
 		}
+		if j.Version == model.JobVersion1 {
+			j.Args = []any{int64(0), false, []int64{}, partCnt}
+		} else {
+			j.ArgsV2 = &model.TruncateTableArgs{
+				OldPartitionIDs: make([]int64, partCnt),
+			}
+		}
+		return j
 	}
 
 	cases := []idAllocationCase{
@@ -444,7 +452,13 @@ func TestCombinedIDAllocation(t *testing.T) {
 					fkCheck  bool
 					partIDs  []int64
 				)
-				require.NoError(t, j.DecodeArgs(&newTblID, &fkCheck, &partIDs))
+				if j.Version == model.JobVersion1 {
+					require.NoError(t, j.DecodeArgs(&newTblID, &fkCheck, &partIDs))
+				} else {
+					argsV2, err := model.GetOrDecodeArgsV2[model.TruncateTableArgs](j)
+					require.NoError(t, err)
+					newTblID, fkCheck, partIDs = argsV2.NewTableID, argsV2.FKCheck, argsV2.NewPartitionIDs
+				}
 				checkID(newTblID)
 				for _, id := range partIDs {
 					checkID(id)

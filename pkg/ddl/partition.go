@@ -4488,13 +4488,14 @@ func isPartExprUnsigned(ectx expression.EvalContext, tbInfo *model.TableInfo) bo
 }
 
 // truncateTableByReassignPartitionIDs reassigns new partition ids.
-func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo, pids []int64) (err error) {
+// it also returns the new partition IDs for cases described below.
+func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo, pids []int64) ([]int64, error) {
 	if len(pids) < len(tblInfo.Partition.Definitions) {
 		// To make it compatible with older versions when pids was not given
 		// and if there has been any add/reorganize partition increasing the number of partitions
 		morePids, err := t.GenGlobalIDs(len(tblInfo.Partition.Definitions) - len(pids))
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		pids = append(pids, morePids...)
 	}
@@ -4505,7 +4506,7 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo,
 		newDefs = append(newDefs, newDef)
 	}
 	tblInfo.Partition.Definitions = newDefs
-	return nil
+	return pids, nil
 }
 
 type partitionExprProcessor func(expression.BuildContext, *model.TableInfo, ast.ExprNode) error

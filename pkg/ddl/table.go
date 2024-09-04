@@ -427,10 +427,21 @@ func getTableInfo(t *meta.Meta, tableID, schemaID int64) (*model.TableInfo, erro
 func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
-	var newTableID int64
-	var fkCheck bool
-	var newPartitionIDs []int64
-	err := job.DecodeArgs(&newTableID, &fkCheck, &newPartitionIDs)
+	var (
+		newTableID      int64
+		fkCheck         bool
+		newPartitionIDs []int64
+		err             error
+		argsV2          *model.TruncateTableArgs
+	)
+	if job.Version == model.JobVersion1 {
+		err = job.DecodeArgs(&newTableID, &fkCheck, &newPartitionIDs)
+	} else if job.Version == model.JobVersion2 {
+		argsV2, err = model.GetOrDecodeArgsV2[model.TruncateTableArgs](job)
+		if err == nil {
+			newTableID, fkCheck, newPartitionIDs = argsV2.NewTableID, argsV2.FKCheck, argsV2.NewPartitionIDs
+		}
+	}
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -478,7 +489,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 	if tblInfo.GetPartitionInfo() != nil {
 		oldPartitionIDs = getPartitionIDs(tblInfo)
 		// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
-		err = truncateTableByReassignPartitionIDs(t, tblInfo, newPartitionIDs)
+		newPartitionIDs, err = truncateTableByReassignPartitionIDs(t, tblInfo, newPartitionIDs)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -496,7 +507,12 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 				newIDs = append(newIDs, newID)
 			}
 		}
-		job.CtxVars = []any{oldIDs, newIDs}
+		if job.Version == model.JobVersion1 {
+			job.CtxVars = []any{oldIDs, newIDs}
+		} else {
+			argsV2.OldPartIDsWithPolicy = oldIDs
+			argsV2.NewPartIDsWithPolicy = newIDs
+		}
 	}
 
 	tableRuleID, partRuleIDs, _, oldRules, err := getOldLabelRules(tblInfo, job.SchemaName, tblInfo.Name.L)
@@ -575,8 +591,15 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		oldTblInfo,
 	)
 	asyncNotifyEvent(jobCtx, truncateTableEvent)
-	startKey := tablecodec.EncodeTablePrefix(tableID)
-	job.Args = []any{startKey, oldPartitionIDs}
+	if job.Version == model.JobVersion1 {
+		startKey := tablecodec.EncodeTablePrefix(tableID)
+		job.Args = []any{startKey, oldPartitionIDs}
+	} else {
+		// see truncateTableByReassignPartitionIDs for why they might change.
+		argsV2.OldPartitionIDs = oldPartitionIDs
+		argsV2.NewPartitionIDs = newPartitionIDs
+		job.ArgsV2 = argsV2
+	}
 	return ver, nil
 }
 

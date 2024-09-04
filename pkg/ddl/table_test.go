@@ -153,13 +153,20 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, store kv.Storage, d
 	require.NoError(t, err)
 	newTableID := genIDs[0]
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionTruncateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{newTableID},
+	}
+	if job.Version == model.JobVersion1 {
+		job.Args = []any{newTableID}
+	} else {
+		job.ArgsV2 = &model.TruncateTableArgs{
+			NewTableID: newTableID,
+		}
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))

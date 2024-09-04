@@ -1458,8 +1458,8 @@ var (
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
 )
 
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
-	b, err := job.Encode(updateRawArgs)
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
+	b, err := job.Encode(true)
 	if err == nil {
 		err = m.txn.RPush(key, b)
 	}
@@ -1473,7 +1473,7 @@ func (m *Meta) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) erro
 		listKey = jobListKeys[0]
 	}
 
-	return m.enQueueDDLJob(listKey, job, true)
+	return m.enQueueDDLJob(listKey, job)
 }
 
 // JobListKeyType is a key type of the DDL job queue.

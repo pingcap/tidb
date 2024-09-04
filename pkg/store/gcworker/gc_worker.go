@@ -1593,10 +1593,25 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 	// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
 	var physicalTableIDs []int64
 	switch historyJob.Type {
-	case model.ActionDropTable, model.ActionTruncateTable:
+	case model.ActionDropTable:
 		var startKey kv.Key
 		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs); err != nil {
 			return
+		}
+		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
+	case model.ActionTruncateTable:
+		var startKey kv.Key
+		if historyJob.Version == model.JobVersion1 {
+			if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs); err != nil {
+				return
+			}
+		} else {
+			var argsV2 *model.TruncateTableArgs
+			argsV2, err = model.GetOrDecodeArgsV2[model.TruncateTableArgs](historyJob)
+			if err != nil {
+				return
+			}
+			physicalTableIDs = argsV2.OldPartitionIDs
 		}
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
 	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition,

@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -241,6 +242,35 @@ func (s SchemaState) String() string {
 	}
 }
 
+// JobVersion is the version of DDL job.
+type JobVersion int64
+
+const (
+	// JobVersion1 is the first version of DDL job where job args are stored as un-typed
+	// array. Before v8.4.0, all DDL jobs are in this version.
+	JobVersion1 JobVersion = 1
+	// JobVersion2 is the second version of DDL job where job args are stored as
+	// typed structs, we start to use this version from v8.4.0. During upgrade from
+	// version < 8.4, we will still use JobVersion1 to make upgrade smooth.
+	// Note: this version is not enabled right now except in some test cases, will
+	// enable it after we have CI to run both versions.
+	JobVersion2 JobVersion = 2
+)
+
+// JobVerInUse is the version of DDL job used in the node.
+// it's for test now.
+var jobVerInUse atomic.Int64
+
+// SetJobVerInUse sets the version of DDL job used in the node.
+func SetJobVerInUse(ver JobVersion) {
+	jobVerInUse.Store(int64(ver))
+}
+
+// GetJobVerInUse returns the version of DDL job used in the node.
+func GetJobVerInUse() JobVersion {
+	return JobVersion(jobVerInUse.Load())
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID   int64      `json:"id"`
@@ -261,6 +291,8 @@ type Job struct {
 	// RowCount means the number of rows that are processed.
 	RowCount int64      `json:"row_count"`
 	Mu       sync.Mutex `json:"-"`
+
+	// below fields are used in JobVersion1
 	// CtxVars are variables attached to the job. It is for internal usage.
 	// E.g. passing arguments between functions by one single *Job pointer.
 	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
@@ -273,8 +305,16 @@ type Job struct {
 	// - ExchangeTablePartition: [partition-id, pt-db-id, pt-id, partition-name, with-validation]
 	Args []any `json:"-"`
 	// RawArgs : We must use json raw message to delay parsing special args.
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
+	RawArgs json.RawMessage `json:"raw_args,omitempty"`
+
+	// below fields are used in JobVersion2
+	// ArgsV2 is a pointer to a typed XXXArgs struct specific to the job type.
+	// see structs inside job_args.go.
+	ArgsV2 any `json:"-"`
+	// RawArgsV2 stores the raw json of ArgsV2.
+	RawArgsV2 json.RawMessage `json:"raw_args_v2,omitempty"`
+
+	SchemaState SchemaState `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
 	SnapshotVer uint64 `json:"snapshot_ver"`
 	// RealStartTS uses timestamp allocated by TSO.
@@ -289,14 +329,14 @@ type Job struct {
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
 
-	// Version indicates the DDL job version. For old jobs, it will be 0.
-	Version int64 `json:"version"`
+	// Version indicates the DDL job version.
+	Version JobVersion `json:"version"`
 
 	// ReorgMeta is meta info of ddl reorganization.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
 
 	// MultiSchemaInfo keeps some warning now for multi schema change.
-	MultiSchemaInfo *MultiSchemaInfo `json:"multi_schema_info"`
+	MultiSchemaInfo *MultiSchemaInfo `json:"multi_schema_info,omitempty"`
 
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
@@ -330,16 +370,16 @@ type Job struct {
 	TraceInfo *TraceInfo `json:"trace_info"`
 
 	// BDRRole indicates the role of BDR cluster when executing this DDL.
-	BDRRole string `json:"bdr_role"`
+	BDRRole string `json:"bdr_role,omitempty"`
 
 	// CDCWriteSource indicates the source of CDC write.
-	CDCWriteSource uint64 `json:"cdc_write_source"`
+	CDCWriteSource uint64 `json:"cdc_write_source,omitempty"`
 
 	// LocalMode = true means the job is running on the local TiDB that the client
 	// connects to, else it's run on the DDL owner.
 	// Only happens when tidb_enable_fast_create_table = on
 	// this field is useless since 8.3
-	LocalMode bool `json:"local_mode"`
+	LocalMode bool `json:"local_mode,omitempty"`
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
@@ -440,21 +480,29 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
 	if updateRawArgs {
-		job.RawArgs, err = json.Marshal(job.Args)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if job.MultiSchemaInfo != nil {
-			for _, sub := range job.MultiSchemaInfo.SubJobs {
-				// Only update the args of executing sub-jobs.
-				if sub.Args == nil {
-					continue
-				}
-				sub.RawArgs, err = json.Marshal(sub.Args)
-				if err != nil {
-					return nil, errors.Trace(err)
+		if job.Version == JobVersion1 {
+			job.RawArgs, err = json.Marshal(job.Args)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if job.MultiSchemaInfo != nil {
+				for _, sub := range job.MultiSchemaInfo.SubJobs {
+					// Only update the args of executing sub-jobs.
+					if sub.Args == nil {
+						continue
+					}
+					sub.RawArgs, err = json.Marshal(sub.Args)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
 				}
 			}
+		} else if job.Version == JobVersion2 {
+			job.RawArgsV2, err = json.Marshal(job.ArgsV2)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			// TODO remember update sub-jobs' RawArgsV2 when we do it.
 		}
 	}
 
@@ -791,20 +839,22 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type        ActionType      `json:"type"`
-	Args        []any           `json:"-"`
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
-	SnapshotVer uint64          `json:"snapshot_ver"`
-	RealStartTS uint64          `json:"real_start_ts"`
-	Revertible  bool            `json:"revertible"`
-	State       JobState        `json:"state"`
-	RowCount    int64           `json:"row_count"`
-	Warning     *terror.Error   `json:"warning"`
-	CtxVars     []any           `json:"-"`
-	SchemaVer   int64           `json:"schema_version"`
-	ReorgTp     ReorgType       `json:"reorg_tp"`
-	UseCloud    bool            `json:"use_cloud"`
+	Type ActionType `json:"type"`
+
+	Args    []any           `json:"-"`
+	RawArgs json.RawMessage `json:"raw_args"`
+
+	SchemaState SchemaState   `json:"schema_state"`
+	SnapshotVer uint64        `json:"snapshot_ver"`
+	RealStartTS uint64        `json:"real_start_ts"`
+	Revertible  bool          `json:"revertible"`
+	State       JobState      `json:"state"`
+	RowCount    int64         `json:"row_count"`
+	Warning     *terror.Error `json:"warning"`
+	CtxVars     []any         `json:"-"`
+	SchemaVer   int64         `json:"schema_version"`
+	ReorgTp     ReorgType     `json:"reorg_tp"`
+	UseCloud    bool          `json:"use_cloud"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -1180,4 +1230,8 @@ type TraceInfo struct {
 	ConnectionID uint64 `json:"connection_id"`
 	// SessionAlias is the alias of session
 	SessionAlias string `json:"session_alias"`
+}
+
+func init() {
+	SetJobVerInUse(JobVersion1)
 }

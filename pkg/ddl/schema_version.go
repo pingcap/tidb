@@ -51,17 +51,41 @@ func SetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error 
 // SetSchemaDiffForTruncateTable set SchemaDiff for ActionTruncateTable.
 func SetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job) error {
 	// Truncate table has two table ID, should be handled differently.
-	err := job.DecodeArgs(&diff.TableID)
+	var (
+		newTableID int64
+		err        error
+		argsV2     *model.TruncateTableArgs
+	)
+	if job.Version == model.JobVersion1 {
+		err = job.DecodeArgs(&newTableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		argsV2, err = model.GetOrDecodeArgsV2[model.TruncateTableArgs](job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newTableID = argsV2.NewTableID
+	}
+	err = job.DecodeArgs(&diff.TableID)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	diff.TableID = newTableID
 	diff.OldTableID = job.TableID
 
 	// affects are used to update placement rule cache
-	if len(job.CtxVars) > 0 {
-		oldIDs := job.CtxVars[0].([]int64)
-		newIDs := job.CtxVars[1].([]int64)
-		diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+	if job.Version == model.JobVersion1 {
+		if len(job.CtxVars) > 0 {
+			oldIDs := job.CtxVars[0].([]int64)
+			newIDs := job.CtxVars[1].([]int64)
+			diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+		}
+	} else {
+		if len(argsV2.OldPartIDsWithPolicy) > 0 {
+			diff.AffectedOpts = buildPlacementAffects(argsV2.OldPartIDsWithPolicy, argsV2.NewPartIDsWithPolicy)
+		}
 	}
 	return nil
 }
