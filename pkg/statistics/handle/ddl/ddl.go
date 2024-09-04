@@ -16,7 +16,7 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
@@ -198,6 +198,12 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	case model.ActionFlashbackCluster:
 		return h.statsWriter.UpdateStatsVersion()
 	}
+
+	//revive:disable:empty-block
+	switch t.SchemaChangeEvent.GetType() {
+	// todo: we will replace the DDLEvent with SchemaChangeEvent, gradually move above switch-case logical to here
+	}
+	//revive:enable:empty-block
 	return nil
 }
 

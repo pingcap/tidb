@@ -22,8 +22,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
@@ -96,7 +97,7 @@ func SetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job) error {
 func SetSchemaDiffForRenameTables(diff *model.SchemaDiff, job *model.Job) error {
 	var (
 		oldSchemaIDs, newSchemaIDs, tableIDs []int64
-		tableNames, oldSchemaNames           []*model.CIStr
+		tableNames, oldSchemaNames           []*pmodel.CIStr
 	)
 	err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames)
 	if err != nil {

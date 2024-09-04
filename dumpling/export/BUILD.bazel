@@ -36,6 +36,7 @@ go_library(
         "//pkg/config",
         "//pkg/errno",
         "//pkg/infoschema/context",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/format",

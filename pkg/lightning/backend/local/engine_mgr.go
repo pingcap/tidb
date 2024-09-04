@@ -320,7 +320,6 @@ func (em *engineManager) closeEngine(
 			externalCfg.StartKey,
 			externalCfg.EndKey,
 			externalCfg.SplitKeys,
-			externalCfg.RegionSplitSize,
 			em.keyAdapter,
 			em.DupeDetectEnabled,
 			em.duplicateDB,

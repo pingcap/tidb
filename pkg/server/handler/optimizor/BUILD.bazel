@@ -13,6 +13,7 @@ go_library(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/infoschema",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/server/handler",

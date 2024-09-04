@@ -145,9 +145,6 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
-show histograms_in_flight;
-HistogramsInFlight
-0
 show open tables;
 Database	Table	In_use	Name_locked
 show open tables in executor__show;
