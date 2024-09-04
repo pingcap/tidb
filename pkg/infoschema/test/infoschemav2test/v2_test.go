@@ -533,3 +533,39 @@ func TestSnapshotInfoschemaReader(t *testing.T) {
 	sql = fmt.Sprintf("select * from INFORMATION_SCHEMA.TABLES as of timestamp '%s' where table_schema = 'issue55827'", timeStr)
 	tk.MustQuery(sql).Check(testkit.Rows())
 }
+
+
+func TestIssue55835(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("set @@global.tidb_schema_cache_size = '512MB'")
+	tk.MustExec("create database issue55835")
+	tk.MustExec("use issue55835")
+	tk.MustExec("create table t (id int)")
+
+	time1 := time.Now()
+	timeStr := time1.Format("2006-1-2 15:04:05.000")
+
+	tk.MustExec("drop table t")
+
+	// use v1/v2 switch to trigger reset of the infoCache.
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0")
+	dom.Reload()
+	tk.MustExec("set @@global.tidb_schema_cache_size = '512MB'")
+	dom.Reload()
+
+	tk.MustQuery("show tables").Check(testkit.Rows())
+	sql := fmt.Sprintf("select * from t as of timestamp '%s'", timeStr)
+	tk.MustQuery(sql).Check(testkit.Rows())
+	tk.MustQuery("show tables").Check(testkit.Rows())
+}
