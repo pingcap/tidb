@@ -655,9 +655,9 @@ const (
 		end_time datetime(6),
 		watch bigint(10) NOT NULL,
 		watch_text TEXT NOT NULL,
-		switch_group_name VARCHAR(32) DEFAULT '',
-		action bigint(10),
 		source varchar(512) NOT NULL,
+		action bigint(10),
+		switch_group_name VARCHAR(32) DEFAULT '',
 		done_time TIMESTAMP(6) NOT NULL
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
