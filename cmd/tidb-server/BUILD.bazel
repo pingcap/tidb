@@ -47,10 +47,6 @@ go_library(
         "//pkg/util/memory",
         "//pkg/util/metricsutil",
         "//pkg/util/printer",
-<<<<<<< HEAD
-        "//pkg/util/profileProcess:profileprocess",
-=======
->>>>>>> 7336c7e639 (Address comments to integrate profileprocess into topsql)
         "//pkg/util/redact",
         "//pkg/util/sem",
         "//pkg/util/servicescope",
