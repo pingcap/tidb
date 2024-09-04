@@ -24,7 +24,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/errno",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/resourcegroup",
@@ -80,7 +80,7 @@ go_test(
     flaky = True,
     shard_count = 23,
     deps = [
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx/stmtctx",

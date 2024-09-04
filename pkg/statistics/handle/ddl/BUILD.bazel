@@ -13,7 +13,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/infoschema",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/lockstats",
@@ -33,6 +33,7 @@ go_test(
     flaky = True,
     shard_count = 27,
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/planner/cardinality",
         "//pkg/statistics/handle/util",
