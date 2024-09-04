@@ -45,6 +45,12 @@ go_library(
         "//br/pkg/utils",
         "//br/pkg/version",
         "//pkg/config",
+<<<<<<< HEAD
+=======
+        "//pkg/ddl",
+        "//pkg/domain",
+        "//pkg/infoschema",
+>>>>>>> 782f08c5f45 (br: restore merge split ranges with small data (#55662))
         "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

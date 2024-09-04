@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,8 +30,19 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
+=======
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/engine"
+>>>>>>> 782f08c5f45 (br: restore merge split ranges with small data (#55662))
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1003,12 +1015,26 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	manager := restore.NewBRContextManager(client)
 	batcher, afterTableRestoredCh := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
 	batcher.SetCheckpoint(checkpointSetWithTableID)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
 	go restoreTableStream(ctx, rangeStream, batcher, errCh)
+=======
+	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
+		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
+		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
+		// If the command is from BRIE SQL, the ddl.EnableSplitTableRegion is TiDB config split-table.
+		// Notice that `split-region-on-table` configure from TiKV split on the region having data, it may trigger after restore done.
+		// It's recommended to enable TiDB configure `split-table` instead.
+		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
+		updateCh,
+	); err != nil {
+		return errors.Trace(err)
+	}
+>>>>>>> 782f08c5f45 (br: restore merge split ranges with small data (#55662))
 
 	var finish <-chan struct{}
 	postHandleCh := afterTableRestoredCh
