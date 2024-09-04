@@ -193,6 +193,9 @@ type Allocator interface {
 	// RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
 	RebaseSeq(newBase int64) (int64, bool, error)
 
+	// Transfer transfor the ownership of this allocator to another table
+	Transfer(databaseID, tableID int64) error
+
 	// Base return the current base of Allocator.
 	Base() int64
 	// End is only used for test.
@@ -313,6 +316,19 @@ func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 		return int64(uint64(autoID) + 1), err
 	}
 	return autoID + 1, err
+}
+
+// Transfer implements autoid.Allocator Transfer interface.
+func (alloc *allocator) Transfer(databaseID, tableID int64) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
+		return alloc.getIDAccessor(txn).Transfer(databaseID, tableID)
+	})
+	if err != nil {
+		alloc.dbID = databaseID
+		alloc.tbID = tableID
+	}
+	return err
 }
 
 func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64, allocIDs bool) error {
@@ -653,7 +669,7 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
 func NewAllocatorsFromTblInfo(r Requirement, schemaID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
-	dbID := tblInfo.GetAutoIDSchemaID(schemaID)
+	dbID := schemaID
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
 	tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
 
