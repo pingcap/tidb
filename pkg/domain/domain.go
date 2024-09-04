@@ -444,14 +444,19 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 	if err != nil {
 		return nil, err
 	}
+	if len(allSchemas) == 0 {
+		return nil, nil
+	}
+
 	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
 
-	eg, _ := errgroup.WithContext(context.Background())
-	workers := util.NewWorkerPool(uint(len(splittedSchemas)), "fetch schemas with tables")
+	eg, ectx := errgroup.WithContext(context.Background())
+	concurrency := mathutil.Min(len(splittedSchemas), 128)
+	workers := util.NewWorkerPool(uint(concurrency), "fetch schemas with tables")
 	for _, schemas := range splittedSchemas {
 		ss := schemas
 		workers.ApplyOnErrorGroup(eg, func() error {
-			return do.fetchSchemasWithTables(ss, m)
+			return do.fetchSchemasWithTables(ectx, ss, m)
 		})
 	}
 	if err := eg.Wait(); err != nil {
@@ -485,8 +490,13 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 	return splitted
 }
 
-func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta) error {
+func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m *meta.Meta) error {
 	for _, di := range schemas {
+		// if the ctx has been canceled, stop fetch schemas.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		if di.State != model.StatePublic {
 			// schema is not public, can't be used outside.
 			continue
