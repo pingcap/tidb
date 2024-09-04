@@ -225,6 +225,7 @@ func (h tidbCodecFuncHelper) encodeIndexKeyFromRow(
 		idxDts = append(idxDts, idxDt)
 	}
 	tablecodec.TruncateIndexValues(tblInfo, idxInfo, idxDts)
+	// Use physicalID instead of tblInfo.ID here to handle the partition case.
 	idx := tables.NewIndex(physicalID, tblInfo, idxInfo)
 
 	idxKey, _, err := idx.GenIndexKey(ctx.ErrCtx(), ctx.Location(), idxDts, handle, nil)
