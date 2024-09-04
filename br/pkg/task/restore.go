@@ -645,17 +645,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-<<<<<<< HEAD
-	var newTS uint64
-	if client.IsIncremental() {
-		newTS = restoreTS
-	}
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
-=======
-	ddlJobs := FilterDDLJobs(client.GetDDLJobs(), tables)
-	ddlJobs = FilterDDLJobByRules(ddlJobs, DDLJobBlockListRule)
->>>>>>> 08147e7e258 (Incremental restore: fix the issue that backfill data is not covered by newTS (#54430))
 
 	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.tiflashRecorder)
 	if err != nil {
@@ -715,7 +706,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// or backfilled data in upstream may not be covered by
 		// the new ts.
 		// see https://github.com/pingcap/tidb/issues/54426
-		newTS, err = restore.GetTSWithRetry(ctx, mgr.GetPDClient())
+		newTS, err = client.GetTSWithRetry(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
