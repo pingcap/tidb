@@ -36,7 +36,7 @@ func ParseOneSQL(sqlText string) (ast.StmtNode, error) {
 }
 
 // NormalizeDigest normalizes the given Query text and returns the normalized Query text and its digest.
-func NormalizeDigest(sqlText string) (string, string) {
+func NormalizeDigest(sqlText string) (normalizedSQL, digest string) {
 	norm, d := parser.NormalizeDigest(sqlText)
 	return norm, d.String()
 }
@@ -53,9 +53,9 @@ func (v *nodeVisitor) Enter(n ast.Node) (out ast.Node, skipChildren bool) {
 	return n, false
 }
 
-func (c *nodeVisitor) Leave(n ast.Node) (out ast.Node, ok bool) {
-	if c.leave != nil {
-		return n, c.leave(n)
+func (v *nodeVisitor) Leave(n ast.Node) (out ast.Node, ok bool) {
+	if v.leave != nil {
+		return n, v.leave(n)
 	}
 	return n, true
 }
@@ -126,8 +126,7 @@ func CollectSelectColumnsFromQuery(q Query) (Set[Column], error) {
 		}
 		return false
 	}, func(n ast.Node) bool {
-		switch n.(type) {
-		case *ast.SelectField:
+		if _, ok := n.(*ast.SelectField); ok {
 			underSelectField = false
 		}
 		return true
@@ -156,8 +155,7 @@ func CollectOrderByColumnsFromQuery(q Query) ([]Column, error) {
 		if exit {
 			return true
 		}
-		switch x := n.(type) {
-		case *ast.OrderByClause:
+		if x, ok := n.(*ast.OrderByClause); ok {
 			for _, byItem := range x.Items {
 				colExpr, ok := byItem.Expr.(*ast.ColumnNameExpr)
 				if !ok {
@@ -197,8 +195,7 @@ func CollectDNFColumnsFromQuery(q Query) (Set[Column], error) {
 		if dnfColSet.Size() > 0 { // already collected
 			return true
 		}
-		switch x := n.(type) {
-		case *ast.SelectStmt:
+		if x, ok := n.(*ast.SelectStmt); ok {
 			cnf := flattenCNF(x.Where)
 			for _, expr := range cnf {
 				dnf := flattenDNF(expr)
