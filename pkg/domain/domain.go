@@ -103,6 +103,7 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
@@ -444,15 +445,17 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 		return nil, err
 	}
 	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
-	doneCh := make(chan error, len(splittedSchemas))
+
+	eg, _ := errgroup.WithContext(context.Background())
+	workers := util.NewWorkerPool(uint(len(splittedSchemas)), "fetch schemas with tables")
 	for _, schemas := range splittedSchemas {
-		go do.fetchSchemasWithTables(schemas, m, doneCh)
+		ss := schemas
+		workers.ApplyOnErrorGroup(eg, func() error {
+			return do.fetchSchemasWithTables(ss, m)
+		})
 	}
-	for range splittedSchemas {
-		err = <-doneCh
-		if err != nil {
-			return nil, err
-		}
+	if err := eg.Wait(); err != nil {
+		return nil, err
 	}
 	return allSchemas, nil
 }
@@ -482,7 +485,7 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 	return splitted
 }
 
-func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, done chan error) {
+func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta) error {
 	for _, di := range schemas {
 		if di.State != model.StatePublic {
 			// schema is not public, can't be used outside.
@@ -493,16 +496,14 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
 			name2ID, specialTableInfos, err := meta.GetAllNameToIDAndTheMustLoadedTableInfo(m, di.ID)
 			if err != nil {
-				done <- err
-				return
+				return err
 			}
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
 		} else {
 			tables, err = m.ListTables(di.ID)
 			if err != nil {
-				done <- err
-				return
+				return err
 			}
 		}
 		// If TreatOldVersionUTF8AsUTF8MB4 was enable, need to convert the old version schema UTF8 charset to UTF8MB4.
@@ -533,7 +534,7 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 		}
 		di.Deprecated.Tables = diTables
 	}
-	done <- nil
+	return nil
 }
 
 // shouldUseV2 decides whether to use infoschema v2.
