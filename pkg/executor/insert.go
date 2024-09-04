@@ -293,20 +293,13 @@ func (e *InsertExec) batchDeleteOldGlobalIndexDupsAndInsert(ctx context.Context,
 		}
 
 		for _, uk := range r.uniqueKeys {
-			/*
-				if r.handleKey != nil {
-					// TODO: just to see if the assertion comes from here...
-					// REMOVE ME!!
-					continue
-				}
-
-			*/
 			partHandle, err := tables.FetchPartitionHandle(ctx, uk.newKey, txn)
 			if err != nil {
 				return err
 			}
 			if partHandle.Handle == nil || partHandle.PartitionID == 0 {
-				panic("Should not happen, please FIXME!!!")
+				// entry does not exist
+				continue
 			}
 			if _, found := oldIDs[partHandle.PartitionID]; !found {
 				continue

@@ -197,6 +197,7 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn
 // truncating a partition with a global index
 func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 	testkit.SkipIfFailpointDisabled(t)
+	// TODO: Also test non-clustered tables, PK as global key, non-int PK, multi-column PK
 	createSQL := `create table t (a int primary key, b varchar(255), c varchar(255) default 'Filler', unique key uk_b (b) global) partition by hash (a) partitions 2`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t (a,b) values (1,1),(2,2),(3,3),(4,4),(51,51),(53,53),(55,55)`)
@@ -205,12 +206,16 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
+		// 1-20 Original rows in the original partition
+		// 21-20 Inserted ... TODO: Describe and update test accordingly...
 		switch schemaState {
 		case "delete only":
-		/*
+			// tkNO is seeing state None, so still can access the dropped partition
+			// tkO is seeing state delete only, so cannot see the dropped partition,
+			// but must still double write to the global indexes.
+
 			// Still in Schema version before ALTER, not affected
 			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
-			// now in Schema state "delete only"
 			// OK with duplicate key, but otherwise it should allow any insert!
 			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 			tkNO.MustExec(`insert into t values (5,5,"OK")`)
@@ -238,17 +243,16 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkO.MustExec(`update t set b = 9 where a = 9`)
 			require.Equal(t, uint64(1), tkNO.Session().GetSessionVars().LastFoundRows)
 			// TODO: Add tests for delete as well as index lookup and table scan!
-
-		*/
 		case "delete reorganization":
-			//tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			// tkNO is seeing state delete only, so cannot see the dropped partition,
+			// but must still double write to the global indexes.
+			// tkO is seeing state delete reorganization, so cannot see the dropped partition,
+			// and should ignore the dropped partitions entries in the Global Indexes!
 			tkO.MustExec(`insert into t values (1,1,"OK")`)
 			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
-			// TODO: This should not be allowed :(
-			// OK, so we cannot just remove duplicates, we do need to read them first!!!
-			tkO.MustExec(`insert into t values (3,1,"Duplicate")`)
-			//tkO.MustContainErrMsg(`insert into t values (3,1,"Duplicate")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
-			tkO.MustContainErrMsg(`insert into t values (10,7,"Duplicate key")`, "[kv:1062]Duplicate entry '7' for key 't.uk_b'")
+			tkO.MustContainErrMsg(`insert into t values (3,1,"Duplicate")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			// b = 7 was inserted into the dropped partition, OK to delete
+			tkO.MustExec(`insert into t values (10,7,"OK")`)
 			tkNO.MustExec(`insert into t values (11,11,"OK")`)
 			tkNO.MustContainErrMsg(`insert into t values (12,9,"Duplicate key")`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
 			tkNO.MustContainErrMsg(`insert into t values (9,9,"Duplicate key")`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
@@ -257,8 +261,6 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkO.MustContainErrMsg(`insert into t values (14,13,"Duplicate key")`, "[kv:1062]Duplicate entry '13' for key 't.uk_b'")
 			tkNO.MustContainErrMsg(`update t set b = 51 where a = 11`, "[kv:1062]Duplicate entry '51' for key 't.uk_b'")
 			tkNO.MustExec(`update t set a = 51 where b = 11`)
-			// TODO: This should be possible!
-			//tkO.MustExec(`update t set b = 53 where a = 13`)
 			tkO.MustExec(`update t set a = 53 where b = 13`)
 		case "none":
 			tkNO.MustExec(`insert into t values (5,5,"OK")`)
