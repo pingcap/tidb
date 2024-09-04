@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"runtime"
 	"runtime/trace"
 	"sync"
 	"sync/atomic"
@@ -298,6 +299,12 @@ func (e *IndexNestedLoopHashJoin) getResultFromChannel(ctx context.Context, resu
 			return nil, result.err
 		}
 	case <-ctx.Done():
+		failpoint.Inject("TestIssue49692", func() {
+			for !e.panicErr.Load() {
+				runtime.Gosched()
+			}
+		})
+
 		err := error(nil)
 		if e.panicErr.Load() {
 			err = e.panicErr.error
