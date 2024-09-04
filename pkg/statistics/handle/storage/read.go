@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -625,6 +625,10 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			return nil
 		}
 		colInfo = tblInfo.Meta().GetColumnByID(col.ID)
+		if colInfo == nil {
+			asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+			return nil
+		}
 		isUpdateColAndIdxExistenceMap = true
 	}
 	hg, _, statsVer, _, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)

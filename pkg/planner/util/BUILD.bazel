@@ -17,6 +17,7 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
@@ -49,7 +50,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/domain",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/planner/core",
         "//pkg/testkit/testsetup",
         "//pkg/types",

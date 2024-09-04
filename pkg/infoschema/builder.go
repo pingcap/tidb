@@ -29,8 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -444,14 +445,14 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 func getKeptAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
 	var autoIDChanged, autoRandomChanged bool
 	switch diff.Type {
-	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIDCache:
 		autoIDChanged = true
 	case model.ActionRebaseAutoRandomBase:
 		autoRandomChanged = true
 	case model.ActionMultiSchemaChange:
 		for _, t := range diff.SubActionTypes {
 			switch t {
-			case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+			case model.ActionRebaseAutoID, model.ActionModifyTableAutoIDCache:
 				autoIDChanged = true
 			case model.ActionRebaseAutoRandomBase:
 				autoRandomChanged = true
@@ -620,8 +621,8 @@ func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.D
 	if len(allocs.Allocs) != 0 {
 		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
 		switch tp {
-		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
-			idCacheOpt := autoid.CustomAutoIncCacheOption(tblInfo.AutoIdCache)
+		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIDCache:
+			idCacheOpt := autoid.CustomAutoIncCacheOption(tblInfo.AutoIDCache)
 			// If the allocator type might be AutoIncrementType, create both AutoIncrementType
 			// and RowIDAllocType allocator for it. Because auto id and row id could share the same allocator.
 			// Allocate auto id may route to allocate row id, if row id allocator is nil, the program panic!
@@ -956,7 +957,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			item := tableItem{
 				dbName:        di.Name,
 				dbID:          di.ID,
-				tableName:     model.NewCIStr(name),
+				tableName:     pmodel.NewCIStr(name),
 				tableID:       id,
 				schemaVersion: schemaVersion,
 			}

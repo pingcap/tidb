@@ -24,7 +24,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	pd "github.com/tikv/pd/client"
 )
 

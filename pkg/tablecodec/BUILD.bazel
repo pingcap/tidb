@@ -8,8 +8,8 @@ go_library(
     deps = [
         "//pkg/errno",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/charset",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/structure",

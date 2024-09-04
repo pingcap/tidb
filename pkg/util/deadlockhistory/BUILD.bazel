@@ -25,6 +25,7 @@ go_test(
     embed = [":deadlockhistory"],
     flaky = True,
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/model",
         "//pkg/testkit/testsetup",

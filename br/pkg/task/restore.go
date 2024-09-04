@@ -35,7 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/spf13/cobra"
@@ -907,7 +908,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if cfg.WithSysTable {
 			client.InitFullClusterRestore(cfg.ExplicitFilter)
 		}
-	} else if checkpointFirstRun && cfg.CheckRequirements {
+	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
 		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
 			schedulersRemovable = true
 			return errors.Trace(err)
@@ -1516,7 +1517,7 @@ func PreCheckTableClusterIndex(
 		if job.Type == model.ActionCreateTable {
 			tableInfo := job.BinlogInfo.TableInfo
 			if tableInfo != nil {
-				oldTableInfo, err := restore.GetTableSchema(dom, model.NewCIStr(job.SchemaName), tableInfo.Name)
+				oldTableInfo, err := restore.GetTableSchema(dom, pmodel.NewCIStr(job.SchemaName), tableInfo.Name)
 				// table exists in database
 				if err == nil {
 					if tableInfo.IsCommonHandle != oldTableInfo.IsCommonHandle {
