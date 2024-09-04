@@ -254,6 +254,65 @@ func TestOnBackupRegionErrorResponse(t *testing.T) {
 	}
 }
 
+func TestGetHistoryDDLJobs(t *testing.T) {
+	s := createBackupSuite(t)
+
+	tk := testkit.NewTestKit(t, s.cluster.Storage)
+	lastTS1, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get last ts: %s", err)
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
+	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
+	lastTS2, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get last ts: %s", err)
+	tk.MustExec("RENAME TABLE test_db.test_table to test_db.test_table1;")
+	tk.MustExec("DROP TABLE test_db.test_table1;")
+	tk.MustExec("DROP DATABASE test_db;")
+	tk.MustExec("CREATE DATABASE test_db;")
+	tk.MustExec("USE test_db;")
+	tk.MustExec("CREATE TABLE test_table1 (c2 CHAR(255));")
+	tk.MustExec("RENAME TABLE test_table1 to test_table;")
+	tk.MustExec("RENAME TABLE test_table to test_table2;")
+	tk.MustExec("RENAME TABLE test_table2 to test_table;")
+	lastTS3, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get last ts: %s", err)
+	tk.MustExec("TRUNCATE TABLE test_table;")
+	ts, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get last ts: %s", err)
+
+	checkFn := func(lastTS uint64, ts uint64, jobsCount int) {
+		cipher := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
+		metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, "", &cipher)
+		ctx := context.Background()
+		metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
+		s.mockGlue.SetSession(tk.Session())
+		err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.cluster.Storage, lastTS, ts, false)
+		require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
+		err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
+		require.NoError(t, err, "Flush failed", err)
+		err = metaWriter.FlushBackupMeta(ctx)
+		require.NoError(t, err, "Finally flush backup meta failed", err)
+
+		metaBytes, err := s.storage.ReadFile(ctx, metautil.MetaFile)
+		require.NoError(t, err)
+		mockMeta := &backuppb.BackupMeta{}
+		err = proto.Unmarshal(metaBytes, mockMeta)
+		require.NoError(t, err)
+		// check the schema version
+		metaReader := metautil.NewMetaReader(mockMeta, s.storage, &cipher)
+		allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
+		require.NoError(t, err)
+		var allDDLJobs []*model.Job
+		err = json.Unmarshal(allDDLJobsBytes, &allDDLJobs)
+		require.NoError(t, err)
+		require.Len(t, allDDLJobs, jobsCount)
+	}
+
+	checkFn(lastTS1, ts, 11)
+	checkFn(lastTS2, ts, 9)
+	checkFn(lastTS1, lastTS2, 2)
+	checkFn(lastTS3, ts, 1)
+}
+
 func TestSkipUnsupportedDDLJob(t *testing.T) {
 	s := createBackupSuite(t)
 
