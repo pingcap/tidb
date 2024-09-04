@@ -5614,6 +5614,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 					break
 				}
 			}
+			if isModified {
+				dependentColumnsModified[col.UniqueID] = true
+			}
 			// skip unmodified generated columns
 			if !isModified {
 				continue
