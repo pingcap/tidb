@@ -919,7 +919,7 @@ func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleSt
 		resultValues = append(resultValues, handleBytes...)
 	} else {
 		// In unique int handle index.
-		handle = decodeIntHandleInIndexValue(value)
+		handle = DecodeIntHandleInIndexValue(value)
 		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -983,11 +983,11 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 // DecodeHandleInIndexValue decodes handle in unqiue index value.
 func DecodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
 	if len(value) <= MaxOldEncodeValueLen {
-		return decodeIntHandleInIndexValue(value), nil
+		return DecodeIntHandleInIndexValue(value), nil
 	}
 	seg := SplitIndexValue(value)
 	if len(seg.IntHandle) != 0 {
-		handle = decodeIntHandleInIndexValue(seg.IntHandle)
+		handle = DecodeIntHandleInIndexValue(seg.IntHandle)
 	}
 	if len(seg.CommonHandle) != 0 {
 		handle, err = kv.NewCommonHandle(seg.CommonHandle)
@@ -1005,8 +1005,8 @@ func DecodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
 	return handle, nil
 }
 
-// decodeIntHandleInIndexValue uses to decode index value as int handle id.
-func decodeIntHandleInIndexValue(data []byte) kv.Handle {
+// DecodeIntHandleInIndexValue uses to decode index value as int handle id.
+func DecodeIntHandleInIndexValue(data []byte) kv.Handle {
 	return kv.IntHandle(binary.BigEndian.Uint64(data))
 }
 
@@ -1368,7 +1368,7 @@ func (v *TempIndexValueElem) DecodeOne(b []byte) (remain []byte, err error) {
 		hLen := (uint16(b[0]) << 8) + uint16(b[1])
 		b = b[2:]
 		if hLen == idLen {
-			v.Handle = decodeIntHandleInIndexValue(b[:idLen])
+			v.Handle = DecodeIntHandleInIndexValue(b[:idLen])
 		} else {
 			v.Handle, _ = kv.NewCommonHandle(b[:hLen])
 		}
@@ -1829,7 +1829,7 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 
 	if segs.IntHandle != nil {
 		// In unique int handle index.
-		handle = decodeIntHandleInIndexValue(segs.IntHandle)
+		handle = DecodeIntHandleInIndexValue(segs.IntHandle)
 	} else if segs.CommonHandle != nil {
 		// In unique common handle index.
 		handle, err = decodeHandleInIndexKey(segs.CommonHandle)

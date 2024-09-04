@@ -16,6 +16,7 @@ package tables
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"sync"
 	"time"
 
@@ -555,6 +556,36 @@ func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
 		return true, h, err
 	}
 	return true, nil, nil
+}
+
+// FetchPartitionHandle is used to find the duplicated row's handle and partition id
+// for a given unique global index key.
+func FetchPartitionHandle(ctx context.Context, key kv.Key, txn kv.Transaction) (partHandle kv.PartitionHandle, err error) {
+	val, err := getKeyInTxn(ctx, txn, key)
+	if err != nil || len(val) == 0 {
+		return partHandle, err
+	}
+	seg := tablecodec.SplitIndexValue(val)
+	var handle kv.Handle
+	if len(seg.IntHandle) != 0 {
+		handle = tablecodec.DecodeIntHandleInIndexValue(seg.IntHandle)
+	}
+	if len(seg.CommonHandle) != 0 {
+		handle, err = kv.NewCommonHandle(seg.CommonHandle)
+		if err != nil {
+			return partHandle, err
+		}
+	}
+	if len(seg.PartitionID) != 0 {
+		var pid int64
+		_, pid, err = codec.DecodeInt(seg.PartitionID)
+		if err != nil {
+			return partHandle, err
+		}
+		partHandle = kv.NewPartitionHandle(pid, handle)
+	}
+
+	return partHandle, err
 }
 
 func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, distinct bool,

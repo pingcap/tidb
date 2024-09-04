@@ -87,6 +87,8 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// Using BatchGet in insert ignore to mark rows as duplicated before we add records to the table.
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
 	// the to-be-insert rows will be check on duplicate keys and update to the new rows.
+	// TODO: Check if all different combinations with Global Index is covered!!!
+	tblMeta := e.Table.Meta()
 	if len(e.OnDuplicate) > 0 {
 		err := e.batchUpdateDupRows(ctx, rows)
 		if err != nil {
@@ -94,6 +96,30 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		}
 	} else if e.IgnoreErr {
 		err := e.batchCheckAndInsert(ctx, rows, e.addRecord, false)
+		if err != nil {
+			return err
+		}
+	} else if tblMeta.Partition != nil &&
+		tables.HasGlobalIndex(tblMeta) &&
+		len(tblMeta.Partition.DroppingDefinitions) > 0 &&
+		len(tblMeta.Partition.AddingDefinitions) == 0 &&
+		tblMeta.Partition.DDLState == model.StateDeleteReorganization {
+		// normal insert, but in DROP/TRUNCATE Partition and
+		// previous state have dropped the old partition(s) so
+		// the previous state can still use them.
+		// So we should handle the case where insert/update in this
+		// state will succeed even if the global index may have
+		// entries from the old partition.
+		// I.e:
+		// If global entries exists pointing to the old partitions:
+		// Delete those rows from the old partitions before adding
+		// the new rows.
+		// If duplicate key for any other partition or index,
+		// return those errors, skip and let normal AddRecord return error!
+		// TODO: Apply similar handling for Exchange partition?
+		// TODO: Apply similar handling in batchCheckAndInsert and
+		// batchUpdateDupRows
+		err := e.batchDeleteOldGlobalIndexDupsAndInsert(ctx, rows)
 		if err != nil {
 			return err
 		}
@@ -211,6 +237,125 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 		return ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err)
 	}
 	return err
+}
+
+func (e *InsertExec) batchDeleteOldGlobalIndexDupsAndInsert(ctx context.Context, newRows [][]types.Datum) error {
+	// Get keys need to be checked.
+	start := time.Now()
+	toBeCheckedRows, err := getGlobalIndexKeysNeedCheck(e.Ctx(), e.Table, newRows)
+	if err != nil {
+		return err
+	}
+
+	txn, err := e.Ctx().Txn(true)
+	if err != nil {
+		return err
+	}
+
+	oldIDs := make(map[int64]struct{})
+	for i := range e.Table.Meta().Partition.DroppingDefinitions {
+		oldIDs[e.Table.Meta().Partition.DroppingDefinitions[i].ID] = struct{}{}
+	}
+	prefetchStart := time.Now()
+	// Use BatchGet to fill cache.
+	// It's an optimization and could be removed without affecting correctness.
+	if err = e.prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
+		return err
+	}
+	if e.stats != nil {
+		e.stats.Prefetch += time.Since(prefetchStart)
+	}
+
+	addDupKeyCheck := optimizeDupKeyCheckForNormalInsert(e.Ctx().GetSessionVars(), txn)
+	for i, r := range toBeCheckedRows {
+		if r.handleKey != nil {
+			partHandle, err := tables.FetchPartitionHandle(ctx, r.handleKey.newKey, txn)
+			if err != nil {
+				return err
+			}
+			if partHandle.Handle == nil || partHandle.PartitionID == 0 {
+				panic("Should not happen, please FIXME!!!")
+			}
+			if _, found := oldIDs[partHandle.PartitionID]; !found {
+				continue
+			}
+			pt := e.Table.GetPartitionedTable()
+			partTbl := pt.GetPartition(partHandle.PartitionID)
+			err = partTbl.RemoveRecord(e.Ctx().GetTableCtx(), txn, partHandle.Handle, r.row)
+			if err == nil {
+				continue
+			}
+			if !kv.IsErrNotFound(err) {
+				return err
+			}
+			panic("What to do if not found?!?")
+			// I would guess to continue to clean up the global indexes?
+		}
+
+		for _, uk := range r.uniqueKeys {
+			/*
+				if r.handleKey != nil {
+					// TODO: just to see if the assertion comes from here...
+					// REMOVE ME!!
+					continue
+				}
+
+			*/
+			partHandle, err := tables.FetchPartitionHandle(ctx, uk.newKey, txn)
+			if err != nil {
+				return err
+			}
+			if partHandle.Handle == nil || partHandle.PartitionID == 0 {
+				panic("Should not happen, please FIXME!!!")
+			}
+			if _, found := oldIDs[partHandle.PartitionID]; !found {
+				continue
+			}
+			// Why is this needed? RemoveRecord below will set a tombstone on the global index,
+			// but the addRecord will still fail on NotExists :(
+			err = txn.SetAssertion(uk.newKey, kv.SetAssertUnknown)
+			if err != nil {
+				return err
+			}
+
+			pt := e.Table.GetPartitionedTable()
+			partTbl := pt.GetPartition(partHandle.PartitionID)
+			err = partTbl.RemoveRecord(e.Ctx().GetTableCtx(), txn, partHandle.Handle, r.row)
+			if err == nil {
+				continue
+			}
+			if !kv.IsErrNotFound(err) {
+				return err
+			}
+			panic("What to do if not found?!?")
+			// I would guess to continue to clean up the global indexes?
+
+			/*
+				newRows[i] = nil
+				break
+
+			*/
+		}
+
+		// TODO: Should we do complete duplicate key checks here and delete and set assertion to Unknown ?!?
+		// Seems risky, better to understand and workaround the assertion some how?!?
+		// In the memory it should be marked as tombstone, why is it given NotExists assertion error?
+
+		// If row was checked with no duplicate keys,
+		// we should do insert the row,
+		// and key-values should be filled back to dupOldRowValues for the further row check,
+		// due to there may be duplicate keys inside the insert statement.
+		if newRows[i] != nil {
+			err := e.addRecord(ctx, newRows[i], addDupKeyCheck)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if e.stats != nil {
+		e.stats.CheckInsertTime += time.Since(start)
+	}
+	return nil
 }
 
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.

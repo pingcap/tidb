@@ -51,6 +51,57 @@ type toBeCheckedRow struct {
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
 // which need to be checked whether they are duplicate keys.
+func getGlobalIndexKeysNeedCheck(sctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]toBeCheckedRow, error) {
+	nGlobal := 0
+	for _, v := range t.Indices() {
+		if !tables.IsIndexWritable(v) {
+			continue
+		}
+		if v.Meta().Unique && v.Meta().Global {
+			nGlobal++
+		} else {
+			continue
+		}
+	}
+	if nGlobal == 0 {
+		return nil, nil
+	}
+	toBeCheckRows := make([]toBeCheckedRow, 0, len(rows))
+
+	var (
+		tblHandleCols []*table.Column
+		pkIdxInfo     *model.IndexInfo
+	)
+	// Get handle column if PK is handle.
+	if t.Meta().PKIsHandle {
+		for _, col := range t.Cols() {
+			if col.IsPKHandleColumn(t.Meta()) {
+				tblHandleCols = append(tblHandleCols, col)
+				break
+			}
+		}
+	} else if t.Meta().IsCommonHandle {
+		pkIdxInfo = tables.FindPrimaryIndex(t.Meta())
+		for _, idxCol := range pkIdxInfo.Columns {
+			tblHandleCols = append(tblHandleCols, t.Cols()[idxCol.Offset])
+		}
+	} else {
+		// _tidb_rowid?
+		panic("FIXME: no PK in table? How to handle Global Index?")
+	}
+
+	var err error
+	for _, row := range rows {
+		toBeCheckRows, err = getKeysNeedCheckOneRow(sctx, t, row, nGlobal, tblHandleCols, pkIdxInfo, toBeCheckRows, true)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return toBeCheckRows, nil
+}
+
+// getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
+// which need to be checked whether they are duplicate keys.
 func getKeysNeedCheck(sctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]toBeCheckedRow, error) {
 	nUnique := 0
 	for _, v := range t.Indices() {
@@ -84,7 +135,7 @@ func getKeysNeedCheck(sctx sessionctx.Context, t table.Table, rows [][]types.Dat
 
 	var err error
 	for _, row := range rows {
-		toBeCheckRows, err = getKeysNeedCheckOneRow(sctx, t, row, nUnique, tblHandleCols, pkIdxInfo, toBeCheckRows)
+		toBeCheckRows, err = getKeysNeedCheckOneRow(sctx, t, row, nUnique, tblHandleCols, pkIdxInfo, toBeCheckRows, false)
 		if err != nil {
 			return nil, err
 		}
@@ -93,9 +144,9 @@ func getKeysNeedCheck(sctx sessionctx.Context, t table.Table, rows [][]types.Dat
 }
 
 func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.Datum, nUnique int, handleCols []*table.Column,
-	pkIdxInfo *model.IndexInfo, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
+	pkIdxInfo *model.IndexInfo, result []toBeCheckedRow, onlyGlobalIndex bool) ([]toBeCheckedRow, error) {
 	var err error
-	if p, ok := t.(table.PartitionedTable); ok {
+	if p, ok := t.(table.PartitionedTable); ok && !onlyGlobalIndex {
 		t, err = p.GetPartitionByRow(ctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
@@ -113,13 +164,13 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	uniqueKeys := make([]*keyValueWithDupInfo, 0, nUnique)
 	// Append record keys and errors.
 	var handle kv.Handle
-	if t.Meta().IsCommonHandle {
+	if t.Meta().IsCommonHandle && !onlyGlobalIndex {
 		var err error
 		handle, err = buildHandleFromDatumRow(ctx.GetSessionVars().StmtCtx, row, handleCols, pkIdxInfo)
 		if err != nil {
 			return nil, err
 		}
-	} else if len(handleCols) > 0 {
+	} else if len(handleCols) > 0 && !onlyGlobalIndex {
 		handle = kv.IntHandle(row[handleCols[0].Offset].GetInt64())
 	}
 	var handleKey *keyValueWithDupInfo
@@ -193,7 +244,10 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if !v.Meta().Unique {
 			continue
 		}
-		if t.Meta().IsCommonHandle && v.Meta().Primary {
+		if t.Meta().IsCommonHandle && v.Meta().Primary && !onlyGlobalIndex {
+			continue
+		}
+		if onlyGlobalIndex && !v.Meta().Global {
 			continue
 		}
 		colVals, err1 := v.FetchValues(row, nil)
@@ -221,10 +275,11 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			if err1 != nil {
 				return nil, err1
 			}
-			uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
+			k := &keyValueWithDupInfo{
 				newKey: key,
 				dupErr: kv.GenKeyExistsErr(colStrVals, v.TableMeta().Name.String()+"."+v.Meta().Name.String()),
-			})
+			}
+			uniqueKeys = append(uniqueKeys, k)
 		}
 	}
 	row = row[:len(row)-extraColumns]

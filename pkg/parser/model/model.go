@@ -1318,16 +1318,6 @@ func (pi *PartitionInfo) GCPartitionStates() {
 	pi.States = newStates
 }
 
-// GetTruncatingPartitionIdx returns the index of the truncated partitions or -1 if no match.
-func (pi *PartitionInfo) GetTruncatingPartitionIdx(pid int64) int {
-	for i := range pi.NewPartitionIDs {
-		if pi.NewPartitionIDs[i] == pid {
-			return i
-		}
-	}
-	return -1
-}
-
 // ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
 func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
 	pi.DDLType = PartitionTypeNone
