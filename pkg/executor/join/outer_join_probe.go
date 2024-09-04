@@ -121,7 +121,7 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 		currentRow := j.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
-			j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(0, currentRow, joinResult.chk, 0, false)
+			j.appendBuildRowToCachedBuildRowsV1(0, currentRow, joinResult.chk, 0, false)
 			insertedRows++
 		}
 		j.rowIter.next()
@@ -183,7 +183,7 @@ func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joine
 			if result {
 				rowIndexInfo := j.rowIndexInfos[index]
 				j.isNotMatchedRows[rowIndexInfo.probeRowIndex] = false
-				j.appendBuildRowToCachedBuildRows(&rowIndexInfo, chk, meta.columnCountNeededForOtherCondition, false)
+				j.appendBuildRowToCachedBuildRowsV2(&rowIndexInfo, chk, meta.columnCountNeededForOtherCondition, false)
 			}
 		}
 		if len(j.cachedBuildRows) > 0 {
@@ -248,7 +248,7 @@ func (j *outerJoinProbe) probeForInnerSideBuild(chk, joinedChk *chunk.Chunk, rem
 			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(j.currentProbeRow, candidateRow, joinedChk, 0, hasOtherCondition)
+				j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, hasOtherCondition)
 				if !hasOtherCondition {
 					// has no other condition, key match mean join match
 					j.isNotMatchedRows[j.currentProbeRow] = false
@@ -304,7 +304,7 @@ func (j *outerJoinProbe) probeForOuterSideBuild(chk, joinedChk *chunk.Chunk, rem
 			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(j.currentProbeRow, candidateRow, joinedChk, 0, hasOtherCondition)
+				j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, hasOtherCondition)
 				if !hasOtherCondition {
 					// has no other condition, key match means join match
 					meta.setUsedFlag(candidateRow)

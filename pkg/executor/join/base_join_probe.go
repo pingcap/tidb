@@ -86,12 +86,6 @@ type matchedRowInfo struct {
 	buildRowOffset int
 }
 
-func createMatchRowInfo(probeRowIndex int, buildRowStart unsafe.Pointer) *matchedRowInfo {
-	ret := &matchedRowInfo{probeRowIndex: probeRowIndex}
-	*(*unsafe.Pointer)(unsafe.Pointer(&ret.buildRowStart)) = buildRowStart
-	return ret
-}
-
 type posAndHashValue struct {
 	hashValue uint64
 	pos       int
@@ -279,7 +273,7 @@ func checkSQLKiller(killer *sqlkiller.SQLKiller, fpName string) error {
 	return err
 }
 
-func (j *baseJoinProbe) appendBuildRowToCachedBuildRows(rowInfo *matchedRowInfo, chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
+func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsV2(rowInfo *matchedRowInfo, chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
 	j.cachedBuildRows[j.nextCachedBuildRowIndex] = *rowInfo
 	j.nextCachedBuildRowIndex++
 	if j.nextCachedBuildRowIndex == batchBuildRowSize {
@@ -287,7 +281,7 @@ func (j *baseJoinProbe) appendBuildRowToCachedBuildRows(rowInfo *matchedRowInfo,
 	}
 }
 
-func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(probeRowIndex int, buildRowStart unsafe.Pointer, chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
+func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsV1(probeRowIndex int, buildRowStart unsafe.Pointer, chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
 	j.cachedBuildRows[j.nextCachedBuildRowIndex].probeRowIndex = probeRowIndex
 	j.cachedBuildRows[j.nextCachedBuildRowIndex].buildRowOffset = 0
 	*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[j.nextCachedBuildRowIndex].buildRowStart)) = buildRowStart
@@ -495,7 +489,7 @@ func (j *baseJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedC
 		// build column that is not in joinedChk
 		for index, result := range j.selected {
 			if result {
-				j.appendBuildRowToCachedBuildRows(&j.rowIndexInfos[index], chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition, false)
+				j.appendBuildRowToCachedBuildRowsV2(&j.rowIndexInfos[index], chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition, false)
 			}
 		}
 		if len(j.cachedBuildRows) > 0 {
