@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/gogo/protobuf/proto"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -558,24 +559,37 @@ func (rc *LogClient) RestoreKVFiles(
 
 func (rc *LogClient) initSchemasMap(
 	ctx context.Context,
-	clusterID uint64,
 	restoreTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
-	filename := metautil.PitrIDMapsFilename(clusterID, restoreTS)
-	exist, err := rc.storage.FileExists(ctx, filename)
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to check filename:%s ", filename)
-	} else if !exist {
-		log.Info("pitr id maps isn't existed", zap.String("file", filename))
+	getPitrIDMapSQL := "SELECT element_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = ? ORDER BY element_id;"
+	execCtx := rc.se.GetSessionCtx().GetRestrictedSQLExecutor()
+	rows, _, errSQL := execCtx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		nil,
+		getPitrIDMapSQL,
+		restoreTS,
+	)
+	if errSQL != nil {
+		return nil, errors.Annotatef(errSQL, "failed to get pitr id map from mysql.tidb_pitr_id_map")
+	}
+	if len(rows) == 0 {
+		log.Info("pitr id map does not exist", zap.Uint64("restored ts", restoreTS))
 		return nil, nil
 	}
-
-	metaData, err := rc.storage.ReadFile(ctx, filename)
-	if err != nil {
-		return nil, errors.Trace(err)
+	var metaData []byte
+	for i, row := range rows {
+		elementID := row.GetUint64(0)
+		if uint64(i) != elementID {
+			return nil, errors.Errorf("the part(element_id = %d) of pitr id map is lost", i)
+		}
+		d := row.GetBytes(1)
+		if len(d) == 0 {
+			return nil, errors.Errorf("get the empty part(element_id = %d) of pitr id map", i)
+		}
+		metaData = append(metaData, d...)
 	}
 	backupMeta := &backuppb.BackupMeta{}
-	if err = backupMeta.Unmarshal(metaData); err != nil {
+	if err := backupMeta.Unmarshal(metaData); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -722,7 +736,7 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 	if !cfg.IsNewTask {
 		log.Info("try to load pitr id maps")
 		needConstructIdMap = false
-		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.restoreTS)
+		dbMaps, err = rc.initSchemasMap(ctx, rc.restoreTS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -733,7 +747,7 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 	if len(dbMaps) <= 0 && cfg.FullBackupStorage == nil {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
 		needConstructIdMap = true
-		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.startTS)
+		dbMaps, err = rc.initSchemasMap(ctx, rc.startTS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1491,24 +1505,36 @@ func (rc *LogClient) GetGCRows() []*stream.PreDelRangeQuery {
 	return rc.deleteRangeQuery
 }
 
+const IdMapBlockSize int = 200 * 1024
+
 // SaveIDMap saves the id mapping information.
 func (rc *LogClient) SaveIDMap(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
 ) error {
-	idMaps := sr.TidySchemaMaps()
-	clusterID := rc.GetClusterID(ctx)
-	metaFileName := metautil.PitrIDMapsFilename(clusterID, rc.restoreTS)
-	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, metaFileName, nil)
-	metaWriter.Update(func(m *backuppb.BackupMeta) {
-		// save log startTS to backupmeta file
-		m.ClusterId = clusterID
-		m.DbMaps = idMaps
-	})
-
-	if err := metaWriter.FlushBackupMeta(ctx); err != nil {
+	backupmeta := &backuppb.BackupMeta{DbMaps: sr.TidySchemaMaps()}
+	updateTime := time.Now().Format(time.DateTime)
+	data, err := proto.Marshal(backupmeta)
+	if err != nil {
 		return errors.Trace(err)
 	}
+	// clean the dirty id map at first
+	if err := rc.se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = ?;", rc.restoreTS); err != nil {
+		return errors.Trace(err)
+	}
+	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, element_id, id_map, update_time) VALUES (?, ?, ?, ?);"
+	for startIdx, elementId := 0, 0; startIdx < len(data); elementId += 1 {
+		endIdx := startIdx + IdMapBlockSize
+		if endIdx > len(data) {
+			endIdx = len(data)
+		}
+		err := rc.se.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, elementId, data[startIdx:endIdx], updateTime)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		startIdx = endIdx
+	}
+
 	if rc.useCheckpoint {
 		var items map[int64]model.TiFlashReplicaInfo
 		if sr.TiflashRecorder != nil {

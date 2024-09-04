@@ -690,6 +690,15 @@ const (
 		KEY (created_by),
 		KEY (status));`
 
+	// CreatePITRIDMap is a table that records the id map from upstream to downstream for PITR.
+	CreatePITRIDMap = `CREATE TABLE IF NOT EXISTS mysql.tidb_pitr_id_map (
+		restored_ts BIGINT NOT NULL,
+		element_id BIGINT NOT NULL,
+		id_map BLOB(524288) NOT NULL,
+		update_time TIMESTAMP(6) NOT NULL,
+		PRIMARY KEY (restored_ts, element_id),
+	)`
+
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
 
@@ -1110,6 +1119,10 @@ const (
 
 	// version211 add column `summary` to `mysql.tidb_background_subtask_history`.
 	version211 = 211
+
+	// version 212
+	//   create `mysql.tidb_pitr_id_map` table
+	version212 = 212
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -1281,6 +1294,7 @@ var (
 		upgradeToVer209,
 		upgradeToVer210,
 		upgradeToVer211,
+		upgradeToVer212,
 	}
 )
 
@@ -3080,6 +3094,13 @@ func upgradeToVer211(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer212(s sessiontypes.Session, ver int64) {
+	if ver >= version212 {
+		return
+	}
+	mustExecute(s, CreatePITRIDMap)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3224,6 +3245,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateDistFrameworkMeta)
 	// create request_unit_by_group
 	mustExecute(s, CreateRequestUnitByGroupTable)
+	// create tidb_pitr_id_map
+	mustExecute(s, CreatePITRIDMap)
 	// create `sys` schema
 	mustExecute(s, CreateSysSchema)
 	// create `sys.schema_unused_indexes` view
