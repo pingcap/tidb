@@ -31,8 +31,9 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/structure"
@@ -99,10 +100,10 @@ var (
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate:     math.MaxInt32,
 			BurstLimit: -1,
-			Priority:   model.MediumPriorityValue,
+			Priority:   pmodel.MediumPriorityValue,
 		},
 		ID:    defaultGroupID,
-		Name:  model.NewCIStr(resourcegroup.DefaultResourceGroupName),
+		Name:  pmodel.NewCIStr(resourcegroup.DefaultResourceGroupName),
 		State: model.StatePublic,
 	}
 )
@@ -765,7 +766,7 @@ func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	}
 	db := model.DBInfo{
 		ID:      id,
-		Name:    model.NewCIStr(mysql.SystemDB),
+		Name:    pmodel.NewCIStr(mysql.SystemDB),
 		Charset: mysql.UTF8MB4Charset,
 		Collate: mysql.UTF8MB4DefaultCollation,
 		State:   model.StatePublic,
@@ -1228,7 +1229,7 @@ func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
 
 	return &model.TableNameInfo{
 		ID:   id,
-		Name: model.NewCIStr(name),
+		Name: pmodel.NewCIStr(name),
 	}, nil
 }
 

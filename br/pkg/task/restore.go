@@ -35,7 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/spf13/cobra"
@@ -1516,7 +1517,7 @@ func PreCheckTableClusterIndex(
 		if job.Type == model.ActionCreateTable {
 			tableInfo := job.BinlogInfo.TableInfo
 			if tableInfo != nil {
-				oldTableInfo, err := restore.GetTableSchema(dom, model.NewCIStr(job.SchemaName), tableInfo.Name)
+				oldTableInfo, err := restore.GetTableSchema(dom, pmodel.NewCIStr(job.SchemaName), tableInfo.Name)
 				// table exists in database
 				if err == nil {
 					if tableInfo.IsCommonHandle != oldTableInfo.IsCommonHandle {
