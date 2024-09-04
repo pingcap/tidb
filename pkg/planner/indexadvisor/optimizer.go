@@ -30,6 +30,7 @@ import (
 )
 
 // QueryPlanCostHook is used to calculate the cost of the query plan on this sctx.
+// This hook is used to avoid cyclic import.
 var QueryPlanCostHook func(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error)
 
 // Optimizer is the interface of a what-if optimizer.
