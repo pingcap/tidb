@@ -71,6 +71,54 @@ func TestMapTableToFiles(t *testing.T) {
 	require.Equal(t, 3, hintSplitKeyCount)
 }
 
+func newPartitionID(ids []int64) *model.PartitionInfo {
+	definitions := make([]model.PartitionDefinition, 0, len(ids))
+	for i, id := range ids {
+		definitions = append(definitions, model.PartitionDefinition{
+			ID:   id,
+			Name: model.NewCIStr(fmt.Sprintf("%d", i)),
+		})
+	}
+	return &model.PartitionInfo{Definitions: definitions}
+}
+
+func newCreatedTable(oldTableID, newTableID int64, oldPartitionIDs, newPartitionIDs []int64) *snapclient.CreatedTable {
+	return &snapclient.CreatedTable{
+		Table: &model.TableInfo{
+			ID:        newTableID,
+			Partition: newPartitionID(newPartitionIDs),
+		},
+		OldTable: &metautil.Table{
+			Info: &model.TableInfo{
+				ID:        oldTableID,
+				Partition: newPartitionID(oldPartitionIDs),
+			},
+		},
+	}
+}
+
+func physicalIDs(physicalTables []*snapclient.PhysicalTable) (oldIDs, newIDs []int64) {
+	oldIDs = make([]int64, 0, len(physicalTables))
+	newIDs = make([]int64, 0, len(physicalTables))
+	for _, table := range physicalTables {
+		oldIDs = append(oldIDs, table.OldPhysicalID)
+		newIDs = append(newIDs, table.NewPhysicalID)
+	}
+
+	return oldIDs, newIDs
+}
+
+func TestGetSortedPhysicalTables(t *testing.T) {
+	createdTables := []*snapclient.CreatedTable{
+		newCreatedTable(100, 200, []int64{32, 145, 324}, []int64{900, 23, 54}),
+		newCreatedTable(300, 400, []int64{322, 11245, 343224}, []int64{9030, 22353, 5354}),
+	}
+	physicalTables := snapclient.GetSortedPhysicalTables(createdTables)
+	oldIDs, newIDs := physicalIDs(physicalTables)
+	require.Equal(t, []int64{145, 324, 100, 300, 32, 343224, 322, 11245}, oldIDs)
+	require.Equal(t, []int64{23, 54, 200, 400, 900, 5354, 9030, 22353}, newIDs)
+}
+
 type MockUpdateCh struct {
 	glue.Progress
 }

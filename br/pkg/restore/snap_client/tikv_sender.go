@@ -125,14 +125,14 @@ const MergedRangeCountThreshold = 1536
 
 // SortAndValidateFileRanges sort, merge and validate files by tables and yields tables with range.
 func SortAndValidateFileRanges(
-	createdTablesX []*CreatedTable,
+	createdTables []*CreatedTable,
 	allFiles []*backuppb.File,
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
 	splitOnTable bool,
 	updateCh glue.Progress,
 ) ([][]byte, [][]TableIDWithFiles, error) {
-	sortedPhysicalTables := getSortedPhysicalTables(createdTablesX)
+	sortedPhysicalTables := getSortedPhysicalTables(createdTables)
 	// mapping table ID to its backup files
 	fileOfTable, hintSplitKeyCount := mapTableToFiles(allFiles)
 	// sort, merge, and validate files in each tables, and generate split keys by the way

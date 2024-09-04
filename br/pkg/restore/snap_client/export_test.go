@@ -33,10 +33,11 @@ var (
 	RestoreLabelKey   = restoreLabelKey
 	RestoreLabelValue = restoreLabelValue
 
-	GetSSTMetaFromFile = getSSTMetaFromFile
-	GetKeyRangeByMode  = getKeyRangeByMode
-	MapTableToFiles    = mapTableToFiles
-	GetFileRangeKey    = getFileRangeKey
+	GetSSTMetaFromFile      = getSSTMetaFromFile
+	GetKeyRangeByMode       = getKeyRangeByMode
+	MapTableToFiles         = mapTableToFiles
+	GetFileRangeKey         = getFileRangeKey
+	GetSortedPhysicalTables = getSortedPhysicalTables
 )
 
 // MockClient create a fake Client used to test.
