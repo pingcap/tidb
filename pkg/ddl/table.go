@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	tidb_util "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"go.uber.org/zap"
@@ -569,7 +569,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	if !tidb_util.IsMemOrSysDB(job.SchemaName) {
+	if !tidbutil.IsMemOrSysDB(job.SchemaName) {
 		truncateTableEvent := &statsutil.DDLEvent{
 			SchemaChangeEvent: util.NewTruncateTableEvent(tblInfo, oldTblInfo),
 		}
@@ -1074,7 +1074,7 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, t *meta.Meta, job *m
 	}
 
 	// Ban setting replica count for tables in system database.
-	if tidb_util.IsMemOrSysDB(job.SchemaName) {
+	if tidbutil.IsMemOrSysDB(job.SchemaName) {
 		return ver, errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 

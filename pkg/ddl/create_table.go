@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	tidb_util "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -182,7 +182,7 @@ func onCreateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-	if !tidb_util.IsMemOrSysDB(job.SchemaName) {
+	if !tidbutil.IsMemOrSysDB(job.SchemaName) {
 		createTableEvent := &statsutil.DDLEvent{
 			SchemaChangeEvent: util.NewCreateTableEvent(tbInfo),
 		}
@@ -215,7 +215,7 @@ func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Meta, job *model.Job
 			return ver, errors.Trace(err)
 		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		if !tidb_util.IsMemOrSysDB(job.SchemaName) {
+		if !tidbutil.IsMemOrSysDB(job.SchemaName) {
 			createTableEvent := &statsutil.DDLEvent{
 				SchemaChangeEvent: util.NewCreateTableEvent(tbInfo),
 			}
@@ -273,7 +273,7 @@ func onCreateTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, er
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
 	job.BinlogInfo.SetTableInfos(ver, args)
-	if !tidb_util.IsMemOrSysDB(job.SchemaName) {
+	if !tidbutil.IsMemOrSysDB(job.SchemaName) {
 		for i := range args {
 			createTableEvent := &statsutil.DDLEvent{
 				SchemaChangeEvent: util.NewCreateTableEvent(args[i]),
