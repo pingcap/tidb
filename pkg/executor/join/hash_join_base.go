@@ -246,17 +246,12 @@ func syncerDone(syncer *sync.WaitGroup) {
 	}
 }
 
-func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
-	w.fetchBuildSideRowsImpl(ctx, hashJoinCtx, nil, chkCh, errCh, doneCh)
-}
-
 // fetchBuildSideRowsImpl fetches all rows from build side executor, and append them
 // to e.buildSideResult.
-func (w *buildWorkerBase) fetchBuildSideRowsImpl(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
+func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
 	var globalErr error
+	defer close(chkCh)
 	defer func() {
-		defer close(chkCh)
-
 		if r := recover(); r != nil {
 			errCh <- util.GetRecoverError(r)
 			return

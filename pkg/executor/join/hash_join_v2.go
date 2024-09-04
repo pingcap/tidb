@@ -364,8 +364,7 @@ func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
 
 func (e *HashJoinV2Exec) initializeForProbe() {
 	e.ProbeSideTupleFetcher.HashJoinCtxV2 = e.HashJoinCtxV2
-	// e.joinResultCh is for transmitting the join result chunks to the main
-	// thread.
+	// e.joinResultCh is for transmitting the join result chunks to the main thread.
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
 	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency, e.joinResultCh)
 	e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty = e.canSkipProbeIfHashTableIsEmpty()
@@ -694,10 +693,10 @@ func (e *HashJoinV2Exec) startBuildFetcher(ctx context.Context) {
 	e.startPrebuildWorkers(srcChkCh, fetcherAndWorkerSyncer, preBuildWorkerWg)
 	e.startBuildTaskDispatcher(buildFetcherAndDispatcherSyncChan)
 
-	// Actually we can directly return error by the function `fetchBuildSideRowsImpl`.
-	// However, `fetchBuildSideRowsImpl` is also used by hash join v1.
+	// Actually we can directly return error by the function `fetchBuildSideRows`.
+	// However, `fetchBuildSideRows` is also used by hash join v1.
 	errCh := make(chan error, 1)
-	e.BuildWorkers[0].fetchBuildSideRowsImpl(ctx, &e.hashJoinCtxBase, fetcherAndWorkerSyncer, srcChkCh, errCh, e.buildFetcherFinishCh)
+	e.BuildWorkers[0].fetchBuildSideRows(ctx, &e.hashJoinCtxBase, fetcherAndWorkerSyncer, srcChkCh, errCh, e.buildFetcherFinishCh)
 
 	// Wait for the finish of prebuild workers
 	preBuildWorkerWg.Wait()

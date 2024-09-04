@@ -1042,7 +1042,7 @@ func (e *HashJoinV1Exec) fetchAndBuildHashTable(ctx context.Context) {
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
 			e.BuildWorker.
-				fetchBuildSideRows(ctx, &e.BuildWorker.HashJoinCtx.hashJoinCtxBase, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
+				fetchBuildSideRows(ctx, &e.BuildWorker.HashJoinCtx.hashJoinCtxBase, nil, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
 		},
 		func(r any) {
 			if r != nil {
