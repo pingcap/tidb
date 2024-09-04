@@ -119,7 +119,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 		statslogutil.StatsLogger().Info("Auto analyze triggered", zap.Stringer("job", job))
 
 		submitted := r.worker.SubmitJob(job)
-		intest.Assert(submitted == true, "Failed to submit job")
+		intest.Assert(submitted, "Failed to submit job")
 		if submitted {
 			statslogutil.StatsLogger().Debug("Job submitted successfully", zap.Int("analyzedCount", analyzedCount))
 			analyzedCount++
