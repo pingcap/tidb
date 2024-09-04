@@ -140,18 +140,18 @@ func TestCollectIndexableColumnsForQuerySet(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int, b int, c int, d int, e int)`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, e int, f int)`)
 	opt := indexadvisor.NewOptimizer(tk.Session())
 
 	set1 := indexadvisor.NewSet[indexadvisor.Query]()
-	set1.Add(indexadvisor.Query{Text: "select * from t where a=1 and b=1 and e like 'abc'"})
-	set1.Add(indexadvisor.Query{Text: "select * from t where a<1 and b>1 and e like 'abc'"})
-	set1.Add(indexadvisor.Query{Text: "select * from t where c in (1, 2, 3) order by d"})
-	set1.Add(indexadvisor.Query{Text: "select 1 from t where c in (1, 2, 3) group by e"})
+	set1.Add(indexadvisor.Query{Text: "select * from test.t where a=1 and b=1 and e like 'abc'"})
+	set1.Add(indexadvisor.Query{Text: "select * from test.t where a<1 and b>1 and e like 'abc'"})
+	set1.Add(indexadvisor.Query{Text: "select * from test.t where c in (1, 2, 3) order by d"})
+	set1.Add(indexadvisor.Query{Text: "select 1 from test.t where c in (1, 2, 3) group by e"})
 
 	set2, err := indexadvisor.CollectIndexableColumnsForQuerySet(opt, set1)
 	require.NoError(t, err)
-	require.Equal(t, "{test.t.a, test.t.b, test.t.c, test.t.d}", set2.String())
+	require.Equal(t, "{test.t.a, test.t.b, test.t.c, test.t.d, test.t.e}", set2.String())
 }
 
 func TestCollectIndexableColumnsFromQuery(t *testing.T) {
