@@ -1115,10 +1115,10 @@ func (c *tidbDecodeKeyFunctionClass) getFunction(ctx BuildContext, args []Expres
 var DecodeKeyFromString func(types.Context, infoschema.MetaOnlyInfoSchema, string) string
 
 // EncodeRecordKeyFromRow is used to encode record key by expressions.
-var EncodeRecordKeyFromRow func(ctx EvalContext, isVer infoschema.MetaOnlyInfoSchema, args []Expression, row chunk.Row) ([]byte, bool, error)
+var EncodeRecordKeyFromRow func(ctx EvalContext, is infoschema.MetaOnlyInfoSchema, args []Expression, row chunk.Row) ([]byte, bool, error)
 
 // EncodeIndexKeyFromRow is used to encode index key by expressions.
-var EncodeIndexKeyFromRow func(ctx EvalContext, isVer infoschema.MetaOnlyInfoSchema, args []Expression, row chunk.Row) ([]byte, bool, error)
+var EncodeIndexKeyFromRow func(ctx EvalContext, is infoschema.MetaOnlyInfoSchema, args []Expression, row chunk.Row) ([]byte, bool, error)
 
 type builtinTiDBDecodeKeySig struct {
 	baseBuiltinFunc
