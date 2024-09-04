@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "model.go",
         "optimizer.go",
-        "set.go",
         "utils.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/indexadvisor",
@@ -13,6 +12,7 @@ go_library(
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/model",
@@ -24,6 +24,7 @@ go_library(
         "//pkg/types/parser_driver",
         "//pkg/util/logutil",
         "//pkg/util/parser",
+        "//pkg/util/set",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -33,15 +34,15 @@ go_test(
     timeout = "short",
     srcs = [
         "optimizer_test.go",
-        "set_test.go",
         "utils_test.go",
     ],
-    embed = [":indexadvisor"],
     flaky = True,
-    shard_count = 20,
+    shard_count = 17,
     deps = [
+        ":indexadvisor",
         "//pkg/parser/mysql",
         "//pkg/testkit",
+        "//pkg/util/set",
         "@com_github_stretchr_testify//require",
     ],
 )
