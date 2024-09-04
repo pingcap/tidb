@@ -14,6 +14,7 @@ go_test(
     deps = [
         "//pkg/domain",
         "//pkg/executor",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/planner",
         "//pkg/planner/core",

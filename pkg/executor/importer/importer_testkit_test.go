@@ -36,8 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -65,7 +66,7 @@ func TestVerifyChecksum(t *testing.T) {
 	plan := &importer.Plan{
 		DBName: "db",
 		TableInfo: &model.TableInfo{
-			Name: model.NewCIStr("tb"),
+			Name: pmodel.NewCIStr("tb"),
 		},
 		Checksum:               config.OpLevelRequired,
 		DistSQLScanConcurrency: 50,
@@ -90,7 +91,7 @@ func TestVerifyChecksum(t *testing.T) {
 	plan2 := &importer.Plan{
 		DBName: "db",
 		TableInfo: &model.TableInfo{
-			Name: model.NewCIStr("tb2"),
+			Name: pmodel.NewCIStr("tb2"),
 		},
 		Checksum: config.OpLevelRequired,
 	}
@@ -207,9 +208,9 @@ func TestPostProcess(t *testing.T) {
 	tk.MustExec("insert into db.tb values(1)")
 	do, err := session.GetDomain(store)
 	require.NoError(t, err)
-	dbInfo, ok := do.InfoSchema().SchemaByName(model.NewCIStr("db"))
+	dbInfo, ok := do.InfoSchema().SchemaByName(pmodel.NewCIStr("db"))
 	require.True(t, ok)
-	table, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("db"), model.NewCIStr("tb"))
+	table, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("db"), pmodel.NewCIStr("tb"))
 	require.NoError(t, err)
 	plan := &importer.Plan{
 		DBID:             dbInfo.ID,
@@ -230,7 +231,7 @@ func TestPostProcess(t *testing.T) {
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger))
 	// rebase success
 	tk.MustExec("create table db.tb2(id int auto_increment primary key)")
-	table, err = do.InfoSchema().TableByName(context.Background(), model.NewCIStr("db"), model.NewCIStr("tb2"))
+	table, err = do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("db"), pmodel.NewCIStr("tb2"))
 	require.NoError(t, err)
 	plan.TableInfo, plan.DesiredTableInfo = table.Meta(), table.Meta()
 	integration.BeforeTestExternal(t)
@@ -259,9 +260,9 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	tk := testkit.NewTestKit(t, store)
 	do, err := session.GetDomain(store)
 	require.NoError(t, err)
-	dbInfo, ok := do.InfoSchema().SchemaByName(model.NewCIStr("test"))
+	dbInfo, ok := do.InfoSchema().SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, ok)
-	table, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(tableName))
+	table, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr(tableName))
 	require.NoError(t, err)
 	var selectPlan base.PhysicalPlan
 	if path == "" {

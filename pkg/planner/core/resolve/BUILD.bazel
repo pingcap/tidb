@@ -2,10 +2,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "resolve",
-    srcs = ["resolve.go"],
+    srcs = [
+        "resolve.go",
+        "result.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/resolve",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/model",
     ],
