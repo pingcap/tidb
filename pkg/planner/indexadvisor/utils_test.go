@@ -100,6 +100,8 @@ func TestFilterSQLAccessingSystemTables(t *testing.T) {
 	set1.Add(indexadvisor.Query{Text: "select * from mysql.stats_meta", SchemaName: "test"})
 	set1.Add(indexadvisor.Query{Text: "select * from mysql.stats_meta, test.t1", SchemaName: "test"})
 	set1.Add(indexadvisor.Query{Text: "select * from test.t1", SchemaName: "mysql"})
+	set1.Add(indexadvisor.Query{Text: "select @@var", SchemaName: "test"})
+	set1.Add(indexadvisor.Query{Text: "select sleep(1)", SchemaName: "test"})
 	set1.Add(indexadvisor.Query{Text: "wrong", SchemaName: "information_schema"})
 
 	set2, err := indexadvisor.FilterSQLAccessingSystemTables(set1, true)
