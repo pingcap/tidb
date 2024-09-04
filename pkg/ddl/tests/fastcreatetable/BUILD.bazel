@@ -12,7 +12,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/server",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

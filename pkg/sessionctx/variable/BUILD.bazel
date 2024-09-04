@@ -23,6 +23,7 @@ go_library(
         "//pkg/errno",
         "//pkg/keyspace",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser",
         "//pkg/parser/ast",

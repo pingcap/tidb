@@ -13,8 +13,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/meta/model",
         "//pkg/parser/auth",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
         "//pkg/types",
@@ -50,6 +50,7 @@ go_test(
     flaky = True,
     shard_count = 13,
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser/auth",
         "//pkg/parser/model",
         "//pkg/testkit/testsetup",
