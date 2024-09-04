@@ -140,7 +140,6 @@ func NewExternalEngine(
 	startKey []byte,
 	endKey []byte,
 	splitKeys [][]byte,
-	regionSplitSize int64,
 	keyAdapter common.KeyAdapter,
 	duplicateDetection bool,
 	duplicateDB *pebble.DB,
@@ -153,13 +152,12 @@ func NewExternalEngine(
 ) common.Engine {
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
-		storage:         storage,
-		dataFiles:       dataFiles,
-		statsFiles:      statsFiles,
-		startKey:        startKey,
-		endKey:          endKey,
-		splitKeys:       splitKeys,
-		regionSplitSize: regionSplitSize,
+		storage:    storage,
+		dataFiles:  dataFiles,
+		statsFiles: statsFiles,
+		startKey:   startKey,
+		endKey:     endKey,
+		splitKeys:  splitKeys,
 		smallBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),

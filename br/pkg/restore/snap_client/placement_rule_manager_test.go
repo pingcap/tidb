@@ -26,7 +26,8 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -40,8 +41,8 @@ func generateTables() []*snapclient.CreatedTable {
 				ID: 1,
 			},
 			OldTable: &metautil.Table{
-				DB:   &model.DBInfo{Name: model.NewCIStr("test")},
-				Info: &model.TableInfo{Name: model.NewCIStr("t1")},
+				DB:   &model.DBInfo{Name: pmodel.NewCIStr("test")},
+				Info: &model.TableInfo{Name: pmodel.NewCIStr("t1")},
 			},
 		},
 		{
@@ -49,8 +50,8 @@ func generateTables() []*snapclient.CreatedTable {
 				ID: 100,
 			},
 			OldTable: &metautil.Table{
-				DB:   &model.DBInfo{Name: model.NewCIStr("test")},
-				Info: &model.TableInfo{Name: model.NewCIStr("t100")},
+				DB:   &model.DBInfo{Name: pmodel.NewCIStr("test")},
+				Info: &model.TableInfo{Name: pmodel.NewCIStr("t100")},
 			},
 		},
 	}

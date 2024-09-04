@@ -26,11 +26,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -505,9 +508,12 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 	return np, hintFlags, nil
 }
 
-func (er *expressionRewriter) requirePlanCtx(inNode ast.Node) (ctx *exprRewriterPlanCtx, err error) {
+func (er *expressionRewriter) requirePlanCtx(inNode ast.Node, detail string) (ctx *exprRewriterPlanCtx, err error) {
 	if ctx = er.planCtx; ctx == nil {
-		err = errors.Errorf("node '%T' is not allowed when building an expression without planner", inNode)
+		if detail != "" {
+			detail = ", " + detail
+		}
+		err = errors.Errorf("planCtx is required when rewriting node: '%T'%s", inNode, detail)
 	}
 	return
 }
@@ -515,7 +521,7 @@ func (er *expressionRewriter) requirePlanCtx(inNode ast.Node) (ctx *exprRewriter
 // Enter implements Visitor interface.
 func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	enterWithPlanCtx := func(fn func(*exprRewriterPlanCtx) (ast.Node, bool)) (ast.Node, bool) {
-		planCtx, err := er.requirePlanCtx(inNode)
+		planCtx, err := er.requirePlanCtx(inNode, "")
 		if err != nil {
 			er.err = err
 			return inNode, true
@@ -1416,8 +1422,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		inNode = er.preprocess(inNode)
 	}
 
-	withPlanCtx := func(fn func(*exprRewriterPlanCtx)) {
-		planCtx, err := er.requirePlanCtx(inNode)
+	withPlanCtx := func(fn func(*exprRewriterPlanCtx), detail string) {
+		planCtx, err := er.requirePlanCtx(inNode, detail)
 		if err != nil {
 			er.err = err
 			return
@@ -1448,15 +1454,19 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *driver.ParamMarkerExpr:
 		er.toParamMarker(v)
 	case *ast.VariableExpr:
-		withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
-			er.rewriteVariable(planCtx, v)
-		})
+		if v.IsSystem {
+			withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
+				er.rewriteSystemVariable(planCtx, v)
+			}, "accessing system variable requires plan context")
+		} else {
+			er.rewriteUserVariable(v)
+		}
 	case *ast.FuncCallExpr:
 		switch v.FnName.L {
 		case ast.Grouping:
 			withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
 				er.funcCallToExpressionWithPlanCtx(planCtx, v)
-			})
+			}, "grouping function requires plan context")
 		default:
 			if _, ok := expression.TryFoldFunctions[v.FnName.L]; ok {
 				er.tryFoldCounter--
@@ -1536,7 +1546,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.PositionExpr:
 		withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
 			er.positionToScalarFunc(planCtx, v)
-		})
+		}, "")
 	case *ast.IsNullExpr:
 		er.isNullToExpression(v)
 	case *ast.IsTruthExpr:
@@ -1651,37 +1661,52 @@ func (er *expressionRewriter) useCache() bool {
 	return er.sctx.IsUseCache()
 }
 
-func (er *expressionRewriter) rewriteVariable(planCtx *exprRewriterPlanCtx, v *ast.VariableExpr) {
+func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 	stkLen := len(er.ctxStack)
 	name := strings.ToLower(v.Name)
-	sessionVars := planCtx.builder.ctx.GetSessionVars()
-	if !v.IsSystem {
-		if v.Value != nil {
-			tp := er.ctxStack[stkLen-1].GetType(er.sctx.GetEvalCtx())
-			er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
-				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0),
-				er.ctxStack[stkLen-1])
-			er.ctxNameStk[stkLen-1] = types.EmptyName
-			// Store the field type of the variable into SessionVars.UserVarTypes.
-			// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
-			// GetVar has not been executed to fill the SessionVars.Users.
-			sessionVars.SetUserVarType(name, tp)
-			return
-		}
-		tp, ok := sessionVars.GetUserVarType(name)
-		if !ok {
-			tp = types.NewFieldType(mysql.TypeVarString)
-			tp.SetFlen(mysql.MaxFieldVarCharLength)
-		}
-		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
-		if err != nil {
-			er.err = err
-			return
-		}
-		f.SetCoercibility(expression.CoercibilityImplicit)
-		er.ctxStackAppend(f, types.EmptyName)
+	evalCtx := er.sctx.GetEvalCtx()
+	if !evalCtx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+		er.err = errors.Errorf("rewriting user variable requires '%s' in evalCtx", exprctx.OptPropSessionVars.String())
 		return
 	}
+
+	sessionVars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(evalCtx)
+	if err != nil {
+		er.err = err
+		return
+	}
+
+	intest.Assert(er.planCtx == nil || sessionVars == er.planCtx.builder.ctx.GetSessionVars())
+
+	if v.Value != nil {
+		tp := er.ctxStack[stkLen-1].GetType(er.sctx.GetEvalCtx())
+		er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
+			expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0),
+			er.ctxStack[stkLen-1])
+		er.ctxNameStk[stkLen-1] = types.EmptyName
+		// Store the field type of the variable into SessionVars.UserVarTypes.
+		// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
+		// GetVar has not been executed to fill the SessionVars.Users.
+		sessionVars.SetUserVarType(name, tp)
+		return
+	}
+	tp, ok := sessionVars.GetUserVarType(name)
+	if !ok {
+		tp = types.NewFieldType(mysql.TypeVarString)
+		tp.SetFlen(mysql.MaxFieldVarCharLength)
+	}
+	f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
+	if err != nil {
+		er.err = err
+		return
+	}
+	f.SetCoercibility(expression.CoercibilityImplicit)
+	er.ctxStackAppend(f, types.EmptyName)
+}
+
+func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx, v *ast.VariableExpr) {
+	name := strings.ToLower(v.Name)
+	sessionVars := planCtx.builder.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
 		er.err = variable.ErrUnknownSystemVar.FastGenByArgs(name)
@@ -2549,7 +2574,7 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 	dbName := name.DBName
 	if dbName.O == "" {
 		// if database name is not specified, use current database name
-		dbName = model.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
+		dbName = pmodel.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
 	}
 	if name.OrigTblName.O == "" {
 		// column is evaluated by some expressions, for example:

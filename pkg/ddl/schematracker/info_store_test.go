@@ -20,15 +20,16 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInfoStoreLowerCaseTableNames(t *testing.T) {
-	dbName := model.NewCIStr("DBName")
-	lowerDBName := model.NewCIStr("dbname")
-	tableName := model.NewCIStr("TableName")
-	lowerTableName := model.NewCIStr("tablename")
+	dbName := pmodel.NewCIStr("DBName")
+	lowerDBName := pmodel.NewCIStr("dbname")
+	tableName := pmodel.NewCIStr("TableName")
+	lowerTableName := pmodel.NewCIStr("tablename")
 	dbInfo := &model.DBInfo{Name: dbName}
 	tableInfo := &model.TableInfo{Name: tableName}
 
@@ -57,7 +58,7 @@ func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 
 	schemaNames := is.AllSchemaNames()
 	require.Equal(t, []string{dbName.O}, schemaNames)
-	_, err = is.AllTableNamesOfSchema(model.NewCIStr("wrong-db"))
+	_, err = is.AllTableNamesOfSchema(pmodel.NewCIStr("wrong-db"))
 	require.Error(t, err)
 	tableNames, err := is.AllTableNamesOfSchema(dbName)
 	require.NoError(t, err)
@@ -85,7 +86,7 @@ func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 
 	schemaNames = is.AllSchemaNames()
 	require.Equal(t, []string{dbName.L}, schemaNames)
-	_, err = is.AllTableNamesOfSchema(model.NewCIStr("wrong-db"))
+	_, err = is.AllTableNamesOfSchema(pmodel.NewCIStr("wrong-db"))
 	require.Error(t, err)
 	tableNames, err = is.AllTableNamesOfSchema(dbName)
 	require.NoError(t, err)
@@ -94,10 +95,10 @@ func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 
 func TestInfoStoreDeleteTables(t *testing.T) {
 	is := NewInfoStore(0)
-	dbName1 := model.NewCIStr("DBName1")
-	dbName2 := model.NewCIStr("DBName2")
-	tableName1 := model.NewCIStr("TableName1")
-	tableName2 := model.NewCIStr("TableName2")
+	dbName1 := pmodel.NewCIStr("DBName1")
+	dbName2 := pmodel.NewCIStr("DBName2")
+	tableName1 := pmodel.NewCIStr("TableName1")
+	tableName2 := pmodel.NewCIStr("TableName2")
 	dbInfo1 := &model.DBInfo{Name: dbName1}
 	dbInfo2 := &model.DBInfo{Name: dbName2}
 	tableInfo1 := &model.TableInfo{Name: tableName1}

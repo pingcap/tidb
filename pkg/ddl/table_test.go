@@ -28,8 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -46,8 +47,8 @@ func testRenameTable(
 	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	newSchemaID, oldSchemaID int64,
-	oldSchemaName model.CIStr,
-	newSchemaName model.CIStr,
+	oldSchemaName pmodel.CIStr,
+	newSchemaName pmodel.CIStr,
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
@@ -72,7 +73,7 @@ func testRenameTable(
 	return job
 }
 
-func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, oldSchemaIDs, newSchemaIDs []int64, newTableNames []*model.CIStr, oldTableIDs []int64, oldSchemaNames, oldTableNames []*model.CIStr) *model.Job {
+func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, oldSchemaIDs, newSchemaIDs []int64, newTableNames []*pmodel.CIStr, oldTableIDs []int64, oldSchemaNames, oldTableNames []*pmodel.CIStr) *model.Job {
 	job := &model.Job{
 		Type:       model.ActionRenameTables,
 		BinlogInfo: &model.HistoryInfo{},
@@ -97,9 +98,9 @@ func testLockTable(
 	d ddl.ExecutorForTest,
 	uuid string,
 	newSchemaID int64,
-	schemaName model.CIStr,
+	schemaName pmodel.CIStr,
 	tblInfo *model.TableInfo,
-	lockTp model.TableLockType,
+	lockTp pmodel.TableLockType,
 ) *model.Job {
 	arg := &ddl.LockTablesArg{
 		LockTables: []model.TableLockTpInfo{{SchemaID: newSchemaID, TableID: tblInfo.ID, Tp: lockTp}},
@@ -127,7 +128,7 @@ func testLockTable(
 	return job
 }
 
-func checkTableLockedTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, serverID string, sessionID uint64, lockTp model.TableLockType) {
+func checkTableLockedTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, serverID string, sessionID uint64, lockTp pmodel.TableLockType) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMeta(txn)
@@ -251,10 +252,10 @@ func TestTable(t *testing.T) {
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
 
-	job = testLockTable(t, ctx, de, d.GetID(), dbInfo1.ID, dbInfo1.Name, tblInfo, model.TableLockWrite)
+	job = testLockTable(t, ctx, de, d.GetID(), dbInfo1.ID, dbInfo1.Name, tblInfo, pmodel.TableLockWrite)
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
-	checkTableLockedTest(t, store, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
+	checkTableLockedTest(t, store, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, pmodel.TableLockWrite)
 	// for alter cache table
 	job = testAlterCacheTable(t, ctx, de, dbInfo1.ID, dbInfo1.Name, tblInfo)
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
@@ -379,7 +380,7 @@ func testAlterCacheTable(
 	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	newSchemaID int64,
-	newSchemaName model.CIStr,
+	newSchemaName pmodel.CIStr,
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
@@ -406,7 +407,7 @@ func testAlterNoCacheTable(
 	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	newSchemaID int64,
-	newSchemaName model.CIStr,
+	newSchemaName pmodel.CIStr,
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
@@ -452,7 +453,7 @@ func TestRenameTables(t *testing.T) {
 		require.NoError(t, err)
 		newTblInfos = append(newTblInfos, tblInfo)
 	}
-	job := testRenameTables(t, ctx, de, []int64{dbInfo.ID, dbInfo.ID}, []int64{dbInfo.ID, dbInfo.ID}, []*model.CIStr{&newTblInfos[0].Name, &newTblInfos[1].Name}, []int64{tblInfos[0].ID, tblInfos[1].ID}, []*model.CIStr{&dbInfo.Name, &dbInfo.Name}, []*model.CIStr{&tblInfos[0].Name, &tblInfos[1].Name})
+	job := testRenameTables(t, ctx, de, []int64{dbInfo.ID, dbInfo.ID}, []int64{dbInfo.ID, dbInfo.ID}, []*pmodel.CIStr{&newTblInfos[0].Name, &newTblInfos[1].Name}, []int64{tblInfos[0].ID, tblInfos[1].ID}, []*pmodel.CIStr{&dbInfo.Name, &dbInfo.Name}, []*pmodel.CIStr{&tblInfos[0].Name, &tblInfos[1].Name})
 
 	historyJob, err := ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
 	require.NoError(t, err)
@@ -477,15 +478,15 @@ func TestCreateTables(t *testing.T) {
 
 	infos = append(infos, &model.TableInfo{
 		ID:   genIDs[0],
-		Name: model.NewCIStr("s1"),
+		Name: pmodel.NewCIStr("s1"),
 	})
 	infos = append(infos, &model.TableInfo{
 		ID:   genIDs[1],
-		Name: model.NewCIStr("s2"),
+		Name: pmodel.NewCIStr("s2"),
 	})
 	infos = append(infos, &model.TableInfo{
 		ID:   genIDs[2],
-		Name: model.NewCIStr("s3"),
+		Name: pmodel.NewCIStr("s3"),
 	})
 
 	job := &model.Job{

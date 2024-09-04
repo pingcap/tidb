@@ -10,8 +10,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/stmtsummary",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser/auth",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
         "//pkg/types",
@@ -41,6 +41,7 @@ go_test(
     flaky = True,
     shard_count = 24,
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser/auth",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

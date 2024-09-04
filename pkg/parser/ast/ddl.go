@@ -2302,17 +2302,9 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-type RunawayOptionType int
-
-const (
-	RunawayRule RunawayOptionType = iota
-	RunawayAction
-	RunawayWatch
-)
-
 // ResourceGroupRunawayOption is used for parsing resource group runaway rule option.
 type ResourceGroupRunawayOption struct {
-	Tp           RunawayOptionType
+	Tp           model.RunawayOptionType
 	RuleOption   *ResourceGroupRunawayRuleOption
 	ActionOption *ResourceGroupRunawayActionOption
 	WatchOption  *ResourceGroupRunawayWatchOption
@@ -2320,11 +2312,11 @@ type ResourceGroupRunawayOption struct {
 
 func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
-	case RunawayRule:
+	case model.RunawayRule:
 		n.RuleOption.restore(ctx)
-	case RunawayAction:
+	case model.RunawayAction:
 		n.ActionOption.Restore(ctx)
-	case RunawayWatch:
+	case model.RunawayWatch:
 		n.WatchOption.restore(ctx)
 	default:
 		return errors.Errorf("invalid ResourceGroupRunawayOption: %d", n.Tp)
