@@ -145,9 +145,7 @@ func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
 	}
 	// The actual number of alive connections is controlled by the region concurrency
 	// The setting is required to avoid frequent connection creation and close
-	if db != nil {
-		db.SetMaxIdleConns(runtime.GOMAXPROCS(0))
-	}
+	db.SetMaxIdleConns(runtime.GOMAXPROCS(0))
 	return db, nil
 }
 
