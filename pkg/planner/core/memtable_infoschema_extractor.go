@@ -189,7 +189,8 @@ func (e *InfoSchemaBaseExtractor) Extract(
 			continue
 		}
 		e.ColPredicates[colName] = resultSet
-
+	}
+	for _, colName := range e.colNames {
 		if _, ok := patternMatchable[colName]; !ok {
 			continue
 		}
@@ -216,13 +217,17 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	colNames := maps.Keys(e.ColPredicates)
 	sort.Strings(colNames)
 	for _, colName := range colNames {
-		if len(e.ColPredicates[colName]) > 0 {
-			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
+		preds := e.ColPredicates[colName]
+		if len(preds) > 0 {
+			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(preds))
 		}
 	}
 
+	colNames = maps.Keys(e.LikePatterns)
+	sort.Strings(colNames)
 	for _, colName := range colNames {
-		if patterns, ok := e.LikePatterns[colName]; ok && len(patterns) > 0 {
+		patterns := e.LikePatterns[colName]
+		if len(patterns) > 0 {
 			fmt.Fprintf(r, "%s_pattern:[%s], ", colName, extractStringFromStringSlice(patterns))
 		}
 	}
