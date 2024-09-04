@@ -1455,6 +1455,15 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+	waitFor(4, "write only")
+	tkTmp := testkit.NewTestKit(t, store)
+	tkTmp.MustExec(`begin`)
+	tkTmp.MustExec("use test")
+	tkTmp.MustQuery(`select count(*) from test_global`).Check(testkit.Rows("5"))
+	tk2.MustExec(`rollback`)
+	tk2.MustExec(`begin`)
+	tk2.MustExec(`insert into test_global values (5,5,5)`)
+	tkTmp.MustExec(`rollback`)
 	waitFor(4, "delete only")
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec(`begin`)
@@ -1469,7 +1478,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	// the partition is not in public.
 	err := tk3.ExecToErr(`insert into test_global values (15,15,15)`)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "the partition is in not in public")
+	require.ErrorContains(t, err, "[kv:1062]Duplicate entry '15' for key 'test_global.idx_b'")
 	tk2.MustExec(`commit`)
 	tk3.MustExec(`commit`)
 	<-syncChan
@@ -1519,12 +1528,12 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			err := tk1.ExecToErr("update test_global set a = 2 where a = 11")
-			assert.NotNil(t, err)
+			assert.NoError(t, err)
 		}
 	})
 
 	tk.MustExec("alter table test_global truncate partition p1")
-	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("11 11 11", "12 12 12"))
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("2 11 11", "12 12 12"))
 }
 
 func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
@@ -1551,7 +1560,7 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			err = tk1.ExecToErr("update test_global set a = 1 where a = 12")
-			assert.NotNil(t, err)
+			assert.NoError(t, err)
 		}
 	})
 
@@ -1621,7 +1630,7 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			err = tk1.ExecToErr("insert into test_global values(2, 2, 2)")
-			assert.NotNil(t, err)
+			assert.NoError(t, err)
 		}
 	})
 

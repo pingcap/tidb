@@ -54,14 +54,10 @@ type toBeCheckedRow struct {
 func getGlobalIndexKeysNeedCheck(sctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]toBeCheckedRow, error) {
 	nGlobal := 0
 	for _, v := range t.Indices() {
-		if !tables.IsIndexWritable(v) {
+		if !tables.IsIndexWritable(v) || !v.Meta().Unique || !v.Meta().Global {
 			continue
 		}
-		if v.Meta().Unique && v.Meta().Global {
-			nGlobal++
-		} else {
-			continue
-		}
+		nGlobal++
 	}
 	if nGlobal == 0 {
 		return nil, nil
