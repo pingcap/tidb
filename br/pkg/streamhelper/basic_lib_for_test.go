@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -266,7 +267,7 @@ func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, erro
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.serviceGCSafePoint > at {
-		return f.serviceGCSafePoint, nil
+		return f.serviceGCSafePoint, errors.Errorf("minimal safe point %d is greater than the target %d", f.serviceGCSafePoint, at)
 	}
 	f.serviceGCSafePoint = at
 	return at, nil

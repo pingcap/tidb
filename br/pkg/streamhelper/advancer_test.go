@@ -850,13 +850,13 @@ func TestGCCheckpoint(t *testing.T) {
 	log.Info("Start Time:", zap.Uint64("StartTs", env.task.Info.StartTs))
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(1 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
-	adv.StartTaskListener(ctx)
 	env.PauseTask(ctx, "whole")
 	c.serviceGCSafePoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(2 * time.Minute))
 	env.ResumeTask(ctx)
-	require.NoError(t,adv.OnTick(ctx)) 
+	require.ErrorContains(t, adv.OnTick(ctx), "greater than the target")
 }
 
 func TestRedactBackend(t *testing.T) {
