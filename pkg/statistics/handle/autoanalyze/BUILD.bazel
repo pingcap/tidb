@@ -23,6 +23,7 @@ go_library(
         "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/sqlescape",
         "//pkg/util/timeutil",
