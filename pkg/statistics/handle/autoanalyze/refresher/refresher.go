@@ -298,6 +298,12 @@ func (r *Refresher) WaitAutoAnalyzeFinishedForTest() {
 	r.worker.WaitAutoAnalyzeFinishedForTest()
 }
 
+// GetRunningJobs returns the currently running jobs.
+// Only used in the test.
+func (r *Refresher) GetRunningJobs() map[int64]struct{} {
+	return r.worker.GetRunningJobs()
+}
+
 // Close stops all running jobs and releases resources.
 func (r *Refresher) Close() {
 	r.worker.Stop()

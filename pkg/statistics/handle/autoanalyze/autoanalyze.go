@@ -347,6 +347,11 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 	)
 }
 
+// Close closes the auto-analyze worker.
+func (sa *statsAnalyze) Close() {
+	sa.refresher.Close()
+}
+
 // CheckAutoAnalyzeWindow determine the time window for auto-analysis and verify if the current time falls within this range.
 // parameters is a map of auto analyze parameters. it is from GetAutoAnalyzeParameters.
 func CheckAutoAnalyzeWindow(sctx sessionctx.Context) bool {
