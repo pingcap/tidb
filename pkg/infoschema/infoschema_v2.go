@@ -653,19 +653,23 @@ type TableItem struct {
 
 // IterateAllTableItems is used for special performance optimization.
 // Used by executor/infoschema_reader.go to handle reading from INFORMATION_SCHEMA.TABLES.
+// If visit return false, stop the iterate process.
 func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
-	pivot, ok := is.byName.Max()
+	max, ok := is.byName.Max()
 	if !ok {
 		return
 	}
-	if !visit(TableItem{DBName: pivot.dbName, TableName: pivot.tableName}) {
-		return
-	}
-	is.byName.Descend(pivot, func(item tableItem) bool {
-		if pivot.dbName == item.dbName && pivot.tableName == item.tableName {
-			return true // skip MVCC version
+	var pivot *tableItem
+	is.byName.Descend(max, func(item tableItem) bool {
+		if item.schemaVersion > is.schemaMetaVersion {
+			// skip MVCC version, those items are not visible to the queried schema version
+			return true
 		}
-		pivot = item
+		if pivot != nil && pivot.dbName == item.dbName && pivot.tableName == item.tableName {
+			// skip MVCC version, this db.table has been visited already
+			return true
+		}
+		pivot = &item
 		if !item.tomb {
 			return visit(TableItem{DBName: item.dbName, TableName: item.tableName})
 		}
