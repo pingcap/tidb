@@ -319,16 +319,16 @@ func FilterInvalidQueries(opt Optimizer, sqls Set[Query], ignoreErr bool) (Set[Q
 }
 
 // FilterSQLAccessingSystemTables filters out queries that access system tables.
-func FilterSQLAccessingSystemTables(sqls Set[Query], returnErr bool) (Set[Query], error) {
+func FilterSQLAccessingSystemTables(sqls Set[Query], ignoreErr bool) (Set[Query], error) {
 	s := NewSet[Query]()
 	for _, sql := range sqls.ToList() {
 		accessSystemTable := false
 		names, err := CollectTableNamesFromQuery(sql.SchemaName, sql.Text)
 		if err != nil {
-			if returnErr {
-				return nil, fmt.Errorf("invalid query: %v, err: %v", sql.Text, err)
+			if ignoreErr {
+				continue
 			}
-			continue
+			return nil, err
 		}
 		if len(names) == 0 {
 			// `select @@some_var` or `select some_func()`

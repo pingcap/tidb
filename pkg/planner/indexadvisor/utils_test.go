@@ -15,9 +15,9 @@
 package indexadvisor_test
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"github.com/stretchr/testify/require"
 )
 
@@ -88,5 +88,24 @@ func TestRestoreSchemaName(t *testing.T) {
 	require.Equal(t, set2.String(), "{SELECT * FROM `test2`.`t2`, SELECT * FROM `test`.`t1`, SELECT * FROM `test`.`t3`}")
 
 	_, err = indexadvisor.RestoreSchemaName("test", set1, false)
+	require.Error(t, err)
+}
+
+func TestFilterSQLAccessingSystemTables(t *testing.T) {
+	set1 := indexadvisor.NewSet[indexadvisor.Query]()
+	set1.Add(indexadvisor.Query{Text: "select * from mysql.stats_meta"})
+	set1.Add(indexadvisor.Query{Text: "select * from information_schema.test"})
+	set1.Add(indexadvisor.Query{Text: "select * from metrics_schema.test"})
+	set1.Add(indexadvisor.Query{Text: "select * from performance_schema.test"})
+	set1.Add(indexadvisor.Query{Text: "select * from mysql.stats_meta", SchemaName: "test"})
+	set1.Add(indexadvisor.Query{Text: "select * from mysql.stats_meta, test.t1", SchemaName: "test"})
+	set1.Add(indexadvisor.Query{Text: "select * from test.t1", SchemaName: "mysql"})
+	set1.Add(indexadvisor.Query{Text: "wrong", SchemaName: "information_schema"})
+
+	set2, err := indexadvisor.FilterSQLAccessingSystemTables(set1, true)
+	require.NoError(t, err)
+	require.Equal(t, set2.String(), "{select * from test.t1}")
+
+	_, err = indexadvisor.FilterSQLAccessingSystemTables(set1, false)
 	require.Error(t, err)
 }
