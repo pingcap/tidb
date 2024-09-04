@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"github.com/pingcap/tidb/pkg/testkit"
-	. "github.com/pingcap/tidb/pkg/util/set"
+	s "github.com/pingcap/tidb/pkg/util/set"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,7 +82,7 @@ func TestRestoreSchemaName(t *testing.T) {
 	q2 := indexadvisor.Query{Text: "select * from t2", SchemaName: "test2"}
 	q3 := indexadvisor.Query{Text: "select * from t3"}
 	q4 := indexadvisor.Query{Text: "wrong"}
-	set1 := NewSet[indexadvisor.Query]()
+	set1 := s.NewSet[indexadvisor.Query]()
 	set1.Add(q1, q2, q3, q4)
 
 	set2, err := indexadvisor.RestoreSchemaName("test", set1, true)
@@ -94,7 +94,7 @@ func TestRestoreSchemaName(t *testing.T) {
 }
 
 func TestFilterSQLAccessingSystemTables(t *testing.T) {
-	set1 := NewSet[indexadvisor.Query]()
+	set1 := s.NewSet[indexadvisor.Query]()
 	set1.Add(indexadvisor.Query{Text: "select * from mysql.stats_meta"})
 	set1.Add(indexadvisor.Query{Text: "select * from information_schema.test"})
 	set1.Add(indexadvisor.Query{Text: "select * from metrics_schema.test"})
@@ -122,7 +122,7 @@ func TestFilterInvalidQueries(t *testing.T) {
 	tk.MustExec(`create table t2 (a int, b int, c int)`)
 	opt := indexadvisor.NewOptimizer(tk.Session())
 
-	set1 := NewSet[indexadvisor.Query]()
+	set1 := s.NewSet[indexadvisor.Query]()
 	set1.Add(indexadvisor.Query{Text: "select * from test.t1"})
 	set1.Add(indexadvisor.Query{Text: "select * from test.t3"})                            // table t3 does not exist
 	set1.Add(indexadvisor.Query{Text: "select d from t1"})                                 // column d does not exist
@@ -144,7 +144,7 @@ func TestCollectIndexableColumnsForQuerySet(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, c int, d int, e int, f int)`)
 	opt := indexadvisor.NewOptimizer(tk.Session())
 
-	set1 := NewSet[indexadvisor.Query]()
+	set1 := s.NewSet[indexadvisor.Query]()
 	set1.Add(indexadvisor.Query{Text: "select * from test.t where a=1 and b=1 and e like 'abc'"})
 	set1.Add(indexadvisor.Query{Text: "select * from test.t where a<1 and b>1 and e like 'abc'"})
 	set1.Add(indexadvisor.Query{Text: "select * from test.t where c in (1, 2, 3) order by d"})

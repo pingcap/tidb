@@ -26,7 +26,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	parser2 "github.com/pingcap/tidb/pkg/util/parser"
-	. "github.com/pingcap/tidb/pkg/util/set"
+	s "github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
 )
 
@@ -98,7 +98,7 @@ func CollectTableNamesFromQuery(defaultSchema, query string) ([]string, error) {
 
 // CollectSelectColumnsFromQuery parses the given Query text and returns the selected columns.
 // For example, "select a, b, c from t" returns []string{"a", "b", "c"}.
-func CollectSelectColumnsFromQuery(q Query) (Set[Column], error) {
+func CollectSelectColumnsFromQuery(q Query) (s.Set[Column], error) {
 	names, err := CollectTableNamesFromQuery(q.SchemaName, q.Text)
 	if err != nil {
 		return nil, err
@@ -112,7 +112,7 @@ func CollectSelectColumnsFromQuery(q Query) (Set[Column], error) {
 		return nil, err
 	}
 	underSelectField := false
-	selectCols := NewSet[Column]()
+	selectCols := s.NewSet[Column]()
 	visitNode(node, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.SelectField:
@@ -177,7 +177,7 @@ func CollectOrderByColumnsFromQuery(q Query) ([]Column, error) {
 
 // CollectDNFColumnsFromQuery parses the given Query text and returns the DNF columns.
 // For a query `select ... where c1=1 or c2=2 or c3=3`, the DNF columns are `c1`, `c2` and `c3`.
-func CollectDNFColumnsFromQuery(q Query) (Set[Column], error) {
+func CollectDNFColumnsFromQuery(q Query) (s.Set[Column], error) {
 	names, err := CollectTableNamesFromQuery(q.SchemaName, q.Text)
 	if err != nil {
 		return nil, err
@@ -190,7 +190,7 @@ func CollectDNFColumnsFromQuery(q Query) (Set[Column], error) {
 	if err != nil {
 		return nil, err
 	}
-	dnfColSet := NewSet[Column]()
+	dnfColSet := s.NewSet[Column]()
 
 	visitNode(node, func(n ast.Node) bool {
 		if dnfColSet.Size() > 0 { // already collected
@@ -280,8 +280,8 @@ func flattenDNF(expr ast.ExprNode) []ast.ExprNode {
 }
 
 // RestoreSchemaName restores the schema name of the given Query set.
-func RestoreSchemaName(defaultSchema string, sqls Set[Query], ignoreErr bool) (Set[Query], error) {
-	s := NewSet[Query]()
+func RestoreSchemaName(defaultSchema string, sqls s.Set[Query], ignoreErr bool) (s.Set[Query], error) {
+	s := s.NewSet[Query]()
 	for _, sql := range sqls.ToList() {
 		if sql.SchemaName == "" {
 			sql.SchemaName = defaultSchema
@@ -301,8 +301,8 @@ func RestoreSchemaName(defaultSchema string, sqls Set[Query], ignoreErr bool) (S
 
 // FilterInvalidQueries filters out invalid queries from the given query set.
 // some queries might be forbidden by the fix-control 43817.
-func FilterInvalidQueries(opt Optimizer, sqls Set[Query], ignoreErr bool) (Set[Query], error) {
-	s := NewSet[Query]()
+func FilterInvalidQueries(opt Optimizer, sqls s.Set[Query], ignoreErr bool) (s.Set[Query], error) {
+	s := s.NewSet[Query]()
 	for _, sql := range sqls.ToList() {
 		_, err := opt.QueryPlanCost(sql.Text)
 		if err != nil {
@@ -317,8 +317,8 @@ func FilterInvalidQueries(opt Optimizer, sqls Set[Query], ignoreErr bool) (Set[Q
 }
 
 // FilterSQLAccessingSystemTables filters out queries that access system tables.
-func FilterSQLAccessingSystemTables(sqls Set[Query], ignoreErr bool) (Set[Query], error) {
-	s := NewSet[Query]()
+func FilterSQLAccessingSystemTables(sqls s.Set[Query], ignoreErr bool) (s.Set[Query], error) {
+	s := s.NewSet[Query]()
 	for _, sql := range sqls.ToList() {
 		accessSystemTable := false
 		names, err := CollectTableNamesFromQuery(sql.SchemaName, sql.Text)
@@ -348,8 +348,8 @@ func FilterSQLAccessingSystemTables(sqls Set[Query], ignoreErr bool) (Set[Query]
 }
 
 // CollectIndexableColumnsForQuerySet finds all columns that appear in any range-filter, order-by, or group-by clause.
-func CollectIndexableColumnsForQuerySet(opt Optimizer, querySet Set[Query]) (Set[Column], error) {
-	indexableColumnSet := NewSet[Column]()
+func CollectIndexableColumnsForQuerySet(opt Optimizer, querySet s.Set[Query]) (s.Set[Column], error) {
+	indexableColumnSet := s.NewSet[Column]()
 	queryList := querySet.ToList()
 	for _, q := range queryList {
 		cols, err := CollectIndexableColumnsFromQuery(q, opt)
@@ -363,7 +363,7 @@ func CollectIndexableColumnsForQuerySet(opt Optimizer, querySet Set[Query]) (Set
 }
 
 // CollectIndexableColumnsFromQuery parses the given Query text and returns the indexable columns.
-func CollectIndexableColumnsFromQuery(q Query, opt Optimizer) (Set[Column], error) {
+func CollectIndexableColumnsFromQuery(q Query, opt Optimizer) (s.Set[Column], error) {
 	tableNames, err := CollectTableNamesFromQuery(q.SchemaName, q.Text)
 	if err != nil {
 		return nil, err
@@ -379,7 +379,7 @@ func CollectIndexableColumnsFromQuery(q Query, opt Optimizer) (Set[Column], erro
 	if err != nil {
 		return nil, err
 	}
-	cols := NewSet[Column]()
+	cols := s.NewSet[Column]()
 	var collectColumn func(n ast.Node)
 	collectColumn = func(n ast.Node) {
 		switch x := n.(type) {
