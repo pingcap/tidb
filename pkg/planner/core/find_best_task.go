@@ -1137,15 +1137,18 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 		}
 	}
 
-	// Limit range scan preferencing to pseudo and zero row tables
-	preferByVar := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() && (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1)
+	// LimitPushDownThreshold == 0 results in PreferRangeScan to apply without any limits on table size
+	//                         > 0 results in PreferRangeScan applying to pseudo or less than the threshold value
+	preferThreshold := uint64(ds.SCtx().GetSessionVars().LimitPushDownThreshold)
+	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() &&
+		(preferThreshold == 0 || (preferThreshold > 0 && (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < float64(preferThreshold))))
 	// If we've forced an index merge - we want to keep these plans
 	preferMerge := len(ds.IndexMergeHints) > 0 || fixcontrol.GetBoolWithDefault(
 		ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
 		fixcontrol.Fix52869,
 		false,
 	)
-	if preferByVar && len(candidates) > 1 {
+	if preferRange && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path or MV index, we just keep them. For other candidate paths, if there exists
 		// any range scan path, we remove full scan paths and keep range scan paths.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))

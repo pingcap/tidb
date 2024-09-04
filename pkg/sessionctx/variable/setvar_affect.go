@@ -38,6 +38,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_distsql_scan_concurrency":                   {},
 	"tidb_opt_insubq_to_join_and_agg":                 {},
 	"tidb_opt_prefer_range_scan":                      {},
+	"tidb_opt_prefer_range_threshold":                 {},
 	"tidb_opt_enable_correlation_adjustment":          {},
 	"tidb_opt_limit_push_down_threshold":              {},
 	"tidb_opt_correlation_threshold":                  {},
