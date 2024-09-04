@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -956,7 +958,23 @@ func (b *builtinTiDBMVCCInfoSig) evalString(ctx EvalContext, row chunk.Row) (str
 	if err != nil {
 		return "", false, err
 	}
-	js, err := json.Marshal(resp)
+	type mvccInfoResult struct {
+		Key  string                        `json:"key"`
+		Resp *kvrpcpb.MvccGetByKeyResponse `json:"mvcc"`
+	}
+	mvccInfo := []*mvccInfoResult{{s, resp}}
+	if tablecodec.IsIndexKey(encodedKey) && !tablecodec.IsTempIndexKey(encodedKey) {
+		tablecodec.IndexKey2TempIndexKey(encodedKey)
+		hexStr := hex.EncodeToString(encodedKey)
+		res, err := h.GetMvccByEncodedKey(encodedKey)
+		if err != nil {
+			return "", false, err
+		}
+		if res.Info != nil && (len(res.Info.Writes) > 0 || len(res.Info.Values) > 0 || res.Info.Lock != nil) {
+			mvccInfo = append(mvccInfo, &mvccInfoResult{hexStr, res})
+		}
+	}
+	js, err := json.Marshal(mvccInfo)
 	if err != nil {
 		return "", false, err
 	}
