@@ -15,6 +15,7 @@
 package indexadvisor_test
 
 import (
+	"github.com/pingcap/tidb/pkg/testkit"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
@@ -109,5 +110,28 @@ func TestFilterSQLAccessingSystemTables(t *testing.T) {
 	require.Equal(t, set2.String(), "{select * from test.t1}")
 
 	_, err = indexadvisor.FilterSQLAccessingSystemTables(set1, false)
+	require.Error(t, err)
+}
+
+func TestFilterInvalidQueries(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int, b int, c int)`)
+	tk.MustExec(`create table t2 (a int, b int, c int)`)
+	opt := indexadvisor.NewOptimizer(tk.Session())
+
+	set1 := indexadvisor.NewSet[indexadvisor.Query]()
+	set1.Add(indexadvisor.Query{Text: "select * from test.t1"})
+	set1.Add(indexadvisor.Query{Text: "select * from test.t3"})                            // table t3 does not exist
+	set1.Add(indexadvisor.Query{Text: "select d from t1"})                                 // column d does not exist
+	set1.Add(indexadvisor.Query{Text: "select * from t1 where a<(select max(b) from t2)"}) // Fix43817
+	set1.Add(indexadvisor.Query{Text: "wrong"})                                            // invalid query
+
+	set2, err := indexadvisor.FilterInvalidQueries(opt, set1, true)
+	require.NoError(t, err)
+	require.Equal(t, set2.String(), "{select * from test.t1}")
+
+	_, err = indexadvisor.FilterInvalidQueries(opt, set1, false)
 	require.Error(t, err)
 }
