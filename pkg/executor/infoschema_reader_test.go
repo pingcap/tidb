@@ -957,3 +957,32 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 	rows = tk.MustQuery("select * from information_schema.partitions where table_schema = 'db_no_partition' and (partition_name is NULL or partition_name = 'p0');").Rows()
 	require.Equal(t, 2, len(rows))
 }
+
+func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	for _, testCase := range []struct {
+		sql    string
+		expect bool
+	}{
+		{"select table_name, table_schema from information_schema.tables", true},
+		{"select table_name from information_schema.tables", true},
+		{"select table_name from information_schema.tables where table_schema = 'test'", true},
+		{"select table_schema from information_schema.tables", true},
+		{"select count(table_schema) from information_schema.tables", true},
+		{"select count(table_name) from information_schema.tables", true},
+		{"select count(table_rows) from information_schema.tables", false},
+		{"select count(1) from information_schema.tables", true},
+		{"select count(*) from information_schema.tables", true},
+		{"select count(1) from (select table_name from information_schema.tables) t", true},
+		{"select * from information_schema.tables", false},
+		{"select table_name, table_catalog from information_schema.tables", true},
+		{"select table_name, table_rows from information_schema.tables", false},
+	} {
+		var covered bool
+		ctx := context.WithValue(context.Background(), "cover-check", &covered)
+		tk.MustQueryWithContext(ctx, testCase.sql)
+		require.Equal(t, testCase.expect, covered, testCase.sql)
+	}
+}

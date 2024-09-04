@@ -645,6 +645,34 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	return ret, true
 }
 
+// TableItem is exported from tableItem.
+type TableItem struct {
+	DBName    model.CIStr
+	TableName model.CIStr
+}
+
+// IterateAllTableItems is used for special performance optimization.
+// Used by executor/infoschema_reader.go to handle reading from INFORMATION_SCHEMA.TABLES.
+func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
+	pivot, ok := is.byName.Max()
+	if !ok {
+		return
+	}
+	if !visit(TableItem{DBName: pivot.dbName, TableName: pivot.tableName}) {
+		return
+	}
+	is.byName.Descend(pivot, func(item tableItem) bool {
+		if pivot.dbName == item.dbName && pivot.tableName == item.tableName {
+			return true // skip MVCC version
+		}
+		pivot = item
+		if !item.tomb {
+			return visit(TableItem{DBName: item.dbName, TableName: item.tableName})
+		}
+		return true
+	})
+}
+
 // IsSpecialDB tells whether the database is a special database.
 func IsSpecialDB(dbName string) bool {
 	return dbName == util.InformationSchemaName.L ||
