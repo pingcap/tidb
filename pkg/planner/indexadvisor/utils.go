@@ -399,7 +399,7 @@ func CollectIndexableColumnsFromQuery(q Query, opt Optimizer) (Set[Column], erro
 			for _, schemaName := range schemaNames {
 				cols, err := opt.PossibleColumns(schemaName, x.Name.L)
 				if err != nil {
-					// TODO: log or return this error?
+					l().Warn("failed to get possible columns", zap.String("schema", schemaName), zap.String("column", x.Name.L))
 					continue
 				}
 				possibleColumns = append(possibleColumns, cols...)
@@ -408,7 +408,7 @@ func CollectIndexableColumnsFromQuery(q Query, opt Optimizer) (Set[Column], erro
 			for _, c := range possibleColumns {
 				colType, err := opt.ColumnType(c)
 				if err != nil {
-					// TODO: log?
+					l().Warn("failed to get column type", zap.String("schema", c.SchemaName), zap.String("table", c.TableName), zap.String("column", c.ColumnName))
 					continue
 				}
 				if !isIndexableColumnType(colType) {
