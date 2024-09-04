@@ -86,22 +86,22 @@ func (extractHelper) extractColInConsExpr(ctx base.PlanContext, extractCols map[
 	return name.ColName.L, results
 }
 
-func (h *extractHelper) setColumnPushedDownFn(
+func (helper *extractHelper) setColumnPushedDownFn(
 	colNameL string,
 	extractCols map[int64]*types.FieldName,
 	expr *expression.ScalarFunction,
 ) {
-	scalar := h.extractColBinaryOpScalarFunc(extractCols, expr)
+	scalar := helper.extractColBinaryOpScalarFunc(extractCols, expr)
 	if scalar == nil {
 		return
 	}
 	switch scalar.FuncName.L {
 	case ast.Lower:
-		h.pushedDownFuncs = make(map[string]func(string) string)
-		h.pushedDownFuncs[colNameL] = strings.ToLower
+		helper.pushedDownFuncs = make(map[string]func(string) string)
+		helper.pushedDownFuncs[colNameL] = strings.ToLower
 	case ast.Upper:
-		h.pushedDownFuncs = make(map[string]func(string) string)
-		h.pushedDownFuncs[colNameL] = strings.ToUpper
+		helper.pushedDownFuncs = make(map[string]func(string) string)
+		helper.pushedDownFuncs[colNameL] = strings.ToUpper
 	}
 }
 
@@ -347,7 +347,7 @@ func (helper *extractHelper) extractCol(
 // SELECT * FROM t WHERE c LIKE '%a%'
 // SELECT * FROM t WHERE c LIKE '%a%' AND c REGEXP '.*xxx.*'
 // SELECT * FROM t WHERE c LIKE '%a%' OR c REGEXP '.*xxx.*'
-func (helper extractHelper) extractLikePatternCol(
+func (helper *extractHelper) extractLikePatternCol(
 	ctx base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
