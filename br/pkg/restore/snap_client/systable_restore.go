@@ -16,7 +16,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/multierr"
@@ -159,20 +160,20 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 // For fast querying whether a table exists and the temporary database of it.
 type database struct {
 	ExistingTables map[string]*model.TableInfo
-	Name           model.CIStr
-	TemporaryName  model.CIStr
+	Name           pmodel.CIStr
+	TemporaryName  pmodel.CIStr
 }
 
 // getSystemDatabaseByName make a record of a system database, such as mysql and sys, from info schema by its name.
 func (rc *SnapClient) getSystemDatabaseByName(ctx context.Context, name string) (*database, bool, error) {
 	infoSchema := rc.dom.InfoSchema()
-	schema, ok := infoSchema.SchemaByName(model.NewCIStr(name))
+	schema, ok := infoSchema.SchemaByName(pmodel.NewCIStr(name))
 	if !ok {
 		return nil, false, nil
 	}
 	db := &database{
 		ExistingTables: map[string]*model.TableInfo{},
-		Name:           model.NewCIStr(name),
+		Name:           pmodel.NewCIStr(name),
 		TemporaryName:  utils.TemporaryDBName(name),
 	}
 	// It's OK to get all the tables from system tables.
@@ -315,7 +316,7 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) er
 			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
 		}
 	}
-	sysDB := model.NewCIStr(mysql.SystemDB)
+	sysDB := pmodel.NewCIStr(mysql.SystemDB)
 	for _, table := range privilegeTablesInBackup {
 		ti, err := restore.GetTableSchema(dom, sysDB, table.Info.Name)
 		if err != nil {

@@ -28,10 +28,12 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -161,12 +163,12 @@ func (*Context) ParseWithParams(_ context.Context, _ string, _ ...any) (ast.Stmt
 }
 
 // ExecRestrictedStmt implements sqlexec.RestrictedSQLExecutor ExecRestrictedStmt interface.
-func (*Context) ExecRestrictedStmt(_ context.Context, _ ast.StmtNode, _ ...sqlexec.OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error) {
+func (*Context) ExecRestrictedStmt(_ context.Context, _ ast.StmtNode, _ ...sqlexec.OptionFuncAlias) ([]chunk.Row, []*resolve.ResultField, error) {
 	return nil, nil, errors.Errorf("Not Supported")
 }
 
 // ExecRestrictedSQL implements sqlexec.RestrictedSQLExecutor ExecRestrictedSQL interface.
-func (*Context) ExecRestrictedSQL(_ context.Context, _ []sqlexec.OptionFuncAlias, _ string, _ ...any) ([]chunk.Row, []*ast.ResultField, error) {
+func (*Context) ExecRestrictedSQL(_ context.Context, _ []sqlexec.OptionFuncAlias, _ string, _ ...any) ([]chunk.Row, []*resolve.ResultField, error) {
 	return nil, nil, errors.Errorf("Not Supported")
 }
 
@@ -506,8 +508,8 @@ func (*Context) ReleaseTableLockByTableIDs(_ []int64) {
 }
 
 // CheckTableLocked implements the sessionctx.Context interface.
-func (*Context) CheckTableLocked(_ int64) (bool, model.TableLockType) {
-	return false, model.TableLockNone
+func (*Context) CheckTableLocked(_ int64) (bool, pmodel.TableLockType) {
+	return false, pmodel.TableLockNone
 }
 
 // GetAllTableLocks implements the sessionctx.Context interface.

@@ -28,7 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -58,8 +59,8 @@ func TransferBoolToValue(enable bool) string {
 // GetTableSchema returns the schema of a table from TiDB.
 func GetTableSchema(
 	dom *domain.Domain,
-	dbName model.CIStr,
-	tableName model.CIStr,
+	dbName pmodel.CIStr,
+	tableName pmodel.CIStr,
 ) (*model.TableInfo, error) {
 	info := dom.InfoSchema()
 	table, err := info.TableByName(context.Background(), dbName, tableName)

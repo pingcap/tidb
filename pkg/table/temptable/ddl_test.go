@@ -20,7 +20,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -63,7 +64,7 @@ func TestAddLocalTemporaryTable(t *testing.T) {
 	require.NotNil(t, sessVars.LocalTemporaryTables)
 	require.NotNil(t, sessVars.TemporaryTableData)
 	require.Equal(t, int64(1), tbl1.ID)
-	got, exists := sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), model.NewCIStr("db1"), model.NewCIStr("t1"))
+	got, exists := sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), pmodel.NewCIStr("db1"), pmodel.NewCIStr("t1"))
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl1)
 
@@ -71,7 +72,7 @@ func TestAddLocalTemporaryTable(t *testing.T) {
 	err = ddl.CreateLocalTemporaryTable(db1, tbl2)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), tbl2.ID)
-	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), model.NewCIStr("db1"), model.NewCIStr("t2"))
+	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), pmodel.NewCIStr("db1"), pmodel.NewCIStr("t2"))
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl2)
 
@@ -88,20 +89,20 @@ func TestAddLocalTemporaryTable(t *testing.T) {
 	tbl1x := newMockTable("t1")
 	err = ddl.CreateLocalTemporaryTable(db1, tbl1x)
 	require.True(t, infoschema.ErrTableExists.Equal(err))
-	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), model.NewCIStr("db1"), model.NewCIStr("t1"))
+	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), pmodel.NewCIStr("db1"), pmodel.NewCIStr("t1"))
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl1)
 
 	// insert should be success for same table name in different db
 	err = ddl.CreateLocalTemporaryTable(db2, tbl1x)
 	require.NoError(t, err)
-	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), model.NewCIStr("db2"), model.NewCIStr("t1"))
+	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), pmodel.NewCIStr("db2"), pmodel.NewCIStr("t1"))
 	require.Equal(t, int64(4), got.Meta().ID)
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl1x)
 
 	// tbl1 still exist
-	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), model.NewCIStr("db1"), model.NewCIStr("t1"))
+	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), pmodel.NewCIStr("db1"), pmodel.NewCIStr("t1"))
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl1)
 }
@@ -113,7 +114,7 @@ func TestRemoveLocalTemporaryTable(t *testing.T) {
 	db1 := newMockSchema("db1")
 
 	// remove when empty
-	err := ddl.DropLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	err := ddl.DropLocalTemporaryTable(pmodel.NewCIStr("db1"), pmodel.NewCIStr("t1"))
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 
 	// add one table
@@ -126,11 +127,11 @@ func TestRemoveLocalTemporaryTable(t *testing.T) {
 	require.NoError(t, err)
 
 	// remove failed when table not found
-	err = ddl.DropLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t2"))
+	err = ddl.DropLocalTemporaryTable(pmodel.NewCIStr("db1"), pmodel.NewCIStr("t2"))
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 
 	// remove failed when table not found (same table name in different db)
-	err = ddl.DropLocalTemporaryTable(model.NewCIStr("db2"), model.NewCIStr("t1"))
+	err = ddl.DropLocalTemporaryTable(pmodel.NewCIStr("db2"), pmodel.NewCIStr("t1"))
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 
 	// check failed remove should have no effects
@@ -142,9 +143,9 @@ func TestRemoveLocalTemporaryTable(t *testing.T) {
 	require.Equal(t, []byte("v1"), val)
 
 	// remove success
-	err = ddl.DropLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	err = ddl.DropLocalTemporaryTable(pmodel.NewCIStr("db1"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
-	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), model.NewCIStr("db1"), model.NewCIStr("t1"))
+	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), pmodel.NewCIStr("db1"), pmodel.NewCIStr("t1"))
 	require.Nil(t, got)
 	require.False(t, exists)
 	val, err = sessVars.TemporaryTableData.Get(context.Background(), k)
@@ -159,7 +160,7 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 	db1 := newMockSchema("db1")
 
 	// truncate when empty
-	err := ddl.TruncateLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	err := ddl.TruncateLocalTemporaryTable(pmodel.NewCIStr("db1"), pmodel.NewCIStr("t1"))
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 	require.Nil(t, sessVars.LocalTemporaryTables)
 	require.Nil(t, sessVars.TemporaryTableData)
@@ -174,13 +175,13 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 	require.NoError(t, err)
 
 	// truncate failed for table not exist
-	err = ddl.TruncateLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t2"))
+	err = ddl.TruncateLocalTemporaryTable(pmodel.NewCIStr("db1"), pmodel.NewCIStr("t2"))
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
-	err = ddl.TruncateLocalTemporaryTable(model.NewCIStr("db2"), model.NewCIStr("t1"))
+	err = ddl.TruncateLocalTemporaryTable(pmodel.NewCIStr("db2"), pmodel.NewCIStr("t1"))
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 
 	// check failed should have no effects
-	got, exists := sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), model.NewCIStr("db1"), model.NewCIStr("t1"))
+	got, exists := sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), pmodel.NewCIStr("db1"), pmodel.NewCIStr("t1"))
 	require.True(t, exists)
 	require.Equal(t, got.Meta(), tbl1)
 	val, err := sessVars.TemporaryTableData.Get(context.Background(), k)
@@ -197,9 +198,9 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 	require.NoError(t, err)
 
 	// truncate success
-	err = ddl.TruncateLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	err = ddl.TruncateLocalTemporaryTable(pmodel.NewCIStr("db1"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
-	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), model.NewCIStr("db1"), model.NewCIStr("t1"))
+	got, exists = sessVars.LocalTemporaryTables.(*infoschema.SessionTables).TableByName(context.Background(), pmodel.NewCIStr("db1"), pmodel.NewCIStr("t1"))
 	require.True(t, exists)
 	require.NotEqual(t, got.Meta(), tbl1)
 	require.Equal(t, int64(3), got.Meta().ID)
@@ -214,13 +215,13 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 }
 
 func newMockTable(tblName string) *model.TableInfo {
-	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
-	c2 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+	c1 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	c2 := &model.ColumnInfo{ID: 2, Name: pmodel.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
 
-	tblInfo := &model.TableInfo{Name: model.NewCIStr(tblName), Columns: []*model.ColumnInfo{c1, c2}, PKIsHandle: true}
+	tblInfo := &model.TableInfo{Name: pmodel.NewCIStr(tblName), Columns: []*model.ColumnInfo{c1, c2}, PKIsHandle: true}
 	return tblInfo
 }
 
 func newMockSchema(schemaName string) *model.DBInfo {
-	return &model.DBInfo{ID: 10, Name: model.NewCIStr(schemaName), State: model.StatePublic}
+	return &model.DBInfo{ID: 10, Name: pmodel.NewCIStr(schemaName), State: model.StatePublic}
 }

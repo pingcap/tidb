@@ -62,6 +62,7 @@ import (
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/param"
@@ -69,13 +70,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
@@ -229,7 +231,7 @@ var parserPool = &sync.Pool{New: func() any { return parser.New() }}
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	for _, l := range locks {
 		// read only lock is session unrelated, skip it when adding lock to session.
-		if l.Tp != model.TableLockReadOnly {
+		if l.Tp != pmodel.TableLockReadOnly {
 			s.lockedTables[l.TableID] = l
 		}
 	}
@@ -250,10 +252,10 @@ func (s *session) ReleaseTableLockByTableIDs(tableIDs []int64) {
 }
 
 // CheckTableLocked checks the table lock.
-func (s *session) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
+func (s *session) CheckTableLocked(tblID int64) (bool, pmodel.TableLockType) {
 	lt, ok := s.lockedTables[tblID]
 	if !ok {
-		return false, model.TableLockNone
+		return false, pmodel.TableLockNone
 	}
 	return true, lt.Tp
 }
@@ -424,10 +426,10 @@ func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
 }
 
 // FieldList returns fields list of a table.
-func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
+func (s *session) FieldList(tableName string) ([]*resolve.ResultField, error) {
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
-	tName := model.NewCIStr(tableName)
+	dbName := pmodel.NewCIStr(s.GetSessionVars().CurrentDB)
+	tName := pmodel.NewCIStr(tableName)
 	pm := privilege.GetPrivilegeManager(s)
 	if pm != nil && s.sessionVars.User != nil {
 		if !pm.RequestVerification(s.sessionVars.ActiveRoles, dbName.O, tName.O, "", mysql.AllPrivMask) {
@@ -447,9 +449,9 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	}
 
 	cols := table.Cols()
-	fields := make([]*ast.ResultField, 0, len(cols))
+	fields := make([]*resolve.ResultField, 0, len(cols))
 	for _, col := range table.Cols() {
-		rf := &ast.ResultField{
+		rf := &resolve.ResultField{
 			ColumnAsName: col.Name,
 			TableAsName:  tName,
 			DBName:       dbName,
@@ -1760,7 +1762,7 @@ var _ sqlexec.SQLExecutor = &session{}
 
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
-	[]chunk.Row, []*ast.ResultField, error) {
+	[]chunk.Row, []*resolve.ResultField, error) {
 	defer pprof.SetGoroutineLabels(ctx)
 	execOption := sqlexec.GetExecOption(opts)
 	var se *session
@@ -1809,7 +1811,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 // ExecRestrictedStmt4Test wrapper `(s *session) ExecRestrictedStmt` for test.
 func ExecRestrictedStmt4Test(ctx context.Context, s types.Session,
 	stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
-	[]chunk.Row, []*ast.ResultField, error) {
+	[]chunk.Row, []*resolve.ResultField, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	return s.(*session).ExecRestrictedStmt(ctx, stmtNode, opts...)
 }
@@ -1923,7 +1925,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	}, nil
 }
 
-func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.OptionFuncAlias, fn func(context.Context, *session) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.OptionFuncAlias, fn func(context.Context, *session) ([]chunk.Row, []*resolve.ResultField, error)) ([]chunk.Row, []*resolve.ResultField, error) {
 	execOption := sqlexec.GetExecOption(opts)
 	var se *session
 	var clean func()
@@ -1948,8 +1950,8 @@ func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.
 	return fn(ctx, se)
 }
 
-func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, params ...any) ([]chunk.Row, []*ast.ResultField, error) {
-	return s.withRestrictedSQLExecutor(ctx, opts, func(ctx context.Context, se *session) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, params ...any) ([]chunk.Row, []*resolve.ResultField, error) {
+	return s.withRestrictedSQLExecutor(ctx, opts, func(ctx context.Context, se *session) ([]chunk.Row, []*resolve.ResultField, error) {
 		stmt, err := se.ParseWithParams(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -2095,7 +2097,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// infoschema there.
 	if sessVars.StmtCtx.ResourceGroupName != sessVars.ResourceGroupName {
 		// if target resource group doesn't exist, fallback to the origin resource group.
-		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(model.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); !ok {
+		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(pmodel.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); !ok {
 			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.StmtCtx.ResourceGroupName))
 			sessVars.StmtCtx.ResourceGroupName = sessVars.ResourceGroupName
 			if txn, err := s.Txn(false); err == nil && txn != nil && txn.Valid() {
@@ -2225,7 +2227,6 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 var fileTransInConnKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
-	executor.IndexAdviseVarKey,
 	executor.PlanReplayerLoadVarKey,
 }
 
@@ -2430,7 +2431,7 @@ func (s *session) rollbackOnError(ctx context.Context) {
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol
-func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
+func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*resolve.ResultField, err error) {
 	defer func() {
 		if s.sessionVars.StmtCtx != nil {
 			s.sessionVars.StmtCtx.DetachMemDiskTracker()
@@ -4028,7 +4029,7 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 		}
 	case *ast.CreateIndexStmt:
 		isCrucial = true
-		if stmt.IndexOption != nil && stmt.IndexOption.Tp == model.IndexTypeHypo {
+		if stmt.IndexOption != nil && stmt.IndexOption.Tp == pmodel.IndexTypeHypo {
 			isCrucial = false
 		}
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
@@ -4498,7 +4499,7 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 	}
 	for _, t := range stmtCtx.Tables {
 		// get table schema from current infoschema
-		tbl, err := is.TableByName(ctx, model.NewCIStr(t.DB), model.NewCIStr(t.Table))
+		tbl, err := is.TableByName(ctx, pmodel.NewCIStr(t.DB), pmodel.NewCIStr(t.Table))
 		if err != nil {
 			stmtCtx.AppendWarning(errors.New("Pipelined DML failed to get table schema. Fallback to standard mode"))
 			return false
