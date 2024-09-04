@@ -90,13 +90,15 @@ func (h tidbCodecFuncHelper) findCommonOrPartitionedTable(
 		// The arguments will be filled by caller.
 		return nil, 0, plannererrors.ErrSpecificAccessDenied
 	}
-	if part := tbl.GetPartitionedTable(); part != nil && len(partName) > 0 {
-		pid, err := tables.FindPartitionByName(tbl.Meta(), partName)
-		if err != nil {
-			return nil, 0, errors.Trace(err)
+	if part := tbl.GetPartitionedTable(); part != nil {
+		if len(partName) > 0 {
+			pid, err := tables.FindPartitionByName(tbl.Meta(), partName)
+			if err != nil {
+				return nil, 0, errors.Trace(err)
+			}
+			tbl = part.GetPartition(pid)
+			return tbl, pid, nil
 		}
-		tbl = part.GetPartition(pid)
-		return tbl, pid, nil
 	} else {
 		if len(partName) != 0 {
 			return nil, 0, errors.New("not a partitioned table")
