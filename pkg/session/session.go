@@ -2225,7 +2225,6 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 var fileTransInConnKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
-	executor.IndexAdviseVarKey,
 	executor.PlanReplayerLoadVarKey,
 }
 

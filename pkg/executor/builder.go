@@ -209,8 +209,6 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildLockStats(v)
 	case *plannercore.UnlockStats:
 		return b.buildUnlockStats(v)
-	case *plannercore.IndexAdvise:
-		return b.buildIndexAdvise(v)
 	case *plannercore.PlanReplayer:
 		return b.buildPlanReplayer(v)
 	case *plannercore.PhysicalLimit:
@@ -1085,21 +1083,6 @@ func (b *executorBuilder) buildUnlockStats(v *plannercore.UnlockStats) exec.Exec
 	e := &lockstats.UnlockExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, v.ID()),
 		Tables:       v.Tables,
-	}
-	return e
-}
-
-func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) exec.Executor {
-	e := &IndexAdviseExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, v.ID()),
-		IsLocal:      v.IsLocal,
-		indexAdviseInfo: &IndexAdviseInfo{
-			Path:           v.Path,
-			MaxMinutes:     v.MaxMinutes,
-			MaxIndexNum:    v.MaxIndexNum,
-			LineFieldsInfo: v.LineFieldsInfo,
-			Ctx:            b.ctx,
-		},
 	}
 	return e
 }
