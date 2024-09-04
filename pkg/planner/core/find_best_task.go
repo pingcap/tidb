@@ -1138,8 +1138,8 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 	}
 
 	// PreferRangeThreshold == 0 results in PreferRangeScan to apply without any limits on table size
-	//                       > 0 results in PreferRangeScan applying to pseudo or less than the threshold value
-	preferThreshold := int64(ds.SCtx().GetSessionVars().PreferRangeThreshold)
+	//                       > 0 results in PreferRangeScan applying to pseudo or table size less than the threshold value
+	preferThreshold := ds.SCtx().GetSessionVars().PreferRangeThreshold
 	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() &&
 		(preferThreshold == 0 || (preferThreshold > 0 && (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < float64(preferThreshold))))
 	// If we've forced an index merge - we want to keep these plans
