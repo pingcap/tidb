@@ -45,6 +45,7 @@ require (
 	github.com/go-ldap/ldap/v3 v3.4.4
 	github.com/go-resty/resty/v2 v2.11.0
 	github.com/go-sql-driver/mysql v1.7.1
+	github.com/gobwas/glob v0.2.3
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
@@ -69,7 +70,7 @@ require (
 	github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
 	github.com/kisielk/errcheck v1.7.0
-	github.com/klauspost/compress v1.17.7
+	github.com/klauspost/compress v1.17.9
 	github.com/ks3sdklib/aws-sdk-go v1.2.9
 	github.com/kyoh86/exportloopref v0.1.11
 	github.com/lestrrat-go/jwx/v2 v2.0.21
@@ -90,7 +91,7 @@ require (
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20240703084358-e46e4632bd2b
-	github.com/prometheus/client_golang v1.19.1
+	github.com/prometheus/client_golang v1.20.2
 	github.com/prometheus/client_model v0.6.1
 	github.com/prometheus/common v0.55.0
 	github.com/prometheus/prometheus v0.50.1
@@ -108,7 +109,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20240815020919-c810ed88fb02
+	github.com/tikv/client-go/v2 v2.0.8-0.20240821073530-75e3705e58f1
 	github.com/tikv/pd/client v0.0.0-20240805092608-838ee7983b78
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
@@ -141,6 +142,8 @@ require (
 	google.golang.org/api v0.169.0
 	google.golang.org/grpc v1.63.2
 	gopkg.in/yaml.v2 v2.4.0
+	gorm.io/driver/mysql v1.5.7
+	gorm.io/gorm v1.25.11
 	honnef.co/go/tools v0.4.7
 	k8s.io/api v0.28.6
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
@@ -155,6 +158,8 @@ require (
 	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/goccy/go-reflect v1.2.0 // indirect
 	github.com/google/flatbuffers v2.0.8+incompatible // indirect
+	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
 	github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8 // indirect
@@ -239,7 +244,7 @@ require (
 	github.com/jfcg/sixb v1.3.8 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/jonboulle/clockwork v0.4.0 // indirect
-	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/json-iterator/go v1.1.12
 	github.com/klauspost/cpuid v1.3.1 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -324,8 +329,6 @@ require (
 )
 
 replace (
-	// fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
-	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 

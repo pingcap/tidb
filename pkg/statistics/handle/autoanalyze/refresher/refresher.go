@@ -70,66 +70,57 @@ func NewRefresher(
 	return r
 }
 
-// PickOneTableAndAnalyzeByPriority picks one table and analyzes it by priority.
-func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
+// AnalyzeHighestPriorityTables picks tables with the highest priority and analyzes them.
+func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	if !r.autoAnalysisTimeWindow.isWithinTimeWindow(time.Now()) {
 		return false
 	}
 
 	se, err := r.statsHandle.SPool().Get()
 	if err != nil {
-		statslogutil.StatsLogger().Error(
-			"Get session context failed",
-			zap.Error(err),
-		)
+		statslogutil.StatsLogger().Error("Failed to get session context", zap.Error(err))
 		return false
 	}
 	defer r.statsHandle.SPool().Put(se)
+
 	sctx := se.(sessionctx.Context)
 	var wg util.WaitGroupWrapper
 	defer wg.Wait()
-	cnt := 0
-	// Pick the table with the highest weight.
-	for r.Jobs.Len() > 0 {
+
+	maxConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
+	analyzedCount := 0
+
+	for r.Jobs.Len() > 0 && analyzedCount < maxConcurrency {
 		job := r.Jobs.Pop()
-		if valid, failReason := job.IsValidToAnalyze(
-			sctx,
-		); !valid {
+		if valid, failReason := job.IsValidToAnalyze(sctx); !valid {
 			statslogutil.SingletonStatsSamplerLogger().Info(
-				"Table is not ready to analyze",
-				zap.String("failReason", failReason),
+				"Table not ready for analysis",
+				zap.String("reason", failReason),
 				zap.Stringer("job", job),
 			)
 			continue
 		}
-		statslogutil.StatsLogger().Info(
-			"Auto analyze triggered",
-			zap.Stringer("job", job),
-		)
+
+		statslogutil.StatsLogger().Info("Auto analyze triggered", zap.Stringer("job", job))
+
 		wg.Run(func() {
-			err = job.Analyze(
-				r.statsHandle,
-				r.sysProcTracker,
-			)
-			if err != nil {
+			if err := job.Analyze(r.statsHandle, r.sysProcTracker); err != nil {
 				statslogutil.StatsLogger().Error(
-					"Execute auto analyze job failed",
+					"Auto analyze job execution failed",
 					zap.Stringer("job", job),
 					zap.Error(err),
 				)
 			}
 		})
-		cnt++
-		if cnt >= int(variable.AutoAnlayzeConcurrency.Load()) {
-			break
-		}
+
+		analyzedCount++
 	}
-	if cnt > 0 {
+
+	if analyzedCount > 0 {
 		return true
 	}
-	statslogutil.SingletonStatsSamplerLogger().Info(
-		"No table to analyze",
-	)
+
+	statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
 	return false
 }
 

@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -75,10 +74,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -1654,31 +1655,6 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 	return loadStatsInfo.Update(data)
 }
 
-// handleIndexAdvise does the index advise work and returns the advise result for index.
-func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *executor.IndexAdviseInfo) error {
-	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return servererr.ErrNotAllowedCommand
-	}
-	if indexAdviseInfo == nil {
-		return errors.New("Index Advise: info is empty")
-	}
-
-	data, err := cc.getDataFromPath(ctx, indexAdviseInfo.Path)
-	if err != nil {
-		return err
-	}
-	if len(data) == 0 {
-		return errors.New("Index Advise: infile is empty")
-	}
-
-	if err := indexAdviseInfo.GetIndexAdvice(data); err != nil {
-		return err
-	}
-
-	// TODO: Write the rss []ResultSet. It will be done in another PR.
-	return nil
-}
-
 func (cc *clientConn) handlePlanReplayerLoad(ctx context.Context, planReplayerLoadInfo *executor.PlanReplayerLoadInfo) error {
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return servererr.ErrNotAllowedCommand
@@ -1936,11 +1912,12 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			return nil, nil
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
-		if err = plannercore.Preprocess(ctx, cc.getCtx(), stmt); err != nil {
+		nodeW := resolve.NewNodeW(stmt)
+		if err = plannercore.Preprocess(ctx, cc.getCtx(), nodeW); err != nil {
 			// error might happen, see https://github.com/pingcap/tidb/issues/39664
 			return nil, nil
 		}
-		p := plannercore.TryFastPlan(cc.ctx.Session.GetPlanCtx(), stmt)
+		p := plannercore.TryFastPlan(cc.ctx.Session.GetPlanCtx(), nodeW)
 		pointPlans[i] = p
 		if p == nil {
 			continue
@@ -2201,16 +2178,6 @@ func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) 
 		defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
 		//nolint:forcetypeassert
 		if err := cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
-			return handled, err
-		}
-	}
-
-	indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
-	if indexAdvise != nil {
-		handled = true
-		defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
-		//nolint:forcetypeassert
-		if err := cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo)); err != nil {
 			return handled, err
 		}
 	}

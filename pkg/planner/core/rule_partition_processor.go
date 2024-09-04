@@ -107,7 +107,7 @@ func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 		// Only one partition, no union all.
 		p.SetChildren(ds)
 		return p, nil
-	case *LogicalCTE:
+	case *logicalop.LogicalCTE:
 		return lp, nil
 	default:
 		children := lp.Children()
@@ -1211,7 +1211,7 @@ func minCmp(ctx base.PlanContext, lowVal []types.Datum, columnsPruner *rangeColu
 							return false
 						}
 					} else {
-						if con.Value.GetInt64() == types.IntergerSignedLowerBound(col.GetStaticType().GetType()) {
+						if con.Value.GetInt64() == types.IntegerSignedLowerBound(col.GetStaticType().GetType()) {
 							return false
 						}
 					}

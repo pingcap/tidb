@@ -69,12 +69,12 @@ go_test(
     shard_count = 27,
     deps = [
         "//pkg/distsql/context",
-        "//pkg/domain/resourcegroup",
         "//pkg/errctx",
         "//pkg/kv",
         "//pkg/parser/charset",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/resourcegroup",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",

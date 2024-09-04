@@ -279,3 +279,41 @@ func (ctx *StaticExprContext) GetWindowingUseHighPrecision() bool {
 func (ctx *StaticExprContext) GetGroupConcatMaxLen() uint64 {
 	return ctx.groupConcatMaxLen
 }
+
+var _ exprctx.StaticConvertibleExprContext = &StaticExprContext{}
+
+// GetLastPlanColumnID implements context.StaticConvertibleExprContext.
+func (ctx *StaticExprContext) GetLastPlanColumnID() int64 {
+	return ctx.columnIDAllocator.GetLastPlanColumnID()
+}
+
+// GetPlanCacheTracker implements context.StaticConvertibleExprContext.
+func (ctx *StaticExprContext) GetPlanCacheTracker() *contextutil.PlanCacheTracker {
+	return ctx.planCacheTracker
+}
+
+// GetStaticConvertibleEvalContext implements context.StaticConvertibleExprContext.
+func (ctx *StaticExprContext) GetStaticConvertibleEvalContext() exprctx.StaticConvertibleEvalContext {
+	return ctx.evalCtx
+}
+
+// MakeExprContextStatic converts the `exprctx.StaticConvertibleExprContext` to `StaticExprContext`.
+func MakeExprContextStatic(ctx exprctx.StaticConvertibleExprContext) *StaticExprContext {
+	staticEvalContext := MakeEvalContextStatic(ctx.GetStaticConvertibleEvalContext())
+
+	return NewStaticExprContext(
+		WithEvalCtx(staticEvalContext),
+		WithCharset(ctx.GetCharsetInfo()),
+		WithDefaultCollationForUTF8MB4(ctx.GetDefaultCollationForUTF8MB4()),
+		WithBlockEncryptionMode(ctx.GetBlockEncryptionMode()),
+		WithSysDateIsNow(ctx.GetSysdateIsNow()),
+		WithNoopFuncsMode(ctx.GetNoopFuncsMode()),
+		WithRng(ctx.Rng()),
+		WithPlanCacheTracker(ctx.GetPlanCacheTracker()),
+		WithColumnIDAllocator(
+			exprctx.NewSimplePlanColumnIDAllocator(ctx.GetLastPlanColumnID())),
+		WithConnectionID(ctx.ConnectionID()),
+		WithWindowingUseHighPrecision(ctx.GetWindowingUseHighPrecision()),
+		WithGroupConcatMaxLen(ctx.GetGroupConcatMaxLen()),
+	)
+}

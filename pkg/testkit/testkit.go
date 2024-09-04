@@ -228,6 +228,12 @@ func (tk *TestKit) EventuallyMustQueryAndCheck(sql string, args []any,
 	}, waitFor, tick)
 }
 
+// MustQueryToErr query the sql statement and must return Error.
+func (tk *TestKit) MustQueryToErr(sql string, args ...any) {
+	err := tk.QueryToErr(sql, args...)
+	tk.require.Error(err)
+}
+
 // MustQueryWithContext query the statements and returns result rows.
 func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ...any) *Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)

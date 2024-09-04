@@ -277,9 +277,6 @@ type TableName struct {
 	Schema model.CIStr
 	Name   model.CIStr
 
-	DBInfo    *model.DBInfo
-	TableInfo *model.TableInfo
-
 	IndexHints     []*IndexHint
 	PartitionNames []model.CIStr
 	TableSample    *TableSample

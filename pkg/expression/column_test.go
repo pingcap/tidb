@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -258,4 +259,211 @@ func TestGcColumnExprIsTidbShard(t *testing.T) {
 	// tidb_shard(a) = 1
 	shardExpr := NewFunctionInternal(ctx, ast.TiDBShard, ft, col)
 	require.True(t, GcColumnExprIsTidbShard(shardExpr))
+}
+
+func TestFieldTypeHashEquals(t *testing.T) {
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	ft2 := types.NewFieldType(mysql.TypeLonglong)
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	ft.Hash64(hasher1)
+	ft2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, ft.Equals(ft2))
+
+	// flag diff
+	ft.DelFlag(mysql.NotNullFlag)
+	ft2.AddFlag(mysql.NotNullFlag)
+	hasher1.Reset()
+	hasher2.Reset()
+	ft.Hash64(hasher1)
+	ft2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, ft.Equals(ft2))
+
+	// flen diff
+	ft.AddFlag(mysql.NotNullFlag)
+	ft2.AddFlag(mysql.NotNullFlag)
+	ft2.SetFlen(ft2.GetFlen() + 1)
+	hasher1.Reset()
+	hasher2.Reset()
+	ft.Hash64(hasher1)
+	ft2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, ft.Equals(ft2))
+
+	// decimal diff
+	ft2.SetFlen(ft.GetFlen())
+	ft2.SetDecimal(ft.GetDecimal() + 1)
+	hasher2.Reset()
+	ft2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, ft.Equals(ft2))
+
+	// charset diff
+	ft2.SetDecimal(ft.GetDecimal())
+	ft2.SetCharset(ft.GetCharset() + "1")
+	hasher2.Reset()
+	ft2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, ft.Equals(ft2))
+
+	// collate diff
+	ft2.SetCharset(ft.GetCharset())
+	ft2.SetCollate(ft.GetCollate() + "1")
+	hasher2.Reset()
+	ft2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, ft.Equals(ft2))
+
+	// tp diff
+	ft2.SetCollate(ft.GetCollate())
+	ft2.SetType(ft.GetType() + 1)
+	hasher2.Reset()
+	ft2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, ft.Equals(ft2))
+
+	// elems diff
+	ft2.SetType(ft.GetType())
+	ft.SetElems([]string{""})
+	ft2.SetElems([]string{"a"})
+	hasher1.Reset()
+	hasher2.Reset()
+	ft.Hash64(hasher1)
+	ft2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, ft.Equals(ft2))
+
+	// elemsIsBinaryLit diff
+	ft.SetElems([]string{"a", "b"})
+	ft2.SetElems([]string{"a", "b"})
+	ft.SetElemWithIsBinaryLit(0, "1", true)
+	ft.SetElemWithIsBinaryLit(1, "2", false)
+	ft2.SetElemWithIsBinaryLit(0, "1", true)
+	ft2.SetElemWithIsBinaryLit(1, "2", true)
+	hasher1.Reset()
+	hasher2.Reset()
+	ft.Hash64(hasher1)
+	ft2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, ft.Equals(ft2))
+
+	// array diff
+	ft.SetElems([]string{"a", "b"})
+	ft2.SetElems([]string{"a", "b"})
+	ft.SetElemWithIsBinaryLit(0, "1", true)
+	ft.SetElemWithIsBinaryLit(1, "2", true)
+	ft2.SetElemWithIsBinaryLit(0, "1", true)
+	ft2.SetElemWithIsBinaryLit(1, "2", true)
+	ft.SetArray(true)
+	ft2.SetArray(false)
+	hasher1.Reset()
+	hasher2.Reset()
+	ft.Hash64(hasher1)
+	ft2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, ft.Equals(ft2))
+
+	// same
+	ft2.SetArray(true)
+	hasher2.Reset()
+	ft2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, ft.Equals(ft2))
+}
+
+func TestColumnHashEquals(t *testing.T) {
+	col1 := &Column{UniqueID: 1}
+	col2 := &Column{UniqueID: 1}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	col1.Hash64(hasher1)
+	col2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, col1.Equals(col2))
+
+	// diff uniqueID
+	col2.UniqueID = 2
+	hasher2.Reset()
+	col2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, col1.Equals(col2))
+
+	// diff ID
+	col2.UniqueID = col1.UniqueID
+	col2.ID = 2
+	hasher2.Reset()
+	col2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, col1.Equals(col2))
+
+	// diff RetType
+	col2.ID = col1.ID
+	col2.RetType = types.NewFieldType(mysql.TypeLonglong)
+	hasher2.Reset()
+	col2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, col1.Equals(col2))
+
+	// diff Index
+	col2.RetType = col1.RetType
+	col2.Index = 1
+	hasher2.Reset()
+	col2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, col1.Equals(col2))
+
+	// diff VirtualExpr
+	// TODO: add HashEquals for VirtualExpr
+
+	// diff OrigName
+	col2.Index = col1.Index
+	col2.OrigName = "a"
+	hasher2.Reset()
+	col2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, col1.Equals(col2))
+
+	// diff IsHidden
+	col2.OrigName = col1.OrigName
+	col2.IsHidden = true
+	hasher2.Reset()
+	col2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, col1.Equals(col2))
+
+	// diff IsPrefix
+	col2.IsHidden = col1.IsHidden
+	col2.IsPrefix = true
+	hasher2.Reset()
+	col2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, col1.Equals(col2))
+
+	// diff InOperand
+	col2.IsPrefix = col1.IsPrefix
+	col2.InOperand = true
+	hasher2.Reset()
+	col2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, col1.Equals(col2))
+
+	// diff collationInfo
+	col2.InOperand = col1.InOperand
+	col2.collationInfo = collationInfo{
+		collation: "aa",
+	}
+	hasher2.Reset()
+	col2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, col1.Equals(col2))
+
+	// diff CorrelatedColUniqueID
+	col2.collationInfo = col1.collationInfo
+	col2.CorrelatedColUniqueID = 1
+	hasher2.Reset()
+	col2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, col1.Equals(col2))
 }

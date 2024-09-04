@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -450,4 +451,84 @@ func TestParamList(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(i+1), val.GetInt64())
 	}
+}
+
+func TestMakeEvalContextStatic(t *testing.T) {
+	// This test is to ensure that the `MakeEvalContextStatic` function works as expected.
+	// It requires the developers to create a special `StaticEvalContext`, whose every fields
+	// are non-empty. Then, the `MakeEvalContextStatic` function is called to create a new
+	// clone of it. Finally, the new clone is compared with the original one to ensure that
+	// the fields are correctly copied.
+	paramList := variable.NewPlanCacheParamList()
+	paramList.Append(types.NewDatum(1))
+
+	provider := contextopt.DDLOwnerInfoProvider(func() bool {
+		return true
+	})
+
+	obj := NewStaticEvalContext(
+		WithWarnHandler(contextutil.NewStaticWarnHandler(16)),
+		WithSQLMode(mysql.ModeNoZeroDate|mysql.ModeStrictTransTables),
+		WithTypeFlags(types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck),
+		WithErrLevelMap(errctx.LevelMap{}),
+		WithLocation(time.UTC),
+		WithCurrentDB("db1"),
+		WithCurrentTime(func() (time.Time, error) {
+			return time.Now(), nil
+		}),
+		WithMaxAllowedPacket(12345),
+		WithDefaultWeekFormatMode("3"),
+		WithDivPrecisionIncrement(5),
+		WithPrivCheck(func(db, table, column string, priv mysql.PrivilegeType) bool {
+			return true
+		}),
+		WithDynamicPrivCheck(func(privName string, grantable bool) bool {
+			return true
+		}),
+		WithParamList(paramList),
+		WithOptionalProperty(provider),
+		WithEnableRedactLog("test"),
+	)
+	obj.AppendWarning(errors.New("test warning"))
+
+	ignorePath := []string{
+		"$.staticEvalCtxState.warnHandler.**",
+		"$.staticEvalCtxState.typeCtx.**",
+		"$.staticEvalCtxState.errCtx.**",
+		"$.staticEvalCtxState.currentTime.**",
+		"$.staticEvalCtxState.props",
+		"$.id",
+	}
+	deeptest.AssertRecursivelyNotEqual(t, obj, NewStaticEvalContext(),
+		deeptest.WithIgnorePath(ignorePath),
+		deeptest.WithPointerComparePath([]string{
+			"$.staticEvalCtxState.requestVerificationFn",
+			"$.staticEvalCtxState.requestDynamicVerificationFn",
+		}))
+
+	staticObj := MakeEvalContextStatic(obj)
+
+	deeptest.AssertDeepClonedEqual(t, obj, staticObj,
+		deeptest.WithIgnorePath(ignorePath),
+		deeptest.WithPointerComparePath([]string{
+			"$.staticEvalCtxState.warnHandler",
+			"$.staticEvalCtxState.paramList*.b",
+			"$.staticEvalCtxState.requestVerificationFn",
+			"$.staticEvalCtxState.requestDynamicVerificationFn",
+		}),
+	)
+
+	require.Equal(t, obj.GetWarnHandler(), staticObj.GetWarnHandler())
+	require.Equal(t, obj.typeCtx.Flags(), staticObj.typeCtx.Flags())
+	require.Equal(t, obj.errCtx.LevelMap(), staticObj.errCtx.LevelMap())
+
+	oldT, err := obj.CurrentTime()
+	require.NoError(t, err)
+	newT, err := staticObj.CurrentTime()
+	require.NoError(t, err)
+	require.Equal(t, oldT.Unix(), newT.Unix())
+
+	require.NotEqual(t, obj.GetOptionalPropSet(), staticObj.GetOptionalPropSet())
+	// Now, it didn't copy any optional properties.
+	require.Equal(t, context.OptionalEvalPropKeySet(0), staticObj.GetOptionalPropSet())
 }

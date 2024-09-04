@@ -209,8 +209,6 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildLockStats(v)
 	case *plannercore.UnlockStats:
 		return b.buildUnlockStats(v)
-	case *plannercore.IndexAdvise:
-		return b.buildIndexAdvise(v)
 	case *plannercore.PlanReplayer:
 		return b.buildPlanReplayer(v)
 	case *plannercore.PhysicalLimit:
@@ -926,6 +924,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 	e := &SimpleExec{
 		BaseExecutor:    base,
 		Statement:       v.Statement,
+		ResolveCtx:      v.ResolveCtx,
 		IsFromRemote:    v.IsFromRemote,
 		is:              b.is,
 		staleTxnStartTS: v.StaleTxnStartTS,
@@ -1088,21 +1087,6 @@ func (b *executorBuilder) buildUnlockStats(v *plannercore.UnlockStats) exec.Exec
 	return e
 }
 
-func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) exec.Executor {
-	e := &IndexAdviseExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, v.ID()),
-		IsLocal:      v.IsLocal,
-		indexAdviseInfo: &IndexAdviseInfo{
-			Path:           v.Path,
-			MaxMinutes:     v.MaxMinutes,
-			MaxIndexNum:    v.MaxIndexNum,
-			LineFieldsInfo: v.LineFieldsInfo,
-			Ctx:            b.ctx,
-		},
-	}
-	return e
-}
-
 func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) exec.Executor {
 	if v.Load {
 		e := &PlanReplayerLoadExec{
@@ -1201,6 +1185,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) exec.Executor {
 	t := &TraceExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmtNode:     v.StmtNode,
+		resolveCtx:   v.ResolveCtx,
 		builder:      b,
 		format:       v.Format,
 

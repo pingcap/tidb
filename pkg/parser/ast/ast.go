@@ -248,8 +248,6 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "Use"
 	case *CreateBindingStmt:
 		return "CreateBinding"
-	case *IndexAdviseStmt:
-		return "IndexAdvise"
 	case *DropBindingStmt:
 		return "DropBinding"
 	case *TraceStmt:

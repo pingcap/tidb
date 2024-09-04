@@ -46,7 +46,7 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
 	}
 	opCtx := ddl.NewLocalOperatorCtx(context.Background(), 1)
-	src := testutil.NewOperatorTestSource(ddl.TableScanTask{1, startKey, endKey})
+	src := testutil.NewOperatorTestSource(ddl.TableScanTask{ID: 1, Start: startKey, End: endKey})
 	scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil, 0)
 	sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
