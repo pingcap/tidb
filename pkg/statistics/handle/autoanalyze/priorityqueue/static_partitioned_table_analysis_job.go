@@ -77,6 +77,12 @@ func NewStaticPartitionTableAnalysisJob(
 	}
 }
 
+// GetTableID gets the table ID of the job.
+func (j *StaticPartitionedTableAnalysisJob) GetTableID() int64 {
+	// Because we only analyze the specified static partition, the table ID is the static partition ID.
+	return j.StaticPartitionID
+}
+
 // Analyze analyzes the specified static partition or indexes.
 func (j *StaticPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
