@@ -25,9 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"go.uber.org/zap"
 )
 
 // EncodeFlatPlan encodes a FlatPhysicalPlan with compression.
@@ -106,7 +104,6 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 		var estRows float64
 		if fop.IsPhysicalPlan {
 			estRows = fop.Origin.(base.PhysicalPlan).GetEstRowCountForDisplay()
-			logutil.BgLogger().Info("fuck origin", zap.Float64("estRows", estRows), zap.Any("fop.Origin", fop.Origin))
 		} else if statsInfo := p.StatsInfo(); statsInfo != nil {
 			estRows = statsInfo.RowCount
 		}

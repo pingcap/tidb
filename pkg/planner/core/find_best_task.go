@@ -1671,8 +1671,6 @@ func convertToPartialIndexScan(ds *DataSource, physPlanPartInfo *PhysPlanPartInf
 			selectivity = path.CountAfterIndex / path.CountAfterAccess
 		}
 		rowCount := is.StatsInfo().RowCount * selectivity
-		logutil.BgLogger().Info("WTF", zap.Float64("is.StatsInfo().RowCount", is.StatsInfo().RowCount), zap.Float64("selectivity", selectivity),
-			zap.Float64("rowCount", rowCount))
 		stats := &property.StatsInfo{RowCount: rowCount}
 		stats.StatsVersion = ds.StatisticTable.Version
 		if ds.StatisticTable.Pseudo {
@@ -2281,8 +2279,6 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 			selectivity = path.CountAfterIndex / path.CountAfterAccess
 		}
 		count := is.StatsInfo().RowCount * selectivity
-		logutil.BgLogger().Info("WTF", zap.Float64("is.StatsInfo().RowCount", is.StatsInfo().RowCount), zap.Float64("selectivity", selectivity),
-			zap.Float64("rowCount", count))
 		stats := p.TableStats.ScaleByExpectCnt(count)
 		indexSel := PhysicalSelection{Conditions: indexConds}.Init(is.SCtx(), stats, is.QueryBlockOffset())
 		indexSel.SetChildren(is)
