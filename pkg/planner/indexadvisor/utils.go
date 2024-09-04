@@ -64,9 +64,9 @@ func visitNode(n ast.Node, enter func(n ast.Node) (skip bool), leave func(n ast.
 	n.Accept(&nodeVisitor{enter, leave})
 }
 
-// collectTableNamesFromQuery returns all referenced table names in the given Query text.
+// CollectTableNamesFromQuery returns all referenced table names in the given Query text.
 // The returned format is []string{"schema.table", "schema.table", ...}.
-func collectTableNamesFromQuery(defaultSchema, query string) ([]string, error) {
+func CollectTableNamesFromQuery(defaultSchema, query string) ([]string, error) {
 	node, err := ParseOneSQL(query)
 	if err != nil {
 		return nil, err
@@ -95,10 +95,10 @@ func collectTableNamesFromQuery(defaultSchema, query string) ([]string, error) {
 	return tableNames, nil
 }
 
-// collectSelectColumnsFromQuery parses the given Query text and returns the selected columns.
+// CollectSelectColumnsFromQuery parses the given Query text and returns the selected columns.
 // For example, "select a, b, c from t" returns []string{"a", "b", "c"}.
-func collectSelectColumnsFromQuery(q Query) (Set[Column], error) {
-	names, err := collectTableNamesFromQuery(q.SchemaName, q.Text)
+func CollectSelectColumnsFromQuery(q Query) (Set[Column], error) {
+	names, err := CollectTableNamesFromQuery(q.SchemaName, q.Text)
 	if err != nil {
 		return nil, err
 	}
@@ -135,10 +135,10 @@ func collectSelectColumnsFromQuery(q Query) (Set[Column], error) {
 	return selectCols, nil
 }
 
-// collectOrderByColumnsFromQuery parses the given Query text and returns the order-by columns.
+// CollectOrderByColumnsFromQuery parses the given Query text and returns the order-by columns.
 // For example, "select a, b from t order by a, b" returns []string{"a", "b"}.
-func collectOrderByColumnsFromQuery(q Query) ([]Column, error) {
-	names, err := collectTableNamesFromQuery(q.SchemaName, q.Text)
+func CollectOrderByColumnsFromQuery(q Query) ([]Column, error) {
+	names, err := CollectTableNamesFromQuery(q.SchemaName, q.Text)
 	if err != nil {
 		return nil, err
 	}
@@ -176,10 +176,10 @@ func collectOrderByColumnsFromQuery(q Query) ([]Column, error) {
 	return orderByCols, nil
 }
 
-// collectDNFColumnsFromQuery parses the given Query text and returns the DNF columns.
+// CollectDNFColumnsFromQuery parses the given Query text and returns the DNF columns.
 // For a query `select ... where c1=1 or c2=2 or c3=3`, the DNF columns are `c1`, `c2` and `c3`.
-func collectDNFColumnsFromQuery(q Query) (Set[Column], error) {
-	names, err := collectTableNamesFromQuery(q.SchemaName, q.Text)
+func CollectDNFColumnsFromQuery(q Query) (Set[Column], error) {
+	names, err := CollectTableNamesFromQuery(q.SchemaName, q.Text)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +281,8 @@ func flattenDNF(expr ast.ExprNode) []ast.ExprNode {
 	return cnf
 }
 
-func restoreSchemaName(defaultSchema string, sqls Set[Query], ignoreErr bool) (Set[Query], error) {
+// RestoreSchemaName restores the schema name of the given Query set.
+func RestoreSchemaName(defaultSchema string, sqls Set[Query], ignoreErr bool) (Set[Query], error) {
 	s := NewSet[Query]()
 	for _, sql := range sqls.ToList() {
 		if sql.SchemaName == "" {
@@ -300,25 +301,29 @@ func restoreSchemaName(defaultSchema string, sqls Set[Query], ignoreErr bool) (S
 	return s, nil
 }
 
+// FilterInvalidQueries filters out invalid queries from the given query set.
 // some queries might be forbidden by the fix-control 43817.
-func filterInvalidQueries(opt Optimizer, sqls Set[Query], returnErr bool) (Set[Query], error) {
+func FilterInvalidQueries(opt Optimizer, sqls Set[Query], ignoreErr bool) (Set[Query], error) {
 	s := NewSet[Query]()
 	for _, sql := range sqls.ToList() {
 		_, err := opt.QueryPlanCost(sql.Text)
-		if err == nil {
-			s.Add(sql)
-		} else if err != nil && returnErr {
-			return nil, fmt.Errorf("invalid query: %v, err: %v", sql.Text, err)
+		if err != nil {
+			if ignoreErr {
+				continue
+			}
+			return nil, err
 		}
+		s.Add(sql)
 	}
 	return s, nil
 }
 
-func filterSQLAccessingSystemTables(sqls Set[Query], returnErr bool) (Set[Query], error) {
+// FilterSQLAccessingSystemTables filters out queries that access system tables.
+func FilterSQLAccessingSystemTables(sqls Set[Query], returnErr bool) (Set[Query], error) {
 	s := NewSet[Query]()
 	for _, sql := range sqls.ToList() {
 		accessSystemTable := false
-		names, err := collectTableNamesFromQuery(sql.SchemaName, sql.Text)
+		names, err := CollectTableNamesFromQuery(sql.SchemaName, sql.Text)
 		if err != nil {
 			if returnErr {
 				return nil, fmt.Errorf("invalid query: %v, err: %v", sql.Text, err)
@@ -361,7 +366,7 @@ func CollectIndexableColumnsForQuerySet(opt Optimizer, querySet Set[Query]) (Set
 
 // CollectIndexableColumnsFromQuery parses the given Query text and returns the indexable columns.
 func CollectIndexableColumnsFromQuery(q Query, opt Optimizer) (Set[Column], error) {
-	tableNames, err := collectTableNamesFromQuery(q.SchemaName, q.Text)
+	tableNames, err := CollectTableNamesFromQuery(q.SchemaName, q.Text)
 	if err != nil {
 		return nil, err
 	}
