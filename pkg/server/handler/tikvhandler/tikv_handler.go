@@ -42,7 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
@@ -800,7 +801,7 @@ type SchemaTableStorage struct {
 	DataFree      int64  `json:"data_free"`
 }
 
-func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *model.CIStr, table *model.CIStr) (messages []*SchemaTableStorage, err error) {
+func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *pmodel.CIStr, table *pmodel.CIStr) (messages []*SchemaTableStorage, err error) {
 	var s sessiontypes.Session
 	if s, err = session.CreateSession(h.Store); err != nil {
 		return
@@ -871,13 +872,13 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	params := mux.Vars(req)
 
 	var (
-		dbName    *model.CIStr
-		tableName *model.CIStr
+		dbName    *pmodel.CIStr
+		tableName *pmodel.CIStr
 		isSingle  bool
 	)
 
 	if reqDbName, ok := params[handler.DBName]; ok {
-		cDBName := model.NewCIStr(reqDbName)
+		cDBName := pmodel.NewCIStr(reqDbName)
 		// all table schemas in a specified database
 		schemaInfo, exists := schema.SchemaByName(cDBName)
 		if !exists {
@@ -888,7 +889,7 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 
 		if reqTableName, ok := params[handler.TableName]; ok {
 			// table schema of a specified table name
-			cTableName := model.NewCIStr(reqTableName)
+			cTableName := pmodel.NewCIStr(reqTableName)
 			data, e := schema.TableByName(context.Background(), cDBName, cTableName)
 			if e != nil {
 				handler.WriteError(w, e)
@@ -987,10 +988,10 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 
 	if dbName, ok := params[handler.DBName]; ok {
-		cDBName := model.NewCIStr(dbName)
+		cDBName := pmodel.NewCIStr(dbName)
 		if tableName, ok := params[handler.TableName]; ok {
 			// table schema of a specified table name
-			cTableName := model.NewCIStr(tableName)
+			cTableName := pmodel.NewCIStr(tableName)
 			data, err := schema.TableByName(context.Background(), cDBName, cTableName)
 			if err != nil {
 				handler.WriteError(w, err)
@@ -1086,7 +1087,7 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	tableName, partitionName := handler.ExtractTableAndPartitionName(tableName)
-	tableVal, err := schema.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
 	if err != nil {
 		handler.WriteError(w, err)
 		return

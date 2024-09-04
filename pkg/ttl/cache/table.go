@@ -26,9 +26,10 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -98,10 +99,10 @@ type PhysicalTable struct {
 	// ID is the physical ID of the table
 	ID int64
 	// Schema is the database name of the table
-	Schema model.CIStr
+	Schema pmodel.CIStr
 	*model.TableInfo
 	// Partition is the partition name
-	Partition model.CIStr
+	Partition pmodel.CIStr
 	// PartitionDef is the partition definition
 	PartitionDef *model.PartitionDefinition
 	// KeyColumns is the cluster index key columns for the table
@@ -113,9 +114,9 @@ type PhysicalTable struct {
 }
 
 // NewBasePhysicalTable create a new PhysicalTable with specific timeColumn.
-func NewBasePhysicalTable(schema model.CIStr,
+func NewBasePhysicalTable(schema pmodel.CIStr,
 	tbl *model.TableInfo,
-	partition model.CIStr,
+	partition pmodel.CIStr,
 	timeColumn *model.ColumnInfo,
 ) (*PhysicalTable, error) {
 	if tbl.State != model.StatePublic {
@@ -166,7 +167,7 @@ func NewBasePhysicalTable(schema model.CIStr,
 }
 
 // NewPhysicalTable create a new PhysicalTable
-func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.CIStr) (*PhysicalTable, error) {
+func NewPhysicalTable(schema pmodel.CIStr, tbl *model.TableInfo, partition pmodel.CIStr) (*PhysicalTable, error) {
 	ttlInfo := tbl.TTLInfo
 	if ttlInfo == nil {
 		return nil, errors.Errorf("table '%s.%s' is not a ttl table", schema, tbl.Name)

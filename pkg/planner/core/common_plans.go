@@ -24,8 +24,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -539,7 +540,7 @@ type V2AnalyzeOptions struct {
 	PhyTableID  int64
 	RawOpts     map[ast.AnalyzeOptionType]uint64
 	FilledOpts  map[ast.AnalyzeOptionType]uint64
-	ColChoice   model.ColumnChoice
+	ColChoice   pmodel.ColumnChoice
 	ColumnList  []*model.ColumnInfo
 	IsPartition bool
 }
@@ -654,23 +655,12 @@ type PlanReplayer struct {
 	PlanDigest string
 }
 
-// IndexAdvise represents a index advise plan.
-type IndexAdvise struct {
-	baseSchemaProducer
-
-	IsLocal     bool
-	Path        string
-	MaxMinutes  uint64
-	MaxIndexNum *ast.MaxIndexNumClause
-	LineFieldsInfo
-}
-
 // SplitRegion represents a split regions plan.
 type SplitRegion struct {
 	baseSchemaProducer
 
 	TableInfo      *model.TableInfo
-	PartitionNames []model.CIStr
+	PartitionNames []pmodel.CIStr
 	IndexInfo      *model.IndexInfo
 	Lower          []types.Datum
 	Upper          []types.Datum
@@ -692,7 +682,7 @@ type CompactTable struct {
 
 	ReplicaKind    ast.CompactReplicaKind
 	TableInfo      *model.TableInfo
-	PartitionNames []model.CIStr
+	PartitionNames []pmodel.CIStr
 }
 
 // DDL represents a DDL statement plan.

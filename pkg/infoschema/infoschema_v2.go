@@ -29,8 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
@@ -42,9 +43,9 @@ import (
 
 // tableItem is the btree item sorted by name or by id.
 type tableItem struct {
-	dbName        model.CIStr
+	dbName        pmodel.CIStr
 	dbID          int64
-	tableName     model.CIStr
+	tableName     pmodel.CIStr
 	tableID       int64
 	schemaVersion int64
 	tomb          bool
@@ -59,7 +60,7 @@ type schemaItem struct {
 type schemaIDName struct {
 	schemaVersion int64
 	id            int64
-	name          model.CIStr
+	name          pmodel.CIStr
 	tomb          bool
 }
 
@@ -123,7 +124,7 @@ type Data struct {
 }
 
 type tableInfoItem struct {
-	dbName        model.CIStr
+	dbName        pmodel.CIStr
 	tableID       int64
 	schemaVersion int64
 	tableInfo     *model.TableInfo
@@ -645,6 +646,38 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	return ret, true
 }
 
+// TableItem is exported from tableItem.
+type TableItem struct {
+	DBName    pmodel.CIStr
+	TableName pmodel.CIStr
+}
+
+// IterateAllTableItems is used for special performance optimization.
+// Used by executor/infoschema_reader.go to handle reading from INFORMATION_SCHEMA.TABLES.
+// If visit return false, stop the iterate process.
+func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
+	max, ok := is.byName.Max()
+	if !ok {
+		return
+	}
+	var pivot *tableItem
+	is.byName.Descend(max, func(item tableItem) bool {
+		if item.schemaVersion > is.schemaMetaVersion {
+			// skip MVCC version, those items are not visible to the queried schema version
+			return true
+		}
+		if pivot != nil && pivot.dbName == item.dbName && pivot.tableName == item.tableName {
+			// skip MVCC version, this db.table has been visited already
+			return true
+		}
+		pivot = &item
+		if !item.tomb {
+			return visit(TableItem{DBName: item.dbName, TableName: item.tableName})
+		}
+		return true
+	})
+}
+
 // IsSpecialDB tells whether the database is a special database.
 func IsSpecialDB(dbName string) bool {
 	return dbName == util.InformationSchemaName.L ||
@@ -653,7 +686,7 @@ func IsSpecialDB(dbName string) bool {
 }
 
 // EvictTable is exported for testing only.
-func (is *infoschemaV2) EvictTable(schema, tbl model.CIStr) {
+func (is *infoschemaV2) EvictTable(schema, tbl pmodel.CIStr) {
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
 	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
@@ -687,7 +720,7 @@ func (h *tableByNameHelper) onItem(item tableItem) bool {
 
 // TableByName implements the InfoSchema interface.
 // When schema cache miss, it will fetch the TableInfo from TikV and refill cache.
-func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr) (t table.Table, err error) {
+func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl pmodel.CIStr) (t table.Table, err error) {
 	if IsSpecialDB(schema.L) {
 		if raw, ok := is.specials.Load(schema.L); ok {
 			tbNames := raw.(*schemaTables)
@@ -737,7 +770,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl model.CIStr
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName
-func (is *infoschemaV2) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
+func (is *infoschemaV2) TableInfoByName(schema, table pmodel.CIStr) (*model.TableInfo, error) {
 	tbl, err := is.TableByName(context.Background(), schema, table)
 	return getTableInfo(tbl), err
 }
@@ -749,7 +782,7 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 }
 
 // SchemaTableInfos implements MetaOnlyInfoSchema.
-func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableInfo, error) {
+func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema pmodel.CIStr) ([]*model.TableInfo, error) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
@@ -795,7 +828,7 @@ retry:
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
-func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema model.CIStr) ([]*model.TableNameInfo, error) {
+func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema pmodel.CIStr) ([]*model.TableNameInfo, error) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
@@ -852,7 +885,7 @@ func (is *infoschemaV2) FindTableInfoByPartitionID(
 	return getTableInfo(tbl), db, partDef
 }
 
-func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
+func (is *infoschemaV2) SchemaByName(schema pmodel.CIStr) (val *model.DBInfo, ok bool) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if !ok {
@@ -917,15 +950,15 @@ func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
 	return
 }
 
-func (is *infoschemaV2) AllSchemaNames() []model.CIStr {
-	rs := make([]model.CIStr, 0, is.Data.schemaMap.Len())
+func (is *infoschemaV2) AllSchemaNames() []pmodel.CIStr {
+	rs := make([]pmodel.CIStr, 0, is.Data.schemaMap.Len())
 	is.allSchemas(func(di *model.DBInfo) {
 		rs = append(rs, di.Name)
 	})
 	return rs
 }
 
-func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
+func (is *infoschemaV2) SchemaExists(schema pmodel.CIStr) bool {
 	_, ok := is.SchemaByName(schema)
 	return ok
 }
@@ -979,7 +1012,7 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 	return tbl, dbInfo, def
 }
 
-func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
+func (is *infoschemaV2) TableExists(schema, table pmodel.CIStr) bool {
 	_, err := is.TableByName(context.Background(), schema, table)
 	return err == nil
 }
@@ -1001,7 +1034,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 		return st.dbInfo, true
 	}
 	var ok bool
-	var name model.CIStr
+	var name pmodel.CIStr
 	is.Data.schemaID2Name.Descend(schemaIDName{
 		id:            id,
 		schemaVersion: math.MaxInt64,
@@ -1398,6 +1431,22 @@ var PlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) b
 	}
 	if parInfo := t.GetPartitionInfo(); parInfo != nil {
 		for _, def := range parInfo.Definitions {
+			if def.PlacementPolicyRef != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// AllPlacementPolicyAttribute is the Placement Policy attribute filter used by ListTablesWithSpecialAttribute.
+// Different from PlacementPolicyAttribute, Partition.Enable flag will be ignored.
+var AllPlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+	if t.PlacementPolicyRef != nil {
+		return true
+	}
+	if t.Partition != nil {
+		for _, def := range t.Partition.Definitions {
 			if def.PlacementPolicyRef != nil {
 				return true
 			}
