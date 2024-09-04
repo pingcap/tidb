@@ -2221,7 +2221,7 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *DataSource, 
 	pInfo := p.TableInfo.GetPartitionInfo()
 	if len(idxArr) == 1 && idxArr[0] == FullRange {
 		// Only filter adding and dropping partitions.
-		if len(pInfo.AddingDefinitions) == 0 && len(pInfo.DroppingDefinitions) == 0 {
+		if len(pInfo.AddingDefinitions) == 0 && len(pInfo.DroppingDefinitions) == 0 && (pInfo.DDLState != model.StateWriteOnly || len(pInfo.NewPartitionIDs) == 0) {
 			return conditions, nil
 		}
 		needNot = true
@@ -2230,6 +2230,11 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *DataSource, 
 		}
 		for _, p := range pInfo.DroppingDefinitions {
 			args = append(args, expression.NewInt64Const(p.ID))
+		}
+		for _, id := range pInfo.NewPartitionIDs {
+			if pInfo.DDLState == model.StateWriteOnly {
+				args = append(args, expression.NewInt64Const(id))
+			}
 		}
 	} else if len(idxArr) == 0 {
 		// add an invalid pid as param for `IN` function

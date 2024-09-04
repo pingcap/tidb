@@ -2365,6 +2365,33 @@ func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) 
 }
 
 // onTruncateTablePartition truncates old partition meta.
+// If there are no global index, it will be a single state change.
+// For GLOBAL INDEX it will be several state changes:
+// StateNone - unaware of DDL
+//
+// StateWriteOnly
+//
+//	still sees and uses the old partition, but should filter out index reads of
+//		global index which has ids from pi.NewPartitionIDs.
+//		Allow duplicate key even if one cannot access the global index entry by reading!
+//
+// StateDeleteOnly
+//
+//	sees new partition, but should filter out index reads of global index which
+//		has ids from pi.DroppingDefinitions.
+//		Allow duplicate key even if one cannot access the global index entry
+//
+// StateDeleteReorganization
+//
+//	now no other session has access to the old partition,
+//		but there are global index entries left pointing to the old partition,
+//		so they should be filtered out (see pi.DroppingDefinitions) and on write (insert/update)
+//		the old partition's row should be deleted and the global index key allowed
+//		to be overwritten.
+//		During this time the old partition is read and removing matching entries in
+//		smaller batches.
+//
+// StatePublic - DDL done
 func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
 	var oldIDs, newIDs []int64
@@ -2441,7 +2468,12 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	// When table has global index, public->deleteOnly->deleteReorg->none schema changes should be handled.
 	switch job.SchemaState {
 	case model.StatePublic:
-		// Step1: use the new partition ids
+		pi.NewPartitionIDs = newIDs[:]
+		pi.DDLState = model.StateWriteOnly
+
+		job.SchemaState = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	case model.StateWriteOnly:
 		truncatingDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
 		for i, oldID := range oldIDs {
 			for j := 0; j < len(pi.Definitions); j++ {
@@ -2455,7 +2487,6 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		}
 		// This should work as a flag to insert/update/delete to also update the old partitions!
 		pi.DroppingDefinitions = truncatingDefinitions
-		pi.NewPartitionIDs = newIDs[:]
 		pi.DDLState = model.StateDeleteOnly
 
 		job.SchemaState = model.StateDeleteOnly

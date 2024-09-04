@@ -206,41 +206,44 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
-		// 1-20 Original rows in the original partition
-		// 21-20 Inserted ... TODO: Describe and update test accordingly...
+		// 1-20 StatePublic
+		// 21-40 Inserted into old partition during, StateWriteOnly
+		// i.e. by session that has not seen the first DDL change yet
+		// 41-60 Inserted into new partition during delete only state
+		// 61-80 Inserted into new partition during delete reorg
+		// 81-100 Inserted into new partition during completed DDL, state none
 		switch schemaState {
+		case "write only":
+			// tkNO is seeing state None, so unaware of DDL
+			// tkO is seeing state write only, so using the old partition,
+			// but are aware of new ids, so should filter them or global index reads
+			// Duplicate keys (from delete only state) are allowed on insert/update,
+			// even if it cannot read them from the global index, due to filtering.
 		case "delete only":
-			// tkNO is seeing state None, so still can access the dropped partition
+			// tkNO is seeing state write only, so still can access the dropped partition
 			// tkO is seeing state delete only, so cannot see the dropped partition,
 			// but must still double write to the global indexes.
 
-			// Still in Schema version before ALTER, not affected
 			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
-			// OK with duplicate key, but otherwise it should allow any insert!
 			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
-			tkNO.MustExec(`insert into t values (5,5,"OK")`)
-			tkNO.MustExec(`insert into t values (7,7,"OK")`)
-			tkO.MustContainErrMsg(`insert into t values (5,5,"Duplicate key")`, "[kv:1062]Duplicate entry '5' for key 't.uk_b'")
-			tkO.MustContainErrMsg(`insert into t values (6,7,"Duplicate key")`, "[kv:1062]Duplicate entry '7' for key 't.uk_b'")
-			tkO.MustExec(`insert into t values (9,9,"OK")`)
-			tkNO.MustContainErrMsg(`insert into t values (8,9,"Duplicate key")`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
-			tkNO.MustQuery(`select count(*) from t where b = 9`).Check(testkit.Rows("1"))
-			tkNO.MustQuery(`select b from t where b = 9`).Check(testkit.Rows("9"))
-			// TODO: How to handle this inconsistency?
-			tkNO.MustQuery(`select * from t where b = 9`).Check(testkit.Rows())
-			// OK, since not found!
-			tkNO.MustExec(`update t set a = 2 where b = 9`)
+			tkNO.MustExec(`insert into t values (21,21,"OK")`)
+			tkNO.MustExec(`insert into t values (23,23,"OK")`)
+			tkO.MustContainErrMsg(`insert into t values (21,21,"Duplicate key")`, "[kv:1062]Duplicate entry '21' for key 't.uk_b'")
+			tkO.MustContainErrMsg(`insert into t values (6,23,"Duplicate key")`, "[kv:1062]Duplicate entry '23' for key 't.uk_b'")
+			tkO.MustExec(`insert into t values (25,25,"OK")`)
+			tkNO.MustContainErrMsg(`insert into t values (8,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.uk_b'")
+			tkNO.MustQuery(`select count(*) from t where b = 25`).Check(testkit.Rows("0"))
+			tkNO.MustQuery(`select b from t where b = 25`).Check(testkit.Rows())
+			tkNO.MustExec(`update t set a = 2 where b = 25`)
 			require.Equal(t, uint64(0), tkNO.Session().GetSessionVars().LastFoundRows)
-			tkO.MustQuery(`select count(*) from t where b = 7`).Check(testkit.Rows("0"))
-			tkO.MustExec(`update t set a = 2 where b = 7`)
+			tkO.MustQuery(`select count(*) from t where b = 23`).Check(testkit.Rows("0"))
+			tkO.MustExec(`update t set a = 2 where b = 23`)
 			require.Equal(t, uint64(0), tkNO.Session().GetSessionVars().LastFoundRows)
-			tkNO.MustQuery(`select count(*) from t where a = 7`).Check(testkit.Rows("1"))
-			tkNO.MustQuery(`select * from t where a = 7`).Check(testkit.Rows("7 7 OK"))
-			tkNO.MustExec(`update t set b = 10 where a = 7`)
+			tkNO.MustQuery(`select count(*) from t where a = 23`).Check(testkit.Rows("1"))
+			tkNO.MustQuery(`select * from t where a = 23`).Check(testkit.Rows("23 23 OK"))
+			tkNO.MustExec(`update t set b = 10 where a = 23`)
 			require.Equal(t, uint64(1), tkNO.Session().GetSessionVars().LastFoundRows)
-			tkNO.MustExec(`update t set b = 7 where a = 7`)
-			require.Equal(t, uint64(1), tkNO.Session().GetSessionVars().LastFoundRows)
-			tkO.MustExec(`update t set b = 9 where a = 9`)
+			tkNO.MustExec(`update t set b = 23 where a = 23`)
 			require.Equal(t, uint64(1), tkNO.Session().GetSessionVars().LastFoundRows)
 			// TODO: Add tests for delete as well as index lookup and table scan!
 		case "delete reorganization":
@@ -251,11 +254,11 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkO.MustExec(`insert into t values (1,1,"OK")`)
 			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 			tkO.MustContainErrMsg(`insert into t values (3,1,"Duplicate")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
-			// b = 7 was inserted into the dropped partition, OK to delete
-			tkO.MustExec(`insert into t values (10,7,"OK")`)
+			// b = 23 was inserted into the dropped partition, OK to delete
+			tkO.MustExec(`insert into t values (10,23,"OK")`)
 			tkNO.MustExec(`insert into t values (11,11,"OK")`)
-			tkNO.MustContainErrMsg(`insert into t values (12,9,"Duplicate key")`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
-			tkNO.MustContainErrMsg(`insert into t values (9,9,"Duplicate key")`, "[kv:1062]Duplicate entry '9' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`insert into t values (12,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`insert into t values (25,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.uk_b'")
 			tkNO.MustContainErrMsg(`insert into t values (11,11,"Duplicate key")`, "[kv:1062]Duplicate entry '11' for key 't.uk_b'")
 			tkO.MustExec(`insert into t values (13,13,"OK")`)
 			tkO.MustContainErrMsg(`insert into t values (14,13,"Duplicate key")`, "[kv:1062]Duplicate entry '13' for key 't.uk_b'")
@@ -263,8 +266,8 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkNO.MustExec(`update t set a = 51 where b = 11`)
 			tkO.MustExec(`update t set a = 53 where b = 13`)
 		case "none":
-			tkNO.MustExec(`insert into t values (5,5,"OK")`)
-			tkO.MustContainErrMsg(`insert into t values (5,5,"Duplicate key")`, "[kv:1062]Duplicate entry '5' for key 't.uk_b'")
+			tkNO.MustExec(`insert into t values (21,21,"OK")`)
+			tkO.MustContainErrMsg(`insert into t values (21,21,"Duplicate key")`, "[kv:1062]Duplicate entry '21' for key 't.uk_b'")
 			tkNO.MustExec(`insert into t values (15,15,"OK")`)
 			tkO.MustExec(`insert into t values (17,17,"OK")`)
 		default:
