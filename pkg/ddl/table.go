@@ -436,7 +436,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 	)
 	if job.Version == model.JobVersion1 {
 		err = job.DecodeArgs(&newTableID, &fkCheck, &newPartitionIDs)
-	} else if job.Version == model.JobVersion2 {
+	} else {
 		argsV2, err = model.GetOrDecodeArgsV2[model.TruncateTableArgs](job)
 		if err == nil {
 			newTableID, fkCheck, newPartitionIDs = argsV2.NewTableID, argsV2.FKCheck, argsV2.NewPartitionIDs

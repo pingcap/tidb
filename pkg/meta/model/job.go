@@ -497,7 +497,7 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 					}
 				}
 			}
-		} else if job.Version == JobVersion2 {
+		} else {
 			job.RawArgsV2, err = json.Marshal(job.ArgsV2)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -839,22 +839,20 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type ActionType `json:"type"`
-
-	Args    []any           `json:"-"`
-	RawArgs json.RawMessage `json:"raw_args"`
-
-	SchemaState SchemaState   `json:"schema_state"`
-	SnapshotVer uint64        `json:"snapshot_ver"`
-	RealStartTS uint64        `json:"real_start_ts"`
-	Revertible  bool          `json:"revertible"`
-	State       JobState      `json:"state"`
-	RowCount    int64         `json:"row_count"`
-	Warning     *terror.Error `json:"warning"`
-	CtxVars     []any         `json:"-"`
-	SchemaVer   int64         `json:"schema_version"`
-	ReorgTp     ReorgType     `json:"reorg_tp"`
-	UseCloud    bool          `json:"use_cloud"`
+	Type        ActionType      `json:"type"`
+	Args        []any           `json:"-"`
+	RawArgs     json.RawMessage `json:"raw_args"`
+	SchemaState SchemaState     `json:"schema_state"`
+	SnapshotVer uint64          `json:"snapshot_ver"`
+	RealStartTS uint64          `json:"real_start_ts"`
+	Revertible  bool            `json:"revertible"`
+	State       JobState        `json:"state"`
+	RowCount    int64           `json:"row_count"`
+	Warning     *terror.Error   `json:"warning"`
+	CtxVars     []any           `json:"-"`
+	SchemaVer   int64           `json:"schema_version"`
+	ReorgTp     ReorgType       `json:"reorg_tp"`
+	UseCloud    bool            `json:"use_cloud"`
 }
 
 // IsNormal returns true if the sub-job is normally running.

@@ -522,7 +522,7 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 			if jobW.Version == model.JobVersion1 {
 				partCount := jobW.Args[3].(int)
 				count += 1 + partCount
-			} else if jobW.Version == model.JobVersion2 {
+			} else {
 				count += 1 + len(jobW.ArgsV2.(*model.TruncateTableArgs).OldPartitionIDs)
 			}
 		}
@@ -602,7 +602,7 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 						partIDs[i] = alloc.next()
 					}
 					jobW.Args[2] = partIDs
-				} else if jobW.Version == model.JobVersion2 {
+				} else {
 					args := jobW.ArgsV2.(*model.TruncateTableArgs)
 					args.NewTableID = alloc.next()
 					partIDs := make([]int64, len(args.OldPartitionIDs))

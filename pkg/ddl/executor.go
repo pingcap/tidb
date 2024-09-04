@@ -4210,7 +4210,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		// the last param is not required for execution, we need it to calculate
 		// number of new IDs to generate.
 		job.Args = []any{int64(0), fkCheck, []int64{}, len(oldPartitionIDs)}
-	} else if job.Version == model.JobVersion2 {
+	} else {
 		job.ArgsV2 = &model.TruncateTableArgs{
 			FKCheck:         fkCheck,
 			OldPartitionIDs: oldPartitionIDs,
