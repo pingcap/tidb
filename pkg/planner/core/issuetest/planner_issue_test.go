@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -243,4 +244,73 @@ UNIQUE KEY idx_5 (col_1)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;`)
 	tk.MustExec(`INSERT INTO tl75eff7ba VALUES(1),(0);`)
 	tk.MustQuery(`SELECT tl75eff7ba.col_1 AS r0 FROM tl75eff7ba WHERE ISNULL(tl75eff7ba.col_1) OR tl75eff7ba.col_1 IN (0, 0, 1, 1) GROUP BY tl75eff7ba.col_1 HAVING ISNULL(tl75eff7ba.col_1) OR tl75eff7ba.col_1 IN (0, 1, 1, 0) LIMIT 58651509;`).Check(testkit.Rows("0", "1"))
+}
+
+func Test55818(t *testing.T) {
+	originConfig := config.GetGlobalConfig()
+	newConfig := config.NewConfig()
+	newConfig.Performance.StatsLoadConcurrency = -1 // no worker to consume channel
+	newConfig.Performance.StatsLoadQueueSize = 1
+	config.StoreGlobalConfig(newConfig)
+	defer config.StoreGlobalConfig(originConfig)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+CREATE TABLE t61a85298 (
+  col_71 binary(179) DEFAULT NULL,
+  col_72 datetime NOT NULL DEFAULT '1991-12-31 00:00:00',
+  col_73 json NOT NULL,
+  col_74 json DEFAULT NULL,
+  col_75 decimal(35,16) NOT NULL DEFAULT '35255.3',
+  col_76 text COLLATE utf8mb4_general_ci DEFAULT NULL,
+  col_77 json NOT NULL,
+  col_78 blob DEFAULT NULL,
+  col_79 json DEFAULT NULL,
+  col_80 int(11) NOT NULL DEFAULT '-946722020',
+  PRIMARY KEY (col_80) /*T![clustered_index] NONCLUSTERED */,
+  UNIQUE KEY idx_26 (col_80)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+`)
+	tk.MustExec(`INSERT INTO t61a85298 VALUES(x'244268334d52253d675050497446000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000','1980-12-29 00:00:00','[2]','["G0XZTTTqz76DK7sJXL7vpI69KobLAL4w3HJpoJMd2RRbYqf4G5Wg30mWXf2vtwzy", "DbI37w1Vp4SCcMifWXedcBd8s1eUXkuhYwFmZOQwnCPZ4QUBuUQ9SM78xiIy1M1U", "lqadGREbQINyTSrLP7S0PQ67VVRxCU1r01V6i3BXTH66DuG11SpGrfSXhKVaKj11"]',0.7257000000000000,'bfGazt0IFc','["okLP9ehoOfIfUy3D5nUc5w5kzwHtWayzCJXItDWwV65HgjnKa3YmMpJeLT3TD7K3", "uLV7R8UGDgchSK69Xl6gEXSTdGTwOi4WDewLMwAHMPFU5oGn97TjjQiDvwqAsYDZ", "vBi5sEgC6YpHxEHvkJR5SQgf6Eo9GRCE6bGUrszYw1snT0LXtLIsmwLK5DnUTaVe"]',x'7e674d6363585e2332722b41','["yWmYbztzBUuVIBBZLTGJivgA2KjQieESK5aFAbqe7s2CyacJDvZApvjNg4d1pfFT", "c1M8WvuTpfvrPeyHTyFC0gQNQRkECbkvVF3Ys8ekPzrFO2M5nzShf683DGwr0Wg4", "jbbGwGapyVXOzJICCGZu18eWiOq9yZH0PHNRTQEuD1WgLrVy2GhmABQpDuiERptb"]',-768730220);
+`)
+	tk.MustExec(`set @@tidb_enable_global_index=1;`)
+	tk.MustExec(`
+CREATE TABLE tceb7972c (
+  col_17 json DEFAULT NULL,
+  col_18 smallint(5) unsigned NOT NULL DEFAULT '13551',
+  col_19 float NOT NULL,
+  PRIMARY KEY (col_18) /*T![clustered_index] NONCLUSTERED */,
+  UNIQUE KEY idx_9 (col_19,(cast(col_17 as signed array))) /*T![global_index] GLOBAL */,
+  UNIQUE KEY idx_10 ((cast(col_17 as signed array)),col_19) /*T![global_index] GLOBAL */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+PARTITION BY RANGE (col_18)
+(PARTITION p0 VALUES LESS THAN (2),
+ PARTITION p1 VALUES LESS THAN (14104),
+ PARTITION p2 VALUES LESS THAN (56927));
+`)
+	tk.MustExec(`
+INSERT INTO tceb7972c VALUES
+(NULL,32768,3820.5208),
+('[2978991857918245466, 2358633058135455779]',14958,9050.871),
+('[3209216649516490663, 8796285761077563704, 8679842102776923655, 7938639730493564777]',50028,5950.6714),
+('[1835017567976206479, 2]',25510,6779.271),
+('[7771897049175925887, 1, 5907722896328501457, 2218303279528464844, 4106409123325473016]',56899,9767.853),
+('[7839602274985524695, 4773627824242235154, 5873227109465605544, 4833046260666832936]',33174,3820.5208);
+`)
+	tk.MustExec("analyze table t61a85298")
+	tk.MustExec("analyze table tceb7972c")
+	dom.StatsHandle().Update(context.Background(), dom.InfoSchema())
+	tk.MustQuery(`explain SELECT 1
+FROM (
+    SELECT /*+ USE_INDEX_MERGE(tceb7972c t61a85298)*/ tceb7972c.col_17 AS col_60767
+    FROM t61a85298
+    JOIN tceb7972c ON tceb7972c.col_19 = t61a85298.col_71
+    WHERE NOT (t61a85298.col_75 <= 43.851) AND t61a85298.col_78 < '@tikQ6I^'
+    ORDER BY col_60767
+) AS derived_table
+WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
+   OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
+`).Check(testkit.Rows())
+
 }

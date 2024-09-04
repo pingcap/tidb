@@ -352,8 +352,10 @@ func EncodePlanNode(depth int, pid, planType string, rowCount float64,
 	buf.WriteString(taskTypeInfo)
 	buf.WriteByte(separator)
 	if math.Round(rowCount) == rowCount {
+		logutil.BgLogger().Info("fuck1", zap.Float64("rowcount", rowCount))
 		buf.WriteString(strconv.FormatFloat(rowCount, 'f', 0, 64))
 	} else {
+		logutil.BgLogger().Info("fuck2", zap.Float64("rowcount", rowCount), zap.Stack("stack"))
 		buf.WriteString(strconv.FormatFloat(rowCount, 'f', 2, 64))
 	}
 	buf.WriteByte(separator)
