@@ -123,16 +123,23 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
-	if expression.ContainVirtualColumn(predicates) {
-		// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
-		// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
-		return predicates, p
+	var predicatesWithVCol, predicatesWithoutVCol []expression.Expression
+	// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
+	// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
+	for _, expr := range predicates {
+		if expression.ContainVirtualColumn([]expression.Expression{expr}) {
+			predicatesWithVCol = append(predicatesWithVCol, expr)
+		} else {
+			predicatesWithoutVCol = append(predicatesWithoutVCol, expr)
+		}
 	}
+	predicates = predicatesWithoutVCol
 
 	retainedPredicates, _ := p.children[0].PredicatePushDown(predicates, opt)
 	p.conditions = make([]expression.Expression, 0, len(predicates))
 	p.conditions = append(p.conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
+	retainedPredicates = append(retainedPredicates, predicatesWithVCol...)
 	return retainedPredicates, p
 }
 

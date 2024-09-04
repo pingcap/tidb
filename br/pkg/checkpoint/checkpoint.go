@@ -41,7 +41,7 @@ import (
 
 const (
 	CheckpointMetaPath = "checkpoint.meta"
-	CheckpointDir      = "/checkpoints"
+	CheckpointDir      = "checkpoints"
 
 	CheckpointDataDir     = CheckpointDir + "/data"
 	CheckpointChecksumDir = CheckpointDir + "/checksum"

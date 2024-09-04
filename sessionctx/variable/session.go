@@ -1334,6 +1334,11 @@ type SessionVars struct {
 
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
+
+	// SkipMissingPartitionStats controls how to handle missing partition stats when merging partition stats to global stats.
+	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
+	// When set to false, give up merging partition stats to global stats.
+	SkipMissingPartitionStats bool
 }
 
 var (
@@ -2288,6 +2293,8 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
 	if tblInfo.TempTableType != model.TempTableNone {
+		s.TxnCtxMu.Lock()
+		defer s.TxnCtxMu.Unlock()
 		if s.TxnCtx.TemporaryTables == nil {
 			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}

@@ -1900,6 +1900,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
 	do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
 	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
+	do.wg.Run(do.handleDDLEvent)
 	return nil
 }
 
@@ -2016,6 +2017,24 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	}
 }
 
+func (do *Domain) handleDDLEvent() {
+	logutil.BgLogger().Info("handleDDLEvent started.")
+	defer util.Recover(metrics.LabelDomain, "handleDDLEvent", nil, false)
+	statsHandle := do.StatsHandle()
+	for {
+		select {
+		case <-do.exit:
+			return
+			// This channel is sent only by ddl owner.
+		case t := <-statsHandle.DDLEventCh():
+			err := statsHandle.HandleDDLEvent(t)
+			if err != nil {
+				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
+			}
+		}
+	}
+}
+
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	lease := do.statsLease
@@ -2045,12 +2064,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			statsHandle.FlushStats()
 			owner.Cancel()
 			return
-			// This channel is sent only by ddl owner.
-		case t := <-statsHandle.DDLEventCh():
-			err := statsHandle.HandleDDLEvent(t)
-			if err != nil {
-				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
-			}
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {

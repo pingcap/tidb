@@ -2306,6 +2306,10 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipMissingPartitionStats, Value: BoolToOnOff(DefTiDBSkipMissingPartitionStats), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.SkipMissingPartitionStats = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

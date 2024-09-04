@@ -2966,37 +2966,61 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 		// PARTITION p1 VALUES LESS THAN (10,20,'mmm')
 		// PARTITION p2 VALUES LESS THAN (15,30,'sss')
 		colInfo := findColumnByName(pi.Columns[i].L, tbInfo)
-		succ, err := parseAndEvalBoolExpr(ctx, curr.LessThan[i], prev.LessThan[i], colInfo, tbInfo)
+		cmp, err := parseAndEvalBoolExpr(ctx, curr.LessThan[i], prev.LessThan[i], colInfo, tbInfo)
 		if err != nil {
 			return false, err
 		}
 
-		if succ {
+		if cmp > 0 {
 			return true, nil
+		}
+
+		if cmp < 0 {
+			return false, nil
 		}
 	}
 	return false, nil
 }
 
-func parseAndEvalBoolExpr(ctx sessionctx.Context, l, r string, colInfo *model.ColumnInfo, tbInfo *model.TableInfo) (bool, error) {
+// equal, return 0
+// greater, return 1
+// less, return -1
+func parseAndEvalBoolExpr(ctx sessionctx.Context, l, r string, colInfo *model.ColumnInfo, tbInfo *model.TableInfo) (int64, error) {
 	lexpr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, l, tbInfo, &colInfo.FieldType)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	rexpr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, r, tbInfo, &colInfo.FieldType)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
-	e, err := expression.NewFunctionBase(ctx, ast.GT, field_types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
+
+	e, err := expression.NewFunctionBase(ctx, ast.EQ, field_types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	e.SetCharsetAndCollation(colInfo.GetCharset(), colInfo.GetCollate())
 	res, _, err1 := e.EvalInt(ctx, chunk.Row{})
 	if err1 != nil {
-		return false, err1
+		return 0, err1
 	}
-	return res > 0, nil
+	if res == 1 {
+		return 0, nil
+	}
+
+	e, err = expression.NewFunctionBase(ctx, ast.GT, field_types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
+	if err != nil {
+		return 0, err
+	}
+	e.SetCharsetAndCollation(colInfo.GetCharset(), colInfo.GetCollate())
+	res, _, err1 = e.EvalInt(ctx, chunk.Row{})
+	if err1 != nil {
+		return 0, err1
+	}
+	if res > 0 {
+		return 1, nil
+	}
+	return -1, nil
 }
 
 func checkCharsetAndCollation(cs string, co string) error {
