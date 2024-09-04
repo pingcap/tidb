@@ -57,7 +57,7 @@ type reorgCtx struct {
 	// If the reorganization job is done, we will use this channel to notify outer.
 	// TODO: Now we use goroutine to simulate reorganization jobs, later we may
 	// use a persistent job list.
-	doneCh chan error
+	doneCh chan reorgFnResult
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
 	// notifyCancelReorgJob is used to notify the backfilling goroutine if the DDL job is cancelled.
@@ -77,6 +77,13 @@ type reorgCtx struct {
 		warnings      map[errors.ErrorID]*terror.Error
 		warningsCount map[errors.ErrorID]int64
 	}
+}
+
+// reorgFnResult records the DDL owner TS before executing reorg function, in order to help
+// receiver determine if the result is from reorg function of previous DDL owner in this instance.
+type reorgFnResult struct {
+	ownerTS int64
+	err     error
 }
 
 // nullableKey can store <nil> kv.Key.
@@ -205,11 +212,13 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 		if job.IsCancelling() {
 			return dbterror.ErrCancelledDDLJob
 		}
+		beOwnerTS := w.ddlCtx.getOwnerTS()
 		rc = w.newReorgCtx(reorgInfo)
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
-			rc.doneCh <- f()
+			err := f()
+			rc.doneCh <- reorgFnResult{ownerTS: beOwnerTS, err: err}
 		}()
 	}
 
@@ -225,7 +234,16 @@ func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *mo
 
 	// wait reorganization job done or timeout
 	select {
-	case err := <-rc.doneCh:
+	case res := <-rc.doneCh:
+		err := res.err
+		curTS := w.ddlCtx.getOwnerTS()
+		if res.ownerTS != curTS {
+			d.removeReorgCtx(job)
+			logutil.BgLogger().Warn("owner ts mismatch, return timeout error and retry",
+				zap.Int64("prevTS", res.ownerTS),
+				zap.Int64("curTS", curTS))
+			return dbterror.ErrWaitReorgTimeout
+		}
 		// Since job is cancelled，we don't care about its partial counts.
 		if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
 			d.removeReorgCtx(job)

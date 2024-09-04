@@ -958,6 +958,14 @@ func TestGetDefaultValueOfColumn(t *testing.T) {
 
 	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", ""+
 		"1962-03-03 1962-03-03 00:00:00 12:23:23 2020-10-13 2020-03-27"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a decimal(0,0), b decimal(0));")
+	tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` decimal(10,0) DEFAULT NULL,\n"+
+		"  `b` decimal(10,0) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestIssue39080(t *testing.T) {

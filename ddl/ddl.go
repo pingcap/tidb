@@ -366,6 +366,7 @@ type ddlCtx struct {
 		sync.RWMutex
 		// reorgCtxMap maps job ID to reorg context.
 		reorgCtxMap map[int64]*reorgCtx
+		beOwnerTS   int64
 	}
 
 	jobCtx struct {
@@ -488,6 +489,18 @@ func (dc *ddlCtx) jobContext(job *model.Job) *JobContext {
 	return NewJobContext()
 }
 
+func (dc *ddlCtx) getOwnerTS() int64 {
+	dc.reorgCtx.RLock()
+	defer dc.reorgCtx.RUnlock()
+	return dc.reorgCtx.beOwnerTS
+}
+
+func (dc *ddlCtx) setOwnerTS(ts int64) {
+	dc.reorgCtx.Lock()
+	dc.reorgCtx.beOwnerTS = ts
+	dc.reorgCtx.Unlock()
+}
+
 func (dc *ddlCtx) getReorgCtx(job *model.Job) *reorgCtx {
 	dc.reorgCtx.RLock()
 	defer dc.reorgCtx.RUnlock()
@@ -496,7 +509,7 @@ func (dc *ddlCtx) getReorgCtx(job *model.Job) *reorgCtx {
 
 func (dc *ddlCtx) newReorgCtx(r *reorgInfo) *reorgCtx {
 	rc := &reorgCtx{}
-	rc.doneCh = make(chan error, 1)
+	rc.doneCh = make(chan reorgFnResult, 1)
 	// initial reorgCtx
 	rc.setRowCount(r.Job.GetRowCount())
 	rc.setNextKey(r.StartKey)
@@ -727,6 +740,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if err != nil {
 			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
 		}
+		d.ddlCtx.setOwnerTS(time.Now().Unix())
 	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)

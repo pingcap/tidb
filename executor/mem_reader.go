@@ -216,11 +216,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *Tabl
 	}
 
 	defVal := func(i int) ([]byte, error) {
-		sessVars := us.ctx.GetSessionVars()
-		originStrict := sessVars.StrictSQLMode
-		sessVars.StrictSQLMode = false
-		d, err := table.GetColOriginDefaultValue(us.ctx, us.columns[i])
-		sessVars.StrictSQLMode = originStrict
+		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(us.ctx, us.columns[i])
 		if err != nil {
 			return nil, err
 		}
@@ -833,11 +829,7 @@ func getColIDAndPkColIDs(ctx sessionctx.Context, tbl table.Table, columns []*mod
 		pkColIDs = []int64{-1}
 	}
 	defVal := func(i int) ([]byte, error) {
-		sessVars := ctx.GetSessionVars()
-		originStrict := sessVars.StrictSQLMode
-		sessVars.StrictSQLMode = false
-		d, err := table.GetColOriginDefaultValue(ctx, columns[i])
-		sessVars.StrictSQLMode = originStrict
+		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(ctx, columns[i])
 		if err != nil {
 			return nil, err
 		}

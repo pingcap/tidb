@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 // HandleDDLEvent begins to process a ddl task.
@@ -165,8 +167,16 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	if err != nil {
 		return err
 	}
+	if len(newColGlobalStats.MissingPartitionStats) > 0 {
+		logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", tblInfo.Name.L),
+			zap.String("item", "columns"), zap.Strings("missing", newColGlobalStats.MissingPartitionStats))
+	}
 	for i := 0; i < newColGlobalStats.Num; i++ {
 		hg, cms, topN := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i]
+		if hg == nil {
+			// All partitions have no stats so global stats are not created.
+			continue
+		}
 		// fms for global stats doesn't need to dump to kv.
 		err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, newColGlobalStats.ModifyCount, 0, hg, cms, topN, 2, 1, false)
 		if err != nil {
@@ -195,8 +205,16 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		if err != nil {
 			return err
 		}
+		if len(newIndexGlobalStats.MissingPartitionStats) > 0 {
+			logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", tblInfo.Name.L),
+				zap.String("item", "index "+idx.Name.L), zap.Strings("missing", newIndexGlobalStats.MissingPartitionStats))
+		}
 		for i := 0; i < newIndexGlobalStats.Num; i++ {
 			hg, cms, topN := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i]
+			if hg == nil {
+				// All partitions have no stats so global stats are not created.
+				continue
+			}
 			// fms for global stats doesn't need to dump to kv.
 			err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, newIndexGlobalStats.ModifyCount, 1, hg, cms, topN, 2, 1, false)
 			if err != nil {
@@ -353,7 +371,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 				}
 			} else {
 				// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-				if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, %?)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
+				if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, GREATEST(%?, 0))", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
 					return err
 				}
 				value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
