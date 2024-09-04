@@ -16,7 +16,6 @@ package tables
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"sync"
 	"time"
 
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
