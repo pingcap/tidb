@@ -73,3 +73,19 @@ func TestCollectDNFColumnsFromQuery(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, cols.String(), "{test.t.a, test.t.b, test.t.c}")
 }
+
+func TestRestoreSchemaName(t *testing.T) {
+	q1 := Query{Text: "select * from t1"}
+	q2 := Query{Text: "select * from t2", SchemaName: "test2"}
+	q3 := Query{Text: "select * from t3"}
+	q4 := Query{Text: "wrong"}
+	set1 := NewSet[Query]()
+	set1.Add(q1, q2, q3, q4)
+
+	set2, err := restoreSchemaName("test", set1, true)
+	require.NoError(t, err)
+	require.Equal(t, set2.String(), "{SELECT * FROM `test2`.`t2`, SELECT * FROM `test`.`t1`, SELECT * FROM `test`.`t3`}")
+
+	_, err = restoreSchemaName("test", set1, false)
+	require.Error(t, err)
+}

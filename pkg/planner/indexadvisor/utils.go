@@ -43,7 +43,7 @@ func NormalizeDigest(sqlText string) (string, string) {
 
 type nodeVisitor struct {
 	enter func(n ast.Node) (skip bool)
-	leave func(n ast.Node) (skip bool)
+	leave func(n ast.Node) (ok bool)
 }
 
 func (v *nodeVisitor) Enter(n ast.Node) (out ast.Node, skipChildren bool) {
@@ -60,11 +60,12 @@ func (c *nodeVisitor) Leave(n ast.Node) (out ast.Node, ok bool) {
 	return n, true
 }
 
-func visitNode(n ast.Node, enter, leave func(n ast.Node) (skip bool)) {
+func visitNode(n ast.Node, enter func(n ast.Node) (skip bool), leave func(n ast.Node) (ok bool)) {
 	n.Accept(&nodeVisitor{enter, leave})
 }
 
 // collectTableNamesFromQuery returns all referenced table names in the given Query text.
+// The returned format is []string{"schema.table", "schema.table", ...}.
 func collectTableNamesFromQuery(defaultSchema, query string) ([]string, error) {
 	node, err := ParseOneSQL(query)
 	if err != nil {
@@ -94,6 +95,8 @@ func collectTableNamesFromQuery(defaultSchema, query string) ([]string, error) {
 	return tableNames, nil
 }
 
+// collectSelectColumnsFromQuery parses the given Query text and returns the selected columns.
+// For example, "select a, b, c from t" returns []string{"a", "b", "c"}.
 func collectSelectColumnsFromQuery(q Query) (Set[Column], error) {
 	names, err := collectTableNamesFromQuery(q.SchemaName, q.Text)
 	if err != nil {
@@ -132,6 +135,8 @@ func collectSelectColumnsFromQuery(q Query) (Set[Column], error) {
 	return selectCols, nil
 }
 
+// collectOrderByColumnsFromQuery parses the given Query text and returns the order-by columns.
+// For example, "select a, b from t order by a, b" returns []string{"a", "b"}.
 func collectOrderByColumnsFromQuery(q Query) ([]Column, error) {
 	names, err := collectTableNamesFromQuery(q.SchemaName, q.Text)
 	if err != nil {
@@ -276,7 +281,7 @@ func flattenDNF(expr ast.ExprNode) []ast.ExprNode {
 	return cnf
 }
 
-func restoreSchemaName(defaultSchema string, sqls Set[Query], returnErr bool) (Set[Query], error) {
+func restoreSchemaName(defaultSchema string, sqls Set[Query], ignoreErr bool) (Set[Query], error) {
 	s := NewSet[Query]()
 	for _, sql := range sqls.ToList() {
 		if sql.SchemaName == "" {
@@ -284,10 +289,10 @@ func restoreSchemaName(defaultSchema string, sqls Set[Query], returnErr bool) (S
 		}
 		stmt, err := ParseOneSQL(sql.Text)
 		if err != nil {
-			if returnErr {
-				return nil, fmt.Errorf("invalid query: %v, err: %v", sql.Text, err)
+			if ignoreErr {
+				continue
 			}
-			continue
+			return nil, fmt.Errorf("invalid query: %v, err: %v", sql.Text, err)
 		}
 		sql.Text = parser2.RestoreWithDefaultDB(stmt, sql.SchemaName, sql.Text)
 		s.Add(sql)
