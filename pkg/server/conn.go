@@ -104,7 +104,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	profileprocess "github.com/pingcap/tidb/pkg/util/profileprocess"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -1314,7 +1313,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		rawCtx := ctx
 		defer pprof.SetGoroutineLabels(rawCtx)
 		sqlID := cc.ctx.GetSessionVars().SQLCPUUsages.AllocNewSQLID()
-		ctx = profileprocess.AttachAndRegisterProcessInfo(ctx, cc.connectionID, sqlID)
+		ctx = topsql.AttachAndRegisterProcessInfo(ctx, cc.connectionID, sqlID)
 	}
 	if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
