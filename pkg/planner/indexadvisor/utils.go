@@ -1,0 +1,460 @@
+// Copyright 2024 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package indexadvisor
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
+	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	parser2 "github.com/pingcap/tidb/pkg/util/parser"
+	"go.uber.org/zap"
+)
+
+// ParseOneSQL parses the given Query text and returns the AST.
+func ParseOneSQL(sqlText string) (ast.StmtNode, error) {
+	p := parser.New()
+	return p.ParseOneStmt(sqlText, "", "")
+}
+
+// NormalizeDigest normalizes the given Query text and returns the normalized Query text and its digest.
+func NormalizeDigest(sqlText string) (string, string) {
+	norm, d := parser.NormalizeDigest(sqlText)
+	return norm, d.String()
+}
+
+type nodeVisitor struct {
+	enter func(n ast.Node) (skip bool)
+	leave func(n ast.Node) (skip bool)
+}
+
+func (v *nodeVisitor) Enter(n ast.Node) (out ast.Node, skipChildren bool) {
+	if v.enter != nil {
+		return n, v.enter(n)
+	}
+	return n, false
+}
+
+func (c *nodeVisitor) Leave(n ast.Node) (out ast.Node, ok bool) {
+	if c.leave != nil {
+		return n, c.leave(n)
+	}
+	return n, true
+}
+
+func visitNode(n ast.Node, enter, leave func(n ast.Node) (skip bool)) {
+	n.Accept(&nodeVisitor{enter, leave})
+}
+
+// collectTableNamesFromQuery returns all referenced table names in the given Query text.
+func collectTableNamesFromQuery(defaultSchema, query string) ([]string, error) {
+	node, err := ParseOneSQL(query)
+	if err != nil {
+		return nil, err
+	}
+	cteNames := make(map[string]struct{})
+	var tableNames []string
+	visitNode(node, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.WithClause:
+			for _, cte := range x.CTEs {
+				cteNames[fmt.Sprintf("%v.%v", defaultSchema, cte.Name.String())] = struct{}{}
+			}
+		case *ast.TableName:
+			var tableName string
+			if x.Schema.L == "" {
+				tableName = fmt.Sprintf("%v.%v", defaultSchema, x.Name.String())
+			} else {
+				tableName = fmt.Sprintf("%v.%v", x.Schema.L, x.Name.String())
+			}
+			if _, ok := cteNames[tableName]; !ok {
+				tableNames = append(tableNames, tableName)
+			}
+		}
+		return false
+	}, nil)
+	return tableNames, nil
+}
+
+func collectSelectColumnsFromQuery(q Query) (Set[Column], error) {
+	names, err := collectTableNamesFromQuery(q.SchemaName, q.Text)
+	if err != nil {
+		return nil, err
+	}
+	if len(names) != 1 { // unsupported yet
+		return nil, nil
+	}
+	tmp := strings.Split(names[0], ".")
+	node, err := ParseOneSQL(q.Text)
+	if err != nil {
+		return nil, err
+	}
+	underSelectField := false
+	selectCols := NewSet[Column]()
+	visitNode(node, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectField:
+			underSelectField = true
+		case *ast.ColumnNameExpr:
+			if underSelectField {
+				selectCols.Add(Column{
+					SchemaName: tmp[0],
+					TableName:  tmp[1],
+					ColumnName: x.Name.Name.O})
+			}
+		}
+		return false
+	}, func(n ast.Node) bool {
+		switch n.(type) {
+		case *ast.SelectField:
+			underSelectField = false
+		}
+		return true
+	})
+	return selectCols, nil
+}
+
+func collectOrderByColumnsFromQuery(q Query) ([]Column, error) {
+	names, err := collectTableNamesFromQuery(q.SchemaName, q.Text)
+	if err != nil {
+		return nil, err
+	}
+	if len(names) != 1 { // unsupported yet
+		return nil, nil
+	}
+	tmp := strings.Split(names[0], ".")
+	node, err := ParseOneSQL(q.Text)
+	if err != nil {
+		return nil, err
+	}
+	var orderByCols []Column
+	exit := false
+	visitNode(node, func(n ast.Node) bool {
+		if exit {
+			return true
+		}
+		switch x := n.(type) {
+		case *ast.OrderByClause:
+			for _, byItem := range x.Items {
+				colExpr, ok := byItem.Expr.(*ast.ColumnNameExpr)
+				if !ok {
+					orderByCols = nil
+					exit = true
+					return true
+				}
+				orderByCols = append(orderByCols, Column{
+					SchemaName: tmp[0],
+					TableName:  tmp[1],
+					ColumnName: colExpr.Name.Name.O})
+			}
+		}
+		return false
+	}, nil)
+	return orderByCols, nil
+}
+
+// collectDNFColumnsFromQuery parses the given Query text and returns the DNF columns.
+// For a query `select ... where c1=1 or c2=2 or c3=3`, the DNF columns are `c1`, `c2` and `c3`.
+func collectDNFColumnsFromQuery(q Query) (Set[Column], error) {
+	names, err := collectTableNamesFromQuery(q.SchemaName, q.Text)
+	if err != nil {
+		return nil, err
+	}
+	if len(names) != 1 { // unsupported yet
+		return nil, nil
+	}
+	tmp := strings.Split(names[0], ".")
+	node, err := ParseOneSQL(q.Text)
+	if err != nil {
+		return nil, err
+	}
+	dnfColSet := NewSet[Column]()
+
+	visitNode(node, func(n ast.Node) bool {
+		if dnfColSet.Size() > 0 { // already collected
+			return true
+		}
+		switch x := n.(type) {
+		case *ast.SelectStmt:
+			cnf := flattenCNF(x.Where)
+			for _, expr := range cnf {
+				dnf := flattenDNF(expr)
+				if len(dnf) <= 1 {
+					continue
+				}
+				// c1=1 or c2=2 or c3=3
+				var dnfCols []*ast.ColumnNameExpr
+				fail := false
+				for _, dnfExpr := range dnf {
+					col, _ := flattenColEQConst(dnfExpr)
+					if col == nil {
+						fail = true
+						break
+					}
+					dnfCols = append(dnfCols, col)
+				}
+				if fail {
+					continue
+				}
+				for _, col := range dnfCols {
+					dnfColSet.Add(Column{SchemaName: tmp[0], TableName: tmp[1], ColumnName: col.Name.Name.O})
+				}
+			}
+		}
+		return false
+	}, nil)
+
+	return dnfColSet, nil
+}
+
+func flattenColEQConst(expr ast.ExprNode) (*ast.ColumnNameExpr, *driver.ValueExpr) {
+	if _, ok := expr.(*ast.ParenthesesExpr); ok {
+		return flattenColEQConst(expr.(*ast.ParenthesesExpr).Expr)
+	}
+
+	if op, ok := expr.(*ast.BinaryOperationExpr); ok && op.Op == opcode.EQ {
+		l, r := op.L, op.R
+		_, lIsCol := l.(*ast.ColumnNameExpr)
+		_, lIsCon := l.(*driver.ValueExpr)
+		_, rIsCol := r.(*ast.ColumnNameExpr)
+		_, rIsCon := r.(*driver.ValueExpr)
+		if lIsCol && rIsCon {
+			return l.(*ast.ColumnNameExpr), r.(*driver.ValueExpr)
+		}
+		if lIsCon && rIsCol {
+			return r.(*ast.ColumnNameExpr), l.(*driver.ValueExpr)
+		}
+	}
+	return nil, nil
+}
+
+func flattenCNF(expr ast.ExprNode) []ast.ExprNode {
+	if _, ok := expr.(*ast.ParenthesesExpr); ok {
+		return flattenCNF(expr.(*ast.ParenthesesExpr).Expr)
+	}
+
+	var cnf []ast.ExprNode
+	if op, ok := expr.(*ast.BinaryOperationExpr); ok && op.Op == opcode.LogicAnd {
+		cnf = append(cnf, flattenCNF(op.L)...)
+		cnf = append(cnf, flattenCNF(op.R)...)
+	} else {
+		cnf = append(cnf, expr)
+	}
+	return cnf
+}
+
+func flattenDNF(expr ast.ExprNode) []ast.ExprNode {
+	if _, ok := expr.(*ast.ParenthesesExpr); ok {
+		return flattenDNF(expr.(*ast.ParenthesesExpr).Expr)
+	}
+
+	var cnf []ast.ExprNode
+	if op, ok := expr.(*ast.BinaryOperationExpr); ok && op.Op == opcode.LogicOr {
+		cnf = append(cnf, flattenDNF(op.L)...)
+		cnf = append(cnf, flattenDNF(op.R)...)
+	} else {
+		cnf = append(cnf, expr)
+	}
+	return cnf
+}
+
+func restoreSchemaName(defaultSchema string, sqls Set[Query], returnErr bool) (Set[Query], error) {
+	s := NewSet[Query]()
+	for _, sql := range sqls.ToList() {
+		if sql.SchemaName == "" {
+			sql.SchemaName = defaultSchema
+		}
+		stmt, err := ParseOneSQL(sql.Text)
+		if err != nil {
+			if returnErr {
+				return nil, fmt.Errorf("invalid query: %v, err: %v", sql.Text, err)
+			}
+			continue
+		}
+		sql.Text = parser2.RestoreWithDefaultDB(stmt, sql.SchemaName, sql.Text)
+		s.Add(sql)
+	}
+	return s, nil
+}
+
+// some queries might be forbidden by the fix-control 43817.
+func filterInvalidQueries(opt Optimizer, sqls Set[Query], returnErr bool) (Set[Query], error) {
+	s := NewSet[Query]()
+	for _, sql := range sqls.ToList() {
+		_, err := opt.QueryPlanCost(sql.Text)
+		if err == nil {
+			s.Add(sql)
+		} else if err != nil && returnErr {
+			return nil, fmt.Errorf("invalid query: %v, err: %v", sql.Text, err)
+		}
+	}
+	return s, nil
+}
+
+func filterSQLAccessingSystemTables(sqls Set[Query], returnErr bool) (Set[Query], error) {
+	s := NewSet[Query]()
+	for _, sql := range sqls.ToList() {
+		accessSystemTable := false
+		names, err := collectTableNamesFromQuery(sql.SchemaName, sql.Text)
+		if err != nil {
+			if returnErr {
+				return nil, fmt.Errorf("invalid query: %v, err: %v", sql.Text, err)
+			}
+			continue
+		}
+		if len(names) == 0 {
+			// `select @@some_var` or `select some_func()`
+			continue
+		}
+		for _, name := range names {
+			schemaName := strings.ToLower(strings.Split(name, ".")[0])
+			if schemaName == "information_schema" || schemaName == "metrics_schema" ||
+				schemaName == "performance_schema" || schemaName == "mysql" {
+				accessSystemTable = true
+				break
+			}
+		}
+		if !accessSystemTable {
+			s.Add(sql)
+		}
+	}
+	return s, nil
+}
+
+// CollectIndexableColumnsForQuerySet finds all columns that appear in any range-filter, order-by, or group-by clause.
+func CollectIndexableColumnsForQuerySet(opt Optimizer, querySet Set[Query]) (Set[Column], error) {
+	indexableColumnSet := NewSet[Column]()
+	queryList := querySet.ToList()
+	for _, q := range queryList {
+		cols, err := CollectIndexableColumnsFromQuery(q, opt)
+		if err != nil {
+			return nil, err
+		}
+		querySet.Add(q)
+		indexableColumnSet.Add(cols.ToList()...)
+	}
+	return indexableColumnSet, nil
+}
+
+// CollectIndexableColumnsFromQuery parses the given Query text and returns the indexable columns.
+func CollectIndexableColumnsFromQuery(q Query, opt Optimizer) (Set[Column], error) {
+	tableNames, err := collectTableNamesFromQuery(q.SchemaName, q.Text)
+	if err != nil {
+		return nil, err
+	}
+	possibleSchemas := make(map[string]bool)
+	possibleSchemas[q.SchemaName] = true
+	for _, name := range tableNames {
+		schemaName := strings.Split(name, ".")[0]
+		possibleSchemas[strings.ToLower(schemaName)] = true
+	}
+
+	stmt, err := ParseOneSQL(q.Text)
+	if err != nil {
+		return nil, err
+	}
+	cols := NewSet[Column]()
+	var collectColumn func(n ast.Node)
+	collectColumn = func(n ast.Node) {
+		switch x := n.(type) {
+		case *ast.ColumnNameExpr:
+			collectColumn(x.Name)
+		case *ast.ColumnName:
+			var schemaNames []string
+			if x.Schema.L != "" {
+				schemaNames = append(schemaNames, x.Schema.L)
+			} else {
+				for schemaName := range possibleSchemas {
+					schemaNames = append(schemaNames, schemaName)
+				}
+			}
+
+			var possibleColumns []Column
+			for _, schemaName := range schemaNames {
+				cols, err := opt.PossibleColumns(schemaName, x.Name.L)
+				if err != nil {
+					// TODO: log or return this error?
+					continue
+				}
+				possibleColumns = append(possibleColumns, cols...)
+			}
+
+			for _, c := range possibleColumns {
+				colType, err := opt.ColumnType(c)
+				if err != nil {
+					// TODO: log?
+					continue
+				}
+				if !isIndexableColumnType(colType) {
+					continue
+				}
+				cols.Add(c)
+			}
+		}
+	}
+
+	visitNode(stmt, func(n ast.Node) (skip bool) {
+		switch x := n.(type) {
+		case *ast.GroupByClause: // group by {col}
+			for _, item := range x.Items {
+				collectColumn(item.Expr)
+			}
+			return true
+		case *ast.OrderByClause: // order by {col}
+			for _, item := range x.Items {
+				collectColumn(item.Expr)
+			}
+			return true
+		case *ast.BetweenExpr: // {col} between ? and ?
+			collectColumn(x.Expr)
+		case *ast.PatternInExpr: // {col} in (?, ?, ...)
+			collectColumn(x.Expr)
+		case *ast.BinaryOperationExpr: // range predicates like `{col} > ?`
+			switch x.Op {
+			case opcode.EQ, opcode.LT, opcode.LE, opcode.GT, opcode.GE: // {col} = ?
+				collectColumn(x.L)
+				collectColumn(x.R)
+			}
+		default:
+		}
+		return false
+	}, nil)
+	return cols, nil
+}
+
+func isIndexableColumnType(tp *types.FieldType) bool {
+	if tp == nil {
+		return false
+	}
+	switch tp.GetType() {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear,
+		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal,
+		mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return true
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+		return tp.GetFlen() <= 512
+	}
+	return false
+}
+
+func l() *zap.Logger {
+	return logutil.BgLogger().With(zap.String("component", "index_advisor"))
+}
