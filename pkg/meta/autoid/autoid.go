@@ -669,13 +669,8 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
 func NewAllocatorsFromTblInfo(r Requirement, schemaID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
-<<<<<<< HEAD
 	dbID := schemaID
-	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
-=======
-	dbID := tblInfo.GetAutoIDSchemaID(schemaID)
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIDCache)
->>>>>>> master
 	tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
 
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
