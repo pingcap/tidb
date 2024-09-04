@@ -171,9 +171,16 @@ func (expr *Constant) format(dt types.Datum) string {
 	switch dt.Kind() {
 	case types.KindNull:
 		return "NULL"
-	case types.KindString, types.KindBytes, types.KindMysqlEnum, types.KindMysqlSet,
-		types.KindMysqlJSON, types.KindBinaryLiteral, types.KindMysqlBit:
+	case types.KindMysqlEnum, types.KindMysqlSet, types.KindBinaryLiteral, types.KindMysqlBit:
 		return fmt.Sprintf("\"%v\"", dt.GetValue())
+	case types.KindString, types.KindBytes, types.KindMysqlJSON:
+		{
+			str := dt.GetString()
+			if len(str) > 64 {
+				return fmt.Sprintf("\"%s\"...(len:%d)", str[:64], len(str))
+			}
+			return fmt.Sprintf("\"%v\"", dt.GetValue())
+		}
 	}
 	return fmt.Sprintf("%v", dt.GetValue())
 }

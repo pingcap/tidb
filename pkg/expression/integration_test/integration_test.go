@@ -581,6 +581,23 @@ func TestVectorMiscFunctions(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM a;`).Check(testkit.Rows("1 [2,10,14] 3"))
 }
 
+func TestTruncateLongString(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+
+	tk.MustExec("CREATE TABLE t(id VARCHAR(255) NOT NULL, val INT NOT NULL);")
+	tk.MustExec("INSERT INTO t VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1);")
+	tk.MustQuery("explain format = 'brief' select * from t where id < 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbb' order by id limit 1").Check(testkit.Rows(
+		"TopN 1.00 root  test.t.id, offset:0, count:1",
+		"└─TableReader 1.00 root  data:TopN",
+		"  └─TopN 1.00 cop[tikv]  test.t.id, offset:0, count:1",
+		"    └─Selection 3323.33 cop[tikv]  lt(test.t.id, \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"...(len:70))",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+}
+
 func TestGetLock(t *testing.T) {
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))

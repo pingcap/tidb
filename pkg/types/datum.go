@@ -2139,6 +2139,23 @@ func (d *Datum) ToBytes() ([]byte, error) {
 	}
 }
 
+// StringTruncate truncate a long string.
+func (d *Datum) StringTruncate() string {
+	switch d.Kind() {
+	case KindNull:
+		return "NULL"
+	case KindString, KindBytes, KindMysqlJSON:
+		{
+			str := d.GetString()
+			if len(str) > 64 {
+				return fmt.Sprintf("%s...(len:%d)", str[:64], len(str))
+			}
+			return str
+		}
+	}
+	return fmt.Sprintf("%v", d.GetValue())
+}
+
 // ToHashKey gets the bytes representation of the datum considering collation.
 func (d *Datum) ToHashKey() ([]byte, error) {
 	switch d.k {

@@ -402,7 +402,7 @@ drop table if exists t;
 create table t(a int, b int);
 explain format = 'brief' select a != any (select a from t t2) from t t1;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		and(or(or(gt(Column#11, 1), ne(select.t.a, Column#10)), if(ne(Column#12, 0), <nil>, 0)), and(ne(Column#13, 0), if(isnull(select.t.a), <nil>, 1)))->Column#14
+Projection	10000.00	root		and(or(or(gt(Column#11, 1), ne(select.t.a, Column#10)), if(ne(Column#12, 0), NULL, 0)), and(ne(Column#13, 0), if(isnull(select.t.a), NULL, 1)))->Column#14
 └─HashJoin	10000.00	root		CARTESIAN inner join
   ├─StreamAgg(Build)	1.00	root		funcs:max(Column#16)->Column#10, funcs:count(distinct Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:count(1)->Column#13
   │ └─Projection	10000.00	root		select.t.a->Column#16, select.t.a->Column#17, cast(isnull(select.t.a), decimal(20,0) BINARY)->Column#18
@@ -412,7 +412,7 @@ Projection	10000.00	root		and(or(or(gt(Column#11, 1), ne(select.t.a, Column#10))
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select a = all (select a from t t2) from t t1;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		or(and(and(le(Column#11, 1), eq(select.t.a, Column#10)), if(ne(Column#12, 0), <nil>, 1)), or(eq(Column#13, 0), if(isnull(select.t.a), <nil>, 0)))->Column#14
+Projection	10000.00	root		or(and(and(le(Column#11, 1), eq(select.t.a, Column#10)), if(ne(Column#12, 0), NULL, 1)), or(eq(Column#13, 0), if(isnull(select.t.a), NULL, 0)))->Column#14
 └─HashJoin	10000.00	root		CARTESIAN inner join
   ├─StreamAgg(Build)	1.00	root		funcs:max(Column#16)->Column#10, funcs:count(distinct Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:count(1)->Column#13
   │ └─Projection	10000.00	root		select.t.a->Column#16, select.t.a->Column#17, cast(isnull(select.t.a), decimal(20,0) BINARY)->Column#18
