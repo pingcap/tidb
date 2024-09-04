@@ -135,3 +135,58 @@ func TestFilterInvalidQueries(t *testing.T) {
 	_, err = indexadvisor.FilterInvalidQueries(opt, set1, false)
 	require.Error(t, err)
 }
+
+func TestCollectIndexableColumnsFromQuery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, e int)`)
+	opt := indexadvisor.NewOptimizer(tk.Session())
+
+	cols, err := indexadvisor.CollectIndexableColumnsFromQuery(
+		indexadvisor.Query{SchemaName: "test", Text: "select * from t where a<1 and b>1 and e like 'abc'"}, opt)
+	require.NoError(t, err)
+	require.Equal(t, cols.String(), "{test.t.a, test.t.b}")
+
+	cols, err = indexadvisor.CollectIndexableColumnsFromQuery(
+		indexadvisor.Query{SchemaName: "test", Text: "select * from t where c in (1, 2, 3) order by d"}, opt)
+	require.NoError(t, err)
+	require.Equal(t, cols.String(), "{test.t.c, test.t.d}")
+
+	cols, err = indexadvisor.CollectIndexableColumnsFromQuery(
+		indexadvisor.Query{SchemaName: "test", Text: "select 1 from t where c in (1, 2, 3) group by d"}, opt)
+	require.NoError(t, err)
+	require.Equal(t, cols.String(), "{test.t.c, test.t.d}")
+
+	tk.MustExec("drop table t")
+
+	tk.MustExec(`create table t1 (a int)`)
+	tk.MustExec(`create table t2 (a int)`)
+	cols, err = indexadvisor.CollectIndexableColumnsFromQuery(
+		indexadvisor.Query{SchemaName: "test", Text: "select * from t2 tx where a<1"}, opt)
+	require.NoError(t, err)
+	require.Equal(t, cols.String(), "{test.t1.a, test.t2.a}")
+	tk.MustExec("drop table t1")
+	tk.MustExec("drop table t2")
+
+	tk.MustExec(`create database tpch`)
+	tk.MustExec(`use tpch`)
+	tk.MustExec(`CREATE TABLE tpch.nation ( N_NATIONKEY bigint(20) NOT NULL,
+		N_NAME char(25) NOT NULL, N_REGIONKEY bigint(20) NOT NULL, N_COMMENT varchar(152) DEFAULT NULL,
+		PRIMARY KEY (N_NATIONKEY) /*T![clustered_index] CLUSTERED */)`)
+	q := ` select supp_nation, cust_nation, l_year, sum(volume) as revenue from
+	( select n1.n_name as supp_nation, n2.n_name as cust_nation,
+			extract(year from l_shipdate) as l_year, l_extendedprice * (1 - l_discount) as volume
+		from supplier, lineitem, orders, customer, nation n1, nation n2
+		where s_suppkey = l_suppkey and o_orderkey = l_orderkey and c_custkey = o_custkey
+		  and s_nationkey = n1.n_nationkey and c_nationkey = n2.n_nationkey
+			and ( (n1.n_name = 'MOZAMBIQUE' and n2.n_name = 'UNITED KINGDOM')
+				or (n1.n_name = 'UNITED KINGDOM' and n2.n_name = 'MOZAMBIQUE')
+			) and l_shipdate between date '1995-01-01' and date '1996-12-31'
+	) as shipping group by supp_nation, cust_nation, l_year
+	order by supp_nation, cust_nation, l_year`
+	cols, err = indexadvisor.CollectIndexableColumnsFromQuery(
+		indexadvisor.Query{SchemaName: "tpch", Text: q}, opt)
+	require.NoError(t, err)
+	require.Equal(t, cols.String(), "{tpch.nation.n_name, tpch.nation.n_nationkey}")
+}
