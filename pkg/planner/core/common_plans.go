@@ -654,17 +654,6 @@ type PlanReplayer struct {
 	PlanDigest string
 }
 
-// IndexAdvise represents a index advise plan.
-type IndexAdvise struct {
-	baseSchemaProducer
-
-	IsLocal     bool
-	Path        string
-	MaxMinutes  uint64
-	MaxIndexNum *ast.MaxIndexNumClause
-	LineFieldsInfo
-}
-
 // SplitRegion represents a split regions plan.
 type SplitRegion struct {
 	baseSchemaProducer

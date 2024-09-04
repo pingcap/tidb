@@ -525,8 +525,6 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildLockStats(x), nil
 	case *ast.UnlockStatsStmt:
 		return b.buildUnlockStats(x), nil
-	case *ast.IndexAdviseStmt:
-		return b.buildIndexAdvise(x), nil
 	case *ast.PlanReplayerStmt:
 		return b.buildPlanReplayer(x), nil
 	case *ast.PrepareStmt:
@@ -4509,17 +4507,6 @@ func (b *PlanBuilder) requireInsertAndSelectPriv(tables []*ast.TableName) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
 	}
-}
-
-func (*PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) base.Plan {
-	p := &IndexAdvise{
-		IsLocal:        node.IsLocal,
-		Path:           node.Path,
-		MaxMinutes:     node.MaxMinutes,
-		MaxIndexNum:    node.MaxIndexNum,
-		LineFieldsInfo: NewLineFieldsInfo(nil, node.LinesInfo),
-	}
-	return p
 }
 
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (base.Plan, error) {
