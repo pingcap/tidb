@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -218,8 +217,7 @@ func (opt *optimizerImpl) addHypoIndex(hypoIndexes ...Index) error {
 
 // QueryPlanCost return the cost of the query plan.
 func (opt *optimizerImpl) QueryPlanCost(sql string, hypoIndexes ...Index) (cost float64, err error) {
-	p := parser.New()
-	stmt, err := p.ParseOneStmt(sql, "", "")
+	stmt, err := ParseOneSQL(sql)
 	if err != nil {
 		return 0, err
 	}
