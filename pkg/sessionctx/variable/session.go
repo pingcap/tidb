@@ -1194,7 +1194,7 @@ type SessionVars struct {
 	preferRangeScan bool
 
 	// preferRangeThreshold applies an upper limit on the table size allowed for preferRangeScan.
-	preferRangeThreshold int64
+	PreferRangeThreshold int64
 
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
@@ -2100,7 +2100,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		DDLReorgPriority:              kv.PriorityLow,
 		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
 		preferRangeScan:               DefOptPreferRangeScan,
-		preferRangeThreshold:          DefOptPreferRangeThreshold,
+		PreferRangeThreshold:          DefOptPreferRangeThreshold,
 		EnableCorrelationAdjustment:   DefOptEnableCorrelationAdjustment,
 		LimitPushDownThreshold:        DefOptLimitPushDownThreshold,
 		CorrelationThreshold:          DefOptCorrelationThreshold,
