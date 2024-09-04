@@ -89,6 +89,7 @@ go_library(
         "//pkg/parser/opcode",
         "//pkg/parser/terror",
         "//pkg/parser/types",
+        "//pkg/planner/cascades/base",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
@@ -212,6 +213,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/planner/cascades/base",
         "//pkg/planner/core",
         "//pkg/planner/core/resolve",
         "//pkg/session",
@@ -246,6 +248,7 @@ go_test(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@io_opencensus_go//stats/view",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
     ],
 )

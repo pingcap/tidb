@@ -1324,6 +1324,43 @@ func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
 	return res, allWarnings, nil
 }
 
+// CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
+// This method does not support:
+//   - Subquery
+//   - System Variables (e.g. `@@tidb_enable_async_commit`)
+//   - Window functions
+//   - Aggregate functions
+//   - Other special functions used in some specified queries such as `GROUPING`, `VALUES` ...
+func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
+	var (
+		i      int
+		assign *ast.Assignment
+	)
+
+	// TODO(lance6716): indeterministic function should also return error
+	defer tidbutil.Recover("load-data/import-into", "CreateColAssignExprs", func() {
+		retErr = errors.Errorf("can't use function at SET index %d", i)
+	}, false)
+
+	e.colAssignMu.Lock()
+	defer e.colAssignMu.Unlock()
+	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
+	var allWarnings []contextutil.SQLWarn
+	for i, assign = range e.ColumnAssignments {
+		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr)
+		// col assign expr warnings is static, we should generate it for each row processed.
+		// so we save it and clear it here.
+		if ctx.GetEvalCtx().WarningCount() > 0 {
+			allWarnings = append(allWarnings, ctx.GetEvalCtx().TruncateWarnings(0)...)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		res = append(res, newExpr)
+	}
+	return res, allWarnings, nil
+}
+
 func (e *LoadDataController) getBackendWorkerConcurrency() int {
 	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
 	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly

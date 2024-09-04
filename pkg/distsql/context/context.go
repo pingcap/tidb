@@ -17,10 +17,10 @@ package context
 import (
 	"time"
 
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -75,7 +75,7 @@ type DistSQLContext struct {
 	StoreBatchSize                int
 	ResourceGroupName             string
 	LoadBasedReplicaReadThreshold time.Duration
-	RunawayChecker                *resourcegroup.RunawayChecker
+	RunawayChecker                resourcegroup.RunawayChecker
 	TiKVClientReadTimeout         uint64
 
 	ReplicaClosestReadThreshold int64

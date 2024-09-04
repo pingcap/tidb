@@ -44,6 +44,10 @@ var (
 	enableHashJoinV2 = atomic.Bool{}
 )
 
+func init() {
+	enableHashJoinV2.Store(true)
+}
+
 // IsHashJoinV2Enabled return true if hash join v2 is enabled
 func IsHashJoinV2Enabled() bool {
 	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
@@ -865,20 +869,12 @@ func (*hashJoinRuntimeStatsV2) Tp() int {
 func (e *hashJoinRuntimeStatsV2) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	if e.fetchAndBuildHashTable > 0 {
-		buf.WriteString("build_hash_table:{concurrency:")
-		buf.WriteString(strconv.Itoa(e.concurrent))
-		buf.WriteString(", total:")
+		buf.WriteString("build_hash_table:{total:")
 		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
 		buf.WriteString(", fetch:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(int64(e.fetchAndBuildHashTable) - e.maxBuildHashTable - e.maxPartitionData)))
-		buf.WriteString(", partition:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.partitionData)))
-		buf.WriteString(", max partition:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxPartitionData)))
 		buf.WriteString(", build:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.buildHashTable)))
-		buf.WriteString(", max build:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxBuildHashTable)))
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {

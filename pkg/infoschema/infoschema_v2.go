@@ -645,6 +645,38 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	return ret, true
 }
 
+// TableItem is exported from tableItem.
+type TableItem struct {
+	DBName    model.CIStr
+	TableName model.CIStr
+}
+
+// IterateAllTableItems is used for special performance optimization.
+// Used by executor/infoschema_reader.go to handle reading from INFORMATION_SCHEMA.TABLES.
+// If visit return false, stop the iterate process.
+func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
+	max, ok := is.byName.Max()
+	if !ok {
+		return
+	}
+	var pivot *tableItem
+	is.byName.Descend(max, func(item tableItem) bool {
+		if item.schemaVersion > is.schemaMetaVersion {
+			// skip MVCC version, those items are not visible to the queried schema version
+			return true
+		}
+		if pivot != nil && pivot.dbName == item.dbName && pivot.tableName == item.tableName {
+			// skip MVCC version, this db.table has been visited already
+			return true
+		}
+		pivot = &item
+		if !item.tomb {
+			return visit(TableItem{DBName: item.dbName, TableName: item.tableName})
+		}
+		return true
+	})
+}
+
 // IsSpecialDB tells whether the database is a special database.
 func IsSpecialDB(dbName string) bool {
 	return dbName == util.InformationSchemaName.L ||
@@ -1398,6 +1430,22 @@ var PlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) b
 	}
 	if parInfo := t.GetPartitionInfo(); parInfo != nil {
 		for _, def := range parInfo.Definitions {
+			if def.PlacementPolicyRef != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// AllPlacementPolicyAttribute is the Placement Policy attribute filter used by ListTablesWithSpecialAttribute.
+// Different from PlacementPolicyAttribute, Partition.Enable flag will be ignored.
+var AllPlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+	if t.PlacementPolicyRef != nil {
+		return true
+	}
+	if t.Partition != nil {
+		for _, def := range t.Partition.Definitions {
 			if def.PlacementPolicyRef != nil {
 				return true
 			}
