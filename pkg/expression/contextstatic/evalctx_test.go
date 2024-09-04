@@ -16,6 +16,7 @@ package contextstatic
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -531,4 +532,163 @@ func TestMakeEvalContextStatic(t *testing.T) {
 	require.NotEqual(t, obj.GetOptionalPropSet(), staticObj.GetOptionalPropSet())
 	// Now, it didn't copy any optional properties.
 	require.Equal(t, context.OptionalEvalPropKeySet(0), staticObj.GetOptionalPropSet())
+}
+
+func TestEvalCtxLoadSystemVars(t *testing.T) {
+	vars := []struct {
+		name   string
+		val    string
+		field  string
+		assert func(ctx *StaticEvalContext, vars *variable.SessionVars)
+	}{
+		{
+			name:  "time_zone",
+			val:   "Europe/Berlin",
+			field: "$.typeCtx.loc",
+			assert: func(ctx *StaticEvalContext, vars *variable.SessionVars) {
+				require.Equal(t, "Europe/Berlin", ctx.Location().String())
+				require.Equal(t, vars.Location().String(), ctx.Location().String())
+			},
+		},
+		{
+			name:  "sql_mode",
+			val:   "ALLOW_INVALID_DATES,ONLY_FULL_GROUP_BY",
+			field: "$.sqlMode",
+			assert: func(ctx *StaticEvalContext, vars *variable.SessionVars) {
+				require.Equal(t, mysql.ModeAllowInvalidDates|mysql.ModeOnlyFullGroupBy, ctx.SQLMode())
+				require.Equal(t, vars.SQLMode, ctx.SQLMode())
+			},
+		},
+		{
+			name:  "timestamp",
+			val:   "1234567890.123456",
+			field: "$.currentTime",
+			assert: func(ctx *StaticEvalContext, vars *variable.SessionVars) {
+				currentTime, err := ctx.CurrentTime()
+				require.NoError(t, err)
+				require.Equal(t, int64(1234567890123456), currentTime.UnixMicro())
+				require.Equal(t, vars.Location().String(), currentTime.Location().String())
+			},
+		},
+		{
+			name:  strings.ToUpper("max_allowed_packet"), // test for settings an upper case variable
+			val:   "524288",
+			field: "$.maxAllowedPacket",
+			assert: func(ctx *StaticEvalContext, vars *variable.SessionVars) {
+				require.Equal(t, uint64(524288), ctx.GetMaxAllowedPacket())
+				require.Equal(t, vars.MaxAllowedPacket, ctx.GetMaxAllowedPacket())
+			},
+		},
+		{
+			name:  strings.ToUpper("tidb_redact_log"), // test for settings an upper case variable
+			val:   "on",
+			field: "$.enableRedactLog",
+			assert: func(ctx *StaticEvalContext, vars *variable.SessionVars) {
+				require.Equal(t, "ON", ctx.GetTiDBRedactLog())
+				require.Equal(t, vars.EnableRedactLog, ctx.GetTiDBRedactLog())
+			},
+		},
+		{
+			name:  "default_week_format",
+			val:   "5",
+			field: "$.defaultWeekFormatMode",
+			assert: func(ctx *StaticEvalContext, vars *variable.SessionVars) {
+				require.Equal(t, "5", ctx.GetDefaultWeekFormatMode())
+				mode, ok := vars.GetSystemVar(variable.DefaultWeekFormat)
+				require.True(t, ok)
+				require.Equal(t, mode, ctx.GetDefaultWeekFormatMode())
+			},
+		},
+		{
+			name:  "div_precision_increment",
+			val:   "12",
+			field: "$.divPrecisionIncrement",
+			assert: func(ctx *StaticEvalContext, vars *variable.SessionVars) {
+				require.Equal(t, 12, ctx.GetDivPrecisionIncrement())
+				require.Equal(t, vars.DivPrecisionIncrement, ctx.GetDivPrecisionIncrement())
+			},
+		},
+	}
+
+	// nonVarRelatedFields means the fields not related to any system variables.
+	// To make sure that all the variables which affect the context state are covered in the above test list,
+	// we need to test all inner fields except those in `nonVarRelatedFields` are changed after `LoadSystemVars`.
+	nonVarRelatedFields := []string{
+		"$.warnHandler",
+		"$.typeCtx.flags",
+		"$.typeCtx.warnHandler",
+		"$.errCtx",
+		"$.currentDB",
+		"$.requestVerificationFn",
+		"$.requestDynamicVerificationFn",
+		"$.paramList",
+		"$.props",
+	}
+
+	// varsRelatedFields means the fields related to
+	varsRelatedFields := make([]string, 0, len(vars))
+	varsMap := make(map[string]string)
+	sessionVars := variable.NewSessionVars(nil)
+	for _, sysVar := range vars {
+		varsMap[sysVar.name] = sysVar.val
+		if sysVar.field != "" {
+			varsRelatedFields = append(varsRelatedFields, sysVar.field)
+		}
+		require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+	}
+
+	defaultEvalCtx := NewStaticEvalContext()
+	ctx, err := defaultEvalCtx.LoadSystemVars(varsMap)
+	require.NoError(t, err)
+	require.Greater(t, ctx.CtxID(), defaultEvalCtx.CtxID())
+
+	// Check all fields except these in `nonVarRelatedFields` are changed after `LoadSystemVars` to make sure
+	// all system variables related fields are covered in the test list.
+	deeptest.AssertRecursivelyNotEqual(
+		t,
+		defaultEvalCtx.staticEvalCtxState,
+		ctx.staticEvalCtxState,
+		deeptest.WithIgnorePath(nonVarRelatedFields),
+		deeptest.WithPointerComparePath([]string{"$.currentTime"}),
+	)
+
+	// We need to compare the new context again with an empty one to make sure those values are set from sys vars,
+	// not inherited from the empty go value.
+	deeptest.AssertRecursivelyNotEqual(
+		t,
+		staticEvalCtxState{},
+		ctx.staticEvalCtxState,
+		deeptest.WithIgnorePath(nonVarRelatedFields),
+		deeptest.WithPointerComparePath([]string{"$.currentTime"}),
+	)
+
+	// Check all system vars unrelated fields are not changed after `LoadSystemVars`.
+	deeptest.AssertDeepClonedEqual(
+		t,
+		defaultEvalCtx.staticEvalCtxState,
+		ctx.staticEvalCtxState,
+		deeptest.WithIgnorePath(append(
+			varsRelatedFields,
+			// Do not check warnHandler in `typeCtx` and `errCtx` because they should be changed to even if
+			// they are not related to any system variable.
+			"$.typeCtx.warnHandler",
+			"$.errCtx.warnHandler",
+		)),
+		// LoadSystemVars only does shallow copy for `EvalContext` so we just need to compare the pointers.
+		deeptest.WithPointerComparePath(nonVarRelatedFields),
+	)
+
+	for _, sysVar := range vars {
+		sysVar.assert(ctx, sessionVars)
+	}
+
+	// additional check about @@timestamp
+	// setting to `variable.DefTimestamp` should return the current timestamp
+	ctx, err = defaultEvalCtx.LoadSystemVars(map[string]string{
+		"timestamp": variable.DefTimestamp,
+	})
+	require.NoError(t, err)
+	tm, err := ctx.CurrentTime()
+	require.NoError(t, err)
+	require.InDelta(t, time.Now().Unix(), tm.Unix(), 5)
 }
