@@ -16,6 +16,7 @@ go_library(
         "//pkg/config",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
@@ -61,6 +62,7 @@ go_test(
     deps = [
         ":storage",
         "//pkg/domain",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/planner/cardinality",
         "//pkg/sessionctx/variable",

@@ -5,5 +5,8 @@ go_library(
     srcs = ["lockcontext.go"],
     importpath = "github.com/pingcap/tidb/pkg/lock/context",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/parser/model"],
+    deps = [
+        "//pkg/meta/model",
+        "//pkg/parser/model",
+    ],
 )

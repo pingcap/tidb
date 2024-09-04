@@ -46,10 +46,11 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -325,7 +326,7 @@ func calcBytesLengthForDecimal(m int) int {
 func BuildIndexInfo(
 	ctx sessionctx.Context,
 	allTableColumns []*model.ColumnInfo,
-	indexName model.CIStr,
+	indexName pmodel.CIStr,
 	isPrimary bool,
 	isUnique bool,
 	indexPartSpecifications []*ast.IndexPartSpecification,
@@ -356,16 +357,16 @@ func BuildIndexInfo(
 		if indexOption.Visibility == ast.IndexVisibilityInvisible {
 			idxInfo.Invisible = true
 		}
-		if indexOption.Tp == model.IndexTypeInvalid {
+		if indexOption.Tp == pmodel.IndexTypeInvalid {
 			// Use btree as default index type.
-			idxInfo.Tp = model.IndexTypeBtree
+			idxInfo.Tp = pmodel.IndexTypeBtree
 		} else {
 			idxInfo.Tp = indexOption.Tp
 		}
 		idxInfo.Global = indexOption.Global
 	} else {
 		// Use btree as default index type.
-		idxInfo.Tp = model.IndexTypeBtree
+		idxInfo.Tp = pmodel.IndexTypeBtree
 	}
 
 	return idxInfo, nil
@@ -416,7 +417,7 @@ func DropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 // ValidateRenameIndex checks if index name is ok to be renamed.
-func ValidateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
+func ValidateRenameIndex(from, to pmodel.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
 	if fromIdx := tbl.FindIndexByName(from.L); fromIdx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(from.O, tbl.Name))
 	}
@@ -459,7 +460,7 @@ func onRenameIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 	return ver, nil
 }
 
-func validateAlterIndexVisibility(ctx sessionctx.Context, indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
+func validateAlterIndexVisibility(ctx sessionctx.Context, indexName pmodel.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
 	var idx *model.IndexInfo
 	if idx = tbl.FindIndexByName(indexName.L); idx == nil || idx.State != model.StatePublic {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
@@ -493,7 +494,7 @@ func onAlterIndexVisibility(jobCtx *jobContext, t *meta.Meta, job *model.Job) (v
 	return ver, nil
 }
 
-func setIndexVisibility(tblInfo *model.TableInfo, name model.CIStr, invisible bool) {
+func setIndexVisibility(tblInfo *model.TableInfo, name pmodel.CIStr, invisible bool) {
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.L == name.L || (isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
 			idx.Invisible = invisible
@@ -530,7 +531,7 @@ func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, t *meta.Meta, job *mo
 		return nil, nil
 	}
 
-	err = modifyColsFromNull2NotNull(w, dbInfo, tblInfo, nullCols, &model.ColumnInfo{Name: model.NewCIStr("")}, false)
+	err = modifyColsFromNull2NotNull(w, dbInfo, tblInfo, nullCols, &model.ColumnInfo{Name: pmodel.NewCIStr("")}, false)
 	if err == nil {
 		return nil, nil
 	}
@@ -571,7 +572,7 @@ func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model
 
 func decodeAddIndexArgs(job *model.Job) (
 	uniques []bool,
-	indexNames []model.CIStr,
+	indexNames []pmodel.CIStr,
 	indexPartSpecifications [][]*ast.IndexPartSpecification,
 	indexOptions []*ast.IndexOption,
 	hiddenCols [][]*model.ColumnInfo,
@@ -579,7 +580,7 @@ func decodeAddIndexArgs(job *model.Job) (
 ) {
 	var (
 		unique                 bool
-		indexName              model.CIStr
+		indexName              pmodel.CIStr
 		indexPartSpecification []*ast.IndexPartSpecification
 		indexOption            *ast.IndexOption
 		hiddenCol              []*model.ColumnInfo
@@ -587,7 +588,7 @@ func decodeAddIndexArgs(job *model.Job) (
 	err = job.DecodeArgs(&unique, &indexName, &indexPartSpecification, &indexOption, &hiddenCol)
 	if err == nil {
 		return []bool{unique},
-			[]model.CIStr{indexName},
+			[]pmodel.CIStr{indexName},
 			[][]*ast.IndexPartSpecification{indexPartSpecification},
 			[]*ast.IndexOption{indexOption},
 			[][]*model.ColumnInfo{hiddenCol},
@@ -619,7 +620,7 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job,
 	}
 
 	uniques := make([]bool, 1)
-	indexNames := make([]model.CIStr, 1)
+	indexNames := make([]pmodel.CIStr, 1)
 	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
 	indexOption := make([]*ast.IndexOption, 1)
 	var sqlMode mysql.SQLMode
@@ -1233,7 +1234,7 @@ func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Meta, job *model.Jo
 		return nil, nil, false, errors.Trace(err)
 	}
 
-	indexNames := make([]model.CIStr, 1)
+	indexNames := make([]pmodel.CIStr, 1)
 	ifExists := make([]bool, 1)
 	if err = job.DecodeArgs(&indexNames[0], &ifExists[0]); err != nil {
 		if err = job.DecodeArgs(&indexNames, &ifExists); err != nil {
@@ -1289,8 +1290,8 @@ func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.Ind
 	return nil
 }
 
-func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, model.CIStr, error) {
-	var from, to model.CIStr
+func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, pmodel.CIStr, pmodel.CIStr, error) {
+	var from, to pmodel.CIStr
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -1314,9 +1315,9 @@ func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIS
 	return tblInfo, from, to, errors.Trace(err)
 }
 
-func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, bool, error) {
+func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, pmodel.CIStr, bool, error) {
 	var (
-		indexName model.CIStr
+		indexName pmodel.CIStr
 		invisible bool
 	)
 
@@ -2552,7 +2553,7 @@ type changingIndex struct {
 
 // FindRelatedIndexesToChange finds the indexes that covering the given column.
 // The normal one will be overridden by the temp one.
-func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []changingIndex {
+func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName pmodel.CIStr) []changingIndex {
 	// In multi-schema change jobs that contains several "modify column" sub-jobs, there may be temp indexes for another temp index.
 	// To prevent reorganizing too many indexes, we should create the temp indexes that are really necessary.
 	var normalIdxInfos, tempIdxInfos []changingIndex
@@ -2592,7 +2593,7 @@ func isTempIdxInfo(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	return false
 }
 
-func findIdxCol(idxInfo *model.IndexInfo, colName model.CIStr) int {
+func findIdxCol(idxInfo *model.IndexInfo, colName pmodel.CIStr) int {
 	for offset, idxCol := range idxInfo.Columns {
 		if idxCol.Name.L == colName.L {
 			return offset
@@ -2601,7 +2602,7 @@ func findIdxCol(idxInfo *model.IndexInfo, colName model.CIStr) int {
 	return -1
 }
 
-func renameIndexes(tblInfo *model.TableInfo, from, to model.CIStr) {
+func renameIndexes(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.L == from.L {
 			idx.Name = to
@@ -2612,7 +2613,7 @@ func renameIndexes(tblInfo *model.TableInfo, from, to model.CIStr) {
 	}
 }
 
-func renameHiddenColumns(tblInfo *model.TableInfo, from, to model.CIStr) {
+func renameHiddenColumns(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
 	for _, col := range tblInfo.Columns {
 		if col.Hidden && getExpressionIndexOriginName(col) == from.O {
 			col.Name.L = strings.Replace(col.Name.L, from.L, to.L, 1)

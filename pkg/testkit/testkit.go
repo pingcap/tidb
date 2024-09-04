@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -703,7 +704,7 @@ func (m MockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogRe
 var _ sqlexec.RecordSet = &rowsRecordSet{}
 
 type rowsRecordSet struct {
-	fields []*ast.ResultField
+	fields []*resolve.ResultField
 	rows   []chunk.Row
 
 	idx int
@@ -712,7 +713,7 @@ type rowsRecordSet struct {
 	err error
 }
 
-func (r *rowsRecordSet) Fields() []*ast.ResultField {
+func (r *rowsRecordSet) Fields() []*resolve.ResultField {
 	return r.fields
 }
 
