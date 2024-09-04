@@ -4048,9 +4048,6 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 // 3. statistics is outdated.
 // Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
 func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	if !ctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("fmt")
-	}
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
 	var statsTbl *statistics.Table
