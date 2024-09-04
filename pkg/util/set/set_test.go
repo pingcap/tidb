@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package indexadvisor
+package set
 
 import (
 	"strings"
@@ -21,49 +21,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type item struct {
+	Text string
+}
+
+func (i item) Key() string {
+	return i.Text
+}
+
 func TestSetBasic(t *testing.T) {
-	s := NewSet[Query]()
-	s.Add(Query{Text: "q1"}, Query{Text: "q2"}, Query{Text: "q3"})
-	require.True(t, s.Contains(Query{Text: "q1"}))
-	require.True(t, s.Contains(Query{Text: "q2"}))
-	require.True(t, s.Contains(Query{Text: "q3"}))
-	require.False(t, s.Contains(Query{Text: "q4"}))
+	s := NewSet[item]()
+	s.Add(item{Text: "q1"}, item{Text: "q2"}, item{Text: "q3"})
+	require.True(t, s.Contains(item{Text: "q1"}))
+	require.True(t, s.Contains(item{Text: "q2"}))
+	require.True(t, s.Contains(item{Text: "q3"}))
+	require.False(t, s.Contains(item{Text: "q4"}))
 	require.Equal(t, 3, s.Size())
-	require.Equal(t, []Query{{Text: "q1"}, {Text: "q2"}, {Text: "q3"}}, s.ToList())
-	s.Remove(Query{Text: "q2"})
-	require.False(t, s.Contains(Query{Text: "q2"}))
+	require.Equal(t, []item{{Text: "q1"}, {Text: "q2"}, {Text: "q3"}}, s.ToList())
+	s.Remove(item{Text: "q2"})
+	require.False(t, s.Contains(item{Text: "q2"}))
 	require.Equal(t, 2, s.Size())
 
 	clonedS := s.Clone()
-	require.True(t, clonedS.Contains(Query{Text: "q1"}))
-	s.Remove(Query{Text: "q1"})
-	require.False(t, s.Contains(Query{Text: "q1"}))
-	require.True(t, clonedS.Contains(Query{Text: "q1"}))
+	require.True(t, clonedS.Contains(item{Text: "q1"}))
+	s.Remove(item{Text: "q1"})
+	require.False(t, s.Contains(item{Text: "q1"}))
+	require.True(t, clonedS.Contains(item{Text: "q1"}))
 	require.Equal(t, 2, clonedS.Size())
 }
 
 func TestSetOperation(t *testing.T) {
-	s1 := NewSet[Query]()
-	s1.Add(Query{Text: "q1"}, Query{Text: "q2"}, Query{Text: "q3"})
-	s2 := NewSet[Query]()
-	s2.Add(Query{Text: "q2"}, Query{Text: "q3"}, Query{Text: "q4"})
+	s1 := NewSet[item]()
+	s1.Add(item{Text: "q1"}, item{Text: "q2"}, item{Text: "q3"})
+	s2 := NewSet[item]()
+	s2.Add(item{Text: "q2"}, item{Text: "q3"}, item{Text: "q4"})
 	unionSet := UnionSet(s1, s2)
-	require.Equal(t, []Query{{Text: "q1"}, {Text: "q2"}, {Text: "q3"}, {Text: "q4"}}, unionSet.ToList())
+	require.Equal(t, []item{{Text: "q1"}, {Text: "q2"}, {Text: "q3"}, {Text: "q4"}}, unionSet.ToList())
 
 	andSet := AndSet(s1, s2)
-	require.Equal(t, []Query{{Text: "q2"}, {Text: "q3"}}, andSet.ToList())
+	require.Equal(t, []item{{Text: "q2"}, {Text: "q3"}}, andSet.ToList())
 
 	diffSet := DiffSet(s1, s2)
-	require.Equal(t, []Query{{Text: "q1"}}, diffSet.ToList())
+	require.Equal(t, []item{{Text: "q1"}}, diffSet.ToList())
 	diffSet = DiffSet(s2, s1)
-	require.Equal(t, []Query{{Text: "q4"}}, diffSet.ToList())
+	require.Equal(t, []item{{Text: "q4"}}, diffSet.ToList())
 }
 
 func TestSetCombination(t *testing.T) {
-	s := NewSet[Query]()
-	s.Add(Query{Text: "q1"}, Query{Text: "q2"}, Query{Text: "q3"}, Query{Text: "q4"})
+	s := NewSet[item]()
+	s.Add(item{Text: "q1"}, item{Text: "q2"}, item{Text: "q3"}, item{Text: "q4"})
 
-	setListStr := func(setList []Set[Query]) string {
+	setListStr := func(setList []Set[item]) string {
 		var tmp []string
 		for _, set := range setList {
 			tmp = append(tmp, set.String())

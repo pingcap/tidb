@@ -26,6 +26,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	parser2 "github.com/pingcap/tidb/pkg/util/parser"
+	. "github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
 )
 
