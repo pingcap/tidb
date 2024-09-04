@@ -42,9 +42,10 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -407,7 +408,7 @@ func (e *memtableRetriever) setDataForStatistics(ctx context.Context, sctx sessi
 }
 
 func (e *memtableRetriever) setDataForStatisticsInTable(
-	schema model.CIStr,
+	schema pmodel.CIStr,
 	table *model.TableInfo,
 	ex *plannercore.InfoSchemaStatisticsExtractor,
 ) {
@@ -530,11 +531,11 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 				continue
 			}
 			updateRule, deleteRule := "NO ACTION", "NO ACTION"
-			if model.ReferOptionType(fk.OnUpdate) != 0 {
-				updateRule = model.ReferOptionType(fk.OnUpdate).String()
+			if pmodel.ReferOptionType(fk.OnUpdate) != 0 {
+				updateRule = pmodel.ReferOptionType(fk.OnUpdate).String()
 			}
-			if model.ReferOptionType(fk.OnDelete) != 0 {
-				deleteRule = model.ReferOptionType(fk.OnDelete).String()
+			if pmodel.ReferOptionType(fk.OnDelete) != 0 {
+				deleteRule = pmodel.ReferOptionType(fk.OnDelete).String()
 			}
 			record := types.MakeDatums(
 				infoschema.CatalogVal, // CONSTRAINT_CATALOG
@@ -570,7 +571,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 	sctx sessionctx.Context,
 	loc *time.Location,
 	checker privilege.Manager,
-	schema model.CIStr,
+	schema pmodel.CIStr,
 	table *model.TableInfo,
 	rows [][]types.Datum,
 	useStatsCache bool,
@@ -904,7 +905,7 @@ type hugeMemTableRetriever struct {
 	retrieved          bool
 	initialized        bool
 	rows               [][]types.Datum
-	dbs                []model.CIStr
+	dbs                []pmodel.CIStr
 	curTables          []*model.TableInfo
 	dbsIdx             int
 	tblIdx             int
@@ -973,7 +974,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	schema model.CIStr,
+	schema pmodel.CIStr,
 	table *model.TableInfo,
 	checker privilege.Manager) bool {
 	hasPrivs := false
@@ -997,7 +998,7 @@ func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
 func (e *hugeMemTableRetriever) dataForColumnsInTable(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	schema model.CIStr,
+	schema pmodel.CIStr,
 	tbl *model.TableInfo,
 	priv mysql.PrivilegeType) {
 	if tbl.IsView() {
@@ -1243,9 +1244,9 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				}
 
 				var partitionDesc string
-				if table.Partition.Type == model.PartitionTypeRange {
+				if table.Partition.Type == pmodel.PartitionTypeRange {
 					partitionDesc = strings.Join(pi.LessThan, ",")
-				} else if table.Partition.Type == model.PartitionTypeList {
+				} else if table.Partition.Type == pmodel.PartitionTypeList {
 					if len(pi.InValues) > 0 {
 						buf := bytes.NewBuffer(nil)
 						for i, vs := range pi.InValues {
@@ -1268,11 +1269,11 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				partitionExpr := table.Partition.Expr
 				if len(table.Partition.Columns) > 0 {
 					switch table.Partition.Type {
-					case model.PartitionTypeRange:
+					case pmodel.PartitionTypeRange:
 						partitionMethod = "RANGE COLUMNS"
-					case model.PartitionTypeList:
+					case pmodel.PartitionTypeList:
 						partitionMethod = "LIST COLUMNS"
-					case model.PartitionTypeKey:
+					case pmodel.PartitionTypeKey:
 						partitionMethod = "KEY"
 					default:
 						return errors.Errorf("Inconsistent partition type, have type %v, but with COLUMNS > 0 (%d)", table.Partition.Type, len(table.Partition.Columns))
@@ -1357,7 +1358,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx session
 
 func (*memtableRetriever) setDataFromIndex(
 	sctx sessionctx.Context,
-	schema model.CIStr,
+	schema pmodel.CIStr,
 	tb *model.TableInfo,
 	rows [][]types.Datum) ([][]types.Datum, error) {
 	checker := privilege.GetPrivilegeManager(sctx)
@@ -1828,7 +1829,7 @@ func (e *memtableRetriever) setDataForMetricTables() {
 	e.rows = rows
 }
 
-func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo, ex *plannercore.InfoSchemaKeyColumnUsageExtractor) [][]types.Datum {
+func keyColumnUsageInTable(schema pmodel.CIStr, table *model.TableInfo, ex *plannercore.InfoSchemaKeyColumnUsageExtractor) [][]types.Datum {
 	var rows [][]types.Datum
 	if table.PKIsHandle && ex.HasPrimaryKey() {
 		for _, col := range table.Columns {
@@ -2307,7 +2308,7 @@ func (e *tableStorageStatsRetriever) initialize(ctx context.Context, sctx sessio
 	for _, DB := range databases {
 		// The user didn't specified the table, extract all tables of this db to initialTable.
 		if len(tables) == 0 {
-			tbs, err := is.SchemaTableInfos(ctx, model.NewCIStr(DB))
+			tbs, err := is.SchemaTableInfos(ctx, pmodel.NewCIStr(DB))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2320,7 +2321,7 @@ func (e *tableStorageStatsRetriever) initialize(ctx context.Context, sctx sessio
 		} else {
 			// The user specified the table, extract the specified tables of this db to initialTable.
 			for tb := range tables {
-				if tb, err := is.TableByName(context.Background(), model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
+				if tb, err := is.TableByName(context.Background(), pmodel.NewCIStr(DB), pmodel.NewCIStr(tb)); err == nil {
 					// For every db.table, check it's privileges.
 					if checker(DB, tb.Meta().Name.L) {
 						e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
@@ -2493,7 +2494,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 		}
 		var tid int64
 		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-		tb, err := is.TableByName(ctx, model.NewCIStr(dbName), model.NewCIStr(tableName))
+		tb, err := is.TableByName(ctx, pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
 		if err != nil {
 			return nil, percentage, totalCnt, err
 		}
@@ -3670,7 +3671,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 	for _, group := range resourceGroups {
 		//mode := ""
 		burstable := burstdisableStr
-		priority := model.PriorityValueToName(uint64(group.Priority))
+		priority := pmodel.PriorityValueToName(uint64(group.Priority))
 		fillrate := unlimitedFillRate
 		// RU_PER_SEC = unlimited like the default group settings.
 		isDefaultInReservedSetting := group.RUSettings.RU.Settings.FillRate == math.MaxInt32
@@ -3685,13 +3686,13 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			}
 			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
 			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
-			fmt.Fprintf(limitBuilder, ", ACTION=%s", model.RunawayActionType(setting.Action).String())
+			fmt.Fprintf(limitBuilder, ", ACTION=%s", pmodel.RunawayActionType(setting.Action).String())
 			if setting.Watch != nil {
 				if setting.Watch.LastingDurationMs > 0 {
 					dur := time.Duration(setting.Watch.LastingDurationMs) * time.Millisecond
-					fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION='%s'", model.RunawayWatchType(setting.Watch.Type).String(), dur.String())
+					fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION='%s'", pmodel.RunawayWatchType(setting.Watch.Type).String(), dur.String())
 				} else {
-					fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION=UNLIMITED", model.RunawayWatchType(setting.Watch.Type).String())
+					fmt.Fprintf(limitBuilder, ", WATCH=%s DURATION=UNLIMITED", pmodel.RunawayWatchType(setting.Watch.Type).String())
 				}
 			}
 		}
@@ -3876,7 +3877,7 @@ func decodeTableIDFromRule(rule *label.Rule) (tableID int64, err error) {
 
 func tableOrPartitionNotExist(ctx context.Context, dbName string, tableName string, partitionName string, is infoschema.InfoSchema, tableID int64) (tableNotExist bool) {
 	if len(partitionName) == 0 {
-		curTable, _ := is.TableByName(ctx, model.NewCIStr(dbName), model.NewCIStr(tableName))
+		curTable, _ := is.TableByName(ctx, pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
 		if curTable == nil {
 			return true
 		}

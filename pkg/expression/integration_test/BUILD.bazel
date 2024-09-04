@@ -15,6 +15,7 @@ go_test(
         "//pkg/errno",
         "//pkg/expression",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/auth",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
