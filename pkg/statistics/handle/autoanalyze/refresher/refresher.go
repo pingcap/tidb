@@ -31,6 +31,7 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -44,7 +45,6 @@ const (
 )
 
 // Refresher provides methods to refresh stats info.
-// NOTE: Refresher is not thread-safe.
 type Refresher struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sysproctrack.Tracker
@@ -54,6 +54,9 @@ type Refresher struct {
 	// Jobs is the priority queue of analysis jobs.
 	// Exported for testing purposes.
 	Jobs *priorityqueue.AnalysisPriorityQueue
+
+	// worker is the worker that runs the analysis jobs.
+	worker *worker
 }
 
 // NewRefresher creates a new Refresher and starts the goroutine.
@@ -61,13 +64,21 @@ func NewRefresher(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) *Refresher {
+	maxConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
 		Jobs:           priorityqueue.NewAnalysisPriorityQueue(),
+		worker:         NewWorker(statsHandle, sysProcTracker, maxConcurrency),
 	}
 
 	return r
+}
+
+// UpdateConcurrency updates the maximum concurrency for auto-analyze jobs
+func (r *Refresher) UpdateConcurrency() {
+	newConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
+	r.worker.UpdateConcurrency(newConcurrency)
 }
 
 // AnalyzeHighestPriorityTables picks tables with the highest priority and analyzes them.
@@ -84,14 +95,18 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	defer r.statsHandle.SPool().Put(se)
 
 	sctx := se.(sessionctx.Context)
-	var wg util.WaitGroupWrapper
-	defer wg.Wait()
-
-	maxConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
+	r.UpdateConcurrency()
+	maxConcurrency := r.worker.GetMaxConcurrency()
+	currentRunningJobs := r.worker.GetRunningJobs()
+	remainConcurrency := maxConcurrency - len(currentRunningJobs)
 	analyzedCount := 0
 
-	for r.Jobs.Len() > 0 && analyzedCount < maxConcurrency {
+	for r.Jobs.Len() > 0 && analyzedCount < remainConcurrency {
 		job := r.Jobs.Pop()
+		if _, isRunning := currentRunningJobs[job.GetTableID()]; isRunning {
+			statslogutil.StatsLogger().Debug("Job already running, skipping", zap.Int64("tableID", job.GetTableID()))
+			continue
+		}
 		if valid, failReason := job.IsValidToAnalyze(sctx); !valid {
 			statslogutil.SingletonStatsSamplerLogger().Info(
 				"Table not ready for analysis",
@@ -103,20 +118,18 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 
 		statslogutil.StatsLogger().Info("Auto analyze triggered", zap.Stringer("job", job))
 
-		wg.Run(func() {
-			if err := job.Analyze(r.statsHandle, r.sysProcTracker); err != nil {
-				statslogutil.StatsLogger().Error(
-					"Auto analyze job execution failed",
-					zap.Stringer("job", job),
-					zap.Error(err),
-				)
-			}
-		})
-
-		analyzedCount++
+		submitted := r.worker.SubmitJob(job)
+		intest.Assert(submitted == true, "Failed to submit job")
+		if submitted {
+			statslogutil.StatsLogger().Debug("Job submitted successfully", zap.Int("analyzedCount", analyzedCount))
+			analyzedCount++
+		} else {
+			statslogutil.SingletonStatsSamplerLogger().Warn("Failed to submit job", zap.Stringer("job", job))
+		}
 	}
 
 	if analyzedCount > 0 {
+		statslogutil.SingletonStatsSamplerLogger().Info("Auto analyze jobs submitted successfully", zap.Int("submittedCount", analyzedCount))
 		return true
 	}
 
@@ -277,6 +290,17 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 	}
 
 	return nil
+}
+
+// WaitAutoAnalyzeFinishedForTest waits for the auto analyze job to be finished.
+// Only used in the test.
+func (r *Refresher) WaitAutoAnalyzeFinishedForTest() {
+	r.worker.WaitAutoAnalyzeFinishedForTest()
+}
+
+// Close stops all running jobs and releases resources.
+func (r *Refresher) Close() {
+	r.worker.Stop()
 }
 
 // CreateTableAnalysisJob creates a TableAnalysisJob for the physical table.
