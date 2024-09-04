@@ -85,7 +85,11 @@ func (p *ResourceGroupSettings) String() string {
 	}
 	if p.Runaway != nil {
 		writeSettingDurationToBuilder(sb, "QUERY_LIMIT=(EXEC_ELAPSED", time.Duration(p.Runaway.ExecElapsedTimeMs)*time.Millisecond, separatorFn)
-		writeSettingItemToBuilder(sb, "ACTION="+p.Runaway.Action.String())
+		if p.Runaway.Action == model.RunawayActionSwitchGroup {
+			writeSettingItemToBuilder(sb, fmt.Sprintf("ACTION=%s(%s)", p.Runaway.Action.String(), p.Runaway.SwitchGroupName))
+		} else {
+			writeSettingItemToBuilder(sb, "ACTION="+p.Runaway.Action.String())
+		}
 		if p.Runaway.WatchType != model.WatchNone {
 			writeSettingItemToBuilder(sb, "WATCH="+p.Runaway.WatchType.String())
 			if p.Runaway.WatchDurationMs > 0 {
