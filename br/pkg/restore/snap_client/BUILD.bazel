@@ -97,6 +97,7 @@ go_test(
         "//br/pkg/utils",
         "//br/pkg/utiltest",
         "//pkg/domain",
+        "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
