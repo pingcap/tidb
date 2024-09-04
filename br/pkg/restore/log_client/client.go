@@ -561,7 +561,7 @@ func (rc *LogClient) initSchemasMap(
 	ctx context.Context,
 	restoreTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
-	getPitrIDMapSQL := "SELECT element_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = ? ORDER BY element_id;"
+	getPitrIDMapSQL := "SELECT element_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? ORDER BY element_id;"
 	execCtx := rc.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
@@ -1505,7 +1505,7 @@ func (rc *LogClient) GetGCRows() []*stream.PreDelRangeQuery {
 	return rc.deleteRangeQuery
 }
 
-const IdMapBlockSize int = 200 * 1024
+const IdMapBlockSize int = 524288
 
 // SaveIDMap saves the id mapping information.
 func (rc *LogClient) SaveIDMap(
@@ -1519,10 +1519,10 @@ func (rc *LogClient) SaveIDMap(
 		return errors.Trace(err)
 	}
 	// clean the dirty id map at first
-	if err := rc.se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = ?;", rc.restoreTS); err != nil {
+	if err := rc.se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %?;", rc.restoreTS); err != nil {
 		return errors.Trace(err)
 	}
-	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, element_id, id_map, update_time) VALUES (?, ?, ?, ?);"
+	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, element_id, id_map, update_time) VALUES (%?, %?, %?, %?);"
 	for startIdx, elementId := 0, 0; startIdx < len(data); elementId += 1 {
 		endIdx := startIdx + IdMapBlockSize
 		if endIdx > len(data) {

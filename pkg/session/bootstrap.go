@@ -696,8 +696,7 @@ const (
 		element_id BIGINT NOT NULL,
 		id_map BLOB(524288) NOT NULL,
 		update_time TIMESTAMP(6) NOT NULL,
-		PRIMARY KEY (restored_ts, element_id),
-	)`
+		PRIMARY KEY (restored_ts, element_id));`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
