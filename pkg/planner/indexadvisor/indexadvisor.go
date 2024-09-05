@@ -133,8 +133,8 @@ func loadQuerySetFromStmtSummary(sessionctx.Context, string) (s.Set[Query], erro
 }
 
 func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer Optimizer) ([]*Recommendation, error) {
-	var results []*Recommendation
 	l().Info("recommend index", zap.Int("num-index", indexes.Size()))
+	results := make([]*Recommendation, 0, indexes.Size())
 	for _, idx := range indexes.ToList() {
 		workloadImpact := new(WorkloadImpact)
 		var cols []string
@@ -212,7 +212,8 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 
 		normText, _ := NormalizeDigest(indexResult.TopImpactedQueries[0].Query)
 		indexResult.WorkloadImpact = workloadImpact
-		indexResult.Reason = fmt.Sprintf("Column %v appear in Equal or Range Predicate clause(s) in query '%v'", cols, normText)
+		indexResult.Reason = fmt.Sprintf(`Column %v appear in Equal or
+Range Predicate clause(s) in query '%v'`, cols, normText)
 		results = append(results, indexResult)
 	}
 	return results, nil

@@ -495,11 +495,11 @@ func evaluateIndexSetCost(
 	querySet s.Set[Query], optimizer Optimizer,
 	indexSet s.Set[Index]) (IndexSetCost, error) {
 	qs := querySet.ToList()
-	var sqls []string
+	sqls := make([]string, 0, len(qs))
 	for _, q := range qs {
 		sqls = append(sqls, q.Text)
 	}
-	var costs []float64
+	costs := make([]float64, 0, len(sqls))
 	for _, sql := range sqls {
 		cost, err := optimizer.QueryPlanCost(sql, indexSet.ToList()...)
 		if err != nil {
@@ -515,7 +515,7 @@ func evaluateIndexSetCost(
 		workloadCost += cost * float64(query.Frequency)
 	}
 	var totCols int
-	var keys []string
+	keys := make([]string, 0, indexSet.Size())
 	for _, index := range indexSet.ToList() {
 		totCols += len(index.Columns)
 		keys = append(keys, index.Key())

@@ -441,7 +441,7 @@ func (aa *autoAdmin) enumerateCombinations(
 	}
 
 	numberIndexes := min(maxNumberIndexes, candidateIndexes.Size())
-	indexes, cost, err := aa.enumerateGreedy(querySet, currentIndexes, cost, candidateIndexes, numberIndexes)
+	indexes, _, err := aa.enumerateGreedy(querySet, currentIndexes, cost, candidateIndexes, numberIndexes)
 	return indexes, err
 }
 
@@ -484,7 +484,8 @@ func (aa *autoAdmin) enumerateGreedy(querySet s.Set[Query], currentIndexes s.Set
 	return currentIndexes, currentCost, nil
 }
 
-// enumerateNaive enumerates all possible combinations of indexes with at most numberIndexesNaive indexes and returns the best one.
+// enumerateNaive enumerates all possible combinations of indexes with
+// at most numberIndexesNaive indexes and returns the best one.
 func (aa *autoAdmin) enumerateNaive(querySet s.Set[Query],
 	candidateIndexes s.Set[Index], numberIndexesNaive int) (s.Set[Index], IndexSetCost, error) {
 	// get all index combinations
@@ -517,8 +518,8 @@ func (aa *autoAdmin) potentialIndexesForQuery(query Query, potentialIndexes s.Se
 }
 
 // tempIndexName returns a temp index name for the given columns.
-func (aa *autoAdmin) tempIndexName(cols ...Column) string {
-	var names []string
+func (*autoAdmin) tempIndexName(cols ...Column) string {
+	names := make([]string, 0, len(cols))
 	for _, col := range cols {
 		names = append(names, col.ColumnName)
 	}
