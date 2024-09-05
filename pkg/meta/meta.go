@@ -1575,7 +1575,7 @@ type LastJobIterator interface {
 	GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error)
 }
 
-// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
+// GetLastHistoryDDLJobsIterator gets latest history ddl jobs iterator.
 func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
 	if err != nil {
@@ -1586,7 +1586,7 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	}, nil
 }
 
-// GetLastHistoryDDLJobsIteratorWithFilter returns a iterator for getting latest N history ddl jobs.
+// GetLastHistoryDDLJobsIteratorWithFilter returns a iterator for getting latest history ddl jobs.
 // This iterator will also filter jobs using given schemaNames and tableNames
 func (m *Meta) GetLastHistoryDDLJobsIteratorWithFilter(
 	schemaNames set.StringSet,
