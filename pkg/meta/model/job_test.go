@@ -28,11 +28,12 @@ import (
 
 func TestJobStartTime(t *testing.T) {
 	job := &Job{
+		Version:    JobVersion1,
 		ID:         123,
 		BinlogInfo: &HistoryInfo{},
 	}
 	require.Equal(t, TSConvert2Time(job.StartTS), time.Unix(0, 0))
-	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:none, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0, LocalMode: false", time.Unix(0, 0)), job.String())
+	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:none, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0, Version: v1", time.Unix(0, 0)), job.String())
 }
 
 func TestState(t *testing.T) {
