@@ -19,6 +19,7 @@ go_library(
         "joiner.go",
         "merge_join.go",
         "outer_join_probe.go",
+        "row_table_builder.go",
         "tagged_ptr.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/join",
