@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
@@ -205,7 +206,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		exitCh := make(chan struct{})
 		require.NoError(t, failpoint.Enable(fp.failPath, fp.inTerms))
 
-		task1, err1 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+		task1, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -226,7 +227,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		}
 
 		require.NoError(t, failpoint.Disable(fp.failPath))
-		task3, err3 := h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+		task3, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 		require.NoError(t, err3)
 		require.Nil(t, task3)
 
@@ -305,7 +306,8 @@ func TestRetry(t *testing.T) {
 	)
 	readerCtx := &handle.StatsReaderContext{}
 	for i := 0; i < handle.RetryCount; i++ {
-		task1, err1 = h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context),
+			task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		select {
@@ -315,7 +317,8 @@ func TestRetry(t *testing.T) {
 		default:
 		}
 	}
-	result, err1 := h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+	result, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context),
+		task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
 	require.NoError(t, err1)
 	require.Nil(t, result)
 	for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
