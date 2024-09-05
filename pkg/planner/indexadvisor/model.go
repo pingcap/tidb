@@ -141,6 +141,7 @@ type ImpactedQuery struct {
 	Improvement float64
 }
 
+// WorkloadImpact represents the workload impact.
 type WorkloadImpact struct {
 	WorkloadImprovement float64
 }
