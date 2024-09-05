@@ -20,15 +20,32 @@ import (
 )
 
 type subTable struct {
-	rowData          *rowTable
-	hashTable        []uintptr
+	rowData *rowTable
+	// the taggedPtr is used to save the row address, during hash join build stage
+	// it will convert the chunk data into row format, each row there is an unsafe.Pointer
+	// pointing the start address of the row. The unsafe.Pointer will be converted to
+	// taggedPtr and saved in hashTable.
+	// Generally speaking it is unsafe or even illegal in go to save unsafe.Pointer
+	// into uintptr, and later convert uintptr back to unsafe.Pointer since after save
+	// the value of unsafe.Pointer into uintptr, it has no pointer semantics, and may
+	// become invalid after GC. But it is ok to do this in hash join so far because
+	// 1. the check of heapObjectsCanMove makes sure that if the object is in heap, the address will not be changed after GC
+	// 2. row address only points to a valid address in `rowTableSegment.rawData`. `rawData` is a slice in `rowTableSegment`, and it will be used by multiple goroutines,
+	//    and its size will be runtime expanded, this kind of slice will always be allocated in heap
+	hashTable        []taggedPtr
 	posMask          uint64
 	isRowTableEmpty  bool
 	isHashTableEmpty bool
 }
 
-func (st *subTable) lookup(hashValue uint64) uintptr {
-	return st.hashTable[hashValue&st.posMask]
+func (st *subTable) lookup(hashValue uint64, tagHelper *tagPtrHelper) taggedPtr {
+	ret := st.hashTable[hashValue&st.posMask]
+	hashTagValue := tagHelper.getTaggedValue(hashValue)
+	if uint64(ret)&hashTagValue != hashTagValue {
+		// if tag value not match, the key will not be matched
+		return 0
+	}
+	return ret
 }
 
 func nextPowerOfTwo(value uint64) uint64 {
@@ -56,35 +73,40 @@ func newSubTable(table *rowTable) *subTable {
 		ret.isHashTableEmpty = true
 	}
 	hashTableLength := max(nextPowerOfTwo(table.validKeyCount()), uint64(32))
-	ret.hashTable = make([]uintptr, hashTableLength)
+	ret.hashTable = make([]taggedPtr, hashTableLength)
 	ret.posMask = hashTableLength - 1
 	return ret
 }
 
-func (st *subTable) updateHashValue(pos uint64, rowAddress unsafe.Pointer) {
-	prev := *(*unsafe.Pointer)(unsafe.Pointer(&st.hashTable[pos]))
-	*(*unsafe.Pointer)(unsafe.Pointer(&st.hashTable[pos])) = rowAddress
+func (st *subTable) updateHashValue(hashValue uint64, rowAddress unsafe.Pointer, tagHelper *tagPtrHelper) {
+	pos := hashValue & st.posMask
+	prev := st.hashTable[pos]
+	tagValue := tagHelper.getTaggedValue(hashValue | uint64(prev))
+	taggedAddress := tagHelper.toTaggedPtr(tagValue, rowAddress)
+	st.hashTable[pos] = taggedAddress
 	setNextRowAddress(rowAddress, prev)
 }
 
-func (st *subTable) atomicUpdateHashValue(pos uint64, rowAddress unsafe.Pointer) {
+func (st *subTable) atomicUpdateHashValue(hashValue uint64, rowAddress unsafe.Pointer, tagHelper *tagPtrHelper) {
+	pos := hashValue & st.posMask
 	for {
-		prev := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&st.hashTable[pos])))
-		if atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&st.hashTable[pos])), prev, rowAddress) {
+		prev := taggedPtr(atomic.LoadUintptr((*uintptr)(unsafe.Pointer(&st.hashTable[pos]))))
+		tagValue := tagHelper.getTaggedValue(hashValue | uint64(prev))
+		taggedAddress := tagHelper.toTaggedPtr(tagValue, rowAddress)
+		if atomic.CompareAndSwapUintptr((*uintptr)(unsafe.Pointer(&st.hashTable[pos])), uintptr(prev), uintptr(taggedAddress)) {
 			setNextRowAddress(rowAddress, prev)
 			break
 		}
 	}
 }
 
-func (st *subTable) build(startSegmentIndex int, endSegmentIndex int) {
+func (st *subTable) build(startSegmentIndex int, endSegmentIndex int, tagHelper *tagPtrHelper) {
 	if startSegmentIndex == 0 && endSegmentIndex == len(st.rowData.segments) {
 		for i := startSegmentIndex; i < endSegmentIndex; i++ {
 			for _, index := range st.rowData.segments[i].validJoinKeyPos {
 				rowAddress := st.rowData.segments[i].getRowPointer(index)
 				hashValue := st.rowData.segments[i].hashValues[index]
-				pos := hashValue & st.posMask
-				st.updateHashValue(pos, rowAddress)
+				st.updateHashValue(hashValue, rowAddress, tagHelper)
 			}
 		}
 	} else {
@@ -92,8 +114,7 @@ func (st *subTable) build(startSegmentIndex int, endSegmentIndex int) {
 			for _, index := range st.rowData.segments[i].validJoinKeyPos {
 				rowAddress := st.rowData.segments[i].getRowPointer(index)
 				hashValue := st.rowData.segments[i].hashValues[index]
-				pos := hashValue & st.posMask
-				st.atomicUpdateHashValue(pos, rowAddress)
+				st.atomicUpdateHashValue(hashValue, rowAddress, tagHelper)
 			}
 		}
 	}
@@ -204,8 +225,4 @@ func (jht *hashTableV2) totalRowCount() uint64 {
 		ret += table.rowData.rowCount()
 	}
 	return ret
-}
-
-func (jht *hashTableV2) buildHashTableForTest(partitionIndex int, startSegmentIndex int, segmentStep int) {
-	jht.tables[partitionIndex].build(startSegmentIndex, segmentStep)
 }

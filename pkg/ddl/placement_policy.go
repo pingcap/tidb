@@ -24,8 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -116,7 +117,7 @@ func getPolicyInfo(t *meta.Meta, policyID int64) (*model.PolicyInfo, error) {
 	return policy, nil
 }
 
-func getPlacementPolicyByName(infoCache *infoschema.InfoCache, t *meta.Meta, policyName model.CIStr) (*model.PolicyInfo, error) {
+func getPlacementPolicyByName(infoCache *infoschema.InfoCache, t *meta.Meta, policyName pmodel.CIStr) (*model.PolicyInfo, error) {
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return nil, err
@@ -497,7 +498,7 @@ func GetRangePlacementPolicyName(ctx context.Context, rangeBundleID string) (str
 	return "", nil
 }
 
-func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*model.PolicyInfo, error) {
+func buildPolicyInfo(name pmodel.CIStr, options []*ast.PlacementOption) (*model.PolicyInfo, error) {
 	policyInfo := &model.PolicyInfo{PlacementSettings: &model.PlacementSettings{}}
 	policyInfo.Name = name
 	for _, opt := range options {

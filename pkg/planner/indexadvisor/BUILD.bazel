@@ -1,0 +1,48 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "indexadvisor",
+    srcs = [
+        "model.go",
+        "optimizer.go",
+        "utils.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/indexadvisor",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/parser/opcode",
+        "//pkg/planner/util/fixcontrol",
+        "//pkg/sessionctx",
+        "//pkg/types",
+        "//pkg/types/parser_driver",
+        "//pkg/util/logutil",
+        "//pkg/util/parser",
+        "//pkg/util/set",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "indexadvisor_test",
+    timeout = "short",
+    srcs = [
+        "optimizer_test.go",
+        "utils_test.go",
+    ],
+    flaky = True,
+    shard_count = 17,
+    deps = [
+        ":indexadvisor",
+        "//pkg/parser/mysql",
+        "//pkg/testkit",
+        "//pkg/util/set",
+        "@com_github_stretchr_testify//require",
+    ],
+)

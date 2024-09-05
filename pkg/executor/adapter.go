@@ -40,10 +40,11 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -93,7 +94,7 @@ type processinfoSetter interface {
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
 type recordSet struct {
-	fields   []*ast.ResultField
+	fields   []*resolve.ResultField
 	executor exec.Executor
 	// The `Fields` method may be called after `Close`, and the executor is cleared in the `Close` function.
 	// Therefore, we need to store the schema in `recordSet` to avoid a null pointer exception when calling `executor.Schema()`.
@@ -104,16 +105,16 @@ type recordSet struct {
 	once       sync.Once
 }
 
-func (a *recordSet) Fields() []*ast.ResultField {
+func (a *recordSet) Fields() []*resolve.ResultField {
 	if len(a.fields) == 0 {
 		a.fields = colNames2ResultFields(a.schema, a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
 	}
 	return a.fields
 }
 
-func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*ast.ResultField {
-	rfs := make([]*ast.ResultField, 0, schema.Len())
-	defaultDBCIStr := model.NewCIStr(defaultDB)
+func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*resolve.ResultField {
+	rfs := make([]*resolve.ResultField, 0, schema.Len())
+	defaultDBCIStr := pmodel.NewCIStr(defaultDB)
 	for i := 0; i < schema.Len(); i++ {
 		dbName := names[i].DBName
 		if dbName.L == "" && names[i].TblName.L != "" {
@@ -125,7 +126,7 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 			origColName = names[i].ColName
 			emptyOrgName = true
 		}
-		rf := &ast.ResultField{
+		rf := &resolve.ResultField{
 			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType},
 			ColumnAsName: names[i].ColName,
 			EmptyOrgName: emptyOrgName,
@@ -549,8 +550,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		_, planDigest := GetPlanDigest(stmtCtx)
 		_, sqlDigest := stmtCtx.SQLDigest()
 		stmtCtx.RunawayChecker = rm.DeriveChecker(stmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, sqlDigest.String(), planDigest.String(), sessionVars.StartTime)
-		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
+		switchGroupName, err := stmtCtx.RunawayChecker.BeforeExecutor()
+		if err != nil {
 			return nil, err
+		}
+		if len(switchGroupName) > 0 {
+			stmtCtx.ResourceGroupName = switchGroupName
 		}
 	}
 	ctx = a.observeStmtBeginForTopSQL(ctx)
@@ -870,12 +875,12 @@ func isNoResultPlan(p base.Plan) bool {
 type chunkRowRecordSet struct {
 	rows     []chunk.Row
 	idx      int
-	fields   []*ast.ResultField
+	fields   []*resolve.ResultField
 	e        exec.Executor
 	execStmt *ExecStmt
 }
 
-func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
+func (c *chunkRowRecordSet) Fields() []*resolve.ResultField {
 	if c.fields == nil {
 		c.fields = colNames2ResultFields(c.e.Schema(), c.execStmt.OutputNames, c.execStmt.Ctx.GetSessionVars().CurrentDB)
 	}

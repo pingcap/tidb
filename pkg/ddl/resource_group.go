@@ -27,8 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	rg "github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -262,16 +263,17 @@ func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGr
 	}
 	settings := resourceGroupSettings.Runaway
 	switch opt.Tp {
-	case ast.RunawayRule:
+	case pmodel.RunawayRule:
 		// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
 		dur, err := time.ParseDuration(opt.RuleOption.ExecElapsed)
 		if err != nil {
 			return err
 		}
 		settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
-	case ast.RunawayAction:
+	case pmodel.RunawayAction:
 		settings.Action = opt.ActionOption.Type
-	case ast.RunawayWatch:
+		settings.SwitchGroupName = opt.ActionOption.SwitchGroupName.String()
+	case pmodel.RunawayWatch:
 		settings.WatchType = opt.WatchOption.Type
 		if dur := opt.WatchOption.Duration; len(dur) > 0 {
 			dur, err := time.ParseDuration(dur)

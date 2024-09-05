@@ -116,6 +116,8 @@ type rowTableSegment struct {
 	rowStartOffset  []uint64 // the start address of each row
 	validJoinKeyPos []int    // the pos of rows that need to be inserted into hash table, used in hash table build
 	finalized       bool     // after finalized is set to true, no further modification is allowed
+	// taggedBits is the bit that can be used to tag for all pointer in rawData, it use the MSB to tag, so if the n MSB is all 0, the taggedBits is n
+	taggedBits uint8
 }
 
 func (rts *rowTableSegment) totalUsedBytes() int64 {
@@ -128,6 +130,14 @@ func (rts *rowTableSegment) totalUsedBytes() int64 {
 
 func (rts *rowTableSegment) getRowPointer(index int) unsafe.Pointer {
 	return unsafe.Pointer(&rts.rawData[rts.rowStartOffset[index]])
+}
+
+func (rts *rowTableSegment) initTaggedBits() {
+	startPtr := uintptr(0)
+	*(*unsafe.Pointer)(unsafe.Pointer(&startPtr)) = rts.getRowPointer(0)
+	endPtr := uintptr(0)
+	*(*unsafe.Pointer)(unsafe.Pointer(&endPtr)) = rts.getRowPointer(len(rts.rowStartOffset) - 1)
+	rts.taggedBits = getTaggedBitsFromUintptr(endPtr | startPtr)
 }
 
 const maxRowTableSegmentSize = 1024
@@ -152,18 +162,17 @@ func (rts *rowTableSegment) validKeyCount() uint64 {
 	return uint64(len(rts.validJoinKeyPos))
 }
 
-func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress unsafe.Pointer) {
-	// Save unsafe.Pointer into current Row header. Generally speaking it is unsafe or even illegal in go
-	// since after save the value of unsafe.Pointer into row header, it has no pointer semantics the value
-	// in the row header may become invalid after GC. It is ok to save unsafe.Pointer so far because
-	// 1. the check of heapObjectsCanMove makes sure that if the object is in heap, the address will not be changed after GC
-	// 2. `rowStart` only points to a valid address in `rawData`. `rawData` is a slice in `rowTableSegment`, and it will be used by multiple goroutines,
-	//    and its size will be runtime expanded, this kind of slice will always be allocated in heap
-	*(*unsafe.Pointer)(rowStart) = nextRowAddress
+func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress taggedPtr) {
+	*(*taggedPtr)(rowStart) = nextRowAddress
 }
 
-func getNextRowAddress(rowStart unsafe.Pointer) uintptr {
-	return uintptr(*(*unsafe.Pointer)(rowStart))
+func getNextRowAddress(rowStart unsafe.Pointer, tagHelper *tagPtrHelper, hashValue uint64) taggedPtr {
+	ret := *(*taggedPtr)(rowStart)
+	hashTagValue := tagHelper.getTaggedValue(hashValue)
+	if uint64(ret)&hashTagValue != hashTagValue {
+		return 0
+	}
+	return ret
 }
 
 // TableMeta is the join table meta used in hash join v2

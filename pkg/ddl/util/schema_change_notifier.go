@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 

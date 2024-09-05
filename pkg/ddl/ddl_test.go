@@ -22,10 +22,11 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -166,7 +167,7 @@ func TestFieldCase(t *testing.T) {
 	colObjects := make([]*model.ColumnInfo, len(fields))
 	for i, name := range fields {
 		colObjects[i] = &model.ColumnInfo{
-			Name: model.NewCIStr(name),
+			Name: pmodel.NewCIStr(name),
 		}
 	}
 	err := checkDuplicateColumn(colObjects)

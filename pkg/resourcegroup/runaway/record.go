@@ -16,6 +16,7 @@ package runaway
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -90,12 +91,32 @@ type QuarantineRecord struct {
 	Watch     rmpb.RunawayWatchType
 	WatchText string
 	Source    string
-	Action    rmpb.RunawayAction
+	// Action-related fields.
+	Action          rmpb.RunawayAction
+	SwitchGroupName string
 }
 
 // getRecordKey is used to get the key in ttl cache.
 func (r *QuarantineRecord) getRecordKey() string {
 	return r.ResourceGroupName + "/" + r.WatchText
+}
+
+func (r *QuarantineRecord) getSwitchGroupName() string {
+	if r.Action == rmpb.RunawayAction_SwitchGroup {
+		return r.SwitchGroupName
+	}
+	return ""
+}
+
+// GetActionString returns the action string.
+func (r *QuarantineRecord) GetActionString() string {
+	if r == nil {
+		return rmpb.RunawayAction_NoneAction.String()
+	}
+	if r.Action == rmpb.RunawayAction_SwitchGroup {
+		return fmt.Sprintf("%s(%s)", r.Action.String(), r.SwitchGroupName)
+	}
+	return r.Action.String()
 }
 
 func writeInsert(builder *strings.Builder, tableName string) {
@@ -109,7 +130,7 @@ func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 6)
 	writeInsert(&builder, watchTableName)
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?)")
+	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
 	if r.EndTime.Equal(NullTime) {
@@ -121,6 +142,7 @@ func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 	params = append(params, r.WatchText)
 	params = append(params, r.Source)
 	params = append(params, r.Action)
+	params = append(params, r.getSwitchGroupName())
 	return builder.String(), params
 }
 
@@ -129,7 +151,7 @@ func (r *QuarantineRecord) genInsertionDoneStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 9)
 	writeInsert(&builder, watchDoneTableName)
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
+	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ID)
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
@@ -142,6 +164,7 @@ func (r *QuarantineRecord) genInsertionDoneStmt() (string, []any) {
 	params = append(params, r.WatchText)
 	params = append(params, r.Source)
 	params = append(params, r.Action)
+	params = append(params, r.getSwitchGroupName())
 	params = append(params, time.Now().UTC())
 	return builder.String(), params
 }
