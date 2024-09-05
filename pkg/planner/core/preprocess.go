@@ -1634,6 +1634,10 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 	}
+	if err := p.checkTableVisible(tableInfo); err != nil {
+		p.err = err
+		return
+	}
 	p.resolveCtx.AddTableName(&resolve.TableNameW{
 		TableName: tn,
 		DBInfo:    dbInfo,
@@ -1974,4 +1978,21 @@ func (p *preprocessor) skipLockMDL() bool {
 	// because it's a batch process and will do both DML and DDL.
 	// skip lock mdl for ANALYZE statement.
 	return p.flag&inImportInto > 0 || p.flag&inAnalyze > 0
+}
+
+// checkTableVisible returns an `ErrTableNotExists` error if the table is not visible (in non-Public state).
+func (p *preprocessor) checkTableVisible(tblInfo *model.TableInfo) error {
+	is := p.ensureInfoSchema()
+
+	if tblInfo.State != model.StatePublic {
+		schemaName := "unknown"
+		schema, ok := infoschema.SchemaByTable(is, tblInfo)
+		if ok {
+			// theoretically, this should always happen
+			schemaName = schema.Name.O
+		}
+		return infoschema.ErrTableNotExists.FastGenByArgs(schemaName, tblInfo.Name.O)
+	}
+
+	return nil
 }
