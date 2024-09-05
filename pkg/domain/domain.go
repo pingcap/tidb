@@ -490,6 +490,10 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 }
 
 func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m *meta.Meta) error {
+	failpoint.Inject("failed-fetch-schemas-with-tables", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: failed to fetch schemas with tables"))
+	})
+
 	for _, di := range schemas {
 		// if the ctx has been canceled, stop fetch schemas.
 		if err := ctx.Err(); err != nil {
