@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -1589,10 +1590,10 @@ func simplifyQueryPlan(s []string) string {
 	return totalPlan
 }
 
-func getPlan(se sqlexec.SQLExecutor, sql string) string {
+func getPlan(se sqlexec.SQLExecutor, sql string, print bool) string {
 	rs, err := se.ExecuteInternal(context.Background(), fmt.Sprintf("explain %s", sql))
 	if err != nil {
-		panic("bbb")
+		return ""
 	}
 	var rows []chunk.Row
 	rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 1)
@@ -1600,6 +1601,9 @@ func getPlan(se sqlexec.SQLExecutor, sql string) string {
 	rs.Close()
 	ss := make([]string, 0, len(rows))
 	for _, row := range rows {
+		if print {
+			logutil.BgLogger().Info("plan for sql", zap.String("sql", sql), zap.String("plan", row.GetString(4)))
+		}
 		ss = append(ss, row.GetString(0))
 	}
 	return simplifyQueryPlan(ss)
@@ -1607,7 +1611,7 @@ func getPlan(se sqlexec.SQLExecutor, sql string) string {
 
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
-	if !a.Ctx.GetSessionVars().InRestrictedSQL {
+	if !a.Ctx.GetSessionVars().InRestrictedSQL && succ {
 		sql := FormatSQL(a.GetTextToLog(true)).String()
 		se := a.Ctx.GetSQLExecutor()
 		tblIDs := a.Ctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs
@@ -1617,10 +1621,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			panic("bbb")
 		}
 
+		printPlan := rand.Intn(500) == 0
+
 		for id := range tblIDs {
-			tbl, ok := a.Ctx.GetInfoSchema().TableInfoByID(id)
+			tbl, ok := a.Ctx.GetDomainInfoSchema().TableInfoByID(id)
 			if ok {
-				panic("aaa")
+				continue
 			}
 			_, err = se.ExecuteInternal(context.Background(), fmt.Sprintf("drop stats %s", tbl.Name.O))
 			if err != nil {
@@ -1631,12 +1637,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 				panic("bbb")
 			}
 		}
-		predicatePlan := getPlan(se, sql)
+		predicatePlan := getPlan(se, sql, printPlan)
 
 		for id := range tblIDs {
-			tbl, ok := a.Ctx.GetInfoSchema().TableInfoByID(id)
+			tbl, ok := a.Ctx.GetDomainInfoSchema().TableInfoByID(id)
 			if ok {
-				panic("aaa")
+				continue
 			}
 			_, err = se.ExecuteInternal(context.Background(), fmt.Sprintf("drop stats %s", tbl.Name.O))
 			if err != nil {
@@ -1647,7 +1653,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 				panic("bbb")
 			}
 		}
-		allPlan := getPlan(se, sql)
+		allPlan := getPlan(se, sql, printPlan)
 		if predicatePlan != allPlan {
 			panic(fmt.Sprintf("predicatePlan: %s, allPlan: %s, sql: %s", predicatePlan, allPlan, sql))
 		}

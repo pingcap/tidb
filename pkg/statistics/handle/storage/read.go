@@ -301,6 +301,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 			(idx == nil || ((!idx.IsStatsInitialized() || idx.IsAllEvicted()) && idx.LastUpdateVersion < histVer)) &&
 			!loadAll &&
 			config.GetGlobalConfig().Performance.LiteInitStats
+		notNeedLoad = false
 		if notNeedLoad {
 			// If we don't have this index in memory, skip it.
 			if idx == nil {
@@ -409,6 +410,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 			(!isHandle || config.GetGlobalConfig().Performance.LiteInitStats) &&
 			(col == nil || ((!col.IsStatsInitialized() || col.IsAllEvicted()) && col.LastUpdateVersion < histVer)) &&
 			!loadAll
+		notNeedLoad = false
 		if notNeedLoad {
 			// If we don't have the column in memory currently, just skip it.
 			if col == nil {
