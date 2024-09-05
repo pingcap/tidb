@@ -256,6 +256,16 @@ const (
 	JobVersion2 JobVersion = 2
 )
 
+// String implements fmt.Stringer interface.
+func (v JobVersion) String() string {
+	if v == JobVersion1 {
+		return "v1"
+	} else if v == JobVersion2 {
+		return "v2"
+	}
+	return fmt.Sprintf("unknown(%d)", v)
+}
+
 // JobVerInUse is the job version for new DDL jobs in the node.
 // it's for test now.
 var jobVerInUse atomic.Int64
@@ -548,8 +558,8 @@ func (job *Job) DecodeArgs(args ...any) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, LocalMode: %t",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.LocalMode)
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
@@ -1230,6 +1240,5 @@ type TraceInfo struct {
 }
 
 func init() {
-	// TODO keep it version 1 for now, will add logic to determine which version to use later.
 	SetJobVerInUse(JobVersion1)
 }
