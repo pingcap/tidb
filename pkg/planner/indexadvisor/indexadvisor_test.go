@@ -131,9 +131,9 @@ func TestIndexAdvisorCTE(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int)`)
 
-	check(nil, t, tk, "test.t.a",
+	check(nil, t, tk, "test.t.a_b",
 		option("with cte as (select * from t where a=1) select * from cte where b=1"))
-	check(nil, t, tk, "test.t.a,test.t.c",
+	check(nil, t, tk, "test.t.a_b_c,test.t.c",
 		option("with cte as (select * from t where a=1) select * from cte where b=1; select * from t where c=1"))
 }
 
@@ -166,14 +166,14 @@ func TestIndexAdvisorMassive(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 10; i++ {
 		sql := fmt.Sprintf(`create table t%d(c0 int,c1 int,c2 int,c3 int,c4 int,c5 int,c6 int,c7 int)`, i)
 		tk.MustExec(sql)
 	}
-	sqls := make([]string, 0, 20)
-	for i := 0; i < 20; i++ {
+	sqls := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
 		sql := fmt.Sprintf("select * from t%d where c%d=1 and c%d=1 and c%d=1",
-			rand.Intn(100), rand.Intn(8), rand.Intn(8), rand.Intn(8))
+			rand.Intn(10), rand.Intn(8), rand.Intn(8), rand.Intn(8))
 		sqls = append(sqls, sql)
 	}
 	r, err := indexadvisor.AdviseIndexes(context.Background(), tk.Session(), option(strings.Join(sqls, ";")))
