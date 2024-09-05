@@ -40,6 +40,7 @@ var (
 	// MppCoordinatorLatency records latencies of mpp coordinator operations.
 	MppCoordinatorLatency *prometheus.HistogramVec
 
+	// AffectedRowsCounter records the number of affected rows.
 	AffectedRowsCounter        *prometheus.CounterVec
 	AffectedRowsCounterInsert  prometheus.Counter
 	AffectedRowsCounterUpdate  prometheus.Counter
