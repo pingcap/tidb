@@ -82,40 +82,6 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	}
 
 	switch t.GetType() {
-	case model.ActionDropTable:
-		droppedTableInfo := t.GetDropTableInfo()
-		ids, err := h.getTableIDs(droppedTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.UpdateStatsMetaVersionForGC(id); err != nil {
-				return err
-			}
-		}
-	case model.ActionAddColumn:
-		newTableInfo, newColumnInfo := t.GetAddColumnInfo()
-		ids, err := h.getTableIDs(newTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.InsertColStats2KV(id, newColumnInfo); err != nil {
-				return err
-			}
-		}
-	case model.ActionModifyColumn:
-		newTableInfo, modifiedColumnInfo := t.GetModifyColumnInfo()
-
-		ids, err := h.getTableIDs(newTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.InsertColStats2KV(id, modifiedColumnInfo); err != nil {
-				return err
-			}
-		}
 	case model.ActionAddTablePartition:
 		globalTableInfo, addedPartitionInfo := t.GetAddPartitionInfo()
 		for _, def := range addedPartitionInfo.Definitions {
@@ -204,6 +170,39 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		}
 		for _, id := range droppedIDs {
 			if err := h.statsWriter.UpdateStatsMetaVersionForGC(id); err != nil {
+				return err
+			}
+		}
+	case model.ActionDropTable:
+		droppedTableInfo := e.GetDropTableInfo()
+		ids, err := h.getTableIDs(droppedTableInfo)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := h.statsWriter.UpdateStatsMetaVersionForGC(id); err != nil {
+				return err
+			}
+		}
+	case model.ActionAddColumn:
+		newTableInfo, newColumnInfo := e.GetAddColumnInfo()
+		ids, err := h.getTableIDs(newTableInfo)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := h.statsWriter.InsertColStats2KV(id, newColumnInfo); err != nil {
+				return err
+			}
+		}
+	case model.ActionModifyColumn:
+		newTableInfo, modifiedColumnInfo := e.GetModifyColumnInfo()
+		ids, err := h.getTableIDs(newTableInfo)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := h.statsWriter.InsertColStats2KV(id, modifiedColumnInfo); err != nil {
 				return err
 			}
 		}

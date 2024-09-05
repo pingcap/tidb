@@ -31,7 +31,8 @@ type SchemaChangeEvent struct {
 	newTableInfo *model.TableInfo
 	oldTableInfo *model.TableInfo
 
-	tp model.ActionType
+	tp          model.ActionType
+	columnInfos []*model.ColumnInfo
 }
 
 // String implements fmt.Stringer interface.
@@ -47,6 +48,10 @@ func (s *SchemaChangeEvent) String() string {
 	}
 	if s.oldTableInfo != nil {
 		_, _ = fmt.Fprintf(&sb, ", Old Table ID: %d, Old Table Name: %s", s.oldTableInfo.ID, s.oldTableInfo.Name)
+	}
+	for _, columnInfo := range s.columnInfos {
+		_, _ = fmt.Fprintf(&sb, ", Column ID: %d, Column Name: %s", columnInfo.ID, columnInfo.Name)
+		//ret += fmt.Sprintf(", Column ID: %d, Column Name: %s", columnInfo.ID, columnInfo.Name)
 	}
 	sb.WriteString(")")
 
@@ -100,4 +105,53 @@ func (s *SchemaChangeEvent) GetTruncateTableInfo() (
 ) {
 	intest.Assert(s.tp == model.ActionTruncateTable)
 	return s.newTableInfo, s.oldTableInfo
+}
+
+// NewDropTableEvent creates a SchemaChangeEvent whose type is ActionDropTable.
+func NewDropTableEvent(
+	droppedTableInfo *model.TableInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:           model.ActionDropTable,
+		oldTableInfo: droppedTableInfo,
+	}
+}
+
+// GetDropTableInfo returns the table info of the SchemaChangeEvent whose type is ActionDropTable.
+func (e *SchemaChangeEvent) GetDropTableInfo() (newTableInfo *model.TableInfo) {
+	return e.oldTableInfo
+}
+
+// NewAddColumnEvent creates a SchemaChangeEvent whose type is ActionAddColumn.
+func NewAddColumnEvent(
+	tableInfo *model.TableInfo,
+	newColumnInfo []*model.ColumnInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:           model.ActionAddColumn,
+		newTableInfo: tableInfo,
+		columnInfos:  newColumnInfo,
+	}
+}
+
+// GetAddColumnInfo returns the table info of the SchemaChangeEvent whose type is ActionAddColumn.
+func (e *SchemaChangeEvent) GetAddColumnInfo() (newTableInfo *model.TableInfo, newColumnInfo []*model.ColumnInfo) {
+	return e.newTableInfo, e.columnInfos
+}
+
+// NewModifyColumnEvent creates a SchemaChangeEvent whose type is ActionModifyColumn.
+func NewModifyColumnEvent(
+	tableInfo *model.TableInfo,
+	modifiedColumnInfo []*model.ColumnInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:           model.ActionModifyColumn,
+		newTableInfo: tableInfo,
+		columnInfos:  modifiedColumnInfo,
+	}
+}
+
+// GetModifyColumnInfo returns the table info of and column info the SchemaChangeEvent whose type is ActionModifyColumn.
+func (e *SchemaChangeEvent) GetModifyColumnInfo() (newTableInfo *model.TableInfo, modifiedColumnInfo []*model.ColumnInfo) {
+	return e.newTableInfo, e.columnInfos
 }
