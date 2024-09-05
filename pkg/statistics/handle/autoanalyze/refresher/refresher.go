@@ -133,7 +133,12 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 			statslogutil.StatsLogger().Debug("Job submitted successfully", zap.Int("analyzedCount", analyzedCount))
 			analyzedCount++
 		} else {
-			statslogutil.SingletonStatsSamplerLogger().Warn("Failed to submit job", zap.Stringer("job", job))
+			statslogutil.SingletonStatsSamplerLogger().Warn("Failed to submit job",
+				zap.Stringer("job", job),
+				zap.Int("remainConcurrency", remainConcurrency),
+				zap.Int("currentRunningJobs", len(currentRunningJobs)),
+				zap.Int("maxConcurrency", maxConcurrency),
+			)
 		}
 	}
 
