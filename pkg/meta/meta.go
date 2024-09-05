@@ -1586,8 +1586,8 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	}, nil
 }
 
-// GetLastHistoryDDLJobsIteratorWithFilter gets latest N history ddl jobs iterator
-// This iterator will filter jobs using given schemaNames and tableNames
+// GetLastHistoryDDLJobsIteratorWithFilter returns a iterator for getting latest N history ddl jobs.
+// This iterator will also filter jobs using given schemaNames and tableNames
 func (m *Meta) GetLastHistoryDDLJobsIteratorWithFilter(
 	schemaNames set.StringSet,
 	tableNames set.StringSet,
