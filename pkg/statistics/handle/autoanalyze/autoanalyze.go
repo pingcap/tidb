@@ -325,8 +325,7 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
 			return false
 		}
-		analyzed := sa.refresher.AnalyzeHighestPriorityTables()
-		return analyzed
+		return sa.refresher.AnalyzeHighestPriorityTables()
 	}
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
