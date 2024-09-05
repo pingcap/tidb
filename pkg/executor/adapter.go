@@ -550,8 +550,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		_, planDigest := GetPlanDigest(stmtCtx)
 		_, sqlDigest := stmtCtx.SQLDigest()
 		stmtCtx.RunawayChecker = rm.DeriveChecker(stmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, sqlDigest.String(), planDigest.String(), sessionVars.StartTime)
-		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
+		switchGroupName, err := stmtCtx.RunawayChecker.BeforeExecutor()
+		if err != nil {
 			return nil, err
+		}
+		if len(switchGroupName) > 0 {
+			stmtCtx.ResourceGroupName = switchGroupName
 		}
 	}
 	ctx = a.observeStmtBeginForTopSQL(ctx)

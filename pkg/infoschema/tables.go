@@ -1408,8 +1408,10 @@ var tableStorageStatsCols = []columnInfo{
 }
 
 var tableTableTiFlashTablesCols = []columnInfo{
-	{name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
+	// TiFlash DB and Table Name contains the internal KeyspaceID,
+	// which is not suitable for presenting to users. Commented out.
+	// {name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
+	// {name: "TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
@@ -1465,8 +1467,10 @@ var tableTableTiFlashTablesCols = []columnInfo{
 }
 
 var tableTableTiFlashSegmentsCols = []columnInfo{
-	{name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
-	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
+	// TiFlash DB and Table Name contains the internal KeyspaceID,
+	// which is not suitable for presenting to users. Commented out.
+	// {name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
+	// {name: "TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
