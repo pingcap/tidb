@@ -275,6 +275,28 @@ type rowTable struct {
 	segments []*rowTableSegment
 }
 
+func (rt *rowTable) getSegmentNum() int {
+	return len(rt.segments)
+}
+
+func (rt *rowTable) getTotalMemoryUsage() int64 {
+	totalMemoryUsage := int64(0)
+	for _, seg := range rt.segments {
+		if seg.finalized {
+			totalMemoryUsage += seg.totalUsedBytes()
+		}
+	}
+	return totalMemoryUsage
+}
+
+func (rt *rowTable) getSegments() []*rowTableSegment {
+	return rt.segments
+}
+
+func (rt *rowTable) clearSegments() {
+	rt.segments = nil
+}
+
 // used for test
 func (rt *rowTable) getRowPointer(rowIndex int) unsafe.Pointer {
 	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
@@ -296,6 +318,16 @@ func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 		startOffset += len(rt.segments[segIndex].rowStartOffset)
 	}
 	return -1
+}
+
+func (rt *rowTable) getTotalUsedBytesInSegments() int64 {
+	totalUsedBytes := int64(0)
+	for _, seg := range rt.segments {
+		if seg.finalized {
+			totalUsedBytes += seg.totalUsedBytes()
+		}
+	}
+	return totalUsedBytes
 }
 
 type keyProp struct {
