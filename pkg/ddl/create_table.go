@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -183,12 +182,10 @@ func onCreateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-	if !tidbutil.IsMemOrSysDB(job.SchemaName) {
-		createTableEvent := &statsutil.DDLEvent{
-			SchemaChangeEvent: util.NewCreateTableEvent(tbInfo),
-		}
-		asyncNotifyEvent(jobCtx, createTableEvent)
+	createTableEvent := &statsutil.DDLEvent{
+		SchemaChangeEvent: util.NewCreateTableEvent(tbInfo),
 	}
+	asyncNotifyEvent(jobCtx, createTableEvent, job)
 	return ver, errors.Trace(err)
 }
 
@@ -216,12 +213,10 @@ func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Meta, job *model.Job
 			return ver, errors.Trace(err)
 		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		if !tidbutil.IsMemOrSysDB(job.SchemaName) {
-			createTableEvent := &statsutil.DDLEvent{
-				SchemaChangeEvent: util.NewCreateTableEvent(tbInfo),
-			}
-			asyncNotifyEvent(jobCtx, createTableEvent)
+		createTableEvent := &statsutil.DDLEvent{
+			SchemaChangeEvent: util.NewCreateTableEvent(tbInfo),
 		}
+		asyncNotifyEvent(jobCtx, createTableEvent, job)
 		return ver, nil
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
@@ -274,13 +269,11 @@ func onCreateTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, er
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
 	job.BinlogInfo.SetTableInfos(ver, args)
-	if !tidbutil.IsMemOrSysDB(job.SchemaName) {
-		for i := range args {
-			createTableEvent := &statsutil.DDLEvent{
-				SchemaChangeEvent: util.NewCreateTableEvent(args[i]),
-			}
-			asyncNotifyEvent(jobCtx, createTableEvent)
+	for i := range args {
+		createTableEvent := &statsutil.DDLEvent{
+			SchemaChangeEvent: util.NewCreateTableEvent(args[i]),
 		}
+		asyncNotifyEvent(jobCtx, createTableEvent, job)
 	}
 
 	return ver, errors.Trace(err)

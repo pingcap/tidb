@@ -128,7 +128,7 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver in
 				job.SchemaID,
 				tblInfo,
 			)
-			asyncNotifyEvent(jobCtx, dropTableEvent)
+			asyncNotifyEvent(jobCtx, dropTableEvent, job)
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
@@ -570,12 +570,10 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	if !tidbutil.IsMemOrSysDB(job.SchemaName) {
-		truncateTableEvent := &statsutil.DDLEvent{
-			SchemaChangeEvent: util.NewTruncateTableEvent(tblInfo, oldTblInfo),
-		}
-		asyncNotifyEvent(jobCtx, truncateTableEvent)
+	truncateTableEvent := &statsutil.DDLEvent{
+		SchemaChangeEvent: util.NewTruncateTableEvent(tblInfo, oldTblInfo),
 	}
+	asyncNotifyEvent(jobCtx, truncateTableEvent, job)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
 	job.Args = []any{startKey, oldPartitionIDs}
 	return ver, nil
