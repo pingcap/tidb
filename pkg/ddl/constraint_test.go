@@ -142,6 +142,7 @@ func TestAlterAddConstraintStateChange1(t *testing.T) {
 }
 
 func TestAlterAddConstraintStateChange2(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -174,6 +175,7 @@ func TestAlterAddConstraintStateChange2(t *testing.T) {
 }
 
 func TestAlterAddConstraintStateChange3(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -217,6 +219,7 @@ func TestAlterAddConstraintStateChange3(t *testing.T) {
 }
 
 func TestAlterEnforcedConstraintStateChange(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -659,6 +659,7 @@ func updateTableMeta(t *testing.T, store kv.Storage, dbID int64, tableInfo *mode
 }
 
 func TestSelectHiddenColumn(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)

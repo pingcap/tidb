@@ -17,6 +17,7 @@ package infoschema
 import (
 	"container/list"
 	"context"
+	"math/rand"
 	"sync"
 
 	"github.com/pingcap/failpoint"
@@ -159,6 +160,11 @@ func (s *Sieve[K, V]) Get(key K) (value V, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e, ok := s.items[key]; ok {
+		if rand.Intn(2) == 0 {
+			//s.removeEntry(e)
+			//s.hook.onMiss()
+			//return value, false
+		}
 		e.visited = true
 		s.hook.onHit()
 		return e.value, true

@@ -127,8 +127,7 @@ func (h *InfoCache) GetLatest() InfoSchema {
 	infoschema_metrics.GetLatestCounter.Inc()
 	if len(h.cache) > 0 {
 		infoschema_metrics.HitLatestCounter.Inc()
-		ret := h.cache[0].infoschema
-		return ret
+		return h.cache[0].infoschema
 	}
 	return nil
 }
@@ -297,6 +296,9 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 				h.cache[i].timestamp = int64(schemaTS)
 			} else if xisV2 {
 				// update infoschema if it's infoschema v2
+				h.cache[i].infoschema = is
+			} else if xisV3, _ := IsV3(h.cache[i].infoschema); xisV3 {
+				// update infoschema if it's infoschema v3
 				h.cache[i].infoschema = is
 			}
 			return true

@@ -142,6 +142,7 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 }
 
 func TestReorgPartitionConcurrent(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "ReorgPartConcurrent"

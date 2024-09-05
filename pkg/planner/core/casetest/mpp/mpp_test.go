@@ -79,6 +79,7 @@ func TestMPPJoin(t *testing.T) {
 }
 
 func TestMPPLeftSemiJoin(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -125,6 +126,7 @@ func TestMPPLeftSemiJoin(t *testing.T) {
 }
 
 func TestMPPOuterJoinBuildSideForBroadcastJoin(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

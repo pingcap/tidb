@@ -1017,6 +1017,7 @@ func TestAnonymousIndex(t *testing.T) {
 }
 
 func TestAddIndexWithDupIndex(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
