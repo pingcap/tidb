@@ -219,7 +219,9 @@ func TestTable(t *testing.T) {
 	newTblInfo, err := testTableInfo(store, "t", 3)
 	require.NoError(t, err)
 	doDDLJobErr(t, dbInfo.ID, newTblInfo.ID, dbInfo.Name.L, newTblInfo.Name.L, model.ActionCreateTable,
-		[]any{newTblInfo}, ctx, de, store)
+		ctx, de, store, func(job *model.Job) {
+			job.Args = []any{newTblInfo}
+		})
 
 	ctx = testkit.NewTestKit(t, store).Session()
 	txn, err := newTxn(ctx)
