@@ -47,7 +47,9 @@ type Checker struct {
 	markedByRule atomic.Bool
 	// markedByWatch is set to true when the query matches the specified watch rules.
 	markedByWatch bool
-	watchAction   rmpb.RunawayAction
+	// watchAction is the specified watch action for the runaway query.
+	// If it's not given, the action defined in `settings` will be used.
+	watchAction rmpb.RunawayAction
 }
 
 // NewChecker creates a new RunawayChecker.
@@ -94,38 +96,47 @@ func (rm *Manager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, plan
 }
 
 // BeforeExecutor checks whether query is in watch list before executing and after compiling.
-func (r *Checker) BeforeExecutor() error {
+func (r *Checker) BeforeExecutor() (string, error) {
 	if r == nil {
-		return nil
+		return "", nil
 	}
+	var (
+		watched         bool
+		action          rmpb.RunawayAction
+		switchGroupName string
+	)
 	// Check if the query matches any specified watch rules.
 	for _, convict := range r.getConvictIdentifiers() {
-		watched, action := r.manager.examineWatchList(r.resourceGroupName, convict)
+		watched, action, switchGroupName = r.manager.examineWatchList(r.resourceGroupName, convict)
 		if !watched {
 			continue
 		}
 		// Use the group runaway settings if none are provided.
 		if action == rmpb.RunawayAction_NoneAction && r.settings != nil {
 			action = r.settings.Action
+			switchGroupName = r.settings.SwitchGroupName
 		}
 		// Mark it if this is the first time being watched.
-		r.markRunawayByWatch(action)
+		r.markRunawayByWatch(action, switchGroupName)
 		// Take action if needed.
 		switch action {
 		case rmpb.RunawayAction_Kill:
 			// Return an error to interrupt the query.
-			return exeerrors.ErrResourceGroupQueryRunawayQuarantine
+			return "", exeerrors.ErrResourceGroupQueryRunawayQuarantine
 		case rmpb.RunawayAction_CoolDown:
 			// This action will be handled in `BeforeCopRequest`.
-			return nil
+			return "", nil
 		case rmpb.RunawayAction_DryRun:
 			// Noop.
-			return nil
+			return "", nil
+		case rmpb.RunawayAction_SwitchGroup:
+			// Return the switch group name to switch the resource group before executing.
+			return switchGroupName, nil
 		default:
 			// Continue to examine other convicts.
 		}
 	}
-	return nil
+	return "", nil
 }
 
 // BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.
@@ -156,13 +167,16 @@ func (r *Checker) BeforeCopRequest(req *tikvrpc.Request) error {
 			return nil
 		}
 		// execution time exceeds the threshold, mark the query as runaway
-		r.markRunawayByIdentify(r.settings.Action, &now)
+		r.markRunawayByIdentify(&now)
 		// Take action if needed.
 		switch r.settings.Action {
 		case rmpb.RunawayAction_Kill:
 			return exeerrors.ErrResourceGroupQueryRunawayInterrupted
 		case rmpb.RunawayAction_CoolDown:
 			req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
+			return nil
+		case rmpb.RunawayAction_SwitchGroup:
+			req.ResourceControlContext.ResourceGroupName = r.settings.SwitchGroupName
 			return nil
 		default:
 			return nil
@@ -190,7 +204,7 @@ func (r *Checker) CheckCopRespError(err error) error {
 	if strings.HasPrefix(err.Error(), "Coprocessor task terminated due to exceeding the deadline") {
 		if !r.markedByRule.Load() {
 			now := time.Now()
-			if r.deadline.Before(now) && r.markRunawayByIdentify(r.settings.Action, &now) {
+			if r.deadline.Before(now) && r.markRunawayByIdentify(&now) {
 				return exeerrors.ErrResourceGroupQueryRunawayInterrupted
 			}
 		}
@@ -230,7 +244,7 @@ func (r *Checker) CheckRuleKillAction() bool {
 		if until > 0 {
 			return false
 		}
-		r.markRunawayByIdentify(r.settings.Action, &now)
+		r.markRunawayByIdentify(&now)
 		return r.settings.Action == rmpb.RunawayAction_Kill
 	}
 	return false
@@ -251,13 +265,17 @@ func (r *Checker) markQuarantine(now *time.Time) {
 	}
 	ttl := time.Duration(r.settings.Watch.LastingDurationMs) * time.Millisecond
 
-	r.manager.markQuarantine(r.resourceGroupName, r.getSettingConvictIdentifier(), r.settings.Watch.Type, r.settings.Action, ttl, now)
+	r.manager.markQuarantine(
+		r.resourceGroupName, r.getSettingConvictIdentifier(),
+		r.settings.Watch.Type, r.settings.Action, r.settings.SwitchGroupName,
+		ttl, now,
+	)
 }
 
-func (r *Checker) markRunawayByIdentify(action rmpb.RunawayAction, now *time.Time) bool {
+func (r *Checker) markRunawayByIdentify(now *time.Time) bool {
 	swapped := r.markedByRule.CompareAndSwap(false, true)
 	if swapped {
-		r.markRunaway("identify", action, now)
+		r.markRunaway("identify", r.settings.Action, r.settings.SwitchGroupName, now)
 		if !r.markedByWatch {
 			r.markQuarantine(now)
 		}
@@ -265,15 +283,22 @@ func (r *Checker) markRunawayByIdentify(action rmpb.RunawayAction, now *time.Tim
 	return swapped
 }
 
-func (r *Checker) markRunawayByWatch(action rmpb.RunawayAction) {
+func (r *Checker) markRunawayByWatch(action rmpb.RunawayAction, switchGroupName string) {
 	r.markedByWatch = true
 	r.watchAction = action
 	now := time.Now()
-	r.markRunaway("watch", action, &now)
+	r.markRunaway("watch", action, switchGroupName, &now)
 }
 
-func (r *Checker) markRunaway(matchType string, action rmpb.RunawayAction, now *time.Time) {
-	actionStr := strings.ToLower(action.String())
+func (r *Checker) markRunaway(matchType string, action rmpb.RunawayAction, switchGroupName string, now *time.Time) {
+	var actionStr string
+	switch action {
+	case rmpb.RunawayAction_NoneAction, rmpb.RunawayAction_DryRun, rmpb.RunawayAction_CoolDown, rmpb.RunawayAction_Kill:
+		actionStr = action.String()
+	case rmpb.RunawayAction_SwitchGroup:
+		actionStr = fmt.Sprintf("%s(%s)", action.String(), switchGroupName)
+	}
+	actionStr = strings.ToLower(actionStr)
 	metrics.RunawayCheckerCounter.WithLabelValues(r.resourceGroupName, matchType, actionStr).Inc()
 	r.manager.markRunaway(r.resourceGroupName, r.originalSQL, r.planDigest, actionStr, matchType, now)
 }

@@ -234,7 +234,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Meta, job *mode
 			tblInfo,
 			partInfo,
 		)
-		asyncNotifyEvent(jobCtx, addPartitionEvent)
+		asyncNotifyEvent(jobCtx, addPartitionEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
@@ -2338,7 +2338,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 			tblInfo,
 			&model.PartitionInfo{Definitions: droppedDefs},
 		)
-		asyncNotifyEvent(jobCtx, dropPartitionEvent)
+		asyncNotifyEvent(jobCtx, dropPartitionEvent, job)
 		// A background job will be created to delete old partition data.
 		job.Args = []any{physicalTableIDs}
 	default:
@@ -2431,7 +2431,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 			&model.PartitionInfo{Definitions: newPartitions},
 			&model.PartitionInfo{Definitions: oldPartitions},
 		)
-		asyncNotifyEvent(jobCtx, truncatePartitionEvent)
+		asyncNotifyEvent(jobCtx, truncatePartitionEvent, job)
 		// A background job will be created to delete old partition data.
 		job.Args = []any{oldIDs}
 
@@ -2570,7 +2570,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 			&model.PartitionInfo{Definitions: newPartitions},
 			&model.PartitionInfo{Definitions: oldPartitions},
 		)
-		asyncNotifyEvent(jobCtx, truncatePartitionEvent)
+		asyncNotifyEvent(jobCtx, truncatePartitionEvent, job)
 		// A background job will be created to delete old partition data.
 		job.Args = []any{oldIDs}
 	default:
@@ -2943,7 +2943,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
 		originalNt,
 	)
-	asyncNotifyEvent(jobCtx, exchangePartitionEvent)
+	asyncNotifyEvent(jobCtx, exchangePartitionEvent, job)
 	return ver, nil
 }
 
@@ -3481,7 +3481,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		asyncNotifyEvent(jobCtx, event)
+		asyncNotifyEvent(jobCtx, event, job)
 		// A background job will be created to delete old partition data.
 		job.Args = []any{physicalTableIDs}
 

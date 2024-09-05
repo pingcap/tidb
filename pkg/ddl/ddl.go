@@ -556,7 +556,14 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *statsutil.DDLEvent) {
+func asyncNotifyEvent(jobCtx *jobContext, e *statsutil.DDLEvent, job *model.Job) {
+	// skip notify for system databases, system databases are expected to change at
+	// bootstrap and other nodes can also handle the changing in its bootstrap rather
+	// than be notified.
+	if tidbutil.IsMemOrSysDB(job.SchemaName) {
+		return
+	}
+
 	ch := jobCtx.oldDDLCtx.ddlEventCh
 	if ch != nil {
 		for i := 0; i < 10; i++ {

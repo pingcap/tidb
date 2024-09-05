@@ -120,16 +120,17 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM NO EXEC_ELAPSED='20s', ACTION=DRYRUN, WATCH=SIMILAR DURATION=UNLIMITED <nil>"))
 
-	tk.MustExec("alter resource group x RU_PER_SEC= unlimited QUERY_LIMIT=(EXEC_ELAPSED='15s' ACTION DRYRUN WATCH SIMILAR DURATION '10m0s')")
+	tk.MustExec("alter resource group x RU_PER_SEC= unlimited QUERY_LIMIT=(EXEC_ELAPSED='15s' ACTION SWITCH_GROUP(y) WATCH SIMILAR DURATION '10m0s')")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Equal(uint64(math.MaxInt32), g.RURate)
 	re.Equal(int64(-1), g.BurstLimit)
 	re.Equal(uint64(time.Second*15/time.Millisecond), g.Runaway.ExecElapsedTimeMs)
-	re.Equal(pmodel.RunawayActionDryRun, g.Runaway.Action)
+	re.Equal(pmodel.RunawayActionSwitchGroup, g.Runaway.Action)
+	re.Equal("y", g.Runaway.SwitchGroupName)
 	re.Equal(pmodel.WatchSimilar, g.Runaway.WatchType)
 	re.Equal(int64(time.Minute*10/time.Millisecond), g.Runaway.WatchDurationMs)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x UNLIMITED MEDIUM YES EXEC_ELAPSED='15s', ACTION=DRYRUN, WATCH=SIMILAR DURATION='10m0s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x UNLIMITED MEDIUM YES EXEC_ELAPSED='15s', ACTION=SWITCH_GROUP(y), WATCH=SIMILAR DURATION='10m0s' <nil>"))
 
 	tk.MustExec("drop resource group x")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
@@ -527,6 +528,18 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 			RURate:           1000,
 		},
 		err: resourcegroup.ErrTooLongResourceGroupName,
+	})
+
+	tests = append(tests, TestCase{
+		name: "error case: invalid switch group name",
+		input: &model.ResourceGroupSettings{
+			Runaway: &model.ResourceGroupRunawaySettings{
+				ExecElapsedTimeMs: 1000,
+				Action:            pmodel.RunawayActionSwitchGroup,
+				SwitchGroupName:   "",
+			},
+		},
+		err: resourcegroup.ErrUnknownResourceGroupRunawaySwitchGroupName,
 	})
 
 	for _, test := range tests {

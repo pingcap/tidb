@@ -58,7 +58,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 
 	// ActionFlashbackCluster will not create any new stats info
 	// and it's SchemaID alwayws equals to 0, so skip check it.
-	if t.GetType() != model.ActionFlashbackCluster {
+	if t.GetType() != model.ActionFlashbackCluster && t.SchemaChangeEvent == nil {
 		if isSysDB, err := t.IsMemOrSysDB(sctx.(sessionctx.Context)); err != nil {
 			return err
 		} else if isSysDB {
@@ -75,42 +75,13 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			return nil
 		}
 	}
-	logutil.StatsLogger().Info("Handle ddl event", zap.Stringer("event", t))
+	if t.SchemaChangeEvent == nil {
+		// when SchemaChangeEvent is set, it will be printed in the default branch of
+		// below switch.
+		logutil.StatsLogger().Info("Handle ddl event", zap.Stringer("event", t))
+	}
 
 	switch t.GetType() {
-	case model.ActionCreateTable:
-		newTableInfo := t.GetCreateTableInfo()
-		ids, err := h.getTableIDs(newTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.InsertTableStats2KV(newTableInfo, id); err != nil {
-				return err
-			}
-		}
-	case model.ActionTruncateTable:
-		newTableInfo, droppedTableInfo := t.GetTruncateTableInfo()
-		ids, err := h.getTableIDs(newTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.InsertTableStats2KV(newTableInfo, id); err != nil {
-				return err
-			}
-		}
-
-		// Remove the old table stats.
-		droppedIDs, err := h.getTableIDs(droppedTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range droppedIDs {
-			if err := h.statsWriter.UpdateStatsMetaVersionForGC(id); err != nil {
-				return err
-			}
-		}
 	case model.ActionDropTable:
 		droppedTableInfo := t.GetDropTableInfo()
 		ids, err := h.getTableIDs(droppedTableInfo)
@@ -197,13 +168,46 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		}
 	case model.ActionFlashbackCluster:
 		return h.statsWriter.UpdateStatsVersion()
+	default:
+		logutil.StatsLogger().Info("Handle schema change event", zap.Stringer("event", t.SchemaChangeEvent))
 	}
 
-	//revive:disable:empty-block
-	switch t.SchemaChangeEvent.GetType() {
-	// todo: we will replace the DDLEvent with SchemaChangeEvent, gradually move above switch-case logical to here
+	e := t.SchemaChangeEvent
+	switch e.GetType() {
+	case model.ActionCreateTable:
+		newTableInfo := e.GetCreateTableInfo()
+		ids, err := h.getTableIDs(newTableInfo)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := h.statsWriter.InsertTableStats2KV(newTableInfo, id); err != nil {
+				return err
+			}
+		}
+	case model.ActionTruncateTable:
+		newTableInfo, droppedTableInfo := e.GetTruncateTableInfo()
+		ids, err := h.getTableIDs(newTableInfo)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := h.statsWriter.InsertTableStats2KV(newTableInfo, id); err != nil {
+				return err
+			}
+		}
+
+		// Remove the old table stats.
+		droppedIDs, err := h.getTableIDs(droppedTableInfo)
+		if err != nil {
+			return err
+		}
+		for _, id := range droppedIDs {
+			if err := h.statsWriter.UpdateStatsMetaVersionForGC(id); err != nil {
+				return err
+			}
+		}
 	}
-	//revive:enable:empty-block
 	return nil
 }
 
