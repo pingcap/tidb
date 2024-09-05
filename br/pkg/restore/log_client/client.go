@@ -561,7 +561,7 @@ func (rc *LogClient) initSchemasMap(
 	ctx context.Context,
 	restoreTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
-	getPitrIDMapSQL := "SELECT element_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? ORDER BY element_id;"
+	getPitrIDMapSQL := "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? ORDER BY segment_id;"
 	execCtx := rc.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
@@ -580,11 +580,11 @@ func (rc *LogClient) initSchemasMap(
 	for i, row := range rows {
 		elementID := row.GetUint64(0)
 		if uint64(i) != elementID {
-			return nil, errors.Errorf("the part(element_id = %d) of pitr id map is lost", i)
+			return nil, errors.Errorf("the part(segment_id = %d) of pitr id map is lost", i)
 		}
 		d := row.GetBytes(1)
 		if len(d) == 0 {
-			return nil, errors.Errorf("get the empty part(element_id = %d) of pitr id map", i)
+			return nil, errors.Errorf("get the empty part(segment_id = %d) of pitr id map", i)
 		}
 		metaData = append(metaData, d...)
 	}
@@ -901,7 +901,7 @@ func (rc *LogClient) PreConstructAndSaveIDMap(
 		return errors.Trace(err)
 	}
 
-	if err := rc.SaveIDMap(ctx, sr); err != nil {
+	if err := rc.saveIDMap(ctx, sr); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1507,8 +1507,8 @@ func (rc *LogClient) GetGCRows() []*stream.PreDelRangeQuery {
 
 const IdMapBlockSize int = 524288
 
-// SaveIDMap saves the id mapping information.
-func (rc *LogClient) SaveIDMap(
+// saveIDMap saves the id mapping information.
+func (rc *LogClient) saveIDMap(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
 ) error {
@@ -1522,7 +1522,7 @@ func (rc *LogClient) SaveIDMap(
 	if err := rc.se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %?;", rc.restoreTS); err != nil {
 		return errors.Trace(err)
 	}
-	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, element_id, id_map, update_time) VALUES (%?, %?, %?, %?);"
+	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, segment_id, id_map, update_time) VALUES (%?, %?, %?, %?);"
 	for startIdx, elementId := 0, 0; startIdx < len(data); elementId += 1 {
 		endIdx := startIdx + IdMapBlockSize
 		if endIdx > len(data) {

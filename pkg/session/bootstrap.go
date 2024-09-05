@@ -695,10 +695,10 @@ const (
 	// CreatePITRIDMap is a table that records the id map from upstream to downstream for PITR.
 	CreatePITRIDMap = `CREATE TABLE IF NOT EXISTS mysql.tidb_pitr_id_map (
 		restored_ts BIGINT NOT NULL,
-		element_id BIGINT NOT NULL,
+		segment_id BIGINT NOT NULL,
 		id_map BLOB(524288) NOT NULL,
 		update_time TIMESTAMP(6) NOT NULL,
-		PRIMARY KEY (restored_ts, element_id));`
+		PRIMARY KEY (restored_ts, segment_id));`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
@@ -1299,6 +1299,7 @@ var (
 		upgradeToVer210,
 		upgradeToVer211,
 		upgradeToVer212,
+		upgradeToVer213,
 	}
 )
 
