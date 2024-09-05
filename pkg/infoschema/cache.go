@@ -143,6 +143,17 @@ func (h *InfoCache) GetEmptySchemaVersions() map[int64]struct{} {
 	return h.emptySchemaVersions
 }
 
+// GetAllSchemaVersions returns all schema versions in the cache. It's exported for test.
+func (h *InfoCache) GetAllSchemaVersions() []int64 {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	versions := make([]int64, 0, len(h.cache))
+	for _, v := range h.cache {
+		versions = append(versions, v.infoschema.SchemaMetaVersion())
+	}
+	return versions
+}
+
 func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 	logutil.BgLogger().Debug("SCHEMA CACHE get schema", zap.Uint64("timestamp", ts))
 	// search one by one instead of binary search, because the timestamp of a schema could be 0

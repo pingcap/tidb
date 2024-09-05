@@ -795,6 +795,15 @@ func (b *Builder) Build(schemaTS uint64) InfoSchema {
 	return b.infoSchema
 }
 
+// BuildWithoutUpdateBundles builds and returns the built infoschema without updateInfoSchemaBundles.
+func (b *Builder) BuildWithoutUpdateBundles(schemaTS uint64) InfoSchema {
+	if b.enableV2 {
+		b.infoschemaV2.ts = schemaTS
+		return &b.infoschemaV2
+	}
+	return b.infoSchema
+}
+
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
 func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	// Do not mix infoschema v1 and infoschema v2 building, this can simplify the logic.

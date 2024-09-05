@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -1025,4 +1026,53 @@ func TestRenameMultiTables(t *testing.T) {
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
+}
+
+func TestSchemaCacheWithConcurrentDDL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel()
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			if i == 0 {
+				tk.MustExec("set @@global.tidb_schema_version_cache_limit = 255")
+			}
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					tableName := fmt.Sprintf("t%d", i)
+					tk.MustExec("drop table if exists " + tableName)
+					tk.MustExec(fmt.Sprintf("create table %s (a int, b int)", tableName))
+					tk.MustExec(fmt.Sprintf("alter table %s add index idx(a)", tableName))
+				}
+			}
+		}(i)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				versions := dom.InfoCache().GetAllSchemaVersions()
+				for i := 0; i < len(versions)-1; i++ {
+					// Following check use to make sure all schema versions are continuous,
+					// if not, it means some schema versions are missing, then stale-raed query will meet schema cache miss,
+					// then load snapshot schema from TiKV, then the TiKV which store schema will become the hot spot.
+					require.Equal(t, versions[i], versions[i+1]+1, fmt.Sprintf("all versions: %v", versions))
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+		}
+	}()
+	wg.Wait()
 }
