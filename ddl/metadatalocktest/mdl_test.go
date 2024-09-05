@@ -909,7 +909,11 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 
 	tk.MustQuery("select * from t2")
 	tk.MustExec(`set @a = 2, @b=4;`)
-	tk.MustExec(`execute stmt_test_1 using @a, @b;`)
+	tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan created outside this txn.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan since this table becomes dirty.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can reuse the prior plan now.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	// The plan is from cache, the metadata lock should be added to block the DDL.
 	ch <- struct{}{}
