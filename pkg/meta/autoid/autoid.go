@@ -322,9 +322,9 @@ func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 func (alloc *allocator) Transfer(databaseID, tableID int64) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
-		return alloc.getIDAccessor(txn).Transfer(databaseID, tableID)
+		return alloc.getIDAccessor(txn).CopyTo(databaseID, tableID)
 	})
-	if err != nil {
+	if err == nil {
 		alloc.dbID = databaseID
 		alloc.tbID = tableID
 	}
@@ -667,9 +667,8 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 // TODO: Handle allocators when changing Table ID during ALTER TABLE t PARTITION BY ...
 
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
-func NewAllocatorsFromTblInfo(r Requirement, schemaID int64, tblInfo *model.TableInfo) Allocators {
+func NewAllocatorsFromTblInfo(r Requirement, dbID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
-	dbID := schemaID
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIDCache)
 	tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
 

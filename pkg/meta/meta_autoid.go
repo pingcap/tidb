@@ -28,7 +28,7 @@ type AutoIDAccessor interface {
 	Get() (int64, error)
 	Put(val int64) error
 	Inc(step int64) (int64, error)
-	Transfer(databaseID, tableID int64) error
+	CopyTo(databaseID, tableID int64) error
 	Del() error
 }
 
@@ -80,16 +80,15 @@ func (a *autoIDAccessor) Del() error {
 
 var _ AutoIDAccessors = &autoIDAccessors{}
 
-// Transfer implements the interface AutoIDAccessor.
-// It's used to transfer the current accessor to another table
-func (a *autoIDAccessor) Transfer(databaseID, tableID int64) error {
+// CopyTo implements the interface AutoIDAccessor.
+// It's used to copy the current meta to another table after rename table
+func (a *autoIDAccessor) CopyTo(databaseID, tableID int64) error {
 	curr, err := a.Get()
 	if err != nil {
 		return err
 	}
-	a.databaseID = databaseID
-	a.tableID = tableID
-	return a.Put(curr)
+	m := a.m
+	return m.txn.HSet(m.dbKey(databaseID), a.idEncodeFn(tableID), []byte(strconv.FormatInt(curr, 10)))
 }
 
 // AutoIDAccessors represents all the auto IDs of a table.

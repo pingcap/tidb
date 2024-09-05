@@ -908,18 +908,47 @@ func forceFullReload(t *testing.T, store kv.Storage, dom *domain.Domain) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
-	tk.MustExec("create table test.t(id int)")
-	tk.MustExec("drop table test.t")
+	tk.MustExec("create table test.forcereload(id int)")
+	tk.MustExec("drop table test.forcereload")
 	dom.Reload()
 
 	domain.LoadSchemaDiffVersionGapThreshold = prev
 }
 
+func TestRenameWithSmallAutoIDStep(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	prev := autoid.GetStep()
+	autoid.SetStep(1)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists rename1")
+	tk.MustExec("drop database if exists rename2")
+	tk.MustExec("drop database if exists rename3")
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create database rename3")
+	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
+	tk.MustExec("insert rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	// Make sure the drop old database doesn't affect the rename3.t's operations.
+	tk.MustExec("drop database rename1")
+
+	tk.MustExec("insert rename2.t values ()")
+	tk.MustExec("rename table rename2.t to rename3.t")
+	tk.MustExec("insert rename3.t values ()")
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "2", "3"))
+	// Make sure the drop old database doesn't affect the rename3.t's operations.
+	tk.MustExec("drop database rename2")
+	tk.MustExec("insert rename3.t values ()")
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("drop database rename3")
+
+	autoid.SetStep(prev)
+}
+
 func TestRenameTableWithReload(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
-	}()
 	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
@@ -941,11 +970,15 @@ func TestRenameTableWithReload(t *testing.T) {
 	tk.MustExec("insert rename2.t values ()")
 	tk.MustExec("rename table rename2.t to rename3.t")
 	tk.MustExec("insert rename3.t values ()")
+	// After reload, autoid will start from 5000, not 0
 	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "5002"))
 	// Make sure the drop old database doesn't affect the rename3.t's operations.
 	tk.MustExec("drop database rename2")
+
+	forceFullReload(t, store, dom)
+
 	tk.MustExec("insert rename3.t values ()")
-	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "5002", "5003"))
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "5002", "10001"))
 	tk.MustExec("drop database rename3")
 }
 
