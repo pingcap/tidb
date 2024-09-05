@@ -218,8 +218,6 @@ func (h *hashJoinSpillHelper) isPartitionSpilled(partID int) bool {
 	return h.spilledPartitions[partID]
 }
 
-// func (h *hashJoinSpillHelper)
-
 func (h *hashJoinSpillHelper) discardInDisks(inDisks [][]*chunk.DataInDiskByChunks) error {
 	hasNilInDisk := false
 	for _, disks := range inDisks {

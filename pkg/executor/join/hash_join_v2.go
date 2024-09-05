@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -447,6 +448,19 @@ type HashJoinV2Exec struct {
 	isMemoryClearedForTest bool
 }
 
+func (e *HashJoinV2Exec) initMaxSpillRound() {
+	e.maxSpillRound = 1
+	totalPartitionsNum := e.partitionNumber
+	for {
+		if totalPartitionsNum > 1024 {
+			break
+		}
+		totalPartitionsNum *= e.partitionNumber
+		e.maxSpillRound++
+	}
+	e.maxSpillRound = max(1, e.maxSpillRound-1)
+}
+
 // Close implements the Executor Close interface.
 func (e *HashJoinV2Exec) Close() error {
 	if e.closeCh != nil {
@@ -513,6 +527,13 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 
 	e.diskTracker = disk.NewTracker(e.ID(), -1)
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
+	e.spillHelper = newHashJoinSpillHelper(e, int(e.partitionNumber), e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes())
+
+	if variable.EnableTmpStorageOnOOM.Load() && e.partitionNumber > 1 {
+		e.initMaxSpillRound()
+		e.spillAction = newHashJoinSpillDiskAction(e.spillHelper)
+		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+	}
 
 	e.workerWg = util.WaitGroupWrapper{}
 	e.waiterWg = util.WaitGroupWrapper{}
@@ -847,6 +868,15 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 
 		if e.memTracker.BytesConsumed() != 0 {
 			e.isMemoryClearedForTest = false
+		}
+
+		// Collect, so that we can close them in the end.
+		// We must collect them once they are popped from stack, or the resource may
+		// fail to be recycled because of the possible panic.
+		err = e.spillHelper.discardInDisks([][]*chunk.DataInDiskByChunks{restoredPartition.buildSideChunks, restoredPartition.probeSideChunks})
+		if err != nil {
+			e.joinResultCh <- &hashjoinWorkerResult{err: err}
+			return
 		}
 
 		lastRound = restoredPartition.round
