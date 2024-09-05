@@ -397,7 +397,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 				mockJoinProber.appendBuildRowToCachedBuildRowsV1(0, rowStart, resultChunk, 0, hasOtherConditionColumns)
 			}
 		}
-		if len(mockJoinProber.cachedBuildRows) > 0 {
+		if mockJoinProber.nextCachedBuildRowIndex > 0 {
 			if hasOtherConditionColumns {
 				mockJoinProber.batchConstructBuildRows(tmpChunk, 0, hasOtherConditionColumns)
 			} else {
@@ -436,7 +436,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 			}
 			rowIndex++
 		}
-		if len(mockJoinProber.cachedBuildRows) > 0 {
+		if mockJoinProber.nextCachedBuildRowIndex > 0 {
 			if hasOtherConditionColumns {
 				mockJoinProber.batchConstructBuildRows(tmpChunk, 0, hasOtherConditionColumns)
 			} else {

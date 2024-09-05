@@ -492,7 +492,7 @@ func (j *baseJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedC
 				j.appendBuildRowToCachedBuildRowsV2(&j.rowIndexInfos[index], chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition, false)
 			}
 		}
-		if len(j.cachedBuildRows) > 0 {
+		if j.nextCachedBuildRowIndex > 0 {
 			j.batchConstructBuildRows(chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition, false)
 		}
 	}

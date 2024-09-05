@@ -113,7 +113,7 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 	if j.rowIter == nil {
 		panic("scanRowTable before init")
 	}
-	j.cachedBuildRows = j.cachedBuildRows[:0]
+	j.nextCachedBuildRowIndex = 0
 	meta := j.ctx.hashTableMeta
 	insertedRows := 0
 	remainCap := joinResult.chk.RequiredRows() - joinResult.chk.NumRows()
@@ -131,7 +131,7 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 		joinResult.err = err
 		return joinResult
 	}
-	if len(j.cachedBuildRows) > 0 {
+	if j.nextCachedBuildRowIndex > 0 {
 		j.batchConstructBuildRows(joinResult.chk, 0, false)
 	}
 	// append probe side in batch
@@ -176,7 +176,7 @@ func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joine
 		}
 	}
 	if hasRemainCols {
-		j.cachedBuildRows = j.cachedBuildRows[:0]
+		j.nextCachedBuildRowIndex = 0
 		markedJoined = true
 		meta := j.ctx.hashTableMeta
 		for index, result := range j.selected {
@@ -186,7 +186,7 @@ func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joine
 				j.appendBuildRowToCachedBuildRowsV2(&rowIndexInfo, chk, meta.columnCountNeededForOtherCondition, false)
 			}
 		}
-		if len(j.cachedBuildRows) > 0 {
+		if j.nextCachedBuildRowIndex > 0 {
 			j.batchConstructBuildRows(chk, meta.columnCountNeededForOtherCondition, false)
 		}
 	}
