@@ -83,6 +83,7 @@ type staticEvalCtxState struct {
 	requestVerificationFn        func(db, table, column string, priv mysql.PrivilegeType) bool
 	requestDynamicVerificationFn func(privName string, grantable bool) bool
 	paramList                    []types.Datum
+	userVars                     variable.UserVarsReader
 	props                        contextopt.OptionalEvalPropProviders
 }
 
@@ -212,6 +213,13 @@ func WithEnableRedactLog(enableRedactLog string) StaticEvalCtxOption {
 	}
 }
 
+// WithUserVarsReader set the user variables reader for the `StaticEvalContext`.
+func WithUserVarsReader(vars variable.UserVarsReader) StaticEvalCtxOption {
+	return func(s *staticEvalCtxState) {
+		s.userVars = vars
+	}
+}
+
 var defaultSQLMode = func() mysql.SQLMode {
 	mode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
 	if err != nil {
@@ -251,6 +259,10 @@ func NewStaticEvalContext(opt ...StaticEvalCtxOption) *StaticEvalContext {
 
 	if ctx.warnHandler == nil {
 		ctx.warnHandler = contextutil.NewStaticWarnHandler(0)
+	}
+
+	if ctx.userVars == nil {
+		ctx.userVars = variable.NewUserVars()
 	}
 
 	return ctx
@@ -340,6 +352,11 @@ func (ctx *StaticEvalContext) GetDefaultWeekFormatMode() string {
 // GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
 func (ctx *StaticEvalContext) GetDivPrecisionIncrement() int {
 	return ctx.divPrecisionIncrement
+}
+
+// GetUserVarsReader returns the user variables.
+func (ctx *StaticEvalContext) GetUserVarsReader() variable.UserVarsReader {
+	return ctx.userVars
 }
 
 // RequestVerification verifies user privilege
@@ -516,6 +533,7 @@ func MakeEvalContextStatic(ctx exprctx.StaticConvertibleEvalContext) *StaticEval
 		WithPrivCheck(ctx.GetRequestVerificationFn()),
 		WithDynamicPrivCheck(ctx.GetDynamicPrivCheckFn()),
 		WithParamList(params),
+		WithUserVarsReader(ctx.GetUserVarsReader().Clone()),
 		WithOptionalProperty(props...),
 		WithEnableRedactLog(ctx.GetTiDBRedactLog()),
 	)
