@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -90,7 +91,7 @@ func (fetcher *probeSideTupleFetcherBase) initializeForProbeBase(concurrency uin
 }
 
 func (fetcher *probeSideTupleFetcherBase) handleProbeSideFetcherPanic(r any) {
-	for i := range fetcher.probeResultChs {
+	for i := range fetcher.probeResultChs { // TODO re-create it at next restore round
 		close(fetcher.probeResultChs[i])
 	}
 	if r != nil {
@@ -218,10 +219,61 @@ type buildWorkerBase struct {
 	BuildKeyColIdx []int
 }
 
+func syncerAdd(syncer *sync.WaitGroup) {
+	if syncer != nil {
+		syncer.Add(1)
+	}
+}
+
+func syncerDone(syncer *sync.WaitGroup) {
+	if syncer != nil {
+		syncer.Done()
+	}
+}
+
+func checkSpillAndExecute(fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper) error {
+	if fetcherAndWorkerSyncer == nil {
+		return nil
+	}
+
+	if spillHelper.isSpillNeeded() {
+		// Wait for the stop of all workers
+		fetcherAndWorkerSyncer.Wait()
+		return spillHelper.spillRowTable()
+	}
+	return nil
+}
+
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
-func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
+func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *hashJoinCtxBase, fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper, chkCh chan<- *chunk.Chunk, errCh chan<- error, doneCh <-chan struct{}) {
+	hasError := false
+
+	// We must put the close of chkCh after the place of spilling remaining rows or there will be data race
 	defer close(chkCh)
+
+	defer func() {
+		if r := recover(); r != nil {
+			errCh <- util.GetRecoverError(r)
+			return
+		}
+
+		if hasError {
+			return
+		}
+
+		if fetcherAndWorkerSyncer != nil {
+			if spillHelper.isSpillTriggeredNoLock() {
+				// Spill remaining rows
+				fetcherAndWorkerSyncer.Wait()
+				err := spillHelper.spillRemainingRows()
+				if err != nil {
+					errCh <- errors.Trace(err)
+				}
+			}
+		}
+	}()
+
 	var err error
 	failpoint.Inject("issue30289", func(val failpoint.Value) {
 		if val.(bool) {
@@ -230,6 +282,7 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 			return
 		}
 	})
+
 	failpoint.Inject("issue42662_1", func(val failpoint.Value) {
 		if val.(bool) {
 			if hashJoinCtx.SessCtx.GetSessionVars().ConnectionID != 0 {
@@ -239,36 +292,56 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 			return
 		}
 	})
+
 	sessVars := hashJoinCtx.SessCtx.GetSessionVars()
 	failpoint.Inject("issue51998", func(val failpoint.Value) {
 		if val.(bool) {
 			time.Sleep(2 * time.Second)
 		}
 	})
+
 	for {
+		err := checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper)
+		err = triggerIntest(2)
+		if err != nil {
+			hasError = true
+			return
+		}
+
 		if hashJoinCtx.finished.Load() {
 			return
 		}
+
 		chk := hashJoinCtx.ChunkAllocPool.Alloc(w.BuildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
 		err = exec.Next(ctx, w.BuildSideExec, chk)
+
 		failpoint.Inject("issue51998", func(val failpoint.Value) {
 			if val.(bool) {
+				hasError = true
 				err = errors.Errorf("issue51998 build return error")
 			}
 		})
+
 		if err != nil {
+			hasError = true
 			errCh <- errors.Trace(err)
 			return
 		}
+
 		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
 		failpoint.Inject("ConsumeRandomPanic", nil)
+
 		if chk.NumRows() == 0 {
 			return
 		}
+
+		syncerAdd(fetcherAndWorkerSyncer)
 		select {
 		case <-doneCh:
+			syncerDone(fetcherAndWorkerSyncer)
 			return
 		case <-hashJoinCtx.closeCh:
+			syncerDone(fetcherAndWorkerSyncer)
 			return
 		case chkCh <- chk:
 		}

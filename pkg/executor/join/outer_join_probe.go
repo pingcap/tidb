@@ -59,17 +59,26 @@ func newOuterJoinProbe(base baseJoinProbe, isOuterSideBuild bool, isRightSideBui
 	return probe
 }
 
-func (j *outerJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
-	err = j.baseJoinProbe.SetChunkForProbe(chunk)
-	if err != nil {
-		return err
-	}
+func (j *outerJoinProbe) prepareIsNotMatchedRows() {
 	if !j.isOuterSideBuild {
 		j.isNotMatchedRows = j.isNotMatchedRows[:0]
 		for i := 0; i < j.chunkRows; i++ {
 			j.isNotMatchedRows = append(j.isNotMatchedRows, true)
 		}
+
+		for _, spilledIdx := range j.spilledIdx {
+			j.isNotMatchedRows[spilledIdx] = false
+		}
 	}
+}
+
+func (j *outerJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
+	err = j.baseJoinProbe.SetChunkForProbe(chunk)
+	if err != nil {
+		return err
+	}
+	
+	j.prepareIsNotMatchedRows()
 	return nil
 }
 

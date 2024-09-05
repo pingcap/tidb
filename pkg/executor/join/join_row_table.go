@@ -162,6 +162,36 @@ func (rts *rowTableSegment) validKeyCount() uint64 {
 	return uint64(len(rts.validJoinKeyPos))
 }
 
+func (rts *rowTableSegment) getRowNum() int {
+	return len(rts.hashValues)
+}
+
+// This function is available to be used only when `rowStartOffset` has been initialized
+// The suffix `ForSpill` in function name means that `next_row_ptr` field will be reset.
+func (rts *rowTableSegment) getRowsBytesForSpill() [][]byte {
+	rowNum := rts.getRowNum()
+	startPos := int64(0)
+	rows := make([][]byte, 0)
+	for idx := 0; idx < rowNum; idx++ {
+		if idx == rowNum-1 {
+			rows = append(rows, rts.rawData[startPos:])
+			continue
+		}
+
+		rowByteLen := int64(rts.rowStartOffset[idx+1] - rts.rowStartOffset[idx])
+		end := startPos + rowByteLen
+
+		// set `next_ptr_row` to nil
+		nextPtrAddr := (unsafe.Pointer)(&rts.rawData[startPos])
+		*(*unsafe.Pointer)(nextPtrAddr) = nil
+
+		rows = append(rows, rts.rawData[startPos:end])
+		startPos = end
+	}
+
+	return rows
+}
+
 func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress taggedPtr) {
 	*(*taggedPtr)(rowStart) = nextRowAddress
 }
@@ -705,7 +735,7 @@ func newRowTable(meta *TableMeta) *rowTable {
 func (b *rowTableBuilder) appendRemainingRowLocations(workerID int, htCtx *hashTableContext) {
 	for partID := 0; partID < int(htCtx.hashTable.partitionNumber); partID++ {
 		if b.rowNumberInCurrentRowTableSeg[partID] > 0 {
-			htCtx.finalizeCurrentSeg(workerID, partID, b)
+			htCtx.finalizeCurrentSeg(workerID, partID, b, true)
 		}
 	}
 }
@@ -808,7 +838,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		// first check if current seg is full
 		if b.rowNumberInCurrentRowTableSeg[partIdx] >= maxRowTableSegmentSize || len(seg.rawData) >= maxRowTableSegmentByteSize {
 			// finalize current seg and create a new seg
-			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partIdx, b)
+			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partIdx, b, true)
 			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, hashJoinCtx.hashTableMeta, true, b.firstSegRowSizeHint)
 		}
 		if hasValidKey {

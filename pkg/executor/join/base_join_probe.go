@@ -131,6 +131,14 @@ type baseJoinProbe struct {
 	rowIndexInfos []matchedRowInfo
 	selected      []bool
 
+	probeSpillChkFieldTypes []*types.FieldType
+
+	// This marks which columns are probe columns, and it is used only in spill
+	usedColIdx  []int
+	spillTmpChk []*chunk.Chunk
+
+	spilledIdx []int
+
 	probeCollision uint64
 }
 
@@ -229,6 +237,17 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			return err
 		}
 	}
+
+	// Not all sqls need spill, so we initialize it at runtime, or there will be too many unnecessary memory allocations
+	// spillTriggered can only be set in build stage, so it's ok to get it without lock
+	if j.ctx.spillHelper.isSpillTriggeredNoLock() && len(j.spillTmpChk) != int(j.ctx.partitionNumber) {
+		for i := 0; i < int(j.ctx.partitionNumber); i++ {
+			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkWithCapacity(j.probeSpillChkFieldTypes, spillChunkSize))
+		}
+	}
+
+	j.spilledIdx = j.spilledIdx[:0]
+
 	// generate hash value
 	hash := fnv.New64()
 	for logicalRowIndex, physicalRowIndex := range j.usedRows {
@@ -238,15 +257,37 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.matchedRowsHashValue[logicalRowIndex] = 0
 			continue
 		}
+
 		hash.Reset()
+
 		// As the golang doc described, `Hash.Write` never returns an error.
 		// See https://golang.org/pkg/hash/#Hash
 		_, _ = hash.Write(j.serializedKeys[logicalRowIndex])
 		hashValue := hash.Sum64()
 		j.matchedRowsHashValue[logicalRowIndex] = hashValue
-		partIndex := hashValue >> j.ctx.partitionMaskOffset
-		j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
+		partIndex := generatePartitionIndex(hashValue, j.ctx.partitionMaskOffset)
+		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
+			j.spillTmpChk[partIndex].AppendInt64(0, int64(hashValue))
+			j.spillTmpChk[partIndex].AppendBytes(1, j.serializedKeys[logicalRowIndex])
+			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(logicalRowIndex))
+
+			j.spilledIdx = append(j.spilledIdx, logicalRowIndex)
+
+			if j.spillTmpChk[partIndex].IsFull() {
+				err := j.ctx.spillHelper.spillProbeChk(int(j.workID), int(partIndex), j.spillTmpChk[partIndex])
+				if err != nil {
+					return err
+				}
+				j.spillTmpChk[partIndex].Reset()
+			}
+
+			j.matchedRowsHeaders[logicalRowIndex] = 0
+			j.matchedRowsHashValue[logicalRowIndex] = 0
+		} else {
+			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
+		}
 	}
+
 	j.currentProbeRow = 0
 	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		for index := range j.hashValues[i] {

@@ -498,6 +498,7 @@ func (h *hashJoinSpillHelper) reset() {
 }
 
 func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
+	// TODO add random failpoint
 	if lastRound+1 > h.hashJoinExec.maxSpillRound {
 		return errors.NewNoStackError(exceedMaxSpillRoundErrInfo)
 	}

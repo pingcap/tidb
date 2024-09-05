@@ -17,14 +17,15 @@ package join
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
+	"math/rand"
 	"runtime/trace"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -37,13 +38,24 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/serialization"
 )
+
+const minimalHashTableLen = 32
 
 var (
 	_ exec.Executor = &HashJoinV2Exec{}
 	// enableHashJoinV2 is a variable used only in test
 	enableHashJoinV2 = atomic.Bool{}
 )
+
+func getHashTableLength(table *rowTable) uint64 {
+	return max(nextPowerOfTwo(table.validKeyCount()), uint64(minimalHashTableLen))
+}
+
+func getHashTableMemoryUsage(hashTableLength uint64) int64 {
+	return int64(hashTableLength) * serialization.UnsafePointerLen
+}
 
 func init() {
 	enableHashJoinV2.Store(true)
@@ -76,6 +88,23 @@ func (htc *hashTableContext) reset() {
 	htc.hashTable = nil
 	htc.tagHelper = nil
 	htc.memoryTracker.Detach()
+}
+
+func (htc *hashTableContext) getAllMemoryUsageInHashTableTest() int64 {
+	partNum := len(htc.hashTable.tables)
+	totalMemoryUsage := int64(0)
+	for i := 0; i < partNum; i++ {
+		mem := htc.hashTable.getPartitionMemoryUsageTest(i)
+		totalMemoryUsage += mem
+	}
+	return totalMemoryUsage
+}
+
+func (htc *hashTableContext) clearHashTable() {
+	partNum := len(htc.hashTable.tables)
+	for i := 0; i < partNum; i++ {
+		htc.hashTable.clearPartitionSegments(i)
+	}
 }
 
 func (htc *hashTableContext) getPartitionMemoryUsage(partID int) int64 {
@@ -154,20 +183,73 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 	return htc.rowTables[workerID][partitionID].segments[segNum-1]
 }
 
-func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder) {
+func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder, needConsume bool) {
 	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false, 0)
 	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
 	seg.initTaggedBits()
 	seg.finalized = true
-	htc.memoryTracker.Consume(seg.totalUsedBytes())
+	if needConsume {
+		htc.memoryTracker.Consume(seg.totalUsedBytes())
+	}
 }
 
-func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber uint) int {
+func (htc *hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable) (int64, []int64) {
+	totalMemoryUsage := int64(0)
+	partitionsMemoryUsage := make([]int64, 0)
+	for _, table := range rowTables {
+		hashTableLength := getHashTableLength(table)
+		memoryUsage := getHashTableMemoryUsage(hashTableLength)
+		partitionsMemoryUsage = append(partitionsMemoryUsage, memoryUsage)
+		totalMemoryUsage += memoryUsage
+	}
+	return totalMemoryUsage, partitionsMemoryUsage
+}
+
+// In order to avoid the allocation of hash table, we pre-calculate the memory usage in advance
+// to know which hash tables need to be created.
+func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hashJoinSpillHelper) ([]*rowTable, error) {
+	totalMemoryUsage, partitionsMemoryUsage := htc.calculateHashTableMemoryUsage(rowTables)
+
+	// Pre-consume the memory usage
+	htc.memoryTracker.Consume(totalMemoryUsage)
+
+	if spillHelper != nil && spillHelper.isSpillNeeded() {
+		spillHelper.spillTriggeredBeforeBuildingHashTableForTest = true
+		err := spillHelper.spillRowTable()
+		if err != nil {
+			return nil, err
+		}
+
+		spilledPartition := spillHelper.getSpilledPartitions()
+		for _, partID := range spilledPartition {
+			// Clear spilled row tables
+			rowTables[partID].clearSegments()
+		}
+
+		// Some partitions have been spilled, we need to release their pre-consumed memory
+		totalReleasedMemoryUsage := int64(0)
+		for _, partID := range spilledPartition {
+			totalReleasedMemoryUsage += partitionsMemoryUsage[partID]
+		}
+
+		// Though some partitions have been spilled or are empty, their hash tables are still be created
+		// because probe rows in these partitions may access their hash tables.
+		// We need to consider these memory usage.
+		totalDefaultMemUsage := getHashTableMemoryUsage(minimalHashTableLen) * int64(len(spilledPartition))
+
+		htc.memoryTracker.Consume(totalDefaultMemUsage - totalReleasedMemoryUsage)
+	}
+
+	return rowTables, nil
+}
+
+func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber uint, spillHelper *hashJoinSpillHelper) (int, error) {
 	rowTables := make([]*rowTable, partitionNumber)
 	for i := 0; i < int(partitionNumber); i++ {
 		rowTables[i] = newRowTable(tableMeta)
 	}
+
 	totalSegmentCnt := 0
 	for _, rowTablesPerWorker := range htc.rowTables {
 		for partIdx, rt := range rowTablesPerWorker {
@@ -178,6 +260,17 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 			totalSegmentCnt += len(rt.segments)
 		}
 	}
+
+	var err error
+
+	// spillHelper may be nil in ut
+	if spillHelper != nil {
+		rowTables, err = htc.tryToSpill(rowTables, spillHelper)
+		if err != nil {
+			return 0, err
+		}
+	}
+
 	taggedBits := uint8(maxTaggedBits)
 	for i := 0; i < int(partitionNumber); i++ {
 		for _, seg := range rowTables[i].segments {
@@ -185,10 +278,11 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 		}
 		htc.hashTable.tables[i] = newSubTable(rowTables[i])
 	}
+
 	htc.tagHelper = &tagPtrHelper{}
 	htc.tagHelper.init(taggedBits)
 	htc.rowTables = nil
-	return totalSegmentCnt
+	return totalSegmentCnt, nil
 }
 
 // HashJoinCtxV2 is the hash join ctx used in hash join v2
@@ -214,6 +308,16 @@ type HashJoinCtxV2 struct {
 	maxSpillRound int
 	spillHelper   *hashJoinSpillHelper
 	spillAction   *hashJoinSpillAction
+}
+
+func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
+	memoryUsage := hCtx.hashTableContext.getAllSegmentsMemoryUsageInRowTable()
+	hCtx.hashTableContext.clearAllSegmentsInRowTable()
+	hCtx.hashTableContext.memoryTracker.Consume(-memoryUsage)
+
+	memoryUsage = hCtx.hashTableContext.getAllMemoryUsageInHashTableTest()
+	hCtx.hashTableContext.clearHashTable()
+	hCtx.hashTableContext.memoryTracker.Consume(-memoryUsage)
 }
 
 // partitionNumber is always power of 2
@@ -291,6 +395,15 @@ type BuildWorkerV2 struct {
 	BuildTypes     []*types.FieldType
 	HasNullableKey bool
 	WorkerID       uint
+	builder        *rowTableBuilder
+}
+
+func (b *BuildWorkerV2) getSegmentsInRowTable(partID int) []*rowTableSegment {
+	return b.HashJoinCtx.hashTableContext.getSegmentsInRowTable(int(b.WorkerID), partID)
+}
+
+func (b *BuildWorkerV2) clearSegmentsInRowTable(partID int) {
+	b.HashJoinCtx.hashTableContext.clearSegmentsInRowTable(int(b.WorkerID), partID)
 }
 
 // NewJoinBuildWorkerV2 create a BuildWorkerV2
@@ -325,10 +438,13 @@ type HashJoinV2Exec struct {
 	workerWg util.WaitGroupWrapper
 	waiterWg util.WaitGroupWrapper
 
+	restoredBuildInDisk []*chunk.DataInDiskByChunks
 	restoredProbeInDisk []*chunk.DataInDiskByChunks
 
 	prepared  bool
 	inRestore bool
+
+	isMemoryClearedForTest bool
 }
 
 // Close implements the Executor Close interface.
@@ -420,7 +536,7 @@ func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
 	return false
 }
 
-func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk) (err error) {
+func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, fetcherAndWorkerSyncer *sync.WaitGroup, srcChkCh chan *chunk.Chunk) (err error) {
 	cost := int64(0)
 	defer func() {
 		if w.HashJoinCtx.stats != nil {
@@ -431,20 +547,47 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 	partitionNumber := w.HashJoinCtx.partitionNumber
 	hashJoinCtx := w.HashJoinCtx
 
-	builder := createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
+	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	for chk := range srcChkCh {
-		start := time.Now()
-		err = builder.processOneChunk(chk, typeCtx, w.HashJoinCtx, int(w.WorkerID))
-		failpoint.Inject("splitPartitionPanic", nil)
-		cost += int64(time.Since(start))
+		err := w.splitPartitionAndAppendToRowTableImpl(typeCtx, chk, fetcherAndWorkerSyncer, &cost)
 		if err != nil {
 			return err
 		}
 	}
+
 	start := time.Now()
-	builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
+	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
 	cost += int64(time.Since(start))
+	return nil
+}
+
+func (w *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk, cost *int64) error {
+	start := time.Now()
+	err := w.builder.processOneChunk(chk, typeCtx, w.HashJoinCtx, int(w.WorkerID))
+	failpoint.Inject("splitPartitionPanic", nil)
+	*cost += int64(time.Since(start))
+	return err
+}
+
+func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableImpl(typeCtx types.Context, chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
+	defer func() {
+		fetcherAndWorkerSyncer.Done()
+	}()
+
+	if w.HashJoinCtx.finished.Load() {
+		return nil
+	}
+
+	err := triggerIntest(5)
+	if err != nil {
+		return err
+	}
+
+	err = w.processOneChunk(typeCtx, chk, cost)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -477,11 +620,11 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 }
 
 func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
-	fetchProbeSideChunksFunc := func() {
-		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
-		if e.inRestore {
-			// TODO
-		} else {
+	if e.inRestore {
+
+	} else {
+		fetchProbeSideChunksFunc := func() {
+			defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
 			e.ProbeSideTupleFetcher.fetchProbeSideChunks(
 				ctx,
 				e.MaxChunkSize(),
@@ -490,9 +633,10 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 				e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone,
 				e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize(),
 				&e.ProbeSideTupleFetcher.hashJoinCtxBase)
+
 		}
+		e.workerWg.RunWithRecover(fetchProbeSideChunksFunc, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
 	}
-	e.workerWg.RunWithRecover(fetchProbeSideChunksFunc, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
 }
 
 func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
@@ -512,7 +656,7 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 func (e *HashJoinV2Exec) fetchAndProbeHashTable(ctx context.Context) {
 	e.startProbeFetcher(ctx)
 	e.startProbeJoinWorkers(ctx)
-	e.waiterWg.RunWithRecover(e.waitJoinWorkersAndCloseResultChan, nil)
+	e.waiterWg.RunWithRecover(e.waitJoinWorkers, nil)
 }
 
 func (w *ProbeWorkerV2) handleProbeWorkerPanic(r any) {
@@ -527,13 +671,14 @@ func (e *HashJoinV2Exec) handleJoinWorkerPanic(r any) {
 	}
 }
 
-func (e *HashJoinV2Exec) waitJoinWorkersAndCloseResultChan() {
+func (e *HashJoinV2Exec) waitJoinWorkers() {
 	e.workerWg.Wait()
 	if e.stats != nil {
 		for _, prober := range e.ProbeWorkers {
 			e.stats.hashStat.probeCollision += int64(prober.JoinProbe.GetProbeCollision())
 		}
 	}
+
 	if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
 		for i := uint(0); i < e.Concurrency; i++ {
 			var workerID = i
@@ -543,7 +688,6 @@ func (e *HashJoinV2Exec) waitJoinWorkersAndCloseResultChan() {
 		}
 		e.workerWg.Wait()
 	}
-	close(e.joinResultCh)
 }
 
 func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
@@ -579,11 +723,18 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 	if joinResult.err != nil {
 		return false, waitTime, joinResult
 	}
+	return w.probeAndSendResult(joinResult)
+}
+
+func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
+	var ok bool
+	waitTime := int64(0)
 	for !w.JoinProbe.IsCurrentChunkProbeDone() {
 		ok, joinResult = w.JoinProbe.Probe(joinResult, &w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
 		if !ok || joinResult.err != nil {
 			return ok, waitTime, joinResult
 		}
+
 		failpoint.Inject("processOneProbeChunkPanic", nil)
 		if joinResult.chk.IsFull() {
 			waitStart := time.Now()
@@ -645,6 +796,8 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 		}
 		probeSideResult.Reset()
 		emptyProbeSideResult.chk = probeSideResult
+
+		// Give back to probe fetcher
 		w.probeChkResourceCh <- emptyProbeSideResult
 	}
 	// note joinResult.chk may be nil when getNewJoinResult fails in loops
@@ -671,13 +824,35 @@ func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {
 }
 
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
+	lastRound := 0
 	for {
-		lastRound := 0
-
 		e.fetchAndBuildHashTable(ctx)
 		e.fetchAndProbeHashTable(ctx)
 
-		// TODO check restore data
+		e.waiterWg.Wait()
+
+		e.spillHelper.spillRoundForTest = int(math.Max(float64(e.spillHelper.spillRoundForTest), float64(lastRound)))
+		err := e.spillHelper.prepareForRestoring(lastRound)
+		if err != nil {
+			e.joinResultCh <- &hashjoinWorkerResult{err: err}
+			return
+		}
+
+		restoredPartition := e.spillHelper.stack.pop()
+		if restoredPartition == nil {
+			// No more data to restore
+			close(e.joinResultCh)
+			return
+		}
+
+		if e.memTracker.BytesConsumed() != 0 {
+			e.isMemoryClearedForTest = false
+		}
+
+		lastRound = restoredPartition.round
+		e.restoredBuildInDisk = restoredPartition.buildSideChunks
+		e.restoredProbeInDisk = restoredPartition.probeSideChunks
+
 		e.inRestore = true
 	}
 }
@@ -814,18 +989,25 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 		return true
 	}
 
+	// It's useful when spill is triggered and the fetcher could know when workers finish their works.
+	fetcherAndWorkerSyncer := &sync.WaitGroup{}
 	wg := new(sync.WaitGroup)
 	errCh := make(chan error, 1+e.Concurrency)
+
 	// doneCh is used by the consumer(splitAndAppendToRowTable) to info the producer(fetchBuildSideRows) that the consumer meet error and stop consume data
 	doneCh := make(chan struct{}, e.Concurrency)
-	srcChkCh := e.fetchBuildSideRows(ctx, wg, errCh, doneCh)
-	e.splitAndAppendToRowTable(srcChkCh, wg, errCh, doneCh)
+	srcChkCh := e.fetchBuildSideRows(ctx, fetcherAndWorkerSyncer, wg, errCh, doneCh)
+	e.splitAndAppendToRowTable(srcChkCh, fetcherAndWorkerSyncer, wg, errCh, doneCh)
 	success := waitJobDone(wg, errCh)
 	if !success {
 		return
 	}
 
-	totalSegmentCnt := e.hashTableContext.mergeRowTablesToHashTable(e.hashTableMeta, e.partitionNumber)
+	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(e.hashTableMeta, e.partitionNumber, e.spillHelper)
+	if err != nil {
+		e.buildFinished <- err
+		return
+	}
 
 	wg = new(sync.WaitGroup)
 	errCh = make(chan error, 1+e.Concurrency)
@@ -836,7 +1018,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 	waitJobDone(wg, errCh)
 }
 
-func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) chan *chunk.Chunk {
+func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) chan *chunk.Chunk {
 	srcChkCh := make(chan *chunk.Chunk, 1)
 	wg.Add(1)
 	e.workerWg.RunWithRecover(
@@ -846,7 +1028,7 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, wg *sync.WaitGr
 			if e.inRestore {
 				// TODO
 			} else {
-				fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, srcChkCh, errCh, doneCh)
+				fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, fetcherAndWorkerSyncer, e.spillHelper, srcChkCh, errCh, doneCh)
 			}
 		},
 		func(r any) {
@@ -859,7 +1041,7 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, wg *sync.WaitGr
 	return srcChkCh
 }
 
-func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
+func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
 	for i := uint(0); i < e.Concurrency; i++ {
 		wg.Add(1)
 		workIndex := i
@@ -869,7 +1051,7 @@ func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, wg
 				if e.inRestore {
 					// TODO
 				} else {
-					err = e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh)
+					err = e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), fetcherAndWorkerSyncer, srcChkCh)
 				}
 				if err != nil {
 					errCh <- err
@@ -1045,4 +1227,33 @@ func (e *hashJoinRuntimeStatsV2) Merge(rs execdetails.RuntimeStats) {
 	if e.maxFetchAndProbe < tmp.maxFetchAndProbe {
 		e.maxFetchAndProbe = tmp.maxFetchAndProbe
 	}
+}
+
+func generatePartitionIndex(hashValue uint64, partitionMaskOffset int) uint64 {
+	return hashValue >> uint64(partitionMaskOffset)
+}
+
+func triggerIntest(errProbability int) error {
+	failpoint.Inject("slowWorkers", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(100000)
+			if num < 4 {
+				time.Sleep(time.Duration(num) * time.Millisecond)
+			}
+		}
+	})
+
+	var err error
+	failpoint.Inject("panicOrError", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(100000)
+			if num < errProbability/2 {
+				panic("Random panic")
+			} else if num < errProbability {
+				err = errors.New("Random error is triggered")
+			}
+		}
+	})
+
+	return err
 }
