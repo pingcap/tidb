@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This file contains utilities for easier testing.g
+// This file contains utilities for easier testing.
 
 // MockInfoCacheAndLoadInfoSchema only used in unit tests.
 func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {

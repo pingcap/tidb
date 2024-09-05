@@ -450,7 +450,7 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
 
 	eg, ectx := errgroup.WithContext(context.Background())
-	concurrency := mathutil.Min(len(splittedSchemas), 128)
+	concurrency := min(len(splittedSchemas), 128)
 	workers := util.NewWorkerPool(uint(concurrency), "fetch schemas with tables")
 	for _, schemas := range splittedSchemas {
 		ss := schemas
