@@ -14,7 +14,7 @@
 
 package util
 
-import "github.com/pingcap/tidb/pkg/parser/model"
+import "github.com/pingcap/tidb/pkg/meta/model"
 
 // SchemaChangeEvent stands for a schema change event. DDL will generate one event or multiple events (only for multi-schema change DDL).
 // The caller should check the Type field of SchemaChange and call the corresponding getter function to retrieve the needed information.

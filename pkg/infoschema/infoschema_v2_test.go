@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
@@ -35,8 +36,8 @@ func TestV2Basic(t *testing.T) {
 	}()
 	is := NewInfoSchemaV2(r, nil, NewData())
 
-	schemaName := model.NewCIStr("testDB")
-	tableName := model.NewCIStr("test")
+	schemaName := pmodel.NewCIStr("testDB")
+	tableName := pmodel.NewCIStr("test")
 
 	dbInfo := internal.MockDBInfo(t, r.Store(), schemaName.O)
 	is.Data.addDB(1, dbInfo)
@@ -70,7 +71,7 @@ func TestV2Basic(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, gotTblInfo, getTableInfo.Meta())
 
-	gotTblInfo, err = is.TableInfoByName(schemaName, model.NewCIStr("notexist"))
+	gotTblInfo, err = is.TableInfoByName(schemaName, pmodel.NewCIStr("notexist"))
 	require.Error(t, err)
 	require.Nil(t, gotTblInfo)
 
@@ -111,11 +112,11 @@ func TestV2Basic(t *testing.T) {
 	require.Equal(t, 1, len(tblInfos))
 	require.Equal(t, tables[0], tblInfos[0])
 
-	tables, err = is.SchemaTableInfos(context.Background(), model.NewCIStr("notexist"))
+	tables, err = is.SchemaTableInfos(context.Background(), pmodel.NewCIStr("notexist"))
 	require.NoError(t, err)
 	require.Equal(t, 0, len(tables))
 
-	tblInfos, err = is.SchemaTableInfos(context.Background(), model.NewCIStr("notexist"))
+	tblInfos, err = is.SchemaTableInfos(context.Background(), pmodel.NewCIStr("notexist"))
 	require.NoError(t, err)
 	require.Equal(t, 0, len(tblInfos))
 
@@ -250,8 +251,8 @@ func TestBundles(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	schemaName := model.NewCIStr("testDB")
-	tableName := model.NewCIStr("test")
+	schemaName := pmodel.NewCIStr("testDB")
+	tableName := pmodel.NewCIStr("test")
 	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
@@ -285,6 +286,10 @@ func TestBundles(t *testing.T) {
 
 	// test create policy
 	policyInfo := internal.MockPolicyInfo(t, r.Store(), "test")
+	policyInfo.PlacementSettings = &model.PlacementSettings{
+		PrimaryRegion: "r1",
+		Regions:       "r1,r2",
+	}
 	internal.CreatePolicy(t, r.Store(), policyInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
@@ -300,6 +305,7 @@ func TestBundles(t *testing.T) {
 	// markTableBundleShouldUpdate
 	// test alter table placement
 	policyRefInfo := internal.MockPolicyRefInfo(t, r.Store(), "test")
+	policyRefInfo.ID = policyInfo.ID
 	tblInfo.PlacementPolicyRef = policyRefInfo
 	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err = r.Store().Begin()
@@ -311,10 +317,14 @@ func TestBundles(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, policyRefInfo, getTableInfo.Meta().PlacementPolicyRef)
 	require.NoError(t, txn.Rollback())
+	bundle, ok := is.PlacementBundleByPhysicalTableID(tblInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, bundle.Rules[0].LabelConstraints[0].Values[0], policyInfo.PrimaryRegion)
 
 	// markBundlesReferPolicyShouldUpdate
 	// test alter policy
 	policyInfo.State = model.StatePublic
+	policyInfo.PrimaryRegion = "r2"
 	internal.UpdatePolicy(t, r.Store(), policyInfo)
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
@@ -326,6 +336,121 @@ func TestBundles(t *testing.T) {
 	getPolicyInfo, ok = is.PolicyByName(getTableInfo.Meta().PlacementPolicyRef.Name)
 	require.True(t, ok)
 	require.Equal(t, policyInfo, getPolicyInfo)
+	bundle, ok = is.PlacementBundleByPhysicalTableID(tblInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, bundle.Rules[0].LabelConstraints[0].Values[0], policyInfo.PrimaryRegion)
+
+	// test alter table partition placement
+	tblInfo.Partition.Definitions[0].PlacementPolicyRef = policyRefInfo
+	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterTablePartitionPlacement, Version: 6, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build(math.MaxUint64)
+	bundle, ok = is.PlacementBundleByPhysicalTableID(tblInfo.Partition.Definitions[0].ID)
+	require.True(t, ok)
+	require.Equal(t, bundle.Rules[0].LabelConstraints[0].Values[0], policyInfo.PrimaryRegion)
+
+	// markPartitionBundleShouldUpdate
+	// test alter policy
+	policyInfo.PrimaryRegion = "r1"
+	internal.UpdatePolicy(t, r.Store(), policyInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAlterPlacementPolicy, Version: 6, SchemaID: policyInfo.ID})
+	require.NoError(t, err)
+	is = builder.Build(math.MaxUint64)
+	bundle, ok = is.PlacementBundleByPhysicalTableID(tblInfo.Partition.Definitions[0].ID)
+	require.True(t, ok)
+	require.Equal(t, bundle.Rules[0].LabelConstraints[0].Values[0], policyInfo.PrimaryRegion)
+}
+
+func TestReferredFKInfo(t *testing.T) {
+	r := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		r.Store().Close()
+	}()
+
+	schemaName := pmodel.NewCIStr("testDB")
+	tableName := pmodel.NewCIStr("testTable")
+	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, 1)
+	require.NoError(t, err)
+	is := builder.Build(math.MaxUint64)
+	v2, ok := is.(*infoschemaV2)
+	require.True(t, ok)
+
+	// create database
+	dbInfo := internal.MockDBInfo(t, r.Store(), schemaName.O)
+	internal.AddDB(t, r.Store(), dbInfo)
+	txn, err := r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
+	require.NoError(t, err)
+
+	// check ReferredFKInfo after create table
+	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
+	tblInfo.ForeignKeys = []*model.FKInfo{{
+		ID:        1,
+		Name:      pmodel.NewCIStr("fk_1"),
+		RefSchema: pmodel.NewCIStr("t1"),
+		RefTable:  pmodel.NewCIStr("parent"),
+		Version:   1,
+	}}
+	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	require.Equal(t, len(v2.referredForeignKeyMap), 1)
+	ref, ok := v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
+	require.True(t, ok)
+	require.Equal(t, len(ref), 1)
+	require.Equal(t, ref[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
+
+	// check ReferredFKInfo after add foreign key
+	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &model.FKInfo{
+		ID:        2,
+		Name:      pmodel.NewCIStr("fk_2"),
+		RefSchema: pmodel.NewCIStr("t1"),
+		RefTable:  pmodel.NewCIStr("parent"),
+		Version:   1,
+	})
+	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionAddForeignKey, Version: 3, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	require.Equal(t, len(v2.referredForeignKeyMap), 1)
+	ref, ok = v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
+	require.True(t, ok)
+	require.Equal(t, len(ref), 2)
+	require.Equal(t, ref[1].ChildFKName, tblInfo.ForeignKeys[1].Name)
+
+	// check ReferredFKInfo after drop foreign key
+	tblInfo.ForeignKeys = tblInfo.ForeignKeys[:1]
+	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionDropForeignKey, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	require.Equal(t, len(v2.referredForeignKeyMap), 1)
+	ref, ok = v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
+	require.True(t, ok)
+	require.Equal(t, len(ref), 1)
+	require.Equal(t, ref[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
+
+	// check ReferredFKInfo after drop table
+	internal.DropTable(t, r.Store(), dbInfo, tblInfo.ID, tblInfo.Name.L)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	require.Equal(t, len(v2.referredForeignKeyMap), 1)
+	ref, ok = v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
+	require.True(t, ok)
+	require.Equal(t, len(ref), 0)
 }
 
 func updateTableSpecialAttribute(t *testing.T, dbInfo *model.DBInfo, tblInfo *model.TableInfo, builder *Builder, r autoid.Requirement,
@@ -353,8 +478,8 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	schemaName := model.NewCIStr("testDB")
-	tableName := model.NewCIStr("testTable")
+	schemaName := pmodel.NewCIStr("testDB")
+	tableName := pmodel.NewCIStr("testTable")
 	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
@@ -388,12 +513,12 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	// tests partition info correctness in schema change
 	tblInfo.Partition = &model.PartitionInfo{
 		Expr: "aa+1",
-		Columns: []model.CIStr{
-			model.NewCIStr("aa"),
+		Columns: []pmodel.CIStr{
+			pmodel.NewCIStr("aa"),
 		},
 		Definitions: []model.PartitionDefinition{
-			{ID: 1, Name: model.NewCIStr("p1")},
-			{ID: 2, Name: model.NewCIStr("p2")},
+			{ID: 1, Name: pmodel.NewCIStr("p1")},
+			{ID: 2, Name: pmodel.NewCIStr("p2")},
 		},
 		Enable:   true,
 		DDLState: model.StatePublic,
@@ -409,7 +534,7 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	// test placement policy correctness in schema change
 	tblInfo.PlacementPolicyRef = &model.PolicyRefInfo{
 		ID:   1,
-		Name: model.NewCIStr("p3"),
+		Name: pmodel.NewCIStr("p3"),
 	}
 	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAlterTablePlacement, 5, PlacementPolicyAttribute, true)
 	require.Equal(t, tblInfo.PlacementPolicyRef, tblInfo1.PlacementPolicyRef)
@@ -429,7 +554,7 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 
 	// test table lock correctness in schema change
 	tblInfo.Lock = &model.TableLockInfo{
-		Tp:    model.TableLockRead,
+		Tp:    pmodel.TableLockRead,
 		State: model.TableLockStatePublic,
 		TS:    1,
 	}
@@ -441,11 +566,11 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	// test foreign key correctness in schema change
 	tblInfo.ForeignKeys = []*model.FKInfo{{
 		ID:        1,
-		Name:      model.NewCIStr("fk_1"),
-		RefSchema: model.NewCIStr("t"),
-		RefTable:  model.NewCIStr("t"),
-		RefCols:   []model.CIStr{model.NewCIStr("a")},
-		Cols:      []model.CIStr{model.NewCIStr("t_a")},
+		Name:      pmodel.NewCIStr("fk_1"),
+		RefSchema: pmodel.NewCIStr("t"),
+		RefTable:  pmodel.NewCIStr("t"),
+		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("a")},
+		Cols:      []pmodel.CIStr{pmodel.NewCIStr("t_a")},
 		State:     model.StateWriteOnly,
 	}}
 	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddForeignKey, 11, ForeignKeysAttribute, true)
@@ -460,8 +585,8 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	schemaName := model.NewCIStr("testDB")
-	tableName := model.NewCIStr("testTable")
+	schemaName := pmodel.NewCIStr("testDB")
+	tableName := pmodel.NewCIStr("testTable")
 	builder := NewBuilder(r, nil, NewData(), variable.SchemaCacheSize.Load() > 0)
 	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
@@ -504,8 +629,8 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	require.Equal(t, v2.Data.pid2tid.Len(), 0)
 	tblInfo.Partition = &model.PartitionInfo{
 		Definitions: []model.PartitionDefinition{
-			{ID: 1, Name: model.NewCIStr("p1")},
-			{ID: 2, Name: model.NewCIStr("p2")},
+			{ID: 1, Name: pmodel.NewCIStr("p1")},
+			{ID: 2, Name: pmodel.NewCIStr("p2")},
 		},
 		Enable:   true,
 		DDLState: model.StatePublic,

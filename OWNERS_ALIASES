@@ -40,10 +40,7 @@ aliases:
     - D3Hunter
     - gmhdbjd
     - lance6716
-    - lichunzhu
-    - okJiang
   sig-approvers-domain: # approvers for domain pkg
-    - zimulala
     - D3Hunter
     - gmhdbjd
     - lance6716
@@ -53,8 +50,9 @@ aliases:
     - Benjamin2037
     - tangenta
     - wjhuang2016
-    - ywqzzy
-    - zimulala
+    - D3Hunter
+    - gmhdbjd
+    - lance6716
   sig-approvers-disttask: # approvers for disttask pkg
     - Benjamin2037
     - D3Hunter
@@ -62,19 +60,14 @@ aliases:
     - lance6716
     - tangenta
     - wjhuang2016
-    - ywqzzy
   sig-approvers-dumpling: # approvers for dumpling module
     - Benjamin2037
     - gmhdbjd
-    - lichunzhu
-    - okJiang
     - lance6716
     - tangenta
   sig-approvers-infoschema: # approvers for infoschema pkg
-    - zimulala
     - wjhuang2016
     - tangenta
-    - ywqzzy
     - D3Hunter
     - Benjamin2037
     - gmhdbjd
@@ -83,15 +76,11 @@ aliases:
     - gmhdbjd
     - tangenta
     - wjhuang2016
-    - ywqzzy
-    - zimulala    
   sig-approvers-owner: # approvers for `owner` pkg
     - Benjamin2037
-    - lichunzhu
     - tangenta
     - wjhuang2016
-    - ywqzzy
-    - zimulala
+    - D3Hunter
   sig-approvers-parser: # approvers for `parser` module.
     - bb7133
     - BornChanger
@@ -104,25 +93,21 @@ aliases:
     - lance6716
     - tangenta
     - wjhuang2016
-    - ywqzzy
   sig-approvers-table: # approvers for table packages.
     - Benjamin2037
     - cfzjywxk
     - gmhdbjd
     - tangenta
     - wjhuang2016
-    - ywqzzy
-    - zimulala
   sig-approvers-lock: # approvers for lock pkg
     - Benjamin2037
     - lance6716
     - tangenta
     - wjhuang2016
-    - zimulala
   sig-approvers-tidb-binlog: # approvers for tidb-binlog module
     - Benjamin2037
     - gmhdbjd
-    - lichunzhu
+    - lance6716
   sig-approvers-planner: # approvers for planner module
     - AilinKid
     - Rustin170506

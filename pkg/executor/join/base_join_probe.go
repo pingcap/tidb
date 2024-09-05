@@ -106,8 +106,9 @@ type baseJoinProbe struct {
 	selRows  []int
 	usedRows []int
 	// matchedRowsHeaders, serializedKeys is indexed by logical row index
-	matchedRowsHeaders []uintptr // the start address of each matched rows
-	serializedKeys     [][]byte  // used for save serialized keys
+	matchedRowsHeaders   []taggedPtr // the start address of each matched rows
+	matchedRowsHashValue []uint64    // the hash value of each matched rows
+	serializedKeys       [][]byte    // used for save serialized keys
 	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
 	filterVector                  []bool              // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector                 []bool              // nullKeyVector[i] = true if any of the key is null
@@ -184,7 +185,12 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	if cap(j.matchedRowsHeaders) >= logicalRows {
 		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRows]
 	} else {
-		j.matchedRowsHeaders = make([]uintptr, logicalRows)
+		j.matchedRowsHeaders = make([]taggedPtr, logicalRows)
+	}
+	if cap(j.matchedRowsHashValue) >= logicalRows {
+		j.matchedRowsHashValue = j.matchedRowsHashValue[:logicalRows]
+	} else {
+		j.matchedRowsHashValue = make([]uint64, logicalRows)
 	}
 	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		j.hashValues[i] = j.hashValues[i][:0]
@@ -234,6 +240,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		if (j.filterVector != nil && !j.filterVector[physicalRowIndex]) || (j.nullKeyVector != nil && j.nullKeyVector[physicalRowIndex]) {
 			// explicit set the matchedRowsHeaders[logicalRowIndex] to nil to indicate there is no matched rows
 			j.matchedRowsHeaders[logicalRowIndex] = 0
+			j.matchedRowsHashValue[logicalRowIndex] = 0
 			continue
 		}
 		hash.Reset()
@@ -241,13 +248,14 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		// See https://golang.org/pkg/hash/#Hash
 		_, _ = hash.Write(j.serializedKeys[logicalRowIndex])
 		hashValue := hash.Sum64()
+		j.matchedRowsHashValue[logicalRowIndex] = hashValue
 		partIndex := hashValue >> j.ctx.partitionMaskOffset
 		j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
 	}
 	j.currentProbeRow = 0
 	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		for index := range j.hashValues[i] {
-			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.hashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
+			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.lookup(i, j.hashValues[i][index].hashValue)
 		}
 	}
 	return
@@ -527,7 +535,8 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		}
 	}
 	base.cachedBuildRows = make([]*matchedRowInfo, 0, batchBuildRowSize)
-	base.matchedRowsHeaders = make([]uintptr, 0, chunk.InitialCapacity)
+	base.matchedRowsHeaders = make([]taggedPtr, 0, chunk.InitialCapacity)
+	base.matchedRowsHashValue = make([]uint64, 0, chunk.InitialCapacity)
 	base.selRows = make([]int, 0, chunk.InitialCapacity)
 	for i := 0; i < chunk.InitialCapacity; i++ {
 		base.selRows = append(base.selRows, i)

@@ -22,7 +22,8 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
@@ -37,7 +38,7 @@ func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableI
 		tblInfo = tbl.Meta()
 		prefix = tblInfo.Name.L + "."
 	} else {
-		db, exists := is.SchemaByName(model.NewCIStr("test"))
+		db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
 		require.True(t, exists, comment)
 		tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
 		require.NoError(t, err)

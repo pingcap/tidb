@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 )
@@ -68,7 +70,7 @@ const (
 	ActionDropSequence                  ActionType = 36
 	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
-	ActionModifyTableAutoIdCache        ActionType = 39 //nolint:revive
+	ActionModifyTableAutoIDCache        ActionType = 39
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
 	ActionExchangeTablePartition        ActionType = 42
@@ -78,7 +80,7 @@ const (
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
-	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46 //nolint:revive
+	_DEPRECATEDActionAlterTableAlterPartition ActionType = 46
 
 	ActionRenameTables                  ActionType = 47
 	ActionDropIndexes                   ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
@@ -148,7 +150,7 @@ var ActionMap = map[ActionType]string{
 	ActionCreateSequence:                "create sequence",
 	ActionAlterSequence:                 "alter sequence",
 	ActionDropSequence:                  "drop sequence",
-	ActionModifyTableAutoIdCache:        "modify auto id cache",
+	ActionModifyTableAutoIDCache:        "modify auto id cache",
 	ActionRebaseAutoRandomBase:          "rebase auto_random ID",
 	ActionAlterIndexVisibility:          "alter index visibility",
 	ActionExchangeTablePartition:        "exchange partition",
@@ -180,104 +182,7 @@ var ActionMap = map[ActionType]string{
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
-	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
-}
-
-// DDLBDRType is the type for DDL when BDR enable.
-type DDLBDRType string
-
-const (
-	// UnsafeDDL means the DDL can't be executed by user when cluster is Primary/Secondary.
-	UnsafeDDL DDLBDRType = "unsafe DDL"
-	// SafeDDL means the DDL can be executed by user when cluster is Primary.
-	SafeDDL DDLBDRType = "safe DDL"
-	// UnmanagementDDL means the DDL can't be synced by CDC.
-	UnmanagementDDL DDLBDRType = "unmanagement DDL"
-	// UnknownDDL means the DDL is unknown.
-	UnknownDDL DDLBDRType = "unknown DDL"
-)
-
-// ActionBDRMap is the map of DDL ActionType to DDLBDRType.
-var ActionBDRMap = map[ActionType]DDLBDRType{}
-
-// BDRActionMap is the map of DDLBDRType to ActionType (reversed from ActionBDRMap).
-var BDRActionMap = map[DDLBDRType][]ActionType{
-	SafeDDL: {
-		ActionCreateSchema,
-		ActionCreateTable,
-		ActionAddColumn, // add a new column to table if it’s nullable or with default value.
-		ActionAddIndex,  //add non-unique index
-		ActionDropIndex,
-		ActionModifyColumn, // add or update comments for column, change default values of one particular column
-		ActionSetDefaultValue,
-		ActionModifyTableComment,
-		ActionRenameIndex,
-		ActionAddTablePartition,
-		ActionDropPrimaryKey,
-		ActionAlterIndexVisibility,
-		ActionCreateTables,
-		ActionAlterTTLInfo,
-		ActionAlterTTLRemove,
-		ActionCreateView,
-		ActionDropView,
-	},
-	UnsafeDDL: {
-		ActionDropSchema,
-		ActionDropTable,
-		ActionDropColumn,
-		ActionAddForeignKey,
-		ActionDropForeignKey,
-		ActionTruncateTable,
-		ActionRebaseAutoID,
-		ActionRenameTable,
-		ActionShardRowID,
-		ActionDropTablePartition,
-		ActionModifyTableCharsetAndCollate,
-		ActionTruncateTablePartition,
-		ActionRecoverTable,
-		ActionModifySchemaCharsetAndCollate,
-		ActionLockTable,
-		ActionUnlockTable,
-		ActionRepairTable,
-		ActionSetTiFlashReplica,
-		ActionUpdateTiFlashReplicaStatus,
-		ActionAddPrimaryKey,
-		ActionCreateSequence,
-		ActionAlterSequence,
-		ActionDropSequence,
-		ActionModifyTableAutoIdCache,
-		ActionRebaseAutoRandomBase,
-		ActionExchangeTablePartition,
-		ActionAddCheckConstraint,
-		ActionDropCheckConstraint,
-		ActionAlterCheckConstraint,
-		ActionRenameTables,
-		ActionAlterTableAttributes,
-		ActionAlterTablePartitionAttributes,
-		ActionAlterTablePartitionPlacement,
-		ActionModifySchemaDefaultPlacement,
-		ActionAlterTablePlacement,
-		ActionAlterCacheTable,
-		ActionAlterTableStatsOptions,
-		ActionAlterNoCacheTable,
-		ActionMultiSchemaChange,
-		ActionFlashbackCluster,
-		ActionRecoverSchema,
-		ActionReorganizePartition,
-		ActionAlterTablePartitioning,
-		ActionRemovePartitioning,
-	},
-	UnmanagementDDL: {
-		ActionCreatePlacementPolicy,
-		ActionAlterPlacementPolicy,
-		ActionDropPlacementPolicy,
-		ActionCreateResourceGroup,
-		ActionAlterResourceGroup,
-		ActionDropResourceGroup,
-	},
-	UnknownDDL: {
-		__DEPRECATED_ActionAlterTableAlterPartition,
-	},
+	_DEPRECATEDActionAlterTableAlterPartition: "alter partition",
 }
 
 // String return current ddl action in string
@@ -288,202 +193,52 @@ func (action ActionType) String() string {
 	return "none"
 }
 
-// HistoryInfo is used for binlog.
-type HistoryInfo struct {
-	SchemaVersion int64
-	DBInfo        *DBInfo
-	TableInfo     *TableInfo
-	FinishedTS    uint64
+// SchemaState is the state for schema elements.
+type SchemaState byte
 
-	// MultipleTableInfos is like TableInfo but only for operations updating multiple tables.
-	MultipleTableInfos []*TableInfo
-}
+const (
+	// StateNone means this schema element is absent and can't be used.
+	StateNone SchemaState = iota
+	// StateDeleteOnly means we can only delete items for this schema element.
+	StateDeleteOnly
+	// StateWriteOnly means we can use any write operation on this schema element,
+	// but outer can't read the changed data.
+	StateWriteOnly
+	// StateWriteReorganization means we are re-organizing whole data after write only state.
+	StateWriteReorganization
+	// StateDeleteReorganization means we are re-organizing whole data after delete only state.
+	StateDeleteReorganization
+	// StatePublic means this schema element is ok for all write and read operations.
+	StatePublic
+	// StateReplicaOnly means we're waiting tiflash replica to be finished.
+	StateReplicaOnly
+	// StateGlobalTxnOnly means we can only use global txn for operator on this schema element
+	StateGlobalTxnOnly
+	/*
+	 *  Please add the new state at the end to keep the values consistent across versions.
+	 */
+)
 
-// AddDBInfo adds schema version and schema information that are used for binlog.
-// dbInfo is added in the following operations: create database, drop database.
-func (h *HistoryInfo) AddDBInfo(schemaVer int64, dbInfo *DBInfo) {
-	h.SchemaVersion = schemaVer
-	h.DBInfo = dbInfo
-}
-
-// AddTableInfo adds schema version and table information that are used for binlog.
-// tblInfo is added except for the following operations: create database, drop database.
-func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
-	h.SchemaVersion = schemaVer
-	h.TableInfo = tblInfo
-}
-
-// SetTableInfos is like AddTableInfo, but will add multiple table infos to the binlog.
-func (h *HistoryInfo) SetTableInfos(schemaVer int64, tblInfos []*TableInfo) {
-	h.SchemaVersion = schemaVer
-	h.MultipleTableInfos = make([]*TableInfo, len(tblInfos))
-	copy(h.MultipleTableInfos, tblInfos)
-}
-
-// Clean cleans history information.
-func (h *HistoryInfo) Clean() {
-	h.SchemaVersion = 0
-	h.DBInfo = nil
-	h.TableInfo = nil
-	h.MultipleTableInfos = nil
-}
-
-// TimeZoneLocation represents a single time zone.
-type TimeZoneLocation struct {
-	Name     string `json:"name"`
-	Offset   int    `json:"offset"` // seconds east of UTC
-	location *time.Location
-}
-
-// GetLocation gets the timezone location.
-func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
-	if tz.location != nil {
-		return tz.location, nil
-	}
-
-	var err error
-	if tz.Offset == 0 {
-		tz.location, err = time.LoadLocation(tz.Name)
-	} else {
-		tz.location = time.FixedZone(tz.Name, tz.Offset)
-	}
-	return tz.location, err
-}
-
-// MultiSchemaInfo keeps some information for multi schema change.
-type MultiSchemaInfo struct {
-	SubJobs    []*SubJob `json:"sub_jobs"`
-	Revertible bool      `json:"revertible"`
-	Seq        int32     `json:"seq"`
-
-	// SkipVersion is used to control whether generating a new schema version for a sub-job.
-	SkipVersion bool `json:"-"`
-
-	AddColumns    []CIStr `json:"-"`
-	DropColumns   []CIStr `json:"-"`
-	ModifyColumns []CIStr `json:"-"`
-	AddIndexes    []CIStr `json:"-"`
-	DropIndexes   []CIStr `json:"-"`
-	AlterIndexes  []CIStr `json:"-"`
-
-	AddForeignKeys []AddForeignKeyInfo `json:"-"`
-
-	RelativeColumns []CIStr `json:"-"`
-	PositionColumns []CIStr `json:"-"`
-}
-
-// AddForeignKeyInfo contains foreign key information.
-type AddForeignKeyInfo struct {
-	Name CIStr
-	Cols []CIStr
-}
-
-// NewMultiSchemaInfo new a MultiSchemaInfo.
-func NewMultiSchemaInfo() *MultiSchemaInfo {
-	return &MultiSchemaInfo{
-		SubJobs:    nil,
-		Revertible: true,
-	}
-}
-
-// SubJob is a representation of one DDL schema change. A Job may contain zero
-// (when multi-schema change is not applicable) or more SubJobs.
-type SubJob struct {
-	Type        ActionType      `json:"type"`
-	Args        []interface{}   `json:"-"`
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
-	SnapshotVer uint64          `json:"snapshot_ver"`
-	RealStartTS uint64          `json:"real_start_ts"`
-	Revertible  bool            `json:"revertible"`
-	State       JobState        `json:"state"`
-	RowCount    int64           `json:"row_count"`
-	Warning     *terror.Error   `json:"warning"`
-	CtxVars     []interface{}   `json:"-"`
-	SchemaVer   int64           `json:"schema_version"`
-	ReorgTp     ReorgType       `json:"reorg_tp"`
-	UseCloud    bool            `json:"use_cloud"`
-}
-
-// IsNormal returns true if the sub-job is normally running.
-func (sub *SubJob) IsNormal() bool {
-	switch sub.State {
-	case JobStateCancelling, JobStateCancelled,
-		JobStateRollingback, JobStateRollbackDone:
-		return false
+// String implements fmt.Stringer interface.
+func (s SchemaState) String() string {
+	switch s {
+	case StateDeleteOnly:
+		return "delete only"
+	case StateWriteOnly:
+		return "write only"
+	case StateWriteReorganization:
+		return "write reorganization"
+	case StateDeleteReorganization:
+		return "delete reorganization"
+	case StatePublic:
+		return "public"
+	case StateReplicaOnly:
+		return "replica only"
+	case StateGlobalTxnOnly:
+		return "global txn only"
 	default:
-		return true
+		return "none"
 	}
-}
-
-// IsFinished returns true if the job is done.
-func (sub *SubJob) IsFinished() bool {
-	return sub.State == JobStateDone ||
-		sub.State == JobStateRollbackDone ||
-		sub.State == JobStateCancelled
-}
-
-// ToProxyJob converts a sub-job to a proxy job.
-func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
-	return Job{
-		ID:              parentJob.ID,
-		Type:            sub.Type,
-		SchemaID:        parentJob.SchemaID,
-		TableID:         parentJob.TableID,
-		SchemaName:      parentJob.SchemaName,
-		State:           sub.State,
-		Warning:         sub.Warning,
-		Error:           nil,
-		ErrorCount:      0,
-		RowCount:        sub.RowCount,
-		Mu:              sync.Mutex{},
-		CtxVars:         sub.CtxVars,
-		Args:            sub.Args,
-		RawArgs:         sub.RawArgs,
-		SchemaState:     sub.SchemaState,
-		SnapshotVer:     sub.SnapshotVer,
-		RealStartTS:     sub.RealStartTS,
-		StartTS:         parentJob.StartTS,
-		DependencyID:    parentJob.DependencyID,
-		Query:           parentJob.Query,
-		BinlogInfo:      parentJob.BinlogInfo,
-		Version:         parentJob.Version,
-		ReorgMeta:       parentJob.ReorgMeta,
-		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
-		Priority:        parentJob.Priority,
-		SeqNum:          parentJob.SeqNum,
-		Charset:         parentJob.Charset,
-		Collate:         parentJob.Collate,
-		AdminOperator:   parentJob.AdminOperator,
-		TraceInfo:       parentJob.TraceInfo,
-	}
-}
-
-// FromProxyJob converts a proxy job to a sub-job.
-func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
-	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
-	sub.SchemaState = proxyJob.SchemaState
-	sub.SnapshotVer = proxyJob.SnapshotVer
-	sub.RealStartTS = proxyJob.RealStartTS
-	sub.Args = proxyJob.Args
-	sub.State = proxyJob.State
-	sub.Warning = proxyJob.Warning
-	sub.RowCount = proxyJob.RowCount
-	sub.SchemaVer = ver
-	sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
-	sub.UseCloud = proxyJob.ReorgMeta.UseCloudStorage
-}
-
-// JobMeta is meta info of Job.
-type JobMeta struct {
-	SchemaID int64 `json:"schema_id"`
-	TableID  int64 `json:"table_id"`
-	// Type is the DDL job's type.
-	Type ActionType `json:"job_type"`
-	// Query is the DDL job's SQL string.
-	Query string `json:"query"`
-	// Priority is only used to set the operation priority of adding indices.
-	Priority int `json:"priority"`
 }
 
 // Job is for a DDL operation.
@@ -509,14 +264,14 @@ type Job struct {
 	// CtxVars are variables attached to the job. It is for internal usage.
 	// E.g. passing arguments between functions by one single *Job pointer.
 	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
-	CtxVars []interface{} `json:"-"`
+	CtxVars []any `json:"-"`
 	// Note: it might change when state changes, such as when rollback on AddColumn.
-	// - CreateTable, it's [model.TableInfo, foreignKeyCheck]
+	// - CreateTable, it's [TableInfo, foreignKeyCheck]
 	// - AddIndex or AddPrimaryKey: [unique, ....
 	// - TruncateTable: [new-table-id, foreignKeyCheck, ...
 	// - RenameTable: [old-db-id, new-table-name, old-db-name]
 	// - ExchangeTablePartition: [partition-id, pt-db-id, pt-id, partition-name, with-validation]
-	Args []interface{} `json:"-"`
+	Args []any `json:"-"`
 	// RawArgs : We must use json raw message to delay parsing special args.
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
@@ -590,44 +345,6 @@ type Job struct {
 	SQLMode mysql.SQLMode `json:"sql_mode"`
 }
 
-// InvolvingSchemaInfo returns the schema info involved in the job. The value
-// should be stored in lower case. Only one type of the three member types
-// (Database&Table, Policy, ResourceGroup) should only be set in a
-// InvolvingSchemaInfo.
-type InvolvingSchemaInfo struct {
-	Database      string                  `json:"database,omitempty"`
-	Table         string                  `json:"table,omitempty"`
-	Policy        string                  `json:"policy,omitempty"`
-	ResourceGroup string                  `json:"resource_group,omitempty"`
-	Mode          InvolvingSchemaInfoMode `json:"mode,omitempty"`
-}
-
-// InvolvingSchemaInfoMode is used by InvolvingSchemaInfo.Mode.
-type InvolvingSchemaInfoMode int
-
-// ExclusiveInvolving and SharedInvolving are considered like the exclusive lock
-// and shared lock when calculate DDL job dependencies. And we also implement the
-// fair lock semantic which means if we have job A/B/C arrive in order, and job B
-// (exclusive request object 0) is waiting for the running job A (shared request
-// object 0), and job C (shared request object 0) arrives, job C should also be
-// blocked until job B is finished although job A & C has no dependency.
-const (
-	// ExclusiveInvolving is the default value to keep compatibility with old
-	// versions.
-	ExclusiveInvolving InvolvingSchemaInfoMode = iota
-	SharedInvolving
-)
-
-const (
-	// InvolvingAll means all schemas/tables are affected. It's used in
-	// InvolvingSchemaInfo.Database/Tables fields. When both the Database and Tables
-	// are InvolvingAll it also means all placement policies and resource groups are
-	// affected. Currently the only case is FLASHBACK CLUSTER.
-	InvolvingAll = "*"
-	// InvolvingNone means no schema/table is affected.
-	InvolvingNone = ""
-)
-
 // FinishTableJob is called when a job is finished.
 // It updates the job's state information and adds tblInfo to the binlog.
 func (job *Job) FinishTableJob(jobState JobState, schemaState SchemaState, ver int64, tblInfo *TableInfo) {
@@ -674,22 +391,16 @@ func (job *Job) Clone() *Job {
 		return nil
 	}
 	if len(job.Args) > 0 {
-		clone.Args = make([]interface{}, len(job.Args))
+		clone.Args = make([]any, len(job.Args))
 		copy(clone.Args, job.Args)
 	}
 	if job.MultiSchemaInfo != nil {
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
-			clone.MultiSchemaInfo.SubJobs[i].Args = make([]interface{}, len(sub.Args))
+			clone.MultiSchemaInfo.SubJobs[i].Args = make([]any, len(sub.Args))
 			copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
 		}
 	}
 	return &clone
-}
-
-// TSConvert2Time converts timestamp to time.
-func TSConvert2Time(ts uint64) time.Time {
-	t := int64(ts >> 18) // 18 is for the logical time.
-	return time.UnixMilli(t)
 }
 
 // SetRowCount sets the number of rows. Make sure it can pass `make race`.
@@ -764,7 +475,7 @@ func (job *Job) Decode(b []byte) error {
 
 // DecodeArgs decodes serialized job arguments from job.RawArgs into the given
 // variables, and also save the result in job.Args.
-func (job *Job) DecodeArgs(args ...interface{}) error {
+func (job *Job) DecodeArgs(args ...any) error {
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {
 		return errors.Trace(err)
@@ -1049,7 +760,7 @@ func (job *Job) IsRollbackable() bool {
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
-		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement, ActionDropCheckConstraint:
+		ActionModifyTableAutoIDCache, ActionModifySchemaDefaultPlacement, ActionDropCheckConstraint:
 		return job.SchemaState == StateNone
 	case ActionMultiSchemaChange:
 		return job.MultiSchemaInfo.Revertible
@@ -1076,6 +787,180 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 		{Database: job.SchemaName, Table: table},
 	}
 }
+
+// SubJob is a representation of one DDL schema change. A Job may contain zero
+// (when multi-schema change is not applicable) or more SubJobs.
+type SubJob struct {
+	Type        ActionType      `json:"type"`
+	Args        []any           `json:"-"`
+	RawArgs     json.RawMessage `json:"raw_args"`
+	SchemaState SchemaState     `json:"schema_state"`
+	SnapshotVer uint64          `json:"snapshot_ver"`
+	RealStartTS uint64          `json:"real_start_ts"`
+	Revertible  bool            `json:"revertible"`
+	State       JobState        `json:"state"`
+	RowCount    int64           `json:"row_count"`
+	Warning     *terror.Error   `json:"warning"`
+	CtxVars     []any           `json:"-"`
+	SchemaVer   int64           `json:"schema_version"`
+	ReorgTp     ReorgType       `json:"reorg_tp"`
+	UseCloud    bool            `json:"use_cloud"`
+}
+
+// IsNormal returns true if the sub-job is normally running.
+func (sub *SubJob) IsNormal() bool {
+	switch sub.State {
+	case JobStateCancelling, JobStateCancelled,
+		JobStateRollingback, JobStateRollbackDone:
+		return false
+	default:
+		return true
+	}
+}
+
+// IsFinished returns true if the job is done.
+func (sub *SubJob) IsFinished() bool {
+	return sub.State == JobStateDone ||
+		sub.State == JobStateRollbackDone ||
+		sub.State == JobStateCancelled
+}
+
+// ToProxyJob converts a sub-job to a proxy job.
+func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
+	return Job{
+		ID:              parentJob.ID,
+		Type:            sub.Type,
+		SchemaID:        parentJob.SchemaID,
+		TableID:         parentJob.TableID,
+		SchemaName:      parentJob.SchemaName,
+		State:           sub.State,
+		Warning:         sub.Warning,
+		Error:           nil,
+		ErrorCount:      0,
+		RowCount:        sub.RowCount,
+		Mu:              sync.Mutex{},
+		CtxVars:         sub.CtxVars,
+		Args:            sub.Args,
+		RawArgs:         sub.RawArgs,
+		SchemaState:     sub.SchemaState,
+		SnapshotVer:     sub.SnapshotVer,
+		RealStartTS:     sub.RealStartTS,
+		StartTS:         parentJob.StartTS,
+		DependencyID:    parentJob.DependencyID,
+		Query:           parentJob.Query,
+		BinlogInfo:      parentJob.BinlogInfo,
+		Version:         parentJob.Version,
+		ReorgMeta:       parentJob.ReorgMeta,
+		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
+		Priority:        parentJob.Priority,
+		SeqNum:          parentJob.SeqNum,
+		Charset:         parentJob.Charset,
+		Collate:         parentJob.Collate,
+		AdminOperator:   parentJob.AdminOperator,
+		TraceInfo:       parentJob.TraceInfo,
+	}
+}
+
+// FromProxyJob converts a proxy job to a sub-job.
+func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
+	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
+	sub.SchemaState = proxyJob.SchemaState
+	sub.SnapshotVer = proxyJob.SnapshotVer
+	sub.RealStartTS = proxyJob.RealStartTS
+	sub.Args = proxyJob.Args
+	sub.State = proxyJob.State
+	sub.Warning = proxyJob.Warning
+	sub.RowCount = proxyJob.RowCount
+	sub.SchemaVer = ver
+	sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+	sub.UseCloud = proxyJob.ReorgMeta.UseCloudStorage
+}
+
+// MultiSchemaInfo keeps some information for multi schema change.
+type MultiSchemaInfo struct {
+	SubJobs    []*SubJob `json:"sub_jobs"`
+	Revertible bool      `json:"revertible"`
+	Seq        int32     `json:"seq"`
+
+	// SkipVersion is used to control whether generating a new schema version for a sub-job.
+	SkipVersion bool `json:"-"`
+
+	AddColumns    []model.CIStr `json:"-"`
+	DropColumns   []model.CIStr `json:"-"`
+	ModifyColumns []model.CIStr `json:"-"`
+	AddIndexes    []model.CIStr `json:"-"`
+	DropIndexes   []model.CIStr `json:"-"`
+	AlterIndexes  []model.CIStr `json:"-"`
+
+	AddForeignKeys []AddForeignKeyInfo `json:"-"`
+
+	RelativeColumns []model.CIStr `json:"-"`
+	PositionColumns []model.CIStr `json:"-"`
+}
+
+// AddForeignKeyInfo contains foreign key information.
+type AddForeignKeyInfo struct {
+	Name model.CIStr
+	Cols []model.CIStr
+}
+
+// NewMultiSchemaInfo new a MultiSchemaInfo.
+func NewMultiSchemaInfo() *MultiSchemaInfo {
+	return &MultiSchemaInfo{
+		SubJobs:    nil,
+		Revertible: true,
+	}
+}
+
+// JobMeta is meta info of Job.
+type JobMeta struct {
+	SchemaID int64 `json:"schema_id"`
+	TableID  int64 `json:"table_id"`
+	// Type is the DDL job's type.
+	Type ActionType `json:"job_type"`
+	// Query is the DDL job's SQL string.
+	Query string `json:"query"`
+	// Priority is only used to set the operation priority of adding indices.
+	Priority int `json:"priority"`
+}
+
+// InvolvingSchemaInfo returns the schema info involved in the job. The value
+// should be stored in lower case. Only one type of the three member types
+// (Database&Table, Policy, ResourceGroup) should only be set in a
+// InvolvingSchemaInfo.
+type InvolvingSchemaInfo struct {
+	Database      string                  `json:"database,omitempty"`
+	Table         string                  `json:"table,omitempty"`
+	Policy        string                  `json:"policy,omitempty"`
+	ResourceGroup string                  `json:"resource_group,omitempty"`
+	Mode          InvolvingSchemaInfoMode `json:"mode,omitempty"`
+}
+
+// InvolvingSchemaInfoMode is used by InvolvingSchemaInfo.Mode.
+type InvolvingSchemaInfoMode int
+
+// ExclusiveInvolving and SharedInvolving are considered like the exclusive lock
+// and shared lock when calculate DDL job dependencies. And we also implement the
+// fair lock semantic which means if we have job A/B/C arrive in order, and job B
+// (exclusive request object 0) is waiting for the running job A (shared request
+// object 0), and job C (shared request object 0) arrives, job C should also be
+// blocked until job B is finished although job A & C has no dependency.
+const (
+	// ExclusiveInvolving is the default value to keep compatibility with old
+	// versions.
+	ExclusiveInvolving InvolvingSchemaInfoMode = iota
+	SharedInvolving
+)
+
+const (
+	// InvolvingAll means all schemas/tables are affected. It's used in
+	// InvolvingSchemaInfo.Database/Tables fields. When both the Database and Tables
+	// are InvolvingAll it also means all placement policies and resource groups are
+	// affected. Currently the only case is FLASHBACK CLUSTER.
+	InvolvingAll = "*"
+	// InvolvingNone means no schema/table is affected.
+	InvolvingNone = ""
+)
 
 // JobState is for job state.
 type JobState int32
@@ -1180,6 +1065,7 @@ const (
 	AdminCommandBySystem
 )
 
+// String implements fmt.Stringer interface.
 func (a *AdminCommandOperator) String() string {
 	switch *a {
 	case AdminCommandByEndUser:
@@ -1226,10 +1112,72 @@ type AffectedOption struct {
 	OldSchemaID int64 `json:"old_schema_id"`
 }
 
-func init() {
-	for bdrType, v := range BDRActionMap {
-		for _, action := range v {
-			ActionBDRMap[action] = bdrType
-		}
+// HistoryInfo is used for binlog.
+type HistoryInfo struct {
+	SchemaVersion int64
+	DBInfo        *DBInfo
+	TableInfo     *TableInfo
+	FinishedTS    uint64
+
+	// MultipleTableInfos is like TableInfo but only for operations updating multiple tables.
+	MultipleTableInfos []*TableInfo
+}
+
+// AddDBInfo adds schema version and schema information that are used for binlog.
+// dbInfo is added in the following operations: create database, drop database.
+func (h *HistoryInfo) AddDBInfo(schemaVer int64, dbInfo *DBInfo) {
+	h.SchemaVersion = schemaVer
+	h.DBInfo = dbInfo
+}
+
+// AddTableInfo adds schema version and table information that are used for binlog.
+// tblInfo is added except for the following operations: create database, drop database.
+func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
+	h.SchemaVersion = schemaVer
+	h.TableInfo = tblInfo
+}
+
+// SetTableInfos is like AddTableInfo, but will add multiple table infos to the binlog.
+func (h *HistoryInfo) SetTableInfos(schemaVer int64, tblInfos []*TableInfo) {
+	h.SchemaVersion = schemaVer
+	h.MultipleTableInfos = make([]*TableInfo, len(tblInfos))
+	copy(h.MultipleTableInfos, tblInfos)
+}
+
+// Clean cleans history information.
+func (h *HistoryInfo) Clean() {
+	h.SchemaVersion = 0
+	h.DBInfo = nil
+	h.TableInfo = nil
+	h.MultipleTableInfos = nil
+}
+
+// TimeZoneLocation represents a single time zone.
+type TimeZoneLocation struct {
+	Name     string `json:"name"`
+	Offset   int    `json:"offset"` // seconds east of UTC
+	location *time.Location
+}
+
+// GetLocation gets the timezone location.
+func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
+	if tz.location != nil {
+		return tz.location, nil
 	}
+
+	var err error
+	if tz.Offset == 0 {
+		tz.location, err = time.LoadLocation(tz.Name)
+	} else {
+		tz.location = time.FixedZone(tz.Name, tz.Offset)
+	}
+	return tz.location, err
+}
+
+// TraceInfo is the information for trace.
+type TraceInfo struct {
+	// ConnectionID is the id of the connection
+	ConnectionID uint64 `json:"connection_id"`
+	// SessionAlias is the alias of session
+	SessionAlias string `json:"session_alias"`
 }
