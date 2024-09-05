@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"testing"
@@ -50,16 +51,25 @@ func TestGetDDLInfo(t *testing.T) {
 		ID: 2,
 	}
 	job := &model.Job{
+		Version:  model.JobVersion1,
 		ID:       1,
 		SchemaID: dbInfo2.ID,
 		Type:     model.ActionCreateSchema,
 		RowCount: 0,
+
+		// although RawArgsV2 is not used in this test, it should be set for compare,
+		// as json.Unmarshal will set RawArgsV2 to "null".
+		RawArgsV2: json.RawMessage("null"),
 	}
 	job1 := &model.Job{
+		Version:  model.JobVersion1,
 		ID:       2,
 		SchemaID: dbInfo2.ID,
 		Type:     model.ActionAddIndex,
 		RowCount: 0,
+
+		// same as above
+		RawArgsV2: json.RawMessage("null"),
 	}
 
 	err = addDDLJobs(sess, txn, job)

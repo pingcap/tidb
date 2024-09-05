@@ -335,7 +335,7 @@ type Job struct {
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
 
 	// MultiSchemaInfo keeps some warning now for multi schema change.
-	MultiSchemaInfo *MultiSchemaInfo `json:"multi_schema_info,omitempty"`
+	MultiSchemaInfo *MultiSchemaInfo `json:"multi_schema_info"`
 
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
@@ -369,16 +369,16 @@ type Job struct {
 	TraceInfo *TraceInfo `json:"trace_info"`
 
 	// BDRRole indicates the role of BDR cluster when executing this DDL.
-	BDRRole string `json:"bdr_role,omitempty"`
+	BDRRole string `json:"bdr_role"`
 
 	// CDCWriteSource indicates the source of CDC write.
-	CDCWriteSource uint64 `json:"cdc_write_source,omitempty"`
+	CDCWriteSource uint64 `json:"cdc_write_source"`
 
 	// LocalMode = true means the job is running on the local TiDB that the client
 	// connects to, else it's run on the DDL owner.
 	// Only happens when tidb_enable_fast_create_table = on
 	// this field is useless since 8.3
-	LocalMode bool `json:"local_mode,omitempty"`
+	LocalMode bool `json:"local_mode"`
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
