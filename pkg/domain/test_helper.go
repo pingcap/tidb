@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
@@ -48,4 +49,9 @@ func (do *Domain) MustGetTableID(t *testing.T, dbName, tableName string) int64 {
 func (do *Domain) MustGetPartitionAt(t *testing.T, dbName, tableName string, idx int) int64 {
 	ti := do.MustGetTableInfo(t, dbName, tableName)
 	return ti.Partition.Definitions[idx].ID
+}
+
+// FetchAllSchemasWithTables calls the internal function. Only used in unit tests.
+func (do *Domain) FetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
+	return do.fetchAllSchemasWithTables(m)
 }
