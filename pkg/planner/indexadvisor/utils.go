@@ -400,7 +400,7 @@ func CollectIndexableColumnsFromQuery(q Query, opt Optimizer) (s.Set[Column], er
 			for _, schemaName := range schemaNames {
 				cols, err := opt.PossibleColumns(schemaName, x.Name.L)
 				if err != nil {
-					l().Warn("failed to get possible columns",
+					advisorLogger().Warn("failed to get possible columns",
 						zap.String("schema", schemaName),
 						zap.String("column", x.Name.L))
 					continue
@@ -411,7 +411,7 @@ func CollectIndexableColumnsFromQuery(q Query, opt Optimizer) (s.Set[Column], er
 			for _, c := range possibleColumns {
 				colType, err := opt.ColumnType(c)
 				if err != nil {
-					l().Warn("failed to get column type",
+					advisorLogger().Warn("failed to get column type",
 						zap.String("schema", c.SchemaName),
 						zap.String("table", c.TableName),
 						zap.String("column", c.ColumnName))
@@ -469,7 +469,7 @@ func isIndexableColumnType(tp *types.FieldType) bool {
 	return false
 }
 
-func l() *zap.Logger {
+func advisorLogger() *zap.Logger {
 	return logutil.BgLogger().With(zap.String("component", "index_advisor"))
 }
 

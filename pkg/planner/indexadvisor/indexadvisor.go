@@ -46,37 +46,37 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
 		return nil, errors.New("nil input")
 	}
 
-	l().Info("start to recommend indexes")
+	advisorLogger().Info("start to recommend indexes")
 	defer func() {
 		if r := recover(); r != nil {
-			l().Error("panic in AdviseIndexes", zap.Any("recover", r))
+			advisorLogger().Error("panic in AdviseIndexes", zap.Any("recover", r))
 			err = fmt.Errorf("panic in AdviseIndexes: %v", r)
 		}
 	}()
 
 	// prepare what-if optimizer
 	opt := NewOptimizer(sctx)
-	l().Info("what-if optimizer prepared")
+	advisorLogger().Info("what-if optimizer prepared")
 
 	defaultDB := sctx.GetSessionVars().CurrentDB
 	querySet, err := prepareQuerySet(ctx, sctx, defaultDB, opt, option.SpecifiedSQLs)
 	if err != nil {
-		l().Error("prepare workload failed", zap.Error(err))
+		advisorLogger().Error("prepare workload failed", zap.Error(err))
 		return nil, err
 	}
 
 	// identify indexable columns
 	indexableColSet, err := CollectIndexableColumnsForQuerySet(opt, querySet)
 	if err != nil {
-		l().Error("fill indexable columns failed", zap.Error(err))
+		advisorLogger().Error("fill indexable columns failed", zap.Error(err))
 		return nil, err
 	}
-	l().Info("indexable columns filled", zap.Int("indexable-cols", indexableColSet.Size()))
+	advisorLogger().Info("indexable columns filled", zap.Int("indexable-cols", indexableColSet.Size()))
 
 	// start the advisor
 	indexes, err := adviseIndexes(querySet, indexableColSet, option.MaxNumIndexes, option.MaxIndexWidth, opt)
 	if err != nil {
-		l().Error("advise indexes failed", zap.Error(err))
+		advisorLogger().Error("advise indexes failed", zap.Error(err))
 		return nil, err
 	}
 
@@ -91,8 +91,8 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
 // prepareQuerySet prepares the target queries for the index advisor.
 func prepareQuerySet(ctx context.Context, sctx sessionctx.Context,
 	defaultDB string, opt Optimizer, specifiedSQLs []string) (s.Set[Query], error) {
-	l().Info("prepare target query set")
-	defer l().Info("prepare target query set finished")
+	advisorLogger().Info("prepare target query set")
+	defer advisorLogger().Info("prepare target query set finished")
 
 	querySet := s.NewSet[Query]()
 	if len(specifiedSQLs) > 0 { // if target queries are specified
@@ -133,7 +133,7 @@ func loadQuerySetFromStmtSummary(sessionctx.Context, string) (s.Set[Query], erro
 }
 
 func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer Optimizer) ([]*Recommendation, error) {
-	l().Info("recommend index", zap.Int("num-index", indexes.Size()))
+	advisorLogger().Info("recommend index", zap.Int("num-index", indexes.Size()))
 	results := make([]*Recommendation, 0, indexes.Size())
 	for _, idx := range indexes.ToList() {
 		workloadImpact := new(WorkloadImpact)
@@ -141,7 +141,7 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 		for _, col := range idx.Columns {
 			cols = append(cols, strings.Trim(col.ColumnName, `'" `))
 		}
-		l().Info("index columns", zap.Strings("columns", cols), zap.Any("index-cols", idx.Columns))
+		advisorLogger().Info("index columns", zap.Strings("columns", cols), zap.Any("index-cols", idx.Columns))
 		indexResult := &Recommendation{
 			Database:     idx.SchemaName,
 			Table:        idx.TableName,
@@ -150,12 +150,12 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 
 		// generate a graceful index name
 		indexResult.IndexName = gracefulIndexName(optimizer, idx.SchemaName, idx.TableName, cols)
-		l().Info("graceful index name", zap.String("index-name", indexResult.IndexName))
+		advisorLogger().Info("graceful index name", zap.String("index-name", indexResult.IndexName))
 
 		// calculate the index size
 		indexSize, err := optimizer.EstIndexSize(idx.SchemaName, idx.TableName, cols...)
 		if err != nil {
-			l().Info("show index stats failed", zap.Error(err))
+			advisorLogger().Info("show index stats failed", zap.Error(err))
 			return nil, err
 		}
 		indexResult.IndexSize = uint64(indexSize)
@@ -166,12 +166,12 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 		for _, query := range queries.ToList() {
 			costBefore, err := optimizer.QueryPlanCost(query.Text)
 			if err != nil {
-				l().Info("failed to get query plan cost", zap.Error(err))
+				advisorLogger().Info("failed to get query plan cost", zap.Error(err))
 				return nil, err
 			}
 			costAfter, err := optimizer.QueryPlanCost(query.Text, idx)
 			if err != nil {
-				l().Info("failed to get query plan cost", zap.Error(err))
+				advisorLogger().Info("failed to get query plan cost", zap.Error(err))
 				return nil, err
 			}
 			if costBefore == 0 { // avoid NaN
