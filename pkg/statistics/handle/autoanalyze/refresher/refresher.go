@@ -130,7 +130,13 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 			"This should not occur as the concurrency limit was checked prior to job submission. "+
 			"Please investigate potential race conditions or inconsistencies in the concurrency management logic.")
 		if submitted {
-			statslogutil.StatsLogger().Debug("Job submitted successfully", zap.Int("analyzedCount", analyzedCount))
+			statslogutil.StatsLogger().Debug("Job submitted successfully",
+				zap.Stringer("job", job),
+				zap.Int("remainConcurrency", remainConcurrency),
+				zap.Int("currentRunningJobs", len(currentRunningJobs)),
+				zap.Int("maxConcurrency", maxConcurrency),
+				zap.Int("analyzedCount", analyzedCount),
+			)
 			analyzedCount++
 		} else {
 			statslogutil.SingletonStatsSamplerLogger().Warn("Failed to submit job",
@@ -138,6 +144,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 				zap.Int("remainConcurrency", remainConcurrency),
 				zap.Int("currentRunningJobs", len(currentRunningJobs)),
 				zap.Int("maxConcurrency", maxConcurrency),
+				zap.Int("analyzedCount", analyzedCount),
 			)
 		}
 	}
