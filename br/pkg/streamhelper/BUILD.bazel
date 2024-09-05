@@ -68,7 +68,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 28,
+    shard_count = 29,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",

@@ -5,7 +5,10 @@ go_library(
     srcs = ["redact.go"],
     importpath = "github.com/pingcap/tidb/br/pkg/redact",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_pingcap_errors//:errors"],
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+    ],
 )
 
 go_test(

@@ -15,6 +15,7 @@ import (
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
@@ -800,4 +801,36 @@ func TestSubscriptionPanic(t *testing.T) {
 	}
 	cancel()
 	wg.Wait()
+}
+
+func TestRedactBackend(t *testing.T) {
+	info := new(backup.StreamBackupTaskInfo)
+	info.Name = "test"
+	info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_S3{
+			S3: &backup.S3{
+				Endpoint:        "http://",
+				Bucket:          "test",
+				Prefix:          "test",
+				AccessKey:       "12abCD!@#[]{}?/\\",
+				SecretAccessKey: "12abCD!@#[]{}?/\\",
+			},
+		},
+	}
+
+	redacted := redact.TaskInfoRedacted{Info: info}
+	require.Equal(t, "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
+
+	info.Storage = &backup.StorageBackend{
+		Backend: &backup.StorageBackend_Gcs{
+			Gcs: &backup.GCS{
+				Endpoint:        "http://",
+				Bucket:          "test",
+				Prefix:          "test",
+				CredentialsBlob: "12abCD!@#[]{}?/\\",
+			},
+		},
+	}
+	redacted = redact.TaskInfoRedacted{Info: info}
+	require.Equal(t, "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" CredentialsBlob:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
 }

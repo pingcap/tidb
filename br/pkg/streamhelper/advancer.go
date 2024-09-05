@@ -17,6 +17,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -438,7 +439,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		}
 		log.Info("get global checkpoint", zap.Uint64("checkpoint", globalCheckpointTs))
 		c.lastCheckpoint = newCheckpointWithTS(globalCheckpointTs)
-		log.Info("added event", zap.Stringer("task", e.Info),
+		log.Info("added event", zap.Stringer("task", redact.TaskInfoRedacted{Info: e.Info}),
 			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
 	case EventDel:
 		utils.LogBackupTaskCountDec()
