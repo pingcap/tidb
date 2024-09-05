@@ -28,7 +28,7 @@ import (
 	Surajit Chaudhuri, Vivek R. Narasayya: An Efficient Cost-Driven Index Selection
 	Tool for Microsoft Query Server. VLDB 1997: 146-155
 	This implementation is the Golang version of
-	github.com/hyrise/index_selection_evaluation/blob/refactoring/selection/algorithms/auto_admin_algorithm.py.
+	https://github.com/hyrise/index_selection_evaluation/blob/refactoring/selection/algorithms/auto_admin_algorithm.py.
 */
 
 // adviseIndexes implements the auto-admin algorithm.
