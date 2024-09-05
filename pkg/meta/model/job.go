@@ -1230,5 +1230,6 @@ type TraceInfo struct {
 }
 
 func init() {
+	// TODO keep it version 1 for now, will add logic to determine which version to use later.
 	SetJobVerInUse(JobVersion1)
 }
