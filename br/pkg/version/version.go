@@ -165,6 +165,12 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 				s.Address, tikvVersion, build.ReleaseVersion)
 		}
 	}
+
+	if tikvVersion.Major < 8 || (tikvVersion.Major == 8 && tikvVersion.Minor < 4) {
+		return errors.Annotatef(berrors.ErrVersionMismatch,
+			"TiKV node %s version %s is too old because the PITR id map is written into the cluster system table mysql.tidb_pitr_id_map, please use the tikv with version v8.4.0+",
+			s.Address, tikvVersion)
+	}
 	return nil
 }
 
