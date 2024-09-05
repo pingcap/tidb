@@ -1511,6 +1511,9 @@ func findEvent(eventCh <-chan *util.DDLEvent, eventType model.ActionType) *util.
 	// Find the target event.
 	for {
 		event := <-eventCh
+		if event.SchemaChangeEvent.GetType() == eventType {
+			return event
+		}
 		if event.GetType() == eventType {
 			return event
 		}
