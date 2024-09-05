@@ -24,9 +24,13 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,4 +128,30 @@ func TestAbnormalSessionPool(t *testing.T) {
 	require.Error(t, err)
 	failpoint.Disable("github.com/pingcap/tidb/pkg/util/mockSessionPoolReturnError")
 	require.Equal(t, svr.InternalSessionExists(se), false)
+}
+
+func TestTetchAllSchemasWithTables2(t *testing.T) {
+	lease := 100 * time.Millisecond
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+	session.SetSchemaLease(lease)
+	domain, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domain.Close()
+
+	snapshot := store.GetSnapshot(kv.NewVersion(mathutil.MaxUint))
+	m := meta.NewSnapshotMeta(snapshot)
+	dbs, err := domain.FetchAllSchemasWithTables(m)
+	require.NoError(t, err)
+	require.Equal(t, len(dbs), 3)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test1")
+	dbs, err = domain.FetchAllSchemasWithTables(m)
+	require.NoError(t, err)
+	require.Equal(t, len(dbs), 4)
 }

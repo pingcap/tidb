@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -39,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -487,42 +485,4 @@ func TestDeferFn(t *testing.T) {
 	require.False(t, c)
 	require.True(t, d)
 	require.Len(t, df.data, 1)
-}
-
-func TestTetchAllSchemasWithTables(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer store.Close()
-
-	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
-	require.NotNil(t, dom)
-	defer dom.Close()
-
-	snapshot := dom.store.GetSnapshot(kv.NewVersion(mathutil.MaxUint))
-	m := meta.NewSnapshotMeta(snapshot)
-	dbs, err := dom.fetchAllSchemasWithTables(m)
-	require.NoError(t, err)
-	require.Equal(t, len(dbs), 0)
-}
-
-func TestTetchAllSchemasWithTables2(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer store.Close()
-
-	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
-	require.NotNil(t, dom)
-	defer dom.Close()
-
-	// tk := testkit.NewTestKit(t, store)
-	// tk.MustExec("create database test1")
-
-	snapshot := dom.store.GetSnapshot(kv.NewVersion(mathutil.MaxUint))
-	m := meta.NewSnapshotMeta(snapshot)
-	dbs, err := dom.fetchAllSchemasWithTables(m)
-	require.NoError(t, err)
-	require.Equal(t, len(dbs), 0)
-
 }
