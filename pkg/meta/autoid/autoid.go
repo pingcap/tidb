@@ -320,6 +320,9 @@ func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 
 // Transfer implements autoid.Allocator Transfer interface.
 func (alloc *allocator) Transfer(databaseID, tableID int64) error {
+	if alloc.dbID == databaseID && alloc.tbID == tableID {
+		return nil
+	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
 		return alloc.getIDAccessor(txn).CopyTo(databaseID, tableID)
