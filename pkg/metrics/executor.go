@@ -41,10 +41,18 @@ var (
 	MppCoordinatorLatency *prometheus.HistogramVec
 
 	// AffectedRowsCounter records the number of affected rows.
-	AffectedRowsCounter        *prometheus.CounterVec
-	AffectedRowsCounterInsert  prometheus.Counter
-	AffectedRowsCounterUpdate  prometheus.Counter
-	AffectedRowsCounterDelete  prometheus.Counter
+	AffectedRowsCounter *prometheus.CounterVec
+
+	// AffectedRowsCounterInsert records the number of insert affected rows.
+	AffectedRowsCounterInsert prometheus.Counter
+
+	// AffectedRowsCounterUpdate records the number of update affected rows.
+	AffectedRowsCounterUpdate prometheus.Counter
+
+	// AffectedRowsCounterDelete records the number of delete affected rows.
+	AffectedRowsCounterDelete prometheus.Counter
+
+	// AffectedRowsCounterReplace records the number of replace affected rows.
 	AffectedRowsCounterReplace prometheus.Counter
 )
 
