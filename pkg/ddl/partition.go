@@ -2465,7 +2465,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		return ver, err
 	}
 
-	// When table has global index, public->deleteOnly->deleteReorg->none schema changes should be handled.
+	// TRUNCATE PARTITION with GLOBAL INDEX
 	switch job.SchemaState {
 	case model.StatePublic:
 		pi.NewPartitionIDs = newIDs[:]
@@ -2495,8 +2495,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		// Now we don't see the old partitions, but other sessions may still use them.
 		// So to keep the Global Index consistent, we will still keep it up-to-date with
 		// the old partitions, as well as the new partitions.
-		// We can remove the flag to update the old partitions.
-		// TODO: How to remove the flag, what is the flag?
+		tblInfo.Partition.NewPartitionIDs = nil
 		job.SchemaState = model.StateDeleteReorganization
 		pi.DDLState = model.StateDeleteReorganization
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)

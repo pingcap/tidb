@@ -179,6 +179,19 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	}
 	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
 	skipCheck := opt.DupKeyCheck() == table.DupKeyCheckSkip
+	oldPartIDs := map[int64]struct{}{}
+	if c.idxInfo.Global {
+		// During Global Index reorganization for DROP/TRUNCATE Partition,
+		// implicitly replace global index entries pointing to old partitions
+		if c.tblInfo.Partition.DDLState == model.StateDeleteReorganization &&
+			len(c.tblInfo.Partition.AddingDefinitions) == 0 &&
+			len(c.tblInfo.Partition.DroppingDefinitions) > 0 {
+			skipCheck = false
+			for _, d := range c.tblInfo.Partition.DroppingDefinitions {
+				oldPartIDs[d.ID] = struct{}{}
+			}
+		}
+	}
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	for _, value := range indexedValues {
@@ -268,6 +281,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				}
 			}
 			if !ignoreAssertion && !untouched {
+				// TODO: Check if this should be updated for Global Index delete reorg
 				if opt.DupKeyCheck() == table.DupKeyCheckLazy && !txn.IsPessimistic() {
 					err = txn.SetAssertion(key, kv.SetAssertUnknown)
 				} else {
@@ -281,7 +295,24 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		}
 
 		var value []byte
-		if c.tblInfo.TempTableType != model.TempTableNone {
+		if len(oldPartIDs) > 0 {
+			// If Global Index and reorg we need this regardless of DupKeyCheck value.
+			value, err = txn.Get(ctx, key)
+			if err == nil && len(value) != 0 {
+				partHandle, errPart := GetPartitionHandleFromVal(value)
+				if errPart != nil {
+					return nil, errPart
+				}
+				if _, found := oldPartIDs[partHandle.PartitionID]; found {
+					// Simply overwrite it
+					err = txn.SetAssertion(key, kv.SetAssertUnknown)
+					if err != nil {
+						return nil, err
+					}
+					value = nil
+				}
+			}
+		} else if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			value, err = txn.Get(ctx, key)
 		} else if opt.DupKeyCheck() == table.DupKeyCheckLazy && !keyIsTempIdxKey {
@@ -558,34 +589,40 @@ func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
 	return true, nil, nil
 }
 
-// FetchPartitionHandle is used to find the duplicated row's handle and partition id
-// for a given unique global index key.
-func FetchPartitionHandle(ctx context.Context, key kv.Key, txn kv.Transaction) (partHandle kv.PartitionHandle, err error) {
-	val, err := getKeyInTxn(ctx, txn, key)
-	if err != nil || len(val) == 0 {
-		return partHandle, err
-	}
+// GetPartitionHandleFromVal creates a PartitionHandle from a global index value
+func GetPartitionHandleFromVal(val []byte) (*kv.PartitionHandle, error) {
 	seg := tablecodec.SplitIndexValue(val)
 	var handle kv.Handle
 	if len(seg.IntHandle) != 0 {
 		handle = tablecodec.DecodeIntHandleInIndexValue(seg.IntHandle)
 	}
 	if len(seg.CommonHandle) != 0 {
+		var err error
 		handle, err = kv.NewCommonHandle(seg.CommonHandle)
 		if err != nil {
-			return partHandle, err
+			return nil, err
 		}
 	}
 	if len(seg.PartitionID) != 0 {
-		var pid int64
-		_, pid, err = codec.DecodeInt(seg.PartitionID)
+		_, pid, err := codec.DecodeInt(seg.PartitionID)
 		if err != nil {
-			return partHandle, err
+			return nil, err
 		}
-		partHandle = kv.NewPartitionHandle(pid, handle)
+		partHandle := kv.NewPartitionHandle(pid, handle)
+		return &partHandle, nil
 	}
 
-	return partHandle, err
+	return nil, nil
+}
+
+// FetchPartitionHandle is used to find the duplicated row's handle and partition id
+// for a given unique global index key.
+func FetchPartitionHandle(ctx context.Context, key kv.Key, txn kv.Transaction) (partHandle *kv.PartitionHandle, err error) {
+	val, err := getKeyInTxn(ctx, txn, key)
+	if err != nil || len(val) == 0 {
+		return nil, err
+	}
+	return GetPartitionHandleFromVal(val)
 }
 
 func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, distinct bool,

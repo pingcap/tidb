@@ -297,7 +297,7 @@ func (e *InsertExec) batchDeleteOldGlobalIndexDupsAndInsert(ctx context.Context,
 			if err != nil {
 				return err
 			}
-			if partHandle.Handle == nil || partHandle.PartitionID == 0 {
+			if partHandle == nil || partHandle.Handle == nil || partHandle.PartitionID == 0 {
 				// entry does not exist
 				continue
 			}

@@ -882,6 +882,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	}
 	key := t.RecordKey(recordID)
 	var setPresume bool
+	// TODO: If PK is Global index, use DupKeyCheckInPlace
 	if opt.DupKeyCheck() != table.DupKeyCheckSkip {
 		if t.meta.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
@@ -899,6 +900,8 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			_, err = txn.Get(ctx, key)
 		}
 		if err == nil {
+			// If Global Index and reorganization truncate/drop partition, old partition,
+			// Accept and set Assertion key to kv.SetAssertUnknown for overwrite instead
 			dupErr := getDuplicateError(t.Meta(), recordID, r)
 			return recordID, dupErr
 		} else if !kv.ErrNotExist.Equal(err) {

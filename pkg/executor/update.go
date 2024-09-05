@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"runtime/trace"
 
 	"github.com/pingcap/errors"
@@ -204,6 +206,16 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 		newTableData := newData[content.Start:content.End]
 		flags := bAssignFlag[content.Start:content.End]
 
+		// Global Index reorganization in Truncate/Drop partition
+		if dupKeyCheck != table.DupKeyCheckInPlace {
+			for _, idx := range tbl.Indices() {
+				if idx.Meta().Global {
+					// This will also check non-global unique indexes.
+					dupKeyCheck = table.DupKeyCheckInPlace
+					break
+				}
+			}
+		}
 		// Update row
 		fkChecks := e.fkChecks[content.TblID]
 		fkCascades := e.fkCascades[content.TblID]
@@ -284,7 +296,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	dupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.IgnoreError)
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
-		err := exec.Next(ctx, e.Children(0), chk)
+		err = exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
 			return 0, err
 		}
@@ -307,6 +319,16 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 				txn.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
 			}
+		}
+		// Special handling for Update of Global Index, to avoid duplicate key during
+		// Global Index reorg and drop/truncate partition
+		//err = e.globalIndexUpdateDuringReorg(ctx, txn, chk, fields)
+		// TODO: The most efficient way would be to generate and iterate over the new rows
+		// and if use BatchGet to find duplicate keys of Global Index from old partitions
+		// and remove those (global index entries or even rows in old partitions?)
+		// Could we even use a RPC call/coprocessor to include filtering of old partition ids?
+		if err != nil {
+			return 0, err
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
@@ -344,6 +366,94 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		chk = chunk.Renew(chk, e.MaxChunkSize())
 	}
 	return totalNumRows, nil
+}
+
+func (e *UpdateExec) globalIndexUpdateDuringReorg(ctx context.Context, txn kv.Transaction, chk *chunk.Chunk, fields []*types.FieldType) error {
+	if chk.NumRows() == 0 {
+		return nil
+	}
+	for _, content := range e.tblColPosInfos {
+		tbl := e.tblID2table[content.TblID]
+		if tbl.GetPartitionedTable() == nil {
+			continue
+		}
+		globalIdxs := make([]table.Index, 0, 4)
+		for _, idx := range tbl.Indices() {
+			if idx.Meta().Global {
+				globalIdxs = append(globalIdxs, idx)
+			}
+		}
+		if len(globalIdxs) == 0 {
+			continue
+		}
+		oldIDs := map[int64]struct{}{}
+		for j := range tbl.Meta().Partition.DroppingDefinitions {
+			oldIDs[tbl.Meta().Partition.DroppingDefinitions[j].ID] = struct{}{}
+		}
+		evalCtx := e.Ctx().GetExprCtx().GetEvalCtx()
+		//tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+		tc := evalCtx.TypeCtx()
+		globalKeys := make([]kv.Key, 0, len(globalIdxs)*chk.NumRows())
+		globalIdxRows := make([]*[]types.Datum, 0, len(globalIdxs)*chk.NumRows())
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+			chunkRow := chk.GetRow(rowIdx)
+			datumRow := chunkRow.GetDatumRow(fields)
+			// precomputes handles
+			handle, err := content.HandleCols.BuildHandleByDatums(datumRow)
+			if err != nil {
+				return err
+			}
+			for _, idx := range globalIdxs {
+				idxVals, err := idx.FetchValues(datumRow, nil)
+				if err != nil {
+					return err
+				}
+				key, _, err := tablecodec.GenIndexKey(tc.Location(), tbl.Meta(), idx.Meta(), tbl.Meta().ID, idxVals, handle, nil)
+				if err != nil {
+					return err
+				}
+				globalKeys = append(globalKeys, key)
+				globalIdxRows = append(globalIdxRows, &datumRow)
+			}
+		}
+		_, err := txn.BatchGet(ctx, globalKeys)
+		if err != nil {
+			return err
+		}
+		for j, key := range globalKeys {
+			partHandle, err := tables.FetchPartitionHandle(ctx, key, txn)
+			if err != nil {
+				return err
+			}
+			if partHandle.Handle == nil || partHandle.PartitionID == 0 {
+				continue
+			}
+			if _, found := oldIDs[partHandle.PartitionID]; !found {
+				continue
+			}
+			// Is this actually needed? TODO: remove and test and update comment
+			// Allow overwriting current global key, since it points to a dropped/truncated
+			// orphan partition
+			err = txn.SetAssertion(key, kv.SetAssertUnknown)
+			if err != nil {
+				return err
+			}
+			// Or is the RemoveRecord that is not needed?!?
+			pt := tbl.GetPartitionedTable()
+			partTbl := pt.GetPartition(partHandle.PartitionID)
+			err = partTbl.RemoveRecord(e.Ctx().GetTableCtx(), txn, partHandle.Handle, *globalIdxRows[j])
+			if err == nil {
+				continue
+			}
+			if !kv.IsErrNotFound(err) {
+				return err
+			}
+			panic("What to do if not found?!?")
+		}
+		//newTableData := newData[content.Start:content.End]
+		//flags := bAssignFlag[content.Start:content.End]
+	}
+	return nil
 }
 
 func (e *UpdateExec) handleErr(colName model.CIStr, col *table.Column, rowIdx int, err error) error {
