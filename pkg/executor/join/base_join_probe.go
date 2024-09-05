@@ -334,7 +334,7 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 	needUpdateVirtualRow := currentColumnInRow == 0
 	if len(usedCols) == 0 || j.nextCachedBuildRowIndex == 0 {
 		if needUpdateVirtualRow {
-			chk.SetNumVirtualRows(chkRows + len(j.cachedBuildRows))
+			chk.SetNumVirtualRows(chkRows + j.nextCachedBuildRowIndex)
 		}
 		return
 	}
