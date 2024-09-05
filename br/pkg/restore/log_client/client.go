@@ -576,7 +576,7 @@ func (rc *LogClient) initSchemasMap(
 		log.Info("pitr id map does not exist", zap.Uint64("restored ts", restoreTS))
 		return nil, nil
 	}
-	var metaData []byte
+	metaData := make([]byte, 0, len(rows)*PITRIdMapBlockSize)
 	for i, row := range rows {
 		elementID := row.GetUint64(0)
 		if uint64(i) != elementID {
@@ -1505,7 +1505,7 @@ func (rc *LogClient) GetGCRows() []*stream.PreDelRangeQuery {
 	return rc.deleteRangeQuery
 }
 
-const IdMapBlockSize int = 524288
+const PITRIdMapBlockSize int = 524288
 
 // saveIDMap saves the id mapping information.
 func (rc *LogClient) saveIDMap(
@@ -1524,7 +1524,7 @@ func (rc *LogClient) saveIDMap(
 	}
 	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, segment_id, id_map, update_time) VALUES (%?, %?, %?, %?);"
 	for startIdx, elementId := 0, 0; startIdx < len(data); elementId += 1 {
-		endIdx := startIdx + IdMapBlockSize
+		endIdx := startIdx + PITRIdMapBlockSize
 		if endIdx > len(data) {
 			endIdx = len(data)
 		}
