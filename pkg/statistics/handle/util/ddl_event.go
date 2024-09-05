@@ -29,6 +29,8 @@ import (
 
 // DDLEvent contains the information of a ddl event that is used to update stats.
 type DDLEvent struct {
+	// todo: replace DDLEvent by SchemaChangeEvent gradually
+	SchemaChangeEvent *ddlutil.SchemaChangeEvent
 	// For different ddl types, the following fields are used.
 	// They have different meanings for different ddl types.
 	// Please do **not** use these fields directly, use the corresponding
@@ -38,6 +40,7 @@ type DDLEvent struct {
 	oldTableInfo *model.TableInfo
 	oldPartInfo  *model.PartitionInfo
 	columnInfos  []*model.ColumnInfo
+
 	// schemaID is the ID of the schema that the table belongs to.
 	// Used to filter out the system or memory tables.
 	schemaID int64
@@ -45,9 +48,6 @@ type DDLEvent struct {
 	// It applies when a table structure is being changed from partitioned to non-partitioned, or vice versa.
 	oldTableID int64
 	tp         model.ActionType
-
-	// todo: replace DDLEvent by SchemaChangeEvent gradually
-	SchemaChangeEvent ddlutil.SchemaChangeEvent
 }
 
 // IsMemOrSysDB checks whether the table is in the memory or system database.
@@ -59,42 +59,6 @@ func (e *DDLEvent) IsMemOrSysDB(sctx sessionctx.Context) (bool, error) {
 		return false, fmt.Errorf("schema not found for table %s", e.tableInfo.Name)
 	}
 	return util.IsMemOrSysDB(schema.Name.L), nil
-}
-
-// NewCreateTableEvent creates a new ddl event that creates a table.
-func NewCreateTableEvent(
-	schemaID int64,
-	newTableInfo *model.TableInfo,
-) *DDLEvent {
-	return &DDLEvent{
-		tp:        model.ActionCreateTable,
-		schemaID:  schemaID,
-		tableInfo: newTableInfo,
-	}
-}
-
-// GetCreateTableInfo gets the table info of the table that is created.
-func (e *DDLEvent) GetCreateTableInfo() (newTableInfo *model.TableInfo) {
-	return e.tableInfo
-}
-
-// NewTruncateTableEvent creates a new ddl event that truncates a table.
-func NewTruncateTableEvent(
-	schemaID int64,
-	newTableInfo *model.TableInfo,
-	droppedTableInfo *model.TableInfo,
-) *DDLEvent {
-	return &DDLEvent{
-		tp:           model.ActionTruncateTable,
-		schemaID:     schemaID,
-		tableInfo:    newTableInfo,
-		oldTableInfo: droppedTableInfo,
-	}
-}
-
-// GetTruncateTableInfo gets the table info of the table that is truncated.
-func (e *DDLEvent) GetTruncateTableInfo() (newTableInfo *model.TableInfo, droppedTableInfo *model.TableInfo) {
-	return e.tableInfo, e.oldTableInfo
 }
 
 // NewDropTableEvent creates a new ddl event that drops a table.

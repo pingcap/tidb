@@ -535,7 +535,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			tblInfo,
 			[]*model.ColumnInfo{changingCol},
 		)
-		asyncNotifyEvent(jobCtx, modifyColumnEvent)
+		asyncNotifyEvent(jobCtx, modifyColumnEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}

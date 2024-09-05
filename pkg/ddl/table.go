@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -42,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	tidb_util "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"go.uber.org/zap"
@@ -127,7 +128,7 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver in
 				job.SchemaID,
 				tblInfo,
 			)
-			asyncNotifyEvent(jobCtx, dropTableEvent)
+			asyncNotifyEvent(jobCtx, dropTableEvent, job)
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
@@ -569,12 +570,10 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	truncateTableEvent := statsutil.NewTruncateTableEvent(
-		job.SchemaID,
-		tblInfo,
-		oldTblInfo,
-	)
-	asyncNotifyEvent(jobCtx, truncateTableEvent)
+	truncateTableEvent := &statsutil.DDLEvent{
+		SchemaChangeEvent: util.NewTruncateTableEvent(tblInfo, oldTblInfo),
+	}
+	asyncNotifyEvent(jobCtx, truncateTableEvent, job)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
 	job.Args = []any{startKey, oldPartitionIDs}
 	return ver, nil
@@ -1074,7 +1073,7 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, t *meta.Meta, job *m
 	}
 
 	// Ban setting replica count for tables in system database.
-	if tidb_util.IsMemOrSysDB(job.SchemaName) {
+	if tidbutil.IsMemOrSysDB(job.SchemaName) {
 		return ver, errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
