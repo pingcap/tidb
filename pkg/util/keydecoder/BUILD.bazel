@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//pkg/infoschema",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/tablecodec",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
@@ -27,6 +27,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/infoschema",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/planner/core",
         "//pkg/sessionctx/stmtctx",

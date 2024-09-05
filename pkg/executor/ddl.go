@@ -26,8 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -75,7 +76,7 @@ func (e *DDLExec) toErr(err error) error {
 	return err
 }
 
-func (e *DDLExec) getLocalTemporaryTable(schema model.CIStr, table model.CIStr) (table.Table, bool) {
+func (e *DDLExec) getLocalTemporaryTable(schema pmodel.CIStr, table pmodel.CIStr) (table.Table, bool) {
 	tbl, err := e.Ctx().GetInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), schema, table)
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return nil, false
@@ -563,7 +564,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 	if len(s.NewName) != 0 {
-		tblInfo.Name = model.NewCIStr(s.NewName)
+		tblInfo.Name = pmodel.NewCIStr(s.NewName)
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -598,7 +599,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	dbName := s.DBName
 	if len(s.NewName) > 0 {
-		dbName = model.NewCIStr(s.NewName)
+		dbName = pmodel.NewCIStr(s.NewName)
 	}
 	// Check the Schema Name was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -619,7 +620,7 @@ func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	return err
 }
 
-func (e *DDLExec) getRecoverDBByName(schemaName model.CIStr) (recoverSchemaInfo *ddl.RecoverSchemaInfo, err error) {
+func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo *ddl.RecoverSchemaInfo, err error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil, err

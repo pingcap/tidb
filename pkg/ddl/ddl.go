@@ -46,9 +46,10 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -989,7 +990,7 @@ type RecoverSchemaInfo struct {
 	LoadTablesOnExecute bool
 	DropJobID           int64
 	SnapshotTS          uint64
-	OldSchemaName       model.CIStr
+	OldSchemaName       pmodel.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.

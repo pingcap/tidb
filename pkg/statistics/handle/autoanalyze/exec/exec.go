@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -80,7 +80,7 @@ func RunAnalyzeStmt(
 	statsVer int,
 	sql string,
 	params ...any,
-) ([]chunk.Row, []*ast.ResultField, error) {
+) ([]chunk.Row, []*resolve.ResultField, error) {
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	autoAnalyzeTracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)
