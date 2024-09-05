@@ -155,6 +155,12 @@ type PhysicalTableReader struct {
 	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
 }
 
+// LoadTableStats loads the stats of the table read by this plan.
+func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	loadTableStats(ctx, ts.Table, ts.physicalTableID)
+}
+
 // PhysPlanPartInfo indicates partition helper info in physical plan.
 type PhysPlanPartInfo struct {
 	PruningConds   []expression.Expression

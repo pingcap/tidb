@@ -495,14 +495,9 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 	})
 
 	for _, di := range schemas {
-		// if the ctx has been canceled, stop fetch schemas.
+		// if the ctx has been canceled, stop fetching schemas.
 		if err := ctx.Err(); err != nil {
 			return err
-		}
-
-		if di.State != model.StatePublic {
-			// schema is not public, can't be used outside.
-			continue
 		}
 		var tables []*model.TableInfo
 		var err error
@@ -527,10 +522,6 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 		}
 		diTables := make([]*model.TableInfo, 0, len(tables))
 		for _, tbl := range tables {
-			if tbl.State != model.StatePublic {
-				// schema is not public, can't be used outside.
-				continue
-			}
 			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
 			// Check whether the table is in repair mode.
 			if domainutil.RepairInfo.InRepairMode() && domainutil.RepairInfo.CheckAndFetchRepairedTable(di, tbl) {
