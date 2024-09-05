@@ -613,5 +613,7 @@ func newMockJoinProbe(ctx *HashJoinCtxV2) *mockJoinProbe {
 		rUsedInOtherCondition: ctx.RUsedInOtherCondition,
 		rightAsBuildSide:      false,
 	}
+	base.cachedBuildRows = make([]matchedRowInfo, batchBuildRowSize)
+	base.nextCachedBuildRowIndex = 0
 	return &mockJoinProbe{base}
 }
