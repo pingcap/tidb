@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "ast",
     srcs = [
-        "advisor.go",
         "ast.go",
         "base.go",
         "ddl.go",
@@ -56,10 +55,8 @@ go_test(
         "//pkg/parser/auth",
         "//pkg/parser/charset",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/test_driver",
-        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],
 )

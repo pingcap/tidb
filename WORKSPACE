@@ -37,12 +37,12 @@ versions.check(minimum_bazel_version = "6.0.0")
 
 http_archive(
     name = "io_bazel_rules_go",
-    sha256 = "b2038e2de2cace18f032249cb4bb0048abf583a36369fa98f687af1b3f880b26",
+    sha256 = "67b4d1f517ba73e0a92eb2f57d821f2ddc21f5bc2bd7a231573f11bd8758192e",
     urls = [
-        "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_go/releases/download/v0.48.1/rules_go-v0.48.1.zip",
-        "http://ats.apps.svc/bazelbuild/rules_go/releases/download/v0.48.1/rules_go-v0.48.1.zip",
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.48.1/rules_go-v0.48.1.zip",
-        "https://github.com/bazelbuild/rules_go/releases/download/v0.48.1/rules_go-v0.48.1.zip",
+        "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_go/releases/download/v0.50.0/rules_go-v0.50.0.zip",
+        "http://ats.apps.svc/bazelbuild/rules_go/releases/download/v0.50.0/rules_go-v0.50.0.zip",
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.50.0/rules_go-v0.50.0.zip",
+        "https://github.com/bazelbuild/rules_go/releases/download/v0.50.0/rules_go-v0.50.0.zip",
     ],
 )
 

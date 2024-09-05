@@ -23,8 +23,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
@@ -222,7 +222,7 @@ func Exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, 
 }
 
 // ExecRows is a helper function to execute sql and return rows and fields.
-func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	if intest.InTest {
 		if v := sctx.Value(mock.RestrictedSQLExecutorKey{}); v != nil {
 			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(StatsCtx,
@@ -235,7 +235,7 @@ func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Ro
 }
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
-func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, opts, sql, args...)
 }

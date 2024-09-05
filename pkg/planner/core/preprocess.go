@@ -26,15 +26,17 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -122,7 +124,7 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 
 // Preprocess resolves table names of the node, and checks some statements' validation.
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
-func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
+func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, preprocessOpt ...PreprocessOpt) error {
 	defer tracing.StartRegion(ctx, "planner.Preprocess").End()
 	v := preprocessor{
 		ctx:                ctx,
@@ -130,6 +132,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, pre
 		tableAliasInJoin:   make([]map[string]any, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
+		resolveCtx:         node.GetResolveContext(),
 	}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
@@ -138,7 +141,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, pre
 	if v.PreprocessorReturn == nil {
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
-	node.Accept(&v)
+	node.Node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
 	return errors.Trace(v.err)
@@ -236,6 +239,8 @@ type preprocessor struct {
 	// values that may be returned
 	*PreprocessorReturn
 	err error
+
+	resolveCtx *resolve.Context
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -491,7 +496,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	if currentDB == "" {
 		return nil, errors.Trace(plannererrors.ErrNoDB)
 	}
-	sName := model.NewCIStr(currentDB)
+	sName := pmodel.NewCIStr(currentDB)
 	is := p.ensureInfoSchema()
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
@@ -541,7 +546,8 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	tblNames := ExtractTableList(originNode, false)
+	nodeW := resolve.NewNodeWWithCtx(originNode, p.resolveCtx)
+	tblNames := ExtractTableList(nodeW, false)
 	for _, tn := range tblNames {
 		tbl, err := p.tableByName(tn)
 		if err != nil {
@@ -559,8 +565,11 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 		}
 		tableInfo := tbl.Meta()
 		dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), tableInfo)
-		tn.TableInfo = tableInfo
-		tn.DBInfo = dbInfo
+		p.resolveCtx.AddTableName(&resolve.TableNameW{
+			TableName: tn,
+			DBInfo:    dbInfo,
+			TableInfo: tableInfo,
+		})
 	}
 
 	originSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()), false)
@@ -843,7 +852,7 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	if stmt.ReferTable != nil {
-		schema := model.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+		schema := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 		if stmt.ReferTable.Schema.String() != "" {
 			schema = stmt.ReferTable.Schema
 		}
@@ -1019,7 +1028,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 }
 
 func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
-	currentDB := model.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+	currentDB := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 	for _, t := range stmt.Tables {
 		if util.IsInCorrectIdentifierName(t.Name.String()) {
 			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
@@ -1084,7 +1093,7 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]any) 
 		if tabName.L == "" {
 			if tableNode, ok := ts.Source.(*ast.TableName); ok {
 				if tableNode.Schema.L != "" {
-					tabName = model.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
+					tabName = pmodel.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
 				} else {
 					tabName = tableNode.Name
 				}
@@ -1571,7 +1580,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 
-		tn.Schema = model.NewCIStr(currentDB)
+		tn.Schema = pmodel.NewCIStr(currentDB)
 	}
 
 	if p.flag&inCreateOrDropTable > 0 {
@@ -1609,7 +1618,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	if !p.skipLockMDL() {
-		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), model.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), pmodel.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
 			return
@@ -1625,8 +1634,11 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 	}
-	tn.TableInfo = tableInfo
-	tn.DBInfo = dbInfo
+	p.resolveCtx.AddTableName(&resolve.TableNameW{
+		TableName: tn,
+		DBInfo:    dbInfo,
+		TableInfo: tableInfo,
+	})
 }
 
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
@@ -1667,7 +1679,7 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 			node.DBName = p.sctx.GetSessionVars().CurrentDB
 		}
 	} else if node.Table != nil && node.Table.Schema.L == "" {
-		node.Table.Schema = model.NewCIStr(node.DBName)
+		node.Table.Schema = pmodel.NewCIStr(node.DBName)
 	}
 	if node.User != nil && node.User.CurrentUser {
 		// Fill the Username and Hostname with the current user.
@@ -1712,7 +1724,7 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 		if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint.Refer != nil {
 			table := spec.Constraint.Refer.Table
 			if table.Schema.L == "" && node.Table.Schema.L != "" {
-				table.Schema = model.NewCIStr(node.Table.Schema.L)
+				table.Schema = pmodel.NewCIStr(node.Table.Schema.L)
 			}
 			if spec.Constraint.Tp == ast.ConstraintForeignKey {
 				// when foreign_key_checks is off, should ignore err when refer table is not exists.
@@ -1827,7 +1839,7 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
-func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
+func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName pmodel.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
 		return tbl, nil
 	}

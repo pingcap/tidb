@@ -19,8 +19,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -220,7 +221,7 @@ func (builder *testTableBuilder) add(name string, tp byte, flag uint) *testTable
 func (builder *testTableBuilder) build() *model.TableInfo {
 	ti := &model.TableInfo{
 		ID:    1,
-		Name:  model.NewCIStr(builder.tableName),
+		Name:  pmodel.NewCIStr(builder.tableName),
 		State: model.StatePublic,
 	}
 	for i, colName := range builder.columnNames {
@@ -235,7 +236,7 @@ func (builder *testTableBuilder) build() *model.TableInfo {
 		fieldType.SetFlag(builder.flags[i])
 		ti.Columns = append(ti.Columns, &model.ColumnInfo{
 			ID:        int64(i + 1),
-			Name:      model.NewCIStr(colName),
+			Name:      pmodel.NewCIStr(colName),
 			Offset:    i,
 			FieldType: *fieldType,
 			State:     model.StatePublic,
