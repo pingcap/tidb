@@ -184,6 +184,20 @@ func TestJoinTableMetaKeyInlinedAndFixed(t *testing.T) {
 	}
 }
 
+func TestReadNullMapThreadSafe(t *testing.T) {
+	// meta with usedFlag
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	metaWithUsedFlag := newTableMeta([]int{0}, []*types.FieldType{tinyTp}, []*types.FieldType{tinyTp}, []*types.FieldType{tinyTp}, nil, []int{}, true)
+	for columnIndex := 0; columnIndex < 100; columnIndex++ {
+		require.Equal(t, columnIndex >= 31, metaWithUsedFlag.isReadNullMapThreadSafe(columnIndex))
+	}
+	// meta without usedFlag
+	metaWithoutUsedFlag := newTableMeta([]int{0}, []*types.FieldType{tinyTp}, []*types.FieldType{tinyTp}, []*types.FieldType{tinyTp}, nil, []int{}, false)
+	for columnIndex := 0; columnIndex < 100; columnIndex++ {
+		require.Equal(t, true, metaWithoutUsedFlag.isReadNullMapThreadSafe(columnIndex))
+	}
+}
+
 func TestJoinTableMetaSerializedMode(t *testing.T) {
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp := types.NewFieldType(mysql.TypeLonglong)

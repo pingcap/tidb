@@ -218,6 +218,13 @@ func (meta *TableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
 	return *(*uint64)(unsafe.Add(rowStart, sizeOfNextPtr+meta.nullMapLength))
 }
 
+func (meta *TableMeta) isReadNullMapThreadSafe(columnIndex int) bool {
+	// Other goroutine will use `atomic.StoreUint32` to write to the first 32 bit in nullmap when it need to set usedFlag
+	// so read from nullMap may meet concurrent write if meta.colOffsetInNullMap == 1 && (columnIndex + meta.colOffsetInNullMap < 32)
+	mayConcurrentWrite := meta.colOffsetInNullMap == 1 && columnIndex < 31
+	return !mayConcurrentWrite
+}
+
 // used in tests
 func (meta *TableMeta) getKeyBytes(rowStart unsafe.Pointer) []byte {
 	switch meta.keyMode {
