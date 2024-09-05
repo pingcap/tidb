@@ -33,8 +33,26 @@ import (
 
 // BackendCtxMgr is used to manage the backend context.
 type BackendCtxMgr interface {
+<<<<<<< HEAD
 	CheckAvailable() (bool, error)
 	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, pdAddr string, resourceGroupName string) (BackendCtx, error)
+=======
+	// CheckMoreTasksAvailable checks if it can run more ingest backfill tasks.
+	CheckMoreTasksAvailable() (bool, error)
+	// Register uses jobID to identify the BackendCtx. If there's already a
+	// BackendCtx with the same jobID, it will be returned. Otherwise, a new
+	// BackendCtx will be created and returned.
+	Register(
+		ctx context.Context,
+		jobID int64,
+		hasUnique bool,
+		etcdClient *clientv3.Client,
+		pdSvcDiscovery pd.ServiceDiscovery,
+		resourceGroupName string,
+		importConc int,
+		initTS uint64,
+	) (BackendCtx, error)
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
 }
@@ -76,7 +94,20 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 var ResignOwnerForTest = atomic.NewBool(false)
 
 // Register creates a new backend and registers it to the backend context.
+<<<<<<< HEAD
 func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, pdAddr string, resourceGroupName string) (BackendCtx, error) {
+=======
+func (m *litBackendCtxMgr) Register(
+	ctx context.Context,
+	jobID int64,
+	hasUnique bool,
+	etcdClient *clientv3.Client,
+	pdSvcDiscovery pd.ServiceDiscovery,
+	resourceGroupName string,
+	concurrency int,
+	initTS uint64,
+) (BackendCtx, error) {
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))
 	bc, exist := m.Load(jobID)
 	if !exist {
 		m.memRoot.RefreshConsumption()
@@ -99,6 +130,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 		bcCtx := newBackendContext(ctx, jobID, bd, cfg.Lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
 		m.Store(jobID, bcCtx)
 
+<<<<<<< HEAD
 		m.memRoot.Consume(StructSizeBackendCtx)
 		logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
 			zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
@@ -107,6 +139,18 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 		return bcCtx, nil
 	}
 	return bc, nil
+=======
+	bcCtx := newBackendContext(ctx, jobID, bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient, initTS)
+	m.backends.m[jobID] = bcCtx
+	m.memRoot.Consume(structSizeBackendCtx)
+	m.backends.mu.Unlock()
+
+	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
+		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
+		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
+		zap.Bool("has unique index", hasUnique))
+	return bcCtx, nil
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))
 }
 
 func createLocalBackend(ctx context.Context, cfg *Config, resourceGroupName string) (*local.Backend, error) {
@@ -129,7 +173,21 @@ func createLocalBackend(ctx context.Context, cfg *Config, resourceGroupName stri
 
 const checkpointUpdateInterval = 10 * time.Minute
 
+<<<<<<< HEAD
 func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot, etcdClient *clientv3.Client) *litBackendCtx {
+=======
+func newBackendContext(
+	ctx context.Context,
+	jobID int64,
+	be *local.Backend,
+	cfg *local.BackendConfig,
+	vars map[string]string,
+	memRoot MemRoot,
+	diskRoot DiskRoot,
+	etcdClient *clientv3.Client,
+	initTS uint64,
+) *litBackendCtx {
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))
 	bCtx := &litBackendCtx{
 		SyncMap:        generic.NewSyncMap[int64, *engineInfo](10),
 		MemRoot:        memRoot,
@@ -142,6 +200,7 @@ func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg 
 		diskRoot:       diskRoot,
 		updateInterval: checkpointUpdateInterval,
 		etcdClient:     etcdClient,
+		initTS:         initTS,
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
 	return bCtx

@@ -629,11 +629,76 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, dbName model.CIStr, t table.
 	return decodeColMap, nil
 }
 
+<<<<<<< HEAD
 func setSessCtxLocation(sctx sessionctx.Context, tzLocation *model.TimeZoneLocation) error {
 	// It is set to SystemLocation to be compatible with nil LocationInfo.
 	tz := *timeutil.SystemLocation()
 	if sctx.GetSessionVars().TimeZone == nil {
 		sctx.GetSessionVars().TimeZone = &tz
+=======
+const backfillTaskChanSize = 128
+
+func (dc *ddlCtx) runAddIndexInLocalIngestMode(
+	ctx context.Context,
+	sessPool *sess.Pool,
+	t table.PhysicalTable,
+	reorgInfo *reorgInfo,
+) error {
+	// TODO(tangenta): support adjust worker count dynamically.
+	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
+		return errors.Trace(err)
+	}
+	job := reorgInfo.Job
+	opCtx := NewLocalOperatorCtx(ctx, job.ID)
+	idxCnt := len(reorgInfo.elements)
+	indexIDs := make([]int64, 0, idxCnt)
+	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
+	uniques := make([]bool, 0, idxCnt)
+	hasUnique := false
+	for _, e := range reorgInfo.elements {
+		indexIDs = append(indexIDs, e.ID)
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, e.ID)
+		if indexInfo == nil {
+			logutil.DDLIngestLogger().Warn("index info not found",
+				zap.Int64("jobID", job.ID),
+				zap.Int64("tableID", t.Meta().ID),
+				zap.Int64("indexID", e.ID))
+			return errors.Errorf("index info not found: %d", e.ID)
+		}
+		indexInfos = append(indexInfos, indexInfo)
+		uniques = append(uniques, indexInfo.Unique)
+		hasUnique = hasUnique || indexInfo.Unique
+	}
+
+	//nolint: forcetypeassert
+	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+	bcCtx, err := ingest.LitBackCtxMgr.Register(
+		ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName, importConc, job.RealStartTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer ingest.LitBackCtxMgr.Unregister(job.ID)
+	sctx, err := sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer sessPool.Put(sctx)
+
+	cpMgr, err := ingest.NewCheckpointManager(
+		ctx,
+		sessPool,
+		reorgInfo.PhysicalTableID,
+		job.ID,
+		indexIDs,
+		ingest.LitBackCtxMgr.EncodeJobSortPath(job.ID),
+		dc.store.(kv.StorageWithPD).GetPDClient(),
+	)
+	if err != nil {
+		logutil.DDLIngestLogger().Warn("create checkpoint manager failed",
+			zap.Int64("jobID", job.ID),
+			zap.Error(err))
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))
 	} else {
 		*sctx.GetSessionVars().TimeZone = tz
 	}

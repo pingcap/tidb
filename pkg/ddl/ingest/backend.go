@@ -90,6 +90,47 @@ type litBackendCtx struct {
 	updateInterval  time.Duration
 	checkpointMgr   *CheckpointManager
 	etcdClient      *clientv3.Client
+<<<<<<< HEAD
+=======
+	initTS          uint64
+
+	// unregisterMu prevents concurrent calls of `FinishAndUnregisterEngines`.
+	// For details, see https://github.com/pingcap/tidb/issues/53843.
+	unregisterMu sync.Mutex
+}
+
+func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(
+	err error,
+	indexID int64,
+	tbl table.Table,
+	hasDupe bool,
+) error {
+	if err != nil && !common.ErrFoundIndexConflictRecords.Equal(err) {
+		logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
+			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
+		return errors.Trace(err)
+	} else if hasDupe {
+		logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
+			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
+
+		if common.ErrFoundIndexConflictRecords.Equal(err) {
+			tErr, ok := errors.Cause(err).(*terror.Error)
+			if !ok {
+				return errors.Trace(tikv.ErrKeyExists)
+			}
+			if len(tErr.Args()) != 4 {
+				return errors.Trace(tikv.ErrKeyExists)
+			}
+			//nolint: forcetypeassert
+			indexName := tErr.Args()[1].(string)
+			//nolint: forcetypeassert
+			keyCols := tErr.Args()[2].([]string)
+			return errors.Trace(tikv.GenKeyExistsErr(keyCols, indexName))
+		}
+		return errors.Trace(tikv.ErrKeyExists)
+	}
+	return nil
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))
 }
 
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
@@ -100,6 +141,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 	//nolint:forcetypeassert
 	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
+<<<<<<< HEAD
 		SQLMode: mysql.ModeStrictAllTables,
 		SysVars: bc.sysVars,
 		IndexID: indexID,
@@ -156,6 +198,14 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 		}
 	}
 	return nil
+=======
+		SQLMode:     mysql.ModeStrictAllTables,
+		SysVars:     bc.sysVars,
+		IndexID:     indexID,
+		MinCommitTS: bc.initTS,
+	}, lightning.ErrorOnDup)
+	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))
 }
 
 func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
