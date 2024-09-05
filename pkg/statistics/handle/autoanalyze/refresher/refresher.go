@@ -102,6 +102,10 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	maxConcurrency := r.worker.GetMaxConcurrency()
 	currentRunningJobs := r.worker.GetRunningJobs()
 	remainConcurrency := maxConcurrency - len(currentRunningJobs)
+	if remainConcurrency <= 0 {
+		statslogutil.SingletonStatsSamplerLogger().Info("No concurrency available")
+		return false
+	}
 
 	analyzedCount := 0
 	for r.Jobs.Len() > 0 && analyzedCount < remainConcurrency {
@@ -138,10 +142,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 		return true
 	}
 
-	// Still have concurrency, but no tables to analyze.
-	if remainConcurrency > 0 {
-		statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
-	}
+	statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
 	return false
 }
 
