@@ -29,6 +29,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// useAnalysisPriorityQueueV2 is a constant that controls whether to use the new priority queue implementation.
+const useAnalysisPriorityQueueV2 = false
+
 // Refresher provides methods to refresh stats info.
 // NOTE: Refresher is not thread-safe.
 type Refresher struct {
@@ -39,7 +42,8 @@ type Refresher struct {
 
 	// Jobs is the priority queue of analysis jobs.
 	// Exported for testing purposes.
-	Jobs *priorityqueue.AnalysisPriorityQueue
+	Jobs   *priorityqueue.AnalysisPriorityQueue
+	jobsV2 *priorityqueue.AnalysisPriorityQueueV2
 
 	// worker is the worker that runs the analysis jobs.
 	worker *worker
@@ -54,8 +58,13 @@ func NewRefresher(
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
-		Jobs:           priorityqueue.NewAnalysisPriorityQueue(),
 		worker:         NewWorker(statsHandle, sysProcTracker, maxConcurrency),
+	}
+
+	if useAnalysisPriorityQueueV2 {
+		r.jobsV2 = priorityqueue.NewAnalysisPriorityQueue2(statsHandle)
+	} else {
+		r.Jobs = priorityqueue.NewAnalysisPriorityQueue()
 	}
 
 	return r
@@ -69,8 +78,20 @@ func (r *Refresher) UpdateConcurrency() {
 
 // AnalyzeHighestPriorityTables picks tables with the highest priority and analyzes them.
 func (r *Refresher) AnalyzeHighestPriorityTables() bool {
-	if !r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
-		return false
+	if useAnalysisPriorityQueueV2 {
+		if !r.jobsV2.IsInitialized() {
+			if err := r.jobsV2.Initialize(); err != nil {
+				statslogutil.StatsLogger().Error("Failed to initialize AnalysisPriorityQueueV2", zap.Error(err))
+				return false
+			}
+		}
+		if !r.jobsV2.IsWithinTimeWindow() {
+			return false
+		}
+	} else {
+		if !r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
+			return false
+		}
 	}
 
 	se, err := r.statsHandle.SPool().Get()
@@ -93,12 +114,22 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	}
 
 	analyzedCount := 0
-	for r.Jobs.Len() > 0 && analyzedCount < remainConcurrency {
-		job := r.Jobs.Pop()
+	for (useAnalysisPriorityQueueV2 && !r.jobsV2.IsEmpty()) || (!useAnalysisPriorityQueueV2 && r.Jobs.Len() > 0) && analyzedCount < remainConcurrency {
+		var job priorityqueue.AnalysisJob
+		if useAnalysisPriorityQueueV2 {
+			job, err = r.jobsV2.Pop()
+			if err != nil {
+				statslogutil.StatsLogger().Error("Failed to pop job from AnalysisPriorityQueueV2", zap.Error(err))
+				continue
+			}
+		} else {
+			job = r.Jobs.Pop()
+		}
 		if _, isRunning := currentRunningJobs[job.GetTableID()]; isRunning {
 			statslogutil.StatsLogger().Debug("Job already running, skipping", zap.Int64("tableID", job.GetTableID()))
 			continue
 		}
+		statslogutil.StatsLogger().Info("job is valid to analyze", zap.Stringer("job", job))
 		if valid, failReason := job.IsValidToAnalyze(sctx); !valid {
 			statslogutil.SingletonStatsSamplerLogger().Info(
 				"Table not ready for analysis",
@@ -145,6 +176,11 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 
 // RebuildTableAnalysisJobQueue rebuilds the priority queue of analysis jobs.
 func (r *Refresher) RebuildTableAnalysisJobQueue() error {
+	if useAnalysisPriorityQueueV2 {
+		// The V2 queue handles rebuilding internally, so we don't need to do anything here
+		return nil
+	}
+
 	// Reset the priority queue.
 	r.Jobs = priorityqueue.NewAnalysisPriorityQueue()
 
@@ -195,4 +231,7 @@ func (r *Refresher) GetRunningJobs() map[int64]struct{} {
 // Close stops all running jobs and releases resources.
 func (r *Refresher) Close() {
 	r.worker.Stop()
+	if useAnalysisPriorityQueueV2 && r.jobsV2 != nil {
+		r.jobsV2.Close()
+	}
 }

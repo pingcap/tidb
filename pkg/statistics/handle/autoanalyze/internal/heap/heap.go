@@ -16,6 +16,7 @@
 // 1. Use the `errors` package from PingCAP.
 // 2. Use generics to define the `heapData` struct.
 // 3. Add a peak API.
+// 4. Add an IsEmpty API.
 
 package heap
 
@@ -219,6 +220,13 @@ func (h *Heap[K, V]) Peek() (V, error) {
 		return zero, errors.New("heap is empty")
 	}
 	return h.data.items[h.data.queue[0]].obj, nil
+}
+
+// IsEmpty returns true if the heap is empty.
+func (h *Heap[K, V]) IsEmpty() bool {
+	h.lock.RLock()
+	defer h.lock.RUnlock()
+	return len(h.data.queue) == 0
 }
 
 // Pop removes the top object from the heap and returns it.

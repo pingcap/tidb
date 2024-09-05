@@ -126,7 +126,7 @@ func (j *NonPartitionedTableAnalysisJob) GetIndicators() Indicators {
 	return j.Indicators
 }
 
-// SetIndicators sets the indicators of the table.
+// SetIndicators sets the indicators of the job.
 func (j *NonPartitionedTableAnalysisJob) SetIndicators(indicators Indicators) {
 	j.Indicators = indicators
 }

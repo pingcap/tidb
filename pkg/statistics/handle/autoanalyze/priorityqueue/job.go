@@ -29,6 +29,7 @@ import (
 // NOTE: this is only used when the average analysis duration is not available.(No successful analysis before)
 const defaultFailedAnalysisWaitTime = 30 * time.Minute
 
+// analyzeType is the type of the analyze job.
 type analyzeType string
 
 // Indicators contains some indicators to evaluate the table priority.
