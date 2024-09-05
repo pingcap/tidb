@@ -39,6 +39,12 @@ var (
 
 	// MppCoordinatorLatency records latencies of mpp coordinator operations.
 	MppCoordinatorLatency *prometheus.HistogramVec
+
+	AffectedRowsCounter        *prometheus.CounterVec
+	AffectedRowsCounterInsert  prometheus.Counter
+	AffectedRowsCounterUpdate  prometheus.Counter
+	AffectedRowsCounterDelete  prometheus.Counter
+	AffectedRowsCounterReplace prometheus.Counter
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -101,4 +107,17 @@ func InitExecutorMetrics() {
 			Help:      "Bucketed histogram of processing time (ms) of mpp coordinator operations.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType})
+
+	AffectedRowsCounter = NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "affected_rows",
+			Help:      "Counters of server affected rows.",
+		}, []string{LblSQLType})
+
+	AffectedRowsCounterInsert = AffectedRowsCounter.WithLabelValues("Insert")
+	AffectedRowsCounterUpdate = AffectedRowsCounter.WithLabelValues("Update")
+	AffectedRowsCounterDelete = AffectedRowsCounter.WithLabelValues("Delete")
+	AffectedRowsCounterReplace = AffectedRowsCounter.WithLabelValues("Replace")
 }

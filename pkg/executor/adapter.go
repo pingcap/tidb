@@ -1467,6 +1467,22 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.Ctx.ReportUsageStats()
 }
 
+func (a *ExecStmt) recordAffectedRows2Metrics() {
+	sessVars := a.Ctx.GetSessionVars()
+	if affectedRows := sessVars.StmtCtx.AffectedRows(); affectedRows > 0 {
+		switch sessVars.StmtCtx.StmtType {
+		case "Insert":
+			metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
+		case "Replace":
+			metrics.AffectedRowsCounterReplace.Add(float64(affectedRows))
+		case "Delete":
+			metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
+		case "Update":
+			metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
+		}
+	}
+}
+
 func (a *ExecStmt) recordLastQueryInfo(err error) {
 	sessVars := a.Ctx.GetSessionVars()
 	// Record diagnostic information for DML statements
