@@ -136,8 +136,9 @@ func TestCombinedIDAllocation(t *testing.T) {
 
 	genCreateTblJob := func(tp model.ActionType, partitionCnt int) *model.Job {
 		return &model.Job{
-			Type: tp,
-			Args: []any{genTblInfo(partitionCnt)},
+			Version: model.JobVersion1,
+			Type:    tp,
+			Args:    []any{genTblInfo(partitionCnt)},
 		}
 	}
 
@@ -147,24 +148,27 @@ func TestCombinedIDAllocation(t *testing.T) {
 			infos = append(infos, genTblInfo(c))
 		}
 		return &model.Job{
-			Type: model.ActionCreateTables,
-			Args: []any{infos},
+			Version: model.JobVersion1,
+			Type:    model.ActionCreateTables,
+			Args:    []any{infos},
 		}
 	}
 
 	genCreateDBJob := func() *model.Job {
 		info := &model.DBInfo{}
 		return &model.Job{
-			Type: model.ActionCreateSchema,
-			Args: []any{info},
+			Version: model.JobVersion1,
+			Type:    model.ActionCreateSchema,
+			Args:    []any{info},
 		}
 	}
 
 	genRGroupJob := func() *model.Job {
 		info := &model.ResourceGroupInfo{}
 		return &model.Job{
-			Type: model.ActionCreateResourceGroup,
-			Args: []any{info},
+			Version: model.JobVersion1,
+			Type:    model.ActionCreateResourceGroup,
+			Args:    []any{info},
 		}
 	}
 
@@ -173,16 +177,18 @@ func TestCombinedIDAllocation(t *testing.T) {
 			Definitions: make([]model.PartitionDefinition, partCnt),
 		}
 		return &model.Job{
-			Type: model.ActionAlterTablePartitioning,
-			Args: []any{[]string{}, info},
+			Version: model.JobVersion1,
+			Type:    model.ActionAlterTablePartitioning,
+			Args:    []any{[]string{}, info},
 		}
 	}
 
 	genTruncPartitionJob := func(partCnt int) *model.Job {
 		oldIDs := make([]int64, partCnt)
 		return &model.Job{
-			Type: model.ActionTruncateTablePartition,
-			Args: []any{oldIDs, []int64{}},
+			Version: model.JobVersion1,
+			Type:    model.ActionTruncateTablePartition,
+			Args:    []any{oldIDs, []int64{}},
 		}
 	}
 
@@ -191,8 +197,9 @@ func TestCombinedIDAllocation(t *testing.T) {
 			Definitions: make([]model.PartitionDefinition, partCnt),
 		}
 		return &model.Job{
-			Type: model.ActionAddTablePartition,
-			Args: []any{info},
+			Version: model.JobVersion1,
+			Type:    model.ActionAddTablePartition,
+			Args:    []any{info},
 		}
 	}
 
@@ -206,8 +213,9 @@ func TestCombinedIDAllocation(t *testing.T) {
 			require.Equal(t, 1, partCnt)
 		}
 		return &model.Job{
-			Type: tp,
-			Args: []any{[]string{}, info},
+			Version: model.JobVersion1,
+			Type:    tp,
+			Args:    []any{[]string{}, info},
 		}
 	}
 

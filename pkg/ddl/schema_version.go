@@ -68,7 +68,6 @@ func SetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job) error
 		}
 		newTableID = argsV2.NewTableID
 	}
-	err = job.DecodeArgs(&diff.TableID)
 	if err != nil {
 		return errors.Trace(err)
 	}

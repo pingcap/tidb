@@ -69,8 +69,8 @@ const (
 	ActionCreateSequence                ActionType = 34
 	ActionAlterSequence                 ActionType = 35
 	ActionDropSequence                  ActionType = 36
-	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
-	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
+	_DEPRECATEDActionAddColumns         ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
+	_DEPRECATEDActionDropColumns        ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionModifyTableAutoIDCache        ActionType = 39
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
@@ -84,7 +84,7 @@ const (
 	_DEPRECATEDActionAlterTableAlterPartition ActionType = 46
 
 	ActionRenameTables                  ActionType = 47
-	ActionDropIndexes                   ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
+	_DEPRECATEDActionDropIndexes        ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionAlterTableAttributes          ActionType = 49
 	ActionAlterTablePartitionAttributes ActionType = 50
 	ActionCreatePlacementPolicy         ActionType = 51
@@ -250,14 +250,13 @@ const (
 	// array. Before v8.4.0, all DDL jobs are in this version.
 	JobVersion1 JobVersion = 1
 	// JobVersion2 is the second version of DDL job where job args are stored as
-	// typed structs, we start to use this version from v8.4.0. During upgrade from
-	// version < 8.4, we will still use JobVersion1 to make upgrade smooth.
+	// typed structs, we start to use this version from v8.4.0.
 	// Note: this version is not enabled right now except in some test cases, will
 	// enable it after we have CI to run both versions.
 	JobVersion2 JobVersion = 2
 )
 
-// JobVerInUse is the version of DDL job used in the node.
+// JobVerInUse is the job version for new DDL jobs in the node.
 // it's for test now.
 var jobVerInUse atomic.Int64
 
@@ -305,14 +304,14 @@ type Job struct {
 	// - ExchangeTablePartition: [partition-id, pt-db-id, pt-id, partition-name, with-validation]
 	Args []any `json:"-"`
 	// RawArgs : We must use json raw message to delay parsing special args.
-	RawArgs json.RawMessage `json:"raw_args,omitempty"`
+	RawArgs json.RawMessage `json:"raw_args"`
 
 	// below fields are used in JobVersion2
 	// ArgsV2 is a pointer to a typed XXXArgs struct specific to the job type.
 	// see structs inside job_args.go.
 	ArgsV2 any `json:"-"`
 	// RawArgsV2 stores the raw json of ArgsV2.
-	RawArgsV2 json.RawMessage `json:"raw_args_v2,omitempty"`
+	RawArgsV2 json.RawMessage `json:"raw_args_v2"`
 
 	SchemaState SchemaState `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
@@ -522,7 +521,7 @@ func (job *Job) Decode(b []byte) error {
 }
 
 // DecodeArgs decodes serialized job arguments from job.RawArgs into the given
-// variables, and also save the result in job.Args.
+// variables, and also save the result in job.Args. It's for JobVersion1.
 func (job *Job) DecodeArgs(args ...any) error {
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {

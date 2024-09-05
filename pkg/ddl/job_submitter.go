@@ -318,7 +318,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		job := jobW.Job
 		if job.Version == 0 {
 			// if not set, fix it to version 1
-			// TODO remove this after we add code v2 for all jobs.
+			// TODO replace this with assert after we add code v2 for all jobs.
 			job.Version = model.JobVersion1
 		}
 		job.StartTS = startTS
@@ -366,7 +366,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 		for _, jobW := range jobWs {
 			if jobW.Version == 0 {
 				// if not set, fix it to version 1
-				// TODO remove this after we add code v2 for all jobs.
+				// TODO replace this with assert after we add code v2 for all jobs.
 				jobW.Version = model.JobVersion1
 			}
 		}
