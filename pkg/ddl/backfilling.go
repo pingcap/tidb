@@ -169,9 +169,10 @@ type backfillCtx struct {
 
 func newBackfillCtx(id int, rInfo *reorgInfo,
 	schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isDistributed bool) (*backfillCtx, error) {
-	sessCtx, err := newSessCtx(rInfo.jobCtx.store, rInfo.ReorgMeta)
-	if err != nil {
-		return nil, err
+	// TODO: remove newReorgSessCtx
+	sessCtx := newReorgSessCtx(rInfo.jobCtx.store)
+	if err := initSessCtx(sessCtx, rInfo.ReorgMeta); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if isDistributed {
@@ -686,7 +687,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
-		ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName, importConc)
+		ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName, importConc, job.RealStartTS)
 	if err != nil {
 		return errors.Trace(err)
 	}

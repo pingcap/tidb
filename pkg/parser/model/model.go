@@ -303,6 +303,7 @@ const (
 	RunawayActionDryRun
 	RunawayActionCooldown
 	RunawayActionKill
+	RunawayActionSwitchGroup
 )
 
 // RunawayWatchType is the type of runaway watch.
@@ -349,6 +350,8 @@ func (t RunawayActionType) String() string {
 		return "COOLDOWN"
 	case RunawayActionKill:
 		return "KILL"
+	case RunawayActionSwitchGroup:
+		return "SWITCH_GROUP"
 	default:
 		return "DRYRUN"
 	}

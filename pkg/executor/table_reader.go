@@ -135,6 +135,7 @@ func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorC
 type TableReaderExecutor struct {
 	tableReaderExecutorContext
 	exec.BaseExecutorV2
+	indexUsageReporter *exec.IndexUsageReporter
 
 	table table.Table
 
@@ -341,6 +342,10 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
+	if e.indexUsageReporter != nil {
+		e.indexUsageReporter.ReportCopIndexUsageForHandle(e.table, e.plans[0].ID())
+	}
+
 	var err error
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
