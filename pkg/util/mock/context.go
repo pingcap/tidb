@@ -266,6 +266,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		Location:                             sc.TimeZone(),
 		RuntimeStatsColl:                     sc.RuntimeStatsColl,
 		SQLKiller:                            &vars.SQLKiller,
+		CPUUsage:                             &vars.SQLCPUUsages,
 		ErrCtx:                               sc.ErrCtx(),
 		TiFlashReplicaRead:                   vars.TiFlashReplicaRead,
 		TiFlashMaxThreads:                    vars.TiFlashMaxThreads,
