@@ -273,6 +273,7 @@ func MockSignedTable() *model.TableInfo {
 		Indices:    indices,
 		Name:       pmodel.NewCIStr("t"),
 		PKIsHandle: true,
+		State:      model.StatePublic,
 	}
 	return table
 }
@@ -343,6 +344,7 @@ func MockUnsignedTable() *model.TableInfo {
 		Indices:    indices,
 		Name:       pmodel.NewCIStr("t2"),
 		PKIsHandle: true,
+		State:      model.StatePublic,
 	}
 	return table
 }
@@ -372,6 +374,7 @@ func MockNoPKTable() *model.TableInfo {
 		Columns:    []*model.ColumnInfo{col0, col1},
 		Name:       pmodel.NewCIStr("t3"),
 		PKIsHandle: true,
+		State:      model.StatePublic,
 	}
 	return table
 }
@@ -403,6 +406,7 @@ func MockView() *model.TableInfo {
 		Name:    pmodel.NewCIStr("v"),
 		Columns: []*model.ColumnInfo{col0, col1, col2},
 		View:    view,
+		State:   model.StatePublic,
 	}
 	return table
 }
@@ -720,6 +724,7 @@ func MockStateNoneColumnTable() *model.TableInfo {
 		Indices:    indices,
 		Name:       pmodel.NewCIStr("T_StateNoneColumn"),
 		PKIsHandle: true,
+		State:      model.StatePublic,
 	}
 	return table
 }
