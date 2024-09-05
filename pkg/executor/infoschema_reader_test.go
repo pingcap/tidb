@@ -911,6 +911,13 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 		"141|create table|public|138|140|t1|synced",
 		"136|create table|public|133|135|t1|synced",
 	))
+
+	// Test explain output, since the output may change in future.
+	tk.MustQuery(`EXPLAIN SELECT * FROM information_schema.ddl_jobs where db_name = "test2" limit 10;`).Check(testkit.Rows(
+		`Limit_10 10.00 root  offset:0, count:10`,
+		`└─Selection_11 10.00 root  eq(Column#2, "test2")`,
+		`  └─MemTableScan_12 10000.00 root table:DDL_JOBS db_name:["test2"]`,
+	))
 }
 
 func TestInfoSchemaConditionWorks(t *testing.T) {
