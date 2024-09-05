@@ -87,13 +87,6 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	return createTidbTestSuiteWithCfg(t, cfg)
 }
 
-// CreateTidbTestSuiteWithDDLLease creates a test suite with DDL lease for tidb.
-func CreateTidbTestSuiteWithDDLLease(t *testing.T, ddlLease string) *tidbTestSuite {
-	cfg := newTestConfig()
-	cfg.Lease = ddlLease
-	return createTidbTestSuiteWithCfg(t, cfg)
-}
-
 // parseDuration parses lease argument string.
 func parseDuration(lease string) (time.Duration, error) {
 	dur, err := time.ParseDuration(lease)
@@ -3328,6 +3321,11 @@ func TestAuthSocket(t *testing.T) {
 }
 
 func TestIssue53634(t *testing.T) {
-	ts := CreateTidbTestSuiteWithDDLLease(t, "20s")
+	cfg := newTestConfig()
+	cfg.Lease = "20s"
+	cfg.Port = 4123
+	cfg.Status.StatusPort = 10088
+	ts := createTidbTestSuiteWithCfg(t, cfg)
+
 	ts.runTestIssue53634(t, ts, ts.domain)
 }

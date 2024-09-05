@@ -2677,8 +2677,22 @@ func MustExec(ctx context.Context, t *testing.T, conn *sql.Conn, sql string) {
 	require.NoError(t, err)
 }
 
-func MustQuery(ctx context.Context, t *testing.T, cli *tidbTestSuite, conn *sql.Conn, sql string) {
-	rs, err := conn.QueryContext(ctx, sql)
+func MustQueryWithRetry(ctx context.Context, t *testing.T, cli *tidbTestSuite, conn *sql.Conn, stmt string) {
+	var rs *sql.Rows
+	var err error
+	retryCnt := 1
+	for i := 0; i < 20; i++ {
+		rs, err = conn.QueryContext(ctx, stmt)
+		if err == nil {
+			break
+		}
+		if !strings.Contains(err.Error(), "Information schema is changed") {
+			break
+		}
+		retryCnt++
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Logf("running test case retry count:%v, stmt:%v", retryCnt, stmt)
 	require.NoError(t, err)
 	if rs != nil {
 		cli.Rows(t, rs)
@@ -2806,7 +2820,7 @@ func runTestInSchemaState(
 				_, err = sqlWithErr.stmt.ExecContext(ctx, 100+i, i)
 				require.NoError(t, err)
 			} else {
-				MustQuery(ctx, t, cli, conn1, sqlWithErr.sql)
+				MustQueryWithRetry(ctx, t, cli, conn1, sqlWithErr.sql)
 			}
 		}
 	}
