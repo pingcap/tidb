@@ -19,7 +19,7 @@ go_test(
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/autoid",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

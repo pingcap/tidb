@@ -35,6 +35,7 @@ go_library(
         "//pkg/expression/aggregation",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/model",
