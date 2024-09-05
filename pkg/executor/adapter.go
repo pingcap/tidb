@@ -25,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -1551,8 +1552,107 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 	return nil
 }
 
+func simplifyQueryPlan(s []string) string {
+	// state
+	enterPartitionUnion := false
+	canPrintInPartitionUnion := false
+	idxRuneForPartitionUnion := 0
+
+	simpleRow := func(s string) string {
+		if strings.Contains(s, "PartitionUnion") {
+			enterPartitionUnion = true
+			canPrintInPartitionUnion = false
+			idxRuneForPartitionUnion = utf8.RuneCountInString(s[:strings.Index(s, "PartitionUnion")])
+		}
+		if enterPartitionUnion && !canPrintInPartitionUnion {
+			a := string([]rune(s)[idxRuneForPartitionUnion:])
+			if strings.HasPrefix(a, "└─") {
+				canPrintInPartitionUnion = true
+			}
+		}
+		if enterPartitionUnion && !canPrintInPartitionUnion && !strings.Contains(s, "PartitionUnion") {
+			return ""
+		}
+
+		simplePlan := strings.ReplaceAll(s, "├─", "")
+		simplePlan = strings.ReplaceAll(simplePlan, "└─", "")
+		simplePlan = strings.ReplaceAll(simplePlan, "│", "")
+		simplePlan = strings.ReplaceAll(simplePlan, "'", "")
+		simplePlan = strings.TrimSpace(simplePlan)
+		simplePlan += ";"
+		return simplePlan
+	}
+	totalPlan := ""
+	for _, r := range s {
+		totalPlan += simpleRow(r)
+	}
+	return totalPlan
+}
+
+func getPlan(se sqlexec.SQLExecutor, sql string) string {
+	rs, err := se.ExecuteInternal(context.Background(), fmt.Sprintf("explain %s", sql))
+	if err != nil {
+		panic("bbb")
+	}
+	var rows []chunk.Row
+	rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 1)
+	//nolint: errcheck
+	rs.Close()
+	ss := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ss = append(ss, row.GetString(0))
+	}
+	return simplifyQueryPlan(ss)
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
+	if !a.Ctx.GetSessionVars().InRestrictedSQL {
+		sql := FormatSQL(a.GetTextToLog(true)).String()
+		se := a.Ctx.GetSQLExecutor()
+		tblIDs := a.Ctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs
+
+		err := domain.GetDomain(a.Ctx).StatsHandle().DumpColStatsUsageToKV()
+		if err != nil {
+			panic("bbb")
+		}
+
+		for id := range tblIDs {
+			tbl, ok := a.Ctx.GetInfoSchema().TableInfoByID(id)
+			if ok {
+				panic("aaa")
+			}
+			_, err = se.ExecuteInternal(context.Background(), fmt.Sprintf("drop stats %s", tbl.Name.O))
+			if err != nil {
+				panic("bbb")
+			}
+			_, err = se.ExecuteInternal(context.Background(), fmt.Sprintf("analyze table %s predicate columns", tbl.Name.O))
+			if err != nil {
+				panic("bbb")
+			}
+		}
+		predicatePlan := getPlan(se, sql)
+
+		for id := range tblIDs {
+			tbl, ok := a.Ctx.GetInfoSchema().TableInfoByID(id)
+			if ok {
+				panic("aaa")
+			}
+			_, err = se.ExecuteInternal(context.Background(), fmt.Sprintf("drop stats %s", tbl.Name.O))
+			if err != nil {
+				panic("bbb")
+			}
+			_, err = se.ExecuteInternal(context.Background(), fmt.Sprintf("analyze table %s all columns", tbl.Name.O))
+			if err != nil {
+				panic("bbb")
+			}
+		}
+		allPlan := getPlan(se, sql)
+		if predicatePlan != allPlan {
+			panic(fmt.Sprintf("predicatePlan: %s, allPlan: %s, sql: %s", predicatePlan, allPlan, sql))
+		}
+	}
+
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	level := log.GetLevel()
