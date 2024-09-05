@@ -63,32 +63,11 @@ func (c *SQLCPUUsages) MergeTikvCPUTime(d time.Duration) {
 	c.cpuUsages.TikvCPUTime += d
 }
 
-// GetSQLID returns current SQLID
-func (c *SQLCPUUsages) GetSQLID() uint64 {
-	c.Lock()
-	defer c.Unlock()
-	return c.sqlID
-}
-
 // GetCPUUsages returns tidbCPU, tikvCPU time
 func (c *SQLCPUUsages) GetCPUUsages() CPUUsages {
 	c.Lock()
 	defer c.Unlock()
 	return c.cpuUsages
-}
-
-// GetTidbCPUTime returns tidbCPU time
-func (c *SQLCPUUsages) GetTidbCPUTime() time.Duration {
-	c.Lock()
-	defer c.Unlock()
-	return c.cpuUsages.TidbCPUTime
-}
-
-// GetTikvCPUTime returns tikvCPU time
-func (c *SQLCPUUsages) GetTikvCPUTime() time.Duration {
-	c.Lock()
-	defer c.Unlock()
-	return c.cpuUsages.TikvCPUTime
 }
 
 // AllocNewSQLID alloc new ID, will restart from 0 when exceeds uint64 max limit
