@@ -16,6 +16,7 @@ package indexadvisor
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -470,4 +471,57 @@ func isIndexableColumnType(tp *types.FieldType) bool {
 
 func l() *zap.Logger {
 	return logutil.BgLogger().With(zap.String("component", "index_advisor"))
+}
+
+
+// chooseBestIndexSet chooses the best index set from the given index sets.
+func chooseBestIndexSet(
+	querySet s.Set[Query], optimizer Optimizer,
+	indexSets []s.Set[Index]) (bestSet s.Set[Index], bestCost IndexSetCost, err error) {
+	for i, indexSet := range indexSets {
+		cost, err := evaluateIndexSetCost(querySet, optimizer, indexSet)
+		if err != nil {
+			return nil, bestCost, err
+		}
+		if i == 0 || cost.Less(bestCost) {
+			bestSet = indexSet
+			bestCost = cost
+		}
+	}
+	return bestSet, bestCost, nil
+}
+
+// evaluateIndexSetCost evaluates the workload cost under the given indexes.
+func evaluateIndexSetCost(
+	querySet s.Set[Query], optimizer Optimizer,
+	indexSet s.Set[Index]) (IndexSetCost, error) {
+	qs := querySet.ToList()
+	var sqls []string
+	for _, q := range qs {
+		sqls = append(sqls, q.Text)
+	}
+	var costs []float64
+	for _, sql := range sqls {
+		cost, err := optimizer.QueryPlanCost(sql, indexSet.ToList()...)
+		if err != nil {
+			return IndexSetCost{}, err
+		}
+		costs = append(costs, cost)
+	}
+
+	var workloadCost float64
+	queries := querySet.ToList()
+	for i, cost := range costs {
+		query := queries[i]
+		workloadCost += cost * float64(query.Frequency)
+	}
+	var totCols int
+	var keys []string
+	for _, index := range indexSet.ToList() {
+		totCols += len(index.Columns)
+		keys = append(keys, index.Key())
+	}
+	sort.Strings(keys)
+
+	return IndexSetCost{workloadCost, totCols, strings.Join(keys, ",")}, nil
 }
