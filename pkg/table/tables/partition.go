@@ -1764,17 +1764,6 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	// Special handling for Updating with Global index during TRUNCATE PARTITION
-	// and StateDeleteReorganize
-	if t.Meta().Partition.DDLState == model.StateDeleteReorganization &&
-		len(t.Meta().Partition.DroppingDefinitions) > 0 &&
-		len(t.Meta().Partition.AddingDefinitions) == 0 {
-		err = t.deleteOldPartitionRowFromGlobalIndex(ctx, txn, to, h, newData)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
 	if from != to {
@@ -1875,41 +1864,6 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	return nil
 }
 
-func (t *partitionedTable) deleteOldPartitionRowFromGlobalIndex(ctx table.MutateContext, txn kv.Transaction, toPid int64, h kv.Handle, currData []types.Datum) error {
-	found := false
-	for _, id := range t.Meta().Partition.NewPartitionIDs {
-		if id == toPid {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return nil
-	}
-	// we are changing a value that may have GLOBAL INDEX entries from dropped partitions,
-	// but are no-longer accessible (dropped or truncated) so instead of giving Duplicate Error
-	// during the global index reorganization, we will directly remove them here.
-	// TODO: Would it be acceptable to keep giving duplicate errors until the global index reorganization is done?!?
-	// TODO: Benchmark this PR with a simplified to see how much this affects QPS/TPS!
-
-	tc, ec := ctx.GetExprCtx().GetEvalCtx().TypeCtx(), ctx.GetExprCtx().GetEvalCtx().ErrCtx()
-	keys := make([]kv.Key, 4)
-	for i, idxInfo := range t.Meta().Indices {
-		if idxInfo.Global {
-			//GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error)
-			k, _, err := t.indices[i].GenIndexKey(ec, tc.Location(), currData, h, nil)
-			if err != nil {
-				return err
-			}
-			keys = append(keys, k)
-		}
-	}
-	// TODO: It would be better to do this for all rows at the same time, and then have a single BatchGet KV call?!?
-
-	return nil
-}
-
-// No need for HasGlobalIndex(), since we need to loop the indexes anyway...
 // FindPartitionByName finds partition in table meta by name.
 func FindPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
 	// Hash partition table use p0, p1, p2, p3 as partition names automatically.
