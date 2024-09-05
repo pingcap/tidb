@@ -29,6 +29,7 @@ go_library(
         "//pkg/config",
         "//pkg/infoschema/context",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser",
         "//pkg/parser/auth",
@@ -82,6 +83,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

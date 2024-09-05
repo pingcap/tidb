@@ -16,11 +16,10 @@ package common
 
 import (
 	"context"
-
-	"github.com/pingcap/tidb/pkg/lightning/log"
 )
 
-// Range contains a start key and an end key.
+// Range contains a start key and an end key. The Range's key should not be
+// encoded by duplicate detection.
 type Range struct {
 	Start []byte
 	End   []byte // end is always exclusive except import_sstpb.SSTMeta
@@ -31,9 +30,8 @@ type Range struct {
 type Engine interface {
 	// ID is the identifier of an engine.
 	ID() string
-	// LoadIngestData sends DataAndRange to outCh. Implementation may choose smaller
-	// ranges than given regionRanges, and data is contained in its range.
-	LoadIngestData(ctx context.Context, regionRanges []Range, outCh chan<- DataAndRange) error
+	// LoadIngestData sends DataAndRanges to outCh.
+	LoadIngestData(ctx context.Context, outCh chan<- DataAndRanges) error
 	// KVStatistics returns the total kv size and total kv count.
 	KVStatistics() (totalKVSize int64, totalKVCount int64)
 	// ImportedStatistics returns the imported kv size and imported kv count.
@@ -42,9 +40,10 @@ type Engine interface {
 	// duplicate detection is enabled, the keys in engine are encoded by duplicate
 	// detection but the returned keys should not be encoded.
 	GetKeyRange() (startKey []byte, endKey []byte, err error)
-	// SplitRanges splits the range [startKey, endKey) into multiple ranges. If the
-	// duplicate detection is enabled, the keys in engine are encoded by duplicate
-	// detection but the returned keys should not be encoded.
-	SplitRanges(startKey, endKey []byte, sizeLimit, keysLimit int64, logger log.Logger) ([]Range, error)
+	// GetRegionSplitKeys checks the KV distribution of the Engine and returns the
+	// keys that can be used as region split keys. If the duplicate detection is
+	// enabled, the keys stored in engine are encoded by duplicate detection but the
+	// returned keys should not be encoded.
+	GetRegionSplitKeys() ([][]byte, error)
 	Close() error
 }
