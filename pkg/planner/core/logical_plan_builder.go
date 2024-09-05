@@ -6967,38 +6967,32 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 		for i := 0; i < len(x.SelectList.Selects); i++ {
 			var p base.LogicalPlan
 			var err error
+			originalLen := b.handleHelper.stackTail
 
 			var afterOpr *ast.SetOprType
 			switch y := x.SelectList.Selects[i].(type) {
 			case *ast.SelectStmt:
-				originalLen := b.handleHelper.stackTail
 				p, err = b.buildSelect(ctx, y)
-				if err == nil {
-					b.handleHelper.popMap()
-				} else {
-					// Be careful with this tricky case. One error is expected here when building the first recursive
-					// part, however, the b.handleHelper won't be restored if error occurs, which means there could be
-					// more than one entry pushed into b.handleHelper without being poped.
-					// For example: with recursive cte1 as (select ... union all select ... from tbl join cte1 ...) ...
-					// This violates the semantic of buildSelect(), which should only push exactly one entry into
-					// b.handleHelper. So we use a special logic to restore the b.handleHelper here.
-					for b.handleHelper.stackTail > originalLen {
-						b.handleHelper.popMap()
-					}
-				}
 				afterOpr = y.AfterSetOperator
 			case *ast.SetOprSelectList:
-				originalLen := b.handleHelper.stackTail
 				p, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: y, With: y.With})
-				if err == nil {
-					b.handleHelper.popMap()
-				} else {
-					// ditto. See comments above.
-					for b.handleHelper.stackTail > originalLen {
-						b.handleHelper.popMap()
-					}
-				}
 				afterOpr = y.AfterSetOperator
+			}
+
+			// This is for maintain b.handleHelper instead of normal error handling. Since one error is expected if
+			// expectSeed && cInfo.useRecursive, error handling is in the "if expectSeed" block below.
+			if err == nil {
+				b.handleHelper.popMap()
+			} else {
+				// Be careful with this tricky case. One error is expected here when building the first recursive
+				// part, however, the b.handleHelper won't be restored if error occurs, which means there could be
+				// more than one entry pushed into b.handleHelper without being poped.
+				// For example: with recursive cte1 as (select ... union all select ... from tbl join cte1 ...) ...
+				// This violates the semantic of buildSelect() and buildSetOpr(), which should only push exactly one
+				// entry into b.handleHelper. So we use a special logic to restore the b.handleHelper here.
+				for b.handleHelper.stackTail > originalLen {
+					b.handleHelper.popMap()
+				}
 			}
 
 			if expectSeed {
