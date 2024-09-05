@@ -103,6 +103,13 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
 		session.MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
 	}
+	if ver < 212 {
+		// for version < version212, revert column changes related to function `upgradeToVer212`.
+		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `start_time` `time` TIMESTAMP NOT NULL")
+		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `sample_sql` `original_sql` TEXT NOT NULL")
+		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries DROP INDEX `time_index`")
+		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries ADD INDEX time_index(time) COMMENT 'accelerate the speed when querying with active watch'")
+	}
 }
 
 func TestUpgradeVersion66(t *testing.T) {
@@ -618,7 +625,8 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 			idxFinishTS = runJob.BinlogInfo.FinishedTS
 		} else {
 			// The second add index op.
-			if strings.Contains(runJob.TableName, "upgrade_tbl") {
+			// notice: upgrade `tidb_runaway_queries` table will happened in `upgradeToVer212` function which is before the second add index op.
+			if strings.Contains(runJob.TableName, "upgrade_tbl") || strings.Contains(runJob.TableName, "tidb_runaway_queries") {
 				require.Greater(t, runJob.BinlogInfo.FinishedTS, idxFinishTS)
 			} else {
 				// The upgrade DDL ops. These jobs' finishedTS must less than add index ops.

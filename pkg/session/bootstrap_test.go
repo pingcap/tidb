@@ -270,6 +270,13 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
 		MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
 	}
+	if ver < version212 {
+		// for version < version212, revert column changes related to function `upgradeToVer212`.
+		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `start_time` `time` TIMESTAMP NOT NULL")
+		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `sample_sql` `original_sql` TEXT NOT NULL")
+		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries DROP INDEX `time_index`")
+		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries ADD INDEX time_index(time) COMMENT 'accelerate the speed when querying with active watch'")
+	}
 }
 
 // TestUpgrade tests upgrading
@@ -312,6 +319,7 @@ func TestUpgrade(t *testing.T) {
 	MustExec(t, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s"`, variable.TiDBDistSQLScanConcurrency))
 	MustExec(t, se1, `commit`)
 	unsetStoreBootstrapped(store.UUID())
+	revertVersionAndVariables(t, se1, 0)
 	// Make sure the version is downgraded.
 	r = MustExecToRecodeSet(t, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
 	req = r.NewChunk(nil)

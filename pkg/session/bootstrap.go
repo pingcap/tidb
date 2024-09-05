@@ -621,14 +621,17 @@ const (
 	// CreateRunawayTable stores the query which is identified as runaway or quarantined because of in watch list.
 	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_queries (
 		resource_group_name varchar(32) not null,
-		time TIMESTAMP NOT NULL,
+		start_time TIMESTAMP NOT NULL,
+		repeats int default 0,
 		match_type varchar(12) NOT NULL,
 		action varchar(12) NOT NULL,
-		original_sql TEXT NOT NULL,
-		plan_digest TEXT NOT NULL,
+		sample_sql TEXT NOT NULL,
+		sql_digest varchar(64) NOT NULL,
+		plan_digest varchar(64) NOT NULL,
 		tidb_server varchar(512),
 		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when select runaway query",
-		INDEX time_index(time) COMMENT "accelerate the speed when querying with active watch"
+		INDEX time_index(start_time) COMMENT "accelerate the speed when querying with active watch",
+		UNIQUE KEY runaway_task(resource_group_name, sql_digest, plan_digest, match_type)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
@@ -1113,7 +1116,10 @@ const (
 	// version211 add column `summary` to `mysql.tidb_background_subtask_history`.
 	version211 = 211
 
-	// version212 add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
+	// version212 changed a lots of runaway related table.
+	// 1. switchGroup: add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
+	// 2. modify column `plan_digest` type, modify column `time` to `start_time,
+	// modify column `original_sql` to `sample_sql` and unique union key to `mysql.tidb_runaway_queries`.
 	version212 = 212
 )
 
@@ -3090,8 +3096,26 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	if ver >= version212 {
 		return
 	}
+	// version212 changed a lots of runaway related table.
+	// 1. switchGroup: add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD COLUMN `switch_group_name` VARCHAR(32) DEFAULT '' AFTER `action`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD COLUMN `switch_group_name` VARCHAR(32) DEFAULT '' AFTER `action`;", infoschema.ErrColumnExists)
+	// 2. modify column `plan_digest` type, modify column `time` to `start_time,
+	// modify column `original_sql` to `sample_sql` and unique union key to `mysql.tidb_runaway_queries`.
+	// add column `sql_digest`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `sql_digest` varchar(64) DEFAULT '' AFTER `original_sql`;", infoschema.ErrColumnExists)
+	// add column `repeats`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `repeats` int DEFAULT 0 AFTER `time`;", infoschema.ErrColumnExists)
+	// modify column `time` to `start_time` and index(time).
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `time` `start_time` TIMESTAMP NOT NULL", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries DROP INDEX `time_index`", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD INDEX time_index(start_time) COMMENT 'accelerate the speed when querying with active watch'", dbterror.ErrDupKeyName)
+	// modify column `original_sql` to `sample_sql`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `original_sql` `sample_sql` TEXT NOT NULL", infoschema.ErrColumnExists)
+	// modify column type of `plan_digest`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
+	// add union key(resource_group_name, sql_digest, plan_digest, match_type)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD UNIQUE KEY runaway_task(resource_group_name, sql_digest, plan_digest, match_type);", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
