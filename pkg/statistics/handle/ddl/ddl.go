@@ -75,7 +75,11 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			return nil
 		}
 	}
-	logutil.StatsLogger().Info("Handle ddl event", zap.Stringer("event", t))
+	if t.SchemaChangeEvent == nil {
+		// when SchemaChangeEvent is set, it will be printed in the default branch of
+		// below switch.
+		logutil.StatsLogger().Info("Handle ddl event", zap.Stringer("event", t))
+	}
 
 	switch t.GetType() {
 	case model.ActionDropTable:
