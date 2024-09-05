@@ -52,7 +52,12 @@ func (m *MockBackendCtxMgr) CheckMoreTasksAvailable(context.Context) (bool, erro
 }
 
 // Register implements BackendCtxMgr.Register interface.
+<<<<<<< HEAD
 func (m *MockBackendCtxMgr) Register(ctx context.Context, jobID int64, unique bool, etcdClient *clientv3.Client, pdSvcDiscovery pd.ServiceDiscovery, resourceGroupName string) (BackendCtx, error) {
+=======
+func (m *MockBackendCtxMgr) Register(ctx context.Context, jobID int64, unique bool, etcdClient *clientv3.Client,
+	pdSvcDiscovery pd.ServiceDiscovery, resourceGroupName string, importConc int, initTS uint64) (BackendCtx, error) {
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))
 	logutil.DDLIngestLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, nil
