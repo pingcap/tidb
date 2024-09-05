@@ -280,14 +280,16 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 // HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
 // It also analyzes newly created tables and newly added indexes.
 func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
-	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	if err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		analyzed = sa.handleAutoAnalyze(sctx)
 		// During the test, we need to wait for the auto analyze job to be finished.
 		if intest.InTest {
 			sa.refresher.WaitAutoAnalyzeFinishedForTest()
 		}
 		return nil
-	})
+	}); err != nil {
+		statslogutil.StatsLogger().Error("Failed to handle auto analyze", zap.Error(err))
+	}
 	return
 }
 
