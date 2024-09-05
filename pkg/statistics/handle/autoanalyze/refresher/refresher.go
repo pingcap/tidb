@@ -45,6 +45,7 @@ const (
 )
 
 // Refresher provides methods to refresh stats info.
+// NOTE: Refresher is not thread-safe.
 type Refresher struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sysproctrack.Tracker
