@@ -1421,6 +1421,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	a.updatePrevStmt()
 	a.recordLastQueryInfo(err)
+	a.recordAffectedRows2Metrics()
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := sessVars.GetExecuteDuration()
 	if sessVars.InRestrictedSQL {
