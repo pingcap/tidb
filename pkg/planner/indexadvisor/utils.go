@@ -473,7 +473,6 @@ func l() *zap.Logger {
 	return logutil.BgLogger().With(zap.String("component", "index_advisor"))
 }
 
-
 // chooseBestIndexSet chooses the best index set from the given index sets.
 func chooseBestIndexSet(
 	querySet s.Set[Query], optimizer Optimizer,
