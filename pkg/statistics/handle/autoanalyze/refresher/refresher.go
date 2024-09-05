@@ -95,12 +95,14 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	defer r.statsHandle.SPool().Put(se)
 
 	sctx := se.(sessionctx.Context)
+	// Update the concurrency to the latest value.
 	r.UpdateConcurrency()
+	// Check remaining concurrency.
 	maxConcurrency := r.worker.GetMaxConcurrency()
 	currentRunningJobs := r.worker.GetRunningJobs()
 	remainConcurrency := maxConcurrency - len(currentRunningJobs)
-	analyzedCount := 0
 
+	analyzedCount := 0
 	for r.Jobs.Len() > 0 && analyzedCount < remainConcurrency {
 		job := r.Jobs.Pop()
 		if _, isRunning := currentRunningJobs[job.GetTableID()]; isRunning {
@@ -119,7 +121,9 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 		statslogutil.StatsLogger().Info("Auto analyze triggered", zap.Stringer("job", job))
 
 		submitted := r.worker.SubmitJob(job)
-		intest.Assert(submitted, "Failed to submit job")
+		intest.Assert(submitted, "Failed to submit job unexpectedly. "+
+			"This should not occur as the concurrency limit was checked prior to job submission. "+
+			"Please investigate potential race conditions or inconsistencies in the concurrency management logic.")
 		if submitted {
 			statslogutil.StatsLogger().Debug("Job submitted successfully", zap.Int("analyzedCount", analyzedCount))
 			analyzedCount++
@@ -133,7 +137,10 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 		return true
 	}
 
-	statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
+	// Still have concurrency, but no tables to analyze.
+	if remainConcurrency > 0 {
+		statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
+	}
 	return false
 }
 
