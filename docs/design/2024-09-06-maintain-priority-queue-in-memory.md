@@ -2,7 +2,7 @@
 
 - Author(s): [Rustin Liu](http://github.com/Rustin170506), [Lance Tian](http://github.com/lance6716)
 - Discussion PR: <https://github.com/pingcap/tidb/pull/55903>
-- Tracking Issue: TBD
+- Tracking Issue: <https://github.com/pingcap/tidb/issues/55906>
 
 ## Table of Contents
 
