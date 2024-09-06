@@ -427,7 +427,8 @@ type StatementContext struct {
 	}
 
 	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
-	MDLRelatedTableIDs map[int64]struct{}
+	MDLRelatedTableIDs  map[int64]struct{}
+	StmtRelatedTableIDs map[int64]struct{}
 
 	// ForShareLockEnabledByNoop indicates whether the current statement contains `for share` clause
 	// and the `for share` execution is enabled by `tidb_enable_noop_functions`, no locks should be
@@ -469,6 +470,7 @@ func (sc *StatementContext) Reset() {
 		LockTableIDs:        sc.LockTableIDs,
 		TableStats:          sc.TableStats,
 		MDLRelatedTableIDs:  sc.MDLRelatedTableIDs,
+		StmtRelatedTableIDs: sc.StmtRelatedTableIDs,
 		TblInfo2UnionScan:   sc.TblInfo2UnionScan,
 		WarnHandler:         sc.WarnHandler,
 		ExtraWarnHandler:    sc.ExtraWarnHandler,

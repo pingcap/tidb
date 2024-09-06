@@ -1594,19 +1594,16 @@ func simplifyQueryPlan(s []string) string {
 	return totalPlan
 }
 
-func getPlan(se sqlexec.SQLExecutor, sql string, print bool) string {
-	rs, err := se.ExecuteInternal(context.Background(), fmt.Sprintf("explain %s", sql))
+func getPlan(se sqlexec.RestrictedSQLExecutor, sql string, print bool) string {
+	rows, _, err := se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("explain %s", sql))
 	if err != nil {
 		return ""
 	}
-	var rows []chunk.Row
-	rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 1)
-	//nolint: errcheck
-	rs.Close()
 	ss := make([]string, 0, len(rows))
 	for _, row := range rows {
 		if print {
-			logutil.BgLogger().Info("plan for sql", zap.String("sql", sql), zap.String("plan", row.GetString(4)))
+			p := row.GetString(0) + " " + row.GetString(1) + " " + row.GetString(2) + " " + row.GetString(3) + " " + row.GetString(4)
+			logutil.BgLogger().Info("plan for sql", zap.String("sql", sql), zap.String("plan", p))
 		}
 		ss = append(ss, row.GetString(0))
 	}
@@ -1617,49 +1614,59 @@ func getPlan(se sqlexec.SQLExecutor, sql string, print bool) string {
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if !a.Ctx.GetSessionVars().InRestrictedSQL && succ {
 		sql := FormatSQL(a.GetTextToLog(true)).String()
-		se := a.Ctx.GetSQLExecutor()
-		tblIDs := a.Ctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs
+		if strings.Contains(sql, "select") {
+			se := a.Ctx.GetRestrictedSQLExecutor()
+			tblIDs := a.Ctx.GetSessionVars().StmtCtx.StmtRelatedTableIDs
 
-		err := domain.GetDomain(a.Ctx).StatsHandle().DumpColStatsUsageToKV()
-		if err != nil {
-			panic("bbb")
-		}
+			err := domain.GetDomain(a.Ctx).StatsHandle().DumpColStatsUsageToKV()
+			if err != nil {
+				panic(err)
+			}
 
-		printPlan := rand.Intn(500) == 0
+			printPlan := rand.Intn(500) == 0
 
-		for id := range tblIDs {
-			tbl, ok := a.Ctx.GetDomainInfoSchema().TableInfoByID(id)
-			if ok {
-				continue
+			for id := range tblIDs {
+				tbl, ok := a.Ctx.GetDomainInfoSchema().TableInfoByID(id)
+				if !ok {
+					continue
+				}
+				db, ok := a.Ctx.GetDomainInfoSchema().SchemaByID(tbl.DBID)
+				if !ok {
+					continue
+				}
+				_, _, err = se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("drop stats %s.%s", db.Name.O, tbl.Name.O))
+				if err != nil {
+					panic(err)
+				}
+				_, _, err = se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("analyze table %s.%s predicate columns", db.Name.O, tbl.Name.O))
+				if err != nil {
+					panic(err)
+				}
 			}
-			_, err = se.ExecuteInternal(context.Background(), fmt.Sprintf("drop stats %s", tbl.Name.O))
-			if err != nil {
-				panic("bbb")
-			}
-			_, err = se.ExecuteInternal(context.Background(), fmt.Sprintf("analyze table %s predicate columns", tbl.Name.O))
-			if err != nil {
-				panic("bbb")
-			}
-		}
-		predicatePlan := getPlan(se, sql, printPlan)
+			predicatePlan := getPlan(se, sql, printPlan)
 
-		for id := range tblIDs {
-			tbl, ok := a.Ctx.GetDomainInfoSchema().TableInfoByID(id)
-			if ok {
-				continue
+			for id := range tblIDs {
+				tbl, ok := a.Ctx.GetDomainInfoSchema().TableInfoByID(id)
+				if !ok {
+					continue
+				}
+				db, ok := a.Ctx.GetDomainInfoSchema().SchemaByID(tbl.DBID)
+				if !ok {
+					continue
+				}
+				_, _, err = se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("drop stats %s.%s", db.Name.O, tbl.Name.O))
+				if err != nil {
+					panic(err)
+				}
+				_, _, err = se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("analyze table %s.%s all columns", db.Name.O, tbl.Name.O))
+				if err != nil {
+					panic(err)
+				}
 			}
-			_, err = se.ExecuteInternal(context.Background(), fmt.Sprintf("drop stats %s", tbl.Name.O))
-			if err != nil {
-				panic("bbb")
+			allPlan := getPlan(se, sql, printPlan)
+			if predicatePlan != allPlan {
+				panic(fmt.Sprintf("predicatePlan: %s, allPlan: %s, sql: %s", predicatePlan, allPlan, sql))
 			}
-			_, err = se.ExecuteInternal(context.Background(), fmt.Sprintf("analyze table %s all columns", tbl.Name.O))
-			if err != nil {
-				panic("bbb")
-			}
-		}
-		allPlan := getPlan(se, sql, printPlan)
-		if predicatePlan != allPlan {
-			panic(fmt.Sprintf("predicatePlan: %s, allPlan: %s, sql: %s", predicatePlan, allPlan, sql))
 		}
 	}
 

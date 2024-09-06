@@ -1817,8 +1817,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	if sc.MDLRelatedTableIDs == nil {
 		sc.MDLRelatedTableIDs = make(map[int64]struct{})
+		sc.StmtRelatedTableIDs = make(map[int64]struct{})
 	} else {
 		clear(sc.MDLRelatedTableIDs)
+		clear(sc.StmtRelatedTableIDs)
 	}
 	if sc.TblInfo2UnionScan == nil {
 		sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
