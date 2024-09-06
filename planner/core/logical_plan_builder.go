@@ -4431,6 +4431,9 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	return statsTbl
 }
 
+// tryBuildCTE considers the input tn as a reference to a CTE and tries to build the logical plan for it like building
+// DataSource for normal tables.
+// tryBuildCTE will push an entry into handleHelper when successful.
 func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
 		cte := b.outerCTEs[i]
