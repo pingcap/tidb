@@ -199,10 +199,6 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r any) {
 		if recoverdErr, ok := r.(error); ok {
 			err = recoverdErr
 		}
-<<<<<<< HEAD:pkg/executor/index_lookup_hash_join.go
-		if !e.keepOuterOrder {
-=======
-
 		if !e.panicErr.Load() {
 			e.panicErr.Lock()
 			if !e.panicErr.Load() {
@@ -213,7 +209,6 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r any) {
 		}
 
 		if !e.KeepOuterOrder {
->>>>>>> 8cdd449c5fa (executor: fix data race in `IndexNestedLoopHashJoin` (#55824)):pkg/executor/join/index_lookup_hash_join.go
 			e.resultCh <- &indexHashJoinResult{err: err}
 		} else {
 			task := &indexHashJoinTask{err: err}
