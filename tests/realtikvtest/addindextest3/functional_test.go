@@ -17,6 +17,7 @@ package addindextest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -115,4 +116,30 @@ func TestMockMemoryUsedUp(t *testing.T) {
 	tk.MustExec("create table t (c int, c2 int, c3 int, c4 int);")
 	tk.MustExec("insert into t values (1,1,1,1), (2,2,2,2), (3,3,3,3);")
 	tk.MustGetErrMsg("alter table t add index i(c), add index i2(c2);", "[ddl:8247]Ingest failed: memory used up")
+}
+
+func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	runDML := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteOnly {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec("insert into t values (2, 2);")
+			runDML = true
+		}
+	})
+	tk.MustExec("create index idx on t(b);")
+	require.True(t, runDML)
+
+	rows := tk.MustQuery("select tidb_mvcc_info(tidb_encode_index_key('test', 't', 'idx', 1, 1));").Rows()
+	rs := rows[0][0].(string)
+	require.Equal(t, 1, strings.Count(rs, "writes"), rs)
+	rows = tk.MustQuery("select tidb_mvcc_info(tidb_encode_index_key('test', 't', 'idx', 2, 2));").Rows()
+	rs = rows[0][0].(string)
+	require.Equal(t, 2, strings.Count(rs, "writes"), rs)
 }

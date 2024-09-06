@@ -839,8 +839,11 @@ tidb_decode_binary_plan
 tidb_decode_key
 tidb_decode_plan
 tidb_decode_sql_digests
+tidb_encode_index_key
+tidb_encode_record_key
 tidb_encode_sql_digest
 tidb_is_ddl_owner
+tidb_mvcc_info
 tidb_parse_tso
 tidb_parse_tso_logical
 tidb_row_checksum
