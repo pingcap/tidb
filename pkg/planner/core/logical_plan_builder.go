@@ -4896,14 +4896,10 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 	return version
 }
 
-<<<<<<< HEAD
-func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
-=======
 // tryBuildCTE considers the input tn as a reference to a CTE and tries to build the logical plan for it like building
 // DataSource for normal tables.
 // tryBuildCTE will push an entry into handleHelper when successful.
-func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *pmodel.CIStr) (base.LogicalPlan, error) {
->>>>>>> c0111648342 (planner: fix incorrect maintenance of `handleColHelper` for recursive CTE (#55732))
+func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
 		cte := b.outerCTEs[i]
 		if cte.def.Name.L == tn.Name.L {
@@ -7738,13 +7734,9 @@ func isJoinHintSupportedInMPPMode(preferJoinType uint) bool {
 	return onesCount < 1
 }
 
-<<<<<<< HEAD
-func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
-=======
 // buildCte prepares for a CTE. It works together with buildWith().
 // It will push one entry into b.handleHelper.
-func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p base.LogicalPlan, err error) {
->>>>>>> c0111648342 (planner: fix incorrect maintenance of `handleColHelper` for recursive CTE (#55732))
+func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
 	saveBuildingCTE := b.buildingCTE
 	b.buildingCTE = true
 	defer func() {
