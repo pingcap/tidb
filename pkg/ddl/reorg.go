@@ -246,6 +246,8 @@ func newReorgTableMutateContext(exprCtx exprctx.ExprContext) table.MutateContext
 		exprCtx:        exprCtx,
 		encodingConfig: encodingConfig,
 		mutateBuffers:  tbctx.NewMutateBuffers(&variable.WriteStmtBufs{}),
+		// Though currently, `RowIDShardGenerator` is not required in DDL reorg,
+		// we still provide a valid one to keep the context complete and to avoid panic if it is used in the future.
 		shardID: variable.NewRowIDShardGenerator(
 			rand.New(rand.NewSource(time.Now().UnixNano())), // #nosec G404
 			variable.DefTiDBShardAllocateStep,
