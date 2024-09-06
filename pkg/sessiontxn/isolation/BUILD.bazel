@@ -67,6 +67,7 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/planner",
+        "//pkg/planner/core/resolve",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessiontxn",

@@ -72,6 +72,9 @@ type AnalysisJob interface {
 	// GetIndicators gets the indicators of the job.
 	GetIndicators() Indicators
 
+	// GetTableID gets the table ID of the job.
+	GetTableID() int64
+
 	fmt.Stringer
 }
 

@@ -15,7 +15,6 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "@com_github_cznic_mathutil//:mathutil",
-        "@org_golang_x_exp//slices",
     ],
 )
 
