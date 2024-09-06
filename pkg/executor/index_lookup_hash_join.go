@@ -197,9 +197,6 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
 		e.IndexLookUpJoin.finished.Store(true)
 		err := fmt.Errorf("%v", r)
-		if recoverdErr, ok := r.(error); ok {
-			err = recoverdErr
-		}
 
 		if !e.panicErr.Load() {
 			e.panicErr.Lock()
