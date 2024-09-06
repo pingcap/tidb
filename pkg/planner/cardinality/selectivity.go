@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -512,9 +513,7 @@ func CalcTotalSelectivityForMVIdxPath(
 				realtimeCount, _ = coll.GetScaledRealtimeAndModifyCnt(coll.GetIdx(path.Index.ID))
 			}
 		}
-		if realtimeCount == 0 {
-			realtimeCount = 1
-		}
+		intest.Assert(realtimeCount != 0)
 		sel := path.CountAfterAccess / float64(realtimeCount)
 		sel = mathutil.Clamp(sel, 0, 1)
 		selectivities = append(selectivities, sel)
