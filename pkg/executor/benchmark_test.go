@@ -732,7 +732,7 @@ func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Ex
 	for i := 0; i < testCase.concurrency; i++ {
 		e.ProbeWorkers[i] = &join.ProbeWorkerV2{
 			HashJoinCtx: e.HashJoinCtxV2,
-			JoinProbe:   join.NewJoinProbe(e.HashJoinCtxV2, uint(i), testCase.joinType, probeKeysColIdx, joinedTypes, probeKeyTypes, false),
+			JoinProbe:   join.NewJoinProbe(e.HashJoinCtxV2, uint(i), testCase.joinType, probeKeysColIdx, joinedTypes, probeKeyTypes, false, nil),
 		}
 		e.ProbeWorkers[i].WorkerID = uint(i)
 		e.BuildWorkers[i] = join.NewJoinBuildWorkerV2(e.HashJoinCtxV2, uint(i), innerExec, joinKeysColIdx, innerTypes)

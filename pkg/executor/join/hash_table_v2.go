@@ -42,10 +42,6 @@ func (st *subTable) getTotalMemoryUsage() int64 {
 	return st.rowData.getTotalMemoryUsage() + getHashTableMemoryUsage(uint64(len(st.hashTable)))
 }
 
-func (st *subTable) getSegmentNum() int {
-	return st.rowData.getSegmentNum()
-}
-
 func (st *subTable) lookup(hashValue uint64, tagHelper *tagPtrHelper) taggedPtr {
 	ret := st.hashTable[hashValue&st.posMask]
 	hashTagValue := tagHelper.getTaggedValue(hashValue)
@@ -140,7 +136,7 @@ func (ht *hashTableV2) getPartitionMemoryUsage(partID int) int64 {
 	return 0
 }
 
-func (ht *hashTableV2) getPartitionMemoryUsageTest(partID int) (int64) {
+func (ht *hashTableV2) getPartitionMemoryUsageTest(partID int) int64 {
 	if ht.tables[partID] != nil {
 		return ht.tables[partID].getTotalMemoryUsage()
 	}

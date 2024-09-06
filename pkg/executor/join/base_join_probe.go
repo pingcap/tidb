@@ -341,6 +341,12 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		j.matchedRowsHeaders = make([]taggedPtr, logicalRows)
 	}
 
+	if cap(j.matchedRowsHashValue) >= logicalRows {
+		j.matchedRowsHashValue = j.matchedRowsHashValue[:logicalRows]
+	} else {
+		j.matchedRowsHashValue = make([]uint64, logicalRows)
+	}
+
 	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		j.hashValues[i] = j.hashValues[i][:0]
 	}
@@ -389,7 +395,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 			}
 
 			j.matchedRowsHeaders[logicalRowIndex] = 0
-			j.matchedRowsHeaders[logicalRowIndex] = 0
+			j.matchedRowsHashValue[logicalRowIndex] = 0
 		} else {
 			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: newHashVal, pos: logicalRowIndex})
 		}

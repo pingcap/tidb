@@ -308,10 +308,6 @@ type rowTable struct {
 	segments []*rowTableSegment
 }
 
-func (rt *rowTable) getSegmentNum() int {
-	return len(rt.segments)
-}
-
 func (rt *rowTable) getTotalMemoryUsage() int64 {
 	totalMemoryUsage := int64(0)
 	for _, seg := range rt.segments {

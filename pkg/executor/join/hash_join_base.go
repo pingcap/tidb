@@ -56,6 +56,7 @@ type hashJoinCtxBase struct {
 	finished      atomic.Bool
 	IsNullEQ      []bool
 	buildFinished chan error
+	restoreBuildFinished chan struct{}
 	JoinType      logicalop.JoinType
 	IsNullAware   bool
 	memTracker    *memory.Tracker // track memory usage.

@@ -235,12 +235,12 @@ func testSpill(t *testing.T, ctx *mock.Context, joinType logicalop.JoinType, lef
 		rUsedInOtherCondition: param.rightUsedByOtherCondition,
 	}
 
-	_ = getExpectedResults(t, ctx, info, returnTypes, leftDataSource, rightDataSource)
-	// testInnerJoinSpillCase1(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[0])
-	// testInnerJoinSpillCase2(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[1])
-	// testInnerJoinSpillCase3(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[2])
-	// testInnerJoinSpillCase4(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[3])
-	// testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource, param.memoryLimits[4])
+	expectedResult := getExpectedResults(t, ctx, info, returnTypes, leftDataSource, rightDataSource)
+	testInnerJoinSpillCase1(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[0])
+	testInnerJoinSpillCase2(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[1])
+	testInnerJoinSpillCase3(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[2])
+	testInnerJoinSpillCase4(t, ctx, expectedResult, info, returnTypes, leftDataSource, rightDataSource, param.memoryLimits[3])
+	testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource, param.memoryLimits[4])
 }
 
 func TestInnerJoinSpillBasic(t *testing.T) {

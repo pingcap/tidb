@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -282,7 +283,8 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber uint, spi
 
 	htc.tagHelper = &tagPtrHelper{}
 	htc.tagHelper.init(taggedBits)
-	htc.rowTables = nil
+
+	htc.clearAllSegmentsInRowTable()
 	return totalSegmentCnt, nil
 }
 
@@ -807,6 +809,11 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 }
 
 func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
+	if e.inRestore {
+		// Wait for the restore build
+		<-e.restoreBuildFinished
+	}
+
 	for i := uint(0); i < e.Concurrency; i++ {
 		workerID := i
 		e.workerWg.RunWithRecover(func() {
@@ -950,9 +957,6 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 		dest: w.probeResultCh,
 	}
 	for ok := true; ok; {
-		if w.HashJoinCtx.finished.Load() {
-			break
-		}
 		select {
 		case <-w.HashJoinCtx.closeCh:
 			return
@@ -976,10 +980,13 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 		// Give back to probe fetcher
 		w.probeChkResourceCh <- emptyProbeSideResult
 	}
-	// note joinResult.chk may be nil when getNewJoinResult fails in loops
-	if joinResult == nil {
-		return
-	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+
+	err := w.JoinProbe.SpillRemainingProbeChunks()
+	if err != nil {
+		joinResult.err = err
+	}
+
+	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		w.joinChkResourceCh <- joinResult.chk
@@ -1000,8 +1007,16 @@ func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {
 }
 
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
+	defer func() {
+		close(e.joinResultCh)
+		close(e.restoreBuildFinished)
+	}()
+
 	lastRound := 0
 	for {
+		if e.inRestore {
+			log.Info("xzxdebug start a restore round")
+		}
 		e.fetchAndBuildHashTable(ctx)
 		e.fetchAndProbeHashTable(ctx)
 
@@ -1017,7 +1032,6 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		restoredPartition := e.spillHelper.stack.pop()
 		if restoredPartition == nil {
 			// No more data to restore
-			close(e.joinResultCh)
 			return
 		}
 
@@ -1052,6 +1066,7 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		e.initializeForProbe()
 		e.hashTableContext.memoryTracker.AttachTo(e.memTracker)
 		e.buildFinished = make(chan error, 1)
+		e.restoreBuildFinished = make(chan struct{}, 1)
 		go e.startBuildAndProbe(ctx)
 		e.prepared = true
 	}
@@ -1077,7 +1092,11 @@ func (e *HashJoinV2Exec) handleFetchAndBuildHashTablePanic(r any) {
 	if r != nil {
 		e.buildFinished <- util.GetRecoverError(r)
 	}
-	close(e.buildFinished)
+	if e.inRestore {
+		e.restoreBuildFinished <- struct{}{}
+	} else {
+		close(e.buildFinished)
+	}
 }
 
 // checkBalance checks whether the segment count of each partition is balanced.
@@ -1188,6 +1207,10 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 		return
 	}
 
+	if e.spillHelper.spillTriggered {
+		e.spillHelper.spillTriggedInBuildingStageForTest = true
+	}
+
 	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(e.partitionNumber, e.spillHelper)
 	if err != nil {
 		e.buildFinished <- err
@@ -1207,13 +1230,16 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) (chan *chunk.Chunk, chan struct{}) {
 	srcChkCh := make(chan *chunk.Chunk, 1)
 	var waitForController chan struct{}
+	if e.inRestore {
+		waitForController = make(chan struct{})
+	}
+
 	wg.Add(1)
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
 			fetcher := e.BuildWorkers[0]
 			if e.inRestore {
-				waitForController = make(chan struct{})
 				chunkNum := e.getRestoredChunkNum()
 				e.controlPrebuildWorkersForRestore(chunkNum, srcChkCh, waitForController, fetcherAndWorkerSyncer, errCh, doneCh)
 			} else {
