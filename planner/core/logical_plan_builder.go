@@ -4431,7 +4431,55 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	return statsTbl
 }
 
+<<<<<<< HEAD:planner/core/logical_plan_builder.go
 func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
+=======
+// getLatestVersionFromStatsTable gets statistics information for a table specified by "tableID", and get the max
+// LastUpdateVersion among all Columns and Indices in it.
+// Its overall logic is quite similar to getStatsTable(). During plan cache matching, only the latest version is needed.
+// In such case, compared to getStatsTable(), this function can save some copies, memory allocations and unnecessary
+// checks. Also, this function won't trigger metrics changes.
+func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) (version uint64) {
+	statsHandle := domain.GetDomain(ctx).StatsHandle()
+	// 1. tidb-server started and statistics handle has not been initialized. Pseudo stats table.
+	if statsHandle == nil {
+		return 0
+	}
+
+	var statsTbl *statistics.Table
+	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		statsTbl = statsHandle.GetTableStats(tblInfo)
+	} else {
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+	}
+
+	// 2. Table row count from statistics is zero. Pseudo stats table.
+	realtimeRowCount := statsTbl.RealtimeCount
+	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDeterminate {
+		realtimeRowCount = max(int64(statsTbl.GetAnalyzeRowCount()), 0)
+	}
+	if realtimeRowCount == 0 {
+		return 0
+	}
+
+	// 3. Not pseudo stats table. Return the max LastUpdateVersion among all Columns and Indices
+	// return statsTbl.LastAnalyzeVersion
+	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
+		version = max(version, col.LastUpdateVersion)
+		return false
+	})
+	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+		version = max(version, idx.LastUpdateVersion)
+		return false
+	})
+	return version
+}
+
+// tryBuildCTE considers the input tn as a reference to a CTE and tries to build the logical plan for it like building
+// DataSource for normal tables.
+// tryBuildCTE will push an entry into handleHelper when successful.
+func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *pmodel.CIStr) (base.LogicalPlan, error) {
+>>>>>>> c0111648342 (planner: fix incorrect maintenance of `handleColHelper` for recursive CTE (#55732)):pkg/planner/core/logical_plan_builder.go
 	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
 		cte := b.outerCTEs[i]
 		if cte.def.Name.L == tn.Name.L {
@@ -4455,6 +4503,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID, seedStat: cte.seedStat, seedSchema: cte.seedLP.Schema()}.Init(b.ctx, b.getSelectOffset())
 				p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 				p.SetOutputNames(cte.seedLP.OutputNames())
+				b.handleHelper.pushMap(nil)
 				return p, nil
 			}
 
@@ -7232,7 +7281,13 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 	return cnt > 1
 }
 
+<<<<<<< HEAD:planner/core/logical_plan_builder.go
 func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
+=======
+// buildCte prepares for a CTE. It works together with buildWith().
+// It will push one entry into b.handleHelper.
+func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p base.LogicalPlan, err error) {
+>>>>>>> c0111648342 (planner: fix incorrect maintenance of `handleColHelper` for recursive CTE (#55732)):pkg/planner/core/logical_plan_builder.go
 	saveBuildingCTE := b.buildingCTE
 	b.buildingCTE = true
 	defer func() {
@@ -7267,6 +7322,7 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 }
 
 // buildRecursiveCTE handles the with clause `with recursive xxx as xx`.
+// It will push one entry into b.handleHelper.
 func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNode) error {
 	b.isCTE = true
 	cInfo := b.outerCTEs[len(b.outerCTEs)-1]
@@ -7296,6 +7352,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 		for i := 0; i < len(x.SelectList.Selects); i++ {
 			var p LogicalPlan
 			var err error
+			originalLen := b.handleHelper.stackTail
 
 			var afterOpr *ast.SetOprType
 			switch y := x.SelectList.Selects[i].(type) {
@@ -7305,6 +7362,22 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 			case *ast.SetOprSelectList:
 				p, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: y, With: y.With, Limit: y.Limit, OrderBy: y.OrderBy})
 				afterOpr = y.AfterSetOperator
+			}
+
+			// This is for maintain b.handleHelper instead of normal error handling. Since one error is expected if
+			// expectSeed && cInfo.useRecursive, error handling is in the "if expectSeed" block below.
+			if err == nil {
+				b.handleHelper.popMap()
+			} else {
+				// Be careful with this tricky case. One error is expected here when building the first recursive
+				// part, however, the b.handleHelper won't be restored if error occurs, which means there could be
+				// more than one entry pushed into b.handleHelper without being poped.
+				// For example: with recursive cte1 as (select ... union all select ... from tbl join cte1 ...) ...
+				// This violates the semantic of buildSelect() and buildSetOpr(), which should only push exactly one
+				// entry into b.handleHelper. So we use a special logic to restore the b.handleHelper here.
+				for b.handleHelper.stackTail > originalLen {
+					b.handleHelper.popMap()
+				}
 			}
 
 			if expectSeed {
@@ -7337,14 +7410,11 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 					// Build seed part plan.
 					saveSelect := x.SelectList.Selects
 					x.SelectList.Selects = x.SelectList.Selects[:i]
-					// We're rebuilding the seed part, so we pop the result we built previously.
-					for _i := 0; _i < i; _i++ {
-						b.handleHelper.popMap()
-					}
 					p, err = b.buildSetOpr(ctx, x)
 					if err != nil {
 						return err
 					}
+					b.handleHelper.popMap()
 					x.SelectList.Selects = saveSelect
 					p, err = b.adjustCTEPlanOutputName(p, cInfo.def)
 					if err != nil {
@@ -7413,6 +7483,7 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 			limit.SetChildren(limit.Children()[:0]...)
 			cInfo.limitLP = limit
 		}
+		b.handleHelper.pushMap(nil)
 		return nil
 	default:
 		p, err := b.buildResultSetNode(ctx, x, true)
@@ -7507,7 +7578,9 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		b.outerCTEs[len(b.outerCTEs)-1].optFlag = b.optFlag
 		b.outerCTEs[len(b.outerCTEs)-1].isBuilding = false
 		b.optFlag = saveFlag
-		// each cte (select statement) will generate a handle map, pop it out here.
+		// buildCte() will push one entry into handleHelper. As said in comments for b.handleHelper, building CTE
+		// should not affect the handleColHelper, so we pop it out here, then buildWith() as a whole will not modify
+		// the handleColHelper.
 		b.handleHelper.popMap()
 	}
 	return nil
