@@ -103,7 +103,6 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
@@ -448,13 +447,13 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 	}
 
 	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
-
-	eg, ectx := errgroup.WithContext(context.Background())
 	concurrency := min(len(splittedSchemas), 128)
-	workers := util.NewWorkerPool(uint(concurrency), "fetch schemas with tables")
+
+	eg, ectx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
+	eg.SetLimit(concurrency)
 	for _, schemas := range splittedSchemas {
 		ss := schemas
-		workers.ApplyOnErrorGroup(eg, func() error {
+		eg.Go(func() error {
 			return do.fetchSchemasWithTables(ectx, ss, m)
 		})
 	}
@@ -490,7 +489,7 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 }
 
 func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m *meta.Meta) error {
-	failpoint.Inject("failed-fetch-schemas-with-tables", func(_ failpoint.Value) {
+	failpoint.Inject("failed-fetch-schemas-with-tables", func() {
 		failpoint.Return(errors.New("failpoint: failed to fetch schemas with tables"))
 	})
 

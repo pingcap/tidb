@@ -194,7 +194,7 @@ func TestTetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 	require.Equal(t, len(dbs), 1003)
 
 	// inject the failpoint
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables", "1*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables", "1*return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables"))
 	}()
