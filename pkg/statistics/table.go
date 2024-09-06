@@ -444,6 +444,36 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 	return -1
 }
 
+<<<<<<< HEAD
+=======
+// GetScaledRealtimeAndModifyCnt scale the RealtimeCount and ModifyCount for some special indexes where the total row
+// count is different from the total row count of the table. Currently, only the mv index is this case.
+// Because we will use the RealtimeCount and ModifyCount during the estimation for ranges on this index (like the upper
+// bound for the out-of-range estimation logic and the IncreaseFactor logic), we can't directly use the RealtimeCount and
+// ModifyCount of the table. Instead, we should scale them before using.
+// For example, if the table analyze row count is 1000 and realtime row count is 1500, and the mv index total count is 5000,
+// when calculating the IncreaseFactor, it should be 1500/1000 = 1.5 for normal columns/indexes, and we should use the
+// same 1.5 for mv index. But obviously, use 1500/5000 would be wrong, the correct calculation should be 7500/5000 = 1.5.
+// So we add this function to get this 7500.
+func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCnt, modifyCnt int64) {
+	// In theory, we can apply this scale logic on all indexes. But currently, we only apply it on the mv index to avoid
+	// any unexpected changes caused by factors like precision difference.
+	if idxStats == nil || idxStats.Info == nil || !idxStats.Info.MVIndex || !idxStats.IsFullLoad() {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
+	analyzeRowCount := coll.GetAnalyzeRowCount()
+	if analyzeRowCount <= 0 {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
+	idxTotalRowCount := idxStats.TotalRowCount()
+	if idxTotalRowCount <= 0 {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
+	scale := idxTotalRowCount / analyzeRowCount
+	return int64(float64(coll.RealtimeCount) * scale), int64(float64(coll.ModifyCount) * scale)
+}
+
+>>>>>>> dd1808364a0 (planner: fix incorrect estRows with global index and json column (#55842))
 // GetStatsHealthy calculates stats healthy if the table stats is not pseudo.
 // If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, true.
 func (t *Table) GetStatsHealthy() (int64, bool) {
