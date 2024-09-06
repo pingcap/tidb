@@ -117,8 +117,8 @@ func NewDropTableEvent(
 }
 
 // GetDropTableInfo returns the table info of the SchemaChangeEvent whose type is ActionDropTable.
-func (e *SchemaChangeEvent) GetDropTableInfo() (newTableInfo *model.TableInfo) {
-	return e.oldTableInfo
+func (s *SchemaChangeEvent) GetDropTableInfo() (newTableInfo *model.TableInfo) {
+	return s.oldTableInfo
 }
 
 // NewAddColumnEvent creates a SchemaChangeEvent whose type is ActionAddColumn.
@@ -134,8 +134,8 @@ func NewAddColumnEvent(
 }
 
 // GetAddColumnInfo returns the table info of the SchemaChangeEvent whose type is ActionAddColumn.
-func (e *SchemaChangeEvent) GetAddColumnInfo() (newTableInfo *model.TableInfo, newColumnInfo []*model.ColumnInfo) {
-	return e.newTableInfo, e.columnInfos
+func (s *SchemaChangeEvent) GetAddColumnInfo() (newTableInfo *model.TableInfo, newColumnInfo []*model.ColumnInfo) {
+	return s.newTableInfo, s.columnInfos
 }
 
 // NewModifyColumnEvent creates a SchemaChangeEvent whose type is ActionModifyColumn.
@@ -151,6 +151,6 @@ func NewModifyColumnEvent(
 }
 
 // GetModifyColumnInfo returns the table info of and column info the SchemaChangeEvent whose type is ActionModifyColumn.
-func (e *SchemaChangeEvent) GetModifyColumnInfo() (newTableInfo *model.TableInfo, modifiedColumnInfo []*model.ColumnInfo) {
-	return e.newTableInfo, e.columnInfos
+func (s *SchemaChangeEvent) GetModifyColumnInfo() (newTableInfo *model.TableInfo, modifiedColumnInfo []*model.ColumnInfo) {
+	return s.newTableInfo, s.columnInfos
 }
