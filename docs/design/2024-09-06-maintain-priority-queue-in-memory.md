@@ -205,7 +205,7 @@ In this sequence diagram, `t2` is `maxTblStatsVer` and `t1` is `nextStatsVersion
 
 #### Reflect on DDL Changes
 
-The priority queue needs to subscribe to DDL changes to update analysis jobs.
+The priority queue needs to subscribe to DDL changes to update analysis jobs. To ensure that DDL events are processed in order, we require a reliable and ordered mechanism to fetch them. Therefore, we have decided to introduce a new system table `mysql.ddl_notifier` to store the DDL events and a DDLNotifier to fetch and deliver them to the priority queue.
 
 ##### Golang-type view from the subscriber
 
