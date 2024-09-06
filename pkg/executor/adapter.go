@@ -1614,7 +1614,7 @@ func getPlan(se sqlexec.RestrictedSQLExecutor, sql string, print bool) string {
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if !a.Ctx.GetSessionVars().InRestrictedSQL && succ {
 		sql := FormatSQL(a.GetTextToLog(true)).String()
-		if strings.Contains(sql, "select") {
+		if strings.Contains(sql, "select") && !strings.Contains(sql, "explain") {
 			se := a.Ctx.GetRestrictedSQLExecutor()
 			tblIDs := a.Ctx.GetSessionVars().StmtCtx.StmtRelatedTableIDs
 
