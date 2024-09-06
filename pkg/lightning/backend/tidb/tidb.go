@@ -306,8 +306,7 @@ type stmtKey struct {
 // Hash implements SimpleLRUCache.Key.
 func (k *stmtKey) Hash() []byte {
 	if len(k.hash) == 0 {
-		k.hash = make([]byte, 0, len(k.query))
-		k.hash = append(k.hash, hack.Slice(k.query)...)
+		return hack.Slice(k.query)
 	}
 	return k.hash
 }
@@ -328,8 +327,6 @@ type tidbBackend struct {
 	// implement stmtCache to improve performance
 	stmtCache      *kvcache.SimpleLRUCache
 	stmtCacheMutex sync.RWMutex
-	// Indicate if the CachePrepStmts should be enabled or not
-	cachePrepStmts bool
 }
 
 var _ backend.Backend = (*tidbBackend)(nil)
@@ -380,7 +377,6 @@ func NewTiDBBackend(
 		maxChunkRows:   cfg.TikvImporter.LogicalImportBatchRows,
 		stmtCache:      stmtCache,
 		stmtCacheMutex: sync.RWMutex{},
-		cachePrepStmts: cfg.TikvImporter.LogicalImportPrepStmt,
 	}
 }
 
@@ -744,7 +740,7 @@ func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string,
 		if i != 0 {
 			insertStmt.WriteByte(',')
 		}
-		if be.cachePrepStmts {
+		if be.stmtCache != nil {
 			insertStmt.WriteString(row.preparedInsertStmt)
 			values = append(values, row.values...)
 		} else {
@@ -781,7 +777,7 @@ func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, colu
 	for _, row := range rows {
 		var finalInsertStmt strings.Builder
 		finalInsertStmt.WriteString(is)
-		if be.cachePrepStmts {
+		if be.stmtCache != nil {
 			finalInsertStmt.WriteString(row.preparedInsertStmt)
 			values = append(values, row.values...)
 		} else {
@@ -826,7 +822,7 @@ stmtLoop:
 		)
 		for i := 0; i < writeRowsMaxRetryTimes; i++ {
 			query := stmtTask.stmt
-			if be.cachePrepStmts {
+			if be.stmtCache != nil {
 				var prepStmt *sql.Stmt
 				key := &stmtKey{query: query}
 				be.stmtCacheMutex.RLock()
@@ -841,6 +837,8 @@ stmtLoop:
 					// to avoid override existing stmt without closing it
 					if _, ok := be.stmtCache.Get(key); !ok {
 						be.stmtCache.Put(key, stmt)
+					} else {
+						defer prepStmt.Close()
 					}
 					be.stmtCacheMutex.Unlock()
 				} else {
