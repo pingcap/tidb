@@ -208,7 +208,7 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r any) {
 			e.panicErr.Unlock()
 		}
 
-		if !e.KeepOuterOrder {
+		if !e.keepOuterOrder {
 			e.resultCh <- &indexHashJoinResult{err: err}
 		} else {
 			task := &indexHashJoinTask{err: err}
