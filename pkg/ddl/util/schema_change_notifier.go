@@ -51,7 +51,6 @@ func (s *SchemaChangeEvent) String() string {
 	}
 	for _, columnInfo := range s.columnInfos {
 		_, _ = fmt.Fprintf(&sb, ", Column ID: %d, Column Name: %s", columnInfo.ID, columnInfo.Name)
-		//ret += fmt.Sprintf(", Column ID: %d, Column Name: %s", columnInfo.ID, columnInfo.Name)
 	}
 	sb.WriteString(")")
 
