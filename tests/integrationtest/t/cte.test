@@ -336,3 +336,71 @@ INSERT INTO `t_dnmxh` VALUES (104,571000,NULL),(104,572000,44.37),(104,573000,59
 WITH cte_0 AS (select distinct ref_0.wkey as c0, ref_0.pkey as c1, ref_0.c_xhsndb as c2 from t_dnmxh as ref_0 where (1 <= ( select ref_1.pkey not in ( select ref_5.wkey as c0 from t_dnmxh as ref_5 where (ref_5.wkey < ( select ref_6.pkey as c0 from t_cqmg3b as ref_6 where 88 between 96 and 76)) ) as c0 from (t_cqmg3b as ref_1 left outer join t_dnmxh as ref_2 on (ref_1.wkey = ref_2.wkey )) where ref_0.c_xhsndb is NULL union select 33 <= 91 as c0 from t_cqmg3b as ref_8 ))), cte_1 AS (select ref_9.wkey as c0, ref_9.pkey as c1, ref_9.c_anpf_c as c2, ref_9.c_b_fp_c as c3, ref_9.c_ndccfb as c4, ref_9.c_8rswc as c5 from t_cqmg3b as ref_9) select count(1) from cte_0 as ref_10 where case when 56 < 50 then case when 100 in ( select distinct ref_11.c4 as c0 from cte_1 as ref_11 where (ref_11.c4 > ( select ref_13.pkey as c0 from t_dnmxh as ref_13 where (ref_13.wkey > ( select distinct ref_11.c1 as c0 from cte_0 as ref_14)) )) or (1 = 1)) then null else null end else '7mxv6' end not like 'ki4%vc';
 #case
 with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 as (select 3) select * from cte2 union all select * from cte2) order by 1;
+
+# Tests for PR #55732
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 value(5,5);
+insert into t2 value(1,1);
+with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1;
+# This UPDATE should update t2.b to 2
+update t2 set b=2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
+select * from t2;
+# This DELETE should delete all rows in t2
+delete from t2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
+select * from t2;
+
+# Issue #55666
+drop table if exists table_abc1;
+drop table if exists table_abc2;
+drop table if exists table_abc3;
+drop table if exists table_abc4;
+
+CREATE TABLE `table_abc1` (
+  `column_abc1` varchar(10) DEFAULT NULL,
+  `column_abc2` varchar(10) DEFAULT NULL,
+  `column_abc3` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `table_abc3` (
+  `column_abc5` varchar(10) DEFAULT NULL,
+  `column_abc6` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `table_abc4` (
+  `column_abc3` varchar(10) DEFAULT NULL,
+  `column_abc7` varchar(10) DEFAULT NULL,
+  `column_abc5` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+INSERT INTO `table_abc1` VALUES ('KTL157','KTL157','KTL157');
+INSERT INTO `table_abc3` VALUES ('1000','20240819');
+INSERT INTO `table_abc4` VALUES ('KTL157','test','1000');
+
+DELETE FROM table_abc3 t_abc3
+WHERE t_abc3.column_abc5 IN (
+    SELECT a.column_abc5
+    FROM (
+        WITH tree_cte1 AS (
+            WITH RECURSIVE tree_cte AS (
+                SELECT t.column_abc1, t.column_abc2, t.column_abc3, 0 AS lv
+                FROM table_abc1 t
+                WHERE t.column_abc1 IN ('KTL157', 'KTL159')
+                UNION ALL
+                SELECT t.column_abc1, t.column_abc2, t.column_abc3, tcte.lv + 1
+                FROM table_abc1 t
+                JOIN tree_cte tcte ON t.column_abc1 = tcte.column_abc2
+                WHERE tcte.lv <= 1
+            )
+            SELECT * FROM tree_cte
+        )
+        SELECT  e.column_abc5
+        FROM (
+            SELECT DISTINCT * FROM tree_cte1
+        ) aa
+        LEFT JOIN table_abc4 e ON e.column_abc3 = aa.column_abc3
+    ) a
+);
+
+
