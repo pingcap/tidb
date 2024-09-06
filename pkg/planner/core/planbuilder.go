@@ -571,6 +571,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSplitRegion(x)
 	case *ast.CompactTableStmt:
 		return b.buildCompactTable(x)
+	case *ast.RecommendIndexStmt:
 	}
 	return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -5634,6 +5635,20 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (base.Plan, 
 		ReplicaKind:    node.ReplicaKind,
 		TableInfo:      tblInfo,
 		PartitionNames: node.PartitionNames,
+	}
+	return p, nil
+}
+
+func (b *PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, error) {
+	p := &RecommendIndexPlan{
+		Action: v.Action,
+		SQL:    v.SQL,
+		ID:     v.ID,
+		Option: v.Option,
+		Value:  v.Value,
+	}
+
+	switch v.Action {
 	}
 	return p, nil
 }
