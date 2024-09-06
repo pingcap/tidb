@@ -4738,12 +4738,12 @@ HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__rule__rul
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#11
+Projection	10000.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#11
 └─IndexReader	10000.00	root		index:IndexFullScan
   └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
   │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5771,7 +5771,7 @@ Projection	15593.77	root		planner__core__casetest__rule__rule_join_reorder.t1.a,
         └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
   │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5780,7 +5780,7 @@ Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NUL
       └─IndexRangeScan	3.75	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:true, stats:pseudo
 explain format = 'brief' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
   │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5792,7 +5792,7 @@ Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
   │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5801,7 +5801,7 @@ Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NUL
       └─IndexRangeScan	3.75	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:true, stats:pseudo
 explain format = 'brief' select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
   │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5813,7 +5813,7 @@ Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t2@sel_2, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
   │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5825,7 +5825,7 @@ Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
   │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -5837,7 +5837,7 @@ Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
   │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
@@ -7291,7 +7291,7 @@ HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rul
         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
   │ └─IndexFullScan	9990.00	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
@@ -7299,7 +7299,7 @@ Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a,
     └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
 explain format = 'brief' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
   │ └─IndexFullScan	9990.00	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
@@ -7310,7 +7310,7 @@ Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
   │ └─IndexFullScan	9990.00	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
@@ -7318,7 +7318,7 @@ Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a,
     └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
 explain format = 'brief' select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 left join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─MergeJoin	12487.50	root		left outer join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
   │ └─IndexFullScan	9990.00	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
@@ -7329,7 +7329,7 @@ Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LE
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 right join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
-Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a, NULL->Column#14
+Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
 └─MergeJoin	12487.50	root		right outer join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
   │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo

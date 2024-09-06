@@ -2142,8 +2142,6 @@ func (d *Datum) ToBytes() ([]byte, error) {
 // StringTruncate truncate a long string.
 func (d *Datum) StringTruncate() string {
 	switch d.Kind() {
-	case KindNull:
-		return "NULL"
 	case KindString, KindBytes, KindMysqlJSON:
 		{
 			str := d.GetString()
