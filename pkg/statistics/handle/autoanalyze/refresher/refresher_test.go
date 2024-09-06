@@ -203,7 +203,7 @@ func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	require.True(t, r.AnalyzeHighestPriorityTables())
 	require.Eventually(t, func() bool {
 		return len(r.GetRunningJobs()) == 0
-	}, 10*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond)
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// The table is analyzed.
@@ -223,7 +223,7 @@ func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	require.True(t, r.AnalyzeHighestPriorityTables())
 	require.Eventually(t, func() bool {
 		return len(r.GetRunningJobs()) == 0
-	}, 10*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond)
 	// t2 is analyzed.
 	pid2 = tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 = handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -271,7 +271,7 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	require.True(t, r.AnalyzeHighestPriorityTables())
 	require.Eventually(t, func() bool {
 		return len(r.GetRunningJobs()) == 0
-	}, 10*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond)
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Check if t1 and t2 are analyzed (they should be, as they have more new data).
@@ -300,7 +300,7 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	require.True(t, r.AnalyzeHighestPriorityTables())
 	require.Eventually(t, func() bool {
 		return len(r.GetRunningJobs()) == 0
-	}, 10*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond)
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 
@@ -329,7 +329,7 @@ func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	r.AnalyzeHighestPriorityTables()
 	require.Eventually(t, func() bool {
 		return len(r.GetRunningJobs()) == 0
-	}, 10*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond)
 	// The table is not analyzed.
 	is := dom.InfoSchema()
 	tbl1, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
@@ -368,7 +368,7 @@ func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	r.AnalyzeHighestPriorityTables()
 	require.Eventually(t, func() bool {
 		return len(r.GetRunningJobs()) == 0
-	}, 10*time.Second, 100*time.Millisecond)
+	}, 5*time.Second, 100*time.Millisecond)
 	// t2 is analyzed.
 	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
