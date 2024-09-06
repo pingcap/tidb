@@ -77,7 +77,17 @@ func (j *outerJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
 	if err != nil {
 		return err
 	}
-	
+
+	j.prepareIsNotMatchedRows()
+	return nil
+}
+
+func (j *outerJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
+	err := j.baseJoinProbe.SetRestoredChunkForProbe(chk)
+	if err != nil {
+		return err
+	}
+
 	j.prepareIsNotMatchedRows()
 	return nil
 }

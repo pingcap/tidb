@@ -357,6 +357,7 @@ type probeChkResource struct {
 }
 
 type hashJoinRuntimeStats struct {
+	fetchAndBuildStartTime time.Time
 	fetchAndBuildHashTable time.Duration
 	hashStat               hashStatistic
 	fetchAndProbe          int64

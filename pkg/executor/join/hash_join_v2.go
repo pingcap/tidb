@@ -163,9 +163,9 @@ func (htc *hashTableContext) lookup(partitionIndex int, hashValue uint64) tagged
 	return htc.hashTable.tables[partitionIndex].lookup(hashValue, htc.tagHelper)
 }
 
-func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *TableMeta, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
+func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
 	if htc.rowTables[workerID][partitionID] == nil {
-		htc.rowTables[workerID][partitionID] = newRowTable(tableMeta)
+		htc.rowTables[workerID][partitionID] = newRowTable()
 	}
 	segNum := len(htc.rowTables[workerID][partitionID].segments)
 	if segNum == 0 || htc.rowTables[workerID][partitionID].segments[segNum-1].finalized {
@@ -185,7 +185,7 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 }
 
 func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, builder *rowTableBuilder, needConsume bool) {
-	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false, 0)
+	seg := htc.getCurrentRowSegment(workerID, partitionID, false, 0)
 	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
 	seg.initTaggedBits()
@@ -245,10 +245,10 @@ func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hash
 	return rowTables, nil
 }
 
-func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber uint, spillHelper *hashJoinSpillHelper) (int, error) {
+func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber uint, spillHelper *hashJoinSpillHelper) (int, error) {
 	rowTables := make([]*rowTable, partitionNumber)
 	for i := 0; i < int(partitionNumber); i++ {
-		rowTables[i] = newRowTable(tableMeta)
+		rowTables[i] = newRowTable()
 	}
 
 	totalSegmentCnt := 0
@@ -389,6 +389,72 @@ type ProbeWorkerV2 struct {
 	JoinProbe ProbeV2
 }
 
+func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
+	t := time.Since(start)
+	atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
+	atomic.AddInt64(&w.HashJoinCtx.stats.fetchAndProbe, int64(t))
+	setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
+}
+
+func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
+	probeTime := int64(0)
+	if w.HashJoinCtx.stats != nil {
+		start := time.Now()
+		defer func() {
+			w.updateProbeStatistic(start, probeTime)
+		}()
+	}
+
+	ok, joinResult := w.getNewJoinResult()
+	if !ok {
+		return
+	}
+
+	chunkNum := inDisk.NumChunks()
+
+	for i := 0; i < chunkNum; i++ {
+		select {
+		case <-w.HashJoinCtx.closeCh:
+			return
+		default:
+		}
+		failpoint.Inject("ConsumeRandomPanic", nil)
+
+		// TODO reuse chunk
+		chk, err := inDisk.GetChunk(i)
+		if err != nil {
+			joinResult.err = err
+			break
+		}
+
+		err = triggerIntest(3)
+		if err != nil {
+			joinResult.err = err
+			break
+		}
+
+		start := time.Now()
+		waitTime := int64(0)
+		ok, waitTime, joinResult = w.processOneRestoredProbeChunk(chk, joinResult)
+		probeTime += int64(time.Since(start)) - waitTime
+		if !ok {
+			break
+		}
+	}
+
+	err := w.JoinProbe.SpillRemainingProbeChunks()
+	if err != nil {
+		joinResult.err = err
+	}
+
+	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+		w.HashJoinCtx.joinResultCh <- joinResult
+	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
+		w.joinChkResourceCh <- joinResult.chk
+	}
+	return
+}
+
 // BuildWorkerV2 is the build worker used in hash join v2
 type BuildWorkerV2 struct {
 	buildWorkerBase
@@ -405,6 +471,83 @@ func (b *BuildWorkerV2) getSegmentsInRowTable(partID int) []*rowTableSegment {
 
 func (b *BuildWorkerV2) clearSegmentsInRowTable(partID int) {
 	b.HashJoinCtx.hashTableContext.clearSegmentsInRowTable(int(b.WorkerID), partID)
+}
+
+func (w *BuildWorkerV2) updatePartitionData(cost int64) {
+	atomic.AddInt64(&w.HashJoinCtx.stats.partitionData, cost)
+	setMaxValue(&w.HashJoinCtx.stats.maxPartitionData, cost)
+}
+
+func (w *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, cost *int64) error {
+	start := time.Now()
+	err := w.builder.processOneRestoredChunk(chk, w.HashJoinCtx, int(w.WorkerID), int(w.HashJoinCtx.partitionNumber))
+	if err != nil {
+		return err
+	}
+	*cost += int64(time.Since(start))
+	return nil
+}
+
+func (w *BuildWorkerV2) restoreAndPrebuildImpl(i int, inDisk *chunk.DataInDiskByChunks, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
+	defer func() {
+		fetcherAndWorkerSyncer.Done()
+	}()
+
+	if w.HashJoinCtx.finished.Load() {
+		return nil
+	}
+
+	// TODO reuse chunk
+	chk, err := inDisk.GetChunk(i)
+	if err != nil {
+		return err
+	}
+
+	err = triggerIntest(3)
+	if err != nil {
+		return err
+	}
+
+	err = w.processOneRestoredChunk(chk, cost)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chunk.DataInDiskByChunks, syncCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup) error {
+	cost := int64(0)
+	defer func() {
+		if w.HashJoinCtx.stats != nil {
+			w.updatePartitionData(cost)
+		}
+	}()
+
+	partitionNumber := w.HashJoinCtx.partitionNumber
+	hashJoinCtx := w.HashJoinCtx
+
+	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
+
+	chunkNum := inDisk.NumChunks()
+	for i := 0; i < chunkNum; i++ {
+		_, ok := <-syncCh
+		if !ok {
+			break
+		}
+
+		err := w.restoreAndPrebuildImpl(i, inDisk, fetcherAndWorkerSyncer, &cost)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Wait for command from the controller so that we can avoid data race with the spill executed in controller
+	<-waitForController
+
+	start := time.Now()
+	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
+	cost += int64(time.Since(start))
+	return nil
 }
 
 // NewJoinBuildWorkerV2 create a BuildWorkerV2
@@ -646,9 +789,7 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 }
 
 func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
-	if e.inRestore {
-
-	} else {
+	if !e.inRestore {
 		fetchProbeSideChunksFunc := func() {
 			defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
 			e.ProbeSideTupleFetcher.fetchProbeSideChunks(
@@ -671,7 +812,7 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinWorker").End()
 			if e.inRestore {
-				// TODO
+				e.ProbeWorkers[workerID].restoreAndProbe(e.restoredProbeInDisk[workerID])
 			} else {
 				e.ProbeWorkers[workerID].runJoinWorker()
 			}
@@ -741,6 +882,15 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		w.HashJoinCtx.joinResultCh <- joinResult
 	}
+}
+
+func (w *ProbeWorkerV2) processOneRestoredProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
+	waitTime = 0
+	joinResult.err = w.JoinProbe.SetRestoredChunkForProbe(probeChunk)
+	if joinResult.err != nil {
+		return false, 0, joinResult
+	}
+	return w.probeAndSendResult(joinResult)
 }
 
 func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
@@ -1031,14 +1181,14 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 
 	// doneCh is used by the consumer(splitAndAppendToRowTable) to info the producer(fetchBuildSideRows) that the consumer meet error and stop consume data
 	doneCh := make(chan struct{}, e.Concurrency)
-	srcChkCh := e.fetchBuildSideRows(ctx, fetcherAndWorkerSyncer, wg, errCh, doneCh)
-	e.splitAndAppendToRowTable(srcChkCh, fetcherAndWorkerSyncer, wg, errCh, doneCh)
+	srcChkCh, waitForController := e.fetchBuildSideRows(ctx, fetcherAndWorkerSyncer, wg, errCh, doneCh)
+	e.splitAndAppendToRowTable(srcChkCh, waitForController, fetcherAndWorkerSyncer, wg, errCh, doneCh)
 	success := waitJobDone(wg, errCh)
 	if !success {
 		return
 	}
 
-	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(e.hashTableMeta, e.partitionNumber, e.spillHelper)
+	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(e.partitionNumber, e.spillHelper)
 	if err != nil {
 		e.buildFinished <- err
 		return
@@ -1048,20 +1198,24 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 	errCh = make(chan error, 1+e.Concurrency)
 	// doneCh is used by the consumer(buildHashTable) to info the producer(createBuildTasks) that the consumer meet error and stop consume data
 	doneCh = make(chan struct{}, e.Concurrency)
+
 	buildTaskCh := e.createBuildTasks(totalSegmentCnt, wg, errCh, doneCh)
 	e.buildHashTable(buildTaskCh, wg, errCh, doneCh)
 	waitJobDone(wg, errCh)
 }
 
-func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) chan *chunk.Chunk {
+func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) (chan *chunk.Chunk, chan struct{}) {
 	srcChkCh := make(chan *chunk.Chunk, 1)
+	var waitForController chan struct{}
 	wg.Add(1)
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
 			fetcher := e.BuildWorkers[0]
 			if e.inRestore {
-				// TODO
+				waitForController = make(chan struct{})
+				chunkNum := e.getRestoredChunkNum()
+				e.controlPrebuildWorkersForRestore(chunkNum, srcChkCh, waitForController, fetcherAndWorkerSyncer, errCh, doneCh)
 			} else {
 				fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, fetcherAndWorkerSyncer, e.spillHelper, srcChkCh, errCh, doneCh)
 			}
@@ -1073,18 +1227,83 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorke
 			wg.Done()
 		},
 	)
-	return srcChkCh
+	return srcChkCh, waitForController
 }
 
-func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
+func (e *HashJoinV2Exec) getRestoredChunkNum() int {
+	chunkNum := 0
+	for _, inDisk := range e.restoredBuildInDisk {
+		chunkNum += inDisk.NumChunks()
+	}
+	return chunkNum
+}
+
+func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, errCh chan<- error, doneCh <-chan struct{}) {
+	defer func() {
+		close(syncCh)
+
+		hasError := false
+		if r := recover(); r != nil {
+			errCh <- util.GetRecoverError(r)
+			hasError = true
+		}
+
+		// Spill remaining rows
+		if !hasError && e.spillHelper.isSpillTriggeredNoLock() {
+			err := e.spillHelper.spillRemainingRows()
+			if err != nil {
+				errCh <- err
+			}
+		}
+
+		// Tell workers that they can execute `appendRemainingRowLocations` function
+		close(waitForController)
+
+		// consume remaining data in `syncCh`
+		for range syncCh {
+			fetcherAndWorkerSyncer.Done()
+		}
+	}()
+
+	if e.stats != nil {
+		e.stats.fetchAndBuildStartTime = time.Now()
+	}
+
+	for i := 0; i < chunkNum; i++ {
+		err := checkSpillAndExecute(fetcherAndWorkerSyncer, e.spillHelper)
+		if err != nil {
+			errCh <- err
+			return
+		}
+
+		err = triggerIntest(3)
+		if err != nil {
+			errCh <- err
+			return
+		}
+
+		fetcherAndWorkerSyncer.Add(1)
+		select {
+		case <-doneCh:
+			fetcherAndWorkerSyncer.Done()
+			return
+		case <-e.hashJoinCtxBase.closeCh:
+			fetcherAndWorkerSyncer.Done()
+			return
+		case syncCh <- nil:
+		}
+	}
+}
+
+func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
+	wg.Add(int(e.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
-		wg.Add(1)
 		workIndex := i
 		e.workerWg.RunWithRecover(
 			func() {
 				var err error
 				if e.inRestore {
-					// TODO
+					err = e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTableForRestore(e.restoredBuildInDisk[workIndex], srcChkCh, waitForController, fetcherAndWorkerSyncer)
 				} else {
 					err = e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), fetcherAndWorkerSyncer, srcChkCh)
 				}
