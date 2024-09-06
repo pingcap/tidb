@@ -175,7 +175,7 @@ func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tab
 		// do not pre-allocate too many memory for the first seg because for query that only has a few rows, it may waste memory and may hurt the performance in high concurrency scenarios
 		rowSizeHint := maxRowTableSegmentSize
 		if segNum == 0 {
-			rowSizeHint = int(firstSegSizeHint)
+			rowSizeHint = int64(firstSegSizeHint)
 		}
 		seg := newRowTableSegment(uint(rowSizeHint))
 		htc.rowTables[workerID][partitionID].segments = append(htc.rowTables[workerID][partitionID].segments, seg)
@@ -448,6 +448,10 @@ type HashJoinV2Exec struct {
 	isMemoryClearedForTest bool
 }
 
+func (e *HashJoinV2Exec) isAllMemoryClearedForTest() bool {
+	return e.isMemoryClearedForTest
+}
+
 func (e *HashJoinV2Exec) initMaxSpillRound() {
 	e.maxSpillRound = 1
 	totalPartitionsNum := e.partitionNumber
@@ -496,6 +500,7 @@ func (e *HashJoinV2Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
+	e.spillHelper.close()
 	err := e.BaseExecutor.Close()
 	return err
 }
@@ -897,7 +902,7 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		e.initializeForProbe()
 		e.hashTableContext.memoryTracker.AttachTo(e.memTracker)
 		e.buildFinished = make(chan error, 1)
-		e.startBuildAndProbe(ctx)
+		go e.startBuildAndProbe(ctx)
 		e.prepared = true
 	}
 	if e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize() {

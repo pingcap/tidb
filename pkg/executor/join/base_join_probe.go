@@ -561,7 +561,7 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 }
 
 // NewJoinProbe create a join probe used for hash join v2
-func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
+func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool, probeChkFieldTypes []*types.FieldType) ProbeV2 {
 	base := baseJoinProbe{
 		ctx:                   ctx,
 		workID:                workID,
@@ -574,6 +574,13 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		rUsedInOtherCondition: ctx.RUsedInOtherCondition,
 		rightAsBuildSide:      rightAsBuildSide,
 	}
+
+	probeSpillChkFieldTypes := make([]*types.FieldType, 0, len(probeChkFieldTypes)+2)
+	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, types.NewFieldType(mysql.TypeLonglong))
+	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))
+	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, probeChkFieldTypes...)
+	base.probeSpillChkFieldTypes = probeSpillChkFieldTypes
+
 	for i := range keyIndex {
 		if !mysql.HasNotNullFlag(base.keyTypes[i].GetFlag()) {
 			base.hasNullableKey = true

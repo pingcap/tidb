@@ -1654,7 +1654,7 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 	for i := uint(0); i < e.Concurrency; i++ {
 		e.ProbeWorkers[i] = &join.ProbeWorkerV2{
 			HashJoinCtx: e.HashJoinCtxV2,
-			JoinProbe:   join.NewJoinProbe(e.HashJoinCtxV2, i, v.JoinType, probeKeyColIdx, joinedTypes, e.ProbeKeyTypes, e.RightAsBuildSide),
+			JoinProbe:   join.NewJoinProbe(e.HashJoinCtxV2, i, v.JoinType, probeKeyColIdx, joinedTypes, e.ProbeKeyTypes, e.RightAsBuildSide, e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes()),
 		}
 		e.ProbeWorkers[i].WorkerID = i
 

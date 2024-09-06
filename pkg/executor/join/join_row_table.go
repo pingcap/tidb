@@ -140,7 +140,8 @@ func (rts *rowTableSegment) initTaggedBits() {
 	rts.taggedBits = getTaggedBitsFromUintptr(endPtr | startPtr)
 }
 
-const maxRowTableSegmentSize = 1024
+// This variable should be const, but we need to modify it for test
+var maxRowTableSegmentSize = int64(1024)
 
 // 64 MB
 const maxRowTableSegmentByteSize = 64 * 1024 * 1024
