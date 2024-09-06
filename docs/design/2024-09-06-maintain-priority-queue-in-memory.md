@@ -102,6 +102,8 @@ For DDL, we need a reliable way to get the DDL events that have occurred and rec
 
 Currently, the stats module maintains the most basic information for all tables (modify_count and count) in the stats cache, and we can maintain the priority queue along the lines of incrementally updating it.
 
+Every time when there are DML changes, we will dump the update details into `mysql.stats_meta` with the new version. The version is the start timestamp of the transaction used to write the record.
+
 1. We start a background worker to call the `statsHandle.Update(do.InfoSchema())` function every 3 seconds(stats lease).
 2. In the stats cache struct, we maintain an atomic timestamp called: [maxTblStatsVer](https://github.com/pingcap/tidb/blob/dd1808364a0499640d9d5b941b6083bf021d2cef/pkg/statistics/handle/cache/statscacheinner.go#L56).
 3. Whenever we call the `statsHandle.Update(do.InfoSchema())` function, we query the new update from incrementally updating with the current `maxTblStatsVer`.
