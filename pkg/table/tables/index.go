@@ -181,14 +181,16 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	skipCheck := opt.DupKeyCheck() == table.DupKeyCheckSkip
 	oldPartIDs := map[int64]struct{}{}
 	if c.idxInfo.Global {
-		// During Global Index reorganization for DROP/TRUNCATE Partition,
 		// implicitly replace global index entries pointing to old partitions
-		if c.tblInfo.Partition.DDLState == model.StateDeleteReorganization &&
-			len(c.tblInfo.Partition.AddingDefinitions) == 0 &&
-			len(c.tblInfo.Partition.DroppingDefinitions) > 0 {
-			skipCheck = false
-			for _, d := range c.tblInfo.Partition.DroppingDefinitions {
-				oldPartIDs[d.ID] = struct{}{}
+		// during Delete Reorganization, since it may take long time to delete
+		// all old entries.
+		if c.tblInfo.Partition.DDLState == model.StateDeleteReorganization {
+			oldIDs := c.tblInfo.Partition.GlobalIndexPartitionIDsToIgnore()
+			if len(oldIDs) != 0 {
+				skipCheck = false
+				for _, id := range oldIDs {
+					oldPartIDs[id] = struct{}{}
+				}
 			}
 		}
 	}
@@ -294,12 +296,12 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			continue
 		}
 
-		var value []byte
+		var foundValue []byte
 		if len(oldPartIDs) > 0 {
 			// If Global Index and reorg we need this regardless of DupKeyCheck value.
-			value, err = txn.Get(ctx, key)
-			if err == nil && len(value) != 0 {
-				partHandle, errPart := GetPartitionHandleFromVal(value)
+			foundValue, err = txn.Get(ctx, key)
+			if err == nil && len(foundValue) != 0 {
+				partHandle, errPart := GetPartitionHandleFromVal(foundValue)
 				if errPart != nil {
 					return nil, errPart
 				}
@@ -309,36 +311,36 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					if err != nil {
 						return nil, err
 					}
-					value = nil
+					foundValue = nil
 				}
 			}
 		} else if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
-			value, err = txn.Get(ctx, key)
+			foundValue, err = txn.Get(ctx, key)
 		} else if opt.DupKeyCheck() == table.DupKeyCheckLazy && !keyIsTempIdxKey {
 			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
 			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
-			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
+			foundValue, err = txn.GetMemBuffer().GetLocal(ctx, key)
 		} else {
-			value, err = txn.Get(ctx, key)
+			foundValue, err = txn.Get(ctx, key)
 		}
 		if err != nil && !kv.IsErrNotFound(err) {
 			return nil, err
 		}
 		var tempIdxVal tablecodec.TempIndexValue
-		if len(value) > 0 && keyIsTempIdxKey {
-			tempIdxVal, err = tablecodec.DecodeTempIndexValue(value)
+		if len(foundValue) > 0 && keyIsTempIdxKey {
+			tempIdxVal, err = tablecodec.DecodeTempIndexValue(foundValue)
 			if err != nil {
 				return nil, err
 			}
 		}
 		// The index key value is not found or deleted.
-		if err != nil || len(value) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
+		if err != nil || len(foundValue) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
 			val := idxVal
 			lazyCheck := opt.DupKeyCheck() == table.DupKeyCheckLazy && err != nil
 			if keyIsTempIdxKey {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
-				val = tempVal.Encode(value)
+				val = tempVal.Encode(foundValue)
 			}
 			needPresumeNotExists, err := needPresumeKeyNotExistsFlag(ctx, txn, key, tempKey, h,
 				keyIsTempIdxKey, c.tblInfo.ID)
@@ -362,7 +364,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 			if len(tempKey) > 0 {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
-				val = tempVal.Encode(value)
+				val = tempVal.Encode(foundValue)
 				if lazyCheck && needPresumeNotExists {
 					err = txn.GetMemBuffer().SetWithFlags(tempKey, val, kv.SetPresumeKeyNotExists)
 				} else {
@@ -386,9 +388,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			continue
 		}
 		if keyIsTempIdxKey && !tempIdxVal.IsEmpty() {
-			value = tempIdxVal.Current().Value
+			foundValue = tempIdxVal.Current().Value
 		}
-		handle, err := tablecodec.DecodeHandleInIndexValue(value)
+		handle, err := tablecodec.DecodeHandleInIndexValue(foundValue)
 		if err != nil {
 			return nil, err
 		}

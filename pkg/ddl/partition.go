@@ -2470,6 +2470,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	case model.StatePublic:
 		pi.NewPartitionIDs = newIDs[:]
 		pi.DDLState = model.StateWriteOnly
+		pi.DDLAction = model.ActionTruncateTablePartition
 
 		job.SchemaState = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
@@ -2584,11 +2585,13 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
+		// TODO: Test injecting failure
 
 		// Step4: clear DroppingDefinitions and finish job.
 		tblInfo.Partition.DroppingDefinitions = nil
 		tblInfo.Partition.NewPartitionIDs = nil
 		tblInfo.Partition.DDLState = model.StateNone
+		tblInfo.Partition.DDLAction = model.ActionNone
 
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newPartitions)
 

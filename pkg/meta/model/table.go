@@ -735,6 +735,9 @@ type PartitionInfo struct {
 	DDLColumns []model.CIStr       `json:"ddl_columns"`
 	// For ActionAlterTablePartitioning, UPDATE INDEXES
 	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes"`
+	// To know which DDL is ongoing. Together with DDLState one can know
+	// how to handle Global Index visible entries
+	DDLAction ActionType `json:"ddl_action"`
 }
 
 // Clone clones itself.
@@ -860,6 +863,60 @@ func (pi *PartitionInfo) GetPartitionIDByName(partitionDefinitionName string) in
 		}
 	}
 	return -1
+}
+
+// GlobalIndexPartitionIDsToIgnore returns a list of IDs that the current
+// session should not see (may be duplicate errors on insert/update though)
+func (pi *PartitionInfo) GlobalIndexPartitionIDsToIgnore() []int64 {
+	// Truncate partition:
+	// write only => should not see NewPartitionIDs
+	// delete only => should not see DroppingPartitions
+	// Drop partition:
+	// TODO: Make same changes as in Truncate Partition!
+	// Add partition:
+	// TODO: ???
+	// Currently not filtering anything, TODO: make multi-step if Global Index?
+	// Exchange Partition:
+	// Currently blocked for GlobalIndex
+	// TODO: Also handle Exchange Partition?!?
+	// Reorganize Partition
+	// write only => nothing, and has not NewPartitionIDs set!
+	// TODO: Maybe more clear to also add pi.DDLAction?
+	switch pi.DDLAction {
+	case ActionTruncateTablePartition:
+		switch pi.DDLState {
+		case StateWriteOnly:
+			return pi.NewPartitionIDs
+		case StateDeleteOnly, StateDeleteReorganization:
+			if len(pi.DroppingDefinitions) == 0 {
+				return nil
+			}
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, definition := range pi.DroppingDefinitions {
+				ids = append(ids, definition.ID)
+			}
+			return ids
+		}
+	case ActionNone:
+		// Not yet added to the onXXXPartition... function
+		// OR ongoing DDL during upgrade
+		if len(pi.DroppingDefinitions) > 0 &&
+			len(pi.AddingDefinitions) == 0 {
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, def := range pi.DroppingDefinitions {
+				if pi.DDLState == StateDeleteOnly {
+					ids = append(ids, def.ID)
+				}
+			}
+			/*
+				TODO: When should this take effect?
+				for _, p := range pi.AddingDefinitions {
+					args = append(args, expression.NewInt64Const(p.ID))
+				}
+			*/
+		}
+	}
+	return nil
 }
 
 // PartitionState is the state of the partition.

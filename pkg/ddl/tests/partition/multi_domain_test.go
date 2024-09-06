@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	parserModel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -98,7 +99,10 @@ func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 }
 
 func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn func(*testkit.TestKit), loopFn func(tO, tNO *testkit.TestKit)) {
-	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
+	// During manual debug, increase this time a lot so it does not reload the tables in the domain
+	// due to lease time :)
+	//distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
+	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Hour)
 	store := distCtx.Store
 	domOwner := distCtx.GetDomain(0)
 	domNonOwner := distCtx.GetDomain(1)
@@ -215,6 +219,12 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			// even if it cannot read them from the global index, due to filtering.
 			rows := tkNO.MustQuery(`select * from t`).Sort().Rows()
 			tkO.MustQuery(`select * from t`).Sort().Check(rows)
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
+			require.NoError(t, err)
+			require.Equal(t, model.StateNone, tblNO.Partition.DDLState)
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
+			require.NoError(t, err)
+			require.Equal(t, model.StateWriteOnly, tblO.Partition.DDLState)
 		case "delete only":
 			// tkNO is seeing state write only, so still can access the dropped partition
 			// tkO is seeing state delete only, so cannot see the dropped partition,
@@ -222,6 +232,13 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 
 			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
+			require.NoError(t, err)
+			require.Equal(t, model.StateWriteOnly, tblNO.Partition.DDLState)
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
+			require.NoError(t, err)
+			require.Equal(t, model.StateDeleteOnly, tblO.Partition.DDLState)
+
 			tkNO.MustExec(`insert into t values (21,21,"OK")`)
 			tkNO.MustExec(`insert into t values (23,23,"OK")`)
 			tkO.MustContainErrMsg(`insert into t values (21,21,"Duplicate key")`, "[kv:1062]Duplicate entry '21' for key 't.uk_b'")
@@ -230,17 +247,29 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			// conflicting to the old one
 			tkO.MustExec(`insert into t values (21,25,"OK")`)
 			tkNO.MustContainErrMsg(`insert into t values (8,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.uk_b'")
-			// TODO: WASHERE!!
-			//tkNO.MustQuery(`select count(*) from t where b = "25"`).Check(testkit.Rows("0"))
-			//tkNO.MustQuery(`select b from t where b = "25"`).Check(testkit.Rows())
-			//tkNO.MustExec(`update t set a = 2 where b = "25"`)
-			//require.Equal(t, uint64(0), tkNO.Session().GetSessionVars().StmtCtx.AffectedRows())
-			tkNO.MustContainErrMsg(`update t set a = 2 where b = "25"`, "[kv:1062]Duplicate entry '2' for key 't.PRIMARY'")
+			// PointGet should not find new partitions for StateWriteOnly
+			tkNO.MustQuery(`select count(*) from t where b = "25"`).Check(testkit.Rows("0"))
+			tkNO.MustQuery(`select b from t where b = "25"`).Check(testkit.Rows())
+			// TODO: Also set column c to something useful
+			tkNO.MustExec(`update t set a = 2 where b = "25"`)
+			require.Equal(t, uint64(0), tkNO.Session().GetSessionVars().StmtCtx.AffectedRows())
+			// TODO: Somehow tkNO gets the updated tableInfo :(
+			// track it down some how...
+			// WASHERE ^^^^
+			// But does not happen every time :(
+			// So first try to make it more reproducable...
+			// Probably due to some internal or lease timeout reloading the domain. Could be checked
+			// with schema version?
+			// TODO: Also set column c to something useful
+			tkNO.MustExec(`update t set a = 2 where b = "25"`)
+			require.Equal(t, uint64(0), tkNO.Session().GetSessionVars().StmtCtx.AffectedRows())
+			//tkNO.MustContainErrMsg(`update t set a = 2 where b = "25"`, "[kv:1062]Duplicate entry '2' for key 't.PRIMARY'")
 			// Primary is not global, so here we can insert into the old partition, without
 			// conflicting to the new one
 			tkNO.MustExec(`insert into t values (25,27,"OK")`)
 
 			tkO.MustQuery(`select count(*) from t where b = "23"`).Check(testkit.Rows("0"))
+			// TODO: Also set column c to something useful
 			tkO.MustExec(`update t set a = 2 where b = "23"`)
 			require.Equal(t, uint64(0), tkO.Session().GetSessionVars().StmtCtx.AffectedRows())
 			tkNO.MustQuery(`select count(*) from t where a = 23`).Check(testkit.Rows("1"))
@@ -285,13 +314,22 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			// but must still double write to the global indexes.
 			// tkO is seeing state delete reorganization, so cannot see the dropped partition,
 			// and should ignore the dropped partitions entries in the Global Indexes!
-			// TODO: WASHERE!!!
-			//tkO.MustExec(`insert into t values (1,1,"OK")`)
-			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			rows := tkO.MustQuery(`select * from t`).Sort().Rows()
+			tkNO.MustQuery(`select * from t`).Sort().Check(rows)
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
+			require.NoError(t, err)
+			require.Equal(t, model.StateDeleteOnly, tblNO.Partition.DDLState)
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
+			require.NoError(t, err)
+			require.Equal(t, model.StateDeleteReorganization, tblO.Partition.DDLState)
+			tkO.MustQuery(`select b from t where b = "1"`).Check(testkit.Rows())
+			tkO.MustExec(`insert into t values (1,1,"OK")`)
+			tkO.MustQuery(`select b from t where b = "1"`).Check(testkit.Rows("1"))
+			tkO.MustQuery(`select b from t where b = 1`).Check(testkit.Rows("1"))
 			tkO.MustContainErrMsg(`insert into t values (3,1,"Duplicate")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
 			// b = 23 was inserted into the dropped partition, OK to delete
 			// TODO: WASHERE!!! Seems like the index thing has blocked the insert fix...
-			//tkO.MustExec(`insert into t values (10,23,"OK")`)
+			tkO.MustExec(`insert into t values (10,23,"OK")`)
 			tkNO.MustExec(`insert into t values (41,41,"OK")`)
 			tkNO.MustContainErrMsg(`insert into t values (12,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.uk_b'")
 			tkNO.MustContainErrMsg(`insert into t values (25,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.uk_b'")
@@ -308,7 +346,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			require.Equal(t, uint64(1), tkO.Session().GetSessionVars().StmtCtx.AffectedRows())
 			tkO.MustExec(`update t set b = 3 where b = 41`)
 			require.Equal(t, uint64(1), tkO.Session().GetSessionVars().StmtCtx.AffectedRows())
-			rows := tkNO.MustQuery(`select * from t`).Sort().Rows()
+			rows = tkNO.MustQuery(`select * from t`).Sort().Rows()
 			tkO.MustQuery(`select * from t`).Sort().Check(rows)
 		case "none":
 			tkNO.MustExec(`insert into t values (81,81,"OK")`)
@@ -317,6 +355,12 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkO.MustExec(`insert into t values (87,87,"OK")`)
 			rows := tkNO.MustQuery(`select * from t`).Sort().Rows()
 			tkO.MustQuery(`select * from t`).Sort().Check(rows)
+			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
+			require.NoError(t, err)
+			require.Equal(t, model.StateDeleteReorganization, tblNO.Partition.DDLState)
+			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(parserModel.NewCIStr("test"), parserModel.NewCIStr("t"))
+			require.NoError(t, err)
+			require.Equal(t, model.StateNone, tblO.Partition.DDLState)
 		default:
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}

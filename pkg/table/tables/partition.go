@@ -1915,13 +1915,3 @@ func (lt *ForRangePruning) Compare(ith int, v int64, unsigned bool) int {
 	}
 	return -1
 }
-
-// HasGlobalIndex returns true if a table has any global indexes
-func HasGlobalIndex(tblInfo *model.TableInfo) bool {
-	for _, idxInfo := range tblInfo.Indices {
-		if idxInfo.Global {
-			return true
-		}
-	}
-	return false
-}

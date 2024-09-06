@@ -1430,6 +1430,10 @@ func findBestTask4DS(ds *DataSource, prop *property.PhysicalProperty, planCounte
 					// Don't convert to point get during ddl
 					// TODO: Revisit truncate partition and global index
 					if len(ds.TableInfo.GetPartitionInfo().DroppingDefinitions) > 0 ||
+						/*
+							ds.TableInfo.GetPartitionInfo().DDLState != model.StateNone ||
+							len(ds.TableInfo.GetPartitionInfo().NewPartitionIDs) > 0 ||
+						*/
 						len(ds.TableInfo.GetPartitionInfo().AddingDefinitions) > 0 {
 						canConvertPointGet = false
 					}
@@ -2221,20 +2225,9 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *DataSource, 
 	pInfo := p.TableInfo.GetPartitionInfo()
 	if len(idxArr) == 1 && idxArr[0] == FullRange {
 		// Only filter adding and dropping partitions.
-		if len(pInfo.AddingDefinitions) == 0 && len(pInfo.DroppingDefinitions) == 0 && (pInfo.DDLState != model.StateWriteOnly || len(pInfo.NewPartitionIDs) == 0) {
-			return conditions, nil
-		}
 		needNot = true
-		for _, p := range pInfo.AddingDefinitions {
-			args = append(args, expression.NewInt64Const(p.ID))
-		}
-		for _, p := range pInfo.DroppingDefinitions {
-			args = append(args, expression.NewInt64Const(p.ID))
-		}
-		for _, id := range pInfo.NewPartitionIDs {
-			if pInfo.DDLState == model.StateWriteOnly {
-				args = append(args, expression.NewInt64Const(id))
-			}
+		for _, id := range pInfo.GlobalIndexPartitionIDsToIgnore() {
+			args = append(args, expression.NewInt64Const(id))
 		}
 	} else if len(idxArr) == 0 {
 		// add an invalid pid as param for `IN` function
@@ -2244,6 +2237,9 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *DataSource, 
 		for _, idx := range idxArr {
 			args = append(args, expression.NewInt64Const(pInfo.Definitions[idx].ID))
 		}
+	}
+	if len(args) == 1 {
+		return conditions, nil
 	}
 	condition, err := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
 	if err != nil {
