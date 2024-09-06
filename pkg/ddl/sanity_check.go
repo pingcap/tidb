@@ -100,20 +100,11 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return len(physicalTableIDs) + 1, nil
 	case model.ActionTruncateTable:
-		var startKey kv.Key
-		var oldPartitionIDs []int64
-		if job.Version == model.JobVersion1 {
-			if err := job.DecodeArgs(&startKey, &oldPartitionIDs); err != nil {
-				return 0, errors.Trace(err)
-			}
-		} else {
-			argsV2, err := model.GetOrDecodeArgsV2[model.TruncateTableArgs](job)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			oldPartitionIDs = argsV2.OldPartitionIDs
+		args, err := model.GetTruncateTableArgsAfterRun(job)
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
-		return len(oldPartitionIDs) + 1, nil
+		return len(args.OldPartitionIDs) + 1, nil
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 		model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:

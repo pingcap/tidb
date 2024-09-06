@@ -428,21 +428,7 @@ func getTableInfo(t *meta.Meta, tableID, schemaID int64) (*model.TableInfo, erro
 func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
-	var (
-		newTableID      int64
-		fkCheck         bool
-		newPartitionIDs []int64
-		err             error
-		argsV2          *model.TruncateTableArgs
-	)
-	if job.Version == model.JobVersion1 {
-		err = job.DecodeArgs(&newTableID, &fkCheck, &newPartitionIDs)
-	} else {
-		argsV2, err = model.GetOrDecodeArgsV2[model.TruncateTableArgs](job)
-		if err == nil {
-			newTableID, fkCheck, newPartitionIDs = argsV2.NewTableID, argsV2.FKCheck, argsV2.NewPartitionIDs
-		}
-	}
+	args, err := model.GetTruncateTableArgsBeforeRun(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -457,7 +443,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 	}
 	// Copy the old tableInfo for later usage.
 	oldTblInfo := tblInfo.Clone()
-	err = checkTruncateTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job, tblInfo, fkCheck)
+	err = checkTruncateTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job, tblInfo, args.FKCheck)
 	if err != nil {
 		return ver, err
 	}
@@ -486,7 +472,10 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		}
 	}
 
-	var oldPartitionIDs []int64
+	var (
+		oldPartitionIDs []int64
+		newPartitionIDs = args.NewPartitionIDs
+	)
 	if tblInfo.GetPartitionInfo() != nil {
 		oldPartitionIDs = getPartitionIDs(tblInfo)
 		// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
@@ -511,8 +500,8 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		if job.Version == model.JobVersion1 {
 			job.CtxVars = []any{oldIDs, newIDs}
 		} else {
-			argsV2.OldPartIDsWithPolicy = oldIDs
-			argsV2.NewPartIDsWithPolicy = newIDs
+			args.OldPartIDsWithPolicy = oldIDs
+			args.NewPartIDsWithPolicy = newIDs
 		}
 	}
 
@@ -522,7 +511,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		return 0, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 
-	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, []string{}, newTableID)
+	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, []string{}, args.NewTableID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to update the label rule to PD")
@@ -538,7 +527,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 				return ver, errors.Trace(e)
 			}
 		} else {
-			if e := infosync.ConfigureTiFlashPDForTable(newTableID, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
+			if e := infosync.ConfigureTiFlashPDForTable(args.NewTableID, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
 				logutil.DDLLogger().Error("ConfigureTiFlashPDForTable fails", zap.Error(err))
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(e)
@@ -548,7 +537,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		tblInfo.TiFlashReplica.Available = false
 	}
 
-	tblInfo.ID = newTableID
+	tblInfo.ID = args.NewTableID
 
 	// build table & partition bundles if any.
 	bundles, err := placement.NewFullTableBundles(t, tblInfo)
@@ -595,9 +584,9 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		job.Args = []any{startKey, oldPartitionIDs}
 	} else {
 		// see truncateTableByReassignPartitionIDs for why they might change.
-		argsV2.OldPartitionIDs = oldPartitionIDs
-		argsV2.NewPartitionIDs = newPartitionIDs
-		job.ArgsV2 = argsV2
+		args.OldPartitionIDs = oldPartitionIDs
+		args.NewPartitionIDs = newPartitionIDs
+		job.ArgsV2 = args
 	}
 	return ver, nil
 }

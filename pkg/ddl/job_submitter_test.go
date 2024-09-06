@@ -455,20 +455,10 @@ func TestCombinedIDAllocation(t *testing.T) {
 				checkPartitionInfo(info)
 				checkID(info.NewTableID)
 			case model.ActionTruncateTable:
-				var (
-					newTblID int64
-					fkCheck  bool
-					partIDs  []int64
-				)
-				if j.Version == model.JobVersion1 {
-					require.NoError(t, j.DecodeArgs(&newTblID, &fkCheck, &partIDs))
-				} else {
-					argsV2, err := model.GetOrDecodeArgsV2[model.TruncateTableArgs](j)
-					require.NoError(t, err)
-					newTblID, fkCheck, partIDs = argsV2.NewTableID, argsV2.FKCheck, argsV2.NewPartitionIDs
-				}
-				checkID(newTblID)
-				for _, id := range partIDs {
+				args, err := model.GetTruncateTableArgsBeforeRun(j)
+				require.NoError(t, err)
+				checkID(args.NewTableID)
+				for _, id := range args.NewPartitionIDs {
 					checkID(id)
 				}
 			}

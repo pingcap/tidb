@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 )
 
 // GetOrDecodeArgsV2 get the argsV2 from job, if the argsV2 is nil, decode rawArgsV2
@@ -44,4 +45,47 @@ type TruncateTableArgs struct {
 	// context vars
 	NewPartIDsWithPolicy []int64 `json:"-"`
 	OldPartIDsWithPolicy []int64 `json:"-"`
+}
+
+// GetTruncateTableArgsBeforeRun gets the truncate table args that we set before
+// running the job. the args might be changed after the job run on JobVersion1.
+func GetTruncateTableArgsBeforeRun(job *Job) (*TruncateTableArgs, error) {
+	var (
+		newTableID      int64
+		fkCheck         bool
+		newPartitionIDs []int64
+	)
+	if job.Version == JobVersion1 {
+		err := job.DecodeArgs(&newTableID, &fkCheck, &newPartitionIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &TruncateTableArgs{
+			NewTableID:      newTableID,
+			FKCheck:         fkCheck,
+			NewPartitionIDs: newPartitionIDs,
+		}, nil
+	}
+	argsV2, err := GetOrDecodeArgsV2[TruncateTableArgs](job)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return argsV2, nil
+}
+
+// GetTruncateTableArgsAfterRun gets the truncate table args after running the job.
+func GetTruncateTableArgsAfterRun(job *Job) (*TruncateTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var startKey kv.Key
+		var oldPartitionIDs []int64
+		if err := job.DecodeArgs(&startKey, &oldPartitionIDs); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
+	}
+	argsV2, err := GetOrDecodeArgsV2[TruncateTableArgs](job)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return argsV2, nil
 }

@@ -315,20 +315,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
 	case model.ActionTruncateTable:
 		tableID := job.TableID
-		var oldPartitionIDs []int64
-		if job.Version == model.JobVersion1 {
-			// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
-			var startKey kv.Key
-			if err := job.DecodeArgs(&startKey, &oldPartitionIDs); err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			argsV2, err := model.GetOrDecodeArgsV2[model.TruncateTableArgs](job)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			oldPartitionIDs = argsV2.OldPartitionIDs
+		args, err := model.GetTruncateTableArgsAfterRun(job)
+		if err != nil {
+			return errors.Trace(err)
 		}
+		oldPartitionIDs := args.OldPartitionIDs
 		if len(oldPartitionIDs) > 0 {
 			if err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, oldPartitionIDs, ea, "truncate table: partition table IDs"); err != nil {
 				return errors.Trace(err)
