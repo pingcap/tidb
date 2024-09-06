@@ -2778,7 +2778,7 @@ func (e *SimpleExec) executeDropStats(ctx context.Context, s *ast.DropStatsStmt)
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
 		return err
 	}
-	return h.UpdateWorker(ctx, e.Ctx().GetInfoSchema().(infoschema.InfoSchema))
+	return h.Update()
 }
 
 func (e *SimpleExec) autoNewTxn() bool {
