@@ -322,7 +322,7 @@ var ErrNotReadyRetryLater = errors.New(...)
 // for each handler to register the handler. Illegal ID will
 // panic. RegisterHandler should not be called after the global
 // DDLNotifier is started.
-func RegisterHandler(id int, handler DDLEventHandler) {...}
+func RegisterHandler(id int, handler SchemaChangeHandler) {...}
 ```
 
 ##### Implementation of subscribing
@@ -342,14 +342,14 @@ type schemaChangeEvent struct {
 
 type DDLNotifier struct {
     sctx         sessionctx.Context
-    handlers     map[int]DDLEventHandler
+    handlers     map[int]SchemaChangeHandler
     pollInterval time.Duration
 }
 
 func NewDDLNotifier(sctx sessionctx.Context, pollInterval time.Duration) *DDLNotifier {
     return &DDLNotifier{
         sctx:         sctx,
-        handlers:     make(map[int]DDLEventHandler),
+        handlers:     make(map[int]SchemaChangeHandler),
         pollInterval: pollInterval,
     }
 }
@@ -394,7 +394,7 @@ func (n *DDLNotifier) processEvents(ctx context.Context) error {
     return nil
 }
 
-func (n *DDLNotifier) processEventForHandler(ctx context.Context, event DDLEvent, handlerID int, handler DDLEventHandler) (err error) {
+func (n *DDLNotifier) processEventForHandler(ctx context.Context, event DDLEvent, handlerID int, handler SchemaChangeHandler) (err error) {
     if n.hasProcessed(event, handlerID) {
         return nil
     }
@@ -441,7 +441,7 @@ func (n *DDLNotifier) deleteProcessedEvent(sctx sessionctx.Context, eventID int)
     return err
 }
 
-func (n *DDLNotifier) RegisterHandler(id int, handler DDLEventHandler) {
+func (n *DDLNotifier) RegisterHandler(id int, handler SchemaChangeHandler) {
     n.handlers[id] = handler
 }
 ```
