@@ -61,17 +61,26 @@ We can try to keep the priority queue in memory to solve the above issues instea
 
 In the current implementation, we use a weighted scoring approach to maintain the queue, which is our current scoring criteria.
 
-Weight table:
+Score table:
 
-| Name                 | Meaning                                                                                                                                                                                       | Weight                                                                                                                                                                                                                                                                                                              | Data Source                  |
+| Name                 | Meaning                                                                                                                                                                                       | Score                                                                                                                                                                                                                                                                                                               | Data Source                  |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | Percentage of Change | The percentage of change since the last analysis.                                                                                                                                             | log10(1 + Change Ratio). [Check the graph](https://www.desmos.com/calculator/gb3i2cropz). <br><br> Note: For unanalyzed tables, we set the percentage of changes to 100%                                                                                                                                            | Stats Cache                  |
 | Table Size           | The size is equal to the number of rows multiplied by the number of columns in the table that are subject to analysis. The smaller tables should have a higher priority than the bigger ones. | Applying a logarithmic transformation, namely log10(1 + Table Size), and its 'penalty' is calculated as 1 - log10(1 + Table Size). [Check the graph.](https://www.desmos.com/calculator/x3fq76w8sb)                                                                                                                 | Stats Cache + Table Info     |
 | Analysis Interval    | Time since the last analysis execution for the table. The bigger interval should have a higher priority than the smaller interval.                                                            | Applying a logarithmic transformation, namely log10(1 + Analysis Interval). To further compress the rate of growth for larger values, we can consider taking the logarithmic square root of x. The final formula is log10(1 + √Analysis Interval). [Check the graph.](https://www.desmos.com/calculator/plhtkfqhx9) | Stats Cache                  |
 | Special Event        | For example, the table has a new index but it hasn't been analyzed yet.                                                                                                                       | HasNewIndexWithoutStats: 2                                                                                                                                                                                                                                                                                          | Table Info (Scan all tables) |
 
+The final score is the weighted sum of the above four factors.
+
+```go
+priority_score = (0.6 * math.Log10(1 + ChangeRatio) +
+                  0.1 * (1 - math.Log10(1 + TableSize)) +
+                  0.3 * math.Log10(1 + math.Sqrt(AnalysisInterval)) +
+                  special_event[event])
+```
+
 Currently, we rebuild the priority queue every 3 seconds by scanning all schemas and tables.
-For count and modify_count, the priority queue gets them from the statistics cache.
+For `count` and `modify_count`, the priority queue gets them from the statistics cache.
 
 ## Detailed Design
 
