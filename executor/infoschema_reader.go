@@ -587,6 +587,11 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				expression = tblCol.GeneratedExprString
 			}
 
+			var subPart any
+			if key.Length != types.UnspecifiedLength {
+				subPart = key.Length
+			}
+
 			record := types.MakeDatums(
 				infoschema.CatalogVal, // TABLE_CATALOG
 				schema.Name.O,         // TABLE_SCHEMA
@@ -598,7 +603,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				colName,               // COLUMN_NAME
 				"A",                   // COLLATION
 				0,                     // CARDINALITY
-				nil,                   // SUB_PART
+				subPart,               // SUB_PART
 				nil,                   // PACKED
 				nullable,              // NULLABLE
 				"BTREE",               // INDEX_TYPE
