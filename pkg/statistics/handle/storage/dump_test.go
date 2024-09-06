@@ -95,7 +95,7 @@ func TestConversion(t *testing.T) {
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 
 	tableInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestConversion(t *testing.T) {
 	cleanStats(tk, dom)
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
-		require.Nil(t, h.UpdateWorker(context.Background(), is))
+		require.Nil(t, h.Update(context.Background(), is))
 	})
 	err = h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0)
 	wg.Wait()
@@ -121,7 +121,7 @@ func TestConversion(t *testing.T) {
 func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *handleutil.JSONTable {
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	table, err := is.TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(tableName))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
@@ -133,7 +133,7 @@ func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *handl
 func persistStats(ctx context.Context, t *testing.T, dom *domain.Domain, db, tableName string, persist statstypes.PersistFunc) {
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	table, err := is.TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(tableName))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
@@ -250,7 +250,7 @@ func TestLoadPredicateColumns(t *testing.T) {
 	tk.MustExec("select * from t where b = 1")
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
-	require.NoError(t, h.UpdateWorker(context.Background(), is))
+	require.NoError(t, h.Update(context.Background(), is))
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	tk.MustExec("analyze table t")
 
@@ -337,7 +337,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 
 	table, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
@@ -396,7 +396,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 
 	// Insert 30 fake data
 	fakeData := make([][]byte, 0, 30)
@@ -408,7 +408,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	stat := h.GetTableStats(tableInfo)
 	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.GetCol(tableInfo.Columns[0].ID).Histogram, cms, nil, statistics.Version1, 1, false, handleutil.StatsMetaHistorySourceLoadStats)
 	require.NoError(t, err)
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 
 	stat = h.GetTableStats(tableInfo)
 	cmsFromStore := stat.GetCol(tableInfo.Columns[0].ID).CMSketch
@@ -467,7 +467,7 @@ func TestDumpExtendedStats(t *testing.T) {
 	cleanStats(tk, dom)
 	wg := util.WaitGroupWrapper{}
 	wg.Run(func() {
-		require.Nil(t, h.UpdateWorker(context.Background(), is))
+		require.Nil(t, h.Update(context.Background(), is))
 	})
 	err = h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0)
 	wg.Wait()
@@ -520,7 +520,7 @@ func TestDumpVer2Stats(t *testing.T) {
 
 	err = h.LoadStatsFromJSON(context.Background(), is, loadJSONTable, 0)
 	require.NoError(t, err)
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsCacheTbl = h.GetTableStats(tableInfo.Meta())
 	// assert that after the JSONTable above loaded into storage then updated into the stats cache,
 	// the statistics.Table in the stats cache is the same as the unmarshalled statistics.Table
@@ -572,7 +572,7 @@ func TestLoadStatsForNewCollation(t *testing.T) {
 
 	err = h.LoadStatsFromJSON(context.Background(), is, loadJSONTable, 0)
 	require.NoError(t, err)
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsCacheTbl = h.GetTableStats(tableInfo.Meta())
 	// assert that after the JSONTable above loaded into storage then updated into the stats cache,
 	// the statistics.Table in the stats cache is the same as the unmarshalled statistics.Table
@@ -623,7 +623,7 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	require.NoError(t, h.UpdateWorker(context.Background(), is))
+	require.NoError(t, h.Update(context.Background(), is))
 
 	statsJSONFromOldVersion := `{
  "database_name": "test",

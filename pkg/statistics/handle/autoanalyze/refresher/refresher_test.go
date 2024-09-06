@@ -61,14 +61,14 @@ func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 	tk.MustExec("update mysql.global_variables set variable_value = '0' where variable_name = 'tidb_auto_analyze_ratio'")
 	handle := dom.StatsHandle()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Analyze those tables first.
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	// Insert more data into t1.
 	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9)")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
 	r.RebuildTableAnalysisJobQueue()
@@ -138,12 +138,12 @@ func TestIgnoreTinyTable(t *testing.T) {
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
 	handle := dom.StatsHandle()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Analyze those tables first.
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Make sure table stats are not pseudo.
 	tbl1, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -160,7 +160,7 @@ func TestIgnoreTinyTable(t *testing.T) {
 	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13)")
 	tk.MustExec("insert into t2 values (4, 4)")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
 	r.RebuildTableAnalysisJobQueue()
@@ -184,17 +184,17 @@ func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
 	handle := dom.StatsHandle()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Analyze those tables first.
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Insert more data into t1 and t2, but more data is inserted into t1.
 	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13)")
 	tk.MustExec("insert into t2 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9)")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
 	r.RebuildTableAnalysisJobQueue()
@@ -202,7 +202,7 @@ func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	// Analyze t1 first.
 	require.True(t, r.AnalyzeHighestPriorityTables())
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// The table is analyzed.
 	tbl1, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -411,7 +411,7 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	handle := dom.StatsHandle()
 	require.Nil(t, handle.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t1")
-	require.Nil(t, handle.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.Nil(t, handle.Update(context.Background(), dom.InfoSchema()))
 
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
@@ -423,7 +423,7 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	// Insert more data into t1.
 	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6)")
 	require.Nil(t, handle.DumpStatsDeltaToKV(true))
-	require.Nil(t, handle.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.Nil(t, handle.Update(context.Background(), dom.InfoSchema()))
 	err = r.RebuildTableAnalysisJobQueue()
 	require.NoError(t, err)
 	require.Equal(t, 1, r.Jobs.Len())

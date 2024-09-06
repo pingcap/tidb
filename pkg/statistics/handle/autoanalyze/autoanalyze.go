@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
@@ -309,13 +308,8 @@ func HandleAutoAnalyze(
 		}
 	}()
 	if variable.EnableAutoAnalyzePriorityQueue.Load() {
-		infoSchema := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-		err := statsHandle.UpdateWorker(context.Background(), infoSchema)
-		if err != nil {
-			return false
-		}
 		r := refresher.NewRefresher(statsHandle, sysProcTracker)
-		err = r.RebuildTableAnalysisJobQueue()
+		err := r.RebuildTableAnalysisJobQueue()
 		if err != nil {
 			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
 			return false

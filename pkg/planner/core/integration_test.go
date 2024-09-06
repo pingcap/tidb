@@ -2168,7 +2168,7 @@ func TestIssue48257(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("analyze table t all columns")
 	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
 		"TableReader 1.00 root  data:TableFullScan",
@@ -2176,7 +2176,7 @@ func TestIssue48257(t *testing.T) {
 	))
 	tk.MustExec("insert into t value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
 		"TableReader 2.00 root  data:TableFullScan",
 		"└─TableFullScan 2.00 cop[tikv] table:t keep order:false",
@@ -2193,7 +2193,7 @@ func TestIssue48257(t *testing.T) {
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("insert into t1 value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("analyze table t1 all columns")
 	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 		"TableReader 1.00 root  data:TableFullScan",
@@ -2201,7 +2201,7 @@ func TestIssue48257(t *testing.T) {
 	))
 	tk.MustExec("insert into t1 value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 		"TableReader 2.00 root  data:TableFullScan",
 		"└─TableFullScan 2.00 cop[tikv] table:t1 keep order:false, stats:pseudo",

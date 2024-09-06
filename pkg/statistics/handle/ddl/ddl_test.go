@@ -74,7 +74,7 @@ func TestDDLTable(t *testing.T) {
 	h := do.StatsHandle()
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
@@ -85,7 +85,7 @@ func TestDDLTable(t *testing.T) {
 	tableInfo = tbl.Meta()
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
@@ -98,7 +98,7 @@ func TestDDLTable(t *testing.T) {
 	tableInfo = tbl.Meta()
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
@@ -109,7 +109,7 @@ func TestDDLTable(t *testing.T) {
 	tableInfo = tbl.Meta()
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
 }
@@ -164,7 +164,7 @@ func TestTruncateTable(t *testing.T) {
 	// Insert some data.
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
 	testKit.MustExec("analyze table t")
-	err = h.UpdateWorker(context.Background(), do.InfoSchema())
+	err = h.Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -237,7 +237,7 @@ func TestTruncateAPartitionedTable(t *testing.T) {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.UpdateWorker(context.Background(), is)
+	err = h.Update(context.Background(), is)
 	require.NoError(t, err)
 
 	// Get partition p0's and p1's stats update version.
@@ -299,7 +299,7 @@ func TestDDLHistogram(t *testing.T) {
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	is := do.InfoSchema()
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -314,7 +314,7 @@ func TestDDLHistogram(t *testing.T) {
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	is = do.InfoSchema()
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
@@ -334,7 +334,7 @@ func TestDDLHistogram(t *testing.T) {
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	is = do.InfoSchema()
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
@@ -347,7 +347,7 @@ func TestDDLHistogram(t *testing.T) {
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	is = do.InfoSchema()
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
@@ -361,7 +361,7 @@ func TestDDLHistogram(t *testing.T) {
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	is = do.InfoSchema()
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
@@ -415,7 +415,7 @@ PARTITION BY RANGE ( a ) (
 		tableInfo := tbl.Meta()
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
 		require.NoError(t, err)
-		require.Nil(t, h.UpdateWorker(context.Background(), is))
+		require.Nil(t, h.Update(context.Background(), is))
 		pi := tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
@@ -428,7 +428,7 @@ PARTITION BY RANGE ( a ) (
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
 		require.NoError(t, err)
 		is = do.InfoSchema()
-		require.Nil(t, h.UpdateWorker(context.Background(), is))
+		require.Nil(t, h.Update(context.Background(), is))
 		tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo = tbl.Meta()
@@ -447,7 +447,7 @@ PARTITION BY RANGE ( a ) (
 		tableInfo = tbl.Meta()
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
 		require.NoError(t, err)
-		require.Nil(t, h.UpdateWorker(context.Background(), is))
+		require.Nil(t, h.Update(context.Background(), is))
 		pi = tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
@@ -489,7 +489,7 @@ func TestReorgPartitions(t *testing.T) {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.UpdateWorker(context.Background(), is)
+	err = h.Update(context.Background(), is)
 	require.NoError(t, err)
 	// Get all the partition IDs.
 	partitionIDs := make(map[int64]struct{}, len(pi.Definitions))
@@ -514,7 +514,7 @@ func TestReorgPartitions(t *testing.T) {
 	reorganizePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
 	err = h.HandleDDLEvent(reorganizePartitionEvent)
 	require.NoError(t, err)
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 
 	// Check the version again.
 	rows = testKit.MustQuery(
@@ -546,7 +546,7 @@ func TestIncreasePartitionCountOfHashPartitionTable(t *testing.T) {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.UpdateWorker(context.Background(), is)
+	err = h.Update(context.Background(), is)
 	require.NoError(t, err)
 
 	// Get partition p0 and p1's stats update version.
@@ -566,7 +566,7 @@ func TestIncreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	reorganizePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
 	err = h.HandleDDLEvent(reorganizePartitionEvent)
 	require.NoError(t, err)
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 
 	// Check new partitions are added.
 	is = do.InfoSchema()
@@ -615,7 +615,7 @@ func TestDecreasePartitionCountOfHashPartitionTable(t *testing.T) {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.UpdateWorker(context.Background(), is)
+	err = h.Update(context.Background(), is)
 	require.NoError(t, err)
 
 	// Get partition p0 and p1's stats update version.
@@ -640,7 +640,7 @@ func TestDecreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	reorganizePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
 	err = h.HandleDDLEvent(reorganizePartitionEvent)
 	require.NoError(t, err)
-	require.Nil(t, h.UpdateWorker(context.Background(), is))
+	require.Nil(t, h.Update(context.Background(), is))
 
 	// Check new partitions are added.
 	is = do.InfoSchema()
@@ -703,7 +703,7 @@ func TestTruncateAPartition(t *testing.T) {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.UpdateWorker(context.Background(), is)
+	err = h.Update(context.Background(), is)
 	require.NoError(t, err)
 
 	// Get partition p0's stats update version.
@@ -766,7 +766,7 @@ func TestTruncateAHashPartition(t *testing.T) {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.UpdateWorker(context.Background(), is)
+	err = h.Update(context.Background(), is)
 	require.NoError(t, err)
 
 	// Get partition p0's stats update version.
@@ -833,7 +833,7 @@ func TestTruncatePartitions(t *testing.T) {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.UpdateWorker(context.Background(), is)
+	err = h.Update(context.Background(), is)
 	require.NoError(t, err)
 
 	// Get partition p0 and p1's stats update version.
@@ -904,7 +904,7 @@ func TestDropAPartition(t *testing.T) {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.UpdateWorker(context.Background(), is)
+	err = h.Update(context.Background(), is)
 	require.NoError(t, err)
 
 	testKit.MustExec("alter table t drop partition p0")
@@ -971,7 +971,7 @@ func TestDropPartitions(t *testing.T) {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.UpdateWorker(context.Background(), is)
+	err = h.Update(context.Background(), is)
 	require.NoError(t, err)
 
 	// Get partition p0 and p1's stats update version.
@@ -1102,7 +1102,7 @@ func TestExchangeAPartition(t *testing.T) {
 	tableInfo2 := tbl2.Meta()
 	statsTbl2 := h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
-	err = h.UpdateWorker(context.Background(), do.InfoSchema())
+	err = h.Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 
 	// Insert some data to partition p1 before exchange partition.
@@ -1146,7 +1146,7 @@ func TestExchangeAPartition(t *testing.T) {
 	tableInfo3 := tbl3.Meta()
 	statsTbl3 := h.GetTableStats(tableInfo3)
 	require.False(t, statsTbl3.Pseudo)
-	err = h.UpdateWorker(context.Background(), do.InfoSchema())
+	err = h.Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 
 	testKit.MustExec("alter table t exchange partition p2 with table t3")

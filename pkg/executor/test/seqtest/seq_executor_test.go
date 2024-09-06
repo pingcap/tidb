@@ -623,7 +623,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
 	err = do.StatsHandle().DumpStatsDeltaToKV(true)
 	require.NoError(t, err)
-	err = do.StatsHandle().UpdateWorker(context.Background(), do.InfoSchema())
+	err = do.StatsHandle().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
@@ -631,7 +631,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	tk.MustExec("delete from t")
 	err = do.StatsHandle().DumpStatsDeltaToKV(true)
 	require.NoError(t, err)
-	err = do.StatsHandle().UpdateWorker(context.Background(), do.InfoSchema())
+	err = do.StatsHandle().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 }

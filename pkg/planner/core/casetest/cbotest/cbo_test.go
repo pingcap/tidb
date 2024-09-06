@@ -70,7 +70,7 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	var input []string
 	var output []struct {
 		SQL  string
@@ -120,7 +120,7 @@ func TestTableDual(t *testing.T) {
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	var input []string
 	var output []struct {
 		SQL  string
@@ -157,7 +157,7 @@ func TestEstimation(t *testing.T) {
 		testKit.MustExec("delete from t where a = ?", i)
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	var input []string
 	var output []struct {
 		SQL  string
@@ -343,7 +343,7 @@ func TestOutdatedAnalyze(t *testing.T) {
 	testKit.MustExec("insert into t select * from t")
 	testKit.MustExec("insert into t select * from t")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	var input []struct {
 		SQL                          string
 		EnablePseudoForOutdatedStats bool
@@ -391,7 +391,7 @@ func TestNullCount(t *testing.T) {
 	}
 	h := dom.StatsHandle()
 	h.Clear()
-	require.NoError(t, h.UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	for i := 2; i < 4; i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -438,7 +438,7 @@ func TestInconsistentEstimation(t *testing.T) {
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
 	dom.StatsHandle().Clear()
-	require.NoError(t, dom.StatsHandle().UpdateWorker(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	var input []string
 	var output []struct {
 		SQL  string
