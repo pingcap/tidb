@@ -750,7 +750,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				if !ex.HasTableSchema(t.DBName.L) {
 					return true
 				}
-				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, t.DBName.L, t.TableName.L, "", mysql.SelectPriv) {
+				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, t.DBName.L, t.TableName.L, "", mysql.AllPrivMask) {
 					return true
 				}
 

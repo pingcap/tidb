@@ -1676,6 +1676,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		RRU:               ruDetails.RRU(),
 		WRU:               ruDetails.WRU(),
 		WaitRUDuration:    ruDetails.RUWaitDuration(),
+		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
@@ -2018,6 +2019,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		KeyspaceID:          keyspaceID,
 		RUDetail:            ruDetail,
 		ResourceGroupName:   sessVars.StmtCtx.ResourceGroupName,
+		CPUUsages:           sessVars.SQLCPUUsages.GetCPUUsages(),
 
 		PlanCacheUnqualified: sessVars.StmtCtx.PlanCacheUnqualified(),
 	}

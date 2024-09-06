@@ -368,6 +368,9 @@ const (
 
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
+	TiDBMVCCInfo        = "tidb_mvcc_info"
+	TiDBEncodeRecordKey = "tidb_encode_record_key"
+	TiDBEncodeIndexKey  = "tidb_encode_index_key"
 	TiDBDecodeBase64Key = "tidb_decode_base64_key"
 
 	// MVCC information fetching function.

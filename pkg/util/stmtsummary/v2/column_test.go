@@ -37,6 +37,8 @@ func TestColumn(t *testing.T) {
 		{Name: pmodel.NewCIStr(ExecCountStr)},
 		{Name: pmodel.NewCIStr(SumLatencyStr)},
 		{Name: pmodel.NewCIStr(MaxLatencyStr)},
+		{Name: pmodel.NewCIStr(AvgTidbCPUTimeStr)},
+		{Name: pmodel.NewCIStr(AvgTikvCPUTimeStr)},
 	}
 	factories := makeColumnFactories(columns)
 	info := GenerateStmtExecInfo4Test("digest")
@@ -67,6 +69,10 @@ func TestColumn(t *testing.T) {
 			require.Equal(t, int64(record.SumLatency), column)
 		case MaxLatencyStr:
 			require.Equal(t, int64(record.MaxLatency), column)
+		case AvgTidbCPUTimeStr:
+			require.Equal(t, int64(record.SumTidbCPU), column)
+		case AvgTikvCPUTimeStr:
+			require.Equal(t, int64(record.SumTikvCPU), column)
 		}
 	}
 }

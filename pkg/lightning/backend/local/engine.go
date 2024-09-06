@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -113,6 +114,10 @@ type Engine struct {
 	UUID         uuid.UUID
 	localWriters sync.Map
 
+	regionSplitSize      int64
+	regionSplitKeyCnt    int64
+	regionSplitKeysCache [][]byte
+
 	// isImportingAtomic is an atomic variable indicating whether this engine is importing.
 	// This should not be used as a "spin lock" indicator.
 	isImportingAtomic atomic.Uint32
@@ -152,6 +157,8 @@ type Engine struct {
 
 	logger log.Logger
 }
+
+var _ common.Engine = (*Engine)(nil)
 
 func (e *Engine) setError(err error) {
 	if err != nil {
@@ -307,13 +314,17 @@ func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 	return firstLey, nextKey(lastKey), nil
 }
 
-// SplitRanges gets size properties from pebble and split ranges according to size/keys limit.
-func (e *Engine) SplitRanges(
-	startKey, endKey []byte,
-	sizeLimit, keysLimit int64,
-	logger log.Logger,
-) ([]common.Range, error) {
-	sizeProps, err := getSizePropertiesFn(logger, e.getDB(), e.keyAdapter)
+// GetRegionSplitKeys implements common.Engine.
+func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
+	return e.getRegionSplitKeys(e.regionSplitSize, e.regionSplitKeyCnt)
+}
+
+func (e *Engine) getRegionSplitKeys(regionSplitSize, regionSplitKeyCnt int64) ([][]byte, error) {
+	sizeProps, err := getSizePropertiesFn(e.logger, e.getDB(), e.keyAdapter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	startKey, endKey, err := e.GetKeyRange()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -321,10 +332,16 @@ func (e *Engine) SplitRanges(
 	ranges := splitRangeBySizeProps(
 		common.Range{Start: startKey, End: endKey},
 		sizeProps,
-		sizeLimit,
-		keysLimit,
+		regionSplitSize,
+		regionSplitKeyCnt,
 	)
-	return ranges, nil
+	keys := make([][]byte, 0, len(ranges)+1)
+	for _, r := range ranges {
+		keys = append(keys, r.Start)
+	}
+	keys = append(keys, ranges[len(ranges)-1].End)
+	e.regionSplitKeysCache = keys
+	return keys, nil
 }
 
 type rangeOffsets struct {
@@ -1084,15 +1101,33 @@ func (e *Engine) Finish(totalBytes, totalCount int64) {
 // IngestData interface.
 func (e *Engine) LoadIngestData(
 	ctx context.Context,
-	regionRanges []common.Range,
-	outCh chan<- common.DataAndRange,
-) error {
-	for _, r := range regionRanges {
+	outCh chan<- common.DataAndRanges,
+) (err error) {
+	jobRangeKeys := e.regionSplitKeysCache
+	// when the region is large, we need to split to smaller job ranges to increase
+	// the concurrency.
+	if jobRangeKeys == nil || e.regionSplitSize > 2*int64(config.SplitRegionSize) {
+		e.regionSplitKeysCache = nil
+		jobRangeKeys, err = e.getRegionSplitKeys(
+			int64(config.SplitRegionSize), int64(config.SplitRegionKeys),
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	prev := jobRangeKeys[0]
+	for i := 1; i < len(jobRangeKeys); i++ {
+		cur := jobRangeKeys[i]
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case outCh <- common.DataAndRange{Data: e, Range: r}:
+		case outCh <- common.DataAndRanges{
+			Data:         e,
+			SortedRanges: []common.Range{{Start: prev, End: cur}},
+		}:
 		}
+		prev = cur
 	}
 	return nil
 }

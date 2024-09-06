@@ -22,6 +22,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/table/tables",
         "//pkg/util/chunk",
+        "//pkg/util/intest",
         "//pkg/util/mock",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
