@@ -30,9 +30,9 @@ type SchemaChangeEvent struct {
 	// todo: field and method will be added in the next few pr on demand
 	newTableInfo *model.TableInfo
 	oldTableInfo *model.TableInfo
+	columnInfos  []*model.ColumnInfo
 
-	tp          model.ActionType
-	columnInfos []*model.ColumnInfo
+	tp model.ActionType
 }
 
 // String implements fmt.Stringer interface.
