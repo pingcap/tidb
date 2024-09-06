@@ -43,7 +43,7 @@
 
 ## Introduction
 
-One para explanation of the proposal that helps others get the brief info of this design doc.
+This design proposes a new priority queue implementation that maintains a heap in memory to improve performance and reduce the overhead of rebuilding the queue.
 
 ## Motivation or Background
 
