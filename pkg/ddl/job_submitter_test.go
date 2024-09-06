@@ -224,13 +224,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 			Version: model.GetJobVerInUse(),
 			Type:    model.ActionTruncateTable,
 		}
-		if j.Version == model.JobVersion1 {
-			j.Args = []any{int64(0), false, []int64{}, partCnt}
-		} else {
-			j.ArgsV2 = &model.TruncateTableArgs{
-				OldPartitionIDs: make([]int64, partCnt),
-			}
-		}
+		j.FillArgs(&model.TruncateTableArgs{OldPartitionIDs: make([]int64, partCnt)})
 		return j
 	}
 

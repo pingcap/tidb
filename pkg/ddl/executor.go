@@ -4204,18 +4204,10 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	if job.Version == model.JobVersion1 {
-		// Args[0] is the new table ID, args[2] is the ids for table partitions, we
-		// add a placeholder here, they will be filled by job submitter.
-		// the last param is not required for execution, we need it to calculate
-		// number of new IDs to generate.
-		job.Args = []any{int64(0), fkCheck, []int64{}, len(oldPartitionIDs)}
-	} else {
-		job.ArgsV2 = &model.TruncateTableArgs{
-			FKCheck:         fkCheck,
-			OldPartitionIDs: oldPartitionIDs,
-		}
-	}
+	job.FillArgs(&model.TruncateTableArgs{
+		FKCheck:         fkCheck,
+		OldPartitionIDs: oldPartitionIDs,
+	})
 	err = e.DoDDLJob(ctx, job)
 	if err != nil {
 		return errors.Trace(err)

@@ -270,13 +270,7 @@ func TestHandleLockTable(t *testing.T) {
 		Type:    model.ActionTruncateTable,
 		TableID: 1,
 	}
-	if job.Version == model.JobVersion1 {
-		job.Args = []any{int64(2)}
-	} else {
-		job.ArgsV2 = &model.TruncateTableArgs{
-			NewTableID: 2,
-		}
-	}
+	job.FillArgs(&model.TruncateTableArgs{NewTableID: 2})
 	jobW := ddl.NewJobWrapper(job, false)
 
 	t.Run("target table not locked", func(t *testing.T) {

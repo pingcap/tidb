@@ -32,14 +32,64 @@ func TestGetOrDecodeArgsV2(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, j.RawArgsV2)
 	// return existing argsV2
-	argsV2, err := GetOrDecodeArgsV2[TruncateTableArgs](j)
+	argsV2, err := getOrDecodeArgsV2[*TruncateTableArgs](j)
 	require.NoError(t, err)
 	require.Same(t, j.ArgsV2, argsV2)
 	// unmarshal from json
 	var argsBak *TruncateTableArgs
 	argsBak, j.ArgsV2 = j.ArgsV2.(*TruncateTableArgs), nil
-	argsV2, err = GetOrDecodeArgsV2[TruncateTableArgs](j)
+	argsV2, err = getOrDecodeArgsV2[*TruncateTableArgs](j)
 	require.NoError(t, err)
 	require.NotNil(t, argsV2)
 	require.NotSame(t, argsBak, argsV2)
+}
+
+func TestGetTruncateTableArgs(t *testing.T) {
+	inArgs := &TruncateTableArgs{
+		NewTableID:      1,
+		FKCheck:         true,
+		NewPartitionIDs: []int64{2, 3},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j := &Job{
+			Version: v,
+			Type:    ActionTruncateTable,
+		}
+		j.FillArgs(inArgs)
+		bytes, err := j.Encode(true)
+		require.NoError(t, err)
+
+		j2 := &Job{}
+		err = j2.Decode(bytes)
+		require.NoError(t, err)
+		args, err := GetTruncateTableArgsBeforeRun(j2)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), args.NewTableID)
+		require.Equal(t, true, args.FKCheck)
+		require.Equal(t, []int64{2, 3}, args.NewPartitionIDs)
+	}
+
+	inArgs = &TruncateTableArgs{
+		OldPartitionIDs: []int64{5, 6},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j := &Job{
+			Version: v,
+			Type:    ActionTruncateTable,
+		}
+		if v == JobVersion1 {
+			j.Args = []any{[]byte{}, inArgs.OldPartitionIDs}
+		} else {
+			j.ArgsV2 = inArgs
+		}
+		bytes, err := j.Encode(true)
+		require.NoError(t, err)
+
+		j2 := &Job{}
+		err = j2.Decode(bytes)
+		require.NoError(t, err)
+		args, err := GetTruncateTableArgsAfterRun(j2)
+		require.NoError(t, err)
+		require.Equal(t, []int64{5, 6}, args.OldPartitionIDs)
+	}
 }

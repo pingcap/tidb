@@ -319,7 +319,7 @@ type Job struct {
 	// below fields are used in JobVersion2
 	// ArgsV2 is a pointer to a typed XXXArgs struct specific to the job type.
 	// see structs inside job_args.go.
-	ArgsV2 any `json:"-"`
+	ArgsV2 JobArgs `json:"-"`
 	// RawArgsV2 stores the raw json of ArgsV2.
 	RawArgsV2 json.RawMessage `json:"raw_args_v2"`
 
@@ -482,6 +482,11 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 	w, wc := job.ReorgMeta.Warnings, job.ReorgMeta.WarningsCount
 	job.Mu.Unlock()
 	return w, wc
+}
+
+// FillArgs fills job args.
+func (job *Job) FillArgs(args JobArgs) {
+	args.fillJob(job)
 }
 
 // Encode encodes job with json format.
