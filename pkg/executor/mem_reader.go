@@ -676,6 +676,7 @@ type memIndexLookUpReader struct {
 	table         table.Table
 	conditions    []expression.Expression
 	retFieldTypes []*types.FieldType
+	schema        *expression.Schema
 
 	idxReader *memIndexReader
 
@@ -713,6 +714,7 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 		table:         idxLookUpReader.table,
 		conditions:    us.conditions,
 		retFieldTypes: exec.RetTypes(us),
+		schema:        us.Schema(),
 		idxReader:     memIdxReader,
 
 		partitionMode:     idxLookUpReader.partitionTableMode,
@@ -726,11 +728,62 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 }
 
 func (m *memIndexLookUpReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
-	data, err := m.getMemRows(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
+	kvRanges := [][]kv.KeyRange{m.idxReader.kvRanges}
+	tbls := []table.Table{m.table}
+	if m.partitionMode {
+		kvRanges = m.partitionKVRanges
+		tbls = tbls[:0]
+		for _, p := range m.partitionTables {
+			tbls = append(tbls, p)
+		}
 	}
-	return &defaultRowsIter{data: data}, nil
+
+	tblKVRanges := make([]kv.KeyRange, 0, 16)
+	numHandles := 0
+	for i, tbl := range tbls {
+		m.idxReader.kvRanges = kvRanges[i]
+		handles, err := m.idxReader.getMemRowsHandle()
+		if err != nil {
+			return nil, err
+		}
+		if len(handles) == 0 {
+			continue
+		}
+		numHandles += len(handles)
+		ranges, _ := distsql.TableHandlesToKVRanges(getPhysicalTableID(tbl), handles)
+		tblKVRanges = append(tblKVRanges, ranges...)
+	}
+	if numHandles == 0 {
+		return nil, nil
+	}
+
+	if m.desc {
+		slices.Reverse(tblKVRanges)
+	}
+
+	cd := NewRowDecoder(m.ctx, m.schema, m.table.Meta())
+	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.ctx, m.table, m.columns)
+	memTblReader := &memTableReader{
+		ctx:           m.ctx,
+		table:         m.table.Meta(),
+		columns:       m.columns,
+		kvRanges:      tblKVRanges,
+		conditions:    m.conditions,
+		addedRows:     make([][]types.Datum, 0, numHandles),
+		retFieldTypes: m.retFieldTypes,
+		colIDs:        colIDs,
+		pkColIDs:      pkColIDs,
+		buffer: allocBuf{
+			handleBytes: make([]byte, 0, 16),
+			rd:          rd,
+			cd:          cd,
+		},
+		cacheTable:  m.cacheTable,
+		keepOrder:   m.keepOrder,
+		compareExec: m.compareExec,
+	}
+
+	return memTblReader.getMemRowsIter(ctx)
 }
 
 func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
