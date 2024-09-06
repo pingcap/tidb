@@ -6424,18 +6424,23 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	}
 }
 
+func getTruncateTableNewTableID(job *model.Job) int64 {
+	if job.Version == model.JobVersion1 {
+		return job.Args[0].(int64)
+	}
+	return job.ArgsV2.(*model.TruncateTableArgs).NewTableID
+}
+
 // HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted
 // successfully. exported for testing purpose.
 func HandleLockTablesOnSuccessSubmit(ctx sessionctx.Context, jobW *JobWrapper) {
 	if jobW.Type == model.ActionTruncateTable {
 		if ok, lockTp := ctx.CheckTableLocked(jobW.TableID); ok {
-			var newTableID int64
-			if jobW.Version == model.JobVersion1 {
-				newTableID = jobW.Args[0].(int64)
-			} else {
-				newTableID = jobW.ArgsV2.(*model.TruncateTableArgs).NewTableID
-			}
-			ctx.AddTableLock([]model.TableLockTpInfo{{SchemaID: jobW.SchemaID, TableID: newTableID, Tp: lockTp}})
+			ctx.AddTableLock([]model.TableLockTpInfo{{
+				SchemaID: jobW.SchemaID,
+				TableID:  getTruncateTableNewTableID(jobW.Job),
+				Tp:       lockTp,
+			}})
 		}
 	}
 }
@@ -6445,12 +6450,7 @@ func HandleLockTablesOnSuccessSubmit(ctx sessionctx.Context, jobW *JobWrapper) {
 func HandleLockTablesOnFinish(ctx sessionctx.Context, jobW *JobWrapper, ddlErr error) {
 	if jobW.Type == model.ActionTruncateTable {
 		if ddlErr != nil {
-			var newTableID int64
-			if jobW.Version == model.JobVersion1 {
-				newTableID = jobW.Args[0].(int64)
-			} else {
-				newTableID = jobW.ArgsV2.(*model.TruncateTableArgs).NewTableID
-			}
+			newTableID := getTruncateTableNewTableID(jobW.Job)
 			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
 			return
 		}

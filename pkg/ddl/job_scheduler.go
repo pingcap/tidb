@@ -723,12 +723,7 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		if schema {
 			return strconv.FormatInt(job.SchemaID, 10)
 		}
-		var newTableID int64
-		if job.Version == model.JobVersion1 {
-			newTableID = job.Args[0].(int64)
-		} else {
-			newTableID = job.ArgsV2.(*model.TruncateTableArgs).NewTableID
-		}
+		newTableID := getTruncateTableNewTableID(job)
 		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
 	}
 	if schema {
