@@ -1,7 +1,7 @@
 # TiDB Design Documents
 
 - Author(s): [Rustin Liu](http://github.com/Rustin170506), [Lance Tian](http://github.com/lance6716)
-- Discussion PR: TBD
+- Discussion PR: <https://github.com/pingcap/tidb/pull/55903>
 - Tracking Issue: TBD
 
 ## Table of Contents
