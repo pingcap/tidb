@@ -63,8 +63,20 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 	return NewStatsCacheImpl(nil)
 }
 
+// StatsCacheUpdateChan is a channel for updating stats cache.
+var StatsCacheUpdateChan = make(chan struct{}, 1)
+
 // Update reads stats meta from store and updates the stats map.
-func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) error {
+func (*StatsCacheImpl) Update() error {
+	select {
+	case StatsCacheUpdateChan <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+// UpdateWorker reads stats meta from store and updates the stats map.
+func (s *StatsCacheImpl) UpdateWorker(ctx context.Context, is infoschema.InfoSchema) error {
 	start := time.Now()
 	lastVersion := s.getLastVersion()
 	var (
@@ -164,7 +176,7 @@ func (s *StatsCacheImpl) getLastVersion() uint64 {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := util.DurationToTS(3 * s.statsHandle.Lease())
+	offset := util.DurationToTS(5 * s.statsHandle.Lease())
 	if s.MaxTableStatsVersion() >= offset {
 		lastVersion = lastVersion - offset
 	} else {

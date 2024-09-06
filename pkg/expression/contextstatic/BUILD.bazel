@@ -31,7 +31,7 @@ go_test(
     ],
     embed = [":contextstatic"],
     flaky = True,
-    shard_count = 11,
+    shard_count = 13,
     deps = [
         "//pkg/errctx",
         "//pkg/expression/context",

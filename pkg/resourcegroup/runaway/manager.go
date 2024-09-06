@@ -232,7 +232,11 @@ func (rm *Manager) RunawayWatchSyncLoop() {
 	}
 }
 
-func (rm *Manager) markQuarantine(resourceGroupName, convict string, watchType rmpb.RunawayWatchType, action rmpb.RunawayAction, ttl time.Duration, now *time.Time) {
+func (rm *Manager) markQuarantine(
+	resourceGroupName, convict string,
+	watchType rmpb.RunawayWatchType, action rmpb.RunawayAction, switchGroupName string,
+	ttl time.Duration, now *time.Time,
+) {
 	var endTime time.Time
 	if ttl > 0 {
 		endTime = now.UTC().Add(ttl)
@@ -245,6 +249,7 @@ func (rm *Manager) markQuarantine(resourceGroupName, convict string, watchType r
 		WatchText:         convict,
 		Source:            rm.serverID,
 		Action:            action,
+		SwitchGroupName:   switchGroupName,
 	}
 	// Add record without ID into watch list in this TiDB right now.
 	rm.addWatchList(record, ttl, false)
@@ -355,12 +360,12 @@ func (rm *Manager) staleQuarantineRecordChan() <-chan *QuarantineRecord {
 }
 
 // examineWatchList check whether the query is in watch list.
-func (rm *Manager) examineWatchList(resourceGroupName string, convict string) (bool, rmpb.RunawayAction) {
+func (rm *Manager) examineWatchList(resourceGroupName string, convict string) (bool, rmpb.RunawayAction, string) {
 	item := rm.getWatchFromWatchList(resourceGroupName + "/" + convict)
 	if item == nil {
-		return false, 0
+		return false, 0, ""
 	}
-	return true, item.Action
+	return true, item.Action, item.getSwitchGroupName()
 }
 
 // Stop stops the watchList which is a ttlCache.

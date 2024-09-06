@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -42,13 +43,15 @@ type OOMAlarmVariablesInfo struct {
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	Time                  time.Time
-	ExpensiveLogTime      time.Time
-	ExpensiveTxnLogTime   time.Time
-	CurTxnCreateTime      time.Time
-	Plan                  any
-	CursorTracker         cursor.Tracker
-	StmtCtx               *stmtctx.StatementContext
+	Time                time.Time
+	ExpensiveLogTime    time.Time
+	ExpensiveTxnLogTime time.Time
+	CurTxnCreateTime    time.Time
+	Plan                any
+	CursorTracker       cursor.Tracker
+	StmtCtx             *stmtctx.StatementContext
+	// SQLCPUUsage should be set nil for sleep command
+	SQLCPUUsage           *ppcpuusage.SQLCPUUsages
 	RefCountOfStmtCtx     *stmtctx.ReferenceCount
 	MemTracker            *memory.Tracker
 	DiskTracker           *disk.Tracker
@@ -144,11 +147,15 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	}
 
 	var affectedRows any
+	var cpuUsages ppcpuusage.CPUUsages
 	if pi.StmtCtx != nil {
 		affectedRows = pi.StmtCtx.AffectedRows()
 	}
+	if pi.SQLCPUUsage != nil {
+		cpuUsages = pi.SQLCPUUsage.GetCPUUsages()
+	}
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed,
-		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows)
+		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows, cpuUsages.TidbCPUTime.Seconds(), cpuUsages.TikvCPUTime.Seconds())
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.

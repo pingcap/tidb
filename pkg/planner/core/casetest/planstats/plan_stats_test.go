@@ -210,7 +210,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		}
 		is := dom.InfoSchema()
 		dom.StatsHandle().Clear() // clear statsCache
-		require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+		require.NoError(t, dom.StatsHandle().UpdateWorker(context.Background(), is))
 		stmt, err := p.ParseOneStmt(testCase.sql, "", "")
 		require.NoError(t, err)
 		err = executor.ResetContextOfStmt(ctx, stmt)
@@ -269,7 +269,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	}()
 	tk.MustExec("analyze table t all columns")
 	is := dom.InfoSchema()
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+	require.NoError(t, dom.StatsHandle().UpdateWorker(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -439,7 +439,7 @@ func TestPartialStatsInExplain(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 	tk.MustExec("analyze table t2")
 	tk.MustExec("analyze table tp all columns")
-	tk.RequireNoError(dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	tk.RequireNoError(dom.StatsHandle().UpdateWorker(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("explain select * from tp where a = 1")
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 	var (

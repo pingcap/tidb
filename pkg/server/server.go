@@ -855,6 +855,21 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 	return rs
 }
 
+// UpdateProcessCPUTime updates specific process's tidb CPU time when the process is still running
+// It implements ProcessCPUTimeUpdater interface
+func (s *Server) UpdateProcessCPUTime(connID uint64, sqlID uint64, cpuTime time.Duration) {
+	s.rwlock.RLock()
+	conn, ok := s.clients[connID]
+	s.rwlock.RUnlock()
+	if !ok {
+		return
+	}
+	vars := conn.ctx.GetSessionVars()
+	if vars != nil {
+		vars.SQLCPUUsages.MergeTidbCPUTime(sqlID, cpuTime)
+	}
+}
+
 // GetProcessInfo implements the SessionManager interface.
 func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	s.rwlock.RLock()

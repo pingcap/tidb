@@ -15,6 +15,8 @@
 package contextstatic
 
 import (
+	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -416,6 +418,66 @@ func (ctx *StaticEvalContext) GetRequestVerificationFn() func(db string, table s
 // GetWarnHandler implements context.StaticConvertibleEvalContext.
 func (ctx *StaticEvalContext) GetWarnHandler() contextutil.WarnHandler {
 	return ctx.warnHandler
+}
+
+// LoadSystemVars loads system variables and returns a new `StaticEvalContext` with system variables loaded.
+func (ctx *StaticEvalContext) LoadSystemVars(sysVars map[string]string) (*StaticEvalContext, error) {
+	sessionVars, err := newSessionVarsWithSystemVariables(sysVars)
+	if err != nil {
+		return nil, err
+	}
+	return ctx.loadSessionVarsInternal(sessionVars, sysVars), nil
+}
+
+func (ctx *StaticEvalContext) loadSessionVarsInternal(
+	sessionVars *variable.SessionVars, sysVars map[string]string,
+) *StaticEvalContext {
+	opts := make([]StaticEvalCtxOption, 0, 8)
+	for name, val := range sysVars {
+		name = strings.ToLower(name)
+		switch name {
+		case variable.TimeZone:
+			opts = append(opts, WithLocation(sessionVars.Location()))
+		case variable.SQLModeVar:
+			opts = append(opts, WithSQLMode(sessionVars.SQLMode))
+		case variable.Timestamp:
+			opts = append(opts, WithCurrentTime(ctx.currentTimeFuncFromStringVal(val)))
+		case variable.MaxAllowedPacket:
+			opts = append(opts, WithMaxAllowedPacket(sessionVars.MaxAllowedPacket))
+		case variable.TiDBRedactLog:
+			opts = append(opts, WithEnableRedactLog(sessionVars.EnableRedactLog))
+		case variable.DefaultWeekFormat:
+			opts = append(opts, WithDefaultWeekFormatMode(val))
+		case variable.DivPrecisionIncrement:
+			opts = append(opts, WithDivPrecisionIncrement(sessionVars.DivPrecisionIncrement))
+		}
+	}
+	return ctx.Apply(opts...)
+}
+
+func (ctx *StaticEvalContext) currentTimeFuncFromStringVal(val string) func() (time.Time, error) {
+	return func() (time.Time, error) {
+		if val == variable.DefTimestamp {
+			return time.Now(), nil
+		}
+
+		ts, err := types.StrToFloat(types.StrictContext, val, false)
+		if err != nil {
+			return time.Time{}, err
+		}
+		seconds, fractionalSeconds := math.Modf(ts)
+		return time.Unix(int64(seconds), int64(fractionalSeconds*float64(time.Second))), nil
+	}
+}
+
+func newSessionVarsWithSystemVariables(vars map[string]string) (*variable.SessionVars, error) {
+	sessionVars := variable.NewSessionVars(nil)
+	for name, val := range vars {
+		if err := sessionVars.SetSystemVar(name, val); err != nil {
+			return nil, err
+		}
+	}
+	return sessionVars, nil
 }
 
 // MakeEvalContextStatic converts the `exprctx.StaticConvertibleEvalContext` to `StaticEvalContext`.

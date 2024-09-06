@@ -163,7 +163,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	}
 	require.Nil(t, statsHandle.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t with 1 samplerate, 20 topn")
-	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, statsHandle.UpdateWorker(context.Background(), dom.InfoSchema()))
 	// Add 100 modify count
 	sql := "insert into t values "
 	topNValue := fmt.Sprintf("(%d,%d) ,", 5000, 5000)
@@ -171,7 +171,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	sql = sql[0 : len(sql)-1]
 	tk.MustExec(sql)
 	require.Nil(t, statsHandle.DumpStatsDeltaToKV(true))
-	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, statsHandle.UpdateWorker(context.Background(), dom.InfoSchema()))
 
 	var (
 		in  []string
@@ -244,7 +244,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 
 	tk.MustExec("set tidb_analyze_version = 1")
 	tk.MustExec("analyze table t with 20 topn")
-	require.Nil(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
+	require.Nil(t, statsHandle.UpdateWorker(context.Background(), dom.InfoSchema()))
 	statsTbl = statsHandle.GetTableStats(tblInfo)
 
 	// Test using ver1 stats.

@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -87,7 +87,7 @@ type reorgFnResult struct {
 	err     error
 }
 
-func newReorgExprCtx() exprctx.ExprContext {
+func newReorgExprCtx() *contextstatic.StaticExprContext {
 	evalCtx := contextstatic.NewStaticEvalContext(
 		contextstatic.WithSQLMode(mysql.ModeNone),
 		contextstatic.WithTypeFlags(types.DefaultStmtFlags),
@@ -100,6 +100,25 @@ func newReorgExprCtx() exprctx.ExprContext {
 		contextstatic.WithEvalCtx(evalCtx),
 		contextstatic.WithPlanCacheTracker(&planCacheTracker),
 	)
+}
+
+func newReorgExprCtxWithReorgMeta(reorgMeta *model.DDLReorgMeta, warnHandler contextutil.WarnHandler) (*contextstatic.StaticExprContext, error) {
+	intest.AssertNotNil(reorgMeta)
+	intest.AssertNotNil(warnHandler)
+	loc, err := reorgTimeZoneWithTzLoc(reorgMeta.Location)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ctx := newReorgExprCtx()
+	evalCtx := ctx.GetStaticEvalCtx().Apply(
+		contextstatic.WithSQLMode(reorgMeta.SQLMode),
+		contextstatic.WithLocation(loc),
+		contextstatic.WithTypeFlags(reorgTypeFlagsWithSQLMode(reorgMeta.SQLMode)),
+		contextstatic.WithErrLevelMap(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode)),
+		contextstatic.WithWarnHandler(warnHandler),
+	)
+	return ctx.Apply(contextstatic.WithEvalCtx(evalCtx)), nil
 }
 
 func reorgTypeFlagsWithSQLMode(mode mysql.SQLMode) types.Flags {
@@ -561,7 +580,7 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 // buildDescTableScan builds a desc table scan upon tblInfo.
 func buildDescTableScan(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl table.PhysicalTable,
 	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
-	distSQLCtx := newDefaultReorgDistSQLCtx(store.GetClient())
+	distSQLCtx := newDefaultReorgDistSQLCtx(store.GetClient(), contextutil.NewStaticWarnHandler(0))
 	dagPB, err := buildDescTableScanDAG(distSQLCtx, tbl, handleCols, limit)
 	if err != nil {
 		return nil, errors.Trace(err)

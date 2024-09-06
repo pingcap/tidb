@@ -227,6 +227,10 @@ func (d *ClientDiscover) ResetConn(reason error) {
 	}
 }
 
+func (*singlePointAlloc) Transfer(_, _ int64) error {
+	return nil
+}
+
 // AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
 // the size of sequence cache with it's increment. The returned round indicates the sequence cycle times if it is with
 // cycle option.

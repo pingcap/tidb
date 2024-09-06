@@ -25,7 +25,7 @@ const DefaultResourceGroupName = "default"
 // RunawayChecker is used to check runaway queries.
 type RunawayChecker interface {
 	// BeforeExecutor checks whether query is in watch list before executing and after compiling.
-	BeforeExecutor() error
+	BeforeExecutor() (string, error)
 	// BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.
 	BeforeCopRequest(req *tikvrpc.Request) error
 	// CheckCopRespError checks TiKV error after receiving coprocessor response.

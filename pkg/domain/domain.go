@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -483,10 +484,6 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 
 func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, done chan error) {
 	for _, di := range schemas {
-		if di.State != model.StatePublic {
-			// schema is not public, can't be used outside.
-			continue
-		}
 		var tables []*model.TableInfo
 		var err error
 		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
@@ -512,10 +509,6 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 		}
 		diTables := make([]*model.TableInfo, 0, len(tables))
 		for _, tbl := range tables {
-			if tbl.State != model.StatePublic {
-				// schema is not public, can't be used outside.
-				continue
-			}
 			infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
 			// Check whether the table is in repair mode.
 			if domainutil.RepairInfo.InRepairMode() && domainutil.RepairInfo.CheckAndFetchRepairedTable(di, tbl) {
@@ -2305,6 +2298,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		return nil
 	}
 	do.SetStatsUpdating(true)
+	do.wg.Run(func() { do.syncStatsWorker() }, "syncStatsWorker")
 	// The stats updated worker doesn't require the stats initialization to be completed.
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
@@ -2365,6 +2359,29 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 func quitStatsOwner(do *Domain, mgr owner.Manager) {
 	<-do.exit
 	mgr.Cancel()
+}
+
+func (do *Domain) syncStatsWorker() {
+	defer util.Recover(metrics.LabelDomain, "syncStatsWorker", nil, false)
+	logutil.BgLogger().Info("syncStatsWorker started.")
+	defer func() {
+		logutil.BgLogger().Info("syncStatsWorker exited.")
+	}()
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	do.cancelFns.mu.Lock()
+	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
+	do.cancelFns.mu.Unlock()
+	for {
+		select {
+		case <-do.exit:
+			return
+		case <-cache.StatsCacheUpdateChan:
+			err := do.StatsHandle().UpdateWorker(ctx, do.InfoSchema())
+			if err != nil {
+				logutil.BgLogger().Warn("update stats info failed", zap.Error(err))
+			}
+		}
+	}
 }
 
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
@@ -2444,7 +2461,7 @@ func (do *Domain) loadStatsWorker() {
 	for {
 		select {
 		case <-loadTicker.C:
-			err = statsHandle.Update(ctx, do.InfoSchema())
+			err = statsHandle.Update()
 			if err != nil {
 				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
 			}
