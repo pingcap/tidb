@@ -493,3 +493,4 @@ FROM (
 ) AS derived_table
 WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
    OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
+set @@tidb_enable_global_index=0;
