@@ -4511,55 +4511,10 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	return statsTbl
 }
 
-<<<<<<< HEAD:planner/core/logical_plan_builder.go
-func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
-=======
-// getLatestVersionFromStatsTable gets statistics information for a table specified by "tableID", and get the max
-// LastUpdateVersion among all Columns and Indices in it.
-// Its overall logic is quite similar to getStatsTable(). During plan cache matching, only the latest version is needed.
-// In such case, compared to getStatsTable(), this function can save some copies, memory allocations and unnecessary
-// checks. Also, this function won't trigger metrics changes.
-func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) (version uint64) {
-	statsHandle := domain.GetDomain(ctx).StatsHandle()
-	// 1. tidb-server started and statistics handle has not been initialized. Pseudo stats table.
-	if statsHandle == nil {
-		return 0
-	}
-
-	var statsTbl *statistics.Table
-	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo)
-	} else {
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
-	}
-
-	// 2. Table row count from statistics is zero. Pseudo stats table.
-	realtimeRowCount := statsTbl.RealtimeCount
-	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDeterminate {
-		realtimeRowCount = max(int64(statsTbl.GetAnalyzeRowCount()), 0)
-	}
-	if realtimeRowCount == 0 {
-		return 0
-	}
-
-	// 3. Not pseudo stats table. Return the max LastUpdateVersion among all Columns and Indices
-	// return statsTbl.LastAnalyzeVersion
-	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		version = max(version, col.LastUpdateVersion)
-		return false
-	})
-	statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		version = max(version, idx.LastUpdateVersion)
-		return false
-	})
-	return version
-}
-
 // tryBuildCTE considers the input tn as a reference to a CTE and tries to build the logical plan for it like building
 // DataSource for normal tables.
 // tryBuildCTE will push an entry into handleHelper when successful.
-func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *pmodel.CIStr) (base.LogicalPlan, error) {
->>>>>>> c0111648342 (planner: fix incorrect maintenance of `handleColHelper` for recursive CTE (#55732)):pkg/planner/core/logical_plan_builder.go
+func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
 		cte := b.outerCTEs[i]
 		if cte.def.Name.L == tn.Name.L {
@@ -7391,13 +7346,9 @@ func isJoinHintSupportedInMPPMode(preferJoinType uint) bool {
 	return onesCount < 1
 }
 
-<<<<<<< HEAD:planner/core/logical_plan_builder.go
-func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
-=======
 // buildCte prepares for a CTE. It works together with buildWith().
 // It will push one entry into b.handleHelper.
-func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p base.LogicalPlan, err error) {
->>>>>>> c0111648342 (planner: fix incorrect maintenance of `handleColHelper` for recursive CTE (#55732)):pkg/planner/core/logical_plan_builder.go
+func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
 	saveBuildingCTE := b.buildingCTE
 	b.buildingCTE = true
 	defer func() {
