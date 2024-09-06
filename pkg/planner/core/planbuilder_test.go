@@ -27,9 +27,10 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -92,24 +93,24 @@ func TestGetPathByIndexName(t *testing.T) {
 
 	accessPath := []*util.AccessPath{
 		{IsIntHandlePath: true},
-		{Index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
+		{Index: &model.IndexInfo{Name: pmodel.NewCIStr("idx")}},
 		genTiFlashPath(tblInfo),
 	}
 
-	path := getPathByIndexName(accessPath, model.NewCIStr("idx"), tblInfo)
+	path := getPathByIndexName(accessPath, pmodel.NewCIStr("idx"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
 	// "id" is a prefix of "idx"
-	path = getPathByIndexName(accessPath, model.NewCIStr("id"), tblInfo)
+	path = getPathByIndexName(accessPath, pmodel.NewCIStr("id"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
-	path = getPathByIndexName(accessPath, model.NewCIStr("primary"), tblInfo)
+	path = getPathByIndexName(accessPath, pmodel.NewCIStr("primary"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[0], path)
 
-	path = getPathByIndexName(accessPath, model.NewCIStr("not exists"), tblInfo)
+	path = getPathByIndexName(accessPath, pmodel.NewCIStr("not exists"), tblInfo)
 	require.Nil(t, path)
 
 	tblInfo = &model.TableInfo{
@@ -117,7 +118,7 @@ func TestGetPathByIndexName(t *testing.T) {
 		PKIsHandle: false,
 	}
 
-	path = getPathByIndexName(accessPath, model.NewCIStr("primary"), tblInfo)
+	path = getPathByIndexName(accessPath, pmodel.NewCIStr("primary"), tblInfo)
 	require.Nil(t, path)
 }
 
@@ -682,23 +683,23 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 
 	// Create a new TableName instance.
 	tableName := &ast.TableName{
-		Schema: model.NewCIStr("test"),
-		Name:   model.NewCIStr("my_table"),
+		Schema: pmodel.NewCIStr("test"),
+		Name:   pmodel.NewCIStr("my_table"),
 	}
 	columns := []*model.ColumnInfo{
 		{
 			ID:        1,
-			Name:      model.NewCIStr("id"),
+			Name:      pmodel.NewCIStr("id"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 		{
 			ID:        2,
-			Name:      model.NewCIStr("name"),
+			Name:      pmodel.NewCIStr("name"),
 			FieldType: *types.NewFieldType(mysql.TypeString),
 		},
 		{
 			ID:        3,
-			Name:      model.NewCIStr("age"),
+			Name:      pmodel.NewCIStr("age"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 	}
@@ -710,7 +711,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	}
 
 	// Test case 1: AllColumns.
-	cols, _, err := pb.getFullAnalyzeColumnsInfo(tblNameW, model.AllColumns, nil, nil, nil, false, false)
+	cols, _, err := pb.getFullAnalyzeColumnsInfo(tblNameW, pmodel.AllColumns, nil, nil, nil, false, false)
 	require.NoError(t, err)
 	require.Equal(t, columns, cols)
 
@@ -722,7 +723,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	// Test case 3: ColumnList.
 	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
 	mustAnalyzedCols.data[3] = struct{}{}
-	cols, _, err = pb.getFullAnalyzeColumnsInfo(tblNameW, model.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tblNameW, pmodel.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
 	require.NoError(t, err)
 	require.Equal(t, specifiedCols, cols)
 }
@@ -736,12 +737,12 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 
 	tables := []*ast.TableName{
 		{
-			Schema: model.NewCIStr("test"),
-			Name:   model.NewCIStr("t1"),
+			Schema: pmodel.NewCIStr("test"),
+			Name:   pmodel.NewCIStr("t1"),
 		},
 		{
-			Schema: model.NewCIStr("test"),
-			Name:   model.NewCIStr("t2"),
+			Schema: pmodel.NewCIStr("test"),
+			Name:   pmodel.NewCIStr("t2"),
 		},
 	}
 

@@ -17,13 +17,14 @@ package context
 import (
 	"time"
 
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
@@ -47,6 +48,7 @@ type DistSQLContext struct {
 	Location         *time.Location
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	SQLKiller        *sqlkiller.SQLKiller
+	CPUUsage         *ppcpuusage.SQLCPUUsages
 	ErrCtx           errctx.Context
 
 	// TiFlash related configurations
@@ -74,7 +76,7 @@ type DistSQLContext struct {
 	StoreBatchSize                int
 	ResourceGroupName             string
 	LoadBasedReplicaReadThreshold time.Duration
-	RunawayChecker                *resourcegroup.RunawayChecker
+	RunawayChecker                resourcegroup.RunawayChecker
 	TiKVClientReadTimeout         uint64
 
 	ReplicaClosestReadThreshold int64
@@ -103,6 +105,9 @@ func (dctx *DistSQLContext) Detach() *DistSQLContext {
 	// cursor, so that it's still good to provide at least one way to stop it.
 	// In the future, we should provide a more constant behavior for killing the cursor.
 	newCtx.SQLKiller = dctx.SQLKiller
+	newCPUUsages := new(ppcpuusage.SQLCPUUsages)
+	newCPUUsages.SetCPUUsages(dctx.CPUUsage.GetCPUUsages())
+	newCtx.CPUUsage = newCPUUsages
 	newCtx.KVVars = new(tikvstore.Variables)
 	*newCtx.KVVars = *dctx.KVVars
 	newCtx.KVVars.Killed = &newCtx.SQLKiller.Signal

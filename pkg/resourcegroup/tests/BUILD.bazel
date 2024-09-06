@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "resourcegroup_test",
+    name = "tests_test",
     timeout = "short",
     srcs = ["resource_group_test.go"],
     flaky = True,
@@ -12,6 +12,7 @@ go_test(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/errno",
+        "//pkg/meta/model",
         "//pkg/parser/auth",
         "//pkg/parser/model",
         "//pkg/server",
