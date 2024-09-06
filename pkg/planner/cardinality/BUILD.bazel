@@ -35,6 +35,7 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/collate",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
         "//pkg/util/ranger",
