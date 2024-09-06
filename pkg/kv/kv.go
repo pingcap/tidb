@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
@@ -828,29 +827,18 @@ func (b *ResourceGroupTagBuilder) Build(req *tikvrpc.Request) {
 	if req == nil {
 		return
 	}
-	encodedBytes := b.EncodeTagWithKey(resourcegrouptag.GetFirstKeyFromRequest(req))
-	if len(encodedBytes) > 0 {
+	if encodedBytes := b.EncodeTagWithKey(resourcegrouptag.GetFirstKeyFromRequest(req)); len(encodedBytes) > 0 {
 		req.ResourceGroupTag = encodedBytes
 	}
 }
 
-var tablePrefix = []byte{'t'}
+// DecodeTableIDFunc is used to decode table id from key.
+var DecodeTableIDFunc func(Key) int64
 
-// DecodeTableID decodes the table ID of the key, if the key is not table key, returns 0.
 // avoid import cycle, not import tablecodec in kv package.
 func decodeTableID(key Key) int64 {
-	if !key.HasPrefix(tablePrefix) {
-		// If the key is in API V2, then ignore the prefix
-		_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
-		if err != nil {
-			return 0
-		}
-		key = k
-		if !key.HasPrefix(tablePrefix) {
-			return 0
-		}
+	if DecodeTableIDFunc != nil {
+		return DecodeTableIDFunc(key)
 	}
-	key = key[len(tablePrefix):]
-	_, tableID, _ := codec.DecodeInt(key)
-	return tableID
+	return 0
 }

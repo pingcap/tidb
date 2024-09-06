@@ -24,12 +24,8 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/errno",
-<<<<<<< HEAD
-        "//pkg/parser",
-        "//pkg/parser/model",
-=======
         "//pkg/meta/model",
->>>>>>> origin/master
+        "//pkg/parser",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/resourcegroup",
