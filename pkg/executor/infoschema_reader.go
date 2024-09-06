@@ -3398,6 +3398,7 @@ var (
 	tiflashTargetTableName = map[string]string{
 		"tiflash_tables":   "dt_tables",
 		"tiflash_segments": "dt_segments",
+		"tiflash_indexes":  "dt_local_indexes",
 	}
 )
 

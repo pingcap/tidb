@@ -179,6 +179,8 @@ const (
 	TableTiFlashTables = "TIFLASH_TABLES"
 	// TableTiFlashSegments is the string constant of tiflash segments table.
 	TableTiFlashSegments = "TIFLASH_SEGMENTS"
+	// TableTiFlashIndexes is the string constant of tiflash indexes table.
+	TableTiFlashIndexes = "TIFLASH_INDEXES"
 	// TableClientErrorsSummaryGlobal is the string constant of client errors table.
 	TableClientErrorsSummaryGlobal = "CLIENT_ERRORS_SUMMARY_GLOBAL"
 	// TableClientErrorsSummaryByUser is the string constant of client errors table.
@@ -338,6 +340,7 @@ var tableIDMap = map[string]int64{
 	TableKeywords:                        autoid.InformationSchemaDBID + 92,
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
+	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1510,6 +1513,20 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
 }
 
+var tableTiFlashIndexesCols = []columnInfo{
+	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "COLUMN_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "COLUMN_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "INDEX_KIND", tp: mysql.TypeVarchar, size: 64},
+	{name: "ROWS_STABLE_INDEXED", tp: mysql.TypeLonglong, size: 64},
+	{name: "ROWS_STABLE_NOT_INDEXED", tp: mysql.TypeLonglong, size: 64},
+	{name: "ROWS_DELTA_INDEXED", tp: mysql.TypeLonglong, size: 64},
+	{name: "ROWS_DELTA_NOT_INDEXED", tp: mysql.TypeLonglong, size: 64},
+	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
+}
+
 var tableClientErrorsSummaryGlobalCols = []columnInfo{
 	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
@@ -2343,6 +2360,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableStorageStats:                       tableStorageStatsCols,
 	TableTiFlashTables:                      tableTableTiFlashTablesCols,
 	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,
+	TableTiFlashIndexes:                     tableTiFlashIndexesCols,
 	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
 	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
