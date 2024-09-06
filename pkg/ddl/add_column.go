@@ -137,7 +137,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 			tblInfo,
 			[]*model.ColumnInfo{columnInfo},
 		)
-		asyncNotifyEvent(jobCtx, addColumnEvent)
+		asyncNotifyEvent(jobCtx, addColumnEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
 	}

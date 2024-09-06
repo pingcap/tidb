@@ -17,15 +17,21 @@ package ddl
 import (
 	"bytes"
 	"testing"
-	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,63 +93,189 @@ func TestPickBackfillType(t *testing.T) {
 	require.Equal(t, tp, model.ReorgTypeLitMerge)
 }
 
+func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *contextstatic.StaticExprContext, warnHandler contextutil.WarnHandler) {
+	exprCtxManualCheckFields := []struct {
+		field string
+		check func(*contextstatic.StaticExprContext)
+	}{
+		{
+			field: "evalCtx",
+			check: func(ctx *contextstatic.StaticExprContext) {
+				require.NotZero(t, ctx.GetEvalCtx().CtxID())
+				require.NotEqual(t, sctx.GetExprCtx().GetEvalCtx().CtxID(), ctx.GetEvalCtx().CtxID())
+			},
+		},
+		{
+			field: "blockEncryptionMode",
+			check: func(context *contextstatic.StaticExprContext) {
+				m := sctx.GetExprCtx().GetBlockEncryptionMode()
+				if m == "" {
+					// Empty string is not a valid encryption mode, so we expect the exprCtx.GetBlockEncryptionMode()
+					// to return a default value "aes-128-ecb" at this time.
+					// For some old codes, empty string can still work because it is not used in DDL.
+					m = "aes-128-ecb"
+				}
+				require.Equal(t, m, context.GetBlockEncryptionMode())
+			},
+		},
+		{
+			field: "rng",
+			check: func(ctx *contextstatic.StaticExprContext) {
+				require.NotNil(t, ctx.Rng())
+			},
+		},
+		{
+			field: "planCacheTracker",
+			check: func(ctx *contextstatic.StaticExprContext) {
+				require.Equal(t, sctx.GetExprCtx().IsUseCache(), ctx.IsUseCache())
+				ctx.SetSkipPlanCache("test reason")
+				require.False(t, ctx.IsUseCache())
+			},
+		},
+	}
+
+	evalCtxManualCheckFields := []struct {
+		field string
+		check func(*contextstatic.StaticEvalContext)
+	}{
+		{
+			field: "warnHandler",
+			check: func(ctx *contextstatic.StaticEvalContext) {
+				require.Same(t, warnHandler, ctx.GetWarnHandler())
+			},
+		},
+		{
+			field: "typeCtx.warnHandler",
+			check: func(ctx *contextstatic.StaticEvalContext) {
+				ec := ctx.ErrCtx()
+				require.Equal(t, errctx.NewContextWithLevels(ec.LevelMap(), ctx), ec)
+			},
+		},
+		{
+			field: "typeCtx.loc",
+			check: func(ctx *contextstatic.StaticEvalContext) {
+				tc := ctx.TypeCtx()
+				require.Same(t, tc.Location(), ctx.Location())
+				require.Equal(t, sctx.GetSessionVars().Location().String(), tc.Location().String())
+				require.Equal(t, sctx.GetSessionVars().StmtCtx.TimeZone().String(), tc.Location().String())
+			},
+		},
+		{
+			field: "errCtx.warnHandler",
+			check: func(ctx *contextstatic.StaticEvalContext) {
+				tc := ctx.TypeCtx()
+				require.Equal(t, types.NewContext(tc.Flags(), tc.Location(), ctx), tc)
+			},
+		},
+		{
+			field: "currentTime",
+			check: func(ctx *contextstatic.StaticEvalContext) {
+				tm1, err := sctx.GetExprCtx().GetEvalCtx().CurrentTime()
+				require.NoError(t, err)
+
+				tm, err := ctx.CurrentTime()
+				require.Equal(t, ctx.Location().String(), tm.Location().String())
+				require.InDelta(t, tm1.Unix(), tm.Unix(), 2)
+			},
+		},
+		{
+			field: "requestVerificationFn",
+			check: func(ctx *contextstatic.StaticEvalContext) {
+				// RequestVerification should allow all privileges
+				// that is the same with input session context (GetPrivilegeManager returns nil).
+				require.Nil(t, privilege.GetPrivilegeManager(sctx))
+				require.True(t, sctx.GetExprCtx().GetEvalCtx().RequestVerification("any", "any", "any", mysql.CreatePriv))
+				require.True(t, ctx.RequestVerification("any", "any", "any", mysql.CreatePriv))
+			},
+		},
+		{
+			field: "requestDynamicVerificationFn",
+			check: func(ctx *contextstatic.StaticEvalContext) {
+				// RequestDynamicVerification should allow all privileges
+				// that is the same with input session context (GetPrivilegeManager returns nil).
+				require.Nil(t, privilege.GetPrivilegeManager(sctx))
+				require.True(t, sctx.GetExprCtx().GetEvalCtx().RequestDynamicVerification("RESTRICTED_USER_ADMIN", true))
+				require.True(t, ctx.RequestDynamicVerification("RESTRICTED_USER_ADMIN", true))
+			},
+		},
+	}
+
+	// check StaticExprContext except StaticEvalContext
+	expected := sctx.GetExprCtx().(*mock.Context).IntoStatic()
+	ignoreFields := make([]string, 0, len(exprCtxManualCheckFields))
+	for _, f := range exprCtxManualCheckFields {
+		f.check(exprCtx)
+		ignoreFields = append(ignoreFields, "$.staticExprCtxState."+f.field)
+	}
+	deeptest.AssertDeepClonedEqual(t, expected, exprCtx, deeptest.WithIgnorePath(ignoreFields))
+
+	// check StaticEvalContext
+	ignoreFields = make([]string, 0, len(evalCtxManualCheckFields))
+	ignoreFields = append(ignoreFields, "$.id")
+	for _, f := range evalCtxManualCheckFields {
+		f.check(exprCtx.GetStaticEvalCtx())
+		ignoreFields = append(ignoreFields, "$.staticEvalCtxState."+f.field)
+	}
+	deeptest.AssertDeepClonedEqual(
+		t,
+		expected.GetStaticEvalCtx(),
+		exprCtx.GetStaticEvalCtx(),
+		deeptest.WithIgnorePath(ignoreFields),
+	)
+}
+
 // TestReorgExprContext is used in refactor stage to make sure the newReorgExprCtx() is
 // compatible with newReorgSessCtx(nil).GetExprCtx() to make it safe to replace `mock.Context` usage.
 // After refactor, the TestReorgExprContext can be removed.
 func TestReorgExprContext(t *testing.T) {
-	sctx := newReorgSessCtx(nil)
-	sessCtx := sctx.GetExprCtx()
-	exprCtx := newReorgExprCtx()
-	cs1, col1 := sessCtx.GetCharsetInfo()
-	cs2, col2 := exprCtx.GetCharsetInfo()
-	require.Equal(t, cs1, cs2)
-	require.Equal(t, col1, col2)
-	require.Equal(t, sessCtx.GetDefaultCollationForUTF8MB4(), exprCtx.GetDefaultCollationForUTF8MB4())
-	if sessCtx.GetBlockEncryptionMode() == "" {
-		// The newReorgSessCtx returns a block encryption mode as an empty string.
-		// Though it is not a valid value, it does not matter because `GetBlockEncryptionMode` is never used in DDL.
-		// So we do not want to modify the behavior of `newReorgSessCtx` or `newReorgExprCtx`, and just to
-		// place the test code here to check:
-		// If `GetBlockEncryptionMode` still returns empty string in `newReorgSessCtx`, that means the behavior is
-		// not changed, and we just need to return a default value for `newReorgExprCtx`.
-		// If `GetBlockEncryptionMode` returns some other values, that means `GetBlockEncryptionMode` may have been
-		// used in somewhere and two return values should be the same.
-		require.Equal(t, "aes-128-ecb", exprCtx.GetBlockEncryptionMode())
-	} else {
-		require.Equal(t, sessCtx.GetBlockEncryptionMode(), exprCtx.GetBlockEncryptionMode())
-	}
-	require.Equal(t, sessCtx.GetSysdateIsNow(), exprCtx.GetSysdateIsNow())
-	require.Equal(t, sessCtx.GetNoopFuncsMode(), exprCtx.GetNoopFuncsMode())
-	require.Equal(t, sessCtx.IsUseCache(), exprCtx.IsUseCache())
-	require.Equal(t, sessCtx.IsInNullRejectCheck(), exprCtx.IsInNullRejectCheck())
-	require.Equal(t, sessCtx.ConnectionID(), exprCtx.ConnectionID())
-	require.Equal(t, sessCtx.AllocPlanColumnID(), exprCtx.AllocPlanColumnID())
-	require.Equal(t, sessCtx.GetWindowingUseHighPrecision(), exprCtx.GetWindowingUseHighPrecision())
-	require.Equal(t, sessCtx.GetGroupConcatMaxLen(), exprCtx.GetGroupConcatMaxLen())
+	// test default expr context
+	store := &mockStorage{client: &mock.Client{}}
+	sctx := newReorgSessCtx(store)
+	defaultCtx := newReorgExprCtx()
+	// should use an empty static warn handler by default
+	evalCtx := defaultCtx.GetStaticEvalCtx()
+	require.Equal(t, contextutil.NewStaticWarnHandler(0), evalCtx.GetWarnHandler())
+	assertStaticExprContextEqual(t, sctx, defaultCtx, evalCtx.GetWarnHandler())
+	defaultTypeCtx := evalCtx.TypeCtx()
+	defaultErrCtx := evalCtx.ErrCtx()
 
-	evalCtx1 := sessCtx.GetEvalCtx()
-	evalCtx := exprCtx.GetEvalCtx()
-	require.Equal(t, evalCtx1.SQLMode(), evalCtx.SQLMode())
-	tc1 := evalCtx1.TypeCtx()
-	tc2 := evalCtx.TypeCtx()
-	require.Equal(t, tc1.Flags(), tc2.Flags())
-	require.Equal(t, tc1.Location().String(), tc2.Location().String())
-	ec1 := evalCtx1.ErrCtx()
-	ec2 := evalCtx.ErrCtx()
-	require.Equal(t, ec1.LevelMap(), ec2.LevelMap())
-	require.Equal(t, time.UTC, sctx.GetSessionVars().Location())
-	require.Equal(t, time.UTC, sctx.GetSessionVars().StmtCtx.TimeZone())
-	require.Equal(t, time.UTC, evalCtx1.Location())
-	require.Equal(t, time.UTC, evalCtx.Location())
-	require.Equal(t, evalCtx1.CurrentDB(), evalCtx.CurrentDB())
-	tm1, err := evalCtx1.CurrentTime()
-	require.NoError(t, err)
-	tm2, err := evalCtx.CurrentTime()
-	require.NoError(t, err)
-	require.InDelta(t, tm1.Unix(), tm2.Unix(), 2)
-	require.Equal(t, evalCtx1.GetMaxAllowedPacket(), evalCtx.GetMaxAllowedPacket())
-	require.Equal(t, evalCtx1.GetDefaultWeekFormatMode(), evalCtx.GetDefaultWeekFormatMode())
-	require.Equal(t, evalCtx1.GetDivPrecisionIncrement(), evalCtx.GetDivPrecisionIncrement())
+	// test expr context from DDLReorgMeta
+	for _, reorg := range []model.DDLReorgMeta{
+		{
+			SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
+			Location:          &model.TimeZoneLocation{Name: "Asia/Tokyo"},
+			ReorgTp:           model.ReorgTypeLitMerge,
+			ResourceGroupName: "rg1",
+		},
+		{
+			SQLMode: mysql.ModeAllowInvalidDates,
+			// should load location from system value when reorg.Location is nil
+			Location:          nil,
+			ReorgTp:           model.ReorgTypeTxnMerge,
+			ResourceGroupName: "rg2",
+		},
+	} {
+		sctx = newReorgSessCtx(store)
+		require.NoError(t, initSessCtx(sctx, &reorg))
+		ctx, err := newReorgExprCtxWithReorgMeta(&reorg, sctx.GetSessionVars().StmtCtx.WarnHandler)
+		require.NoError(t, err)
+		assertStaticExprContextEqual(t, sctx, ctx, ctx.GetStaticEvalCtx().GetWarnHandler())
+		evalCtx := ctx.GetEvalCtx()
+		tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+		// SQLMode should match DDLReorgMeta
+		require.Equal(t, reorg.SQLMode, evalCtx.SQLMode())
+		// Location should match DDLReorgMeta
+		if reorg.Location != nil {
+			require.Equal(t, reorg.Location.Name, evalCtx.Location().String())
+		} else {
+			loc := timeutil.SystemLocation()
+			require.Same(t, loc, evalCtx.Location())
+		}
+		// Some fields should be different from the default context to make the test robust.
+		require.NotEqual(t, defaultCtx.GetEvalCtx().SQLMode(), evalCtx.SQLMode())
+		require.NotEqual(t, defaultTypeCtx.Flags(), tc.Flags())
+		require.NotEqual(t, defaultErrCtx.LevelMap(), ec.LevelMap())
+	}
 }
 
 type mockStorage struct {
@@ -155,40 +287,76 @@ func (s *mockStorage) GetClient() kv.Client {
 	return s.client
 }
 
+func assertDistSQLCtxEqual(t *testing.T, expected *distsqlctx.DistSQLContext, actual *distsqlctx.DistSQLContext) {
+	deeptest.AssertDeepClonedEqual(
+		t, expected, actual,
+		deeptest.WithPointerComparePath([]string{
+			"$.WarnHandler",
+			"$.Client",
+		}),
+		deeptest.WithIgnorePath([]string{
+			"$.SessionMemTracker",
+			"$.Location",
+			"$.ErrCtx.warnHandler",
+		}),
+	)
+
+	// manually check
+	// SessionMemTracker
+	require.Equal(t, expected.SessionMemTracker.Label(), actual.SessionMemTracker.Label())
+	require.Equal(t, expected.SessionMemTracker.GetBytesLimit(), actual.SessionMemTracker.GetBytesLimit())
+	require.Equal(t, expected.SessionMemTracker.BytesConsumed(), actual.SessionMemTracker.BytesConsumed())
+	// Location
+	require.Equal(t, expected.Location.String(), actual.Location.String())
+	// ErrCtx
+	require.Equal(t, errctx.NewContextWithLevels(expected.ErrCtx.LevelMap(), expected.WarnHandler), actual.ErrCtx)
+}
+
 // TestReorgExprContext is used in refactor stage to make sure the newDefaultReorgDistSQLCtx() is
 // compatible with newReorgSessCtx(nil).GetDistSQLCtx() to make it safe to replace `mock.Context` usage.
 // After refactor, the TestReorgExprContext can be removed.
 func TestReorgDistSQLCtx(t *testing.T) {
 	store := &mockStorage{client: &mock.Client{}}
-	ctx1 := newReorgSessCtx(store).GetDistSQLCtx()
-	ctx2 := newDefaultReorgDistSQLCtx(store.client)
 
-	// set the same warnHandler to make two contexts equal
-	ctx1.WarnHandler = ctx2.WarnHandler
+	// test default dist sql context
+	expected := newReorgSessCtx(store).GetDistSQLCtx()
+	defaultCtx := newDefaultReorgDistSQLCtx(store.client, expected.WarnHandler)
+	assertDistSQLCtxEqual(t, expected, defaultCtx)
 
-	// set the same KVVars to make two contexts equal
-	require.Equal(t, uint32(0), *ctx1.KVVars.Killed)
-	require.Equal(t, uint32(0), *ctx2.KVVars.Killed)
-	ctx1.KVVars.Killed = ctx2.KVVars.Killed
-
-	// set the same SessionMemTracker to make two contexts equal
-	require.Equal(t, ctx1.SessionMemTracker.Label(), ctx2.SessionMemTracker.Label())
-	require.Equal(t, ctx1.SessionMemTracker.GetBytesLimit(), ctx2.SessionMemTracker.GetBytesLimit())
-	ctx1.SessionMemTracker = ctx2.SessionMemTracker
-
-	// set the same ErrCtx to make two contexts equal
-	require.Equal(t, ctx1.ErrCtx.LevelMap(), ctx2.ErrCtx.LevelMap())
-	require.Equal(t, 0, ctx2.WarnHandler.(contextutil.WarnHandler).WarningCount())
-	ctx2.ErrCtx.AppendWarning(errors.New("warn"))
-	require.Equal(t, 1, ctx2.WarnHandler.(contextutil.WarnHandler).WarningCount())
-	ctx1.ErrCtx = ctx2.ErrCtx
-
-	// set the same ExecDetails to make two contexts equal
-	require.NotNil(t, ctx1.ExecDetails)
-	require.NotNil(t, ctx2.ExecDetails)
-	ctx1.ExecDetails = ctx2.ExecDetails
-
-	require.Equal(t, ctx1, ctx2)
+	// test dist sql context from DDLReorgMeta
+	for _, reorg := range []model.DDLReorgMeta{
+		{
+			SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
+			Location:          &model.TimeZoneLocation{Name: "Asia/Tokyo"},
+			ReorgTp:           model.ReorgTypeLitMerge,
+			ResourceGroupName: "rg1",
+		},
+		{
+			SQLMode: mysql.ModeAllowInvalidDates,
+			// should load location from system value when reorg.Location is nil
+			Location:          nil,
+			ReorgTp:           model.ReorgTypeTxnMerge,
+			ResourceGroupName: "rg2",
+		},
+	} {
+		sctx := newReorgSessCtx(store)
+		require.NoError(t, initSessCtx(sctx, &reorg))
+		expected = sctx.GetDistSQLCtx()
+		ctx, err := newReorgDistSQLCtxWithReorgMeta(store.client, &reorg, expected.WarnHandler)
+		require.NoError(t, err)
+		assertDistSQLCtxEqual(t, expected, ctx)
+		// Location should match DDLReorgMeta
+		if reorg.Location != nil {
+			require.Equal(t, reorg.Location.Name, ctx.Location.String())
+		} else {
+			loc := timeutil.SystemLocation()
+			require.Same(t, loc, ctx.Location)
+		}
+		// ResourceGroupName should match DDLReorgMeta
+		require.Equal(t, reorg.ResourceGroupName, ctx.ResourceGroupName)
+		// Some fields should be different from the default context to make the test robust.
+		require.NotEqual(t, defaultCtx.ErrCtx.LevelMap(), ctx.ErrCtx.LevelMap())
+	}
 }
 
 func TestValidateAndFillRanges(t *testing.T) {

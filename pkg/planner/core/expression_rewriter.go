@@ -16,12 +16,9 @@ package core
 
 import (
 	"context"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -29,7 +26,6 @@ import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -42,12 +38,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -2639,231 +2632,4 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 		return false
 	}
 	return strings.ToLower(x) == ast.CurrentTimestamp
-}
-
-func decodeKeyFromString(tc types.Context, isVer infoschemactx.MetaOnlyInfoSchema, s string) string {
-	key, err := hex.DecodeString(s)
-	if err != nil {
-		tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
-		return s
-	}
-	// Auto decode byte if needed.
-	_, bs, err := codec.DecodeBytes(key, nil)
-	if err == nil {
-		key = bs
-	}
-	tableID := tablecodec.DecodeTableID(key)
-	if tableID <= 0 {
-		tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
-		return s
-	}
-
-	is, ok := isVer.(infoschema.InfoSchema)
-	if !ok {
-		tc.AppendWarning(errors.NewNoStackErrorf("infoschema not found when decoding key: %X", key))
-		return s
-	}
-	tbl, _ := infoschema.FindTableByTblOrPartID(is, tableID)
-	loc := tc.Location()
-	if tablecodec.IsRecordKey(key) {
-		ret, err := decodeRecordKey(key, tableID, tbl, loc)
-		if err != nil {
-			tc.AppendWarning(err)
-			return s
-		}
-		return ret
-	} else if tablecodec.IsIndexKey(key) {
-		ret, err := decodeIndexKey(key, tableID, tbl, loc)
-		if err != nil {
-			tc.AppendWarning(err)
-			return s
-		}
-		return ret
-	} else if tablecodec.IsTableKey(key) {
-		ret, err := decodeTableKey(key, tableID, tbl)
-		if err != nil {
-			tc.AppendWarning(err)
-			return s
-		}
-		return ret
-	}
-	tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
-	return s
-}
-
-func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Location) (string, error) {
-	_, handle, err := tablecodec.DecodeRecordKey(key)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	if handle.IsInt() {
-		ret := make(map[string]any)
-		if tbl != nil && tbl.Meta().Partition != nil {
-			ret["partition_id"] = tableID
-			tableID = tbl.Meta().ID
-		}
-		ret["table_id"] = strconv.FormatInt(tableID, 10)
-		// When the clustered index is enabled, we should show the PK name.
-		if tbl != nil && tbl.Meta().HasClusteredIndex() {
-			ret[tbl.Meta().GetPkName().String()] = handle.IntValue()
-		} else {
-			ret["_tidb_rowid"] = handle.IntValue()
-		}
-		retStr, err := json.Marshal(ret)
-		if err != nil {
-			return "", errors.Trace(err)
-		}
-		return string(retStr), nil
-	}
-	if tbl != nil {
-		tblInfo := tbl.Meta()
-		idxInfo := tables.FindPrimaryIndex(tblInfo)
-		if idxInfo == nil {
-			return "", errors.Trace(errors.Errorf("primary key not found when decoding record key: %X", key))
-		}
-		cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
-		for _, col := range tblInfo.Columns {
-			cols[col.ID] = &(col.FieldType)
-		}
-		handleColIDs := make([]int64, 0, len(idxInfo.Columns))
-		for _, col := range idxInfo.Columns {
-			handleColIDs = append(handleColIDs, tblInfo.Columns[col.Offset].ID)
-		}
-
-		if len(handleColIDs) != handle.NumCols() {
-			return "", errors.Trace(errors.Errorf("primary key length not match handle columns number in key"))
-		}
-		datumMap, err := tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, cols, loc, nil)
-		if err != nil {
-			return "", errors.Trace(err)
-		}
-		ret := make(map[string]any)
-		if tbl.Meta().Partition != nil {
-			ret["partition_id"] = tableID
-			tableID = tbl.Meta().ID
-		}
-		ret["table_id"] = tableID
-		handleRet := make(map[string]any)
-		for colID := range datumMap {
-			dt := datumMap[colID]
-			dtStr, err := datumToJSONObject(&dt)
-			if err != nil {
-				return "", errors.Trace(err)
-			}
-			found := false
-			for _, colInfo := range tblInfo.Columns {
-				if colInfo.ID == colID {
-					found = true
-					handleRet[colInfo.Name.L] = dtStr
-					break
-				}
-			}
-			if !found {
-				return "", errors.Trace(errors.Errorf("column not found when decoding record key: %X", key))
-			}
-		}
-		ret["handle"] = handleRet
-		retStr, err := json.Marshal(ret)
-		if err != nil {
-			return "", errors.Trace(err)
-		}
-		return string(retStr), nil
-	}
-	ret := make(map[string]any)
-	ret["table_id"] = tableID
-	ret["handle"] = handle.String()
-	retStr, err := json.Marshal(ret)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	return string(retStr), nil
-}
-
-func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Location) (string, error) {
-	if tbl != nil {
-		_, indexID, _, err := tablecodec.DecodeKeyHead(key)
-		if err != nil {
-			return "", errors.Trace(errors.Errorf("invalid record/index key: %X", key))
-		}
-		tblInfo := tbl.Meta()
-		var targetIndex *model.IndexInfo
-		for _, idx := range tblInfo.Indices {
-			if idx.ID == indexID {
-				targetIndex = idx
-				break
-			}
-		}
-		if targetIndex == nil {
-			return "", errors.Trace(errors.Errorf("index not found when decoding index key: %X", key))
-		}
-		colInfos := tables.BuildRowcodecColInfoForIndexColumns(targetIndex, tblInfo)
-		tps := tables.BuildFieldTypesForIndexColumns(targetIndex, tblInfo)
-		values, err := tablecodec.DecodeIndexKV(key, []byte{0}, len(colInfos), tablecodec.HandleNotNeeded, colInfos)
-		if err != nil {
-			return "", errors.Trace(err)
-		}
-		ds := make([]types.Datum, 0, len(colInfos))
-		for i := 0; i < len(colInfos); i++ {
-			d, err := tablecodec.DecodeColumnValue(values[i], tps[i], loc)
-			if err != nil {
-				return "", errors.Trace(err)
-			}
-			ds = append(ds, d)
-		}
-		ret := make(map[string]any)
-		if tbl.Meta().Partition != nil {
-			ret["partition_id"] = tableID
-			tableID = tbl.Meta().ID
-		}
-		ret["table_id"] = tableID
-		ret["index_id"] = indexID
-		idxValMap := make(map[string]any, len(targetIndex.Columns))
-		for i := 0; i < len(targetIndex.Columns); i++ {
-			dtStr, err := datumToJSONObject(&ds[i])
-			if err != nil {
-				return "", errors.Trace(err)
-			}
-			idxValMap[targetIndex.Columns[i].Name.L] = dtStr
-		}
-		ret["index_vals"] = idxValMap
-		retStr, err := json.Marshal(ret)
-		if err != nil {
-			return "", errors.Trace(err)
-		}
-		return string(retStr), nil
-	}
-	_, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
-	if err != nil {
-		return "", errors.Trace(errors.Errorf("invalid index key: %X", key))
-	}
-	ret := make(map[string]any)
-	ret["table_id"] = tableID
-	ret["index_id"] = indexID
-	ret["index_vals"] = strings.Join(indexValues, ", ")
-	retStr, err := json.Marshal(ret)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	return string(retStr), nil
-}
-
-func decodeTableKey(_ []byte, tableID int64, tbl table.Table) (string, error) {
-	ret := map[string]int64{}
-	if tbl != nil && tbl.Meta().GetPartitionInfo() != nil {
-		ret["partition_id"] = tableID
-		tableID = tbl.Meta().ID
-	}
-	ret["table_id"] = tableID
-	retStr, err := json.Marshal(ret)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	return string(retStr), nil
-}
-
-func datumToJSONObject(d *types.Datum) (any, error) {
-	if d.IsNull() {
-		return nil, nil
-	}
-	return d.ToString()
 }
