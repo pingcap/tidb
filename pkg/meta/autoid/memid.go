@@ -158,6 +158,10 @@ func (*inMemoryAllocator) Transfer(_, _ int64) error {
 	return nil
 }
 
+func (*inMemoryAllocator) Transfer(_, _ int64) error {
+	return nil
+}
+
 func (*inMemoryAllocator) AllocSeqCache() (base int64, end int64, round int64, err error) {
 	return 0, 0, 0, errNotImplemented.GenWithStackByArgs()
 }
