@@ -52,6 +52,7 @@ Currently, we use a priority queue at TiDB to automatically update statistics. H
 1. After the introduction of information schema version 2, TiDB no longer stores all table information in memory. As a result, the priority queue must retrieve table information from TiKV, which can be slow when dealing with a large number of tables. Therefore, it's important to prevent any operations in the priority queue that require loading all table information.
 
 2. Because we scan it too frequently, we'll spend a lot of CPU on building this queue, since we'll be scanning all the stats cache and the schema cache. See more: <https://github.com/pingcap/tidb/issues/49972>
+
 We can try to keep the priority queue in memory to solve the above issues instead of rebuilding it every time.
 
 ## Current Implementation
