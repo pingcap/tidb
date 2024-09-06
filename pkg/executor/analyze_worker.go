@@ -64,7 +64,6 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *hand
 			worker.errCh <- err
 		} else {
 			finishJobWithLog(statsHandle, results.Job, nil)
-			statsHandle.Update()
 		}
 		results.DestroyAndPutToPool()
 		if err != nil {
