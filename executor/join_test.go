@@ -2701,7 +2701,6 @@ func TestIssue30211(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName2))
 	}()
-	
 	func() {
 		fpName := "github.com/pingcap/tidb/executor/TestIssue30211"
 		require.NoError(t, failpoint.Enable(fpName, `panic("TestIssue30211 IndexJoinPanic")`))
