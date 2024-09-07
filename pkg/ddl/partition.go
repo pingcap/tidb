@@ -98,7 +98,7 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Handle the rolling back job
 	if job.IsRollingback() {
-		ver, err := w.onDropTablePartition(jobCtx, t, job)
+		ver, err := w.rollbackLikeDropPartition(jobCtx, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2151,6 +2151,62 @@ func dropLabelRules(ctx context.Context, schemaName, tableName string, partNames
 	return infosync.UpdateLabelRules(ctx, patch)
 }
 
+func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var partNames []string
+	partInfo := model.PartitionInfo{}
+	if err := job.DecodeArgs(&partNames, &partInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// If rollback from reorganize partition, remove DroppingDefinitions from tableInfo
+	tblInfo.Partition.DroppingDefinitions = nil
+	// If rollback from adding table partition, remove addingDefinitions from tableInfo.
+	physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
+	err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+	// TODO: Will this drop LabelRules for existing partitions, if the new partitions have the same name?
+	err = dropLabelRules(w.ctx, job.SchemaName, tblInfo.Name.L, pNames)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
+	}
+
+	if _, err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, err
+	}
+	// ALTER TABLE ... PARTITION BY
+	if partInfo.Type != pmodel.PartitionTypeNone {
+		// Also remove anything with the new table id
+		physicalTableIDs = append(physicalTableIDs, partInfo.NewTableID)
+		// Reset if it was normal table before
+		if tblInfo.Partition.Type == pmodel.PartitionTypeNone ||
+			tblInfo.Partition.DDLType == pmodel.PartitionTypeNone {
+			tblInfo.Partition = nil
+		} else {
+			tblInfo.Partition.ClearReorgIntermediateInfo()
+		}
+	} else {
+		// REMOVE PARTITIONING
+		tblInfo.Partition.ClearReorgIntermediateInfo()
+	}
+
+	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+	job.Args = []any{physicalTableIDs}
+	return ver, nil
+}
+
 // onDropTablePartition deletes old partition meta.
 func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
@@ -2162,51 +2218,6 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-	if job.Type != model.ActionDropTablePartition {
-		// If rollback from reorganize partition, remove DroppingDefinitions from tableInfo
-		tblInfo.Partition.DroppingDefinitions = nil
-		// If rollback from adding table partition, remove addingDefinitions from tableInfo.
-		physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
-		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
-		// TODO: Will this drop LabelRules for existing partitions, if the new partitions have the same name?
-		err = dropLabelRules(w.ctx, job.SchemaName, tblInfo.Name.L, pNames)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
-		}
-
-		if _, err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, err
-		}
-		// ALTER TABLE ... PARTITION BY
-		if partInfo.Type != pmodel.PartitionTypeNone {
-			// Also remove anything with the new table id
-			physicalTableIDs = append(physicalTableIDs, partInfo.NewTableID)
-			// Reset if it was normal table before
-			if tblInfo.Partition.Type == pmodel.PartitionTypeNone ||
-				tblInfo.Partition.DDLType == pmodel.PartitionTypeNone {
-				tblInfo.Partition = nil
-			} else {
-				tblInfo.Partition.ClearReorgIntermediateInfo()
-			}
-		} else {
-			// REMOVE PARTITIONING
-			tblInfo.Partition.ClearReorgIntermediateInfo()
-		}
-
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-		job.Args = []any{physicalTableIDs}
-		return ver, nil
 	}
 
 	var physicalTableIDs []int64
@@ -3067,7 +3078,7 @@ func getReorgPartitionInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, []st
 func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Handle the rolling back job
 	if job.IsRollingback() {
-		ver, err := w.onDropTablePartition(jobCtx, t, job)
+		ver, err := w.rollbackLikeDropPartition(jobCtx, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
