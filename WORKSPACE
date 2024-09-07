@@ -27,6 +27,7 @@ http_archive(
     urls = [
         "http://bazel-cache.pingcap.net:8080/gomod/rules/bazel-skylib-1.4.2.tar.gz",
         "http://ats.apps.svc/gomod/rules/bazel-skylib-1.4.2.tar.gz",
+        "https://cache.hawkingrei.com/gomod/rules/bazel-skylib-1.4.2.tar.gz",
         "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/1.4.2/bazel-skylib-1.4.2.tar.gz",
         "https://github.com/bazelbuild/bazel-skylib/releases/download/1.4.2/bazel-skylib-1.4.2.tar.gz",
     ],
@@ -41,6 +42,7 @@ http_archive(
     urls = [
         "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_go/releases/download/v0.50.0/rules_go-v0.50.0.zip",
         "http://ats.apps.svc/bazelbuild/rules_go/releases/download/v0.50.0/rules_go-v0.50.0.zip",
+        "https://cache.hawkingrei.com/bazelbuild/rules_go/releases/download/v0.50.0/rules_go-v0.50.0.zip",
         "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.50.0/rules_go-v0.50.0.zip",
         "https://github.com/bazelbuild/rules_go/releases/download/v0.50.0/rules_go-v0.50.0.zip",
     ],
