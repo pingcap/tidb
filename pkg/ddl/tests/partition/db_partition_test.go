@@ -3241,6 +3241,8 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	tk2.MustExec(`COMMIT`)
 
 	/*
+		// Currently there is an duplicate entry issue, so it will rollback in WriteReorganization
+		// instead of continuing.
 		waitFor(4, "t", "delete reorganization")
 		tk2.MustExec(`BEGIN`)
 		tk2.MustExec(`insert into t values (null, 24)`)
