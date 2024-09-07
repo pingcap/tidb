@@ -69,6 +69,11 @@ func NewNonPartitionedTableAnalysisJob(
 	}
 }
 
+// GetTableID gets the table ID of the job.
+func (j *NonPartitionedTableAnalysisJob) GetTableID() int64 {
+	return j.TableID
+}
+
 // Analyze analyzes the table or indexes.
 func (j *NonPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,

@@ -12,6 +12,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/autoid",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/store/mockstore",

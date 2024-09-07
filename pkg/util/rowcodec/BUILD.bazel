@@ -12,7 +12,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/mysql",
         "//pkg/parser/types",
         "//pkg/types",
@@ -35,7 +35,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
         "//pkg/tablecodec",

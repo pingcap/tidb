@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -27,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 )
+
+var _ base.HashEquals = &collationInfo{}
 
 // ExprCollation is a struct that store the collation related information.
 type ExprCollation struct {
@@ -43,6 +46,37 @@ type collationInfo struct {
 
 	charset   string
 	collation string
+}
+
+// Hash64 implements the base.Hasher.<0th> interface.
+func (c *collationInfo) Hash64(h base.Hasher) {
+	h.HashInt64(int64(c.coer))
+	h.HashBool(c.coerInit.Load())
+	h.HashInt(int(c.repertoire))
+	h.HashString(c.charset)
+	h.HashString(c.collation)
+}
+
+// Equals implements the base.Hasher.<1th> interface.
+func (c *collationInfo) Equals(other any) bool {
+	// the caller should care about c is nil or not.
+	if other == nil {
+		return false
+	}
+	var c2 *collationInfo
+	switch x := other.(type) {
+	case *collationInfo:
+		c2 = x
+	case collationInfo:
+		c2 = &x
+	default:
+		return false
+	}
+	return c.coer == c2.coer &&
+		c.coerInit.Load() == c2.coerInit.Load() &&
+		c.repertoire == c2.repertoire &&
+		c.charset == c2.charset &&
+		c.collation == c2.collation
 }
 
 func (c *collationInfo) HasCoercibility() bool {

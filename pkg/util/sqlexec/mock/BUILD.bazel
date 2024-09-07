@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser/ast",
+        "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
         "//pkg/util/chunk",
         "//pkg/util/mock",

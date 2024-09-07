@@ -379,6 +379,8 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	addTo.sumPDTotal += addWith.sumPDTotal
 	addTo.sumBackoffTotal += addWith.sumBackoffTotal
 	addTo.sumWriteSQLRespTotal += addWith.sumWriteSQLRespTotal
+	addTo.sumTidbCPU += addWith.sumTidbCPU
+	addTo.sumTikvCPU += addWith.sumTikvCPU
 
 	addTo.sumErrors += addWith.sumErrors
 

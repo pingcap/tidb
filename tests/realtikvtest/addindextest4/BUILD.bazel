@@ -12,7 +12,7 @@ go_test(
         "//pkg/config",
         "//pkg/domain",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/testkit",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",

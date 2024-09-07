@@ -10,6 +10,7 @@ go_library(
         "//lightning/pkg/importer/opts",
         "//pkg/errno",
         "//pkg/lightning/mydump",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/util/dbterror",
         "//pkg/util/filter",
@@ -27,6 +28,7 @@ go_test(
     flaky = True,
     deps = [
         "//lightning/pkg/importer",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "@com_github_stretchr_testify//require",
     ],

@@ -13,6 +13,7 @@ go_library(
         "//pkg/disttask/operator",
         "//pkg/domain",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/session",
         "//pkg/session/types",

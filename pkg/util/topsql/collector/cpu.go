@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/hex"
 	"runtime/pprof"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,7 +34,13 @@ import (
 const (
 	labelSQLDigest  = "sql_digest"
 	labelPlanDigest = "plan_digest"
+	labelSQLUID     = "sql_global_uid"
 )
+
+// ProcessCPUTimeUpdater Introduce this interface due to the dependency cycle
+type ProcessCPUTimeUpdater interface {
+	UpdateProcessCPUTime(connID uint64, sqlID uint64, cpuTime time.Duration)
+}
 
 // Collector uses to collect SQL execution cpu time.
 type Collector interface {
@@ -56,6 +64,7 @@ type SQLCPUTimeRecord struct {
 type SQLCPUCollector struct {
 	ctx        context.Context
 	collector  Collector
+	updater    ProcessCPUTimeUpdater
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	started    bool
@@ -67,6 +76,11 @@ func NewSQLCPUCollector(c Collector) *SQLCPUCollector {
 	return &SQLCPUCollector{
 		collector: c,
 	}
+}
+
+// SetProcessCPUUpdater sets the updater field
+func (sp *SQLCPUCollector) SetProcessCPUUpdater(updater ProcessCPUTimeUpdater) {
+	sp.updater = updater
 }
 
 // Start uses to start to run SQLCPUCollector.
@@ -139,6 +153,7 @@ func (sp *SQLCPUCollector) handleProfileData(data *cpuprofile.ProfileData) {
 	}
 	stats := sp.parseCPUProfileBySQLLabels(p)
 	sp.collector.Collect(stats)
+	sp.parseCPUProfileForProcess(p)
 }
 
 func (sp *SQLCPUCollector) doRegister(profileConsumer cpuprofile.ProfileConsumer) {
@@ -267,6 +282,49 @@ func (s *sqlStats) tune() {
 	s.plans[""] += optimize
 }
 
+// processCPUTimeRecord represents a single record of how much cpu time a process consumes in one second.
+type processCPUTimeRecord struct {
+	sqlID uint64
+	total int64
+}
+
+// parseCPUProfileForProcess uses to aggregate the cpu-profile sample data by sql_global_uid labels,
+func (sp *SQLCPUCollector) parseCPUProfileForProcess(p *profile.Profile) {
+	sqlMap := make(map[uint64]processCPUTimeRecord)
+	idx := len(p.SampleType) - 1
+	// Reverse traverse sample data, since only the latest sqlID for each connection is usable
+	for i := len(p.Sample) - 1; i >= 0; i-- {
+		s := p.Sample[i]
+		sqlUIDs, ok := s.Label[labelSQLUID]
+		if !ok || len(sqlUIDs) == 0 {
+			continue
+		}
+		for _, sqlUID := range sqlUIDs {
+			keys := strings.Split(sqlUID, `_`)
+			connID, _ := strconv.ParseUint(keys[0], 10, 64)
+			sqlID, _ := strconv.ParseUint(keys[1], 10, 64)
+			if timeRecord, ok := sqlMap[connID]; ok {
+				if sqlID < sqlMap[connID].sqlID {
+					// Ignore previous sql's cpu profile data inside the same connection
+					continue
+				} else if sqlID > sqlMap[connID].sqlID {
+					// Resets sqlID and total value
+					timeRecord.sqlID = sqlID
+					timeRecord.total = s.Value[idx]
+				} else {
+					timeRecord.total += s.Value[idx]
+				}
+				sqlMap[connID] = timeRecord
+			} else {
+				sqlMap[connID] = processCPUTimeRecord{sqlID, s.Value[idx]}
+			}
+		}
+	}
+	for key, val := range sqlMap {
+		sp.updater.UpdateProcessCPUTime(key, val.sqlID, time.Duration(val.total))
+	}
+}
+
 // CtxWithSQLDigest wrap the ctx with sql digest.
 func CtxWithSQLDigest(ctx context.Context, sqlDigest string) context.Context {
 	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest))
@@ -276,4 +334,12 @@ func CtxWithSQLDigest(ctx context.Context, sqlDigest string) context.Context {
 func CtxWithSQLAndPlanDigest(ctx context.Context, sqlDigest, planDigest string) context.Context {
 	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest,
 		labelPlanDigest, planDigest))
+}
+
+// CtxWithProcessInfo .
+func CtxWithProcessInfo(ctx context.Context, connID uint64, sqlID uint64) context.Context {
+	processLabel := strconv.FormatUint(connID, 10) + "_" + strconv.FormatUint(sqlID, 10)
+	ctx = pprof.WithLabels(ctx, pprof.Labels(labelSQLUID, processLabel))
+	pprof.SetGoroutineLabels(ctx)
+	return ctx
 }

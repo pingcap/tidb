@@ -30,7 +30,8 @@ import (
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -86,8 +87,8 @@ func TestAdminRecoverIndex(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 
@@ -176,8 +177,8 @@ func TestAdminRecoverIndex(t *testing.T) {
 	sctx.Store = store
 	ctx = sctx.GetTableCtx()
 	is = domain.InfoSchema()
-	dbName = model.NewCIStr("test")
-	tblName = model.NewCIStr("admin_test")
+	dbName = pmodel.NewCIStr("test")
+	tblName = pmodel.NewCIStr("admin_test")
 	tbl, err = is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 
@@ -222,8 +223,8 @@ func TestAdminRecoverMVIndex(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("t")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("t")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -267,8 +268,8 @@ func TestAdminCleanupMVIndex(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("t")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("t")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -302,8 +303,8 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	tk.MustExec("create database test_cluster_index_admin_recover;")
 	tk.MustExec("use test_cluster_index_admin_recover;")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	dbName := model.NewCIStr("test_cluster_index_admin_recover")
-	tblName := model.NewCIStr("t")
+	dbName := pmodel.NewCIStr("test_cluster_index_admin_recover")
+	tblName := pmodel.NewCIStr("t")
 
 	// Test no corruption case.
 	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key(a, c), index idx(b), index idx1(c));")
@@ -366,8 +367,8 @@ func TestAdminRecoverPartitionTableIndex(t *testing.T) {
 		ctx := mock.NewContext()
 		ctx.Store = store
 		is := domain.InfoSchema()
-		dbName := model.NewCIStr("test")
-		tblName := model.NewCIStr("admin_test")
+		dbName := pmodel.NewCIStr("test")
+		tblName := pmodel.NewCIStr("admin_test")
 		tbl, err := is.TableByName(context.Background(), dbName, tblName)
 		require.NoError(t, err)
 		return tbl
@@ -435,8 +436,8 @@ func TestAdminRecoverIndex1(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("admin_test")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
@@ -505,8 +506,8 @@ func TestAdminCleanupIndex(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 
@@ -574,8 +575,8 @@ func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
 		ctx := mock.NewContext()
 		ctx.Store = store
 		is := domain.InfoSchema()
-		dbName := model.NewCIStr("test")
-		tblName := model.NewCIStr("admin_test")
+		dbName := pmodel.NewCIStr("test")
+		tblName := pmodel.NewCIStr("admin_test")
 		tbl, err := is.TableByName(context.Background(), dbName, tblName)
 		require.NoError(t, err)
 		return tbl
@@ -665,8 +666,8 @@ func TestAdminCleanupIndexPKNotHandle(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 
@@ -716,8 +717,8 @@ func TestAdminCleanupIndexMore(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 
@@ -785,7 +786,7 @@ func TestClusteredAdminCleanupIndex(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
-	tbl, err := domain.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("admin_test"))
+	tbl, err := domain.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("admin_test"))
 	require.NoError(t, err)
 	// cleanup clustered primary key takes no effect.
 
@@ -863,8 +864,8 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("t")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("t")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -918,8 +919,8 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test_p")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("admin_test_p")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -1051,7 +1052,7 @@ func newInconsistencyKit(t *testing.T, tk *testkit.AsyncTestKit, opt *kitOpt) *i
 func (tk *inconsistencyTestKit) rebuild() {
 	tk.MustExec(tk.ctx, "truncate table "+tblName)
 	is := domain.GetDomain(testkit.TryRetrieveSession(tk.ctx)).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tblName))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tblName))
 	require.NoError(tk.t, err)
 	tk.uniqueIndex = tables.NewIndex(tbl.Meta().ID, tbl.Meta(), tbl.Meta().Indices[0])
 	tk.plainIndex = tables.NewIndex(tbl.Meta().ID, tbl.Meta(), tbl.Meta().Indices[1])
@@ -1303,8 +1304,8 @@ func TestAdminCheckWithSnapshot(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_t_s")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("admin_t_s")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 
@@ -1362,8 +1363,8 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -1527,8 +1528,8 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -1659,8 +1660,8 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	sctx.Store = store
 	ctx := sctx.GetTableCtx()
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -1794,8 +1795,8 @@ func TestAdminCleanUpGlobalIndex(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.Store = store
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -1839,8 +1840,8 @@ func TestAdminRecoverGlobalIndex(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.Store = store
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test")
+	dbName := pmodel.NewCIStr("test")
+	tblName := pmodel.NewCIStr("admin_test")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -1889,8 +1890,8 @@ func TestAdminCheckGlobalIndex(t *testing.T) {
 		sctx := mock.NewContext()
 		sctx.Store = store
 		is := domain.InfoSchema()
-		dbName := model.NewCIStr("test")
-		tblName := model.NewCIStr("admin_test")
+		dbName := pmodel.NewCIStr("test")
+		tblName := pmodel.NewCIStr("admin_test")
 		tbl, err := is.TableByName(context.Background(), dbName, tblName)
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
@@ -1986,8 +1987,8 @@ func TestAdminCheckGlobalIndexWithClusterIndex(t *testing.T) {
 		sctx := mock.NewContext()
 		sctx.Store = store
 		is := domain.InfoSchema()
-		dbName := model.NewCIStr("test")
-		tblName := model.NewCIStr("admin_test")
+		dbName := pmodel.NewCIStr("test")
+		tblName := pmodel.NewCIStr("admin_test")
 		tbl, err := is.TableByName(context.Background(), dbName, tblName)
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()

@@ -21,9 +21,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. See: https://github.com/pingcap/tidb/blob/a94cff903cd1e7f3b050db782da84273ef5592f4/planner/core/optimizer.go#L202
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
@@ -60,11 +61,11 @@ func GetTableInfoBySQL(createTableSQL string, parser2 *parser.Parser) (table *mo
 		// put primary key in indices
 		if table.PKIsHandle {
 			pkIndex := &model.IndexInfo{
-				Name:    model.NewCIStr("PRIMARY"),
+				Name:    pmodel.NewCIStr("PRIMARY"),
 				Primary: true,
 				State:   model.StatePublic,
 				Unique:  true,
-				Tp:      model.IndexTypeBtree,
+				Tp:      pmodel.IndexTypeBtree,
 				Columns: []*model.IndexColumn{
 					{
 						Name:   table.GetPkName(),

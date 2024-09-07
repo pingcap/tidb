@@ -25,8 +25,9 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -42,18 +43,18 @@ var idAllocator atomic.Int64
 func newMockTTLTbl(t *testing.T, name string) *cache.PhysicalTable {
 	tblInfo := &model.TableInfo{
 		ID:   idAllocator.Add(1),
-		Name: model.NewCIStr(name),
+		Name: pmodel.NewCIStr(name),
 		Columns: []*model.ColumnInfo{
 			{
 				ID:        1,
-				Name:      model.NewCIStr("time"),
+				Name:      pmodel.NewCIStr("time"),
 				Offset:    0,
 				FieldType: *types.NewFieldType(mysql.TypeDatetime),
 				State:     model.StatePublic,
 			},
 		},
 		TTLInfo: &model.TTLInfo{
-			ColumnName:       model.NewCIStr("time"),
+			ColumnName:       pmodel.NewCIStr("time"),
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: int(ast.TimeUnitSecond),
 			Enable:           true,
@@ -62,7 +63,7 @@ func newMockTTLTbl(t *testing.T, name string) *cache.PhysicalTable {
 		State: model.StatePublic,
 	}
 
-	tbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo, model.NewCIStr(""))
+	tbl, err := cache.NewPhysicalTable(pmodel.NewCIStr("test"), tblInfo, pmodel.NewCIStr(""))
 	require.NoError(t, err)
 	return tbl
 }
@@ -303,7 +304,7 @@ func TestValidateTTLWork(t *testing.T) {
 
 	// test table name changed
 	tbl2 = tbl.TableInfo.Clone()
-	tbl2.Name = model.NewCIStr("testcc")
+	tbl2.Name = pmodel.NewCIStr("testcc")
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	err = validateTTLWork(ctx, s, tbl, expire)
 	require.EqualError(t, err, "[schema:1146]Table 'test.t1' doesn't exist")
@@ -318,8 +319,8 @@ func TestValidateTTLWork(t *testing.T) {
 	// test time column name changed
 	tbl2 = tbl.TableInfo.Clone()
 	tbl2.Columns[0] = tbl2.Columns[0].Clone()
-	tbl2.Columns[0].Name = model.NewCIStr("time2")
-	tbl2.TTLInfo.ColumnName = model.NewCIStr("time2")
+	tbl2.Columns[0].Name = pmodel.NewCIStr("time2")
+	tbl2.TTLInfo.ColumnName = pmodel.NewCIStr("time2")
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	err = validateTTLWork(ctx, s, tbl, expire)
 	require.EqualError(t, err, "time column name changed")
@@ -354,14 +355,14 @@ func TestValidateTTLWork(t *testing.T) {
 	tp := tbl.TableInfo.Clone()
 	tp.Partition = &model.PartitionInfo{
 		Definitions: []model.PartitionDefinition{
-			{ID: 1023, Name: model.NewCIStr("p0")},
+			{ID: 1023, Name: pmodel.NewCIStr("p0")},
 		},
 	}
-	tbl, err = cache.NewPhysicalTable(model.NewCIStr("test"), tp, model.NewCIStr("p0"))
+	tbl, err = cache.NewPhysicalTable(pmodel.NewCIStr("test"), tp, pmodel.NewCIStr("p0"))
 	require.NoError(t, err)
 	tbl2 = tp.Clone()
 	tbl2.Partition = tp.Partition.Clone()
-	tbl2.Partition.Definitions[0].Name = model.NewCIStr("p1")
+	tbl2.Partition.Definitions[0].Name = pmodel.NewCIStr("p1")
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	err = validateTTLWork(ctx, s, tbl, expire)
 	require.EqualError(t, err, "partition 'p0' is not found in ttl table 'test.t1'")

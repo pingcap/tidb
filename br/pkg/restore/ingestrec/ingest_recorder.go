@@ -22,15 +22,16 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
 )
 
 // IngestIndexInfo records the information used to generate index drop/re-add SQL.
 type IngestIndexInfo struct {
-	SchemaName model.CIStr
-	TableName  model.CIStr
+	SchemaName pmodel.CIStr
+	TableName  pmodel.CIStr
 	ColumnList string
 	ColumnArgs []any
 	IsPrimary  bool

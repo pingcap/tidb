@@ -27,7 +27,8 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -162,7 +163,7 @@ func (c mockConn) QueryContext(_ context.Context, query string, args []driver.Na
 func TestReplaceConflictOneKey(t *testing.T) {
 	column1 := &model.ColumnInfo{
 		ID:           1,
-		Name:         model.NewCIStr("a"),
+		Name:         pmodel.NewCIStr("a"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -173,7 +174,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	column2 := &model.ColumnInfo{
 		ID:           2,
-		Name:         model.NewCIStr("b"),
+		Name:         pmodel.NewCIStr("b"),
 		Offset:       1,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -183,7 +184,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	column3 := &model.ColumnInfo{
 		ID:           3,
-		Name:         model.NewCIStr("c"),
+		Name:         pmodel.NewCIStr("c"),
 		Offset:       2,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeBlob),
@@ -193,11 +194,11 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	index := &model.IndexInfo{
 		ID:    1,
-		Name:  model.NewCIStr("key_b"),
-		Table: model.NewCIStr(""),
+		Name:  pmodel.NewCIStr("key_b"),
+		Table: pmodel.NewCIStr(""),
 		Columns: []*model.IndexColumn{
 			{
-				Name:   model.NewCIStr("b"),
+				Name:   pmodel.NewCIStr("b"),
 				Offset: 1,
 				Length: -1,
 			}},
@@ -208,7 +209,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	table := &model.TableInfo{
 		ID:         104,
-		Name:       model.NewCIStr("a"),
+		Name:       pmodel.NewCIStr("a"),
 		Charset:    "utf8mb4",
 		Collate:    "utf8mb4_bin",
 		Columns:    []*model.ColumnInfo{column1, column2, column3},
@@ -350,7 +351,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 func TestReplaceConflictOneUniqueKey(t *testing.T) {
 	column1 := &model.ColumnInfo{
 		ID:           1,
-		Name:         model.NewCIStr("a"),
+		Name:         pmodel.NewCIStr("a"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -361,7 +362,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	column2 := &model.ColumnInfo{
 		ID:           2,
-		Name:         model.NewCIStr("b"),
+		Name:         pmodel.NewCIStr("b"),
 		Offset:       1,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -372,7 +373,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	column3 := &model.ColumnInfo{
 		ID:           3,
-		Name:         model.NewCIStr("c"),
+		Name:         pmodel.NewCIStr("c"),
 		Offset:       2,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(mysql.TypeBlob),
@@ -382,11 +383,11 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	index := &model.IndexInfo{
 		ID:    1,
-		Name:  model.NewCIStr("uni_b"),
-		Table: model.NewCIStr(""),
+		Name:  pmodel.NewCIStr("uni_b"),
+		Table: pmodel.NewCIStr(""),
 		Columns: []*model.IndexColumn{
 			{
-				Name:   model.NewCIStr("b"),
+				Name:   pmodel.NewCIStr("b"),
 				Offset: 1,
 				Length: -1,
 			}},
@@ -397,7 +398,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	table := &model.TableInfo{
 		ID:         104,
-		Name:       model.NewCIStr("a"),
+		Name:       pmodel.NewCIStr("a"),
 		Charset:    "utf8mb4",
 		Collate:    "utf8mb4_bin",
 		Columns:    []*model.ColumnInfo{column1, column2, column3},

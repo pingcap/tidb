@@ -125,6 +125,15 @@ check_result() {
 echo "restart a services"
 restart_services
 
+# non-compliant operation
+echo "non compliant operation"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts || restore_fail=1
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success' 
+    exit 1
+fi
+
 # PITR restore
 echo "run pitr"
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1

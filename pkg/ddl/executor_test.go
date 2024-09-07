@@ -26,7 +26,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -259,7 +260,7 @@ func TestHandleLockTable(t *testing.T) {
 	se := tk.Session().(sessionctx.Context)
 	require.False(t, se.HasLockedTables())
 
-	checkTableLocked := func(tblID int64, tp model.TableLockType) {
+	checkTableLocked := func(tblID int64, tp pmodel.TableLockType) {
 		locked, lockType := se.CheckTableLocked(tblID)
 		require.True(t, locked)
 		require.Equal(t, tp, lockType)
@@ -282,28 +283,28 @@ func TestHandleLockTable(t *testing.T) {
 	t.Run("ddl success", func(t *testing.T) {
 		se.ReleaseAllTableLocks()
 		require.False(t, se.HasLockedTables())
-		se.AddTableLock([]model.TableLockTpInfo{{SchemaID: 1, TableID: 1, Tp: model.TableLockRead}})
+		se.AddTableLock([]model.TableLockTpInfo{{SchemaID: 1, TableID: 1, Tp: pmodel.TableLockRead}})
 		ddl.HandleLockTablesOnSuccessSubmit(tk.Session(), jobW)
 		require.Len(t, se.GetAllTableLocks(), 2)
-		checkTableLocked(1, model.TableLockRead)
-		checkTableLocked(2, model.TableLockRead)
+		checkTableLocked(1, pmodel.TableLockRead)
+		checkTableLocked(2, pmodel.TableLockRead)
 
 		ddl.HandleLockTablesOnFinish(se, jobW, nil)
 		require.Len(t, se.GetAllTableLocks(), 1)
-		checkTableLocked(2, model.TableLockRead)
+		checkTableLocked(2, pmodel.TableLockRead)
 	})
 
 	t.Run("ddl fail", func(t *testing.T) {
 		se.ReleaseAllTableLocks()
 		require.False(t, se.HasLockedTables())
-		se.AddTableLock([]model.TableLockTpInfo{{SchemaID: 1, TableID: 1, Tp: model.TableLockRead}})
+		se.AddTableLock([]model.TableLockTpInfo{{SchemaID: 1, TableID: 1, Tp: pmodel.TableLockRead}})
 		ddl.HandleLockTablesOnSuccessSubmit(tk.Session(), jobW)
 		require.Len(t, se.GetAllTableLocks(), 2)
-		checkTableLocked(1, model.TableLockRead)
-		checkTableLocked(2, model.TableLockRead)
+		checkTableLocked(1, pmodel.TableLockRead)
+		checkTableLocked(2, pmodel.TableLockRead)
 
 		ddl.HandleLockTablesOnFinish(se, jobW, errors.New("test error"))
 		require.Len(t, se.GetAllTableLocks(), 1)
-		checkTableLocked(1, model.TableLockRead)
+		checkTableLocked(1, pmodel.TableLockRead)
 	})
 }

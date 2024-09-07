@@ -11,7 +11,7 @@ go_library(
     deps = [
         "//pkg/ddl/logutil",
         "//pkg/ddl/session",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
@@ -30,7 +30,7 @@ go_test(
         "//pkg/ddl/mock",
         "//pkg/ddl/session",
         "//pkg/domain",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "@com_github_ngaut_pools//:pools",

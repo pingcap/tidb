@@ -30,7 +30,6 @@ go_library(
         "//pkg/lightning/backend/encode",
         "//pkg/lightning/backend/kv",
         "//pkg/lightning/common",
-        "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/metrics",
         "//pkg/util",

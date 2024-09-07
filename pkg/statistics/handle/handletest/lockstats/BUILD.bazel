@@ -14,6 +14,7 @@ go_test(
         "//pkg/config",
         "//pkg/domain",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/statistics",
         "//pkg/testkit",

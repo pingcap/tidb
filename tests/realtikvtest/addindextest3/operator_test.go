@@ -31,7 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -330,7 +331,7 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 	tk.MustQuery("select count(*) from t;").Check(testkit.Rows(fmt.Sprintf("%d", regionCnt)))
 
 	var err error
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("op"), model.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("op"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	start = tbl.RecordPrefix()
 	end = tbl.RecordPrefix().PrefixNext()

@@ -43,5 +43,9 @@ type RangerContext struct {
 func (r *RangerContext) Detach(staticExprCtx exprctx.BuildContext) *RangerContext {
 	newCtx := *r
 	newCtx.ExprCtx = staticExprCtx
+	newCtx.OptimizerFixControl = make(map[uint64]string, len(r.OptimizerFixControl))
+	for k, v := range r.OptimizerFixControl {
+		newCtx.OptimizerFixControl[k] = v
+	}
 	return &newCtx
 }

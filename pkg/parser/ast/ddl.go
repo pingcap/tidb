@@ -2302,17 +2302,9 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-type RunawayOptionType int
-
-const (
-	RunawayRule RunawayOptionType = iota
-	RunawayAction
-	RunawayWatch
-)
-
 // ResourceGroupRunawayOption is used for parsing resource group runaway rule option.
 type ResourceGroupRunawayOption struct {
-	Tp           RunawayOptionType
+	Tp           model.RunawayOptionType
 	RuleOption   *ResourceGroupRunawayRuleOption
 	ActionOption *ResourceGroupRunawayActionOption
 	WatchOption  *ResourceGroupRunawayWatchOption
@@ -2320,11 +2312,11 @@ type ResourceGroupRunawayOption struct {
 
 func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
-	case RunawayRule:
+	case model.RunawayRule:
 		n.RuleOption.restore(ctx)
-	case RunawayAction:
+	case model.RunawayAction:
 		n.ActionOption.Restore(ctx)
-	case RunawayWatch:
+	case model.RunawayWatch:
 		n.WatchOption.restore(ctx)
 	default:
 		return errors.Errorf("invalid ResourceGroupRunawayOption: %d", n.Tp)
@@ -2347,14 +2339,27 @@ func (n *ResourceGroupRunawayRuleOption) restore(ctx *format.RestoreCtx) error {
 // ResourceGroupRunawayActionOption is used for parsing the resource group runaway action.
 type ResourceGroupRunawayActionOption struct {
 	node
-	Type model.RunawayActionType
+	Type            model.RunawayActionType
+	SwitchGroupName model.CIStr
 }
 
 // Restore implements Node interface.
 func (n *ResourceGroupRunawayActionOption) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ACTION ")
 	ctx.WritePlain("= ")
-	ctx.WriteKeyWord(n.Type.String())
+	switch n.Type {
+	case model.RunawayActionNone, model.RunawayActionDryRun, model.RunawayActionCooldown, model.RunawayActionKill:
+		ctx.WriteKeyWord(n.Type.String())
+	case model.RunawayActionSwitchGroup:
+		switchGroup := n.SwitchGroupName.String()
+		if len(switchGroup) == 0 {
+			return errors.New("SWITCH_GROUP runaway watch action requires a non-empty group name")
+		}
+		ctx.WriteKeyWord("SWITCH_GROUP")
+		ctx.WritePlain("(")
+		ctx.WriteName(switchGroup)
+		ctx.WritePlain(")")
+	}
 	return nil
 }
 

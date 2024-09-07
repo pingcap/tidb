@@ -26,7 +26,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -95,8 +96,8 @@ func TestCheckpointMeta(t *testing.T) {
 		SQLs: []checkpoint.CheckpointIngestIndexRepairSQL{
 			{
 				IndexID:    1,
-				SchemaName: model.NewCIStr("2"),
-				TableName:  model.NewCIStr("3"),
+				SchemaName: pmodel.NewCIStr("2"),
+				TableName:  pmodel.NewCIStr("3"),
 				IndexName:  "4",
 				AddSQL:     "5",
 				AddArgs:    []any{"6", "7", "8"},
@@ -107,8 +108,8 @@ func TestCheckpointMeta(t *testing.T) {
 	repairSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, s, "123")
 	require.NoError(t, err)
 	require.Equal(t, repairSQLs.SQLs[0].IndexID, int64(1))
-	require.Equal(t, repairSQLs.SQLs[0].SchemaName, model.NewCIStr("2"))
-	require.Equal(t, repairSQLs.SQLs[0].TableName, model.NewCIStr("3"))
+	require.Equal(t, repairSQLs.SQLs[0].SchemaName, pmodel.NewCIStr("2"))
+	require.Equal(t, repairSQLs.SQLs[0].TableName, pmodel.NewCIStr("3"))
 	require.Equal(t, repairSQLs.SQLs[0].IndexName, "4")
 	require.Equal(t, repairSQLs.SQLs[0].AddSQL, "5")
 	require.Equal(t, repairSQLs.SQLs[0].AddArgs, []any{"6", "7", "8"})

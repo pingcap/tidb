@@ -14,7 +14,7 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/planner/cardinality",
         "//pkg/planner/core",
         "//pkg/planner/core/base",

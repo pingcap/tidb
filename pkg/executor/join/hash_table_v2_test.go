@@ -49,7 +49,7 @@ func createMockRowTable(maxRowsPerSeg int, segmentCount int, fixedSize bool) *ro
 	return ret
 }
 
-func createRowTable(rows int) (*rowTable, error) {
+func createRowTable(rows int) (*rowTable, uint8, error) {
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	tinyTp.AddFlag(mysql.NotNullFlag)
 	buildKeyIndex := []int{0}
@@ -83,10 +83,14 @@ func createRowTable(rows int) (*rowTable, error) {
 	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, false, false)
 	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
-	return hashJoinCtx.hashTableContext.rowTables[0][0], nil
+	taggedBits := uint8(maxTaggedBits)
+	for _, seg := range hashJoinCtx.hashTableContext.rowTables[0][0].segments {
+		taggedBits = min(taggedBits, seg.taggedBits)
+	}
+	return hashJoinCtx.hashTableContext.rowTables[0][0], taggedBits, nil
 }
 
 func TestHashTableSize(t *testing.T) {
@@ -109,11 +113,13 @@ func TestHashTableSize(t *testing.T) {
 }
 
 func TestBuild(t *testing.T) {
-	rowTable, err := createRowTable(1000000)
+	rowTable, taggedBits, err := createRowTable(1000000)
 	require.NoError(t, err)
+	tagHelper := &tagPtrHelper{}
+	tagHelper.init(taggedBits)
 	subTable := newSubTable(rowTable)
 	// single thread build
-	subTable.build(0, len(rowTable.segments))
+	subTable.build(0, len(rowTable.segments), tagHelper)
 	rowSet := make(map[unsafe.Pointer]struct{}, rowTable.rowCount())
 	for _, seg := range rowTable.segments {
 		for index := range seg.rowStartOffset {
@@ -127,11 +133,12 @@ func TestBuild(t *testing.T) {
 	for _, locHolder := range subTable.hashTable {
 		for locHolder != 0 {
 			rowCount++
-			loc := *(*unsafe.Pointer)(unsafe.Pointer(&locHolder))
+			loc := tagHelper.toUnsafePointer(locHolder)
 			_, ok := rowSet[loc]
 			require.True(t, ok)
 			delete(rowSet, loc)
-			locHolder = getNextRowAddress(loc)
+			// use 0 as hashvalue so getNextRowAddress won't exit early
+			locHolder = getNextRowAddress(loc, tagHelper, 0)
 		}
 	}
 	require.Equal(t, 0, len(rowSet))
@@ -139,11 +146,13 @@ func TestBuild(t *testing.T) {
 }
 
 func TestConcurrentBuild(t *testing.T) {
-	rowTable, err := createRowTable(3000000)
+	rowTable, tagBits, err := createRowTable(3000000)
 	require.NoError(t, err)
 	subTable := newSubTable(rowTable)
 	segmentCount := len(rowTable.segments)
 	buildThreads := 3
+	tagHelper := &tagPtrHelper{}
+	tagHelper.init(tagBits)
 	wg := util.WaitGroupWrapper{}
 	for i := 0; i < buildThreads; i++ {
 		segmentStart := segmentCount / buildThreads * i
@@ -152,7 +161,7 @@ func TestConcurrentBuild(t *testing.T) {
 			segmentEnd = segmentCount
 		}
 		wg.Run(func() {
-			subTable.build(segmentStart, segmentEnd)
+			subTable.build(segmentStart, segmentEnd, tagHelper)
 		})
 	}
 	wg.Wait()
@@ -167,36 +176,38 @@ func TestConcurrentBuild(t *testing.T) {
 	}
 	for _, locHolder := range subTable.hashTable {
 		for locHolder != 0 {
-			loc := *(*unsafe.Pointer)(unsafe.Pointer(&locHolder))
+			loc := tagHelper.toUnsafePointer(locHolder)
 			_, ok := rowSet[loc]
 			require.True(t, ok)
 			delete(rowSet, loc)
-			locHolder = getNextRowAddress(loc)
+			locHolder = getNextRowAddress(loc, tagHelper, 0)
 		}
 	}
 	require.Equal(t, 0, len(rowSet))
 }
 
 func TestLookup(t *testing.T) {
-	rowTable, err := createRowTable(200000)
+	rowTable, tagBits, err := createRowTable(200000)
 	require.NoError(t, err)
+	tagHelper := &tagPtrHelper{}
+	tagHelper.init(tagBits)
 	subTable := newSubTable(rowTable)
 	// single thread build
-	subTable.build(0, len(rowTable.segments))
+	subTable.build(0, len(rowTable.segments), tagHelper)
 
 	for _, seg := range rowTable.segments {
 		for index := range seg.rowStartOffset {
 			hashValue := seg.hashValues[index]
-			candidate := subTable.lookup(hashValue)
+			candidate := subTable.lookup(hashValue, tagHelper)
 			loc := seg.getRowPointer(index)
 			found := false
 			for candidate != 0 {
-				candidatePtr := *(*unsafe.Pointer)(unsafe.Pointer(&candidate))
+				candidatePtr := tagHelper.toUnsafePointer(candidate)
 				if candidatePtr == loc {
 					found = true
 					break
 				}
-				candidate = getNextRowAddress(candidatePtr)
+				candidate = getNextRowAddress(candidatePtr, tagHelper, hashValue)
 			}
 			require.True(t, found)
 		}

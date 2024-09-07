@@ -18,7 +18,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -91,7 +92,7 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 	return nil
 }
 
-func (isc *InfoSchemaCache) newTable(schema model.CIStr, tblInfo *model.TableInfo,
+func (isc *InfoSchemaCache) newTable(schema pmodel.CIStr, tblInfo *model.TableInfo,
 	par *model.PartitionDefinition) (*PhysicalTable, error) {
 	id := tblInfo.ID
 	if par != nil {
@@ -105,7 +106,7 @@ func (isc *InfoSchemaCache) newTable(schema model.CIStr, tblInfo *model.TableInf
 		}
 	}
 
-	partitionName := model.NewCIStr("")
+	partitionName := pmodel.NewCIStr("")
 	if par != nil {
 		partitionName = par.Name
 	}

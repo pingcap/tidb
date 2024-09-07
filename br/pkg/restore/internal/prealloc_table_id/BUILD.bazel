@@ -7,7 +7,7 @@ go_library(
     visibility = ["//br/pkg/restore:__subpackages__"],
     deps = [
         "//br/pkg/metautil",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
     ],
 )
 
@@ -19,7 +19,7 @@ go_test(
     deps = [
         ":prealloc_table_id",
         "//br/pkg/metautil",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "@com_github_stretchr_testify//require",
     ],
 )

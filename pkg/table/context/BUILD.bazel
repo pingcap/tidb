@@ -14,7 +14,7 @@ go_library(
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/autoid",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/tablecodec",

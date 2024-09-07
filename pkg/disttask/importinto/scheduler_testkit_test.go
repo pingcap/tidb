@@ -29,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -62,7 +63,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		Plan: importer.Plan{
 			DBName: "test",
 			TableInfo: &model.TableInfo{
-				Name: model.NewCIStr("t"),
+				Name: pmodel.NewCIStr("t"),
 			},
 			DisableTiKVImportMode: true,
 		},
@@ -199,7 +200,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 			Format: "csv",
 			DBName: "test",
 			TableInfo: &model.TableInfo{
-				Name:  model.NewCIStr("t"),
+				Name:  pmodel.NewCIStr("t"),
 				State: model.StatePublic,
 			},
 			DisableTiKVImportMode: true,

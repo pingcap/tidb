@@ -17,7 +17,8 @@ package util
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,7 +29,7 @@ func TestEventString(t *testing.T) {
 		schemaID: 1,
 		tableInfo: &model.TableInfo{
 			ID:   1,
-			Name: model.NewCIStr("Table1"),
+			Name: pmodel.NewCIStr("Table1"),
 		},
 		partInfo: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
@@ -38,7 +39,7 @@ func TestEventString(t *testing.T) {
 		},
 		oldTableInfo: &model.TableInfo{
 			ID:   4,
-			Name: model.NewCIStr("Table2"),
+			Name: pmodel.NewCIStr("Table2"),
 		},
 		oldPartInfo: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
@@ -47,8 +48,8 @@ func TestEventString(t *testing.T) {
 			},
 		},
 		columnInfos: []*model.ColumnInfo{
-			{ID: 7, Name: model.NewCIStr("Column1")},
-			{ID: 8, Name: model.NewCIStr("Column2")},
+			{ID: 7, Name: pmodel.NewCIStr("Column1")},
+			{ID: 8, Name: pmodel.NewCIStr("Column2")},
 		},
 	}
 

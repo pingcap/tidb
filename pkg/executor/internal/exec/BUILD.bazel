@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//pkg/domain",
         "//pkg/expression",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
@@ -36,7 +37,7 @@ go_test(
     timeout = "short",
     srcs = ["indexusage_test.go"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         ":exec",
         "//pkg/domain",

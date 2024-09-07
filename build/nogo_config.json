@@ -276,7 +276,10 @@
       "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
       ".*test_/testmain\\.go$": "ignore generated code",
-      ".*failpoint_binding__.go$": "ignore generated code"
+      ".*failpoint_binding__.go$": "ignore generated code",
+      "_cgo_gotypes.go": "skip _cgo_gotypes.go",
+      "_cgo_imports.go": "skip _cgo_imports.go",
+      ".*.cgo1.go": "skip cgo1.go"
     }
   },
   "gci": {

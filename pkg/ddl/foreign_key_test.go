@@ -23,7 +23,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -33,17 +34,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testCreateForeignKey(t *testing.T, d ddl.ExecutorForTest, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete model.ReferOptionType, onUpdate model.ReferOptionType) *model.Job {
-	FKName := model.NewCIStr(fkName)
-	Keys := make([]model.CIStr, len(keys))
+func testCreateForeignKey(t *testing.T, d ddl.ExecutorForTest, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete pmodel.ReferOptionType, onUpdate pmodel.ReferOptionType) *model.Job {
+	FKName := pmodel.NewCIStr(fkName)
+	Keys := make([]pmodel.CIStr, len(keys))
 	for i, key := range keys {
-		Keys[i] = model.NewCIStr(key)
+		Keys[i] = pmodel.NewCIStr(key)
 	}
 
-	RefTable := model.NewCIStr(refTable)
-	RefKeys := make([]model.CIStr, len(refKeys))
+	RefTable := pmodel.NewCIStr(refTable)
+	RefKeys := make([]pmodel.CIStr, len(refKeys))
 	for i, key := range refKeys {
-		RefKeys[i] = model.NewCIStr(key)
+		RefKeys[i] = pmodel.NewCIStr(key)
 	}
 
 	fkInfo := &model.FKInfo{
@@ -81,7 +82,7 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForT
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionDropForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{model.NewCIStr(foreignKeyName)},
+		Args:       []any{pmodel.NewCIStr(foreignKeyName)},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
@@ -115,10 +116,10 @@ func TestForeignKey(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo.Indices = append(tblInfo.Indices, &model.IndexInfo{
 		ID:    1,
-		Name:  model.NewCIStr("idx_fk"),
-		Table: model.NewCIStr("t"),
+		Name:  pmodel.NewCIStr("idx_fk"),
+		Table: pmodel.NewCIStr("t"),
 		Columns: []*model.IndexColumn{{
-			Name:   model.NewCIStr("c1"),
+			Name:   pmodel.NewCIStr("c1"),
 			Offset: 0,
 			Length: types.UnspecifiedLength,
 		}},
@@ -151,7 +152,7 @@ func TestForeignKey(t *testing.T) {
 	})
 
 	ctx := testkit.NewTestKit(t, store).Session()
-	job := testCreateForeignKey(t, de, ctx, dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, model.ReferOptionCascade, model.ReferOptionSetNull)
+	job := testCreateForeignKey(t, de, ctx, dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, pmodel.ReferOptionCascade, pmodel.ReferOptionSetNull)
 	testCheckJobDone(t, store, job.ID, true)
 	require.NoError(t, err)
 	mu.Lock()

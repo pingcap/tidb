@@ -24,7 +24,8 @@ import (
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -217,7 +218,7 @@ func (t *TargetInfo) SetTableInfo(schemaName string, tableName string, tblInfo *
 func (t *TargetInfo) FetchRemoteDBModels(_ context.Context) ([]*model.DBInfo, error) {
 	resultInfos := []*model.DBInfo{}
 	for dbName := range t.dbTblInfoMap {
-		resultInfos = append(resultInfos, &model.DBInfo{Name: model.NewCIStr(dbName)})
+		resultInfos = append(resultInfos, &model.DBInfo{Name: pmodel.NewCIStr(dbName)})
 	}
 	return resultInfos, nil
 }

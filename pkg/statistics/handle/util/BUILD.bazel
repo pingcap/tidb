@@ -13,11 +13,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/util",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/ddl/util",
         "//pkg/infoschema",
         "//pkg/kv",
-        "//pkg/parser/ast",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/terror",
+        "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/variable",
@@ -45,6 +46,7 @@ go_test(
     embed = [":util"],
     flaky = True,
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "@com_github_stretchr_testify//require",
     ],

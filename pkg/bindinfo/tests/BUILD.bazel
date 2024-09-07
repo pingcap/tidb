@@ -15,6 +15,7 @@ go_test(
         "//pkg/bindinfo/internal",
         "//pkg/bindinfo/norm",
         "//pkg/domain",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/model",
         "//pkg/parser/terror",

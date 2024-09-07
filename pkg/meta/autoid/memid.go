@@ -18,7 +18,7 @@ import (
 	"context"
 	"math"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 // NewAllocatorFromTempTblInfo creates an in-memory allocator from a temporary table info.
@@ -152,6 +152,10 @@ func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
 	return min, alloc.base, nil
+}
+
+func (*inMemoryAllocator) Transfer(_, _ int64) error {
+	return nil
 }
 
 func (*inMemoryAllocator) AllocSeqCache() (base int64, end int64, round int64, err error) {

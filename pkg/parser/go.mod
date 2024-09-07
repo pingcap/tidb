@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb/pkg/parser
 
-go 1.19
+go 1.21
 
 require (
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548

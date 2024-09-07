@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -48,17 +48,17 @@ type recordSet struct {
 	data      []types.Datum
 	count     int
 	cursor    int
-	fields    []*ast.ResultField
+	fields    []*resolve.ResultField
 }
 
-func (r *recordSet) Fields() []*ast.ResultField {
+func (r *recordSet) Fields() []*resolve.ResultField {
 	return r.fields
 }
 
 func (r *recordSet) setFields(tps ...uint8) {
-	r.fields = make([]*ast.ResultField, len(tps))
+	r.fields = make([]*resolve.ResultField, len(tps))
 	for i := 0; i < len(tps); i++ {
-		rf := new(ast.ResultField)
+		rf := new(resolve.ResultField)
 		rf.Column = new(model.ColumnInfo)
 		rf.Column.FieldType = *types.NewFieldType(tps[i])
 		r.fields[i] = rf

@@ -22,7 +22,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -36,7 +37,7 @@ func TestLogKVConvertFailed(t *testing.T) {
 	err := log.InitLogger(logCfg, "info")
 	require.NoError(t, err)
 
-	modelName := model.NewCIStr("c1")
+	modelName := pmodel.NewCIStr("c1")
 	modelState := model.StatePublic
 	modelFieldType := *types.NewFieldType(mysql.TypeTiny)
 	c1 := &model.ColumnInfo{ID: 1, Name: modelName, State: modelState, Offset: 0, FieldType: modelFieldType}

@@ -9,7 +9,7 @@ go_library(
         "//br/pkg/errors",
         "//br/pkg/logutil",
         "//br/pkg/version/build",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/util/dbutil",
         "//pkg/util/engine",
         "@com_github_coreos_go_semver//semver",
@@ -30,7 +30,7 @@ go_test(
     shard_count = 10,
     deps = [
         "//br/pkg/version/build",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "@com_github_coreos_go_semver//semver",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_pingcap_kvproto//pkg/metapb",

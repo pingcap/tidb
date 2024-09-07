@@ -16,7 +16,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"go.uber.org/zap"
@@ -85,7 +86,7 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 		}
 		return errors.Trace(err)
 	case model.ActionCreateTable:
-		err = db.se.CreateTable(ctx, model.NewCIStr(ddlJob.SchemaName), tableInfo)
+		err = db.se.CreateTable(ctx, pmodel.NewCIStr(ddlJob.SchemaName), tableInfo)
 		if err != nil {
 			log.Error("create table failed",
 				zap.Stringer("db", dbInfo.Name),
@@ -378,7 +379,7 @@ func (db *DB) Close() {
 	db.se.Close()
 }
 
-func (db *DB) ensurePlacementPolicy(ctx context.Context, policyName model.CIStr, policies *sync.Map) error {
+func (db *DB) ensurePlacementPolicy(ctx context.Context, policyName pmodel.CIStr, policies *sync.Map) error {
 	if policies == nil {
 		return nil
 	}

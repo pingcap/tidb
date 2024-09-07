@@ -7,15 +7,14 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -34,14 +33,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
@@ -161,7 +160,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint64(FlagMergeRegionKeyCount, conn.DefaultMergeRegionKeyCount,
 		"the threshold of merging small regions (Default 960_000, region split key count)")
 	flags.Uint(FlagPDConcurrency, defaultPDConcurrency,
-		"concurrency pd-relative operations like split & scatter.")
+		"(deprecated) concurrency pd-relative operations like split & scatter.")
 	flags.Uint(FlagStatsConcurrency, defaultStatsConcurrency,
 		"concurrency to restore statistic")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
@@ -911,7 +910,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if cfg.WithSysTable {
 			client.InitFullClusterRestore(cfg.ExplicitFilter)
 		}
-	} else if checkpointFirstRun && cfg.CheckRequirements {
+	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
 		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
 			schedulersRemovable = true
 			return errors.Trace(err)
@@ -1050,8 +1049,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			}
 		}
 	}
-	// We make bigger errCh so we won't block on multi-part failed.
-	errCh := make(chan error, 32)
 
 	createdTables, err := client.CreateTables(ctx, tables, newTS)
 	if err != nil {
@@ -1094,14 +1091,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
-	tableStream := afterTableCreatedCh(ctx, createdTables)
-
-	tableFileMap := MapTableToFiles(files)
-	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
-
-	rangeStream := client.GoValidateFileRanges(
-		ctx, tableStream, tableFileMap, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value, errCh)
-
 	rangeSize := EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)
 	log.Info("range and file prepared", zap.Int("file count", len(files)), zap.Int("range count", rangeSize))
@@ -1115,13 +1104,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
-	// Restore sst files in batch.
-	batchSize := mathutil.MaxInt
-	failpoint.Inject("small-batch-size", func(v failpoint.Value) {
-		log.Info("failpoint small batch size is on", zap.Int("size", v.(int)))
-		batchSize = v.(int)
-	})
-
 	// Split/Scatter + Download/Ingest
 	progressLen := int64(rangeSize + len(files))
 	if cfg.Checksum {
@@ -1131,28 +1113,27 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		progressLen += int64(len(tables))
 	}
 	// Redirect to log if there is no log file to avoid unreadable output.
-	updateCh := g.StartProgress(
-		ctx,
-		cmdName,
-		progressLen,
-		!cfg.LogProgress)
+	updateCh := g.StartProgress(ctx, cmdName, progressLen, !cfg.LogProgress)
 	defer updateCh.Close()
-	sender, err := snapclient.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
+	placementRuleManager, err := snapclient.NewPlacementRuleManager(ctx, mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), cfg.Online)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	manager, err := snapclient.NewBRContextManager(ctx, mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), cfg.Online)
-	if err != nil {
+	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
+		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
+		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
+		// If the command is from BRIE SQL, the ddl.EnableSplitTableRegion is TiDB config split-table.
+		// Notice that `split-region-on-table` configure from TiKV split on the region having data, it may trigger after restore done.
+		// It's recommended to enable TiDB configure `split-table` instead.
+		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
+		updateCh,
+	); err != nil {
 		return errors.Trace(err)
 	}
-	batcher, afterTableRestoredCh := snapclient.NewBatcher(ctx, sender, manager, errCh, updateCh)
-	batcher.SetCheckpoint(checkpointSetWithTableID)
-	batcher.SetThreshold(batchSize)
-	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
-	go restoreTableStream(ctx, rangeStream, batcher, errCh)
 
-	var finish <-chan struct{}
-	postHandleCh := afterTableRestoredCh
+	// We make bigger errCh so we won't block on multi-part failed.
+	errCh := make(chan error, 32)
+	postHandleCh := afterTableRestoredCh(ctx, createdTables)
 
 	// pipeline checksum
 	if cfg.Checksum {
@@ -1168,7 +1149,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		postHandleCh = client.GoWaitTiFlashReady(ctx, postHandleCh, updateCh, errCh)
 	}
 
-	finish = dropToBlackhole(ctx, postHandleCh, errCh)
+	finish := dropToBlackhole(ctx, postHandleCh, errCh)
 
 	// Reset speed limit. ResetSpeedLimit must be called after client.InitBackupMeta has been called.
 	defer func() {
@@ -1399,30 +1380,6 @@ func EstimateRangeSize(files []*backuppb.File) int {
 	return result
 }
 
-// MapTableToFiles makes a map that mapping table ID to its backup files.
-// aware that one file can and only can hold one table.
-func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
-	result := map[int64][]*backuppb.File{}
-	for _, file := range files {
-		tableID := tablecodec.DecodeTableID(file.GetStartKey())
-		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
-		if tableID != tableEndID {
-			log.Panic("key range spread between many files.",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		if tableID == 0 {
-			log.Panic("invalid table key of file",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		result[tableID] = append(result[tableID], file)
-	}
-	return result
-}
-
 // dropToBlackhole drop all incoming tables into black hole,
 // i.e. don't execute checksum, just increase the process anyhow.
 func dropToBlackhole(
@@ -1492,39 +1449,6 @@ func enableTiDBConfig() func() {
 		log.Warn("set table-column-count to max(4096) to skip check column count in DDL")
 	})
 	return restoreConfig
-}
-
-// restoreTableStream blocks current goroutine and restore a stream of tables,
-// by send tables to batcher.
-func restoreTableStream(
-	ctx context.Context,
-	inputCh <-chan snapclient.TableWithRange,
-	batcher *snapclient.Batcher,
-	errCh chan<- error,
-) {
-	oldTableCount := 0
-	defer func() {
-		// when things done, we must clean pending requests.
-		batcher.Close()
-		log.Info("doing postwork",
-			zap.Int("table count", oldTableCount),
-		)
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			errCh <- ctx.Err()
-			return
-		case t, ok := <-inputCh:
-			if !ok {
-				return
-			}
-			oldTableCount += 1
-
-			batcher.Add(t)
-		}
-	}
 }
 
 func getTiFlashNodeCount(ctx context.Context, pdClient pd.Client) (uint64, error) {
@@ -1600,7 +1524,7 @@ func PreCheckTableClusterIndex(
 		if job.Type == model.ActionCreateTable {
 			tableInfo := job.BinlogInfo.TableInfo
 			if tableInfo != nil {
-				oldTableInfo, err := restore.GetTableSchema(dom, model.NewCIStr(job.SchemaName), tableInfo.Name)
+				oldTableInfo, err := restore.GetTableSchema(dom, pmodel.NewCIStr(job.SchemaName), tableInfo.Name)
 				// table exists in database
 				if err == nil {
 					if tableInfo.IsCommonHandle != oldTableInfo.IsCommonHandle {
@@ -1742,22 +1666,18 @@ func checkIsInActions(action model.ActionType, actions map[model.ActionType]stru
 	return ok
 }
 
-func afterTableCreatedCh(ctx context.Context, createdTables []*snapclient.CreatedTable) <-chan snapclient.CreatedTable {
-	outCh := make(chan snapclient.CreatedTable)
+func afterTableRestoredCh(ctx context.Context, createdTables []*snapclient.CreatedTable) <-chan *snapclient.CreatedTable {
+	outCh := make(chan *snapclient.CreatedTable)
 
 	go func() {
 		defer close(outCh)
-
-		sort.Slice(createdTables, func(a, b int) bool {
-			return createdTables[a].Table.ID < createdTables[b].Table.ID
-		})
 
 		for _, createdTable := range createdTables {
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				outCh <- *createdTable
+				outCh <- createdTable
 			}
 		}
 	}()

@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	model "github.com/pingcap/tidb/pkg/parser/model"
+	model "github.com/pingcap/tidb/pkg/meta/model"
 	gomock "go.uber.org/mock/gomock"
 )
 

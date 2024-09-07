@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -50,7 +51,7 @@ type Session interface {
 	CommitTxn(context.Context) error
 	RollbackTxn(context.Context)
 	// PrepareStmt executes prepare statement in binary protocol.
-	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
+	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*resolve.ResultField, err error)
 	// ExecutePreparedStmt executes a prepared statement.
 	// Deprecated: please use ExecuteStmt, this function is left for testing only.
 	// TODO: remove ExecutePreparedStmt.
@@ -77,7 +78,7 @@ type Session interface {
 	// PrepareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context) error
 	// FieldList returns fields list of a table.
-	FieldList(tableName string) (fields []*ast.ResultField, err error)
+	FieldList(tableName string) (fields []*resolve.ResultField, err error)
 	SetPort(port string)
 
 	// SetExtensions sets the `*extension.SessionExtensions` object

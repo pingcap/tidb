@@ -21,6 +21,7 @@ go_test(
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/lightning/backend/local",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",

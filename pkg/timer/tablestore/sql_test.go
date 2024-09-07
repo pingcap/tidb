@@ -24,9 +24,9 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/timer/api"
@@ -652,7 +652,7 @@ func TestTakeSession(t *testing.T) {
 	// Get returns a session
 	pool.On("Get").Return(se, nil).Once()
 	rs := &sqlexec.SimpleRecordSet{
-		ResultFields: []*ast.ResultField{{
+		ResultFields: []*resolve.ResultField{{
 			Column: &model.ColumnInfo{
 				FieldType: *types.NewFieldType(mysql.TypeString),
 			},

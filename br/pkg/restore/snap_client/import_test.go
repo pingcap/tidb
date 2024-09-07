@@ -103,7 +103,7 @@ func TestGetSSTMetaFromFile(t *testing.T) {
 		StartKey: []byte("t2abc"),
 		EndKey:   []byte("t3a"),
 	}
-	sstMeta, err := snapclient.GetSSTMetaFromFile([]byte{}, file, region, rule, snapclient.RewriteModeLegacy)
+	sstMeta, err := snapclient.GetSSTMetaFromFile(file, region, rule, snapclient.RewriteModeLegacy)
 	require.Nil(t, err)
 	require.Equal(t, "t2abc", string(sstMeta.GetRange().GetStart()))
 	require.Equal(t, "t2\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff", string(sstMeta.GetRange().GetEnd()))
@@ -171,7 +171,7 @@ func TestSnapImporter(t *testing.T) {
 	files, rules := generateFiles()
 	for _, file := range files {
 		importer.WaitUntilUnblock()
-		err = importer.ImportSSTFiles(ctx, []*backuppb.File{file}, rules, nil, kvrpcpb.APIVersion_V1)
+		err = importer.ImportSSTFiles(ctx, []snapclient.TableIDWithFiles{{Files: []*backuppb.File{file}, RewriteRules: rules}}, nil, kvrpcpb.APIVersion_V1)
 		require.NoError(t, err)
 	}
 	err = importer.Close()
@@ -192,7 +192,7 @@ func TestSnapImporterRaw(t *testing.T) {
 	files, rules := generateFiles()
 	for _, file := range files {
 		importer.WaitUntilUnblock()
-		err = importer.ImportSSTFiles(ctx, []*backuppb.File{file}, rules, nil, kvrpcpb.APIVersion_V1)
+		err = importer.ImportSSTFiles(ctx, []snapclient.TableIDWithFiles{{Files: []*backuppb.File{file}, RewriteRules: rules}}, nil, kvrpcpb.APIVersion_V1)
 		require.NoError(t, err)
 	}
 	err = importer.Close()

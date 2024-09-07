@@ -12,7 +12,7 @@ go_library(
         "//pkg/config",
         "//pkg/infoschema",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx",

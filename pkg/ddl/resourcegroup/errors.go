@@ -35,4 +35,6 @@ var (
 	ErrInvalidResourceGroupRunawayExecElapsedTime = errors.New("invalid exec elapsed time")
 	// ErrUnknownResourceGroupRunawayAction is from group.go.
 	ErrUnknownResourceGroupRunawayAction = errors.New("unknown resource group runaway action")
+	// ErrUnknownResourceGroupRunawaySwitchGroupName is from group.go.
+	ErrUnknownResourceGroupRunawaySwitchGroupName = errors.New("unknown resource group runaway switch group name")
 )

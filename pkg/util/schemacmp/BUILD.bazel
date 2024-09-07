@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/schemacmp",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser/charset",
         "//pkg/parser/format",
         "//pkg/parser/model",
@@ -32,9 +33,9 @@ go_test(
     deps = [
         ":schemacmp",
         "//pkg/ddl",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner",
         "//pkg/sessionctx",

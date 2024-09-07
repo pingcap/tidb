@@ -14,6 +14,7 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/kv",
+        "//pkg/planner/cascades/base",
         "//pkg/planner/context",
         "//pkg/planner/funcdep",
         "//pkg/planner/property",

@@ -13,7 +13,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -22,8 +23,8 @@ import (
 func getTableInfo(t *testing.T, mock *mock.Cluster, db, table string) *model.TableInfo {
 	info, err := mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	cDBName := model.NewCIStr(db)
-	cTableName := model.NewCIStr(table)
+	cDBName := pmodel.NewCIStr(db)
+	cTableName := pmodel.NewCIStr(table)
 	tableInfo, err := info.TableByName(context.Background(), cDBName, cTableName)
 	require.NoError(t, err)
 	return tableInfo.Meta()

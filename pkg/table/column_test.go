@@ -21,9 +21,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -521,7 +522,7 @@ func TestGetDefaultValue(t *testing.T) {
 
 func newCol(name string) *Column {
 	return ToColumn(&model.ColumnInfo{
-		Name:  model.NewCIStr(name),
+		Name:  pmodel.NewCIStr(name),
 		State: model.StatePublic,
 	})
 }

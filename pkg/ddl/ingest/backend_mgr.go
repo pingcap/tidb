@@ -51,6 +51,7 @@ type BackendCtxMgr interface {
 		pdSvcDiscovery pd.ServiceDiscovery,
 		resourceGroupName string,
 		importConc int,
+		initTS uint64,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
 	// EncodeJobSortPath encodes the job ID to the local disk sort path.
@@ -117,6 +118,7 @@ func (m *litBackendCtxMgr) Register(
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
 	concurrency int,
+	initTS uint64,
 ) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if exist {
@@ -153,7 +155,7 @@ func (m *litBackendCtxMgr) Register(
 		return nil, err
 	}
 
-	bcCtx := newBackendContext(ctx, jobID, bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
+	bcCtx := newBackendContext(ctx, jobID, bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient, initTS)
 	m.backends.m[jobID] = bcCtx
 	m.memRoot.Consume(structSizeBackendCtx)
 	m.backends.mu.Unlock()
@@ -205,6 +207,7 @@ func newBackendContext(
 	memRoot MemRoot,
 	diskRoot DiskRoot,
 	etcdClient *clientv3.Client,
+	initTS uint64,
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
 		engines:        make(map[int64]*engineInfo, 10),
@@ -217,6 +220,7 @@ func newBackendContext(
 		sysVars:        vars,
 		updateInterval: checkpointUpdateInterval,
 		etcdClient:     etcdClient,
+		initTS:         initTS,
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
 	return bCtx

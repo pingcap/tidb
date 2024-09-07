@@ -10,6 +10,7 @@ go_library(
         "//pkg/expression",
         "//pkg/expression/context",
         "//pkg/infoschema",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/table/tables",
         "//pkg/types",
@@ -27,6 +28,7 @@ go_test(
     deps = [
         "//pkg/expression",
         "//pkg/expression/contextstatic",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/types",

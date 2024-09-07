@@ -757,6 +757,12 @@ func TestIssue30211(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1(a int, index(a));")
 	tk.MustExec("create table t2(a int, index(a));")
+	fpName2 := "github.com/pingcap/tidb/pkg/executor/join/TestIssue49692"
+	require.NoError(t, failpoint.Enable(fpName2, `return`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName2))
+	}()
+
 	func() {
 		fpName := "github.com/pingcap/tidb/pkg/executor/join/TestIssue30211"
 		require.NoError(t, failpoint.Enable(fpName, `panic("TestIssue30211 IndexJoinPanic")`))

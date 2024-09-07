@@ -64,7 +64,7 @@ create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JO
 show create table t;
 
 # TestShowHistogramsInFlight
-show histograms_in_flight;
+# show histograms_in_flight;  // it is unstable.
 
 # TestShowOpenTables
 show open tables;

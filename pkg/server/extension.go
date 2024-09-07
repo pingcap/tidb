@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -218,7 +219,8 @@ func (e *stmtEventInfo) RelatedTables() []stmtctx.TableEntry {
 	if e.sc != nil && e.err == nil {
 		return e.sc.Tables
 	}
-	tableNames := core.ExtractTableList(e.stmtNode, false)
+	nodeW := resolve.NewNodeW(e.stmtNode)
+	tableNames := core.ExtractTableList(nodeW, false)
 	tableEntries := make([]stmtctx.TableEntry, 0, len(tableNames))
 	for i, tableName := range tableNames {
 		if tableName != nil {

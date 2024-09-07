@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -257,4 +258,84 @@ func TestRegionJobRetryer(t *testing.T) {
 	require.True(t, ok)
 	cancel()
 	jobWg.Wait()
+}
+
+func TestNewRegionJobs(t *testing.T) {
+	buildRegion := func(regionKeys [][]byte) []*split.RegionInfo {
+		ret := make([]*split.RegionInfo, 0, len(regionKeys)-1)
+		for i := 0; i < len(regionKeys)-1; i++ {
+			ret = append(ret, &split.RegionInfo{
+				Region: &metapb.Region{
+					StartKey: codec.EncodeBytes(nil, regionKeys[i]),
+					EndKey:   codec.EncodeBytes(nil, regionKeys[i+1]),
+				},
+			})
+		}
+		return ret
+	}
+	buildJobRanges := func(jobRangeKeys [][]byte) []common.Range {
+		ret := make([]common.Range, 0, len(jobRangeKeys)-1)
+		for i := 0; i < len(jobRangeKeys)-1; i++ {
+			ret = append(ret, common.Range{
+				Start: jobRangeKeys[i],
+				End:   jobRangeKeys[i+1],
+			})
+		}
+		return ret
+	}
+
+	cases := []struct {
+		regionKeys   [][]byte
+		jobRangeKeys [][]byte
+		jobKeys      [][]byte
+	}{
+		{
+			regionKeys:   [][]byte{{1}, nil},
+			jobRangeKeys: [][]byte{{2}, {3}, {4}},
+			jobKeys:      [][]byte{{2}, {3}, {4}},
+		},
+		{
+			regionKeys:   [][]byte{{1}, {4}},
+			jobRangeKeys: [][]byte{{1}, {2}, {3}, {4}},
+			jobKeys:      [][]byte{{1}, {2}, {3}, {4}},
+		},
+		{
+
+			regionKeys:   [][]byte{{1}, {2}, {3}, {4}},
+			jobRangeKeys: [][]byte{{1}, {4}},
+			jobKeys:      [][]byte{{1}, {2}, {3}, {4}},
+		},
+		{
+
+			regionKeys:   [][]byte{{1}, {3}, {5}, {7}},
+			jobRangeKeys: [][]byte{{2}, {4}, {6}},
+			jobKeys:      [][]byte{{2}, {3}, {4}, {5}, {6}},
+		},
+		{
+
+			regionKeys:   [][]byte{{1}, {4}, {7}},
+			jobRangeKeys: [][]byte{{2}, {3}, {4}, {5}, {6}},
+			jobKeys:      [][]byte{{2}, {3}, {4}, {5}, {6}},
+		},
+		{
+
+			regionKeys:   [][]byte{{1}, {5}, {6}, {7}, {8}, {12}},
+			jobRangeKeys: [][]byte{{1}, {2}, {3}, {4}, {9}, {10}, {12}},
+			jobKeys:      [][]byte{{1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}, {10}, {12}},
+		},
+	}
+
+	for caseIdx, c := range cases {
+		jobs := newRegionJobs(
+			buildRegion(c.regionKeys),
+			nil,
+			buildJobRanges(c.jobRangeKeys),
+			0, 0, nil,
+		)
+		require.Len(t, jobs, len(c.jobKeys)-1, "case %d", caseIdx)
+		for i, j := range jobs {
+			require.Equal(t, c.jobKeys[i], j.keyRange.Start, "case %d", caseIdx)
+			require.Equal(t, c.jobKeys[i+1], j.keyRange.End, "case %d", caseIdx)
+		}
+	}
 }

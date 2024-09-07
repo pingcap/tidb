@@ -22,6 +22,7 @@ go_library(
         "//pkg/parser/auth",
         "//pkg/parser/terror",
         "//pkg/planner/core",
+        "//pkg/planner/core/resolve",
         "//pkg/resourcemanager",
         "//pkg/session",
         "//pkg/session/txninfo",

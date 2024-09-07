@@ -84,6 +84,11 @@ func NewDynamicPartitionedTableAnalysisJob(
 	}
 }
 
+// GetTableID gets the table ID of the job.
+func (j *DynamicPartitionedTableAnalysisJob) GetTableID() int64 {
+	return j.GlobalTableID
+}
+
 // Analyze analyzes the partitions or partition indexes.
 func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,

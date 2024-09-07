@@ -15,7 +15,7 @@ go_test(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/ingest",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",

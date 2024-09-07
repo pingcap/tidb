@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,7 +57,7 @@ func TestGetKeptAllocators(t *testing.T) {
 			expected: []autoid.AllocatorType{autoid.AutoRandomType},
 		},
 		{
-			diff:     &model.SchemaDiff{Type: model.ActionModifyTableAutoIdCache},
+			diff:     &model.SchemaDiff{Type: model.ActionModifyTableAutoIDCache},
 			expected: []autoid.AllocatorType{autoid.AutoRandomType},
 		},
 		{
@@ -71,7 +71,7 @@ func TestGetKeptAllocators(t *testing.T) {
 		},
 		{
 			diff: &model.SchemaDiff{Type: model.ActionMultiSchemaChange,
-				SubActionTypes: []model.ActionType{model.ActionModifyTableAutoIdCache}},
+				SubActionTypes: []model.ActionType{model.ActionModifyTableAutoIDCache}},
 			expected: []autoid.AllocatorType{autoid.AutoRandomType},
 		},
 		{

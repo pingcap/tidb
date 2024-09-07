@@ -51,7 +51,8 @@ func init() {
 }
 
 // SetupTopSQL sets up the top-sql worker.
-func SetupTopSQL() {
+func SetupTopSQL(updater collector.ProcessCPUTimeUpdater) {
+	globalTopSQLReport.BindProcessCPUTimeUpdater(updater)
 	globalTopSQLReport.Start()
 	singleTargetDataSink.Start()
 
@@ -143,6 +144,13 @@ func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDig
 			}
 		}
 	})
+	return ctx
+}
+
+// AttachAndRegisterProcessInfo attach the ProcessInfo into Goroutine labels.
+func AttachAndRegisterProcessInfo(ctx context.Context, connID uint64, sqlID uint64) context.Context {
+	ctx = collector.CtxWithProcessInfo(ctx, connID, sqlID)
+	pprof.SetGoroutineLabels(ctx)
 	return ctx
 }
 

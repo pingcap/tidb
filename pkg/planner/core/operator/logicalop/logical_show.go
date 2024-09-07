@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -41,9 +42,9 @@ type LogicalShow struct {
 type ShowContents struct {
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName            string
-	Table             *ast.TableName  // Used for showing columns.
-	Partition         model.CIStr     // Use for showing partition
-	Column            *ast.ColumnName // Used for `desc table column`.
+	Table             *resolve.TableNameW // Used for showing columns.
+	Partition         model.CIStr         // Use for showing partition
+	Column            *ast.ColumnName     // Used for `desc table column`.
 	IndexName         model.CIStr
 	ResourceGroupName string               // Used for showing resource group
 	Flag              int                  // Some flag parsed from sql, such as FULL.

@@ -680,3 +680,70 @@ SELECT col_4
           FROM product_detail
 ) a;
 
+# Tests for PR #55732
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 value(5,5);
+insert into t2 value(1,1);
+with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1;
+# This UPDATE should update t2.b to 2
+update t2 set b=2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
+select * from t2;
+# This DELETE should delete all rows in t2
+delete from t2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
+select * from t2;
+
+# Issue #55666
+drop table if exists table_abc1;
+drop table if exists table_abc2;
+drop table if exists table_abc3;
+drop table if exists table_abc4;
+
+CREATE TABLE `table_abc1` (
+  `column_abc1` varchar(10) DEFAULT NULL,
+  `column_abc2` varchar(10) DEFAULT NULL,
+  `column_abc3` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `table_abc3` (
+  `column_abc5` varchar(10) DEFAULT NULL,
+  `column_abc6` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `table_abc4` (
+  `column_abc3` varchar(10) DEFAULT NULL,
+  `column_abc7` varchar(10) DEFAULT NULL,
+  `column_abc5` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+INSERT INTO `table_abc1` VALUES ('KTL157','KTL157','KTL157');
+INSERT INTO `table_abc3` VALUES ('1000','20240819');
+INSERT INTO `table_abc4` VALUES ('KTL157','test','1000');
+
+DELETE FROM table_abc3 t_abc3
+WHERE t_abc3.column_abc5 IN (
+    SELECT a.column_abc5
+    FROM (
+        WITH tree_cte1 AS (
+            WITH RECURSIVE tree_cte AS (
+                SELECT t.column_abc1, t.column_abc2, t.column_abc3, 0 AS lv
+                FROM table_abc1 t
+                WHERE t.column_abc1 IN ('KTL157', 'KTL159')
+                UNION ALL
+                SELECT t.column_abc1, t.column_abc2, t.column_abc3, tcte.lv + 1
+                FROM table_abc1 t
+                JOIN tree_cte tcte ON t.column_abc1 = tcte.column_abc2
+                WHERE tcte.lv <= 1
+            )
+            SELECT * FROM tree_cte
+        )
+        SELECT  e.column_abc5
+        FROM (
+            SELECT DISTINCT * FROM tree_cte1
+        ) aa
+        LEFT JOIN table_abc4 e ON e.column_abc3 = aa.column_abc3
+    ) a
+);
+
+

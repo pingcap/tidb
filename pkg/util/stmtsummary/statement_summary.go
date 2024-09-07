@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 )
@@ -199,6 +200,8 @@ type stmtSummaryByDigestElement struct {
 	sumPDTotal           time.Duration
 	sumBackoffTotal      time.Duration
 	sumWriteSQLRespTotal time.Duration
+	sumTidbCPU           time.Duration
+	sumTikvCPU           time.Duration
 	sumResultRows        int64
 	maxResultRows        int64
 	minResultRows        int64
@@ -260,6 +263,7 @@ type StmtExecInfo struct {
 	KeyspaceID        uint32
 	ResourceGroupName string
 	RUDetail          *util.RUDetails
+	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
 }
@@ -912,6 +916,8 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
 	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
 	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
+	ssElement.sumTidbCPU += sei.CPUUsages.TidbCPUTime
+	ssElement.sumTikvCPU += sei.CPUUsages.TikvCPUTime
 
 	// request-units
 	ssElement.StmtRUSummary.Add(sei.RUDetail)

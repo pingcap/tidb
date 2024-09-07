@@ -24,10 +24,9 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/restore/internal/utils"
+	snapsplit "github.com/pingcap/tidb/br/pkg/restore/internal/snap_split"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -139,11 +138,11 @@ func (helper *LogSplitHelper) Merge(file *backuppb.DataFileInfo) {
 	})
 }
 
-type splitFunc = func(context.Context, *utils.RegionSplitter, uint64, int64, *split.RegionInfo, []Valued) error
+type splitFunc = func(context.Context, *snapsplit.RegionSplitter, uint64, int64, *split.RegionInfo, []Valued) error
 
 func (helper *LogSplitHelper) splitRegionByPoints(
 	ctx context.Context,
-	regionSplitter *utils.RegionSplitter,
+	regionSplitter *snapsplit.RegionSplitter,
 	initialLength uint64,
 	initialNumber int64,
 	region *split.RegionInfo,
@@ -176,14 +175,10 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 		newRegions, errSplit := regionSplitter.SplitWaitAndScatter(ctx, region, splitPoints)
 		if errSplit != nil {
 			log.Warn("failed to split the scaned region", zap.Error(errSplit))
-			_, startKey, _ := codec.DecodeBytes(region.Region.StartKey, nil)
-			ranges := make([]rtree.Range, 0, len(splitPoints))
-			for _, point := range splitPoints {
-				ranges = append(ranges, rtree.Range{StartKey: startKey, EndKey: point})
-				startKey = point
-			}
-
-			return regionSplitter.ExecuteSplit(ctx, ranges)
+			sort.Slice(splitPoints, func(i, j int) bool {
+				return bytes.Compare(splitPoints[i], splitPoints[j]) < 0
+			})
+			return regionSplitter.ExecuteSplit(ctx, splitPoints)
 		}
 		select {
 		case <-ctx.Done():
@@ -205,7 +200,7 @@ func SplitPoint(
 ) (err error) {
 	// common status
 	var (
-		regionSplitter *utils.RegionSplitter = utils.NewRegionSplitter(client)
+		regionSplitter *snapsplit.RegionSplitter = snapsplit.NewRegionSplitter(client)
 	)
 	// region traverse status
 	var (
@@ -357,7 +352,7 @@ func (helper *LogSplitHelper) Split(ctx context.Context) error {
 			}
 		}
 
-		regionSplitter := utils.NewRegionSplitter(helper.client)
+		regionSplitter := snapsplit.NewRegionSplitter(helper.client)
 		// It is too expensive to stop recovery and wait for a small number of regions
 		// to complete scatter, so the maximum waiting time is reduced to 1 minute.
 		_ = regionSplitter.WaitForScatterRegionsTimeout(ctx, scatterRegions, time.Minute)

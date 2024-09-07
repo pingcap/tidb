@@ -53,6 +53,7 @@ go_library(
         "//pkg/parser/opcode",
         "//pkg/parser/terror",
         "//pkg/parser/types",
+        "//pkg/planner/cascades/base",
         "//pkg/util/collate",
         "//pkg/util/context",
         "//pkg/util/dbterror",

@@ -47,7 +47,7 @@ go_test(
     deps = [
         "//pkg/domain",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/session",
         "//pkg/store/copr",
         "//pkg/store/mockstore",

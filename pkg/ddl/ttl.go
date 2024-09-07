@@ -20,9 +20,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -98,7 +99,7 @@ func onTTLInfoChange(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int6
 	return ver, nil
 }
 
-func checkTTLInfoValid(ctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) error {
+func checkTTLInfoValid(ctx sessionctx.Context, schema pmodel.CIStr, tblInfo *model.TableInfo) error {
 	if err := checkTTLIntervalExpr(tblInfo.TTLInfo); err != nil {
 		return err
 	}
@@ -129,7 +130,7 @@ func checkTTLInfoColumnType(tblInfo *model.TableInfo) error {
 
 // checkTTLTableSuitable returns whether this table is suitable to be a TTL table
 // A temporary table or a parent table referenced by a foreign key cannot be TTL table
-func checkTTLTableSuitable(ctx sessionctx.Context, schema model.CIStr, tblInfo *model.TableInfo) error {
+func checkTTLTableSuitable(ctx sessionctx.Context, schema pmodel.CIStr, tblInfo *model.TableInfo) error {
 	if tblInfo.TempTableType != model.TempTableNone {
 		return dbterror.ErrTempTableNotAllowedWithTTL
 	}

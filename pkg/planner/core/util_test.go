@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/stretchr/testify/require"
 )
 
@@ -306,7 +307,8 @@ func TestExtractTableList(t *testing.T) {
 	for i, c := range cases {
 		stmtNode, err := p.ParseOneStmt(c.sql, "", "")
 		require.NoError(t, err, "case %d sql: %s", i, c.sql)
-		tableNames := ExtractTableList(stmtNode, c.asName)
+		nodeW := resolve.NewNodeW(stmtNode)
+		tableNames := ExtractTableList(nodeW, c.asName)
 		require.Len(t, tableNames, len(c.expect), "case %d sql: %s, len: %d, actual: %s", i, c.sql, len(tableNames), tableNamesAsStr(tableNames))
 		sortTableNames(tableNames)
 		sortTableNames(c.expect)

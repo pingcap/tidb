@@ -3,7 +3,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 go_test(
     name = "instanceplancache_test",
     timeout = "short",
-    srcs = ["main_test.go"],
+    srcs = [
+        "dml_test.go",
+        "main_test.go",
+    ],
     flaky = True,
+    shard_count = 3,
     deps = ["//pkg/testkit"],
 )

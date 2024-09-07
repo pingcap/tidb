@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/util"
@@ -130,6 +131,8 @@ type StmtRecord struct {
 	SumPDTotal           time.Duration `json:"sum_pd_total"`
 	SumBackoffTotal      time.Duration `json:"sum_backoff_total"`
 	SumWriteSQLRespTotal time.Duration `json:"sum_write_sql_resp_total"`
+	SumTidbCPU           time.Duration `json:"sum_tidb_cpu"`
+	SumTikvCPU           time.Duration `json:"sum_tikv_cpu"`
 	SumResultRows        int64         `json:"sum_result_rows"`
 	MaxResultRows        int64         `json:"max_result_rows"`
 	MinResultRows        int64         `json:"min_result_rows"`
@@ -417,6 +420,8 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.SumPDTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.WaitPDRespDuration))
 	r.SumBackoffTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.BackoffDuration))
 	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
+	r.SumTidbCPU += info.CPUUsages.TidbCPUTime
+	r.SumTikvCPU += info.CPUUsages.TikvCPUTime
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail)
 }
@@ -576,6 +581,8 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	r.SumPDTotal += other.SumPDTotal
 	r.SumBackoffTotal += other.SumBackoffTotal
 	r.SumWriteSQLRespTotal += other.SumWriteSQLRespTotal
+	r.SumTidbCPU += other.SumTidbCPU
+	r.SumTikvCPU += other.SumTikvCPU
 	r.SumErrors += other.SumErrors
 	r.StmtRUSummary.Merge(&other.StmtRUSummary)
 }
@@ -687,6 +694,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		KeyspaceID:        1,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
+		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo

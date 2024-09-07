@@ -10,7 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/executor/internal/exec",
-        "//pkg/parser/ast",
+        "//pkg/planner/core/resolve",
         "//pkg/session/cursor",
         "//pkg/util",
         "//pkg/util/chunk",

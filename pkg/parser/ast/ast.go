@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
@@ -118,26 +117,6 @@ type DDLNode interface {
 type DMLNode interface {
 	StmtNode
 	dmlStatement()
-}
-
-// ResultField represents a result field which can be a column from a table,
-// or an expression in select field. It is a generated property during
-// binding process. ResultField is the key element to evaluate a ColumnNameExpr.
-// After resolving process, every ColumnNameExpr will be resolved to a ResultField.
-// During execution, every row retrieved from table will set the row value to
-// ResultFields of that table, so ColumnNameExpr resolved to that ResultField can be
-// easily evaluated.
-type ResultField struct {
-	Column       *model.ColumnInfo
-	ColumnAsName model.CIStr
-	// EmptyOrgName indicates whether this field has an empty org_name. A field has an empty org name, if it's an
-	// expression. It's not sure whether it's safe to use empty string in `.Column.Name`, so a new field is added to
-	// indicate whether it's empty.
-	EmptyOrgName bool
-
-	Table       *model.TableInfo
-	TableAsName model.CIStr
-	DBName      model.CIStr
 }
 
 // ResultSetNode interface has a ResultFields property, represents a Node that returns result set.
@@ -248,8 +227,6 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "Use"
 	case *CreateBindingStmt:
 		return "CreateBinding"
-	case *IndexAdviseStmt:
-		return "IndexAdvise"
 	case *DropBindingStmt:
 		return "DropBinding"
 	case *TraceStmt:

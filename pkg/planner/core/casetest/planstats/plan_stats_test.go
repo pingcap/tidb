@@ -25,11 +25,13 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -213,9 +215,10 @@ func TestPlanStatsLoad(t *testing.T) {
 		require.NoError(t, err)
 		err = executor.ResetContextOfStmt(ctx, stmt)
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 		require.NoError(t, err)
-		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		testCase.check(p, tableInfo)
@@ -267,7 +270,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 	is := dom.InfoSchema()
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	neededColumn := model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}, FullLoad: true}
@@ -283,7 +286,8 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=false")
-	_, _, err = planner.Optimize(context.TODO(), ctx, stmt, is)
+	nodeW := resolve.NewNodeW(stmt)
+	_, _, err = planner.Optimize(context.TODO(), ctx, nodeW, is)
 	require.Error(t, err) // fail sql for timeout when pseudo=false
 
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=true")
@@ -296,7 +300,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tk.MustExec(sql)
 	failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/assertSyncWaitFailed")
 
-	plan, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+	plan, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 	require.NoError(t, err) // not fail sql for timeout when pseudo=true
 	switch pp := plan.(type) {
 	case *plannercore.PhysicalTableReader:
@@ -362,7 +366,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 	tblName2TblID := make(map[string]int64)
 	tblID2Tbl := make(map[int64]table.Table)
 	for _, tblName := range tableNames {
-		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(tblName))
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblName2TblID[tblName] = tbl.Meta().ID
 		tblID2Tbl[tbl.Meta().ID] = tbl

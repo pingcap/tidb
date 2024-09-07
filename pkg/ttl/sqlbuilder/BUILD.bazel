@@ -6,9 +6,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ttl/sqlbuilder",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/ttl/cache",
         "//pkg/types",
@@ -29,6 +29,7 @@ go_test(
     deps = [
         ":sqlbuilder",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/model",

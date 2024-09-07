@@ -24,7 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
@@ -75,10 +76,10 @@ func (is *mockedInfoSchema) TableByID(_ context.Context, tblID int64) (table.Tab
 
 	tblInfo := &model.TableInfo{
 		ID:   tblID,
-		Name: model.NewCIStr(fmt.Sprintf("tb%d", tblID)),
+		Name: pmodel.NewCIStr(fmt.Sprintf("tb%d", tblID)),
 		Columns: []*model.ColumnInfo{{
 			ID:        1,
-			Name:      model.NewCIStr("col1"),
+			Name:      pmodel.NewCIStr("col1"),
 			Offset:    0,
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			State:     model.StatePublic,

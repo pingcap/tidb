@@ -16,9 +16,9 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//pkg/ddl",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/statistics",

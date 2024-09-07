@@ -8,8 +8,8 @@ go_library(
     deps = [
         "//pkg/errno",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/metrics",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/server",
         "//pkg/sessionctx/sessionstates",
