@@ -283,7 +283,6 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				}
 			}
 			if !ignoreAssertion && !untouched {
-				// TODO: Check if this should be updated for Global Index delete reorg
 				if opt.DupKeyCheck() == table.DupKeyCheckLazy && !txn.IsPessimistic() {
 					err = txn.SetAssertion(key, kv.SetAssertUnknown)
 				} else {
@@ -298,7 +297,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 
 		var foundValue []byte
 		if len(oldPartIDs) > 0 {
-			// If Global Index and reorg we need this regardless of DupKeyCheck value.
+			// In DeleteReorganization, overwrite Global Index keys pointing to
+			// old dropped/truncated partitions.
+			// Note that a partitioned table cannot be temporary table
 			foundValue, err = txn.Get(ctx, key)
 			if err == nil && len(foundValue) != 0 {
 				partHandle, errPart := GetPartitionHandleFromVal(foundValue)

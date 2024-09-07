@@ -1425,20 +1425,6 @@ func findBestTask4DS(ds *DataSource, prop *property.PhysicalProperty, planCounte
 			if canConvertPointGet && path.IsIntHandlePath && !ds.table.Meta().PKIsHandle && len(ds.PartitionNames) != 1 {
 				canConvertPointGet = false
 			}
-			if canConvertPointGet {
-				if path != nil && path.Index != nil && path.Index.Global {
-					// Don't convert to point get during ddl
-					// TODO: Revisit truncate partition and global index
-					if len(ds.TableInfo.GetPartitionInfo().DroppingDefinitions) > 0 ||
-						/*
-							ds.TableInfo.GetPartitionInfo().DDLState != model.StateNone ||
-							len(ds.TableInfo.GetPartitionInfo().NewPartitionIDs) > 0 ||
-						*/
-						len(ds.TableInfo.GetPartitionInfo().AddingDefinitions) > 0 {
-						canConvertPointGet = false
-					}
-				}
-			}
 		}
 		if canConvertPointGet {
 			allRangeIsPoint := true

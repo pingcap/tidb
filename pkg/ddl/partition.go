@@ -2214,6 +2214,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 	// In order to skip maintaining the state check in partitionDefinition, TiDB use droppingDefinition instead of state field.
 	// So here using `job.SchemaState` to judge what the stage of this job is.
 	originalState := job.SchemaState
+	// TODO: Check if Global Index, if not do a single state change DDL!
 	switch job.SchemaState {
 	case model.StatePublic:
 		// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
@@ -2261,12 +2262,15 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 		}
 
 		job.SchemaState = model.StateDeleteOnly
+		tblInfo.Partition.DDLState = model.StateDeleteOnly
+		tblInfo.Partition.DDLAction = model.ActionDropTablePartition
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteOnly:
 		// This state is not a real 'DeleteOnly' state, because tidb does not maintaining the state check in partitionDefinition.
 		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
 		// so that no new data will be inserted into old partitions when reorganizing.
 		job.SchemaState = model.StateDeleteReorganization
+		tblInfo.Partition.DDLState = model.StateDeleteReorganization
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteReorganization:
 		oldTblInfo := getTableInfoWithDroppingPartitions(tblInfo)
@@ -2325,6 +2329,8 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 		}
 		droppedDefs := tblInfo.Partition.DroppingDefinitions
 		tblInfo.Partition.DroppingDefinitions = nil
+		tblInfo.Partition.DDLState = model.StateNone
+		tblInfo.Partition.DDLAction = model.ActionNone
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []any{physicalTableIDs}
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
@@ -2468,6 +2474,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	// TRUNCATE PARTITION with GLOBAL INDEX
 	switch job.SchemaState {
 	case model.StatePublic:
+		// This work as a flag to ignore Global Index entries from the new partitions!
 		pi.NewPartitionIDs = newIDs[:]
 		pi.DDLState = model.StateWriteOnly
 		pi.DDLAction = model.ActionTruncateTablePartition
@@ -2486,7 +2493,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 				}
 			}
 		}
-		// This should work as a flag to insert/update/delete to also update the old partitions!
+		// This work as a flag to ignore Global Index entries from the old partitions!
 		pi.DroppingDefinitions = truncatingDefinitions
 		pi.DDLState = model.StateDeleteOnly
 

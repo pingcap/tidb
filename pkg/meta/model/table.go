@@ -840,6 +840,8 @@ func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
 	pi.DDLExpr = ""
 	pi.DDLColumns = nil
 	pi.NewTableID = 0
+	pi.DDLState = StateNone
+	pi.DDLAction = ActionNone
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
@@ -881,7 +883,6 @@ func (pi *PartitionInfo) GlobalIndexPartitionIDsToIgnore() []int64 {
 	// TODO: Also handle Exchange Partition?!?
 	// Reorganize Partition
 	// write only => nothing, and has not NewPartitionIDs set!
-	// TODO: Maybe more clear to also add pi.DDLAction?
 	switch pi.DDLAction {
 	case ActionTruncateTablePartition:
 		switch pi.DDLState {
@@ -897,11 +898,9 @@ func (pi *PartitionInfo) GlobalIndexPartitionIDsToIgnore() []int64 {
 			}
 			return ids
 		}
-	case ActionNone:
-		// Not yet added to the onXXXPartition... function
-		// OR ongoing DDL during upgrade
-		if len(pi.DroppingDefinitions) > 0 &&
-			len(pi.AddingDefinitions) == 0 {
+	case ActionDropTablePartition:
+		if len(pi.DroppingDefinitions) > 0 ||
+			len(pi.AddingDefinitions) > 0 {
 			ids := make([]int64, 0, len(pi.DroppingDefinitions))
 			for _, def := range pi.DroppingDefinitions {
 				if pi.DDLState == StateDeleteOnly {
@@ -909,12 +908,14 @@ func (pi *PartitionInfo) GlobalIndexPartitionIDsToIgnore() []int64 {
 				}
 			}
 			/*
-				TODO: When should this take effect?
-				for _, p := range pi.AddingDefinitions {
-					args = append(args, expression.NewInt64Const(p.ID))
+				//TODO: When should this take effect?
+				for _, def := range pi.AddingDefinitions {
+					ids = append(ids, def.ID)
 				}
 			*/
+			return ids
 		}
+		// TODO: Should we also handle ADD PARTITION for RANGE and LIST?
 	}
 	return nil
 }
