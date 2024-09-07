@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -27,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *ddlHandlerImpl) onTruncatePartitions(t *util.DDLEvent) error {
+func (h *ddlHandlerImpl) onTruncatePartitions(t *ddlutil.SchemaChangeEvent) error {
 	globalTableInfo, addedPartInfo, droppedPartInfo := t.GetTruncatePartitionInfo()
 	// First, add the new stats meta record for the new partitions.
 	for _, def := range addedPartInfo.Definitions {

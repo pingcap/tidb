@@ -61,44 +61,6 @@ func (e *DDLEvent) IsMemOrSysDB(sctx sessionctx.Context) (bool, error) {
 	return util.IsMemOrSysDB(schema.Name.L), nil
 }
 
-// NewAddPartitionEvent creates a new ddl event that adds partitions.
-func NewAddPartitionEvent(
-	schemaID int64,
-	globalTableInfo *model.TableInfo,
-	addedPartInfo *model.PartitionInfo,
-) *DDLEvent {
-	return &DDLEvent{
-		tp:        model.ActionAddTablePartition,
-		schemaID:  schemaID,
-		tableInfo: globalTableInfo,
-		partInfo:  addedPartInfo,
-	}
-}
-
-// GetAddPartitionInfo gets the table info of the table that is added partitions.
-func (e *DDLEvent) GetAddPartitionInfo() (globalTableInfo *model.TableInfo, addedPartInfo *model.PartitionInfo) {
-	return e.tableInfo, e.partInfo
-}
-
-// NewDropPartitionEvent creates a new ddl event that drops partitions.
-func NewDropPartitionEvent(
-	schemaID int64,
-	globalTableInfo *model.TableInfo,
-	droppedPartInfo *model.PartitionInfo,
-) *DDLEvent {
-	return &DDLEvent{
-		tp:          model.ActionDropTablePartition,
-		schemaID:    schemaID,
-		tableInfo:   globalTableInfo,
-		oldPartInfo: droppedPartInfo,
-	}
-}
-
-// GetDropPartitionInfo gets the table info of the table that is dropped partitions.
-func (e *DDLEvent) GetDropPartitionInfo() (globalTableInfo *model.TableInfo, droppedPartInfo *model.PartitionInfo) {
-	return e.tableInfo, e.oldPartInfo
-}
-
 // NewExchangePartitionEvent creates a new ddl event that exchanges a partition.
 // Please make sure pass the information before the exchange.
 func NewExchangePartitionEvent(
@@ -161,31 +123,6 @@ func NewReorganizePartitionEvent(
 
 // GetReorganizePartitionInfo gets the table info of the table that is reorganized partitions.
 func (e *DDLEvent) GetReorganizePartitionInfo() (
-	globalTableInfo *model.TableInfo,
-	addedPartInfo *model.PartitionInfo,
-	droppedPartInfo *model.PartitionInfo,
-) {
-	return e.tableInfo, e.partInfo, e.oldPartInfo
-}
-
-// NewTruncatePartitionEvent creates a new ddl event that truncates partitions.
-func NewTruncatePartitionEvent(
-	schemaID int64,
-	globalTableInfo *model.TableInfo,
-	addedPartInfo *model.PartitionInfo,
-	droppedPartInfo *model.PartitionInfo,
-) *DDLEvent {
-	return &DDLEvent{
-		tp:          model.ActionTruncateTablePartition,
-		schemaID:    schemaID,
-		tableInfo:   globalTableInfo,
-		partInfo:    addedPartInfo,
-		oldPartInfo: droppedPartInfo,
-	}
-}
-
-// GetTruncatePartitionInfo gets the table info of the table that is truncated partitions.
-func (e *DDLEvent) GetTruncatePartitionInfo() (
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
