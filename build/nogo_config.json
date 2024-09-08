@@ -273,7 +273,6 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
-      "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
       ".*test_/testmain\\.go$": "ignore generated code",
       ".*failpoint_binding__.go$": "ignore generated code"
