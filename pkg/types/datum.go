@@ -552,6 +552,39 @@ func (d *Datum) GetValue() any {
 	}
 }
 
+// TruncatedStringify returns the %v representation of the datum
+// but truncated (for example, for strings, only first 64 bytes is printed).
+// This function is useful in contexts like EXPLAIN.
+func (d *Datum) TruncatedStringify() string {
+	const maxLen = 64
+
+	switch d.k {
+	case KindString, KindBytes:
+		str := d.GetString()
+		originalLen := len(str)
+		if len(str) > maxLen {
+			str = str[:maxLen]
+		}
+		// This efficiently returns the truncated string without
+		// less possible allocations.
+		return fmt.Sprintf("%s...(len:%d)", str, originalLen)
+	case KindMysqlJSON:
+		// For now we can only stringify then truncate.
+		str := d.GetMysqlJSON().String()
+		originalLen := len(str)
+		if len(str) > maxLen {
+			str = str[:maxLen]
+		}
+		return fmt.Sprintf("%s...(len:%d)", str, originalLen)
+	case KindVectorFloat32:
+		// Vector supports native efficient truncation.
+		return d.GetVectorFloat32().TruncatedString()
+	default:
+		// For other types, no truncation.
+		return fmt.Sprintf("%v", d.GetValue())
+	}
+}
+
 // SetValueWithDefaultCollation sets any kind of value.
 func (d *Datum) SetValueWithDefaultCollation(val any) {
 	switch x := val.(type) {
