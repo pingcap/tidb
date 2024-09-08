@@ -4,6 +4,7 @@ go 1.21
 
 require (
 	cloud.google.com/go/storage v1.38.0
+	gitee.com/joccau/orc v0.0.0-20231201065950-efbd25e5a1f1
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.12.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.6.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.0.0
@@ -98,6 +99,7 @@ require (
 	github.com/qri-io/jsonschema v0.2.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sasha-s/go-deadlock v0.3.5
+	github.com/scritchley/orc v0.0.0-20210513144143-06dddf1ad665
 	github.com/shirou/gopsutil/v3 v3.24.4
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5

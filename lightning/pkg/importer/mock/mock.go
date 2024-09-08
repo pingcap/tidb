@@ -128,6 +128,8 @@ func NewImportSource(dbSrcDataMap map[string]*DBSourceData) (*ImportSource, erro
 					fileInfo.FileMeta.Type = mydump.SourceTypeSQL
 				case strings.HasSuffix(fileName, ".parquet"):
 					fileInfo.FileMeta.Type = mydump.SourceTypeParquet
+				case strings.HasSuffix(fileName, ".orc"):
+					fileInfo.FileMeta.Type = mydump.SourceTypeORC
 				default:
 					return nil, errors.Errorf("unsupported file type: %s", tblDataFile.FileName)
 				}

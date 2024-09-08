@@ -1490,11 +1490,17 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			if len(cp.Engines) == 0 {
 				for i, fi := range tableMeta.DataFiles {
 					totalDataSizeToRestore += fi.FileMeta.FileSize
-					if fi.FileMeta.Type == mydump.SourceTypeParquet {
-						numberRows, err := mydump.ReadParquetFileRowCountByFile(ctx, rc.store, fi.FileMeta)
+					if fi.FileMeta.Type == mydump.SourceTypeParquet || fi.FileMeta.Type == mydump.SourceTypeORC {
+						var numberRows int64
+						if fi.FileMeta.Type == mydump.SourceTypeParquet {
+							numberRows, err = mydump.ReadParquetFileRowCountByFile(ctx, rc.store, fi.FileMeta)
+						} else if fi.FileMeta.Type == mydump.SourceTypeORC {
+							numberRows, err = mydump.ReadOrcFileRowCountByFile(ctx, rc.store, fi.FileMeta)
+						}
 						if err != nil {
 							return errors.Trace(err)
 						}
+
 						if m, ok := metric.FromContext(ctx); ok {
 							m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(numberRows))
 						}
@@ -1507,7 +1513,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 					for _, chunk := range eng.Chunks {
 						// for parquet files filesize is more accurate, we can calculate correct unfinished bytes unless
 						//  we set up the reader, so we directly use filesize here
-						if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+						if chunk.FileMeta.Type == mydump.SourceTypeParquet || chunk.FileMeta.Type == mydump.SourceTypeORC {
 							totalDataSizeToRestore += chunk.FileMeta.FileSize
 							if m, ok := metric.FromContext(ctx); ok {
 								m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(chunk.UnfinishedSize()))

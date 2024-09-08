@@ -73,6 +73,8 @@ const (
 	DataFormatSQL = "sql"
 	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
 	DataFormatParquet = "parquet"
+	// LoadDataFormatORC represents the data source file of LOAD DATA is orc.
+	LoadDataFormatORC = "orc"
 
 	// DefaultDiskQuota is the default disk quota for IMPORT INTO
 	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
@@ -1151,6 +1153,8 @@ func (e *LoadDataController) getSourceType() mydump.SourceType {
 	switch e.Format {
 	case DataFormatParquet:
 		return mydump.SourceTypeParquet
+	case LoadDataFormatORC:
+		return mydump.SourceTypeORC
 	case DataFormatDelimitedData, DataFormatCSV:
 		return mydump.SourceTypeCSV
 	default:
