@@ -34,6 +34,7 @@ go_test(
         "//pkg/types",
         "//pkg/util/codec",
         "//pkg/util/collate",
+        "//pkg/util/plancodec",
         "//pkg/util/sem",
         "//pkg/util/timeutil",
         "//pkg/util/versioninfo",
