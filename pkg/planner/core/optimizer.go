@@ -973,11 +973,17 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
+		if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("before")
+		}
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		var planChanged bool
 		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
+		}
+		if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("after")
 		}
 		// Compute interaction rules that should be optimized again
 		interactionRule, ok := optInteractionRuleList[rule]
