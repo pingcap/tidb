@@ -371,10 +371,10 @@ func TestVectorConstantExplain(t *testing.T) {
 	planTree, err := plancodec.DecodePlan(encodedPlanTree)
 	require.NoError(t, err)
 	require.Equal(t, strings.Join([]string{
-		`	id                 	task     	estRows	operator info                                                                                                                        	actRows	execution info  	memory 	disk`,
+		`	id                 	task     	estRows	operator info                                                                                                                      	actRows	execution info  	memory 	disk`,
 		`	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3	0      	time:0s, loops:0	0 Bytes	N/A`,
-		`	└─TableReader_5    	root     	10000  	data:TableFullScan_4                                                                                                                 	0      	time:0s, loops:0	0 Bytes	N/A`,
-		`	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo                                                                                              	0      	                	N/A    	N/A`,
+		`	└─TableReader_5    	root     	10000  	data:TableFullScan_4                                                                                                               	0      	time:0s, loops:0	0 Bytes	N/A`,
+		`	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo                                                                                            	0      	                	N/A    	N/A`,
 	}, "\n"), planTree)
 
 	// No need to check result at all.
