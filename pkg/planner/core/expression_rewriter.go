@@ -736,35 +736,6 @@ func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np base.LogicalPlan, p
 	planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, []expression.Expression{condition}, er.asScalar, not, false, markNoDecorrelate)
 }
 
-func (er *expressionRewriter) handleInformationSchemaBinaryOperationExpr(v *ast.BinaryOperationExpr) {
-	switch cn := v.L.(type) {
-	case *ast.ColumnNameExpr:
-		switch x := v.R.(type) {
-		case *driver.ValueExpr:
-			if x.Datum.Kind() == types.KindString {
-				var name *types.FieldName
-				for i := len(er.planCtx.builder.allNames) - 1; i >= 0; i-- {
-					idx, err := expression.FindFieldName(er.planCtx.builder.allNames[i], cn.Name)
-					if err != nil {
-						er.err = err
-						return
-					}
-					if idx >= 0 {
-						name = er.planCtx.builder.allNames[i][idx]
-						break
-					}
-				}
-				if name != nil {
-					if name.DBName.L == "information_schema" && (name.OrigTblName.L == "columns" || name.OrigTblName.L == "tables") {
-						x.Datum.SetString(strings.ToLower(x.Datum.GetString()), x.Datum.Collation())
-					}
-				}
-			}
-		}
-	default:
-	}
-}
-
 func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.CompareSubqueryExpr) (ast.Node, bool) {
 	intest.AssertNotNil(planCtx)
 	b := planCtx.builder

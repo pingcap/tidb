@@ -3,7 +3,7 @@ package core_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/testkit"
 )
 
 func TestFuck(t *testing.T) {
