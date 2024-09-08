@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -797,6 +798,9 @@ type SessionVars struct {
 
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
+
+	// SQLCPUUsages records tidb/tikv cpu usages for current sql
+	SQLCPUUsages ppcpuusage.SQLCPUUsages
 
 	// PlanID is the unique id of logical and physical plan.
 	PlanID atomic.Int32
@@ -3288,6 +3292,10 @@ const (
 	SlowLogWRU = "Request_unit_write"
 	// SlowLogWaitRUDuration is the total duration for kv requests to wait available request-units.
 	SlowLogWaitRUDuration = "Time_queued_by_rc"
+	// SlowLogTidbCPUUsageDuration is the total tidb cpu usages.
+	SlowLogTidbCPUUsageDuration = "Tidb_cpu_usage"
+	// SlowLogTikvCPUUsageDuration is the total tikv cpu usages.
+	SlowLogTikvCPUUsageDuration = "Tikv_cpu_usage"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -3347,6 +3355,7 @@ type SlowQueryLogItems struct {
 	RRU               float64
 	WRU               float64
 	WaitRUDuration    time.Duration
+	CPUUsages         ppcpuusage.CPUUsages
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -3557,7 +3566,12 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.WaitRUDuration > time.Duration(0) {
 		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(logItems.WaitRUDuration.Seconds(), 'f', -1, 64))
 	}
-
+	if logItems.CPUUsages.TidbCPUTime > time.Duration(0) {
+		writeSlowLogItem(&buf, SlowLogTidbCPUUsageDuration, strconv.FormatFloat(logItems.CPUUsages.TidbCPUTime.Seconds(), 'f', -1, 64))
+	}
+	if logItems.CPUUsages.TikvCPUTime > time.Duration(0) {
+		writeSlowLogItem(&buf, SlowLogTikvCPUUsageDuration, strconv.FormatFloat(logItems.CPUUsages.TikvCPUTime.Seconds(), 'f', -1, 64))
+	}
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}

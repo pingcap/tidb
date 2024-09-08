@@ -28,14 +28,17 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
@@ -125,32 +128,37 @@ func NewReorgCopContext(
 	allIdxInfo []*model.IndexInfo,
 	requestSource string,
 ) (copr.CopContext, error) {
-	sessCtx, err := newSessCtx(store, reorgMeta)
+	warnHandler := contextutil.NewStaticWarnHandler(0)
+	distSQLCtx, err := newReorgDistSQLCtxWithReorgMeta(store.GetClient(), reorgMeta, warnHandler)
 	if err != nil {
 		return nil, err
 	}
+
+	exprCtx, err := newReorgExprCtxWithReorgMeta(reorgMeta, warnHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	evalCtx := exprCtx.GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	pushDownFlags := stmtctx.PushDownFlagsWithTypeFlagsAndErrLevels(tc.Flags(), ec.LevelMap())
+
 	return copr.NewCopContext(
-		sessCtx.GetExprCtx(),
-		sessCtx.GetDistSQLCtx(),
-		sessCtx.GetSessionVars().StmtCtx.PushDownFlags(),
+		exprCtx,
+		distSQLCtx,
+		pushDownFlags,
 		tblInfo,
 		allIdxInfo,
 		requestSource,
 	)
 }
 
-func newSessCtx(store kv.Storage, reorgMeta *model.DDLReorgMeta) (sessionctx.Context, error) {
-	sessCtx := newReorgSessCtx(store)
-	if err := initSessCtx(sessCtx, reorgMeta); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return sessCtx, nil
-}
-
-func newDefaultReorgDistSQLCtx(kvClient kv.Client) *distsqlctx.DistSQLContext {
-	warnHandler := contextutil.NewStaticWarnHandler(0)
+func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnAppender) *distsqlctx.DistSQLContext {
+	intest.AssertNotNil(kvClient)
+	intest.AssertNotNil(warnHandler)
 	var sqlKiller sqlkiller.SQLKiller
 	var execDetails execdetails.SyncExecDetails
+	var cpuUsages ppcpuusage.SQLCPUUsages
 	return &distsqlctx.DistSQLContext{
 		WarnHandler:                          warnHandler,
 		Client:                               kvClient,
@@ -160,6 +168,7 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client) *distsqlctx.DistSQLContext {
 		SessionMemTracker:                    memory.NewTracker(memory.LabelForSession, -1),
 		Location:                             time.UTC,
 		SQLKiller:                            &sqlKiller,
+		CPUUsage:                             &cpuUsages,
 		ErrCtx:                               errctx.NewContextWithLevels(stmtctx.DefaultStmtErrLevels, warnHandler),
 		TiFlashReplicaRead:                   tiflash.GetTiFlashReplicaReadByStr(variable.DefTiFlashReplicaRead),
 		TiFlashMaxThreads:                    variable.DefTiFlashMaxThreads,
@@ -168,8 +177,21 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client) *distsqlctx.DistSQLContext {
 		TiFlashMaxBytesBeforeExternalSort:    variable.DefTiFlashMaxBytesBeforeExternalSort,
 		TiFlashMaxQueryMemoryPerNode:         variable.DefTiFlashMemQuotaQueryPerNode,
 		TiFlashQuerySpillRatio:               variable.DefTiFlashQuerySpillRatio,
+		ResourceGroupName:                    resourcegroup.DefaultResourceGroupName,
 		ExecDetails:                          &execDetails,
 	}
+}
+
+func newReorgDistSQLCtxWithReorgMeta(kvClient kv.Client, reorgMeta *model.DDLReorgMeta, warnHandler contextutil.WarnAppender) (*distsqlctx.DistSQLContext, error) {
+	loc, err := reorgTimeZoneWithTzLoc(reorgMeta.Location)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ctx := newDefaultReorgDistSQLCtx(kvClient, warnHandler)
+	ctx.Location = loc
+	ctx.ErrCtx = errctx.NewContextWithLevels(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode), ctx.WarnHandler)
+	ctx.ResourceGroupName = reorgMeta.ResourceGroupName
+	return ctx, nil
 }
 
 // initSessCtx initializes the session context. Be careful to the timezone.

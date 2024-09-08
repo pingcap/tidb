@@ -295,6 +295,8 @@ const (
 	AvgPdTimeStr                      = "AVG_PD_TIME"
 	AvgBackoffTotalTimeStr            = "AVG_BACKOFF_TOTAL_TIME"
 	AvgWriteSQLRespTimeStr            = "AVG_WRITE_SQL_RESP_TIME"
+	AvgTidbCPUTimeStr                 = "AVG_TIDB_CPU_TIME"
+	AvgTikvCPUTimeStr                 = "AVG_TIKV_CPU_TIME"
 	MaxResultRowsStr                  = "MAX_RESULT_ROWS"
 	MinResultRowsStr                  = "MIN_RESULT_ROWS"
 	AvgResultRowsStr                  = "AVG_RESULT_ROWS"
@@ -573,6 +575,12 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	AvgWriteSQLRespTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return avgInt(int64(ssElement.sumWriteSQLRespTotal), ssElement.commitCount)
+	},
+	AvgTidbCPUTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return avgInt(int64(ssElement.sumTidbCPU), ssElement.execCount)
+	},
+	AvgTikvCPUTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return avgInt(int64(ssElement.sumTikvCPU), ssElement.execCount)
 	},
 	MaxResultRowsStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.maxResultRows

@@ -114,246 +114,41 @@ func TestDDLTable(t *testing.T) {
 	require.False(t, statsTbl.Pseudo)
 }
 
-func TestCreateASystemTable(t *testing.T) {
+func TestSystemTableDDLHasNoEvent(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	// Test create a system table.
 	testKit.MustExec("create table mysql.test (c1 int, c2 int)")
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("test"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
-	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl := h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
-}
-
-func TestTruncateASystemTable(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	// Test truncate a system table.
-	testKit.MustExec("create table mysql.test (c1 int, c2 int)")
+	require.Len(t, h.DDLEventCh(), 0)
 	testKit.MustExec("truncate table mysql.test")
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("test"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	h := do.StatsHandle()
-	// Find the truncate table partition event.
-	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
-	err = h.HandleDDLEvent(truncateTableEvent)
-	require.NoError(t, err)
-	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl := h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
-}
-
-func TestDropASystemTable(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	// Test drop a system table.
-	testKit.MustExec("create table mysql.test (c1 int, c2 int)")
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("test"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	tableID := tableInfo.ID
-	testKit.MustExec("drop table mysql.test")
-	h := do.StatsHandle()
-	// Find the drop table partition event.
-	dropTableEvent := findEvent(h.DDLEventCh(), model.ActionDropTable)
-	err = h.HandleDDLEvent(dropTableEvent)
-	require.NoError(t, err)
-	require.Nil(t, h.Update(context.Background(), is))
-	// No stats for the table.
-	testKit.MustQuery("select count(*) from mysql.stats_meta where table_id = ?", tableID).Check(testkit.Rows("0"))
-}
-
-func TestAddColumnToASystemTable(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	// Test add column to a system table.
-	testKit.MustExec("create table mysql.test (c1 int, c2 int)")
+	require.Len(t, h.DDLEventCh(), 0)
 	testKit.MustExec("alter table mysql.test add column c3 int")
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("test"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	h := do.StatsHandle()
-	// Find the add column event.
-	addColumnEvent := findEvent(h.DDLEventCh(), model.ActionAddColumn)
-	err = h.HandleDDLEvent(addColumnEvent)
-	require.NoError(t, err)
-	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl := h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
-}
-
-func TestModifyColumnOfASystemTable(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	// Test modify column of a system table.
-	// NOTE: Types have to be different, otherwise it won't trigger the modify column event.
-	testKit.MustExec("create table mysql.test (c1 varchar(255), c2 int)")
-	testKit.MustExec("insert into mysql.test values ('1',2)")
+	require.Len(t, h.DDLEventCh(), 0)
 	testKit.MustExec("alter table mysql.test modify column c1 int")
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("test"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	h := do.StatsHandle()
-	// Find the modify column event.
-	modifyColumnEvent := findEvent(h.DDLEventCh(), model.ActionModifyColumn)
-	err = h.HandleDDLEvent(modifyColumnEvent)
-	require.NoError(t, err)
-	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl := h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
-}
+	require.Len(t, h.DDLEventCh(), 0)
+	testKit.MustExec("drop table mysql.test")
+	require.Len(t, h.DDLEventCh(), 0)
 
-func TestAddNewPartitionToASystemTable(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	// Test add new partition to a system table.
-	testKit.MustExec("create table mysql.test (c1 int, c2 int) partition by range (c1) (partition p0 values less than (6))")
-	// Add partition p1.
-	testKit.MustExec("alter table mysql.test add partition (partition p1 values less than (11))")
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("test"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	h := do.StatsHandle()
-	// Find the add partition event.
-	addPartitionEvent := findEvent(h.DDLEventCh(), model.ActionAddTablePartition)
-	err = h.HandleDDLEvent(addPartitionEvent)
-	require.NoError(t, err)
-	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl := h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
-	// Check the partitions' stats.
-	pi := tableInfo.GetPartitionInfo()
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
-	}
-}
+	testKit.MustExec("create table mysql.test2 (c1 int, c2 int) partition by range (c1) (partition p0 values less than (6))")
+	require.Len(t, h.DDLEventCh(), 0)
+	testKit.MustExec("alter table mysql.test2 add partition (partition p1 values less than (11))")
+	require.Len(t, h.DDLEventCh(), 0)
+	testKit.MustExec("alter table mysql.test2 truncate partition p1")
+	require.Len(t, h.DDLEventCh(), 0)
+	testKit.MustExec("alter table mysql.test2 drop partition p1")
+	require.Len(t, h.DDLEventCh(), 0)
+	testKit.MustExec("alter table mysql.test2 remove partitioning")
+	require.Len(t, h.DDLEventCh(), 0)
 
-func TestDropPartitionOfASystemTable(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	h := do.StatsHandle()
-	testKit.MustExec("use test")
-	// Test drop partition of a system table.
-	testKit.MustExec("create table mysql.test (c1 int, c2 int) partition by range (c1) (partition p0 values less than (6), partition p1 values less than (11))")
-	// Drop partition p1.
-	testKit.MustExec("alter table mysql.test drop partition p1")
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("test"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	// Find the drop partition event.
-	dropPartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
-	err = h.HandleDDLEvent(dropPartitionEvent)
-	require.NoError(t, err)
-	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl := h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
-	// Check the partitions' stats.
-	pi := tableInfo.GetPartitionInfo()
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
-	}
-}
-
-func TestExchangePartitionWithASystemTable(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	h := do.StatsHandle()
-	testKit.MustExec("use test")
-	// Test exchange partition with a system table.
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2)) partition by range (c1) (partition p0 values less than (6))")
-	testKit.MustExec("create table mysql.test (c1 int, c2 int, index idx(c1, c2))")
-	// Insert some data to table t.
-	testKit.MustExec("insert into t values (1,2),(2,2)")
-	// Analyze table t.
-	testKit.MustExec("analyze table t")
-	// Insert some data to table mysql.test.
-	testKit.MustExec("insert into mysql.test values (1,2),(2,2)")
+	<-h.DDLEventCh()
+	testKit.MustExec("create table mysql.test3 (c1 int, c2 int, index idx(c1, c2))")
 	// Exchange partition.
-	testKit.MustExec("alter table t exchange partition p0 with table mysql.test")
-	// Find the exchange partition event.
-	exchangePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
-	err := h.HandleDDLEvent(exchangePartitionEvent)
-	require.NoError(t, err)
-	is := do.InfoSchema()
-	require.Nil(t, h.Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("test"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	require.NoError(t, err)
-	statsTbl := h.GetTableStats(tableInfo)
 	// NOTE: This is a rare case and the effort required to address it outweighs the benefits, hence it is not prioritized for a fix.
-	require.False(t, statsTbl.Pseudo, "even we skip the DDL event, but the table ID is still changed, so we can see the stats")
-}
-
-func TestRemovePartitioningOfASystemTable(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	h := do.StatsHandle()
-	testKit.MustExec("use test")
-	// Test remove partitioning of a system table.
-	testKit.MustExec("create table mysql.test (c1 int, c2 int) partition by range (c1) (partition p0 values less than (6))")
-	// Remove partitioning.
-	testKit.MustExec("alter table mysql.test remove partitioning")
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("test"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	// Find the remove partitioning event.
-	removePartitioningEvent := findEvent(h.DDLEventCh(), model.ActionRemovePartitioning)
-	err = h.HandleDDLEvent(removePartitioningEvent)
-	require.NoError(t, err)
-	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl := h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
-}
-
-func TestTruncateAPartitionOfASystemTable(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	h := do.StatsHandle()
-	testKit.MustExec("use test")
-	// Test truncate a partition of a system table.
-	testKit.MustExec("create table mysql.test (c1 int, c2 int) partition by range (c1) (partition p0 values less than (6), partition p1 values less than (11))")
-	// Truncate partition p1.
-	testKit.MustExec("alter table mysql.test truncate partition p1")
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("mysql"), pmodel.NewCIStr("test"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	// Find the truncate partition event.
-	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
-	err = h.HandleDDLEvent(truncatePartitionEvent)
-	require.NoError(t, err)
-	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl := h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
-	// Check the partitions' stats.
-	pi := tableInfo.GetPartitionInfo()
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
-	}
+	testKit.MustExec("alter table t exchange partition p0 with table mysql.test3")
+	require.Len(t, h.DDLEventCh(), 0)
 }
 
 func TestTruncateTable(t *testing.T) {
@@ -1511,6 +1306,9 @@ func findEvent(eventCh <-chan *util.DDLEvent, eventType model.ActionType) *util.
 	// Find the target event.
 	for {
 		event := <-eventCh
+		if event.SchemaChangeEvent.GetType() == eventType {
+			return event
+		}
 		if event.GetType() == eventType {
 			return event
 		}

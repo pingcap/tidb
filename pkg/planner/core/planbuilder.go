@@ -235,7 +235,8 @@ type PlanBuilder struct {
 	//   If it's a aggregation, we pop the map and push a nil map since no handle information left.
 	//   If it's a union, we pop all children's and push a nil map.
 	//   If it's a join, we pop its children's out then merge them and push the new map to stack.
-	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
+	//   If we meet a subquery or CTE, it's clearly that it's an independent problem so we just pop one map out when we
+	//   finish building the subquery or CTE.
 	handleHelper *handleColHelper
 
 	hintProcessor *hint.QBHintHandler
