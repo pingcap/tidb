@@ -176,6 +176,7 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 				tm, err := ctx.CurrentTime()
 				require.Equal(t, ctx.Location().String(), tm.Location().String())
 				require.InDelta(t, tm1.Unix(), tm.Unix(), 2)
+				require.NoError(t, err)
 			},
 		},
 		{
