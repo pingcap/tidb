@@ -642,38 +642,6 @@ r0
 1
 1
 1
-<<<<<<< HEAD
-=======
-set autocommit=ON;
-use test;
-drop table if exists t1;
-create table t1 (cc1 int,cc2 text);
-insert into t1 values (1, 'aaaa'),(2, 'bbbb'),(3, 'cccc');
-drop table if exists t2;
-create table t2 (cc1 int,cc2 text,primary key(cc1));
-insert into t2 values (2, '2');
-set tidb_executor_concurrency = 1;
-set tidb_window_concurrency = 100;
-explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
-id	estRows	task	access object	operator info
-Sort_15	20000.00	root		Column#8, Column#9, Column#10
-└─Union_18	20000.00	root		
-  ├─Projection_20	10000.00	root		test.t2.cc2->Column#8, test.t2.cc2->Column#9, test.t2.cc1->Column#10
-  │ └─TableReader_22	10000.00	root		data:TableFullScan_21
-  │   └─TableFullScan_21	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─Projection_23	10000.00	root		cast(Column#7, text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8, test.t1.cc2->Column#9, test.t1.cc1->Column#10
-    └─Shuffle_28	10000.00	root		execution info: concurrency:100, data sources:[TableReader_26]
-      └─Window_24	10000.00	root		count(1)->Column#7 over(partition by test.t1.cc1)
-        └─Sort_27	10000.00	root		test.t1.cc1
-          └─ShuffleReceiver_30	10000.00	root		
-            └─TableReader_26	10000.00	root		data:TableFullScan_25
-              └─TableFullScan_25	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
-a	b	c
-1	aaaa	1
-1	bbbb	2
-1	cccc	3
-2	2	2
 CREATE TABLE `t61a85298` (
 `col_71` binary(179) DEFAULT NULL,
 `col_72` datetime NOT NULL DEFAULT '1991-12-31 00:00:00',
@@ -713,13 +681,13 @@ JOIN tceb7972c ON tceb7972c.col_19 = t61a85298.col_71
 WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
 OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
 id	estRows	task	access object	operator info
-Projection_11	6.00	root		1->Column#18
-└─HashJoin_13	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
-  ├─TableReader_16(Build)	4.80	root	partition:all	data:Selection_15
-  │ └─Selection_15	4.80	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
-  │   └─TableFullScan_14	6.00	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
-  └─Projection_17(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
-    └─TableReader_19	10000.00	root		data:TableFullScan_18
-      └─TableFullScan_18	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
+Projection_12	10000.00	root		1->Column#19
+└─HashJoin_13	10000.00	root		inner join, equal:[eq(planner__core__issuetest__planner_issue.tceb7972c.col_19, Column#20)]
+  ├─Projection_19(Build)	10000.00	root		cast(planner__core__issuetest__planner_issue.t61a85298.col_71, double BINARY)->Column#20
+  │ └─TableReader_21	10000.00	root		data:TableFullScan_20
+  │   └─TableFullScan_20	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
+  └─UnionScan_15(Probe)	8000.00	root		or(json_memberof(cast(16739493649928310215, json BINARY), planner__core__issuetest__planner_issue.tceb7972c.col_17), not(json_contains(planner__core__issuetest__planner_issue.tceb7972c.col_17, cast("6019730272580550835", json BINARY))))
+    └─TableReader_18	8000.00	root	partition:all	data:Selection_17
+      └─Selection_17	8000.00	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), planner__core__issuetest__planner_issue.tceb7972c.col_17), not(istrue_with_null(json_contains(planner__core__issuetest__planner_issue.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
+        └─TableFullScan_16	10000.00	cop[tikv]	table:tceb7972c	keep order:false, stats:pseudo
 set @@tidb_enable_global_index=0;
->>>>>>> dd1808364a0 (planner: fix incorrect estRows with global index and json column (#55842))
