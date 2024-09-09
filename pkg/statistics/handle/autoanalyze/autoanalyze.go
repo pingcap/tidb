@@ -328,7 +328,6 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 		}
 	}()
 	if variable.EnableAutoAnalyzePriorityQueue.Load() {
-		sa.statsHandle.SyncStats(context.Background(), sa.InfoSchema())
 		err := sa.refresher.RebuildTableAnalysisJobQueue()
 		if err != nil {
 			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
