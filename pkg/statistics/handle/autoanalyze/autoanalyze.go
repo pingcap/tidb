@@ -287,7 +287,11 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 	}
 	defer sa.statsHandle.SPool().Put(se)
 	sctx := se.(sessionctx.Context)
-	sa.statsHandle.SyncStats(context.Background(), sctx.GetInfoSchema().(infoschema.InfoSchema))
+	if err := sa.statsHandle.SyncStats(context.Background(), sctx.GetInfoSchema().(infoschema.InfoSchema)); err != nil {
+		statslogutil.StatsLogger().Error("Failed to handle auto analyze", zap.Error(err))
+		return
+	}
+
 	if err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		analyzed = sa.handleAutoAnalyze(sctx)
 		// During the test, we need to wait for the auto analyze job to be finished.
