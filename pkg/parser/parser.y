@@ -719,6 +719,8 @@ import (
 	endTime               "END_TIME"
 	exact                 "EXACT"
 	execElapsed           "EXEC_ELAPSED"
+	processedKeys         "PROCESSED_KEYS"
+	requestUnit           "REQUEST_UNIT"
 	exprPushdownBlacklist "EXPR_PUSHDOWN_BLACKLIST"
 	extract               "EXTRACT"
 	flashback             "FLASHBACK"
@@ -1837,10 +1839,22 @@ DirectResourceGroupRunawayOption:
 			return 1
 		}
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp: model.RunawayRule,
-			RuleOption: &ast.ResourceGroupRunawayRuleOption{
-				ExecElapsed: $3,
-			},
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleExecElapsed, ExecElapsed: $3},
+		}
+	}
+|	"PROCESSED_KEYS" EqOpt intLit
+	{
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleProcessedKeys, ProcessedKeys: $3.(int64)},
+		}
+	}
+|	"REQUEST_UNIT" EqOpt intLit
+	{
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleRequestUnit, RequestUnit: $3.(int64)},
 		}
 	}
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
@@ -7215,6 +7229,8 @@ NotKeywordToken:
 |	"RESTORED_TS"
 |	"FULL_BACKUP_STORAGE"
 |	"EXEC_ELAPSED"
+|	"PROCESSED_KEYS"
+|	"REQUEST_UNIT"
 |	"DRYRUN"
 |	"COOLDOWN"
 |	"SWITCH_GROUP"

@@ -221,6 +221,13 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 		if len(opt.RunawayOptionList) == 0 {
 			resourceGroupSettings.Runaway = nil
 		}
+		if resourceGroupSettings.Runaway == nil {
+			resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
+		} else { // reset the runaway rule settings
+			resourceGroupSettings.Runaway.ExecElapsedTimeMs = 0
+			resourceGroupSettings.Runaway.ProcessedKeys = 0
+			resourceGroupSettings.Runaway.RequestUnit = 0
+		}
 		for _, opt := range opt.RunawayOptionList {
 			if err := SetDirectResourceGroupRunawayOption(resourceGroupSettings, opt); err != nil {
 				return err
@@ -258,18 +265,23 @@ func SetDirectResourceGroupRUSecondOption(resourceGroupSettings *model.ResourceG
 
 // SetDirectResourceGroupRunawayOption tries to set runaway part of the ResourceGroupSettings.
 func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupRunawayOption) error {
-	if resourceGroupSettings.Runaway == nil {
-		resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
-	}
 	settings := resourceGroupSettings.Runaway
 	switch opt.Tp {
 	case pmodel.RunawayRule:
 		// because execute time won't be too long, we use `time` pkg which does not support to parse unit 'd'.
-		dur, err := time.ParseDuration(opt.RuleOption.ExecElapsed)
-		if err != nil {
-			return err
+		if opt.RuleOption.ExecElapsed != "" {
+			dur, err := time.ParseDuration(opt.RuleOption.ExecElapsed)
+			if err != nil {
+				return err
+			}
+			settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
 		}
-		settings.ExecElapsedTimeMs = uint64(dur.Milliseconds())
+		if opt.RuleOption.ProcessedKeys != 0 {
+			settings.ProcessedKeys = opt.RuleOption.ProcessedKeys
+		}
+		if opt.RuleOption.RequestUnit != 0 {
+			settings.RequestUnit = opt.RuleOption.RequestUnit
+		}
 	case pmodel.RunawayAction:
 		settings.Action = opt.ActionOption.Type
 		settings.SwitchGroupName = opt.ActionOption.SwitchGroupName.String()

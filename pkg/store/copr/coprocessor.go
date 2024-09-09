@@ -102,6 +102,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, op
 		return errRes
 	}
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
+	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	if sessionMemTracker != nil && enabledRateLimitAction {
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
@@ -1235,8 +1236,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 
 	if worker.req.RunawayChecker != nil {
-		if err := worker.req.RunawayChecker.BeforeCopRequest(req); err != nil {
-			return nil, err
+		if runawayErr := worker.req.RunawayChecker.BeforeCopRequest(req); runawayErr != nil {
+			return nil, runawayErr
 		}
 	}
 	req.StoreTp = getEndPointType(task.storeType)
@@ -1266,14 +1267,16 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
 	if worker.req.RunawayChecker != nil {
-		err = worker.req.RunawayChecker.CheckCopRespError(err)
+		err = worker.req.RunawayChecker.CheckThresholds(nil, 0, err)
 	}
 	if err != nil {
 		if task.storeType == kv.TiDB {
 			err = worker.handleTiDBSendReqErr(err, task, ch)
 			return nil, err
 		}
-		worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx)
+		if runawayErr := worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx); runawayErr != nil {
+			return nil, runawayErr
+		}
 		return nil, errors.Trace(err)
 	}
 
@@ -1467,7 +1470,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	} else if task.ranges != nil && task.ranges.Len() > 0 {
 		resp.startKey = task.ranges.At(0).StartKey
 	}
-	worker.handleCollectExecutionInfo(bo, rpcCtx, resp)
+	if err := worker.handleCollectExecutionInfo(bo, rpcCtx, resp); err != nil {
+		return nil, err
+	}
 	resp.respTime = costTime
 
 	if err := worker.handleCopCache(task, resp, cacheKey, cacheValue); err != nil {
@@ -1594,7 +1599,9 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			}
 			return nil, errors.Trace(err)
 		}
-		worker.handleCollectExecutionInfo(bo, dummyRPCCtx, resp)
+		if err := worker.handleCollectExecutionInfo(bo, dummyRPCCtx, resp); err != nil {
+			return nil, err
+		}
 		worker.sendToRespCh(resp, ch, true)
 	}
 	for _, t := range tasks {
@@ -1768,12 +1775,12 @@ func (worker *copIteratorWorker) getLockResolverDetails() *util.ResolveLockDetai
 	return &util.ResolveLockDetail{}
 }
 
-func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) {
+func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) error {
 	defer func() {
 		worker.kvclient.Stats = nil
 	}()
 	if !worker.enableCollectExecutionInfo {
-		return
+		return nil
 	}
 	failpoint.Inject("disable-collect-execution", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1783,10 +1790,10 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 	if resp.detail == nil {
 		resp.detail = new(CopRuntimeStats)
 	}
-	worker.collectCopRuntimeStats(resp.detail, bo, rpcCtx, resp)
+	return worker.collectCopRuntimeStats(resp.detail, bo, rpcCtx, resp)
 }
 
-func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) {
+func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) error {
 	copStats.ReqStats = worker.kvclient.Stats
 	backoffTimes := bo.GetBackoffTimes()
 	copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
@@ -1800,7 +1807,7 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 		copStats.CalleeAddress = rpcCtx.Addr
 	}
 	if resp == nil {
-		return
+		return nil
 	}
 	sd := &util.ScanDetail{}
 	td := util.TimeDetail{}
@@ -1825,18 +1832,32 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 	}
 	copStats.ScanDetail = sd
 	copStats.TimeDetail = td
+
+	if worker.req.RunawayChecker != nil {
+		var ruDetail *util.RUDetails
+		if ruDetailRaw := bo.GetCtx().Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+			ruDetail = ruDetailRaw.(*util.RUDetails)
+		}
+		if err := worker.req.RunawayChecker.CheckThresholds(ruDetail, sd.ProcessedKeys, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer, rpcCtx *tikv.RPCContext) {
+func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer, rpcCtx *tikv.RPCContext) error {
 	if worker.kvclient.Stats == nil {
-		return
+		return nil
 	}
 	copStats := &CopRuntimeStats{}
-	worker.collectCopRuntimeStats(copStats, bo, rpcCtx, nil)
+	if err := worker.collectCopRuntimeStats(copStats, bo, rpcCtx, nil); err != nil {
+		return err
+	}
 	worker.unconsumedStats.Lock()
 	worker.unconsumedStats.stats = append(worker.unconsumedStats.stats, copStats)
 	worker.unconsumedStats.Unlock()
 	worker.kvclient.Stats = nil
+	return nil
 }
 
 // CopRuntimeStats contains execution detail information.

@@ -55,6 +55,7 @@ type Record struct {
 	Time              time.Time
 	Match             string
 	Action            string
+	ExceedCause       string
 	SQLText           string
 	PlanDigest        string
 	Source            string
@@ -69,7 +70,7 @@ func genRunawayQueriesStmt(records []*Record) (string, []any) {
 		if count > 0 {
 			builder.WriteByte(',')
 		}
-		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?)")
+		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?, %?)")
 		params = append(params, r.ResourceGroupName)
 		params = append(params, r.Time)
 		params = append(params, r.Match)
@@ -77,6 +78,7 @@ func genRunawayQueriesStmt(records []*Record) (string, []any) {
 		params = append(params, r.SQLText)
 		params = append(params, r.PlanDigest)
 		params = append(params, r.Source)
+		params = append(params, r.ExceedCause)
 	}
 	return builder.String(), params
 }
@@ -86,11 +88,12 @@ type QuarantineRecord struct {
 	ID                int64
 	ResourceGroupName string
 	// startTime and endTime are in UTC.
-	StartTime time.Time
-	EndTime   time.Time
-	Watch     rmpb.RunawayWatchType
-	WatchText string
-	Source    string
+	StartTime   time.Time
+	EndTime     time.Time
+	Watch       rmpb.RunawayWatchType
+	WatchText   string
+	Source      string
+	ExceedCause string
 	// Action-related fields.
 	Action          rmpb.RunawayAction
 	SwitchGroupName string
@@ -106,6 +109,11 @@ func (r *QuarantineRecord) getSwitchGroupName() string {
 		return r.SwitchGroupName
 	}
 	return ""
+}
+
+// GetExceedCause returns the exceed cause.
+func (r *QuarantineRecord) GetExceedCause() string {
+	return r.ExceedCause
 }
 
 // GetActionString returns the action string.
@@ -130,7 +138,7 @@ func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 6)
 	writeInsert(&builder, watchTableName)
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?)")
+	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
 	if r.EndTime.Equal(NullTime) {
@@ -143,6 +151,7 @@ func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 	params = append(params, r.Source)
 	params = append(params, r.Action)
 	params = append(params, r.getSwitchGroupName())
+	params = append(params, r.ExceedCause)
 	return builder.String(), params
 }
 
@@ -151,7 +160,7 @@ func (r *QuarantineRecord) genInsertionDoneStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 9)
 	writeInsert(&builder, watchDoneTableName)
-	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
+	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ID)
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
@@ -165,6 +174,7 @@ func (r *QuarantineRecord) genInsertionDoneStmt() (string, []any) {
 	params = append(params, r.Source)
 	params = append(params, r.Action)
 	params = append(params, r.getSwitchGroupName())
+	params = append(params, r.ExceedCause)
 	params = append(params, time.Now().UTC())
 	return builder.String(), params
 }
