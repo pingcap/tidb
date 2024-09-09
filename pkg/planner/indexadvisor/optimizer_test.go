@@ -192,7 +192,7 @@ func TestOptimizerEstIndexSize(t *testing.T) {
 
 	tk.MustExec(`insert into t values (1, space(32))`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.TriggerSyncStats(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.SyncStats(context.Background(), dom.InfoSchema()))
 	s, err = opt.EstIndexSize("test", "t", "a")
 	require.NoError(t, err)
 	require.Equal(t, float64(1), s)
@@ -207,7 +207,7 @@ func TestOptimizerEstIndexSize(t *testing.T) {
 
 	tk.MustExec(`insert into t values (1, space(64))`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.TriggerSyncStats(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.SyncStats(context.Background(), dom.InfoSchema()))
 	s, err = opt.EstIndexSize("test", "t", "a")
 	require.NoError(t, err)
 	require.Equal(t, float64(2), s) // 2 rows
