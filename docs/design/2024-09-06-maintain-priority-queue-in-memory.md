@@ -179,6 +179,7 @@ type Heap[T any, K comparable] interface {
 
     // Remove element
     Delete(obj T) error
+    DeleteByKey(key K) error
 
     // View/Pop top element
     Peek() (T, error)
