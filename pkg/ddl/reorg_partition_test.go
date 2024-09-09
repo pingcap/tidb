@@ -18,9 +18,14 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/testkit/external"
+	"strconv"
 	"testing"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -152,6 +157,264 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 		require.NoError(t, err)
 	}
 	return all
+}
+
+func TestReorgPartitionFailures(t *testing.T) {
+	create := `create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition p2 values less than (30),` +
+		` partition pMax values less than (MAXVALUE))`
+	alter := "alter table t reorganize partition p1,p2 into (partition p1 values less than (17), partition p1b values less than (24), partition p2 values less than (30))"
+	beforeDML := []string{
+		`insert into t values (1,"1",1),(2,"2",2),(12,"12",21),(13,"13",13),(17,"17",17),(18,"18",18),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`,
+		`update t set a = 11, b = "11", c = 11 where a = 17`,
+		`update t set b = "21", c = 12 where c = 12`,
+		`delete from t where a = 13`,
+		`delete from t where b = "56"`,
+	}
+	beforeResult := testkit.Rows(
+		"1 1 1", "11 11 11", "12 12 21", "18 18 18", "2 2 2", "23 23 32", "34 34 43", "45 45 54",
+	)
+	afterDML := []string{
+		`insert into t values (5,"5",5),(13,"13",13)`,
+		`update t set a = 17, b = "17", c = 17 where a = 11`,
+		`update t set b = "12", c = 21 where c = 12`,
+		`delete from t where a = 34`,
+		`delete from t where b = "56"`,
+	}
+	afterResult := testkit.Rows(
+		"1 1 1", "12 12 21", "13 13 13", "17 17 17", "18 18 18", "2 2 2", "23 23 32", "45 45 54", "5 5 5",
+	)
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+}
+
+func TestRemovePartitionFailures(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
+                        partition p0 values less than (100),
+                        partition p1 values less than (200))`
+	alter := `alter table t remove partitioning`
+	beforeDML := []string{
+		`insert into t values (1,1,1),(2,2,2),(3,3,3),(101,101,101),(102,102,102),(103,103,103)`,
+		`update t set a = 11, b = "11", c = 11 where a = 1`,
+		`update t set b = "12", c = 12 where b = 2`,
+		`delete from t where a = 102`,
+		`delete from t where b = 103`,
+	}
+	beforeResult := testkit.Rows("101 101 101", "11 11 11", "2 12 12", "3 3 3")
+	afterDML := []string{
+		`insert into t values (4,4,4),(5,5,5),(104,104,104)`,
+		`update t set a = 1, b = 1, c = 1 where a = 11`,
+		`update t set b = 2, c = 2 where c = 12`,
+		`update t set a = 9, b = 9 where a = 104`,
+		`delete from t where a = 5`,
+		`delete from t where b = 102`,
+	}
+	afterResult := testkit.Rows("1 1 1", "101 101 101", "2 2 2", "3 3 3", "4 4 4", "9 9 104")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+}
+
+func TestPartitionByFailures(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
+                        partition p0 values less than (100),
+                        partition p1 values less than (200))`
+	alter := "alter table t partition by range (b) (partition pNoneC values less than (150), partition p2 values less than (300)) update indexes (`primary` global)"
+	beforeDML := []string{
+		`insert into t values (1,1,1),(2,2,2),(3,3,3),(101,101,101),(102,102,102),(103,103,103)`,
+		`update t set a = 11, b = "11", c = 11 where a = 1`,
+		`update t set b = "12", c = 12 where b = 2`,
+		`delete from t where a = 102`,
+		`delete from t where b = 103`,
+	}
+	beforeResult := testkit.Rows("101 101 101", "11 11 11", "2 12 12", "3 3 3")
+	afterDML := []string{
+		`insert into t values (4,4,4),(5,5,5),(104,104,104)`,
+		`update t set a = 1, b = 1, c = 1 where a = 11`,
+		`update t set b = 2, c = 2 where c = 12`,
+		`update t set a = 9, b = 9 where a = 104`,
+		`delete from t where a = 5`,
+		`delete from t where b = 102`,
+	}
+	afterResult := testkit.Rows("1 1 1", "101 101 101", "2 2 2", "3 3 3", "4 4 4", "9 9 104")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+}
+
+func TestReorganizePartitionListFailures(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered global, b int not null, c varchar(255), unique index (c) global) partition by list(b) (
+                        partition p0 values in (1,2,3),
+                        partition p1 values in (4,5,6),
+                        partition p2 values in (7,8,9))`
+	alter := `alter table t reorganize partition p0,p2 into (partition pNone1 values in (1,9), partition pNone2 values in (2,8), partition pNone3 values in (3,7))`
+	beforeDML := []string{
+		`insert into t values (1,1,1),(2,2,2),(4,4,4),(8,8,8),(9,9,9),(6,6,6)`,
+		`update t set a = 7, b = 7, c = 7 where a = 1`,
+		`update t set b = 3, c = 3 where c = 4`,
+		`delete from t where a = 8`,
+		`delete from t where b = 2`,
+	}
+	beforeResult := testkit.Rows("4 3 3", "6 6 6", "7 7 7", "9 9 9")
+	afterDML := []string{
+		`insert into t values (1,1,1),(5,5,5),(8,8,8)`,
+		`update t set a = 2, b = 2, c = 2 where a = 1`,
+		`update t set a = 1, b = 1, c = 1 where c = 6`,
+		`update t set a = 6, b = 6 where a = 9`,
+		`delete from t where a = 5`,
+		`delete from t where b = 3`,
+	}
+	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+}
+
+func TestPartitionByListFailures(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered global, b int not null, c varchar(255), unique index (b), unique index (c) global) partition by list(b) (
+                        partition p0 values in (1,2,3,4,5,6),
+                        partition p1 values in (11,10,9,8,7))`
+	alter := `alter table t partition by list columns (c) (partition pNone1 values in (1,11,3,5,7,9), partition pNone2 values in (2,4,8,10,6)) update indexes (b global, c local)`
+	beforeDML := []string{
+		`insert into t values (1,1,1),(2,2,2),(4,4,4),(8,8,8),(9,9,9),(6,6,6)`,
+		`update t set a = 7, b = 7, c = 7 where a = 1`,
+		`update t set b = 3, c = 3 where c = "4"`,
+		`delete from t where a = 8`,
+		`delete from t where b = 2`,
+	}
+	beforeResult := testkit.Rows("4 3 3", "6 6 6", "7 7 7", "9 9 9")
+	afterDML := []string{
+		`insert into t values (1,1,1),(5,5,5),(8,8,8)`,
+		`update t set a = 2, b = 2, c = 2 where a = 1`,
+		`update t set a = 1, b = 1, c = 1 where c = "6"`,
+		`update t set a = 6, b = 6 where a = 9`,
+		`delete from t where a = 5`,
+		`delete from t where b = 3`,
+	}
+	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+}
+
+func TestAddHashPartitionFailures(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered global, b int not null, c varchar(255), unique index (c) global) partition by hash(b) partitions 3`
+	alter := `alter table t add partition partitions 2`
+	beforeDML := []string{
+		`insert into t values (1,1,1),(2,2,2),(4,4,4),(8,8,8),(9,9,9),(6,6,6)`,
+		`update t set a = 7, b = 7, c = 7 where a = 1`,
+		`update t set b = 3, c = 3 where c = "4"`,
+		`delete from t where a = 8`,
+		`delete from t where b = 2`,
+	}
+	beforeResult := testkit.Rows("4 3 3", "6 6 6", "7 7 7", "9 9 9")
+	afterDML := []string{
+		`insert into t values (1,1,1),(5,5,5),(8,8,8)`,
+		`update t set a = 2, b = 2, c = 2 where a = 1`,
+		`update t set a = 1, b = 1, c = 1 where c = "6"`,
+		`update t set a = 6, b = 6 where a = 9`,
+		`delete from t where a = 5`,
+		`delete from t where b = 3`,
+	}
+	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+}
+
+func TestCoalesceKeyPartitionFailures(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered global, b int not null, c varchar(255), unique index (b) global, unique index (c)) partition by key(c) partitions 5`
+	alter := `alter table t coalesce partition 2`
+	beforeDML := []string{
+		`insert into t values (1,1,1),(2,2,2),(4,4,4),(8,8,8),(9,9,9),(6,6,6)`,
+		`update t set a = 7, b = 7, c = 7 where a = 1`,
+		`update t set b = 3, c = 3 where c = "4"`,
+		`delete from t where a = 8`,
+		`delete from t where b = 2`,
+	}
+	beforeResult := testkit.Rows("4 3 3", "6 6 6", "7 7 7", "9 9 9")
+	afterDML := []string{
+		`insert into t values (1,1,1),(5,5,5),(8,8,8)`,
+		`update t set a = 2, b = 2, c = 2 where a = 1`,
+		`update t set a = 1, b = 1, c = 1 where c = "6"`,
+		`update t set a = 6, b = 6 where a = 9`,
+		`delete from t where a = 5`,
+		`delete from t where b = 3`,
+	}
+	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+}
+
+func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterResult [][]any, skipTests ...string) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+	// Fail means we simply inject an error, and set the error count very high to see what happens
+	//   we do expect to do best effort rollback here as well!
+	// Cancel means we set job.State = JobStateCancelled, as in no need to do more
+	// Rollback means we do full rollback before returning error.
+	tests := []struct {
+		name  string
+		count int
+	}{
+		{
+			"Cancel",
+			1,
+		},
+		{
+			"Fail",
+			5,
+		},
+		{
+			"Rollback",
+			4,
+		},
+	}
+	oldWaitTimeWhenErrorOccurred := ddl.WaitTimeWhenErrorOccurred
+	defer func() {
+		ddl.WaitTimeWhenErrorOccurred = oldWaitTimeWhenErrorOccurred
+	}()
+	ddl.WaitTimeWhenErrorOccurred = 0
+	for _, test := range tests {
+	SUBTEST:
+		for i := 1; i <= test.count; i++ {
+			suffix := test.name + strconv.Itoa(i)
+			for _, skip := range skipTests {
+				if suffix == skip {
+					continue SUBTEST
+				}
+			}
+			tk.MustExec(createSQL)
+			for _, sql := range beforeDML {
+				tk.MustExec(sql + ` /* ` + suffix + ` */`)
+			}
+			tk.MustQuery(`select * from t /* ` + suffix + ` */`).Sort().Check(beforeResult)
+			tOrg := external.GetTableByName(t, tk, "test", "t")
+			idxID := tOrg.Meta().Indices[0].ID
+			oldCreate := tk.MustQuery(`show create table t`).Rows()
+			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
+			require.NoError(t, failpoint.Enable(name, `return(true)`))
+			err := tk.ExecToErr(alterSQL)
+			require.Error(t, err, "failpoint reorgPart"+suffix)
+			require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
+			require.NoError(t, failpoint.Disable(name))
+			tk.MustQuery(`show create table t /* ` + suffix + ` */`).Check(oldCreate)
+			tt := external.GetTableByName(t, tk, "test", "t")
+			partition := tt.Meta().Partition
+			require.Equal(t, len(tOrg.Meta().Partition.Definitions), len(partition.Definitions), suffix)
+			require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
+			require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
+			require.Equal(t, len(tOrg.Meta().Indices), len(tt.Meta().Indices), suffix)
+			require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
+			noNewTablesAfter(t, tk, tk.Session(), tOrg, suffix)
+			tk.MustExec(`admin check table t /* ` + suffix + ` */`)
+			for _, sql := range afterDML {
+				tk.MustExec(sql + " /* " + suffix + " */")
+			}
+			tk.MustQuery(`select * from t /* ` + suffix + ` */`).Sort().Check(afterResult)
+			tk.MustExec(`drop table t /* ` + suffix + ` */`)
+			// TODO: Check TiFlash replicas
+			// TODO: Check Label rules
+			// TODO: Check bundles
+			// TODO: Check autoIDs
+		}
+	}
 }
 
 func TestReorgPartitionConcurrent(t *testing.T) {
@@ -520,4 +783,54 @@ func TestReorgPartitionFailInject(t *testing.T) {
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
 		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+}
+
+func TestReorgPartitionRollback(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	schemaName := "ReorgPartRollback"
+	tk.MustExec("create database " + schemaName)
+	tk.MustExec("use " + schemaName)
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
+	// TODO: Check that there are no additional placement rules,
+	// bundles, or ranges with non-completed tableIDs
+	// (partitions used during reorg, but was dropped)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", `return(true)`))
+	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
+	tk.MustExec(`admin check table t`)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr"))
+	ctx := tk.Session()
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	noNewTablesAfter(t, tk, ctx, tbl, "Reorganize rollback")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/reorgPartitionAfterDataCopy", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/reorgPartitionAfterDataCopy")
+		require.NoError(t, err)
+	}()
+	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1` VALUES LESS THAN (20),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	noNewTablesAfter(t, tk, ctx, tbl, "Reorganize rollback")
 }

@@ -3962,10 +3962,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 					return errors.Trace(err)
 				}
 			}
-			if pid == 0 {
-				// All partitions will be dropped, nothing more to add to global indexes.
-				reorgInfo.PhysicalTableID = 0
-			}
+			// if pid == 0 => All partitions will be dropped, nothing more to add to global indexes.
 			reorgInfo.PhysicalTableID = pid
 		}
 		if reorgInfo.PhysicalTableID != 0 {
