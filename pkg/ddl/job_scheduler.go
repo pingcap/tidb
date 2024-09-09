@@ -719,8 +719,6 @@ func job2SchemaIDs(job *model.Job) string {
 	case model.ActionExchangeTablePartition, model.ActionRenameTable:
 		ids := job.CtxVars[0].([]int64)
 		return makeStringForIDs(ids)
-	case model.ActionTruncateTable:
-		return strconv.FormatInt(job.SchemaID, 10)
 	default:
 		return strconv.FormatInt(job.SchemaID, 10)
 	}

@@ -4276,7 +4276,7 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Ident, isAlterTable bool) error {
 	is := e.infoCache.GetLatest()
 	oldTableNames := make([]*pmodel.CIStr, 0, len(oldIdents))
-	tableNames := make([]*pmodel.CIStr, 0, len(oldIdents))
+	newTableNames := make([]*pmodel.CIStr, 0, len(oldIdents))
 	oldSchemaIDs := make([]int64, 0, len(oldIdents))
 	newSchemaIDs := make([]int64, 0, len(oldIdents))
 	tableIDs := make([]int64, 0, len(oldIdents))
@@ -4302,7 +4302,7 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 
 		tableIDs = append(tableIDs, tableID)
 		oldTableNames = append(oldTableNames, &oldIdents[i].Name)
-		tableNames = append(tableNames, &newIdents[i].Name)
+		newTableNames = append(newTableNames, &newIdents[i].Name)
 		oldSchemaIDs = append(oldSchemaIDs, schemas[0].ID)
 		newSchemaIDs = append(newSchemaIDs, schemas[1].ID)
 		oldSchemaNames = append(oldSchemaNames, &schemas[0].Name)
@@ -4331,11 +4331,15 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 	job.FillArgs(&model.RenameTablesArgs{
 		OldSchemaIDs:   oldSchemaIDs,
 		NewSchemaIDs:   newSchemaIDs,
-		NewTableNames:  tableNames,
+		NewTableNames:  newTableNames,
 		TableIDs:       tableIDs,
 		OldSchemaNames: oldSchemaNames,
 		OldTableNames:  oldTableNames,
 	})
+
+	if job.Version == model.JobVersion1 {
+		job.CtxVars = []any{append(oldSchemaIDs, newSchemaIDs...), tableIDs}
+	}
 
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)

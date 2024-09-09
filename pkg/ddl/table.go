@@ -797,7 +797,7 @@ func onRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ver, err := checkAndRenameTables(t, job, tblInfo, oldSchemaID, args.NewSchemaIDs[i], args.OldSchemaNames[i], args.TableNames[i])
+		ver, err := checkAndRenameTables(t, job, tblInfo, oldSchemaID, args.NewSchemaIDs[i], args.OldSchemaNames[i], args.NewTableNames[i])
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
