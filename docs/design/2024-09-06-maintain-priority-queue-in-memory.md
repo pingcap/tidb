@@ -170,7 +170,9 @@ type AnalysisJob interface {
 #### Basic API
 
 ```go
-type Heap[T any, K comparable] interface {
+// K is the key type of the object. It has to be comparable.
+// T is the type of the object.
+type Heap[K comparable, T any] interface {
     // Add/Update elements
     Add(obj T) error
     BulkAdd(list []T) error
@@ -197,10 +199,10 @@ type Heap[T any, K comparable] interface {
 }
 
 // Constructor
-func NewHeap[T any, K comparable](keyFunc KeyFunc[T, K], lessFunc LessFunc[T]) *Heap[T, K]
+func NewHeap[K comparable, T any](keyFunc KeyFunc[K, T], lessFunc LessFunc[T]) *Heap[K, T]
 
 // Helper function type definitions
-type KeyFunc[T any, K comparable] func(T) (K, error)
+type KeyFunc[K comparable, T any] func(T) (K, error)
 type LessFunc[T any] func(T, T) bool
 ```
 
