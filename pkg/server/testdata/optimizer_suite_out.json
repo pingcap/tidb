@@ -197,7 +197,7 @@
                                 ]
                               },
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).generateIndexMergePath": null
+                                "github.com/pingcap/tidb/pkg/planner/core.generateIndexMergePath": null
                               },
                               {
                                 "Access paths": [
@@ -403,7 +403,7 @@
                             }
                           },
                           {
-                            "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).generateIndexMergePath": null
+                            "github.com/pingcap/tidb/pkg/planner/core.generateIndexMergePath": null
                           },
                           {
                             "Access paths": [
@@ -625,7 +625,7 @@
                                 ]
                               },
                               {
-                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).generateIndexMergePath": null
+                                "github.com/pingcap/tidb/pkg/planner/core.generateIndexMergePath": null
                               },
                               {
                                 "Access paths": [

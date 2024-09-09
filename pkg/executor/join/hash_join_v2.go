@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -53,7 +53,7 @@ func IsHashJoinV2Enabled() bool {
 	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
 	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
 	// change this
-	return enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
+	return !heapObjectsCanMove() && enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
 }
 
 // SetEnableHashJoinV2 enable/disable hash join v2
@@ -66,16 +66,26 @@ type hashTableContext struct {
 	// its own rowTable
 	rowTables     [][]*rowTable
 	hashTable     *hashTableV2
+	tagHelper     *tagPtrHelper
 	memoryTracker *memory.Tracker
 }
 
 func (htc *hashTableContext) reset() {
 	htc.rowTables = nil
 	htc.hashTable = nil
+	htc.tagHelper = nil
 	htc.memoryTracker.Detach()
 }
 
-func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *TableMeta, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
+func (htc *hashTableContext) build(task *buildTask) {
+	htc.hashTable.tables[task.partitionIdx].build(task.segStartIdx, task.segEndIdx, htc.tagHelper)
+}
+
+func (htc *hashTableContext) lookup(partitionIndex int, hashValue uint64) taggedPtr {
+	return htc.hashTable.tables[partitionIndex].lookup(hashValue, htc.tagHelper)
+}
+
+func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *joinTableMeta, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
 	if htc.rowTables[workerID][partitionID] == nil {
 		htc.rowTables[workerID][partitionID] = newRowTable(tableMeta)
 	}
@@ -100,11 +110,12 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false, 0)
 	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
+	seg.initTaggedBits()
 	seg.finalized = true
 	htc.memoryTracker.Consume(seg.totalUsedBytes())
 }
 
-func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber uint) int {
+func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *joinTableMeta, partitionNumber uint) int {
 	rowTables := make([]*rowTable, partitionNumber)
 	for i := 0; i < int(partitionNumber); i++ {
 		rowTables[i] = newRowTable(tableMeta)
@@ -119,9 +130,15 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 			totalSegmentCnt += len(rt.segments)
 		}
 	}
+	taggedBits := uint8(maxTaggedBits)
 	for i := 0; i < int(partitionNumber); i++ {
+		for _, seg := range rowTables[i].segments {
+			taggedBits = min(taggedBits, seg.taggedBits)
+		}
 		htc.hashTable.tables[i] = newSubTable(rowTables[i])
 	}
+	htc.tagHelper = &tagPtrHelper{}
+	htc.tagHelper.init(taggedBits)
 	htc.rowTables = nil
 	return totalSegmentCnt
 }
@@ -140,7 +157,7 @@ type HashJoinCtxV2 struct {
 	ProbeFilter                    expression.CNFExprs
 	OtherCondition                 expression.CNFExprs
 	hashTableContext               *hashTableContext
-	hashTableMeta                  *TableMeta
+	hashTableMeta                  *joinTableMeta
 	needScanRowTableAfterProbeDone bool
 
 	LUsed, RUsed                                 []int
@@ -339,10 +356,10 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 }
 
 func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
-	if fetcher.JoinType == plannercore.LeftOuterJoin && fetcher.RightAsBuildSide {
+	if fetcher.JoinType == logicalop.LeftOuterJoin && fetcher.RightAsBuildSide {
 		return true
 	}
-	if fetcher.JoinType == plannercore.RightOuterJoin && !fetcher.RightAsBuildSide {
+	if fetcher.JoinType == logicalop.RightOuterJoin && !fetcher.RightAsBuildSide {
 		return true
 	}
 	return false
@@ -378,13 +395,13 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 
 func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
 	switch e.JoinType {
-	case plannercore.InnerJoin:
+	case logicalop.InnerJoin:
 		return true
-	case plannercore.LeftOuterJoin:
+	case logicalop.LeftOuterJoin:
 		return !e.RightAsBuildSide
-	case plannercore.RightOuterJoin:
+	case logicalop.RightOuterJoin:
 		return e.RightAsBuildSide
-	case plannercore.SemiJoin:
+	case logicalop.SemiJoin:
 		return e.RightAsBuildSide
 	default:
 		return false
@@ -401,6 +418,7 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 
 	for i := uint(0); i < e.Concurrency; i++ {
 		e.ProbeWorkers[i].initializeForProbe(e.ProbeSideTupleFetcher.probeChkResourceCh, e.ProbeSideTupleFetcher.probeResultChs[i], e)
+		e.ProbeWorkers[i].JoinProbe.ResetProbeCollision()
 	}
 }
 
@@ -443,6 +461,11 @@ func (e *HashJoinV2Exec) handleJoinWorkerPanic(r any) {
 
 func (e *HashJoinV2Exec) waitJoinWorkersAndCloseResultChan() {
 	e.workerWg.Wait()
+	if e.stats != nil {
+		for _, prober := range e.ProbeWorkers {
+			e.stats.hashStat.probeCollision += int64(prober.JoinProbe.GetProbeCollision())
+		}
+	}
 	if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
 		for i := uint(0); i < e.Concurrency; i++ {
 			var workerID = i
@@ -827,8 +850,7 @@ func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
 	}()
 	for task := range taskCh {
 		start := time.Now()
-		partIdx, segStartIdx, segEndIdx := task.partitionIdx, task.segStartIdx, task.segEndIdx
-		w.HashJoinCtx.hashTableContext.hashTable.tables[partIdx].build(segStartIdx, segEndIdx)
+		w.HashJoinCtx.hashTableContext.build(task)
 		failpoint.Inject("buildHashTablePanic", nil)
 		cost += int64(time.Since(start))
 	}

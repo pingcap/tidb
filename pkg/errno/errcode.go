@@ -1141,6 +1141,8 @@ const (
 	ErrPausedDDLJob       = 8262
 	ErrBDRRestrictedDDL   = 8263
 
+	ErrGlobalIndexNotExplicitlySet = 8264
+
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
 	ErrResourceGroupNotExists                 = 8249

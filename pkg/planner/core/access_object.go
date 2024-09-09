@@ -15,13 +15,14 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tipb/go-tipb"
@@ -380,7 +381,7 @@ func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 	if ok {
 		res.Database = db.Name.O
 	}
-	tmp, ok := is.TableByID(tblInfo.ID)
+	tmp, ok := is.TableByID(context.Background(), tblInfo.ID)
 	if !ok {
 		res.err = "partition table not found:" + strconv.FormatInt(tblInfo.ID, 10)
 		return res

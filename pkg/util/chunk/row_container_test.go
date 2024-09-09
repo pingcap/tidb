@@ -510,7 +510,8 @@ func TestPanicDuringSortedRowContainerSpill(t *testing.T) {
 func TestInterruptedDuringSpilling(t *testing.T) {
 	rootTracker := memory.NewTracker(-1, -1)
 	rootTracker.IsRootTrackerOfSess = true
-	rootTracker.Killer = &sqlkiller.SQLKiller{ConnID: 1}
+	rootTracker.Killer = &sqlkiller.SQLKiller{}
+	rootTracker.Killer.ConnID.Store(1)
 	fields := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeLonglong),

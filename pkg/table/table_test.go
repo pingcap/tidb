@@ -15,6 +15,7 @@
 package table
 
 import (
+	"context"
 	"testing"
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
@@ -40,4 +41,40 @@ func TestErrorCode(t *testing.T) {
 	require.Equal(t, mysql.ErrUnknownPartition, int(terror.ToSQLError(ErrUnknownPartition).Code))
 	require.Equal(t, mysql.ErrNoPartitionForGivenValue, int(terror.ToSQLError(ErrNoPartitionForGivenValue).Code))
 	require.Equal(t, mysql.ErrLockOrActiveTransaction, int(terror.ToSQLError(ErrLockOrActiveTransaction).Code))
+}
+
+func TestOptions(t *testing.T) {
+	ctx := context.WithValue(context.Background(), "test", "test")
+	// NewAddRecordOpt without option
+	addOpt := NewAddRecordOpt()
+	require.Equal(t, AddRecordOpt{}, *addOpt)
+	require.Equal(t, CreateIdxOpt{}, *(addOpt.GetCreateIdxOpt()))
+	// NewAddRecordOpt with options
+	addOpt = NewAddRecordOpt(WithCtx(ctx), IsUpdate, WithReserveAutoIDHint(12))
+	require.Equal(t, AddRecordOpt{
+		commonMutateOpt: commonMutateOpt{ctx: ctx},
+		isUpdate:        true,
+		reserveAutoID:   12,
+	}, *addOpt)
+	require.Equal(t, CreateIdxOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}}, *(addOpt.GetCreateIdxOpt()))
+	// NewUpdateRecordOpt without option
+	updateOpt := NewUpdateRecordOpt()
+	require.Equal(t, UpdateRecordOpt{}, *updateOpt)
+	require.Equal(t, AddRecordOpt{}, *(updateOpt.GetAddRecordOpt()))
+	require.Equal(t, CreateIdxOpt{}, *(updateOpt.GetCreateIdxOpt()))
+	// NewUpdateRecordOpt with options
+	updateOpt = NewUpdateRecordOpt(WithCtx(ctx))
+	require.Equal(t, UpdateRecordOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}}, *updateOpt)
+	require.Equal(t, AddRecordOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}}, *(updateOpt.GetAddRecordOpt()))
+	require.Equal(t, CreateIdxOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}}, *(updateOpt.GetCreateIdxOpt()))
+	// NewCreateIdxOpt without option
+	createIdxOpt := NewCreateIdxOpt()
+	require.Equal(t, CreateIdxOpt{}, *createIdxOpt)
+	// NewCreateIdxOpt with options
+	createIdxOpt = NewCreateIdxOpt(WithCtx(ctx), WithIgnoreAssertion, FromBackfill)
+	require.Equal(t, CreateIdxOpt{
+		commonMutateOpt: commonMutateOpt{ctx: ctx},
+		ignoreAssertion: true,
+		fromBackFill:    true,
+	}, *createIdxOpt)
 }

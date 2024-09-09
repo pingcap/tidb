@@ -1741,3 +1741,61 @@ func TestTiDBSchemaCacheSize(t *testing.T) {
 	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "a700MB")
 	require.Error(t, err)
 }
+
+func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
+	vars := NewSessionVars(nil)
+
+	tests := []struct {
+		name                string
+		autoAnalyze         bool
+		autoAnalyzePriority bool
+		input               string
+		expectError         bool
+	}{
+		{
+			name:                "Both enabled, valid input",
+			autoAnalyze:         true,
+			autoAnalyzePriority: true,
+			input:               "10",
+			expectError:         false,
+		},
+		{
+			name:                "Auto analyze disabled",
+			autoAnalyze:         false,
+			autoAnalyzePriority: true,
+			input:               "10",
+			expectError:         true,
+		},
+		{
+			name:                "Auto analyze priority queue disabled",
+			autoAnalyze:         true,
+			autoAnalyzePriority: false,
+			input:               "10",
+			expectError:         true,
+		},
+		{
+			name:                "Both disabled",
+			autoAnalyze:         false,
+			autoAnalyzePriority: false,
+			input:               "10",
+			expectError:         true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			RunAutoAnalyze.Store(tt.autoAnalyze)
+			EnableAutoAnalyzePriorityQueue.Store(tt.autoAnalyzePriority)
+
+			sysVar := GetSysVar(TiDBAutoAnalyzeConcurrency)
+			require.NotNil(t, sysVar)
+
+			_, err := sysVar.Validate(vars, tt.input, ScopeGlobal)
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

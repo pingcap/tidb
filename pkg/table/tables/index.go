@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -160,17 +160,17 @@ out:
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
-func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
+func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOption) (kv.Handle, error) {
+	opt := table.NewCreateIdxOpt(opts...)
+	return c.create(sctx, txn, indexedValue, h, handleRestoreData, false, opt)
+}
+
+func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum, untouched bool, opt *table.CreateIdxOpt) (kv.Handle, error) {
 	if c.Meta().Unique {
 		txn.CacheTableInfo(c.phyTblID, c.tblInfo)
 	}
-	var opt table.CreateIdxOpt
-	for _, fn := range opts {
-		fn(&opt)
-	}
-
 	indexedValues := c.getIndexedValue(indexedValue)
-	ctx := opt.Ctx
+	ctx := opt.Ctx()
 	if ctx != nil {
 		var r tracing.Region
 		r, ctx = tracing.StartRegionEx(ctx, "index.Create")
@@ -178,9 +178,8 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	} else {
 		ctx = context.TODO()
 	}
-	vars := sctx.GetSessionVars()
 	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
-	skipCheck := vars.StmtCtx.BatchCheck
+	skipCheck := opt.DupKeyCheck() == table.DupKeyCheckSkip
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	for _, value := range indexedValues {
@@ -194,7 +193,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			keyVer          byte
 			keyIsTempIdxKey bool
 		)
-		if !opt.FromBackFill {
+		if !opt.FromBackFill() {
 			key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
 			if keyVer == TempIndexKeyTypeBackfill || keyVer == TempIndexKeyTypeDelete {
 				key, tempKey = tempKey, nil
@@ -205,14 +204,10 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		if txn.IsPipelined() {
 			// For pipelined DML, disable the untouched optimization to avoid extra RPCs for MemBuffer.Get().
 			// TODO: optimize this.
-			opt.Untouched = false
+			untouched = false
 		}
 
-		if opt.Untouched {
-			txn, err1 := sctx.Txn(true)
-			if err1 != nil {
-				return nil, err1
-			}
+		if untouched {
 			// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
 			// should not overwrite the key with un-commit flag.
 			// So if the key exists, just do nothing and return.
@@ -230,7 +225,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 						return nil, err
 					}
 					if keyFlags.HasPresumeKeyNotExists() {
-						opt.Untouched = false
+						untouched = false
 					}
 				}
 			}
@@ -242,17 +237,17 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 		})
 		idxVal, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo,
-			c.needRestoredData, distinct, opt.Untouched, value, h, c.phyTblID, handleRestoreData, nil)
+			c.needRestoredData, distinct, untouched, value, h, c.phyTblID, handleRestoreData, nil)
 		err = ec.HandleError(err)
 		if err != nil {
 			return nil, err
 		}
 
-		opt.IgnoreAssertion = opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
+		ignoreAssertion := opt.IgnoreAssertion() || c.idxInfo.State != model.StatePublic
 
-		if !distinct || skipCheck || opt.Untouched {
+		if !distinct || skipCheck || untouched {
 			val := idxVal
-			if opt.Untouched && (keyIsTempIdxKey || len(tempKey) > 0) {
+			if untouched && (keyIsTempIdxKey || len(tempKey) > 0) {
 				// Untouched key-values never occur in the storage and the temp index is not public.
 				// It is unnecessary to write the untouched temp index key-values.
 				continue
@@ -273,8 +268,8 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					return nil, err
 				}
 			}
-			if !opt.IgnoreAssertion && (!opt.Untouched) {
-				if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
+			if !ignoreAssertion && !untouched {
+				if opt.DupKeyCheck() == table.DupKeyCheckLazy && !txn.IsPessimistic() {
 					err = txn.SetAssertion(key, kv.SetAssertUnknown)
 				} else {
 					err = txn.SetAssertion(key, kv.SetAssertNotExist)
@@ -290,7 +285,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			value, err = txn.Get(ctx, key)
-		} else if (txn.IsPipelined() || sctx.GetSessionVars().LazyCheckKeyNotExists()) && !keyIsTempIdxKey {
+		} else if opt.DupKeyCheck() == table.DupKeyCheckLazy && !keyIsTempIdxKey {
 			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
 			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
 			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
@@ -310,7 +305,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		// The index key value is not found or deleted.
 		if err != nil || len(value) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
 			val := idxVal
-			lazyCheck := (txn.IsPipelined() || sctx.GetSessionVars().LazyCheckKeyNotExists()) && err != nil
+			lazyCheck := opt.DupKeyCheck() == table.DupKeyCheckLazy && err != nil
 			if keyIsTempIdxKey {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
 				val = tempVal.Encode(value)
@@ -325,8 +320,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				if needPresumeNotExists {
 					flags = []kv.FlagsOp{kv.SetPresumeKeyNotExists}
 				}
-				if !vars.ConstraintCheckInPlacePessimistic && vars.TxnCtx.IsPessimistic && vars.InTxn() &&
-					!vars.InRestrictedSQL && vars.ConnectionID > 0 {
+				if opt.PessimisticLazyDupKeyCheck() == table.DupKeyCheckInPrewrite && txn.IsPessimistic() {
 					flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 				}
 				err = txn.GetMemBuffer().SetWithFlags(key, val, flags...)
@@ -348,7 +342,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					return nil, err
 				}
 			}
-			if opt.IgnoreAssertion {
+			if ignoreAssertion {
 				continue
 			}
 			if lazyCheck && !txn.IsPessimistic() {

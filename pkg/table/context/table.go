@@ -17,9 +17,8 @@ package context
 import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -104,20 +103,18 @@ type TemporaryTableSupport interface {
 	AddTemporaryTableToTxn(tblInfo *model.TableInfo) (TemporaryTableHandler, bool)
 }
 
+// ExchangePartitionDMLSupport is used for DML operations when the table exchanging a partition.
+type ExchangePartitionDMLSupport interface {
+	// GetInfoSchemaToCheckExchangeConstraint is used by DML to get the exchanged table to check
+	// constraints when exchanging partition.
+	GetInfoSchemaToCheckExchangeConstraint() infoschema.MetaOnlyInfoSchema
+}
+
 // MutateContext is used to when mutating a table.
 type MutateContext interface {
 	AllocatorContext
 	// GetExprCtx returns the context to build or evaluate expressions
 	GetExprCtx() exprctx.ExprContext
-	// GetSessionVars returns the session variables.
-	GetSessionVars() *variable.SessionVars
-	// Txn returns the current transaction which is created before executing a statement.
-	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
-	// If the active parameter is true, call this function will wait for the pending txn
-	// to become valid.
-	Txn(active bool) (kv.Transaction, error)
-	// GetDomainInfoSchema returns the latest information schema in domain
-	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// ConnectionID returns the id of the current connection.
 	// If the current environment is not in a query from the client, the return value is 0.
 	ConnectionID() uint64
@@ -162,6 +159,9 @@ type MutateContext interface {
 	// GetTemporaryTableSupport returns a `TemporaryTableSupport` if the context supports it.
 	// If the context does not support temporary table, the second return value will be false.
 	GetTemporaryTableSupport() (TemporaryTableSupport, bool)
+	// GetExchangePartitionDMLSupport returns a `ExchangePartitionDMLSupport` if the context supports it.
+	// ExchangePartitionDMLSupport is used by DMLs when the table is exchanging a partition.
+	GetExchangePartitionDMLSupport() (ExchangePartitionDMLSupport, bool)
 }
 
 // AllocatorContext is used to provide context for method `table.Allocators`.

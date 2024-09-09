@@ -378,3 +378,6 @@ create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`
 alter table t add partition (PARTITION `p20240521A` VALUES LESS THAN ('A','2024-05-21 00:00:00'));
 Error 1493 (HY000): VALUES LESS THAN value must be strictly increasing for each partition
 alter table t add partition (PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-21 00:00:00'));
+CREATE TABLE employees (id int unsigned NOT NULL) PARTITION BY RANGE (id) INTERVAL (1) FIRST PARTITION LESS THAN (1) LAST PARTITION LESS THAN (8193);
+Error 1499 (HY000): Too many partitions (including subpartitions) were defined
+CREATE TABLE employees (id int unsigned NOT NULL) PARTITION BY RANGE (id) INTERVAL (1) FIRST PARTITION LESS THAN (1) LAST PARTITION LESS THAN (8192);

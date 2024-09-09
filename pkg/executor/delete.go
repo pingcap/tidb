@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -269,8 +269,13 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 }
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *plannercore.TblColPosInfo) error {
+	txn, err := e.Ctx().Txn(true)
+	if err != nil {
+		return err
+	}
+
 	e.Ctx().GetTableCtx().SetExtraIndexKeyPosInfo(posInfo.IndexesForDelete)
-	err := t.RemoveRecord(ctx.GetTableCtx(), h, data)
+	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data)
 	defer e.Ctx().GetTableCtx().ResetExtraInfo()
 	if err != nil {
 		return err

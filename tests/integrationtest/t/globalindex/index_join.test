@@ -2,7 +2,7 @@ set tidb_enable_global_index=true;
 
 --echo # Prepare data
 drop table if exists p;
-create table p (id int, c int, unique index idx(id)) partition by range (c) (
+create table p (id int, c int, unique index idx(id) global) partition by range (c) (
 partition p0 values less than (4),
 partition p1 values less than (7),
 partition p2 values less than (10));
@@ -31,7 +31,7 @@ select p.id from p partition(p1) inner join t on p.id = t.id;
 
 --echo # Prepare tables with clustered index
 drop table if exists p, t;
-create table p (id int, c int, d int, e int, primary key(d, c) clustered, unique index idx(id)) partition by range (c) (
+create table p (id int, c int, d int, e int, primary key(d, c) clustered, unique index idx(id) global) partition by range (c) (
 partition p0 values less than (4),
 partition p1 values less than (7),
 partition p2 values less than (10));

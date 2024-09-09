@@ -609,5 +609,6 @@ func (p *mockSessionPool) Get() (pools.Resource, error) {
 	return p.se, nil
 }
 
-func (p *mockSessionPool) Put(pools.Resource) {
-}
+func (p *mockSessionPool) Put(pools.Resource) {}
+
+func (p *mockSessionPool) Close() {}

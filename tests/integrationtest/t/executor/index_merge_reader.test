@@ -281,7 +281,7 @@ insert into t1 values('TXwuGSfZfrgVbTksgvQBilqiUXlNEXzyXNqWRTCidzXFbrkpGFJalRMdV
 explain format='brief' select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;
 set global tidb_mem_oom_action='CANCEL';
 set @@tidb_mem_quota_query = 4000;
--- replace_regex /conn=[0-9]+/conn=<num>/
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;
 set global tidb_mem_oom_action = DEFAULT;

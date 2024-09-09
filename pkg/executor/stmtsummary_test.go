@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -32,7 +33,8 @@ import (
 
 func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
 	data := infoschema.NewData()
-	infoSchemaBuilder, err := infoschema.NewBuilder(nil, nil, data).InitWithDBInfos(nil, nil, nil, 0)
+	infoSchemaBuilder := infoschema.NewBuilder(nil, nil, data, variable.SchemaCacheSize.Load() > 0)
+	err := infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
 	table, err := infoSchema.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(infoschema.TableStatementsSummary))
@@ -76,7 +78,8 @@ func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
 
 func TestStmtSummaryRetriverV2_TableStatementsSummaryEvicted(t *testing.T) {
 	data := infoschema.NewData()
-	infoSchemaBuilder, err := infoschema.NewBuilder(nil, nil, data).InitWithDBInfos(nil, nil, nil, 0)
+	infoSchemaBuilder := infoschema.NewBuilder(nil, nil, data, variable.SchemaCacheSize.Load() > 0)
+	err := infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
 	table, err := infoSchema.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(infoschema.TableStatementsSummaryEvicted))
@@ -155,7 +158,8 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
 
 	data := infoschema.NewData()
-	infoSchemaBuilder, err := infoschema.NewBuilder(nil, nil, data).InitWithDBInfos(nil, nil, nil, 0)
+	infoSchemaBuilder := infoschema.NewBuilder(nil, nil, data, variable.SchemaCacheSize.Load() > 0)
+	err = infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
 	table, err := infoSchema.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(infoschema.TableStatementsSummaryHistory))

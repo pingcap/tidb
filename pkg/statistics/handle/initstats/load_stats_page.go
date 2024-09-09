@@ -21,8 +21,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
+
+// InitStatsPercentage is the percentage of the table to load stats.
+var InitStatsPercentage atomicutil.Float64
 
 var (
 	sampleLoggerFactory = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
@@ -43,26 +47,30 @@ type Task struct {
 
 // RangeWorker is used to load stats concurrently by the range of table id.
 type RangeWorker struct {
-	dealFunc        func(task Task) error
-	taskChan        chan Task
-	logger          *zap.Logger
-	taskName        string
-	wg              util.WaitGroupWrapper
-	taskCnt         uint64
-	completeTaskCnt atomic.Uint64
+	dealFunc            func(task Task) error
+	taskChan            chan Task
+	logger              *zap.Logger
+	taskName            string
+	wg                  util.WaitGroupWrapper
+	taskCnt             uint64
+	completeTaskCnt     atomic.Uint64
+	totalPercentage     float64
+	totalPercentageStep float64
 }
 
 // NewRangeWorker creates a new RangeWorker.
-func NewRangeWorker(taskName string, dealFunc func(task Task) error, maxTid, initStatsStep uint64) *RangeWorker {
+func NewRangeWorker(taskName string, dealFunc func(task Task) error, maxTid, initStatsStep uint64, totalPercentageStep float64) *RangeWorker {
 	taskCnt := uint64(1)
 	if maxTid > initStatsStep*2 {
 		taskCnt = maxTid / initStatsStep
 	}
 	worker := &RangeWorker{
-		taskName: taskName,
-		dealFunc: dealFunc,
-		taskChan: make(chan Task, 1),
-		taskCnt:  taskCnt,
+		taskName:            taskName,
+		dealFunc:            dealFunc,
+		taskChan:            make(chan Task, 1),
+		taskCnt:             taskCnt,
+		totalPercentage:     InitStatsPercentage.Load(),
+		totalPercentageStep: totalPercentageStep,
 	}
 	worker.logger = singletonStatsSamplerLogger()
 	return worker
@@ -85,6 +93,8 @@ func (ls *RangeWorker) loadStats() {
 		}
 		if ls.logger != nil {
 			completeTaskCnt := ls.completeTaskCnt.Add(1)
+			taskPercentage := float64(completeTaskCnt)/float64(ls.taskCnt)*ls.totalPercentageStep + ls.totalPercentage
+			InitStatsPercentage.Store(taskPercentage)
 			ls.logger.Info(fmt.Sprintf("load %s [%d/%d]", ls.taskName, completeTaskCnt, ls.taskCnt))
 		}
 	}

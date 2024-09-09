@@ -18,8 +18,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,11 +28,10 @@ func TestDecodeAddIndexArgsCompatibility(t *testing.T) {
 	cases := []struct {
 		raw                     json.RawMessage
 		uniques                 []bool
-		indexNames              []model.CIStr
+		indexNames              []pmodel.CIStr
 		indexPartSpecifications [][]*ast.IndexPartSpecification
 		indexOptions            []*ast.IndexOption
 		hiddenCols              [][]*model.ColumnInfo
-		globals                 []bool
 	}{
 		{
 			raw: json.RawMessage(`[
@@ -45,16 +45,16 @@ null,
 [],
 false]`),
 			uniques: []bool{true},
-			indexNames: []model.CIStr{
+			indexNames: []pmodel.CIStr{
 				{O: "t", L: "t"},
 			},
 			indexPartSpecifications: [][]*ast.IndexPartSpecification{
 				{
 					{
 						Column: &ast.ColumnName{
-							Schema: model.CIStr{O: "", L: ""},
-							Table:  model.CIStr{O: "", L: ""},
-							Name:   model.CIStr{O: "a", L: "a"},
+							Schema: pmodel.CIStr{O: "", L: ""},
+							Table:  pmodel.CIStr{O: "", L: ""},
+							Name:   pmodel.CIStr{O: "a", L: "a"},
 						},
 						Length: -1,
 						Desc:   false,
@@ -62,9 +62,9 @@ false]`),
 					},
 					{
 						Column: &ast.ColumnName{
-							Schema: model.CIStr{O: "", L: ""},
-							Table:  model.CIStr{O: "", L: ""},
-							Name:   model.CIStr{O: "b", L: "b"},
+							Schema: pmodel.CIStr{O: "", L: ""},
+							Table:  pmodel.CIStr{O: "", L: ""},
+							Name:   pmodel.CIStr{O: "b", L: "b"},
 						},
 						Length: -1,
 						Desc:   false,
@@ -74,7 +74,6 @@ false]`),
 			},
 			indexOptions: []*ast.IndexOption{nil},
 			hiddenCols:   [][]*model.ColumnInfo{{}},
-			globals:      []bool{false},
 		},
 		{
 			raw: json.RawMessage(`[
@@ -93,16 +92,16 @@ false]`),
 [[],[]],
 [false,false]]`),
 			uniques: []bool{false, true},
-			indexNames: []model.CIStr{
+			indexNames: []pmodel.CIStr{
 				{O: "t", L: "t"}, {O: "t1", L: "t1"},
 			},
 			indexPartSpecifications: [][]*ast.IndexPartSpecification{
 				{
 					{
 						Column: &ast.ColumnName{
-							Schema: model.CIStr{O: "", L: ""},
-							Table:  model.CIStr{O: "", L: ""},
-							Name:   model.CIStr{O: "a", L: "a"},
+							Schema: pmodel.CIStr{O: "", L: ""},
+							Table:  pmodel.CIStr{O: "", L: ""},
+							Name:   pmodel.CIStr{O: "a", L: "a"},
 						},
 						Length: -1,
 						Desc:   false,
@@ -110,9 +109,9 @@ false]`),
 					},
 					{
 						Column: &ast.ColumnName{
-							Schema: model.CIStr{O: "", L: ""},
-							Table:  model.CIStr{O: "", L: ""},
-							Name:   model.CIStr{O: "b", L: "b"},
+							Schema: pmodel.CIStr{O: "", L: ""},
+							Table:  pmodel.CIStr{O: "", L: ""},
+							Name:   pmodel.CIStr{O: "b", L: "b"},
 						},
 						Length: -1,
 						Desc:   false,
@@ -122,9 +121,9 @@ false]`),
 				{
 					{
 						Column: &ast.ColumnName{
-							Schema: model.CIStr{O: "", L: ""},
-							Table:  model.CIStr{O: "", L: ""},
-							Name:   model.CIStr{O: "a", L: "a"},
+							Schema: pmodel.CIStr{O: "", L: ""},
+							Table:  pmodel.CIStr{O: "", L: ""},
+							Name:   pmodel.CIStr{O: "a", L: "a"},
 						},
 						Length: -1,
 						Desc:   false,
@@ -134,19 +133,17 @@ false]`),
 			},
 			indexOptions: []*ast.IndexOption{nil, nil},
 			hiddenCols:   [][]*model.ColumnInfo{{}, {}},
-			globals:      []bool{false, false},
 		},
 	}
 
 	for _, c := range cases {
 		job := &model.Job{RawArgs: c.raw}
-		uniques, indexNames, specs, indexOptions, hiddenCols, globals, err := decodeAddIndexArgs(job)
+		uniques, indexNames, specs, indexOptions, hiddenCols, err := decodeAddIndexArgs(job)
 		require.NoError(t, err)
 		require.Equal(t, c.uniques, uniques)
 		require.Equal(t, c.indexNames, indexNames)
 		require.Equal(t, c.indexPartSpecifications, specs)
 		require.Equal(t, c.indexOptions, indexOptions)
 		require.Equal(t, c.hiddenCols, hiddenCols)
-		require.Equal(t, c.globals, globals)
 	}
 }

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/querywatch"
@@ -48,8 +47,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -83,7 +84,8 @@ const notSpecified = -1
 type SimpleExec struct {
 	exec.BaseExecutor
 
-	Statement ast.StmtNode
+	Statement  ast.StmtNode
+	ResolveCtx *resolve.Context
 	// IsFromRemote indicates whether the statement IS FROM REMOTE TiDB instance in cluster,
 	//   and executing in coprocessor.
 	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
@@ -2592,7 +2594,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	if x, ok := s.Expr.(*ast.FuncCallExpr); ok {
 		if x.FnName.L == ast.ConnectionID {
 			sm := e.Ctx().GetSessionManager()
-			sm.Kill(e.Ctx().GetSessionVars().ConnectionID, s.Query, false)
+			sm.Kill(e.Ctx().GetSessionVars().ConnectionID, s.Query, false, false)
 			return nil
 		}
 		return errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
@@ -2604,7 +2606,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			if sm == nil {
 				return nil
 			}
-			sm.Kill(s.ConnectionID, s.Query, false)
+			sm.Kill(s.ConnectionID, s.Query, false, false)
 		} else {
 			err := errors.NewNoStackError("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
@@ -2619,7 +2621,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	if e.IsFromRemote {
 		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("conn", s.ConnectionID), zap.Bool("query", s.Query),
 			zap.String("sourceAddr", e.Ctx().GetSessionVars().SourceAddr.IP.String()))
-		sm.Kill(s.ConnectionID, s.Query, false)
+		sm.Kill(s.ConnectionID, s.Query, false, false)
 		return nil
 	}
 
@@ -2645,7 +2647,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err1)
 		}
 	} else {
-		sm.Kill(s.ConnectionID, s.Query, false)
+		sm.Kill(s.ConnectionID, s.Query, false, false)
 	}
 
 	return nil
@@ -2752,20 +2754,23 @@ func (e *SimpleExec) executeDropStats(ctx context.Context, s *ast.DropStatsStmt)
 	var statsIDs []int64
 	// TODO: GLOBAL option will be deprecated. Also remove this condition when the syntax is removed
 	if s.IsGlobalStats {
-		statsIDs = []int64{s.Tables[0].TableInfo.ID}
+		tnW := e.ResolveCtx.GetTableName(s.Tables[0])
+		statsIDs = []int64{tnW.TableInfo.ID}
 	} else {
 		if len(s.PartitionNames) == 0 {
 			for _, table := range s.Tables {
-				partitionStatIDs, _, err := core.GetPhysicalIDsAndPartitionNames(table.TableInfo, nil)
+				tnW := e.ResolveCtx.GetTableName(table)
+				partitionStatIDs, _, err := core.GetPhysicalIDsAndPartitionNames(tnW.TableInfo, nil)
 				if err != nil {
 					return err
 				}
 				statsIDs = append(statsIDs, partitionStatIDs...)
-				statsIDs = append(statsIDs, table.TableInfo.ID)
+				statsIDs = append(statsIDs, tnW.TableInfo.ID)
 			}
 		} else {
 			// TODO: drop stats for specific partition is deprecated. Also remove this condition when the syntax is removed
-			if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(s.Tables[0].TableInfo, s.PartitionNames); err != nil {
+			tnW := e.ResolveCtx.GetTableName(s.Tables[0])
+			if statsIDs, _, err = core.GetPhysicalIDsAndPartitionNames(tnW.TableInfo, s.PartitionNames); err != nil {
 				return err
 			}
 		}

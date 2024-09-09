@@ -57,6 +57,7 @@ var (
 	_ builtinFunc = &builtinInTimeSig{}
 	_ builtinFunc = &builtinInDurationSig{}
 	_ builtinFunc = &builtinInJSONSig{}
+	_ builtinFunc = &builtinInVectorFloat32Sig{}
 	_ builtinFunc = &builtinRowSig{}
 	_ builtinFunc = &builtinSetStringVarSig{}
 	_ builtinFunc = &builtinSetIntVarSig{}
@@ -153,6 +154,11 @@ func (c *inFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 	case types.ETJson:
 		sig = &builtinInJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_InJson)
+	case types.ETVectorFloat32:
+		sig = &builtinInVectorFloat32Sig{baseBuiltinFunc: bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_InVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for IN()", args[0].GetType(ctx.GetEvalCtx()).EvalType())
 	}
 	return sig, nil
 }
@@ -681,6 +687,39 @@ func (b *builtinInJSONSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 	return 0, hasNull, nil
 }
 
+type builtinInVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinInVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinInVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinInVectorFloat32Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	arg0, isNull0, err := b.args[0].EvalVectorFloat32(ctx, row)
+	if isNull0 || err != nil {
+		return 0, isNull0, err
+	}
+	var hasNull bool
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalVectorFloat32(ctx, row)
+		if err != nil {
+			return 0, true, err
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		result := arg0.Compare(evaledArg)
+		if result == 0 {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
 type rowFunctionClass struct {
 	baseFunctionClass
 }
@@ -986,7 +1025,6 @@ func (c *getStringVarFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinGetStringVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinGetStringVarSig) Clone() builtinFunc {
@@ -995,21 +1033,13 @@ func (b *builtinGetStringVarSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetStringVarSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetStringVarSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return "", true, err
-	}
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
 	varName = strings.ToLower(varName)
-	if v, ok := sessionVars.GetUserVarVal(varName); ok {
+	if v, ok := ctx.GetUserVarsReader().GetUserVarVal(varName); ok {
 		// We cannot use v.GetString() here, because the datum may be in KindMysqlTime, which
 		// stores the data in datum.x.
 		// This seems controversial with https://dev.mysql.com/doc/refman/8.0/en/user-variables.html:
@@ -1046,7 +1076,6 @@ func (c *getIntVarFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinGetIntVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinGetIntVarSig) Clone() builtinFunc {
@@ -1055,21 +1084,13 @@ func (b *builtinGetIntVarSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetIntVarSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetIntVarSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return 0, true, err
-	}
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
 	varName = strings.ToLower(varName)
-	if v, ok := sessionVars.GetUserVarVal(varName); ok {
+	if v, ok := ctx.GetUserVarsReader().GetUserVarVal(varName); ok {
 		return v.GetInt64(), false, nil
 	}
 	return 0, true, nil
@@ -1094,7 +1115,6 @@ func (c *getRealVarFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinGetRealVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinGetRealVarSig) Clone() builtinFunc {
@@ -1103,21 +1123,13 @@ func (b *builtinGetRealVarSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetRealVarSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetRealVarSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return 0, true, err
-	}
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
 	varName = strings.ToLower(varName)
-	if v, ok := sessionVars.GetUserVarVal(varName); ok {
+	if v, ok := ctx.GetUserVarsReader().GetUserVarVal(varName); ok {
 		d, err := v.ToFloat64(typeCtx(ctx))
 		if err != nil {
 			return 0, false, err
@@ -1146,7 +1158,6 @@ func (c *getDecimalVarFunctionClass) getFunction(ctx BuildContext, args []Expres
 
 type builtinGetDecimalVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinGetDecimalVarSig) Clone() builtinFunc {
@@ -1155,21 +1166,13 @@ func (b *builtinGetDecimalVarSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetDecimalVarSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetDecimalVarSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return nil, true, err
-	}
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, err
 	}
 	varName = strings.ToLower(varName)
-	if v, ok := sessionVars.GetUserVarVal(varName); ok {
+	if v, ok := ctx.GetUserVarsReader().GetUserVarVal(varName); ok {
 		d, err := v.ToDecimal(typeCtx(ctx))
 		if err != nil {
 			return nil, false, err
@@ -1206,7 +1209,6 @@ func (c *getTimeVarFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinGetTimeVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinGetTimeVarSig) Clone() builtinFunc {
@@ -1215,21 +1217,13 @@ func (b *builtinGetTimeVarSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetTimeVarSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetTimeVarSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return types.ZeroTime, true, err
-	}
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
 	varName = strings.ToLower(varName)
-	if v, ok := sessionVars.GetUserVarVal(varName); ok {
+	if v, ok := ctx.GetUserVarsReader().GetUserVarVal(varName); ok {
 		return v.GetMysqlTime(), false, nil
 	}
 	return types.ZeroTime, true, nil
@@ -1265,6 +1259,10 @@ func (c *valuesFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		sig = &builtinValuesDurationSig{baseBuiltinFunc: bf, offset: c.offset}
 	case types.ETJson:
 		sig = &builtinValuesJSONSig{baseBuiltinFunc: bf, offset: c.offset}
+	case types.ETVectorFloat32:
+		sig = &builtinValuesVectorFloat32Sig{baseBuiltinFunc: bf, offset: c.offset}
+	default:
+		return nil, errors.Errorf("%s is not supported for VALUES()", c.tp.EvalType())
 	}
 	return sig, nil
 }
@@ -1554,6 +1552,43 @@ func (b *builtinValuesJSONSig) evalJSON(ctx EvalContext, _ chunk.Row) (types.Bin
 	return types.BinaryJSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
+type builtinValuesVectorFloat32Sig struct {
+	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
+
+	offset int
+}
+
+func (b *builtinValuesVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinValuesVectorFloat32Sig{offset: b.offset}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinValuesVectorFloat32Sig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
+// evalVectorFloat32 evals a builtinValuesVectorFloat32Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+func (b *builtinValuesVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, _ chunk.Row) (types.VectorFloat32, bool, error) {
+	sessionvar, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return types.ZeroVectorFloat32, true, err
+	}
+	row := sessionvar.CurrInsertValues
+	if row.IsEmpty() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return types.ZeroVectorFloat32, true, nil
+		}
+		return row.GetVectorFloat32(b.offset), false, nil
+	}
+	return types.ZeroVectorFloat32, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+}
+
 type bitCountFunctionClass struct {
 	baseFunctionClass
 }
@@ -1616,7 +1651,6 @@ func (c *getParamFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinGetParamStringSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinGetParamStringSig) Clone() builtinFunc {
@@ -1625,20 +1659,16 @@ func (b *builtinGetParamStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetParamStringSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetParamStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return "", true, err
-	}
 	idx, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	v := sessionVars.PlanCacheParams.GetParamValue(int(idx))
+
+	v, err := ctx.GetParamValue(int(idx))
+	if err != nil {
+		return "", true, err
+	}
 
 	str, err := v.ToString()
 	if err != nil {

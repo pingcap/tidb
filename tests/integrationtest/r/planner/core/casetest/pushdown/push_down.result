@@ -239,3 +239,31 @@ id	estRows	task	access object	operator info
 Projection	10000.00	root		from_unixtime(cast(planner__core__casetest__pushdown__push_down.t.name, decimal(65,6) BINARY), %Y-%m-%d)->Column#13
 └─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+CREATE TABLE `t4a8656d1` (
+`col_73` json NOT NULL,
+`col_74` date DEFAULT '1984-06-10',
+KEY `idx_39` ((cast(`col_73` as double array)),`col_74`),
+KEY `idx_40` ((cast(`col_73` as double array)),`col_74`),
+UNIQUE KEY `idx_41` (`col_74`,(cast(`col_73` as double array)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+CREATE TABLE `tld47bc815` (
+`col_1` text NOT NULL,
+PRIMARY KEY (`col_1`(3)) /*T![clustered_index] NONCLUSTERED */,
+KEY `idx_2` (`col_1`(5)),
+UNIQUE KEY `idx_3` (`col_1`(5)),
+KEY `idx_4` (`col_1`(4))
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
+explain select 1, r0 as col_754 from (     select format(t4a8656d1.col_74, 1) as r0     from t4a8656d1     join tld47bc815 on t4a8656d1.col_74 = tld47bc815.col_1     where JSON_OVERLAPS(t4a8656d1.col_73, '[0.035131302371695955]')     group by t4a8656d1.col_74, t4a8656d1.col_73 ) as subquery where IsNull(subquery.r0)
+id	estRows	task	access object	operator info
+Projection_14	6.40	root		1->Column#10, Column#9
+└─Projection_15	6.40	root		format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)->Column#9
+  └─HashAgg_16	6.40	root		group by:planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, funcs:firstrow(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74)->planner__core__casetest__pushdown__push_down.t4a8656d1.col_74
+    └─HashJoin_19	10.00	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, Column#13)]
+      ├─Selection_20(Build)	8.00	root		isnull(format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)), json_overlaps(planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, cast("[0.035131302371695955]", json BINARY))
+      │ └─IndexMerge_27	10.00	root		type: union
+      │   ├─Selection_25(Build)	0.00	cop[tikv]		
+      │   │ └─IndexRangeScan_24	10.00	cop[tikv]	table:t4a8656d1, index:idx_39(cast(`col_73` as double array), col_74)	range:[0.035131302371695955,0.035131302371695955], keep order:false, stats:pseudo
+      │   └─TableRowIDScan_26(Probe)	10.00	cop[tikv]	table:t4a8656d1	keep order:false, stats:pseudo
+      └─Projection_34(Probe)	10000.00	root		cast(planner__core__casetest__pushdown__push_down.tld47bc815.col_1, datetime(6) BINARY)->Column#13
+        └─TableReader_36	10000.00	root		data:TableFullScan_35
+          └─TableFullScan_35	10000.00	cop[tikv]	table:tld47bc815	keep order:false, stats:pseudo
