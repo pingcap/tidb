@@ -736,7 +736,7 @@ func filterSchemaObjectByRegexp[targetTp any](
 	strFn func(targetTp) string,
 ) []targetTp {
 	regs := e.colsRegexp[colName]
-	if len(e.colsRegexp[colName]) == 0 {
+	if len(regs) == 0 {
 		return targets
 	}
 	filtered := targets[:0]

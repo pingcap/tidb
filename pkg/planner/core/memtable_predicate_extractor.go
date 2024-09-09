@@ -321,7 +321,9 @@ func (helper *extractHelper) extractCol(
 		case ast.EQ:
 			helper.enableScalarPushDown = true
 			colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
-			helper.setColumnPushedDownFn(colName, extractCols, fn)
+			if colName == extractColName {
+				helper.setColumnPushedDownFn(colName, extractCols, fn)
+			}
 			helper.enableScalarPushDown = false
 		case ast.In:
 			colName, datums = helper.extractColInConsExpr(ctx, extractCols, fn)
