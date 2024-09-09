@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -152,10 +152,10 @@ func TestLeftOuterJoinProbeBasic(t *testing.T) {
 					leftFilter = nil
 				}
 				testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, tc.leftKeyTypes, tc.rightKeyTypes, tc.leftTypes, tc.rightTypes, value, tc.leftUsed,
-					tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, leftFilter, nil, tc.otherCondition, partitionNumber, plannercore.LeftOuterJoin, 200)
+					tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, leftFilter, nil, tc.otherCondition, partitionNumber, logicalop.LeftOuterJoin, 200)
 				testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, toNullableTypes(tc.leftKeyTypes), toNullableTypes(tc.rightKeyTypes),
 					toNullableTypes(tc.leftTypes), toNullableTypes(tc.rightTypes), value, tc.leftUsed, tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition,
-					leftFilter, nil, tc.otherCondition, partitionNumber, plannercore.LeftOuterJoin, 200)
+					leftFilter, nil, tc.otherCondition, partitionNumber, logicalop.LeftOuterJoin, 200)
 			}
 		}
 	}
@@ -205,7 +205,7 @@ func TestLeftOuterJoinProbeAllJoinKeys(t *testing.T) {
 	rTypes := lTypes
 	lUsed := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
 	rUsed := lUsed
-	joinType := plannercore.LeftOuterJoin
+	joinType := logicalop.LeftOuterJoin
 	partitionNumber := 4
 
 	rightAsBuildSide := []bool{true, false}
@@ -270,7 +270,7 @@ func TestLeftOuterJoinProbeOtherCondition(t *testing.T) {
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
-	joinType := plannercore.LeftOuterJoin
+	joinType := logicalop.LeftOuterJoin
 	simpleFilter := createSimpleFilter(t)
 	hasFilter := []bool{false, true}
 	rightAsBuildSide := []bool{false, true}
@@ -311,7 +311,7 @@ func TestLeftOuterJoinProbeWithSel(t *testing.T) {
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
-	joinType := plannercore.LeftOuterJoin
+	joinType := logicalop.LeftOuterJoin
 	rightAsBuildSide := []bool{false, true}
 	simpleFilter := createSimpleFilter(t)
 	hasFilter := []bool{false, true}

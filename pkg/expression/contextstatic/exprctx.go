@@ -15,6 +15,8 @@
 package contextstatic
 
 import (
+	"strings"
+
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -205,6 +207,11 @@ func (ctx *StaticExprContext) GetEvalCtx() exprctx.EvalContext {
 	return ctx.evalCtx
 }
 
+// GetStaticEvalCtx returns the inner `StaticEvalContext`.
+func (ctx *StaticExprContext) GetStaticEvalCtx() *StaticEvalContext {
+	return ctx.evalCtx
+}
+
 // GetCharsetInfo implements the `ExprContext.GetCharsetInfo`.
 func (ctx *StaticExprContext) GetCharsetInfo() (string, string) {
 	return ctx.charset, ctx.collation
@@ -273,4 +280,82 @@ func (ctx *StaticExprContext) GetWindowingUseHighPrecision() bool {
 // GetGroupConcatMaxLen implements the `ExprContext.GetGroupConcatMaxLen`.
 func (ctx *StaticExprContext) GetGroupConcatMaxLen() uint64 {
 	return ctx.groupConcatMaxLen
+}
+
+var _ exprctx.StaticConvertibleExprContext = &StaticExprContext{}
+
+// GetLastPlanColumnID implements context.StaticConvertibleExprContext.
+func (ctx *StaticExprContext) GetLastPlanColumnID() int64 {
+	return ctx.columnIDAllocator.GetLastPlanColumnID()
+}
+
+// GetPlanCacheTracker implements context.StaticConvertibleExprContext.
+func (ctx *StaticExprContext) GetPlanCacheTracker() *contextutil.PlanCacheTracker {
+	return ctx.planCacheTracker
+}
+
+// GetStaticConvertibleEvalContext implements context.StaticConvertibleExprContext.
+func (ctx *StaticExprContext) GetStaticConvertibleEvalContext() exprctx.StaticConvertibleEvalContext {
+	return ctx.evalCtx
+}
+
+// MakeExprContextStatic converts the `exprctx.StaticConvertibleExprContext` to `StaticExprContext`.
+func MakeExprContextStatic(ctx exprctx.StaticConvertibleExprContext) *StaticExprContext {
+	staticEvalContext := MakeEvalContextStatic(ctx.GetStaticConvertibleEvalContext())
+
+	return NewStaticExprContext(
+		WithEvalCtx(staticEvalContext),
+		WithCharset(ctx.GetCharsetInfo()),
+		WithDefaultCollationForUTF8MB4(ctx.GetDefaultCollationForUTF8MB4()),
+		WithBlockEncryptionMode(ctx.GetBlockEncryptionMode()),
+		WithSysDateIsNow(ctx.GetSysdateIsNow()),
+		WithNoopFuncsMode(ctx.GetNoopFuncsMode()),
+		WithRng(ctx.Rng()),
+		WithPlanCacheTracker(ctx.GetPlanCacheTracker()),
+		WithColumnIDAllocator(
+			exprctx.NewSimplePlanColumnIDAllocator(ctx.GetLastPlanColumnID())),
+		WithConnectionID(ctx.ConnectionID()),
+		WithWindowingUseHighPrecision(ctx.GetWindowingUseHighPrecision()),
+		WithGroupConcatMaxLen(ctx.GetGroupConcatMaxLen()),
+	)
+}
+
+// LoadSystemVars loads system variables and returns a new `StaticEvalContext` with system variables loaded.
+func (ctx *StaticExprContext) LoadSystemVars(sysVars map[string]string) (*StaticExprContext, error) {
+	sessionVars, err := newSessionVarsWithSystemVariables(sysVars)
+	if err != nil {
+		return nil, err
+	}
+	return ctx.loadSessionVarsInternal(sessionVars, sysVars), nil
+}
+
+func (ctx *StaticExprContext) loadSessionVarsInternal(
+	sessionVars *variable.SessionVars, sysVars map[string]string,
+) *StaticExprContext {
+	opts := make([]StaticExprCtxOption, 0, 8)
+	opts = append(opts, WithEvalCtx(ctx.evalCtx.loadSessionVarsInternal(sessionVars, sysVars)))
+	for name := range sysVars {
+		name = strings.ToLower(name)
+		switch name {
+		case variable.CharacterSetConnection, variable.CollationConnection:
+			opts = append(opts, WithCharset(sessionVars.GetCharsetInfo()))
+		case variable.DefaultCollationForUTF8MB4:
+			opts = append(opts, WithDefaultCollationForUTF8MB4(sessionVars.DefaultCollationForUTF8MB4))
+		case variable.BlockEncryptionMode:
+			blockMode, ok := sessionVars.GetSystemVar(variable.BlockEncryptionMode)
+			intest.Assert(ok)
+			if ok {
+				opts = append(opts, WithBlockEncryptionMode(blockMode))
+			}
+		case variable.TiDBSysdateIsNow:
+			opts = append(opts, WithSysDateIsNow(sessionVars.SysdateIsNow))
+		case variable.TiDBEnableNoopFuncs:
+			opts = append(opts, WithNoopFuncsMode(sessionVars.NoopFuncsMode))
+		case variable.WindowingUseHighPrecision:
+			opts = append(opts, WithWindowingUseHighPrecision(sessionVars.WindowingUseHighPrecision))
+		case variable.GroupConcatMaxLen:
+			opts = append(opts, WithGroupConcatMaxLen(sessionVars.GroupConcatMaxLen))
+		}
+	}
+	return ctx.Apply(opts...)
 }

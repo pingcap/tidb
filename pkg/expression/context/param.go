@@ -34,6 +34,6 @@ var EmptyParamValues ParamValues = &emptyParamValues{}
 type emptyParamValues struct{}
 
 // GetParamValue always returns the `ErrParamIndexExceedParamCounts` for any index
-func (e *emptyParamValues) GetParamValue(idx int) (types.Datum, error) {
+func (e *emptyParamValues) GetParamValue(_ int) (types.Datum, error) {
 	return types.Datum{}, ErrParamIndexExceedParamCounts
 }

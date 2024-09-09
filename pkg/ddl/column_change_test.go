@@ -23,10 +23,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -49,9 +48,6 @@ func TestColumnAdd(t *testing.T) {
 	tk.MustExec("create table t (c1 int, c2 int);")
 	tk.MustExec("insert t values (1, 2);")
 
-	d := dom.DDL()
-	tc := &callback.TestDDLCallback{Do: dom}
-
 	ct := testNewContext(store)
 	// set up hook
 	var (
@@ -64,7 +60,7 @@ func TestColumnAdd(t *testing.T) {
 	var jobID int64
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		jobID = job.ID
-		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
+		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
@@ -87,12 +83,12 @@ func TestColumnAdd(t *testing.T) {
 	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: tb.Meta()})
 
 	// Drop column.
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if dropCol == nil {
 			tbl := external.GetTableByName(t, internal, "test", "t")
 			dropCol = tbl.VisibleCols()[2]
 		}
-	}
+	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.NotStarted() {
 			return
@@ -105,7 +101,6 @@ func TestColumnAdd(t *testing.T) {
 			}
 		}
 	})
-	d.SetHook(tc.Clone())
 	tk.MustExec("alter table t drop column c3")
 	v = getSchemaVer(t, tk.Session())
 	// Don't check column, so it's ok to use tb.
@@ -115,7 +110,7 @@ func TestColumnAdd(t *testing.T) {
 	first = true
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		jobID = job.ID
-		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
+		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
 		switch job.SchemaState {
 		case model.StateWriteOnly:
@@ -126,9 +121,9 @@ func TestColumnAdd(t *testing.T) {
 			}
 			first = false
 			sess := testNewContext(store)
-			err := sessiontxn.NewTxn(context.Background(), sess)
+			txn, err := newTxn(sess)
 			require.NoError(t, err)
-			_, err = writeOnlyTable.AddRecord(sess.GetTableCtx(), types.MakeDatums(10, 10))
+			_, err = writeOnlyTable.AddRecord(sess.GetTableCtx(), txn, types.MakeDatums(10, 10))
 			require.NoError(t, err)
 		}
 	})
@@ -137,21 +132,18 @@ func TestColumnAdd(t *testing.T) {
 }
 
 func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a bigint primary key clustered AUTO_RANDOM(5));")
-
-	d := dom.DDL()
-	tc := &callback.TestDDLCallback{Do: dom}
 
 	var errCount int32 = 3
 	var genAutoRandErr error
 	var dbID int64
 	var tID int64
 	var jobID int64
-	tc.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		jobID = job.ID
 		dbID = job.SchemaID
 		tID = job.TableID
@@ -164,8 +156,7 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 				return err1
 			})
 		}
-	}
-	d.SetHook(tc)
+	})
 
 	tk.MustExec("alter table t modify column a bigint AUTO_RANDOM(10)")
 	require.True(t, errCount == 0)
@@ -211,15 +202,15 @@ func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle
 
 func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
 	// WriteOnlyTable: insert t values (2, 3)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err := newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeOnlyTable.AddRecord(ctx.GetTableCtx(), types.MakeDatums(2, 3))
+	_, err = writeOnlyTable.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(2, 3))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err = newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -253,11 +244,11 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = writeOnlyTable.UpdateRecord(ctx.GetTableCtx(), h, types.MakeDatums(1, 2, 3), types.MakeDatums(2, 2, 3), touchedSlice(writeOnlyTable))
+	err = writeOnlyTable.UpdateRecord(ctx.GetTableCtx(), txn, h, types.MakeDatums(1, 2, 3), types.MakeDatums(2, 2, 3), touchedSlice(writeOnlyTable))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err = newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -270,11 +261,11 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 		return errors.Trace(err)
 	}
 	// DeleteOnlyTable: delete from t where c2 = 2
-	err = deleteOnlyTable.RemoveRecord(ctx.GetTableCtx(), h, types.MakeDatums(2, 2))
+	err = deleteOnlyTable.RemoveRecord(ctx.GetTableCtx(), txn, h, types.MakeDatums(2, 2))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessiontxn.NewTxn(context.Background(), ctx)
+	_, err = newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -294,17 +285,16 @@ func touchedSlice(t table.Table) []bool {
 }
 
 func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.Table) error {
-	ctx := context.TODO()
 	// publicTable Insert t values (4, 4, 4)
-	err := sessiontxn.NewTxn(ctx, sctx)
+	txn, err := newTxn(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h, err := publicTable.AddRecord(sctx.GetTableCtx(), types.MakeDatums(4, 4, 4))
+	h, err := publicTable.AddRecord(sctx.GetTableCtx(), txn, types.MakeDatums(4, 4, 4))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessiontxn.NewTxn(ctx, sctx)
+	txn, err = newTxn(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -317,11 +307,11 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 		return errors.Errorf("%v", oldRow)
 	}
 	newRow := types.MakeDatums(3, 4, oldRow[2].GetValue())
-	err = writeOnlyTable.UpdateRecord(sctx.GetTableCtx(), h, oldRow, newRow, touchedSlice(writeOnlyTable))
+	err = writeOnlyTable.UpdateRecord(sctx.GetTableCtx(), txn, h, oldRow, newRow, touchedSlice(writeOnlyTable))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessiontxn.NewTxn(ctx, sctx)
+	_, err = newTxn(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -369,9 +359,7 @@ type historyJobArgs struct {
 }
 
 func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
-	err := sessiontxn.NewTxn(context.Background(), ctx)
-	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
+	txn, err := newTxn(ctx)
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	ver, err := m.GetSchemaVersion()
@@ -434,7 +422,7 @@ func testNewContext(store kv.Storage) sessionctx.Context {
 }
 
 func TestIssue40135(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -443,16 +431,22 @@ func TestIssue40135(t *testing.T) {
 
 	tk.MustExec("CREATE TABLE t40135 ( a tinyint DEFAULT NULL, b varchar(32) DEFAULT 'md') PARTITION BY HASH (a) PARTITIONS 2")
 	one := true
-	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if one {
 			one = false
 			_, checkErr = tk1.Exec("alter table t40135 change column a aNew SMALLINT NULL DEFAULT '-14996'")
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t40135 modify column a MEDIUMINT NULL DEFAULT '6243108' FIRST")
 
 	require.ErrorContains(t, checkErr, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+}
+
+func newTxn(ctx sessionctx.Context) (kv.Transaction, error) {
+	err := sessiontxn.NewTxn(context.Background(), ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ctx.Txn(true)
 }

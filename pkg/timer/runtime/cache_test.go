@@ -30,7 +30,7 @@ func newTestTimer(id string, policyExpr string, watermark time.Time) *api.TimerR
 		ID: id,
 		TimerSpec: api.TimerSpec{
 			Namespace:       "n1",
-			Key:             fmt.Sprintf("key-" + id),
+			Key:             "key-" + id,
 			SchedPolicyType: api.SchedEventInterval,
 			SchedPolicyExpr: policyExpr,
 			HookClass:       "hook1",

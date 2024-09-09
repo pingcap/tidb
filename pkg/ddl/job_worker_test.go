@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -38,7 +38,7 @@ func TestCheckOwner(t *testing.T) {
 
 	time.Sleep(testLease)
 	require.Equal(t, dom.DDL().OwnerManager().IsOwner(), true)
-	require.Equal(t, dom.DDL().GetLease(), testLease)
+	require.Equal(t, dom.GetSchemaLease(), testLease)
 }
 
 func TestInvalidDDLJob(t *testing.T) {

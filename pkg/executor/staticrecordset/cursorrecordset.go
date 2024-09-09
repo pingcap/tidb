@@ -17,7 +17,7 @@ package staticrecordset
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -32,7 +32,7 @@ type cursorRecordSet struct {
 	recordSet sqlexec.RecordSet
 }
 
-func (c *cursorRecordSet) Fields() []*ast.ResultField {
+func (c *cursorRecordSet) Fields() []*resolve.ResultField {
 	return c.recordSet.Fields()
 }
 

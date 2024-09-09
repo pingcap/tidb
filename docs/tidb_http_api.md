@@ -13,7 +13,10 @@
     {
         "connections": 0,
         "git_hash": "f572e33854e1c0f942f031e9656d0004f99995c6",
-        "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
+        "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty",
+        "status":{
+          "init_stats_percentage":100
+        }
     }
     ```
 
@@ -562,13 +565,13 @@ timezone.*
 
     **Note**: If you request a TiDB that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`
 
-25. Get all TiDB DDL job history information.
+25. Get the TiDB DDL job history information.
 
      ```shell
      curl http://{TiDBIP}:10080/ddl/history
      ```
 
-     **Note**: When the DDL history is very very long, it may consume a lot memory and even cause OOM. Consider adding `start_job_id` and `limit`.
+     **Note**: When the DDL history is very very long, system table may containg too many jobs. This interface will get a maximum of 2048 history ddl jobs by default. If you want get more jobs, consider adding `start_job_id` and `limit`.
 
 26. Get count {number} TiDB DDL job history information.
 

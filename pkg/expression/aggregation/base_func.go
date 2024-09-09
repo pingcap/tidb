@@ -423,8 +423,10 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
 		castFunc = expression.WrapWithCastAsDuration
 	case types.ETJson:
 		castFunc = expression.WrapWithCastAsJSON
+	case types.ETVectorFloat32:
+		castFunc = expression.WrapWithCastAsVectorFloat32
 	default:
-		panic("should never happen in baseFuncDesc.WrapCastForAggArgs")
+		panic(fmt.Sprintf("unsupported type %s during evaluation", retTp.EvalType()))
 	}
 	for i := range a.Args {
 		// Do not cast the second args of these functions, as they are simply non-negative numbers.

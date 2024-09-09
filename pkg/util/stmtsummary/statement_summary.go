@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"container/list"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -34,9 +35,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 )
 
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
@@ -199,6 +200,8 @@ type stmtSummaryByDigestElement struct {
 	sumPDTotal           time.Duration
 	sumBackoffTotal      time.Duration
 	sumWriteSQLRespTotal time.Duration
+	sumTidbCPU           time.Duration
+	sumTikvCPU           time.Duration
 	sumResultRows        int64
 	maxResultRows        int64
 	minResultRows        int64
@@ -260,6 +263,7 @@ type StmtExecInfo struct {
 	KeyspaceID        uint32
 	ResourceGroupName string
 	RUDetail          *util.RUDetails
+	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
 }
@@ -421,9 +425,8 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*Bi
 							PlanHint:  ssElement.planHint,
 							Charset:   ssElement.charset,
 							Collation: ssElement.collation,
-							Users:     make(map[string]struct{}),
+							Users:     maps.Clone(ssElement.authUsers),
 						}
-						maps.Copy(stmt.Users, ssElement.authUsers)
 						// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
 						// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
 						if ssElement.prepared {
@@ -913,6 +916,8 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
 	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
 	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
+	ssElement.sumTidbCPU += sei.CPUUsages.TidbCPUTime
+	ssElement.sumTikvCPU += sei.CPUUsages.TikvCPUTime
 
 	// request-units
 	ssElement.StmtRUSummary.Add(sei.RUDetail)

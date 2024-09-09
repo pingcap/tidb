@@ -23,9 +23,10 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -90,7 +91,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return len(tableIDs), nil
-	case model.ActionDropTable, model.ActionTruncateTable:
+	case model.ActionDropTable:
 		var startKey kv.Key
 		var physicalTableIDs []int64
 		var ruleIDs []string
@@ -98,6 +99,12 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return len(physicalTableIDs) + 1, nil
+	case model.ActionTruncateTable:
+		args, err := model.GetTruncateTableArgsAfterRun(job)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return len(args.OldPartitionIDs) + 1, nil
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 		model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
@@ -145,7 +152,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return mathutil.Max(len(partitionIDs), 1), nil
 	case model.ActionDropColumn:
-		var colName model.CIStr
+		var colName pmodel.CIStr
 		var ifExists bool
 		var indexIDs []int64
 		var partitionIDs []int64

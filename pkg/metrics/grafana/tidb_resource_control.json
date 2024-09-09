@@ -225,9 +225,17 @@
               "editorMode": "code",
               "expr": "sum(resource_manager_resource_unit_read_request_unit_max_per_sec{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}) by (resource_group)",
               "hide": false,
-              "legendFormat": "{{resource_group}}",
+              "legendFormat": "{{resource_group}}-read",
               "range": true,
-              "refId": "C"
+              "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(resource_manager_resource_unit_write_request_unit_max_per_sec{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}) by (resource_group)",
+              "hide": false,
+              "legendFormat": "{{resource_group}}-write",
+              "range": true,
+              "refId": "B"
             }
           ],
           "thresholds": [],

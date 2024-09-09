@@ -23,10 +23,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -75,7 +74,7 @@ func TestAddIndexMergeProcess(t *testing.T) {
 }
 
 func TestAddPrimaryKeyMergeProcess(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 0)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, time.Second)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
@@ -431,12 +430,9 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
 	tk.MustExec("set @@global.tidb_enable_metadata_lock = 0;")
 
-	originHook := dom.DDL().GetHook()
-	callback := &callback.TestDDLCallback{Do: dom}
-
 	runPessimisticTxn := false
 	afterPessDML := make(chan struct{}, 1)
-	callback.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if t.Failed() {
 			return
 		}
@@ -460,8 +456,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 			assert.NoError(t, err)
 			afterPessDML <- struct{}{}
 		}
-	}
-	dom.DDL().SetHook(callback)
+	})
 	afterCommit := make(chan struct{}, 1)
 	go func() {
 		tk.MustExec("alter table t add index idx(a);")
@@ -477,7 +472,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	<-afterPessDML
 	tk2.MustExec("rollback;")
 	<-afterCommit
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
 }

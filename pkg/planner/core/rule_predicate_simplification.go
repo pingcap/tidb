@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
-// predicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
+// PredicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
 // in-list and not equal list intersection.
-type predicateSimplification struct {
+type PredicateSimplification struct {
 }
 
 type predicateType = byte
@@ -65,7 +65,8 @@ func findPredicateType(expr expression.Expression) (*expression.Column, predicat
 	return nil, otherPredicate
 }
 
-func (*predicateSimplification) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements base.LogicalOptRule.<0th> interface.
+func (*PredicateSimplification) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return p.PredicateSimplification(opt), planChanged, nil
 }
@@ -146,6 +147,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	return newValues
 }
 
-func (*predicateSimplification) name() string {
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*PredicateSimplification) Name() string {
 	return "predicate_simplification"
 }

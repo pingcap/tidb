@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
@@ -42,9 +43,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -52,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // compressionRatio is the tikv/tiflash's compression ratio

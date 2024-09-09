@@ -33,20 +33,23 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -86,7 +89,10 @@ const (
 )
 
 type ownerListener struct {
-	ddl       *ddl
+	ddl          *ddl
+	jobSubmitter *JobSubmitter
+	ddlExecutor  *executor
+
 	scheduler *jobScheduler
 }
 
@@ -102,11 +108,17 @@ func (l *ownerListener) OnBecomeOwner() {
 		sysTblMgr:         sysTblMgr,
 		schemaLoader:      l.ddl.schemaLoader,
 		minJobIDRefresher: l.ddl.minJobIDRefresher,
+		unSyncedTracker:   newUnSyncedJobTracker(),
+		schemaVerMgr:      newSchemaVersionManager(l.ddl.store),
+		schemaVerSyncer:   l.ddl.schemaVerSyncer,
+		binlogCli:         l.ddl.binlogCli,
 
 		ddlCtx:         l.ddl.ddlCtx,
-		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
+		ddlJobNotifyCh: l.jobSubmitter.ddlJobNotifyCh,
 		sessPool:       l.ddl.sessPool,
 		delRangeMgr:    l.ddl.delRangeMgr,
+
+		ddlJobDoneChMap: l.ddlExecutor.ddlJobDoneChMap,
 	}
 	l.ddl.reorgCtx.setOwnerTS(time.Now().Unix())
 	l.scheduler.start()
@@ -129,6 +141,10 @@ type jobScheduler struct {
 	sysTblMgr         systable.Manager
 	schemaLoader      SchemaLoader
 	minJobIDRefresher *systable.MinJobIDRefresher
+	unSyncedTracker   *unSyncedJobTracker
+	schemaVerMgr      *schemaVersionManager
+	schemaVerSyncer   schemaver.Syncer
+	binlogCli         *pumpcli.PumpsClient
 
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
@@ -141,6 +157,9 @@ type jobScheduler struct {
 	ddlJobNotifyCh chan struct{}
 	sessPool       *sess.Pool
 	delRangeMgr    delRangeManager
+
+	// shared with ddl executor and job submitter.
+	ddlJobDoneChMap *generic.SyncMap[int64, chan struct{}]
 }
 
 func (s *jobScheduler) start() {
@@ -164,7 +183,7 @@ func (s *jobScheduler) start() {
 	s.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
 	s.wg.RunWithLog(s.scheduleLoop)
 	s.wg.RunWithLog(func() {
-		s.schemaSyncer.SyncJobSchemaVerLoop(s.schCtx)
+		s.schemaVerSyncer.SyncJobSchemaVerLoop(s.schCtx)
 	})
 }
 
@@ -190,7 +209,7 @@ func hasSysDB(job *model.Job) bool {
 }
 
 func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRunnable bool, err error) {
-	if s.stateSyncer.IsUpgradingState() {
+	if s.serverStateSyncer.IsUpgradingState() {
 		if job.IsPaused() {
 			return false, nil
 		}
@@ -278,8 +297,6 @@ func (s *jobScheduler) schedule() error {
 	}
 	ticker := time.NewTicker(dispatchLoopWaitingDuration)
 	defer ticker.Stop()
-	// TODO move waitSchemaSyncedController out of ddlCtx.
-	s.clearOnceMap()
 	s.mustReloadSchemas()
 
 	for {
@@ -321,11 +338,11 @@ func (s *jobScheduler) schedule() error {
 // TODO make it run in a separate routine.
 func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 	select {
-	case _, ok := <-s.stateSyncer.WatchChan():
+	case _, ok := <-s.serverStateSyncer.WatchChan():
 		if !ok {
-			// TODO stateSyncer should only be started when we are the owner, and use
+			// TODO serverStateSyncer should only be started when we are the owner, and use
 			// the context of scheduler, will refactor it later.
-			s.stateSyncer.Rewatch(s.ddlCtx.ctx)
+			s.serverStateSyncer.Rewatch(s.ddlCtx.ctx)
 		}
 	default:
 		if !needUpdate {
@@ -333,17 +350,17 @@ func (s *jobScheduler) checkAndUpdateClusterState(needUpdate bool) error {
 		}
 	}
 
-	oldState := s.stateSyncer.IsUpgradingState()
-	stateInfo, err := s.stateSyncer.GetGlobalState(s.schCtx)
+	oldState := s.serverStateSyncer.IsUpgradingState()
+	stateInfo, err := s.serverStateSyncer.GetGlobalState(s.schCtx)
 	if err != nil {
 		logutil.DDLLogger().Warn("get global state failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	logutil.DDLLogger().Info("get global state and global state change",
-		zap.Bool("oldState", oldState), zap.Bool("currState", s.stateSyncer.IsUpgradingState()))
+		zap.Bool("oldState", oldState), zap.Bool("currState", s.serverStateSyncer.IsUpgradingState()))
 
 	ownerOp := owner.OpNone
-	if stateInfo.State == syncer.StateUpgrading {
+	if stateInfo.State == serverstate.StateUpgrading {
 		ownerOp = owner.OpSyncUpgradingState
 	}
 	err = s.ownerManager.SetOwnerOpValue(s.schCtx, ownerOp)
@@ -456,6 +473,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
+	jobCtx := s.getJobRunCtx(job.ID)
 	s.wg.Run(func() {
 		defer func() {
 			r := recover()
@@ -473,7 +491,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 			pool.put(wk)
 		}()
 		for {
-			err := s.transitOneJobStepAndWaitSync(wk, job)
+			err := s.transitOneJobStepAndWaitSync(wk, jobCtx, job)
 			if err != nil {
 				logutil.DDLLogger().Info("run job failed", zap.Error(err), zap.Stringer("job", job))
 			} else if job.InFinalState() {
@@ -508,39 +526,58 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	})
 }
 
+func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
+	ch, _ := s.ddlJobDoneChMap.Load(jobID)
+	return &jobContext{
+		ctx:                  s.schCtx,
+		unSyncedJobTracker:   s.unSyncedTracker,
+		schemaVersionManager: s.schemaVerMgr,
+		infoCache:            s.infoCache,
+		autoidCli:            s.autoidCli,
+		store:                s.store,
+		schemaVerSyncer:      s.schemaVerSyncer,
+		binlogCli:            s.binlogCli,
+
+		notifyCh: ch,
+
+		oldDDLCtx: s.ddlCtx,
+	}
+}
+
 // transitOneJobStepAndWaitSync runs one step of the DDL job, persist it and
 // waits for other TiDB node to synchronize.
-func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, job *model.Job) error {
+func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobContext, job *model.Job) error {
 	failpoint.InjectCall("beforeRunOneJobStep")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
 	// before run to maintain the 2-version invariant.
-	if !job.NotStarted() && (!s.isSynced(job) || !s.maybeAlreadyRunOnce(job.ID)) {
+	// if owner not change, we need try to sync when it's un-synced.
+	// if owner changed, we need to try sync it if the job is not started by
+	// current owner.
+	if jobCtx.isUnSynced(job.ID) || (job.Started() && !jobCtx.maybeAlreadyRunOnce(job.ID)) {
 		if variable.EnableMDL.Load() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err == nil {
-				err = waitSchemaSyncedForMDL(wk.ctx, s.ddlCtx, job, version)
+				err = waitVersionSynced(jobCtx, job, version)
 				if err != nil {
 					return err
 				}
-				s.setAlreadyRunOnce(job.ID)
 				s.cleanMDLInfo(job, ownerID)
-				return nil
 			} else if err != systable.ErrNotFound {
 				wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
 				return err
 			}
 		} else {
-			err := waitSchemaSynced(wk.ctx, s.ddlCtx, job)
+			err := waitVersionSyncedWithoutMDL(jobCtx, job)
 			if err != nil {
 				time.Sleep(time.Second)
 				return err
 			}
-			s.setAlreadyRunOnce(job.ID)
 		}
+		jobCtx.setAlreadyRunOnce(job.ID)
 	}
 
-	schemaVer, err := wk.transitOneJobStep(s.ddlCtx, job)
+	schemaVer, err := wk.transitOneJobStep(jobCtx, job)
 	if err != nil {
 		tidblogutil.Logger(wk.logCtx).Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		return err
@@ -558,11 +595,11 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, job *model.Job) 
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
-	if err = waitSchemaChanged(wk.ctx, s.ddlCtx, schemaVer, job); err != nil {
+	if err = updateGlobalVersionAndWaitSynced(jobCtx, schemaVer, job); err != nil {
 		return err
 	}
 	s.cleanMDLInfo(job, ownerID)
-	s.synced(job)
+	jobCtx.removeUnSynced(job.ID)
 
 	failpoint.InjectCall("onJobUpdated", job)
 	return nil
@@ -646,7 +683,7 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 		}
 		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", jobW.ID, jobW.MayNeedReorg(),
 			strconv.Quote(job2SchemaIDs(jobW.Job)), strconv.Quote(job2TableIDs(jobW.Job)),
-			util.WrapKey2String(b), jobW.Type, !jobW.NotStarted())
+			util.WrapKey2String(b), jobW.Type, jobW.Started())
 	}
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(ctx, sql.String(), "insert_job")
@@ -686,7 +723,8 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		if schema {
 			return strconv.FormatInt(job.SchemaID, 10)
 		}
-		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(job.Args[0].(int64), 10)
+		newTableID := getTruncateTableNewTableID(job)
+		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
 	}
 	if schema {
 		return strconv.FormatInt(job.SchemaID, 10)

@@ -23,9 +23,14 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
@@ -42,12 +47,12 @@ func CloneFieldNames(names []*types.FieldName) []*types.FieldName {
 	return cloned
 }
 
-// CloneCIStrs uses model.CIStr.Clone to clone a slice of model.CIStr.
-func CloneCIStrs(strs []model.CIStr) []model.CIStr {
+// CloneCIStrs uses ast.CIStr.Clone to clone a slice of ast.CIStr.
+func CloneCIStrs(strs []pmodel.CIStr) []pmodel.CIStr {
 	if strs == nil {
 		return nil
 	}
-	cloned := make([]model.CIStr, 0, len(strs))
+	cloned := make([]pmodel.CIStr, 0, len(strs))
 	cloned = append(cloned, strs...)
 	return cloned
 }
@@ -69,6 +74,18 @@ func CloneExpressions(exprs []expression.Expression) []expression.Expression {
 	return CloneExprs(exprs)
 }
 
+// CloneExpression2D uses CloneExprs to clone a 2D slice of expression.Expression.
+func CloneExpression2D(exprs [][]expression.Expression) [][]expression.Expression {
+	if exprs == nil {
+		return nil
+	}
+	cloned := make([][]expression.Expression, 0, len(exprs))
+	for _, e := range exprs {
+		cloned = append(cloned, CloneExprs(e))
+	}
+	return cloned
+}
+
 // CloneScalarFunctions uses (*ScalarFunction).Clone to clone a slice of *ScalarFunction.
 func CloneScalarFunctions(scalarFuncs []*expression.ScalarFunction) []*expression.ScalarFunction {
 	if scalarFuncs == nil {
@@ -77,6 +94,30 @@ func CloneScalarFunctions(scalarFuncs []*expression.ScalarFunction) []*expressio
 	cloned := make([]*expression.ScalarFunction, 0, len(scalarFuncs))
 	for _, f := range scalarFuncs {
 		cloned = append(cloned, f.Clone().(*expression.ScalarFunction))
+	}
+	return cloned
+}
+
+// CloneAssignments uses (*Assignment).Clone to clone a slice of *Assignment.
+func CloneAssignments(assignments []*expression.Assignment) []*expression.Assignment {
+	if assignments == nil {
+		return nil
+	}
+	cloned := make([]*expression.Assignment, 0, len(assignments))
+	for _, a := range assignments {
+		cloned = append(cloned, a.Clone())
+	}
+	return cloned
+}
+
+// CloneHandleCols uses HandleCols.Clone to clone a slice of HandleCols.
+func CloneHandleCols(newCtx *stmtctx.StatementContext, handles []HandleCols) []HandleCols {
+	if handles == nil {
+		return nil
+	}
+	cloned := make([]HandleCols, 0, len(handles))
+	for _, h := range handles {
+		cloned = append(cloned, h.Clone(newCtx))
 	}
 	return cloned
 }
@@ -266,4 +307,46 @@ func DeriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *pro
 		stats.ColNDVs[id] = math.Min(c, stats.RowCount)
 	}
 	return stats
+}
+
+// ExtractTableAlias returns table alias of the base.LogicalPlan's columns.
+// It will return nil when there are multiple table alias, because the alias is only used to check if
+// the base.LogicalPlan Match some optimizer hints, and hints are not expected to take effect in this case.
+func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
+	if len(p.OutputNames()) > 0 && p.OutputNames()[0].TblName.L != "" {
+		firstName := p.OutputNames()[0]
+		for _, name := range p.OutputNames() {
+			if name.TblName.L != firstName.TblName.L ||
+				(name.DBName.L != "" && firstName.DBName.L != "" &&
+					name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
+				return nil
+			}
+		}
+		qbOffset := p.QueryBlockOffset()
+		var blockAsNames []ast.HintTable
+		if p := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
+			blockAsNames = *p
+		}
+		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
+		if qbOffset != parentOffset && blockAsNames != nil && blockAsNames[qbOffset].TableName.L != "" {
+			qbOffset = parentOffset
+		}
+		dbName := firstName.DBName
+		if dbName.L == "" {
+			dbName = pmodel.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+		}
+		return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
+	}
+	return nil
+}
+
+// GetPushDownCtx creates a PushDownContext from PlanContext
+func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
+	return GetPushDownCtxFromBuildPBContext(pctx.GetBuildPBCtx())
+}
+
+// GetPushDownCtxFromBuildPBContext creates a PushDownContext from BuildPBContext
+func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.PushDownContext {
+	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(),
+		bctx.InExplainStmt, bctx.WarnHandler, bctx.ExtraWarnghandler, bctx.GroupConcatMaxLen)
 }

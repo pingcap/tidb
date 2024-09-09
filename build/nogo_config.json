@@ -81,7 +81,9 @@
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
+      ".*_generated\\.go$": "ignore generated code",
+      "pkg/planner/core/plan_clone_generator.go": "ignore plan_clone_generator code",
+      "pkg/util/dbterror/ddl_terror.go": "ignore ddl_terror code"
     }
   },
   "unreachable": {
@@ -274,7 +276,10 @@
       "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
       ".*test_/testmain\\.go$": "ignore generated code",
-      ".*failpoint_binding__.go$": "ignore generated code"
+      ".*failpoint_binding__.go$": "ignore generated code",
+      "_cgo_gotypes.go": "skip _cgo_gotypes.go",
+      "_cgo_imports.go": "skip _cgo_imports.go",
+      ".*.cgo1.go": "skip cgo1.go"
     }
   },
   "gci": {
