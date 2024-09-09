@@ -96,6 +96,8 @@ type LogClient struct {
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
 	currentTS uint64
 
+	upstreamClusterID uint64
+
 	*LogFileManager
 
 	workerPool   *tidbutil.WorkerPool
@@ -166,6 +168,11 @@ func (rc *LogClient) SetCrypter(crypter *backuppb.CipherInfo) {
 func (rc *LogClient) SetConcurrency(c uint) {
 	log.Info("download worker pool", zap.Uint("size", c))
 	rc.workerPool = tidbutil.NewWorkerPool(c, "file")
+}
+
+func (rc *LogClient) SetUpstreamClusterID(upstreamClusterID uint64) {
+	log.Info("upstream cluster id", zap.Uint64("cluster id", upstreamClusterID))
+	rc.upstreamClusterID = upstreamClusterID
 }
 
 func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
@@ -561,13 +568,14 @@ func (rc *LogClient) initSchemasMap(
 	ctx context.Context,
 	restoreTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
-	getPitrIDMapSQL := "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? ORDER BY segment_id;"
+	getPitrIDMapSQL := "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
 	execCtx := rc.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
 		getPitrIDMapSQL,
 		restoreTS,
+		rc.upstreamClusterID,
 	)
 	if errSQL != nil {
 		return nil, errors.Annotatef(errSQL, "failed to get pitr id map from mysql.tidb_pitr_id_map")
@@ -1513,22 +1521,22 @@ func (rc *LogClient) saveIDMap(
 	sr *stream.SchemasReplace,
 ) error {
 	backupmeta := &backuppb.BackupMeta{DbMaps: sr.TidySchemaMaps()}
-	updateTime := time.Now().Format(time.DateTime)
 	data, err := proto.Marshal(backupmeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// clean the dirty id map at first
-	if err := rc.se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %?;", rc.restoreTS); err != nil {
+	err = rc.se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;", rc.restoreTS, rc.upstreamClusterID)
+	if err != nil {
 		return errors.Trace(err)
 	}
-	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, segment_id, id_map, update_time) VALUES (%?, %?, %?, %?);"
-	for startIdx, elementId := 0, 0; startIdx < len(data); elementId += 1 {
+	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?);"
+	for startIdx, segmentId := 0, 0; startIdx < len(data); segmentId += 1 {
 		endIdx := startIdx + PITRIdMapBlockSize
 		if endIdx > len(data) {
 			endIdx = len(data)
 		}
-		err := rc.se.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, elementId, data[startIdx:endIdx], updateTime)
+		err := rc.se.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -1363,7 +1363,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	ctx := context.Background()
 
 	{
-		client := logclient.TEST_NewLogClient(123, 1, 2, fakeStorage{}, domain.NewMockDomain(), nil)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, fakeStorage{}, domain.NewMockDomain(), nil)
 		cfg := &logclient.InitSchemaConfig{IsNewTask: false}
 		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
 		require.Error(t, err)
@@ -1371,7 +1371,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	}
 
 	{
-		client := logclient.TEST_NewLogClient(123, 1, 2, fakeStorage{}, domain.NewMockDomain(), nil)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, fakeStorage{}, domain.NewMockDomain(), nil)
 		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
 		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
 		require.Error(t, err)
@@ -1379,7 +1379,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	}
 
 	{
-		client := logclient.TEST_NewLogClient(123, 1, 2, fakeStorageOK{}, domain.NewMockDomain(), nil)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, fakeStorageOK{}, domain.NewMockDomain(), nil)
 		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
 		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
 		require.Error(t, err)
@@ -1450,13 +1450,17 @@ func TestPITRIDMap(t *testing.T) {
 	g := gluetidb.New()
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
-	client := logclient.TEST_NewLogClient(123, 1, 2, nil, nil, se)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 3, nil, nil, se)
 	baseSchemaReplaces := &stream.SchemasReplace{
 		DbMap: getDBMap(),
 	}
 	err = client.TEST_saveIDMap(ctx, baseSchemaReplaces)
 	require.NoError(t, err)
 	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1)
+	require.NoError(t, err)
+	require.Nil(t, newSchemaReplaces)
+	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, nil, nil, se)
+	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2)
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
 	newSchemaReplaces, err = client.TEST_initSchemasMap(ctx, 2)
