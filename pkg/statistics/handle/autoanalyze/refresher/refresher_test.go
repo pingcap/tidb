@@ -246,19 +246,19 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	tk.MustExec("insert into t3 values (1, 1), (2, 2), (3, 3)")
 	handle := dom.StatsHandle()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.TriggerSyncStats(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.SyncStats(context.Background(), dom.InfoSchema()))
 	// Analyze those tables first.
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	tk.MustExec("analyze table t3")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.TriggerSyncStats(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.SyncStats(context.Background(), dom.InfoSchema()))
 	// Insert more data into t1, t2, and t3, with different amounts of new data.
 	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13)")
 	tk.MustExec("insert into t2 values (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9)")
 	tk.MustExec("insert into t3 values (4, 4), (5, 5), (6, 6), (7, 7)")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.TriggerSyncStats(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.SyncStats(context.Background(), dom.InfoSchema()))
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
 	r.RebuildTableAnalysisJobQueue()
@@ -267,7 +267,7 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	require.True(t, r.AnalyzeHighestPriorityTables())
 	r.WaitAutoAnalyzeFinishedForTest()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.TriggerSyncStats(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.SyncStats(context.Background(), dom.InfoSchema()))
 	// Check if t1 and t2 are analyzed (they should be, as they have more new data).
 	tbl1, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -294,7 +294,7 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	require.True(t, r.AnalyzeHighestPriorityTables())
 	r.WaitAutoAnalyzeFinishedForTest()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.TriggerSyncStats(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.SyncStats(context.Background(), dom.InfoSchema()))
 
 	// Now t3 should be analyzed.
 	tblStats3 = handle.GetPartitionStats(tbl3.Meta(), pid3)
