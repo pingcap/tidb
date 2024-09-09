@@ -2,13 +2,13 @@
 aliases:
   sig-critical-approvers-tidb-server:
     - yudongusa
-    - easonn7
+    - BenMeadowcroft
   sig-critical-approvers-tidb-lightning:
     - yudongusa
-    - easonn7
+    - BenMeadowcroft
   sig-critical-approvers-parser:
     - yudongusa
-    - easonn7
+    - BenMeadowcroft
   sig-approvers-autoid-service: # approvers for auto-id service
     - bb7133
     - tiancaiamao
