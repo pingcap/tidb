@@ -45,16 +45,9 @@ var (
 	WithRealTiKV = flag.Bool("with-real-tikv", false, "whether tests run with real TiKV")
 	// TiKVPath is the path of the TiKV Storage.
 	TiKVPath = flag.String("tikv-path", "tikv://127.0.0.1:2379?disableGC=true", "TiKV addr")
-<<<<<<< HEAD
-=======
 
 	// PDAddr is the address of PD.
 	PDAddr = "127.0.0.1:2379"
-
-	// KeyspaceName is an option to specify the name of keyspace that the tests run on,
-	// this option is only valid while the flag WithRealTiKV is set.
-	KeyspaceName = flag.String("keyspace-name", "", "the name of keyspace that the tests run on")
->>>>>>> 6260e66ad8f (ddl: use latest PD address to register lightning (#48687))
 )
 
 // RunTestMain run common setups for all real tikv tests.
