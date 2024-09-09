@@ -124,10 +124,9 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver in
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
-			dropTableEvent := statsutil.NewDropTableEvent(
-				job.SchemaID,
-				tblInfo,
-			)
+			dropTableEvent := &statsutil.DDLEvent{
+				SchemaChangeEvent: util.NewDropTableEvent(tblInfo),
+			}
 			asyncNotifyEvent(jobCtx, dropTableEvent, job)
 		}
 	default:
