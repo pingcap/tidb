@@ -15,8 +15,11 @@
 package join
 
 import (
+	"fmt"
 	"sync/atomic"
 	"unsafe"
+
+	"github.com/pingcap/log"
 )
 
 type subTable struct {
@@ -105,12 +108,17 @@ func (st *subTable) atomicUpdateHashValue(hashValue uint64, rowAddress unsafe.Po
 }
 
 func (st *subTable) build(startSegmentIndex int, endSegmentIndex int, tagHelper *tagPtrHelper) {
+	buildRowNum := 0
+	defer func() {
+		log.Info(fmt.Sprintf("xzxdebug build row num %d", buildRowNum))
+	}()
 	if startSegmentIndex == 0 && endSegmentIndex == len(st.rowData.segments) {
 		for i := startSegmentIndex; i < endSegmentIndex; i++ {
 			for _, index := range st.rowData.segments[i].validJoinKeyPos {
 				rowAddress := st.rowData.segments[i].getRowPointer(index)
 				hashValue := st.rowData.segments[i].hashValues[index]
 				st.updateHashValue(hashValue, rowAddress, tagHelper)
+				buildRowNum++
 			}
 		}
 	} else {
@@ -119,6 +127,7 @@ func (st *subTable) build(startSegmentIndex int, endSegmentIndex int, tagHelper 
 				rowAddress := st.rowData.segments[i].getRowPointer(index)
 				hashValue := st.rowData.segments[i].hashValues[index]
 				st.atomicUpdateHashValue(hashValue, rowAddress, tagHelper)
+				buildRowNum++
 			}
 		}
 	}

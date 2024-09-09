@@ -78,10 +78,6 @@ func getExpectedResults(t *testing.T, ctx *mock.Context, info *hashJoinInfo, res
 
 	leftDataSource.PrepareChunks()
 	rightDataSource.PrepareChunks()
-	// leftRows := sortRows(leftDataSource.Chunks, leftDataSource.RetFieldTypes())
-	// rightRows := sortRows(rightDataSource.Chunks, rightDataSource.RetFieldTypes())
-	// printResult(leftRows, leftDataSource.RetFieldTypes())
-	// printResult(rightRows, rightDataSource.RetFieldTypes())
 
 	// Execute no spill hash join to get expected result
 	hashJoinExec := buildHashJoinV2Exec(info)

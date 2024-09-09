@@ -287,7 +287,6 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			}
 
 			j.matchedRowsHeaders[logicalRowIndex] = 0
-			j.matchedRowsHashValue[logicalRowIndex] = 0
 		} else {
 			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
 		}
@@ -378,6 +377,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		hash.Reset()
 		hash.Write(rehashBuf.Bytes())
 		newHashVal := hash.Sum64()
+		j.matchedRowsHashValue[logicalRowIndex] = newHashVal
 		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
 			j.spillTmpChk[partIndex].AppendInt64(0, int64(newHashVal))
@@ -395,7 +395,6 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 			}
 
 			j.matchedRowsHeaders[logicalRowIndex] = 0
-			j.matchedRowsHashValue[logicalRowIndex] = 0
 		} else {
 			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: newHashVal, pos: logicalRowIndex})
 		}

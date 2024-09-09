@@ -17,6 +17,7 @@ package join
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"math/rand"
 	"runtime/trace"
@@ -357,7 +358,7 @@ func getPartitionMaskOffset(partitionNumber uint) int {
 
 // SetupPartitionInfo set up partitionNumber and partitionMaskOffset based on concurrency
 func (hCtx *HashJoinCtxV2) SetupPartitionInfo() {
-	hCtx.partitionNumber = genHashJoinPartitionNumber(hCtx.Concurrency)
+	// hCtx.partitionNumber = genHashJoinPartitionNumber(hCtx.Concurrency) // TODO
 	hCtx.partitionMaskOffset = getPartitionMaskOffset(hCtx.partitionNumber)
 }
 
@@ -389,6 +390,13 @@ type ProbeWorkerV2 struct {
 	// We build individual joinProbe for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	JoinProbe ProbeV2
+
+	outputRowNum int
+}
+
+func (w *ProbeWorkerV2) printAndReset() {
+	log.Info(fmt.Sprintf("xzxdebug probe output row num %d", w.outputRowNum))
+	w.outputRowNum = 0
 }
 
 func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
@@ -400,6 +408,7 @@ func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
 
 func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 	probeTime := int64(0)
+	defer w.printAndReset() // TODO remove
 	if w.HashJoinCtx.stats != nil {
 		start := time.Now()
 		defer func() {
@@ -413,6 +422,12 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 	}
 
 	chunkNum := inDisk.NumChunks()
+
+	restoredRowNum := 0
+
+	defer func() {
+		log.Info(fmt.Sprintf("xzxdebug restored probe row num %d", restoredRowNum))
+	}()
 
 	for i := 0; i < chunkNum; i++ {
 		select {
@@ -435,6 +450,8 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 			break
 		}
 
+		restoredRowNum += chk.NumRows()
+
 		start := time.Now()
 		waitTime := int64(0)
 		ok, waitTime, joinResult = w.processOneRestoredProbeChunk(chk, joinResult)
@@ -450,11 +467,13 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 	}
 
 	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+		if joinResult.err == nil {
+			w.outputRowNum += joinResult.chk.NumRows()
+		}
 		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		w.joinChkResourceCh <- joinResult.chk
 	}
-	return
 }
 
 // BuildWorkerV2 is the build worker used in hash join v2
@@ -465,6 +484,8 @@ type BuildWorkerV2 struct {
 	HasNullableKey bool
 	WorkerID       uint
 	builder        *rowTableBuilder
+
+	buildRowNum int
 }
 
 func (b *BuildWorkerV2) getSegmentsInRowTable(partID int) []*rowTableSegment {
@@ -490,17 +511,27 @@ func (w *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, cost *int64) e
 	return nil
 }
 
-func (w *BuildWorkerV2) restoreAndPrebuildImpl(i int, inDisk *chunk.DataInDiskByChunks, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
+func (w *BuildWorkerV2) restoreAndPrebuildImpl(i int, inDisk *chunk.DataInDiskByChunks, fetcherAndWorkerSyncer *sync.WaitGroup, hasErr bool, cost *int64) (err error) {
 	defer func() {
 		fetcherAndWorkerSyncer.Done()
+
+		if r := recover(); r != nil {
+			// We shouldn't throw the panic out of this function, or
+			// we can't continue to consume `syncCh` channel and call
+			// the `Done` function of `fetcherAndWorkerSyncer`.
+			// So it's necessary to handle it here.
+			err = util.GetRecoverError(r)
+		}
 	}()
 
-	if w.HashJoinCtx.finished.Load() {
+	if hasErr {
 		return nil
 	}
 
+	var chk *chunk.Chunk
+
 	// TODO reuse chunk
-	chk, err := inDisk.GetChunk(i)
+	chk, err = inDisk.GetChunk(i)
 	if err != nil {
 		return err
 	}
@@ -510,6 +541,8 @@ func (w *BuildWorkerV2) restoreAndPrebuildImpl(i int, inDisk *chunk.DataInDiskBy
 		return err
 	}
 
+	w.buildRowNum += chk.NumRows()
+
 	err = w.processOneRestoredChunk(chk, cost)
 	if err != nil {
 		return err
@@ -517,7 +550,7 @@ func (w *BuildWorkerV2) restoreAndPrebuildImpl(i int, inDisk *chunk.DataInDiskBy
 	return nil
 }
 
-func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chunk.DataInDiskByChunks, syncCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup) error {
+func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chunk.DataInDiskByChunks, syncCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
 	cost := int64(0)
 	defer func() {
 		if w.HashJoinCtx.stats != nil {
@@ -525,11 +558,17 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 		}
 	}()
 
+	defer func() {
+		log.Info(fmt.Sprintf("xzxdebug build restored row num %d, indisk: [row %d, chunk %d]", w.buildRowNum, inDisk.NumRows(), inDisk.NumChunks()))
+		w.buildRowNum = 0
+	}()
+
 	partitionNumber := w.HashJoinCtx.partitionNumber
 	hashJoinCtx := w.HashJoinCtx
 
 	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
+	hasErr := false
 	chunkNum := inDisk.NumChunks()
 	for i := 0; i < chunkNum; i++ {
 		_, ok := <-syncCh
@@ -537,19 +576,23 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 			break
 		}
 
-		err := w.restoreAndPrebuildImpl(i, inDisk, fetcherAndWorkerSyncer, &cost)
+		err := w.restoreAndPrebuildImpl(i, inDisk, fetcherAndWorkerSyncer, hasErr, &cost)
 		if err != nil {
-			return err
+			hasErr = true
+			handleErr(err, errCh, doneCh)
 		}
 	}
 
 	// Wait for command from the controller so that we can avoid data race with the spill executed in controller
 	<-waitForController
 
+	if hasErr {
+		return
+	}
+
 	start := time.Now()
 	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
 	cost += int64(time.Since(start))
-	return nil
 }
 
 // NewJoinBuildWorkerV2 create a BuildWorkerV2
@@ -707,7 +750,7 @@ func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
 	return false
 }
 
-func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, fetcherAndWorkerSyncer *sync.WaitGroup, srcChkCh chan *chunk.Chunk) (err error) {
+func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, fetcherAndWorkerSyncer *sync.WaitGroup, srcChkCh chan *chunk.Chunk, errCh chan error, doneCh chan struct{}) {
 	cost := int64(0)
 	defer func() {
 		if w.HashJoinCtx.stats != nil {
@@ -720,17 +763,18 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 
 	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
+	hasErr := false
 	for chk := range srcChkCh {
-		err := w.splitPartitionAndAppendToRowTableImpl(typeCtx, chk, fetcherAndWorkerSyncer, &cost)
+		err := w.splitPartitionAndAppendToRowTableImpl(typeCtx, chk, fetcherAndWorkerSyncer, hasErr, &cost)
 		if err != nil {
-			return err
+			hasErr = true
+			handleErr(err, errCh, doneCh)
 		}
 	}
 
 	start := time.Now()
 	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
 	cost += int64(time.Since(start))
-	return nil
 }
 
 func (w *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk, cost *int64) error {
@@ -741,12 +785,12 @@ func (w *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk,
 	return err
 }
 
-func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableImpl(typeCtx types.Context, chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, cost *int64) error {
+func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableImpl(typeCtx types.Context, chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, hasErr bool, cost *int64) error {
 	defer func() {
 		fetcherAndWorkerSyncer.Done()
 	}()
 
-	if w.HashJoinCtx.finished.Load() {
+	if hasErr {
 		return nil
 	}
 
@@ -798,6 +842,7 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 				ctx,
 				e.MaxChunkSize(),
 				func() bool { return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty() },
+				func() bool { return e.spillHelper.isSpillTriggeredNoLock() },
 				e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty,
 				e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone,
 				e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize(),
@@ -811,7 +856,10 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 	if e.inRestore {
 		// Wait for the restore build
-		<-e.restoreBuildFinished
+		err := <-e.restoreBuildFinished
+		if err != nil {
+			return
+		}
 	}
 
 	for i := uint(0); i < e.Concurrency; i++ {
@@ -921,6 +969,7 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 		failpoint.Inject("processOneProbeChunkPanic", nil)
 		if joinResult.chk.IsFull() {
 			waitStart := time.Now()
+			w.outputRowNum += joinResult.chk.NumRows()
 			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			waitTime += int64(time.Since(waitStart))
@@ -934,6 +983,7 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 
 func (w *ProbeWorkerV2) runJoinWorker() {
 	probeTime := int64(0)
+	defer w.printAndReset()
 	if w.HashJoinCtx.stats != nil {
 		start := time.Now()
 		defer func() {
@@ -987,6 +1037,9 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 	}
 
 	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+		if joinResult.err == nil {
+			w.outputRowNum += joinResult.chk.NumRows()
+		}
 		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		w.joinChkResourceCh <- joinResult.chk
@@ -1066,7 +1119,7 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		e.initializeForProbe()
 		e.hashTableContext.memoryTracker.AttachTo(e.memTracker)
 		e.buildFinished = make(chan error, 1)
-		e.restoreBuildFinished = make(chan struct{}, 1)
+		e.restoreBuildFinished = make(chan error, 1)
 		go e.startBuildAndProbe(ctx)
 		e.prepared = true
 	}
@@ -1089,12 +1142,16 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 }
 
 func (e *HashJoinV2Exec) handleFetchAndBuildHashTablePanic(r any) {
-	if r != nil {
-		e.buildFinished <- util.GetRecoverError(r)
-	}
 	if e.inRestore {
-		e.restoreBuildFinished <- struct{}{}
+		if r != nil {
+			e.restoreBuildFinished <- util.GetRecoverError(r)
+		} else {
+			e.restoreBuildFinished <- nil
+		}
 	} else {
+		if r != nil {
+			e.buildFinished <- util.GetRecoverError(r)
+		}
 		close(e.buildFinished)
 	}
 }
@@ -1187,7 +1244,11 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 		wg.Wait()
 		close(errCh)
 		if err := <-errCh; err != nil {
-			e.buildFinished <- err
+			if e.inRestore {
+				e.restoreBuildFinished <- err
+			} else {
+				e.buildFinished <- err
+			}
 			return false
 		}
 		return true
@@ -1274,6 +1335,8 @@ func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh c
 			hasError = true
 		}
 
+		fetcherAndWorkerSyncer.Wait()
+
 		// Spill remaining rows
 		if !hasError && e.spillHelper.isSpillTriggeredNoLock() {
 			err := e.spillHelper.spillRemainingRows()
@@ -1284,11 +1347,6 @@ func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh c
 
 		// Tell workers that they can execute `appendRemainingRowLocations` function
 		close(waitForController)
-
-		// consume remaining data in `syncCh`
-		for range syncCh {
-			fetcherAndWorkerSyncer.Done()
-		}
 	}()
 
 	if e.stats != nil {
@@ -1321,21 +1379,21 @@ func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh c
 	}
 }
 
+func handleErr(err error, errCh chan error, doneCh chan struct{}) {
+	errCh <- err
+	doneCh <- struct{}{}
+}
+
 func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
 	wg.Add(int(e.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
 		workIndex := i
 		e.workerWg.RunWithRecover(
 			func() {
-				var err error
 				if e.inRestore {
-					err = e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTableForRestore(e.restoredBuildInDisk[workIndex], srcChkCh, waitForController, fetcherAndWorkerSyncer)
+					e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTableForRestore(e.restoredBuildInDisk[workIndex], srcChkCh, waitForController, fetcherAndWorkerSyncer, errCh, doneCh)
 				} else {
-					err = e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), fetcherAndWorkerSyncer, srcChkCh)
-				}
-				if err != nil {
-					errCh <- err
-					doneCh <- struct{}{}
+					e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), fetcherAndWorkerSyncer, srcChkCh, errCh, doneCh)
 				}
 			},
 			func(r any) {

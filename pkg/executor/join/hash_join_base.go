@@ -52,15 +52,15 @@ type hashJoinCtxBase struct {
 	Concurrency  uint
 	joinResultCh chan *hashjoinWorkerResult
 	// closeCh add a lock for closing executor.
-	closeCh       chan struct{}
-	finished      atomic.Bool
-	IsNullEQ      []bool
-	buildFinished chan error
-	restoreBuildFinished chan struct{}
-	JoinType      logicalop.JoinType
-	IsNullAware   bool
-	memTracker    *memory.Tracker // track memory usage.
-	diskTracker   *disk.Tracker   // track disk usage.
+	closeCh              chan struct{}
+	finished             atomic.Bool
+	IsNullEQ             []bool
+	buildFinished        chan error
+	restoreBuildFinished chan error
+	JoinType             logicalop.JoinType
+	IsNullAware          bool
+	memTracker           *memory.Tracker // track memory usage.
+	diskTracker          *disk.Tracker   // track disk usage.
 }
 
 type probeSideTupleFetcherBase struct {
@@ -92,7 +92,7 @@ func (fetcher *probeSideTupleFetcherBase) initializeForProbeBase(concurrency uin
 }
 
 func (fetcher *probeSideTupleFetcherBase) handleProbeSideFetcherPanic(r any) {
-	for i := range fetcher.probeResultChs { // TODO re-create it at next restore round
+	for i := range fetcher.probeResultChs {
 		close(fetcher.probeResultChs[i])
 	}
 	if r != nil {
@@ -101,8 +101,9 @@ func (fetcher *probeSideTupleFetcherBase) handleProbeSideFetcherPanic(r any) {
 }
 
 type isBuildSideEmpty func() bool
+type isSpillTriggered func() bool
 
-func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone bool, hashJoinCtx *hashJoinCtxBase) (skipProbe bool) {
+func wait4BuildSide(isBuildEmpty isBuildSideEmpty, checkSpill isSpillTriggered, canSkipIfBuildEmpty, needScanAfterProbeDone bool, hashJoinCtx *hashJoinCtxBase) (skipProbe bool) {
 	var err error
 	skipProbe = false
 	buildFinishes := false
@@ -119,7 +120,7 @@ func wait4BuildSide(isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScan
 		}
 	}
 	// only check build empty if build finishes
-	if buildFinishes && isBuildEmpty() && canSkipIfBuildEmpty {
+	if buildFinishes && isBuildEmpty() && !checkSpill() && canSkipIfBuildEmpty {
 		// if build side is empty, can skip probe if canSkipIfBuildEmpty is true(e.g. inner join)
 		skipProbe = true
 	}
@@ -161,7 +162,7 @@ func (fetcher *probeSideTupleFetcherBase) getProbeSideResource(shouldLimitProbeF
 
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
 // and sends the chunks to multiple channels which will be read by multiple join workers.
-func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, maxChunkSize int, isBuildEmpty isBuildSideEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
+func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Context, maxChunkSize int, isBuildEmpty isBuildSideEmpty, checkSpill isSpillTriggered, canSkipIfBuildEmpty, needScanAfterProbeDone, shouldLimitProbeFetchSize bool, hashJoinCtx *hashJoinCtxBase) {
 	hasWaitedForBuild := false
 	for {
 		probeSideResource := fetcher.getProbeSideResource(shouldLimitProbeFetchSize, maxChunkSize, hashJoinCtx)
@@ -183,7 +184,7 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 					probeSideResult.Reset()
 				}
 			})
-			skipProbe := wait4BuildSide(isBuildEmpty, canSkipIfBuildEmpty, needScanAfterProbeDone, hashJoinCtx)
+			skipProbe := wait4BuildSide(isBuildEmpty, checkSpill, canSkipIfBuildEmpty, needScanAfterProbeDone, hashJoinCtx)
 			if skipProbe {
 				// there is no need to probe, so just return
 				return

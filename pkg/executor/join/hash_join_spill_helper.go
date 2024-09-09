@@ -16,6 +16,7 @@ package join
 
 import (
 	"bytes"
+	"fmt"
 	"hash"
 	"hash/fnv"
 	"slices"
@@ -23,6 +24,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -530,6 +532,16 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 			round:           lastRound + 1,
 		}
 		h.stack.push(rd)
+
+		buildRowNum := 0
+		probeRowNum := 0
+		for _, inDisk := range buildInDisks {
+			buildRowNum += int(inDisk.NumRows())
+		}
+		for _, inDisk := range probeInDisks {
+			probeRowNum += int(inDisk.NumRows())
+		}
+		log.Info(fmt.Sprintf("xzxdebug part %d build %d probe %d", i, buildRowNum, probeRowNum))
 	}
 
 	// Reset something as spill may still be triggered during restoring
