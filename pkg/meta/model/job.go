@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -241,6 +242,44 @@ func (s SchemaState) String() string {
 	}
 }
 
+// JobVersion is the version of DDL job.
+type JobVersion int64
+
+const (
+	// JobVersion1 is the first version of DDL job where job args are stored as un-typed
+	// array. Before v8.4.0, all DDL jobs are in this version.
+	JobVersion1 JobVersion = 1
+	// JobVersion2 is the second version of DDL job where job args are stored as
+	// typed structs, we start to use this version from v8.4.0.
+	// Note: this version is not enabled right now except in some test cases, will
+	// enable it after we have CI to run both versions.
+	JobVersion2 JobVersion = 2
+)
+
+// String implements fmt.Stringer interface.
+func (v JobVersion) String() string {
+	if v == JobVersion1 {
+		return "v1"
+	} else if v == JobVersion2 {
+		return "v2"
+	}
+	return fmt.Sprintf("unknown(%d)", v)
+}
+
+// JobVerInUse is the job version for new DDL jobs in the node.
+// it's for test now.
+var jobVerInUse atomic.Int64
+
+// SetJobVerInUse sets the version of DDL job used in the node.
+func SetJobVerInUse(ver JobVersion) {
+	jobVerInUse.Store(int64(ver))
+}
+
+// GetJobVerInUse returns the version of DDL job used in the node.
+func GetJobVerInUse() JobVersion {
+	return JobVersion(jobVerInUse.Load())
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID   int64      `json:"id"`
@@ -261,6 +300,7 @@ type Job struct {
 	// RowCount means the number of rows that are processed.
 	RowCount int64      `json:"row_count"`
 	Mu       sync.Mutex `json:"-"`
+
 	// CtxVars are variables attached to the job. It is for internal usage.
 	// E.g. passing arguments between functions by one single *Job pointer.
 	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
@@ -272,9 +312,11 @@ type Job struct {
 	// - RenameTable: [old-db-id, new-table-name, old-db-name]
 	// - ExchangeTablePartition: [partition-id, pt-db-id, pt-id, partition-name, with-validation]
 	Args []any `json:"-"`
-	// RawArgs : We must use json raw message to delay parsing special args.
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
+	// we use json raw message to delay parsing special args.
+	// the args are cleared out unless Job.FillFinishedArgs is called.
+	RawArgs json.RawMessage `json:"raw_args"`
+
+	SchemaState SchemaState `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
 	SnapshotVer uint64 `json:"snapshot_ver"`
 	// RealStartTS uses timestamp allocated by TSO.
@@ -289,8 +331,8 @@ type Job struct {
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
 
-	// Version indicates the DDL job version. For old jobs, it will be 0.
-	Version int64 `json:"version"`
+	// Version indicates the DDL job version.
+	Version JobVersion `json:"version"`
 
 	// ReorgMeta is meta info of ddl reorganization.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
@@ -464,6 +506,16 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	b, err = json.Marshal(job)
 
 	return b, errors.Trace(err)
+}
+
+// FillArgs fills args for new job.
+func (job *Job) FillArgs(args JobArgs) {
+	args.fillJob(job)
+}
+
+// FillFinishedArgs fills args for finished job.
+func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
+	args.fillFinishedJob(job)
 }
 
 // Decode decodes job from the json buffer, we must use DecodeArgs later to

@@ -691,44 +691,59 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	return errors.Trace(err)
 }
 
+func makeStringForIDs(ids []int64) string {
+	set := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+
+	s := make([]string, 0, len(set))
+	for id := range set {
+		s = append(s, strconv.FormatInt(id, 10))
+	}
+	slices.Sort(s)
+	return strings.Join(s, ",")
+}
+
 func job2SchemaIDs(job *model.Job) string {
-	return job2UniqueIDs(job, true)
+	switch job.Type {
+	case model.ActionRenameTables:
+		var ids []int64
+		if job.Version == model.JobVersion1 {
+			ids = job.CtxVars[0].([]int64)
+		} else {
+			arg := job.Args[0].(*model.RenameTablesArgs)
+			ids = append(arg.OldSchemaIDs, arg.NewSchemaIDs...)
+		}
+		return makeStringForIDs(ids)
+	case model.ActionExchangeTablePartition, model.ActionRenameTable:
+		ids := job.CtxVars[0].([]int64)
+		return makeStringForIDs(ids)
+	case model.ActionTruncateTable:
+		return strconv.FormatInt(job.SchemaID, 10)
+	default:
+		return strconv.FormatInt(job.SchemaID, 10)
+	}
 }
 
 func job2TableIDs(job *model.Job) string {
-	return job2UniqueIDs(job, false)
-}
-
-func job2UniqueIDs(job *model.Job, schema bool) string {
 	switch job.Type {
-	case model.ActionExchangeTablePartition, model.ActionRenameTables, model.ActionRenameTable:
+	case model.ActionRenameTables:
 		var ids []int64
-		if schema {
-			ids = job.CtxVars[0].([]int64)
-		} else {
+		if job.Version == model.JobVersion1 {
 			ids = job.CtxVars[1].([]int64)
+		} else {
+			ids = job.Args[1].(*model.RenameTablesArgs).TableIDs
 		}
-		set := make(map[int64]struct{}, len(ids))
-		for _, id := range ids {
-			set[id] = struct{}{}
-		}
-
-		s := make([]string, 0, len(set))
-		for id := range set {
-			s = append(s, strconv.FormatInt(id, 10))
-		}
-		slices.Sort(s)
-		return strings.Join(s, ",")
+		return makeStringForIDs(ids)
+	case model.ActionExchangeTablePartition, model.ActionRenameTable:
+		ids := job.CtxVars[1].([]int64)
+		return makeStringForIDs(ids)
 	case model.ActionTruncateTable:
-		if schema {
-			return strconv.FormatInt(job.SchemaID, 10)
-		}
 		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(job.Args[0].(int64), 10)
+	default:
+		return strconv.FormatInt(job.TableID, 10)
 	}
-	if schema {
-		return strconv.FormatInt(job.SchemaID, 10)
-	}
-	return strconv.FormatInt(job.TableID, 10)
 }
 
 func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) error {

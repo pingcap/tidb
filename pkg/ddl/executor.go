@@ -4317,17 +4317,25 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 	}
 
 	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
 		SchemaID:            schemas[1].ID,
 		TableID:             tableIDs[0],
 		SchemaName:          schemas[1].Name.L,
 		Type:                model.ActionRenameTables,
 		BinlogInfo:          &model.HistoryInfo{},
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
-		Args:                []any{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs, oldSchemaNames, oldTableNames},
-		CtxVars:             []any{append(oldSchemaIDs, newSchemaIDs...), tableIDs},
 		InvolvingSchemaInfo: involveSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
+
+	job.FillArgs(&model.RenameTablesArgs{
+		OldSchemaIDs:   oldSchemaIDs,
+		NewSchemaIDs:   newSchemaIDs,
+		NewTableNames:  tableNames,
+		TableIDs:       tableIDs,
+		OldSchemaNames: oldSchemaNames,
+		OldTableNames:  oldTableNames,
+	})
 
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
