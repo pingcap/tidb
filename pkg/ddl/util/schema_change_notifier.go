@@ -18,8 +18,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/zap"
 )
 
 // SchemaChangeEvent stands for a schema change event. DDL will generate one
@@ -33,6 +35,7 @@ type SchemaChangeEvent struct {
 	addedPartInfo   *model.PartitionInfo
 	deletedPartInfo *model.PartitionInfo
 	columnInfos     []*model.ColumnInfo
+	oldTableID4Part int64
 
 	tp model.ActionType
 }
@@ -50,6 +53,19 @@ func (s *SchemaChangeEvent) String() string {
 	}
 	if s.oldTableInfo != nil {
 		_, _ = fmt.Fprintf(&sb, ", Old Table ID: %d, Old Table Name: %s", s.oldTableInfo.ID, s.oldTableInfo.Name)
+	}
+	if s.oldTableID4Part != 0 {
+		_, _ = fmt.Fprintf(&sb, ", Old Table ID for Partition: %d", s.oldTableID4Part)
+	}
+	if s.addedPartInfo != nil {
+		for _, partDef := range s.addedPartInfo.Definitions {
+			_, _ = fmt.Fprintf(&sb, ", Partition Name: %s, Partition ID: %d", partDef.Name, partDef.ID)
+		}
+	}
+	if s.deletedPartInfo != nil {
+		for _, partDef := range s.deletedPartInfo.Definitions {
+			_, _ = fmt.Fprintf(&sb, ", Deleted Partition Name: %s, Deleted Partition ID: %d", partDef.Name, partDef.ID)
+		}
 	}
 	for _, columnInfo := range s.columnInfos {
 		_, _ = fmt.Fprintf(&sb, ", Column ID: %d, Column Name: %s", columnInfo.ID, columnInfo.Name)
@@ -229,4 +245,101 @@ func NewDropPartitionEvent(
 func (s *SchemaChangeEvent) GetDropPartitionInfo() (globalTableInfo *model.TableInfo, droppedPartInfo *model.PartitionInfo) {
 	intest.Assert(s.tp == model.ActionDropTablePartition)
 	return s.newTableInfo, s.deletedPartInfo
+}
+
+// NewExchangePartitionEvent creates a SchemaChangeEvent whose type is
+// ActionExchangeTablePartition.
+func NewExchangePartitionEvent(
+	globalTableInfo *model.TableInfo,
+	originalPartInfo *model.PartitionInfo,
+	originalTableInfo *model.TableInfo,
+) *SchemaChangeEvent {
+	if len(originalPartInfo.Definitions) != 1 {
+		allIDs := make([]int64, 0, len(originalPartInfo.Definitions))
+		allNames := make([]string, 0, len(originalPartInfo.Definitions))
+		for _, def := range originalPartInfo.Definitions {
+			allIDs = append(allIDs, def.ID)
+			allNames = append(allNames, def.Name.O)
+		}
+		logutil.SampleLogger().Error("Exchange partition should only have one partition to exchange",
+			zap.Int64("globalTableID", globalTableInfo.ID),
+			zap.String("globalTableName", globalTableInfo.Name.O),
+			zap.Int64("tableID", originalTableInfo.ID),
+			zap.String("tableName", originalTableInfo.Name.O),
+			zap.Int64s("allPartitionIDs", allIDs),
+			zap.Strings("allPartitionNames", allNames),
+		)
+	}
+	return &SchemaChangeEvent{
+		tp:            model.ActionExchangeTablePartition,
+		newTableInfo:  globalTableInfo,
+		addedPartInfo: originalPartInfo,
+		oldTableInfo:  originalTableInfo,
+	}
+}
+
+// GetExchangePartitionInfo returns the table info, exchanged partition info and
+// original table info of the SchemaChangeEvent whose type is
+// ActionExchangeTablePartition.
+func (s *SchemaChangeEvent) GetExchangePartitionInfo() (
+	globalTableInfo *model.TableInfo,
+	originalPartInfo *model.PartitionInfo,
+	originalTableInfo *model.TableInfo,
+) {
+	intest.Assert(s.tp == model.ActionExchangeTablePartition)
+	return s.newTableInfo, s.addedPartInfo, s.oldTableInfo
+}
+
+// NewReorganizePartitionEvent creates a SchemaChangeEvent whose type is
+// ActionReorganizePartition.
+func NewReorganizePartitionEvent(
+	globalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+	droppedPartInfo *model.PartitionInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:              model.ActionReorganizePartition,
+		newTableInfo:    globalTableInfo,
+		addedPartInfo:   addedPartInfo,
+		deletedPartInfo: droppedPartInfo,
+	}
+}
+
+// GetReorganizePartitionInfo returns the global table info, added partition info
+// and deleted partition info of the SchemaChangeEvent whose type is
+// ActionReorganizePartition.
+func (s *SchemaChangeEvent) GetReorganizePartitionInfo() (
+	globalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+	droppedPartInfo *model.PartitionInfo,
+) {
+	intest.Assert(s.tp == model.ActionReorganizePartition)
+	return s.newTableInfo, s.addedPartInfo, s.deletedPartInfo
+}
+
+// NewAddPartitioningEvent creates a SchemaChangeEvent whose type is
+// ActionAlterTablePartitioning.
+func NewAddPartitioningEvent(
+	oldSingleTableID int64,
+	newGlobalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:              model.ActionAlterTablePartitioning,
+		oldTableID4Part: oldSingleTableID,
+		newTableInfo:    newGlobalTableInfo,
+		addedPartInfo:   addedPartInfo,
+	}
+}
+
+// GetAddPartitioningInfo returns the old single table ID, new global table info
+// and added partition info of the SchemaChangeEvent whose type is
+// ActionAlterTablePartitioning.
+func (s *SchemaChangeEvent) GetAddPartitioningInfo() (
+	oldSingleTableID int64,
+	newGlobalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+) {
+	intest.Assert(s.tp == model.ActionAlterTablePartitioning)
+	return s.oldTableID4Part, s.newTableInfo, s.addedPartInfo
 }

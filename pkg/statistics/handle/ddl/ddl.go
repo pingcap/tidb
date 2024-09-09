@@ -82,14 +82,6 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	}
 
 	switch t.GetType() {
-	case model.ActionExchangeTablePartition:
-		if err := h.onExchangeAPartition(t); err != nil {
-			return err
-		}
-	case model.ActionReorganizePartition:
-		if err := h.onReorganizePartitions(t); err != nil {
-			return err
-		}
 	case model.ActionAlterTablePartitioning:
 		oldSingleTableID, globalTableInfo, addedPartInfo := t.GetAddPartitioningInfo()
 		// Add new partition stats.
@@ -204,6 +196,14 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		}
 	case model.ActionDropTablePartition:
 		if err := h.onDropPartitions(e); err != nil {
+			return err
+		}
+	case model.ActionExchangeTablePartition:
+		if err := h.onExchangeAPartition(e); err != nil {
+			return err
+		}
+	case model.ActionReorganizePartition:
+		if err := h.onReorganizePartitions(e); err != nil {
 			return err
 		}
 	}
