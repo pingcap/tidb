@@ -754,7 +754,7 @@ func (m *memIndexLookUpReader) getMemRowsIter(ctx context.Context) (memRowsIter,
 		tblKVRanges = append(tblKVRanges, ranges...)
 	}
 	if numHandles == 0 {
-		return nil, nil
+		return &defaultRowsIter{}, nil
 	}
 
 	if m.desc {
