@@ -233,18 +233,20 @@ func (*reorgTableMutateContext) GetExchangePartitionDMLSupport() (tbctx.Exchange
 
 // SetExtraIndexKeyPosInfo implements table.MutateContext.SetExtraIndexKeyPosInfo.
 // It is used when the given row is not a full row, but only contains some limit columns. This context does not need it.
-func (*reorgTableMutateContext) SetExtraIndexKeyPosInfo(indexKeyPos map[int64][]int) {}
+func (*reorgTableMutateContext) SetExtraIndexKeyPosInfo(map[int64][]int) {}
 
 // ResetExtraInfo implements table.MutateContext.ResetExtraInfo.
 // It is used to reset the extra index key pos info. This context does not need it.
-func (*reorgTableMutateContext) GetExtraIndexKeyPosInfo(idxID int64) []int {
+func (*reorgTableMutateContext) GetExtraIndexKeyPosInfo(int64) []int {
 	return nil
 }
 
+// HasExtraInfo implements table.MutateContext.HasExtraInfo.
 func (*reorgTableMutateContext) HasExtraInfo() bool {
 	return false
 }
 
+// SetExtraInfo implements table.MutateContext.SetExtraInfo.
 func (*reorgTableMutateContext) ResetExtraInfo() {}
 
 // newReorgTableMutateContext creates a new table.MutateContext for reorganization.
