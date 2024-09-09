@@ -2364,13 +2364,11 @@ func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	// If table has global indexes, we need reorg to clean up them.
 	pt, ok := tbl.(table.PartitionedTable)
 	if !ok {
 		return false, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
 
-	// Build elements for compatible with modify column type. elements will not be used when reorganizing.
 	elements := make([]*meta.Element, 0, len(tblInfo.Indices))
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.Global {
@@ -2465,7 +2463,6 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	var oldPartitions []model.PartitionDefinition
 	var newPartitions []model.PartitionDefinition
 
-	// TRUNCATE PARTITION with GLOBAL INDEX
 	switch job.SchemaState {
 	case model.StatePublic:
 		if hasGlobalIndex(tblInfo) || tblInfo.TiFlashReplica != nil {
