@@ -28,11 +28,12 @@ import (
 
 func TestJobStartTime(t *testing.T) {
 	job := &Job{
+		Version:    JobVersion1,
 		ID:         123,
 		BinlogInfo: &HistoryInfo{},
 	}
 	require.Equal(t, TSConvert2Time(job.StartTS), time.Unix(0, 0))
-	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:none, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0, LocalMode: false", time.Unix(0, 0)), job.String())
+	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:none, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0, Version: v1", time.Unix(0, 0)), job.String())
 }
 
 func TestState(t *testing.T) {
@@ -56,6 +57,7 @@ func TestJobCodec(t *testing.T) {
 	}
 	tzName, tzOffset := time.Now().In(time.UTC).Zone()
 	job := &Job{
+		Version:    JobVersion1,
 		ID:         1,
 		TableID:    2,
 		SchemaID:   1,
@@ -73,6 +75,7 @@ func TestJobCodec(t *testing.T) {
 	// job1: table ID is 2
 	var err error
 	job1 := &Job{
+		Version:    JobVersion1,
 		ID:         2,
 		TableID:    2,
 		SchemaID:   1,
@@ -88,6 +91,7 @@ func TestJobCodec(t *testing.T) {
 	// job1: rename table, old schema ID is 3
 	// job2: create schema, schema ID is 3
 	job2 := &Job{
+		Version:    JobVersion1,
 		ID:         3,
 		TableID:    3,
 		SchemaID:   3,
@@ -101,6 +105,7 @@ func TestJobCodec(t *testing.T) {
 	// Test IsDependentOn for exchange partition with table.
 	// test ActionCreateSchema and ActionExchangeTablePartition is dependent.
 	job3 := &Job{
+		Version:    JobVersion1,
 		ID:         4,
 		TableID:    4,
 		SchemaID:   4,
@@ -116,6 +121,7 @@ func TestJobCodec(t *testing.T) {
 
 	// test random and ActionExchangeTablePartition is dependent because TableID is same.
 	job4 := &Job{
+		Version:    JobVersion1,
 		ID:         5,
 		TableID:    5,
 		SchemaID:   3,
@@ -131,6 +137,7 @@ func TestJobCodec(t *testing.T) {
 
 	// test ActionExchangeTablePartition and ActionExchangeTablePartition is dependent.
 	job5 := &Job{
+		Version:    JobVersion1,
 		ID:         6,
 		TableID:    6,
 		SchemaID:   6,
@@ -145,6 +152,7 @@ func TestJobCodec(t *testing.T) {
 	require.True(t, isDependent)
 
 	job6 := &Job{
+		Version:    JobVersion1,
 		ID:         7,
 		TableID:    7,
 		SchemaID:   7,
@@ -159,6 +167,7 @@ func TestJobCodec(t *testing.T) {
 	require.True(t, isDependent)
 
 	job7 := &Job{
+		Version:    JobVersion1,
 		ID:         8,
 		TableID:    8,
 		SchemaID:   8,
@@ -173,6 +182,7 @@ func TestJobCodec(t *testing.T) {
 	require.True(t, isDependent)
 
 	job8 := &Job{
+		Version:    JobVersion1,
 		ID:         9,
 		TableID:    9,
 		SchemaID:   9,
@@ -187,6 +197,7 @@ func TestJobCodec(t *testing.T) {
 	require.True(t, isDependent)
 
 	job9 := &Job{
+		Version:    JobVersion1,
 		ID:         10,
 		TableID:    10,
 		SchemaID:   10,
@@ -202,6 +213,7 @@ func TestJobCodec(t *testing.T) {
 
 	// test ActionDropSchema and ActionExchangeTablePartition is dependent.
 	job10 := &Job{
+		Version:    JobVersion1,
 		ID:         11,
 		TableID:    11,
 		SchemaID:   11,
@@ -212,6 +224,7 @@ func TestJobCodec(t *testing.T) {
 	require.NoError(t, err)
 
 	job11 := &Job{
+		Version:    JobVersion1,
 		ID:         12,
 		TableID:    12,
 		SchemaID:   11,
@@ -227,6 +240,7 @@ func TestJobCodec(t *testing.T) {
 
 	// test ActionDropTable and ActionExchangeTablePartition is dependent.
 	job12 := &Job{
+		Version:    JobVersion1,
 		ID:         13,
 		TableID:    13,
 		SchemaID:   11,
@@ -240,6 +254,7 @@ func TestJobCodec(t *testing.T) {
 	require.False(t, isDependent)
 
 	job13 := &Job{
+		Version:    JobVersion1,
 		ID:         14,
 		TableID:    12,
 		SchemaID:   14,
@@ -254,6 +269,7 @@ func TestJobCodec(t *testing.T) {
 
 	// test ActionDropTable and ActionExchangeTablePartition is dependent.
 	job14 := &Job{
+		Version:    JobVersion1,
 		ID:         15,
 		TableID:    15,
 		SchemaID:   15,
@@ -269,6 +285,7 @@ func TestJobCodec(t *testing.T) {
 
 	// test ActionFlashbackCluster with other ddl jobs are dependent.
 	job15 := &Job{
+		Version:    JobVersion1,
 		ID:         16,
 		Type:       ActionFlashbackCluster,
 		BinlogInfo: &HistoryInfo{},
@@ -363,6 +380,7 @@ func TestLocation(t *testing.T) {
 
 func TestJobClone(t *testing.T) {
 	job := &Job{
+		Version:         JobVersion1,
 		ID:              100,
 		Type:            ActionCreateTable,
 		SchemaID:        101,
@@ -389,7 +407,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.ToProxyJob()
 `
 	job := Job{}
-	require.Equal(t, 400, int(unsafe.Sizeof(job)), msg)
+	require.Equal(t, 440, int(unsafe.Sizeof(job)), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {
@@ -425,6 +443,7 @@ func TestMayNeedReorg(t *testing.T) {
 		ActionDropTable,
 	}
 	job := &Job{
+		Version:         JobVersion1,
 		ID:              100,
 		Type:            ActionCreateTable,
 		SchemaID:        101,
@@ -502,4 +521,23 @@ func TestString(t *testing.T) {
 		str := v.act.String()
 		require.Equal(t, v.result, str)
 	}
+}
+
+func TestJobEncodeV2(t *testing.T) {
+	j := &Job{
+		Version: JobVersion2,
+		Type:    ActionTruncateTable,
+		ArgsV2: &TruncateTableArgs{
+			FKCheck: true,
+		},
+	}
+	_, err := j.Encode(false)
+	require.NoError(t, err)
+	require.Nil(t, j.RawArgsV2)
+	_, err = j.Encode(true)
+	require.NoError(t, err)
+	require.NotNil(t, j.RawArgsV2)
+	args := &TruncateTableArgs{}
+	require.NoError(t, json.Unmarshal(j.RawArgsV2, args))
+	require.EqualValues(t, j.ArgsV2, args)
 }

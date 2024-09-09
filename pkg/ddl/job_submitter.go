@@ -316,7 +316,11 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 
 	for _, jobW := range jobWs {
 		job := jobW.Job
-		job.Version = currentVersion
+		if job.Version == 0 {
+			// if not set, fix it to version 1
+			// TODO replace this with assert after we add code v2 for all jobs.
+			job.Version = model.JobVersion1
+		}
 		job.StartTS = startTS
 		job.BDRRole = bdrRole
 
@@ -359,6 +363,14 @@ func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 	return kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 
+		for _, jobW := range jobWs {
+			if jobW.Version == 0 {
+				// if not set, fix it to version 1
+				// TODO replace this with assert after we add code v2 for all jobs.
+				jobW.Version = model.JobVersion1
+			}
+		}
+
 		count := getRequiredGIDCount(jobWs)
 		ids, err := t.GenGlobalIDs(count)
 		if err != nil {
@@ -372,7 +384,6 @@ func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
 
 		for _, jobW := range jobWs {
 			job := jobW.Job
-			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
 			setJobStateToQueueing(job)
 			if err = buildJobDependence(t, job); err != nil {
@@ -508,8 +519,12 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 			pInfo := jobW.Args[1].(*model.PartitionInfo)
 			count += len(pInfo.Definitions)
 		case model.ActionTruncateTable:
-			partCount := jobW.Args[3].(int)
-			count += 1 + partCount
+			if jobW.Version == model.JobVersion1 {
+				partCount := jobW.Args[3].(int)
+				count += 1 + partCount
+			} else {
+				count += 1 + len(jobW.ArgsV2.(*model.TruncateTableArgs).OldPartitionIDs)
+			}
 		}
 	}
 	return count
@@ -579,13 +594,23 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 			pInfo.NewTableID = pInfo.Definitions[0].ID
 		case model.ActionTruncateTable:
 			if !jobW.IDAllocated {
-				jobW.Args[0] = alloc.next()
-				partCount := jobW.Args[3].(int)
-				partIDs := make([]int64, partCount)
-				for i := range partIDs {
-					partIDs[i] = alloc.next()
+				if jobW.Version == model.JobVersion1 {
+					jobW.Args[0] = alloc.next()
+					partCount := jobW.Args[3].(int)
+					partIDs := make([]int64, partCount)
+					for i := range partIDs {
+						partIDs[i] = alloc.next()
+					}
+					jobW.Args[2] = partIDs
+				} else {
+					args := jobW.ArgsV2.(*model.TruncateTableArgs)
+					args.NewTableID = alloc.next()
+					partIDs := make([]int64, len(args.OldPartitionIDs))
+					for i := range partIDs {
+						partIDs[i] = alloc.next()
+					}
+					args.NewPartitionIDs = partIDs
 				}
-				jobW.Args[2] = partIDs
 			}
 		}
 		jobW.ID = alloc.next()

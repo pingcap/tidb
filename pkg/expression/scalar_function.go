@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -34,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
+
+var _ base.HashEquals = &ScalarFunction{}
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
@@ -671,6 +674,51 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 			sf.canonicalhashcode = append(sf.canonicalhashcode, byte(evalTp))
 		}
 	}
+}
+
+// Hash64 implements HashEquals.<0th> interface.
+func (sf *ScalarFunction) Hash64(h base.Hasher) {
+	h.HashByte(scalarFunctionFlag)
+	h.HashString(sf.FuncName.L)
+	if sf.RetType == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		sf.RetType.Hash64(h)
+	}
+	// hash the arg length to avoid hash collision.
+	h.HashInt(len(sf.GetArgs()))
+	for _, arg := range sf.GetArgs() {
+		arg.Hash64(h)
+	}
+}
+
+// Equals implements HashEquals.<1th> interface.
+func (sf *ScalarFunction) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var sf2 *ScalarFunction
+	switch x := other.(type) {
+	case *ScalarFunction:
+		sf2 = x
+	case ScalarFunction:
+		sf2 = &x
+	default:
+		return false
+	}
+	ok := sf.FuncName.L == sf2.FuncName.L
+	ok = ok && (sf.RetType == nil && sf2.RetType == nil || sf.RetType != nil && sf2.RetType != nil && sf.RetType.Equals(sf2.RetType))
+	if len(sf.GetArgs()) != len(sf2.GetArgs()) {
+		return false
+	}
+	for i, arg := range sf.GetArgs() {
+		ok = ok && arg.Equals(sf2.GetArgs()[i])
+		if !ok {
+			return false
+		}
+	}
+	return ok
 }
 
 // ReHashCode is used after we change the argument in place.

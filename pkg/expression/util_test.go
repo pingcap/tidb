@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -661,3 +662,5 @@ func (m *MockExpr) MemoryUsage() (sum int64) {
 func (m *MockExpr) Traverse(action TraverseAction) Expression {
 	return action.Transform(m)
 }
+func (m *MockExpr) Hash64(_ base.Hasher) {}
+func (m *MockExpr) Equals(_ any) bool    { return false }

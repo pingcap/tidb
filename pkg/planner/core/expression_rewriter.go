@@ -1658,20 +1658,20 @@ func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 	stkLen := len(er.ctxStack)
 	name := strings.ToLower(v.Name)
 	evalCtx := er.sctx.GetEvalCtx()
-	if !evalCtx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
-		er.err = errors.Errorf("rewriting user variable requires '%s' in evalCtx", exprctx.OptPropSessionVars.String())
-		return
-	}
-
-	sessionVars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(evalCtx)
-	if err != nil {
-		er.err = err
-		return
-	}
-
-	intest.Assert(er.planCtx == nil || sessionVars == er.planCtx.builder.ctx.GetSessionVars())
-
 	if v.Value != nil {
+		if !evalCtx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+			er.err = errors.Errorf("rewriting user variable requires '%s' in evalCtx", exprctx.OptPropSessionVars.String())
+			return
+		}
+
+		sessionVars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(evalCtx)
+		if err != nil {
+			er.err = err
+			return
+		}
+
+		intest.Assert(er.planCtx == nil || sessionVars == er.planCtx.builder.ctx.GetSessionVars())
+
 		tp := er.ctxStack[stkLen-1].GetType(er.sctx.GetEvalCtx())
 		er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
 			expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0),
@@ -1683,7 +1683,7 @@ func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 		sessionVars.SetUserVarType(name, tp)
 		return
 	}
-	tp, ok := sessionVars.GetUserVarType(name)
+	tp, ok := evalCtx.GetUserVarsReader().GetUserVarType(name)
 	if !ok {
 		tp = types.NewFieldType(mysql.TypeVarString)
 		tp.SetFlen(mysql.MaxFieldVarCharLength)
