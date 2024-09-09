@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // ActionType is the type for DDL action.
@@ -482,21 +483,33 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
 	if updateRawArgs {
-		job.RawArgs, err = json.Marshal(job.Args)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if job.MultiSchemaInfo != nil {
-			for _, sub := range job.MultiSchemaInfo.SubJobs {
-				// Only update the args of executing sub-jobs.
-				if sub.Args == nil {
-					continue
-				}
-				sub.RawArgs, err = json.Marshal(sub.Args)
-				if err != nil {
-					return nil, errors.Trace(err)
+		if job.Version == JobVersion1 {
+			job.RawArgs, err = json.Marshal(job.Args)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if job.MultiSchemaInfo != nil {
+				for _, sub := range job.MultiSchemaInfo.SubJobs {
+					// Only update the args of executing sub-jobs.
+					if sub.Args == nil {
+						continue
+					}
+					sub.RawArgs, err = json.Marshal(sub.Args)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
 				}
 			}
+		} else {
+			var arg any
+			if len(job.Args) > 0 {
+				arg = job.Args[0]
+			}
+			job.RawArgs, err = json.Marshal(arg)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			// TODO remember update sub-jobs' RawArgs when we do it.
 		}
 	}
 
@@ -526,8 +539,9 @@ func (job *Job) Decode(b []byte) error {
 }
 
 // DecodeArgs decodes serialized job arguments from job.RawArgs into the given
-// variables, and also save the result in job.Args.
+// variables, and also save the result in job.Args. It's for JobVersion1.
 func (job *Job) DecodeArgs(args ...any) error {
+	intest.Assert(job.Version == JobVersion1, "Job.DecodeArgs is only used for JobVersion1")
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {
 		return errors.Trace(err)
@@ -553,8 +567,8 @@ func (job *Job) DecodeArgs(args ...any) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, LocalMode: %t",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.LocalMode)
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
@@ -1232,4 +1246,8 @@ type TraceInfo struct {
 	ConnectionID uint64 `json:"connection_id"`
 	// SessionAlias is the alias of session
 	SessionAlias string `json:"session_alias"`
+}
+
+func init() {
+	SetJobVerInUse(JobVersion1)
 }

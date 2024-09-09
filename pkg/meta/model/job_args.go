@@ -207,7 +207,8 @@ type RenameTablesArgs struct {
 
 func (a *RenameTablesArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
-		job.Args = []any{a.OldSchemaIDs, a.NewSchemaIDs, a.NewTableNames, a.TableIDs, a.OldSchemaNames, a.OldTableNames}
+		job.Args = []any{a.OldSchemaIDs, a.OldSchemaNames, a.OldTableNames, a.NewSchemaIDs, a.NewTableNames, a.TableIDs}
+		return
 	}
 	job.Args = []any{a}
 }
@@ -223,7 +224,7 @@ func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
 			newTableNames  []*pmodel.CIStr
 			tableIDs       []int64
 		)
-		if err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &newTableNames, &tableIDs, &oldSchemaNames, &oldTableNames); err != nil {
+		if err := job.DecodeArgs(&oldSchemaIDs, &oldSchemaNames, &oldTableNames, &newSchemaIDs, &newTableNames, &tableIDs); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &RenameTablesArgs{
