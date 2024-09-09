@@ -14,7 +14,11 @@
 
 package set
 
-import "golang.org/x/exp/maps"
+import (
+	"strings"
+
+	"golang.org/x/exp/maps"
+)
 
 // StringSet is a string set.
 type StringSet map[string]struct{}
@@ -50,6 +54,23 @@ func (s StringSet) Intersection(rhs StringSet) StringSet {
 	return newSet
 }
 
+// IntersectionWithLower returns the intersection of two sets with different case of string.
+func (s StringSet) IntersectionWithLower(rhs StringSet, toLower bool) StringSet {
+	newSet := NewStringSet()
+	for origElt := range rhs {
+		var elt string
+		if toLower {
+			elt = strings.ToLower(origElt)
+		} else {
+			elt = strings.ToUpper(origElt)
+		}
+		if s.Exist(elt) {
+			newSet.Insert(origElt)
+		}
+	}
+	return newSet
+}
+
 // Count returns the number in Set s.
 func (s StringSet) Count() int {
 	return len(s)
@@ -63,4 +84,11 @@ func (s StringSet) Empty() bool {
 // Clear clears the set.
 func (s StringSet) Clear() {
 	maps.Clear(s)
+}
+
+// IterateWith iterate items in StringSet and pass it to `fn`.
+func (s StringSet) IterateWith(fn func(string)) {
+	for k := range s {
+		fn(k)
+	}
 }

@@ -17,15 +17,14 @@ package domain
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // The sysvar cache replaces the GlobalVariableCache.
@@ -65,9 +64,7 @@ func (do *Domain) GetSessionCache() (map[string]string, error) {
 	do.sysVarCache.RLock()
 	defer do.sysVarCache.RUnlock()
 	// Perform a deep copy since this will be assigned directly to the session
-	newMap := make(map[string]string, len(do.sysVarCache.session))
-	maps.Copy(newMap, do.sysVarCache.session)
-	return newMap, nil
+	return maps.Clone(do.sysVarCache.session), nil
 }
 
 // GetGlobalVar gets an individual global var from the sysvar cache.
@@ -85,10 +82,10 @@ func (do *Domain) GetGlobalVar(name string) (string, error) {
 	return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 }
 
-func (do *Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, error) {
+func (*Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, error) {
 	tableContents := make(map[string]string)
 	// Copy all variables from the table to tableContents
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT variable_name, variable_value FROM mysql.global_variables`)
 	if err != nil {
@@ -108,12 +105,11 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
 	if ctx == nil {
-		sysSessionPool := do.SysSessionPool()
-		res, err := sysSessionPool.Get()
+		res, err := do.sysSessionPool.Get()
 		if err != nil {
 			return err
 		}
-		defer sysSessionPool.Put(res)
+		defer do.sysSessionPool.Put(res)
 		ctx = res.(sessionctx.Context)
 	}
 	// Only one rebuild can be in progress at a time, this prevents a lost update race

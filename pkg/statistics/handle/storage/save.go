@@ -197,7 +197,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		if modifyCnt < 0 {
 			modifyCnt = 0
 		}
-		statslogutil.StatsLogger.Info("incrementally update modifyCount",
+		statslogutil.StatsLogger().Info("incrementally update modifyCount",
 			zap.Int64("tableID", tableID),
 			zap.Int64("curModifyCnt", curModifyCnt),
 			zap.Int64("results.BaseModifyCnt", results.BaseModifyCnt),
@@ -208,7 +208,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			if cnt < 0 {
 				cnt = 0
 			}
-			statslogutil.StatsLogger.Info("incrementally update count",
+			statslogutil.StatsLogger().Info("incrementally update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("curCnt", curCnt),
 				zap.Int64("results.Count", results.Count),
@@ -219,7 +219,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			if cnt < 0 {
 				cnt = 0
 			}
-			statslogutil.StatsLogger.Info("directly update count",
+			statslogutil.StatsLogger().Info("directly update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))
@@ -271,7 +271,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 					return 0, err
 				}
 			}
-			if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+			if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?, %?)",
 				tableID, result.IsIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, results.StatsVer, statistics.AnalyzeFlag, hg.Correlation); err != nil {
 				return 0, err
 			}
@@ -325,9 +325,18 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 // If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
-func SaveStatsToStorage(sctx sessionctx.Context,
-	tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
-	cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (statsVer uint64, err error) {
+func SaveStatsToStorage(
+	sctx sessionctx.Context,
+	tableID int64,
+	count, modifyCount int64,
+	isIndex int,
+	hg *statistics.Histogram,
+	cms *statistics.CMSketch,
+	topN *statistics.TopN,
+	statsVersion int,
+	isAnalyzed int64,
+	updateAnalyzeTime bool,
+) (statsVer uint64, err error) {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -362,7 +371,7 @@ func SaveStatsToStorage(sctx sessionctx.Context,
 	if isAnalyzed == 1 {
 		flag = statistics.AnalyzeFlag
 	}
-	if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+	if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?, %?)",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
 		return 0, err
 	}

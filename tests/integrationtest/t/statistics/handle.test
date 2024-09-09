@@ -73,3 +73,12 @@ alter table t drop stats_extended s1;
 -- error 1105
 admin reload stats_extended;
 
+# TestReloadExtStatsLockRelease
+set session tidb_enable_extended_stats = on;
+drop table if exists t;
+create table t(a int, b int);
+insert into t values(1,1),(2,2),(3,3);
+alter table t add stats_extended s1 correlation(a,b);
+## no error
+analyze table t;
+set session tidb_enable_extended_stats = default;

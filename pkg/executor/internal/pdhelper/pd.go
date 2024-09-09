@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // GlobalPDHelper is the global variable for PDHelper.
@@ -39,7 +38,7 @@ var globalPDHelperOnce sync.Once
 type PDHelper struct {
 	cacheForApproximateTableCountFromStorage *ttlcache.Cache[string, float64]
 
-	getApproximateTableCountFromStorageFunc func(sctx sessionctx.Context, tid int64, dbName, tableName, partitionName string) (float64, bool)
+	getApproximateTableCountFromStorageFunc func(ctx context.Context, sctx sessionctx.Context, tid int64, dbName, tableName, partitionName string) (float64, bool)
 	wg                                      util.WaitGroupWrapper
 }
 
@@ -72,24 +71,28 @@ func approximateTableCountKey(tid int64, dbName, tableName, partitionName string
 }
 
 // GetApproximateTableCountFromStorage gets the approximate count of the table.
-func (p *PDHelper) GetApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, dbName, tableName, partitionName string) (float64, bool) {
+func (p *PDHelper) GetApproximateTableCountFromStorage(
+	ctx context.Context, sctx sessionctx.Context,
+	tid int64, dbName, tableName, partitionName string,
+) (float64, bool) {
 	key := approximateTableCountKey(tid, dbName, tableName, partitionName)
 	if item := p.cacheForApproximateTableCountFromStorage.Get(key); item != nil {
 		return item.Value(), true
 	}
-	result, hasPD := p.getApproximateTableCountFromStorageFunc(sctx, tid, dbName, tableName, partitionName)
+	result, hasPD := p.getApproximateTableCountFromStorageFunc(ctx, sctx, tid, dbName, tableName, partitionName)
 	p.cacheForApproximateTableCountFromStorage.Set(key, result, ttlcache.DefaultTTL)
 	return result, hasPD
 }
 
-func getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, dbName, tableName, partitionName string) (float64, bool) {
+func getApproximateTableCountFromStorage(
+	ctx context.Context, sctx sessionctx.Context,
+	tid int64, dbName, tableName, partitionName string,
+) (float64, bool) {
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return 0, false
 	}
-	regionStats := &helper.PDRegionStats{}
-	pdHelper := helper.NewHelper(tikvStore)
-	err := pdHelper.GetPDRegionStats(tid, regionStats, true)
+	regionStats, err := helper.NewHelper(tikvStore).GetPDRegionStats(ctx, tid, true)
 	failpoint.Inject("calcSampleRateByStorageCount", func() {
 		// Force the TiDB thinking that there's PD and the count of region is small.
 		err = nil
@@ -112,8 +115,8 @@ func getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, dbN
 	if partitionName != "" {
 		sqlescape.MustFormatSQL(sql, " partition(%n)", partitionName)
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql.String())
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return 0, false
 	}

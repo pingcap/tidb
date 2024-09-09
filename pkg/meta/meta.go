@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,14 +28,18 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/partialjson"
 )
 
 var (
@@ -56,9 +61,14 @@ var (
 //		TID:2 -> int64
 //	}
 //
+// DDL version 2
+// Names -> {
+//		Name:DBname\x00tablename -> tableID
+// }
 
 var (
-	mMetaPrefix          = []byte("m")
+	mMetaPrefix = []byte("m")
+	// the value inside it is actually the max current used ID, not next id.
 	mNextGlobalIDKey     = []byte("NextGlobalID")
 	mSchemaVersionKey    = []byte("SchemaVersionKey")
 	mDBs                 = []byte("DBs")
@@ -78,7 +88,10 @@ var (
 	mPolicyGlobalID      = []byte("PolicyGlobalID")
 	mPolicyMagicByte     = CurrentMagicByteVer
 	mDDLTableVersion     = []byte("DDLTableVersion")
+	mBDRRole             = []byte("BDRRole")
 	mMetaDataLock        = []byte("metadataLock")
+	mSchemaCacheSize     = []byte("SchemaCacheSize")
+	mRequestUnitStats    = []byte("RequestUnitStats")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -87,10 +100,10 @@ var (
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate:     math.MaxInt32,
 			BurstLimit: -1,
-			Priority:   model.MediumPriorityValue,
+			Priority:   pmodel.MediumPriorityValue,
 		},
 		ID:    defaultGroupID,
-		Name:  model.NewCIStr(resourcegroup.DefaultResourceGroupName),
+		Name:  pmodel.NewCIStr(resourcegroup.DefaultResourceGroupName),
 		State: model.StatePublic,
 	}
 )
@@ -157,6 +170,9 @@ func (ver DDLTableVersion) Bytes() []byte {
 	return []byte(strconv.Itoa(int(ver)))
 }
 
+// Option is for Meta option.
+type Option func(m *Meta)
+
 // Meta is for handling meta information in a transaction.
 type Meta struct {
 	txn        *structure.TxStructure
@@ -166,14 +182,18 @@ type Meta struct {
 
 // NewMeta creates a Meta in transaction txn.
 // If the current Meta needs to handle a job, jobListKey is the type of the job's list.
-func NewMeta(txn kv.Transaction) *Meta {
+func NewMeta(txn kv.Transaction, options ...Option) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
-	return &Meta{txn: t,
+	m := &Meta{txn: t,
 		StartTS:    txn.StartTS(),
 		jobListKey: DefaultJobListKey,
 	}
+	for _, opt := range options {
+		opt(m)
+	}
+	return m
 }
 
 // NewSnapshotMeta creates a Meta with snapshot.
@@ -234,6 +254,11 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 		ids = append(ids, i)
 	}
 	return ids, nil
+}
+
+// GlobalIDKey returns the key for the global ID.
+func (m *Meta) GlobalIDKey() []byte {
+	return m.txn.EncodeStringDataKey(mNextGlobalIDKey)
 }
 
 // GenPlacementPolicyID generates next placement policy id globally.
@@ -447,6 +472,8 @@ func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
 // To solve this problem, we always check the schema diff at first, if the diff is empty, we know at t2 moment we can only see the v9 schema,
 // so make neededSchemaVersion = neededSchemaVersion - 1.
 // For `Reload`, we can also do this: if the newest version's diff is not set yet, it is ok to load the previous version's infoSchema, and wait for the next reload.
+// if there are multiple consecutive jobs failed or cancelled after the schema version
+// increased, the returned 'version - 1' might still not have diff.
 func (m *Meta) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
 	v, err := m.txn.GetInt64(mSchemaVersionKey)
 	if err != nil {
@@ -639,7 +666,10 @@ func (m *Meta) CreateDatabase(dbInfo *model.DBInfo) error {
 		return errors.Trace(err)
 	}
 
-	return m.txn.HSet(mDBs, dbKey, data)
+	if err := m.txn.HSet(mDBs, dbKey, data); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // UpdateDatabase updates a database with db info.
@@ -677,13 +707,34 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 		return errors.Trace(err)
 	}
 
-	return m.txn.HSet(dbKey, tableKey, data)
+	if err := m.txn.HSet(dbKey, tableKey, data); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// SetBDRRole write BDR role into storage.
+func (m *Meta) SetBDRRole(role string) error {
+	return errors.Trace(m.txn.Set(mBDRRole, []byte(role)))
+}
+
+// GetBDRRole get BDR role from storage.
+func (m *Meta) GetBDRRole() (string, error) {
+	v, err := m.txn.Get(mBDRRole)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return string(v), nil
+}
+
+// ClearBDRRole clear BDR role from storage.
+func (m *Meta) ClearBDRRole() error {
+	return errors.Trace(m.txn.Clear(mBDRRole))
 }
 
 // SetDDLTables write a key into storage.
 func (m *Meta) SetDDLTables(ddlTableVersion DDLTableVersion) error {
-	err := m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes())
-	return errors.Trace(err)
+	return errors.Trace(m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes()))
 }
 
 // CheckDDLTableVersion check if the tables related to concurrent DDL exists.
@@ -715,7 +766,7 @@ func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	}
 	db := model.DBInfo{
 		ID:      id,
-		Name:    model.NewCIStr(mysql.SystemDB),
+		Name:    pmodel.NewCIStr(mysql.SystemDB),
 		Charset: mysql.UTF8MB4Charset,
 		Collate: mysql.UTF8MB4DefaultCollation,
 		State:   model.StatePublic,
@@ -761,19 +812,43 @@ func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
 	return bytes.Equal(val, []byte("1")), false, nil
 }
 
+// SetSchemaCacheSize sets the schema cache size.
+func (m *Meta) SetSchemaCacheSize(size uint64) error {
+	return errors.Trace(m.txn.Set(mSchemaCacheSize, []byte(strconv.FormatUint(size, 10))))
+}
+
+// GetSchemaCacheSize gets the schema cache size.
+func (m *Meta) GetSchemaCacheSize() (size uint64, isNull bool, err error) {
+	val, err := m.txn.Get(mSchemaCacheSize)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return 0, true, nil
+	}
+	size, err = strconv.ParseUint(string(val), 10, 64)
+	return size, false, errors.Trace(err)
+}
+
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
-func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIncID, autoRandID int64) error {
+func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIDs AutoIDGroup) error {
 	err := m.CreateTableOrView(dbID, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoIncID)
+	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoIDs.RowID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if tableInfo.AutoRandomBits > 0 {
-		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), autoRandID)
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), autoIDs.RandomID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if tableInfo.SepAutoInc() && tableInfo.GetAutoIncrementColInfo() != nil {
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoIncrementIDKey(tableInfo.ID), autoIDs.IncrementID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -886,6 +961,8 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 		return errors.Trace(err)
 	}
 
+	tableInfo.Revision++
+
 	data, err := json.Marshal(tableInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -914,6 +991,7 @@ func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) erro
 		if err != nil {
 			return errors.Trace(err)
 		}
+		tbInfo.DBID = dbID
 
 		err = fn(tbInfo)
 		return errors.Trace(err)
@@ -921,14 +999,143 @@ func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) erro
 	return errors.Trace(err)
 }
 
-// ListTables shows all tables in database.
-func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
+// GetMetasByDBID return all meta information of a database.
+// Note(dongmen): This method is used by TiCDC to reduce the time of changefeed initialization.
+// Ref: https://github.com/pingcap/tiflow/issues/11109
+func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return res, nil
+}
+
+var checkAttributesInOrder = []string{
+	`"fk_info":null`,
+	`"partition":null`,
+	`"Lock":null`,
+	`"tiflash_replica":null`,
+	`"temp_table_type":0`,
+	`"policy_ref_info":null`,
+	`"ttl_info":null`,
+}
+
+// isTableInfoMustLoad checks whether the table info needs to be loaded.
+// If the byte representation contains all the given attributes,
+// then it does not need to be loaded and this function will return false.
+// Otherwise, it will return true, indicating that the table info should be loaded.
+// Since attributes are checked in sequence, it's important to choose the order carefully.
+func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
+	idx := 0
+	for _, substr := range filterAttrs {
+		idx = bytes.Index(json, hack.Slice(substr))
+		if idx == -1 {
+			return true
+		}
+		json = json[idx:]
+	}
+	return false
+}
+
+// IsTableInfoMustLoad checks whether the table info needs to be loaded.
+// Exported for testing.
+func IsTableInfoMustLoad(json []byte) bool {
+	return isTableInfoMustLoad(json, checkAttributesInOrder...)
+}
+
+// NameExtractRegexp is exported for testing.
+const NameExtractRegexp = `"O":"([^"\\]*(?:\\.[^"\\]*)*)",`
+
+// Unescape is exported for testing.
+func Unescape(s string) string {
+	s = strings.ReplaceAll(s, `\"`, `"`)
+	s = strings.ReplaceAll(s, `\\`, `\`)
+	return s
+}
+
+// GetAllNameToIDAndTheMustLoadedTableInfo gets all the fields and values and table info for special attributes in a hash.
+// It's used to get some infos for information schema cache in a faster way.
+// If a table contains any of the attributes listed in checkSubstringsInOrder, it must be loaded during schema full load.
+// hasSpecialAttributes() is a subset of it, the difference is that:
+// If a table need to be resident in-memory, its table info MUST be loaded.
+// If a table info is loaded, it's NOT NECESSARILY to be keep in-memory.
+func GetAllNameToIDAndTheMustLoadedTableInfo(m *Meta, dbID int64) (map[string]int64, []*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	res := make(map[string]int64)
+	idRegex := regexp.MustCompile(`"id":(\d+)`)
+	nameLRegex := regexp.MustCompile(NameExtractRegexp)
+
+	tableInfos := make([]*model.TableInfo, 0)
+
+	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
+		if !strings.HasPrefix(string(hack.String(field)), "Table") {
+			return nil
+		}
+
+		idMatch := idRegex.FindStringSubmatch(string(hack.String(value)))
+		nameLMatch := nameLRegex.FindStringSubmatch(string(hack.String(value)))
+		id, err := strconv.Atoi(idMatch[1])
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		key := Unescape(nameLMatch[1])
+		res[strings.Clone(key)] = int64(id)
+		if isTableInfoMustLoad(value, checkAttributesInOrder...) {
+			tbInfo := &model.TableInfo{}
+			err = json.Unmarshal(value, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tbInfo.DBID = dbID
+			tableInfos = append(tableInfos, tbInfo)
+		}
+		return nil
+	})
+
+	return res, tableInfos, errors.Trace(err)
+}
+
+// GetTableInfoWithAttributes retrieves all the table infos for a given db.
+// The filterAttrs are used to filter out any table that is not needed.
+func GetTableInfoWithAttributes(m *Meta, dbID int64, filterAttrs ...string) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	res, err := m.txn.HGetAll(dbKey)
+	tableInfos := make([]*model.TableInfo, 0)
+	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
+		if !strings.HasPrefix(string(hack.String(field)), "Table") {
+			return nil
+		}
+
+		if isTableInfoMustLoad(value, filterAttrs...) {
+			tbInfo := &model.TableInfo{}
+			err := json.Unmarshal(value, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tbInfo.DBID = dbID
+			tableInfos = append(tableInfos, tbInfo)
+		}
+		return nil
+	})
+
+	return tableInfos, errors.Trace(err)
+}
+
+// ListTables shows all tables in database.
+func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
+	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -946,11 +1153,84 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		tbInfo.DBID = dbID
 
 		tables = append(tables, tbInfo)
 	}
 
 	return tables, nil
+}
+
+// ListSimpleTables shows all simple tables in database.
+func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
+	res, err := m.GetMetasByDBID(dbID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableNameInfo, 0, len(res)/2)
+	for _, r := range res {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			continue
+		}
+
+		tbInfo, err2 := FastUnmarshalTableNameInfo(r.Value)
+		if err2 != nil {
+			return nil, errors.Trace(err2)
+		}
+
+		tables = append(tables, tbInfo)
+	}
+
+	return tables, nil
+}
+
+var tableNameInfoFields = []string{"id", "name"}
+
+// FastUnmarshalTableNameInfo is exported for testing.
+func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
+	m, err := partialjson.ExtractTopLevelMembers(data, tableNameInfoFields)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	idTokens, ok := m["id"]
+	if !ok {
+		return nil, errors.New("id field not found in JSON")
+	}
+	if len(idTokens) != 1 {
+		return nil, errors.Errorf("unexpected id field in JSON, %v", idTokens)
+	}
+	num, ok := idTokens[0].(json.Number)
+	if !ok {
+		return nil, errors.Errorf(
+			"id field is not a number, got %T %v", idTokens[0], idTokens[0],
+		)
+	}
+	id, err := num.Int64()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	nameTokens, ok := m["name"]
+	if !ok {
+		return nil, errors.New("name field not found in JSON")
+	}
+	// 6 tokens; {, O, ..., L, ..., }, the data looks like this {123,"O","t","L","t",125}
+	if len(nameTokens) != 6 {
+		return nil, errors.Errorf("unexpected name field in JSON, %v", nameTokens)
+	}
+	name, ok := nameTokens[2].(string)
+	if !ok {
+		return nil, errors.Errorf("unexpected name field in JSON, %v", nameTokens)
+	}
+
+	return &model.TableNameInfo{
+		ID:   id,
+		Name: pmodel.NewCIStr(name),
+	}, nil
 }
 
 // ListDatabases shows all databases.
@@ -1070,7 +1350,7 @@ func (m *Meta) GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error)
 		return nil, errors.Trace(err)
 	}
 	if value == nil {
-		// the default group is not persistanted to tikv by default.
+		// the default group is not persistent to tikv by default.
 		if groupID == defaultGroupID {
 			return defaultRGroupMeta, nil
 		}
@@ -1130,6 +1410,7 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 
 	tableInfo := &model.TableInfo{}
 	err = json.Unmarshal(value, tableInfo)
+	tableInfo.DBID = dbID
 	return tableInfo, errors.Trace(err)
 }
 
@@ -1170,13 +1451,15 @@ var (
 
 var (
 	// DefaultJobListKey keeps all actions of DDL jobs except "add index".
+	// this and below list are always appended, so the order is the same as the
+	// job's creation order.
 	DefaultJobListKey JobListKeyType = mDDLJobListKey
 	// AddIndexJobListKey only keeps the action of adding index.
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
 )
 
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
-	b, err := job.Encode(updateRawArgs)
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
+	b, err := job.Encode(true)
 	if err == nil {
 		err = m.txn.RPush(key, b)
 	}
@@ -1190,7 +1473,7 @@ func (m *Meta) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) erro
 		listKey = jobListKeys[0]
 	}
 
-	return m.enQueueDDLJob(listKey, job, true)
+	return m.enQueueDDLJob(listKey, job)
 }
 
 // JobListKeyType is a key type of the DDL job queue.
@@ -1438,5 +1721,51 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	startTime := time.Now()
 	err = m.txn.Set(diffKey, data)
 	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	return errors.Trace(err)
+}
+
+// GroupRUStats keeps the ru consumption statistics data.
+type GroupRUStats struct {
+	ID            int64             `json:"id"`
+	Name          string            `json:"name"`
+	RUConsumption *rmpb.Consumption `json:"ru_consumption"`
+}
+
+// DailyRUStats keeps all the ru consumption statistics data.
+type DailyRUStats struct {
+	EndTime time.Time      `json:"date"`
+	Stats   []GroupRUStats `json:"stats"`
+}
+
+// RUStats keeps the lastest and second lastest DailyRUStats data.
+type RUStats struct {
+	Latest   *DailyRUStats `json:"latest"`
+	Previous *DailyRUStats `json:"previous"`
+}
+
+// GetRUStats load the persisted RUStats data.
+func (m *Meta) GetRUStats() (*RUStats, error) {
+	data, err := m.txn.Get(mRequestUnitStats)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var ruStats *RUStats
+	if data != nil {
+		ruStats = &RUStats{}
+		if err = json.Unmarshal(data, &ruStats); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return ruStats, nil
+}
+
+// SetRUStats persist new ru stats data to meta storage.
+func (m *Meta) SetRUStats(stats *RUStats) error {
+	data, err := json.Marshal(stats)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = m.txn.Set(mRequestUnitStats, data)
 	return errors.Trace(err)
 }

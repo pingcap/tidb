@@ -157,6 +157,20 @@ func TestWalkDirSkipSubDir(t *testing.T) {
 	}))
 }
 
+func TestLocalURI(t *testing.T) {
+	ctx := context.Background()
+
+	url := "file:///tmp/folder"
+	sb, err := ParseBackend(url, &BackendOptions{})
+	require.NoError(t, err)
+
+	store, err := Create(ctx, sb, true)
+	require.NoError(t, err)
+
+	obtained := store.URI()
+	require.Equal(t, url, obtained)
+}
+
 func TestLocalFileReadRange(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -222,4 +236,24 @@ func TestLocalFileReadRange(t *testing.T) {
 	require.NoError(t, err)
 	n, _ := r.Read(smallBuf)
 	require.Equal(t, "23", string(smallBuf[:n]))
+}
+
+func TestWalkBrokenSymLink(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	err := os.Symlink(filepath.Join(dir, "non-existing-file"), filepath.Join(dir, "file-that-should-be-ignored"))
+	require.NoError(t, err)
+
+	sb, err := ParseBackend("file://"+filepath.ToSlash(dir), nil)
+	require.NoError(t, err)
+	store, err := New(ctx, sb, nil)
+	require.NoError(t, err)
+
+	files := map[string]int64{}
+	err = store.WalkDir(ctx, nil, func(path string, size int64) error {
+		files[path] = size
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"file-that-should-be-ignored": 0}, files)
 }

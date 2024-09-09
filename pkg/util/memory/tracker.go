@@ -32,6 +32,9 @@ import (
 // TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
 const TrackMemWhenExceeds = 104857600 // 100MB
 
+// DefMemQuotaQuery is default memory quota for query.
+const DefMemQuotaQuery = 1073741824 // 1GB
+
 // Process global variables for memory limit.
 var (
 	ServerMemoryLimitOriginText  = atomicutil.NewString("0")
@@ -72,7 +75,7 @@ var (
 // The actions that could be triggered are: SpillDiskAction, SortAndSpillDiskAction, rateLimitAction,
 // PanicOnExceed, globalPanicOnExceed, LogOnExceed.
 type Tracker struct {
-	bytesLimit           atomic.Value
+	bytesLimit           atomic.Pointer[bytesLimits]
 	actionMuForHardLimit actionMu
 	actionMuForSoftLimit actionMu
 	Killer               *sqlkiller.SQLKiller
@@ -119,6 +122,16 @@ type bytesLimits struct {
 	bytesSoftLimit int64 // bytesSoftLimit <= 0 means no limit, used for actionMuForSoftLimit.
 }
 
+var unlimitedBytesLimit = bytesLimits{
+	bytesHardLimit: -1,
+	bytesSoftLimit: -1,
+}
+
+var defaultQueryQuota = bytesLimits{
+	bytesHardLimit: DefMemQuotaQuery,
+	bytesSoftLimit: DefMemQuotaQuery * 8 / 10,
+}
+
 // MemUsageTop1Tracker record the use memory top1 session's tracker for kill.
 var MemUsageTop1Tracker atomic.Pointer[Tracker]
 
@@ -134,10 +147,16 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 	t.parMu.parent = nil
 
 	t.label = label
-	t.bytesLimit.Store(&bytesLimits{
-		bytesHardLimit: bytesLimit,
-		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
-	})
+	if bytesLimit <= 0 {
+		t.bytesLimit.Store(&unlimitedBytesLimit)
+	} else if bytesLimit == DefMemQuotaQuery {
+		t.bytesLimit.Store(&defaultQueryQuota)
+	} else {
+		t.bytesLimit.Store(&bytesLimits{
+			bytesHardLimit: bytesLimit,
+			bytesSoftLimit: int64(float64(bytesLimit) * softScale),
+		})
+	}
 	t.maxConsumed.Store(0)
 	t.isGlobal = false
 }
@@ -177,35 +196,41 @@ func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 // CheckBytesLimit check whether the bytes limit of the tracker is equal to a value.
 // Only used in test.
 func (t *Tracker) CheckBytesLimit(val int64) bool {
-	return t.bytesLimit.Load().(*bytesLimits).bytesHardLimit == val
+	return t.bytesLimit.Load().bytesHardLimit == val
 }
 
 // SetBytesLimit sets the bytes limit for this tracker.
 // "bytesHardLimit <= 0" means no limit.
 func (t *Tracker) SetBytesLimit(bytesLimit int64) {
-	t.bytesLimit.Store(&bytesLimits{
-		bytesHardLimit: bytesLimit,
-		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
-	})
+	if bytesLimit <= 0 {
+		t.bytesLimit.Store(&unlimitedBytesLimit)
+	} else if bytesLimit == DefMemQuotaQuery {
+		t.bytesLimit.Store(&defaultQueryQuota)
+	} else {
+		t.bytesLimit.Store(&bytesLimits{
+			bytesHardLimit: bytesLimit,
+			bytesSoftLimit: int64(float64(bytesLimit) * softScale),
+		})
+	}
 }
 
 // GetBytesLimit gets the bytes limit for this tracker.
 // "bytesHardLimit <= 0" means no limit.
 func (t *Tracker) GetBytesLimit() int64 {
-	return t.bytesLimit.Load().(*bytesLimits).bytesHardLimit
+	return t.bytesLimit.Load().bytesHardLimit
 }
 
 // CheckExceed checks whether the consumed bytes is exceed for this tracker.
 func (t *Tracker) CheckExceed() bool {
-	bytesHardLimit := t.bytesLimit.Load().(*bytesLimits).bytesHardLimit
+	bytesHardLimit := t.bytesLimit.Load().bytesHardLimit
 	return atomic.LoadInt64(&t.bytesConsumed) >= bytesHardLimit && bytesHardLimit > 0
 }
 
 // SetActionOnExceed sets the action when memory usage exceeds bytesHardLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
 	t.actionMuForHardLimit.actionOnExceed = a
-	t.actionMuForHardLimit.Unlock()
 }
 
 // FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesHardLimit
@@ -242,7 +267,30 @@ func (t *Tracker) UnbindActions() {
 
 	t.actionMuForHardLimit.Lock()
 	defer t.actionMuForHardLimit.Unlock()
-	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
+	// Currently this method is only called by ResetContextOfStmt, which then always calls SetActionOnExceed to set
+	// actionForHardLimit.actionOnExceed properly, thus it's safe to set it nil here.
+	t.actionMuForHardLimit.actionOnExceed = nil
+}
+
+// UnbindActionFromHardLimit unbinds action from hardLimit.
+func (t *Tracker) UnbindActionFromHardLimit(actionToUnbind ActionOnExceed) {
+	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
+
+	var prev ActionOnExceed
+	for current := t.actionMuForHardLimit.actionOnExceed; current != nil; current = current.GetFallback() {
+		if current == actionToUnbind {
+			if prev == nil {
+				// actionToUnbind is the first element
+				t.actionMuForHardLimit.actionOnExceed = current.GetFallback()
+			} else {
+				// actionToUnbind is not the first element
+				prev.SetFallback(current.GetFallback())
+			}
+			break
+		}
+		prev = current
+	}
 }
 
 // reArrangeFallback merge two action chains and rearrange them by priority in descending order.
@@ -406,7 +454,7 @@ func (t *Tracker) Consume(bs int64) {
 		}
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bs)
 		bytesReleased := atomic.LoadInt64(&tracker.bytesReleased)
-		limits := tracker.bytesLimit.Load().(*bytesLimits)
+		limits := tracker.bytesLimit.Load()
 		if bytesConsumed+bytesReleased >= limits.bytesHardLimit && limits.bytesHardLimit > 0 {
 			rootExceed = tracker
 		}
@@ -469,6 +517,23 @@ func (t *Tracker) Consume(bs int64) {
 	}
 }
 
+// HandleKillSignal checks if a kill signal has been sent to the session root tracker.
+// If a kill signal is detected, it panics with the error returned by the signal handler.
+func (t *Tracker) HandleKillSignal() {
+	var sessionRootTracker *Tracker
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		if tracker.IsRootTrackerOfSess {
+			sessionRootTracker = tracker
+		}
+	}
+	if sessionRootTracker != nil {
+		err := sessionRootTracker.Killer.HandleSignal()
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
 // BufferedConsume is used to buffer memory usage and do late consume
 // not thread-safe, should be called in one goroutine
 func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
@@ -492,7 +557,7 @@ func (t *Tracker) Release(bytes int64) {
 			// use fake ref instead of obj ref, otherwise obj will be reachable again and gc in next cycle
 			newRef := &finalizerRef{}
 			finalizer := func(tracker *Tracker) func(ref *finalizerRef) {
-				return func(ref *finalizerRef) {
+				return func(*finalizerRef) {
 					tracker.release(bytes) // finalizer func is called async
 				}
 			}
@@ -839,6 +904,12 @@ const (
 	LabelForMemDB int = -28
 	// LabelForCursorFetch represents the label of the execution of cursor fetch
 	LabelForCursorFetch int = -29
+	// LabelForChunkDataInDiskByChunks represents the label of the chunk list in disk
+	LabelForChunkDataInDiskByChunks int = -30
+	// LabelForSortPartition represents the label of the sort partition
+	LabelForSortPartition int = -31
+	// LabelForHashTableInHashJoinV2 represents the label of the hash join v2's hash table
+	LabelForHashTableInHashJoinV2 int = -32
 )
 
 // MetricsTypes is used to get label for metrics

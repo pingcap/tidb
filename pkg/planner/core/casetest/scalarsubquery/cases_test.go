@@ -47,7 +47,7 @@ func TestExplainNonEvaledSubquery(t *testing.T) {
 	tk.MustExec("create table t3(a varchar(5), b varchar(5), c varchar(5))")
 	tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")
 
-	cutExecutionInfoFromExplainAnalyzeOutput := func(rows [][]interface{}) [][]interface{} {
+	cutExecutionInfoFromExplainAnalyzeOutput := func(rows [][]any) [][]any {
 		// The columns are id, estRows, actRows, task type, access object, execution info, operator info, memory, disk
 		// We need to cut the unstable output of execution info, memory and disk.
 		for i := range rows {

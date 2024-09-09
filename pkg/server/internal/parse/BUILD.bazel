@@ -10,7 +10,6 @@ go_library(
         "//pkg/server/internal/handshake",
         "//pkg/server/internal/util",
         "//pkg/util/logutil",
-        "@com_github_klauspost_compress//zstd",
         "@org_uber_go_zap//:zap",
     ],
 )

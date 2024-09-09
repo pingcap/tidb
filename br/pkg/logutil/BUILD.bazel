@@ -10,9 +10,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/logutil",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/lightning/metric",
-        "//br/pkg/redact",
         "//pkg/kv",
+        "//pkg/lightning/metric",
+        "//pkg/util/redact",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",

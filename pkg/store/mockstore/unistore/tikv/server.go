@@ -270,7 +270,11 @@ func (svr *Server) KVPessimisticRollback(ctx context.Context, req *kvrpcpb.Pessi
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.PessimisticRollbackResponse{RegionError: reqCtx.regErr}, nil
 	}
-	err = svr.mvccStore.PessimisticRollback(reqCtx, req)
+	if len(req.Keys) == 0 {
+		err = svr.mvccStore.PessimisticRollbackWithScanFirst(reqCtx, req)
+	} else {
+		err = svr.mvccStore.PessimisticRollback(reqCtx, req)
+	}
 	resp := &kvrpcpb.PessimisticRollbackResponse{}
 	resp.Errors, resp.RegionError = convertToPBErrors(err)
 	return resp, nil
@@ -376,6 +380,38 @@ func (svr *Server) KvCommit(ctx context.Context, req *kvrpcpb.CommitRequest) (*k
 		resp.Error, resp.RegionError = convertToPBError(err)
 	}
 	return resp, nil
+}
+
+// KvFlush implements the tikvpb.TikvServer interface.
+func (svr *Server) KvFlush(ctx context.Context, req *kvrpcpb.FlushRequest) (*kvrpcpb.FlushResponse, error) {
+	reqCtx, err := newRequestCtx(svr, req.Context, "KvFlush")
+	if err != nil {
+		return &kvrpcpb.FlushResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil
+	}
+	defer reqCtx.finish()
+	if reqCtx.regErr != nil {
+		return &kvrpcpb.FlushResponse{RegionError: reqCtx.regErr}, nil
+	}
+	err = svr.mvccStore.Flush(reqCtx, req)
+	resp := &kvrpcpb.FlushResponse{}
+	resp.Errors, resp.RegionError = convertToPBErrors(err)
+	return resp, nil
+}
+
+// KvBufferBatchGet implements the tikvpb.TikvServer interface.
+func (svr *Server) KvBufferBatchGet(ctx context.Context, req *kvrpcpb.BufferBatchGetRequest) (*kvrpcpb.BufferBatchGetResponse, error) {
+	reqCtx, err := newRequestCtx(svr, req.Context, "KvBufferBatchGet")
+	if err != nil {
+		return &kvrpcpb.BufferBatchGetResponse{Pairs: []*kvrpcpb.KvPair{{Error: convertToKeyError(err)}}}, nil
+	}
+	defer reqCtx.finish()
+	if reqCtx.regErr != nil {
+		return &kvrpcpb.BufferBatchGetResponse{RegionError: reqCtx.regErr}, nil
+	}
+	pairs := svr.mvccStore.ReadBufferFromLock(req.GetVersion(), req.Keys...)
+	return &kvrpcpb.BufferBatchGetResponse{
+		Pairs: pairs,
+	}, nil
 }
 
 // RawGetKeyTTL implements the tikvpb.TikvServer interface.

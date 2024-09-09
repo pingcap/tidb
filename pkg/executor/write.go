@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -56,12 +56,13 @@ var (
 func updateRecord(
 	ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool,
 	t table.Table,
-	onDup bool, _ *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec,
+	onDup bool, _ *memory.Tracker, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec, dupKeyMode table.DupKeyCheckMode,
 ) (bool, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
 	defer r.End()
 
-	sc := sctx.GetSessionVars().StmtCtx
+	sessVars := sctx.GetSessionVars()
+	sc := sessVars.StmtCtx
 	changed, handleChanged := false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
 	// timestamp field is explicitly set, but not changed in fact.
@@ -74,7 +75,7 @@ func updateRecord(
 	// Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
-		if err = col.HandleBadNull(&newData[i], sc, 0); err != nil {
+		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
 			return false, err
 		}
 	}
@@ -103,7 +104,7 @@ func updateRecord(
 				if err != nil {
 					return false, err
 				}
-				if err = t.Allocators(sctx).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
+				if err = t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
 					return false, err
 				}
 			}
@@ -130,11 +131,11 @@ func updateRecord(
 	// If no changes, nothing to do, return directly.
 	if !changed {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
-		if sctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
+		if sessVars.ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
 		keySet := lockRowKey
-		if sctx.GetSessionVars().LockUnchangedKeys {
+		if sessVars.LockUnchangedKeys {
 			keySet |= lockUniqueKeys
 		}
 		_, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, keySet)
@@ -144,7 +145,7 @@ func updateRecord(
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && !modified[i] && !onUpdateSpecified[i] {
-			v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
+			v, err := expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
 			if err != nil {
 				return false, err
 			}
@@ -161,45 +162,59 @@ func updateRecord(
 		}
 	}
 
+	pessimisticLazyCheck := getPessimisticLazyCheckMode(sessVars)
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return false, err
+	}
 	// If handle changed, remove the old then add the new record, otherwise update the record.
 	if handleChanged {
 		// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
 		// we use the staging buffer so that we don't need to precheck the existence of handle or unique keys by sending
 		// extra kv requests, and the remove action will not take effect if there are conflicts.
 		if updated, err := func() (bool, error) {
-			txn, err := sctx.Txn(true)
-			if err != nil {
-				return false, err
-			}
 			memBuffer := txn.GetMemBuffer()
 			sh := memBuffer.Staging()
 			defer memBuffer.Cleanup(sh)
 
-			if err = t.RemoveRecord(sctx, h, oldData); err != nil {
+			if err = t.RemoveRecord(sctx.GetTableCtx(), txn, h, oldData); err != nil {
 				return false, err
 			}
 
-			_, err = t.AddRecord(sctx, newData, table.IsUpdate, table.WithCtx(ctx))
+			_, err = t.AddRecord(sctx.GetTableCtx(), txn, newData, table.IsUpdate, table.WithCtx(ctx), dupKeyMode, pessimisticLazyCheck)
 			if err != nil {
 				return false, err
 			}
 			memBuffer.Release(sh)
 			return true, nil
 		}(); err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
-				return false, nil
+			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
+				ec := sc.ErrCtx()
+				return false, ec.HandleError(err)
 			}
 			return updated, err
 		}
 	} else {
+		var opts []table.UpdateRecordOption
+		if sessVars.InTxn() || sc.InHandleForeignKeyTrigger || sc.ForeignKeyTriggerCtx.HasFKCascades {
+			// If txn is auto commit and index is untouched, no need to write index value.
+			// If InHandleForeignKeyTrigger or ForeignKeyTriggerCtx.HasFKCascades is true indicate we may have
+			// foreign key cascade need to handle later, then we still need to write index value,
+			// otherwise, the later foreign cascade executor may see data-index inconsistency in txn-mem-buffer.
+			opts = []table.UpdateRecordOption{table.WithCtx(ctx), dupKeyMode, pessimisticLazyCheck}
+		} else {
+			opts = []table.UpdateRecordOption{table.WithCtx(ctx), dupKeyMode, pessimisticLazyCheck, table.SkipWriteUntouchedIndices}
+		}
+
 		// Update record to new value and update index.
-		if err := t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
-				return false, nil
+		if err := t.UpdateRecord(sctx.GetTableCtx(), txn, h, oldData, newData, modified, opts...); err != nil {
+			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
+				ec := sc.ErrCtx()
+				return false, ec.HandleError(err)
 			}
 			return false, err
 		}
-		if sctx.GetSessionVars().LockUnchangedKeys {
+		if sessVars.LockUnchangedKeys {
 			// Lock unique keys when handle unchanged
 			if _, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, lockUniqueKeys); err != nil {
 				return false, err
@@ -244,7 +259,7 @@ func addUnchangedKeysForLockByRow(
 	count := 0
 	physicalID := t.Meta().ID
 	if pt, ok := t.(table.PartitionedTable); ok {
-		p, err := pt.GetPartitionByRow(sctx, row)
+		p, err := pt.GetPartitionByRow(sctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			return 0, err
 		}
@@ -268,7 +283,7 @@ func addUnchangedKeysForLockByRow(
 				return count, err
 			}
 			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(
-				stmtCtx,
+				stmtCtx.TimeZone(),
 				idx.TableMeta(),
 				meta,
 				physicalID,
@@ -276,6 +291,7 @@ func addUnchangedKeysForLockByRow(
 				h,
 				nil,
 			)
+			err = stmtCtx.HandleError(err)
 			if err != nil {
 				return count, err
 			}
@@ -303,14 +319,14 @@ func rebaseAutoRandomValue(
 	shardFmt := autoid.NewShardIDFormat(&col.FieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
 	// Set bits except incremental_bits to zero.
 	recordID = recordID & shardFmt.IncrementalMask()
-	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
+	return t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.
 // types.ErrDataTooLong is produced in types.ProduceStrWithSpecifiedTp, there is no column info in there,
 // so we reset the error msg here, and wrap old err with errors.Wrap.
 func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
-	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
+	newErr := types.ErrDataTooLong.FastGen("Data too long for column '%v' at row %v", colName, rowIdx)
 	return newErr
 }
 
@@ -318,7 +334,7 @@ func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
 // It check if rowData inserted or updated violate partition definition or checkConstraints of partitionTable.
 func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tbl *model.TableInfo) error {
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionTableID)
+	pt, tableFound := is.TableByID(context.Background(), tbl.ExchangePartitionInfo.ExchangePartitionTableID)
 	if !tableFound {
 		return errors.Errorf("exchange partition process table by id failed")
 	}
@@ -326,8 +342,9 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 	if !ok {
 		return errors.Errorf("exchange partition process assert table partition failed")
 	}
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	err := p.CheckForExchangePartition(
-		sctx,
+		evalCtx,
 		pt.Meta().Partition,
 		row,
 		tbl.ExchangePartitionInfo.ExchangePartitionDefID,
@@ -337,15 +354,7 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 		return err
 	}
 	if variable.EnableCheckConstraint.Load() {
-		type CheckConstraintTable interface {
-			CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error
-		}
-		cc, ok := pt.(CheckConstraintTable)
-		if !ok {
-			return errors.Errorf("exchange partition process assert check constraint failed")
-		}
-		err := cc.CheckRowConstraint(sctx, row)
-		if err != nil {
+		if err = table.CheckRowConstraintWithDatum(evalCtx, pt.WritableConstraint(), row); err != nil {
 			// TODO: make error include ExchangePartition info.
 			return err
 		}

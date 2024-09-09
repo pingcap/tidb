@@ -99,7 +99,7 @@ func TestCurrentUser(t *testing.T) {
 func TestCurrentResourceGroup(t *testing.T) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.ResourceGroupName = "rg1"
+	sessionVars.StmtCtx.ResourceGroupName = "rg1"
 
 	fc := funcs[ast.CurrentResourceGroup]
 	f, err := fc.getFunction(ctx, nil)
@@ -164,7 +164,7 @@ func TestBenchMark(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
 		LoopCount  int
-		Expression interface{}
+		Expression any
 		Expected   int64
 		IsNil      bool
 	}{
@@ -181,13 +181,13 @@ func TestBenchMark(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.Benchmark, primitiveValsToConstants(ctx, []interface{}{
+		f, err := newFunctionForTest(ctx, ast.Benchmark, primitiveValsToConstants(ctx, []any{
 			c.LoopCount,
 			c.Expression,
 		})...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		if c.IsNil {
 			require.True(t, d.IsNull())
@@ -248,9 +248,9 @@ func TestRowCount(t *testing.T) {
 // TestTiDBVersion for tidb_server().
 func TestTiDBVersion(t *testing.T) {
 	ctx := createContext(t)
-	f, err := newFunctionForTest(ctx, ast.TiDBVersion, primitiveValsToConstants(ctx, []interface{}{})...)
+	f, err := newFunctionForTest(ctx, ast.TiDBVersion, primitiveValsToConstants(ctx, []any{})...)
 	require.NoError(t, err)
-	v, err := f.Eval(chunk.Row{})
+	v, err := f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, printer.GetTiDBInfo(), v.GetString())
 }
@@ -260,7 +260,7 @@ func TestLastInsertID(t *testing.T) {
 	maxUint64 := uint64(math.MaxUint64)
 	cases := []struct {
 		insertID uint64
-		args     interface{}
+		args     any
 		expected uint64
 		isNil    bool
 		getErr   bool
@@ -283,18 +283,18 @@ func TestLastInsertID(t *testing.T) {
 		}
 
 		if c.args != nil {
-			f, err = newFunctionForTest(ctx, ast.LastInsertId, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+			f, err = newFunctionForTest(ctx, ast.LastInsertId, primitiveValsToConstants(ctx, []any{c.args})...)
 		} else {
 			f, err = newFunctionForTest(ctx, ast.LastInsertId)
 		}
-		tp := f.GetType()
+		tp := f.GetType(ctx)
 		require.NoError(t, err)
 		require.Equal(t, mysql.TypeLonglong, tp.GetType())
 		require.Equal(t, charset.CharsetBin, tp.GetCharset())
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
 		require.Equal(t, mysql.BinaryFlag, tp.GetFlag()&mysql.BinaryFlag)
 		require.Equal(t, mysql.MaxIntWidth, tp.GetFlen())
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -314,8 +314,8 @@ func TestLastInsertID(t *testing.T) {
 func TestFormatBytes(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+		Arg any
+		Ret any
 	}{
 		{nil, nil},
 		{float64(0), "0 bytes"},
@@ -343,8 +343,8 @@ func TestFormatBytes(t *testing.T) {
 func TestFormatNanoTime(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+		Arg any
+		Ret any
 	}{
 		{nil, nil},
 		{float64(0), "0 ns"},

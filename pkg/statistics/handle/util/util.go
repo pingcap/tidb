@@ -15,19 +15,19 @@
 package util
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strconv"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -60,12 +60,6 @@ var (
 	StatsCtx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 )
 
-// SessionPool is used to recycle sessionctx.
-type SessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
-}
-
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
 func finishTransaction(sctx sessionctx.Context, err error) error {
 	if err == nil {
@@ -83,7 +77,7 @@ var (
 )
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
-func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
 	se, err := pool.Get()
 	if err != nil {
 		return err
@@ -114,6 +108,24 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
 func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
+	// async merge global stats
+	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAsyncMergeGlobalStats)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().EnableAsyncMergeGlobalStats = variable.TiDBOptOn(enableAsyncMergeGlobalStats)
+
+	// concurrency of save stats to storage
+	analyzePartitionConcurrency, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzePartitionConcurrency)
+	if err != nil {
+		return err
+	}
+	c, err := strconv.ParseInt(analyzePartitionConcurrency, 10, 64)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().AnalyzePartitionConcurrency = int(c)
+
 	// analyzer version
 	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
 	if err != nil {
@@ -171,6 +183,15 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	return nil
 }
 
+// GetCurrentPruneMode returns the current latest partitioning table prune mode.
+func GetCurrentPruneMode(pool util.SessionPool) (mode string, err error) {
+	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
+		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
+		return nil
+	})
+	return
+}
+
 // WrapTxn uses a transaction here can let different SQLs in this operation have the same data visibility.
 func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (err error) {
 	// TODO: check whether this sctx is already in a txn
@@ -194,55 +215,34 @@ func GetStartTS(sctx sessionctx.Context) (uint64, error) {
 }
 
 // Exec is a helper function to execute sql and return RecordSet.
-func Exec(sctx sessionctx.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	sqlExec, ok := sctx.(sqlexec.SQLExecutor)
-	if !ok {
-		return nil, errors.Errorf("invalid sql executor")
-	}
+func Exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
+	sqlExec := sctx.GetSQLExecutor()
 	// TODO: use RestrictedSQLExecutor + ExecOptionUseCurSession instead of SQLExecutor
 	return sqlExec.ExecuteInternal(StatsCtx, sql, args...)
 }
 
 // ExecRows is a helper function to execute sql and return rows and fields.
-func ExecRows(sctx sessionctx.Context, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	if intest.InTest {
-		if v := sctx.Value(mock.MockRestrictedSQLExecutorKey{}); v != nil {
+		if v := sctx.Value(mock.RestrictedSQLExecutorKey{}); v != nil {
 			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(StatsCtx,
 				UseCurrentSessionOpt, sql, args...)
 		}
 	}
 
-	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return nil, nil, errors.Errorf("invalid sql executor")
-	}
+	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, UseCurrentSessionOpt, sql, args...)
 }
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
-func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
-	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return nil, nil, errors.Errorf("invalid sql executor")
-	}
+func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
+	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, opts, sql, args...)
 }
 
 // DurationToTS converts duration to timestamp.
 func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
-}
-
-// GetFullTableName returns the full table name.
-func GetFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string {
-	for _, schema := range is.AllSchemas() {
-		if t, err := is.TableByName(schema.Name, tblInfo.Name); err == nil {
-			if t.Meta().ID == tblInfo.ID {
-				return schema.Name.O + "." + tblInfo.Name.O
-			}
-		}
-	}
-	return strconv.FormatInt(tblInfo.ID, 10)
 }
 
 // JSONTable is used for dumping statistics.
@@ -253,10 +253,18 @@ type JSONTable struct {
 	DatabaseName      string                 `json:"database_name"`
 	TableName         string                 `json:"table_name"`
 	ExtStats          []*JSONExtendedStats   `json:"ext_stats"`
+	PredicateColumns  []*JSONPredicateColumn `json:"predicate_columns"`
 	Count             int64                  `json:"count"`
 	ModifyCount       int64                  `json:"modify_count"`
 	Version           uint64                 `json:"version"`
 	IsHistoricalStats bool                   `json:"is_historical_stats"`
+}
+
+// Sort is used to sort the object in the JSONTable. it is used for testing to avoid flaky test.
+func (j *JSONTable) Sort() {
+	slices.SortFunc(j.PredicateColumns, func(a, b *JSONPredicateColumn) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 }
 
 // JSONExtendedStats is used for dumping extended statistics.
@@ -293,4 +301,11 @@ func (col *JSONColumn) TotalMemoryUsage() (size int64) {
 		size += int64(col.FMSketch.Size())
 	}
 	return size
+}
+
+// JSONPredicateColumn contains the information of the columns used in the predicate.
+type JSONPredicateColumn struct {
+	LastUsedAt     *string `json:"last_used_at"`
+	LastAnalyzedAt *string `json:"last_analyzed_at"`
+	ID             int64   `json:"id"`
 }

@@ -39,9 +39,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -81,7 +83,7 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 //
 //	exec:      execute logic function.
 //	recoverFn: handler will be called after recover and before dump stack, passing `nil` means noop.
-func WithRecovery(exec func(), recoverFn func(r interface{})) {
+func WithRecovery(exec func(), recoverFn func(r any)) {
 	defer func() {
 		r := recover()
 		if recoverFn != nil {
@@ -110,15 +112,16 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		return
 	}
 
-	if recoverFn != nil {
-		recoverFn()
-	}
 	logutil.BgLogger().Error("panic in the recoverable goroutine",
 		zap.String("label", metricsLabel),
 		zap.String("funcInfo", funcInfo),
 		zap.Any("r", r),
 		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
+
+	if recoverFn != nil {
+		recoverFn()
+	}
 	if quit {
 		// Wait for metrics to be pushed.
 		time.Sleep(time.Second * 15)
@@ -166,24 +169,22 @@ func SyntaxWarn(err error) error {
 	}
 	logutil.BgLogger().Debug("syntax error", zap.Error(err))
 
-	// If the warn is already a terror with stack, pass it through.
-	if errors.HasStack(err) {
-		cause := errors.Cause(err)
-		if _, ok := cause.(*terror.Error); ok {
-			return err
-		}
+	// If the "err" is already a terror, pass it through.
+	cause := errors.Cause(err)
+	if _, ok := cause.(*terror.Error); ok {
+		return err
 	}
 
-	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
+	return parser.ErrParse.FastGenByArgs(syntaxErrorPrefix, err.Error())
 }
 
 var (
 	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = model.NewCIStr("INFORMATION_SCHEMA")
+	InformationSchemaName = pmodel.NewCIStr("INFORMATION_SCHEMA")
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
+	PerformanceSchemaName = pmodel.NewCIStr("PERFORMANCE_SCHEMA")
 	// MetricSchemaName is the `METRICS_SCHEMA` database name.
-	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
+	MetricSchemaName = pmodel.NewCIStr("METRICS_SCHEMA")
 	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
 	ClusterTableInstanceColumnName = "INSTANCE"
 )
@@ -206,7 +207,7 @@ func IsMemDB(dbLowerName string) bool {
 
 // IsSysDB checks whether dbLowerName is system database.
 func IsSysDB(dbLowerName string) bool {
-	return dbLowerName == mysql.SystemDB
+	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB
 }
 
 // IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
@@ -394,10 +395,10 @@ func TLSCipher2String(n uint16) string {
 }
 
 // ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
-func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool) []*tipb.ColumnInfo {
+func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool, isTiFlashStore bool) []*tipb.ColumnInfo {
 	cols := make([]*tipb.ColumnInfo, 0, len(columns))
 	for _, c := range columns {
-		col := ColumnToProto(c, forIndex)
+		col := ColumnToProto(c, forIndex, isTiFlashStore)
 		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
 		// is abandoned.
 		if (pkIsHandle && mysql.HasPriKeyFlag(c.GetFlag())) || c.ID == model.ExtraHandleID {
@@ -411,7 +412,7 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool)
 }
 
 // ColumnToProto converts model.ColumnInfo to tipb.ColumnInfo.
-func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
+func ColumnToProto(c *model.ColumnInfo, forIndex bool, isTiFlashStore bool) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
 		ColumnId:  c.ID,
 		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.GetCollate()])),
@@ -419,6 +420,9 @@ func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
 		Decimal:   int32(c.GetDecimal()),
 		Flag:      int32(c.GetFlag()),
 		Elems:     c.GetElems(),
+	}
+	if isTiFlashStore && c.IsVirtualGenerated() {
+		pc.Flag |= int32(mysql.GeneratedColumnFlag)
 	}
 	if forIndex {
 		// Use array type for read the multi-valued index.
@@ -445,15 +449,15 @@ func init() {
 }
 
 // GetSequenceByName could be used in expression package without import cycle problem.
-var GetSequenceByName func(is interface{}, schema, sequence model.CIStr) (SequenceTable, error)
+var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence pmodel.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.
 // Otherwise calling table will cause import cycle problem.
 type SequenceTable interface {
 	GetSequenceID() int64
-	GetSequenceNextVal(ctx interface{}, dbName, seqName string) (int64, error)
-	SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error)
+	GetSequenceNextVal(ctx any, dbName, seqName string) (int64, error)
+	SetSequenceVal(ctx any, newVal int64, dbName, seqName string) (int64, bool, error)
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.
@@ -485,12 +489,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 
 	requireTLS := tlsutil.RequireSecureTransport.Load()
 
-	var minTLSVersion uint16 = tls.VersionTLS11
+	var minTLSVersion uint16 = tls.VersionTLS12
 	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
-	case "TLSv1.0":
-		minTLSVersion = tls.VersionTLS10
-	case "TLSv1.1":
-		minTLSVersion = tls.VersionTLS11
 	case "TLSv1.2":
 		minTLSVersion = tls.VersionTLS12
 	case "TLSv1.3":
@@ -503,9 +503,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		)
 	}
 	if minTLSVersion < tls.VersionTLS12 {
-		logutil.BgLogger().Warn(
-			"Minimum TLS version allows pre-TLSv1.2 protocols, this is not recommended",
-		)
+		err = errors.New("Minimum TLS version pre-TLSv1.2 protocols are not allowed")
+		return
 	}
 
 	// Try loading CA cert.

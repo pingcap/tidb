@@ -25,17 +25,17 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -50,56 +50,6 @@ func assertSameHints(t *testing.T, expected, actual []*ast.TableOptimizerHint) {
 		actualStr = append(actualStr, hint.RestoreTableOptimizerHint(h))
 	}
 	require.ElementsMatch(t, expectedStr, actualStr)
-}
-
-func doTestPushdownDistinct(t *testing.T, vars, input []string, output []struct {
-	SQL    string
-	Plan   []string
-	Result []string
-}) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, c int, index(c))")
-	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 3), (1, 2, 3), (2, 1, 3), (1, 2, NULL);")
-
-	tk.MustExec("drop table if exists pt")
-	tk.MustExec(`CREATE TABLE pt (a int, b int) PARTITION BY RANGE (a) (
-		PARTITION p0 VALUES LESS THAN (2),
-		PARTITION p1 VALUES LESS THAN (100)
-	);`)
-
-	tk.MustExec("drop table if exists tc;")
-	tk.MustExec("CREATE TABLE `tc`(`timestamp` timestamp NULL DEFAULT NULL, KEY `idx_timestamp` (`timestamp`)) PARTITION BY RANGE ( UNIX_TIMESTAMP(`timestamp`) ) (PARTITION `p2020072312` VALUES LESS THAN (1595480400),PARTITION `p2020072313` VALUES LESS THAN (1595484000));")
-
-	tk.MustExec("drop table if exists ta")
-	tk.MustExec("create table ta(a int);")
-	tk.MustExec("insert into ta values(1), (1);")
-	tk.MustExec("drop table if exists tb")
-	tk.MustExec("create table tb(a int);")
-	tk.MustExec("insert into tb values(1), (1);")
-
-	tk.MustExec("set session sql_mode=''")
-	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggPartialConcurrency))
-	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggFinalConcurrency))
-
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
-
-	for _, v := range vars {
-		tk.MustExec(v)
-	}
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
-	}
 }
 
 func TestRefine(t *testing.T) {
@@ -124,7 +74,8 @@ func TestRefine(t *testing.T) {
 		require.NoError(t, err, comment)
 		sc := tk.Session().GetSessionVars().StmtCtx
 		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(false))
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -157,7 +108,8 @@ func TestAggEliminator(t *testing.T) {
 		require.NoError(t, err, comment)
 		sc := tk.Session().GetSessionVars().StmtCtx
 		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(false))
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -186,151 +138,14 @@ func TestRuleColumnPruningLogicalApply(t *testing.T) {
 		comment := fmt.Sprintf("input: %s", tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Best = core.ToString(p)
 		})
 		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
-	}
-}
-
-func TestINMJHint(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Plan   []string
-			Result []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int primary key, b int not null)")
-	tk.MustExec("create table t2(a int primary key, b int not null)")
-	tk.MustExec("insert into t1 values(1,1),(2,2)")
-	tk.MustExec("insert into t2 values(1,1),(2,1)")
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
-	}
-}
-
-func TestEliminateMaxOneRow(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Plan   []string
-			Result []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("drop table if exists t3;")
-	tk.MustExec("create table t1(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, UNIQUE KEY idx_a (a))")
-	tk.MustExec("create table t2(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL)")
-	tk.MustExec("create table t3(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL, UNIQUE KEY idx_abc (a, b, c))")
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
-	}
-}
-
-func TestIndexJoinUnionScan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("create table t (a int primary key, b int, index idx(a))")
-	tk.MustExec("create table tt (a int primary key) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
-
-	var input [][]string
-	var output []struct {
-		SQL  []string
-		Plan []string
-	}
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-
-	for i, ts := range input {
-		tk.MustExec("begin")
-		for j, tt := range ts {
-			if j != len(ts)-1 {
-				tk.MustExec(tt)
-			}
-			testdata.OnRecord(func() {
-				output[i].SQL = ts
-				if j == len(ts)-1 {
-					output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-				}
-			})
-			if j == len(ts)-1 {
-				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-			}
-		}
-		tk.MustExec("rollback")
-	}
-}
-
-func TestMergeJoinUnionScan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int))")
-	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int))")
-	tk.MustExec("insert into t1 (`c_int`, `c_str`) values (11, 'keen williamson'), (10, 'gracious hermann')")
-	tk.MustExec("insert into t2 (`c_int`, `c_str`) values (10, 'gracious hermann')")
-
-	var input [][]string
-	var output []struct {
-		SQL  []string
-		Plan []string
-	}
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-
-	for i, ts := range input {
-		tk.MustExec("begin")
-		for j, tt := range ts {
-			if j != len(ts)-1 {
-				tk.MustExec(tt)
-			}
-			testdata.OnRecord(func() {
-				output[i].SQL = ts
-				if j == len(ts)-1 {
-					output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-				}
-			})
-			if j == len(ts)-1 {
-				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-			}
-		}
-		tk.MustExec("rollback")
 	}
 }
 
@@ -353,7 +168,8 @@ func TestSemiJoinToInner(t *testing.T) {
 	for i, tt := range input {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -380,7 +196,8 @@ func TestUnmatchedTableInHint(t *testing.T) {
 		tk.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err)
-		_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 		testdata.OnRecord(func() {
@@ -393,14 +210,14 @@ func TestUnmatchedTableInHint(t *testing.T) {
 			require.Len(t, warnings, 0)
 		} else {
 			require.Len(t, warnings, 1)
-			require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+			require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 			require.Equal(t, output[i].Warning, warnings[0].Err.Error())
 		}
 	}
 }
 
 func TestIssue37520(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -430,7 +247,7 @@ func TestIssue37520(t *testing.T) {
 }
 
 func TestMPPHints(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -440,7 +257,7 @@ func TestMPPHints(t *testing.T) {
 	tk.MustExec("create definer='root'@'localhost' view v as select a, sum(b) from t group by a, c;")
 	tk.MustExec("create definer='root'@'localhost' view v1 as select t1.a from t t1, t t2 where t1.a=t2.a;")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	var input []string
@@ -472,7 +289,7 @@ func TestMPPHints(t *testing.T) {
 }
 
 func TestMPPHintsScope(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -487,7 +304,7 @@ func TestMPPHintsScope(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	var input []string
@@ -529,7 +346,7 @@ func TestMPPBCJModel(t *testing.T) {
 			Probe: sizeof(Data) * 2 / 3
 			exchange size: Build + Probe = 4/3 * sizeof(Data)
 	*/
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(3))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(3))
 	{
 		cnt, err := store.GetMPPClient().GetMPPStoreCount()
 		require.Equal(t, cnt, 3)
@@ -540,7 +357,7 @@ func TestMPPBCJModel(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	var input []string
@@ -571,7 +388,7 @@ func TestMPPBCJModel(t *testing.T) {
 }
 
 func TestMPPPreferBCJ(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(3))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(3))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -585,17 +402,17 @@ func TestMPPPreferBCJ(t *testing.T) {
 	{
 		tk.MustExec("alter table t1 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t1")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 	{
 		tk.MustExec("alter table t2 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t2")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	{
 		var input []string
@@ -638,13 +455,13 @@ func TestMPPBCJModelOneTiFlash(t *testing.T) {
 			Probe: sizeof(Data) * 0 / 1
 			exchange size: Build + Probe = 0 * sizeof(Data)
 	*/
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(1))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(1))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	{
 		cnt, err := store.GetMPPClient().GetMPPStoreCount()
@@ -689,7 +506,7 @@ func TestMPPBCJModelOneTiFlash(t *testing.T) {
 }
 
 func TestMPPRightSemiJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(3))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(3))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -703,17 +520,17 @@ func TestMPPRightSemiJoin(t *testing.T) {
 	{
 		tk.MustExec("alter table t1 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t1")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 	{
 		tk.MustExec("alter table t2 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t2")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	{
 		var input []string
@@ -745,7 +562,7 @@ func TestMPPRightSemiJoin(t *testing.T) {
 }
 
 func TestMPPRightOuterJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(3))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(3))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -759,17 +576,17 @@ func TestMPPRightOuterJoin(t *testing.T) {
 	{
 		tk.MustExec("alter table t1 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t1")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 	{
 		tk.MustExec("alter table t2 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t2")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	{
 		var input []string
@@ -822,7 +639,8 @@ func TestHintScope(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(context.Background(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = test
@@ -860,7 +678,8 @@ func TestJoinHints(t *testing.T) {
 		require.NoError(t, err, comment)
 
 		tk.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 
@@ -877,7 +696,7 @@ func TestJoinHints(t *testing.T) {
 			require.Len(t, warnings, 0)
 		} else {
 			require.Len(t, warnings, 1, fmt.Sprintf("%v", warnings))
-			require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+			require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 			require.Equal(t, output[i].Warning, warnings[0].Err.Error())
 		}
 		hints := core.GenHintsFromPhysicalPlan(p)
@@ -922,7 +741,8 @@ func TestAggregationHints(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test.SQL, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 
@@ -938,7 +758,7 @@ func TestAggregationHints(t *testing.T) {
 			require.Len(t, warnings, 0)
 		} else {
 			require.Len(t, warnings, 1, fmt.Sprintf("%v", warnings))
-			require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+			require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 			require.Equal(t, output[i].Warning, warnings[0].Err.Error())
 		}
 	}
@@ -973,7 +793,8 @@ func TestSemiJoinRewriteHints(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
 
-		_, _, err = planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		_, _, err = planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 
@@ -989,7 +810,7 @@ func TestSemiJoinRewriteHints(t *testing.T) {
 			require.Len(t, warnings, 0)
 		} else {
 			require.Len(t, warnings, 1, fmt.Sprintf("%v", warnings))
-			require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+			require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 			require.Equal(t, output[i].Warning, warnings[0].Err.Error())
 		}
 	}
@@ -1028,7 +849,8 @@ func TestAggToCopHint(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		planString := core.ToString(p)
 		testdata.OnRecord(func() {
@@ -1046,243 +868,10 @@ func TestAggToCopHint(t *testing.T) {
 			require.Len(t, warnings, 0)
 		} else {
 			require.Len(t, warnings, 1, fmt.Sprintf("%v", warnings))
-			require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+			require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 			require.Equal(t, output[i].Warning, warnings[0].Err.Error())
 		}
 	}
-}
-
-func TestLimitToCopHint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists tn")
-	tk.MustExec("create table tn(a int, b int, c int, d int, key (a, b, c, d))")
-	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
-
-	var (
-		input  []string
-		output []struct {
-			SQL     string
-			Plan    []string
-			Warning []string
-		}
-	)
-
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-
-		comment := fmt.Sprintf("case:%v sql:%s", i, ts)
-		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		testdata.OnRecord(func() {
-			if len(warnings) > 0 {
-				output[i].Warning = make([]string, len(warnings))
-				for j, warning := range warnings {
-					output[i].Warning[j] = warning.Err.Error()
-				}
-			}
-		})
-		if len(output[i].Warning) == 0 {
-			require.Len(t, warnings, 0)
-		} else {
-			require.Len(t, warnings, len(output[i].Warning), comment)
-			for j, warning := range warnings {
-				require.Equal(t, stmtctx.WarnLevelWarning, warning.Level, comment)
-				require.Equal(t, output[i].Warning[j], warning.Err.Error(), comment)
-			}
-		}
-	}
-}
-
-func TestCTEMergeHint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tc")
-	tk.MustExec("drop table if exists te")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("drop table if exists t3")
-	tk.MustExec("drop table if exists t4")
-	tk.MustExec("drop view if exists v")
-	tk.MustExec("create table tc(a int)")
-	tk.MustExec("create table te(c int)")
-	tk.MustExec("create table t1(a int)")
-	tk.MustExec("create table t2(b int)")
-	tk.MustExec("create table t3(c int)")
-	tk.MustExec("create table t4(d int)")
-	tk.MustExec("insert into tc values (1), (5), (10), (15), (20), (30), (50);")
-	tk.MustExec("insert into te values (1), (5), (10), (25), (40), (60), (100);")
-	tk.MustExec("insert into t1 values (1), (5), (10), (25), (40), (60), (100);")
-	tk.MustExec("insert into t2 values (1), (5), (10), (25), (40), (60), (100);")
-	tk.MustExec("insert into t3 values (1), (5), (10), (25), (40), (60), (100);")
-	tk.MustExec("insert into t4 values (1), (5), (10), (25), (40), (60), (100);")
-	tk.MustExec("analyze table tc;")
-	tk.MustExec("analyze table te;")
-	tk.MustExec("analyze table t1;")
-	tk.MustExec("analyze table t2;")
-	tk.MustExec("analyze table t3;")
-	tk.MustExec("analyze table t4;")
-	tk.MustExec("create definer='root'@'localhost' view v as select * from tc")
-	var (
-		input  []string
-		output []struct {
-			SQL     string
-			Plan    []string
-			Warning []string
-		}
-	)
-
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-
-		comment := fmt.Sprintf("case:%v sql:%s", i, ts)
-		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		testdata.OnRecord(func() {
-			if len(warnings) > 0 {
-				output[i].Warning = make([]string, len(warnings))
-				for j, warning := range warnings {
-					output[i].Warning[j] = warning.Err.Error()
-				}
-			}
-		})
-		if len(output[i].Warning) == 0 {
-			require.Len(t, warnings, 0)
-		} else {
-			require.Len(t, warnings, len(output[i].Warning), comment)
-			for j, warning := range warnings {
-				require.Equal(t, stmtctx.WarnLevelWarning, warning.Level, comment)
-				require.Equal(t, output[i].Warning[j], warning.Err.Error(), comment)
-			}
-		}
-	}
-}
-
-func TestForceInlineCTE(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE `t` (`a` int(11));")
-	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
-
-	var (
-		input  []string
-		output []struct {
-			SQL     string
-			Plan    []string
-			Warning []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-		})
-		if strings.HasPrefix(ts, "set") {
-			tk.MustExec(ts)
-			continue
-		}
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + ts).Rows())
-		})
-		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-
-		comment := fmt.Sprintf("case:%v sql:%s", i, ts)
-		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		testdata.OnRecord(func() {
-			if len(warnings) > 0 {
-				output[i].Warning = make([]string, len(warnings))
-				for j, warning := range warnings {
-					output[i].Warning[j] = warning.Err.Error()
-				}
-			}
-		})
-		if len(output[i].Warning) == 0 {
-			require.Len(t, warnings, 0)
-		} else {
-			require.Len(t, warnings, len(output[i].Warning), comment)
-			for j, warning := range warnings {
-				require.Equal(t, stmtctx.WarnLevelWarning, warning.Level, comment)
-				require.Equal(t, output[i].Warning[j], warning.Err.Error(), comment)
-			}
-		}
-	}
-}
-
-func TestSingleConsumerCTE(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE `t` (`a` int(11));")
-	tk.MustExec("create table t1 (c1 int primary key, c2 int, index c2 (c2));")
-	tk.MustExec("create table t2 (c1 int unique, c2 int);")
-	tk.MustExec("insert into t values (1), (5), (10), (15), (20), (30), (50);")
-
-	var (
-		input  []string
-		output []struct {
-			SQL     string
-			Plan    []string
-			Warning []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-		})
-		if strings.HasPrefix(ts, "set") {
-			tk.MustExec(ts)
-			continue
-		}
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + ts).Rows())
-		})
-		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestPushdownDistinctEnableAggPushDownDisable(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Plan   []string
-			Result []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	vars := []string{
-		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
-		"set session tidb_opt_agg_push_down = 0",
-		"set tidb_cost_model_version=2",
-	}
-	doTestPushdownDistinct(t, vars, input, output)
 }
 
 func TestGroupConcatOrderby(t *testing.T) {
@@ -1354,7 +943,8 @@ func TestIndexHint(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = test
@@ -1408,7 +998,8 @@ func TestIndexMergeHint(t *testing.T) {
 		sctx := tk.Session()
 		err = executor.ResetContextOfStmt(sctx, stmt)
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = test
@@ -1458,7 +1049,8 @@ func TestQueryBlockHint(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1504,7 +1096,8 @@ func TestInlineProjection(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1536,8 +1129,9 @@ func TestIndexJoinHint(t *testing.T) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Plan string
+		SQL   string
+		Plan  string
+		Warns []string
 	}
 
 	is := domain.GetDomain(tk.Session()).InfoSchema()
@@ -1546,45 +1140,30 @@ func TestIndexJoinHint(t *testing.T) {
 
 	planSuiteData := GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
+	filterWarnings := func(originalWarnings []contextutil.SQLWarn) []contextutil.SQLWarn {
+		warnings := make([]contextutil.SQLWarn, 0, 4)
+		for _, warning := range originalWarnings {
+			// filter out warning about skyline pruning
+			if !strings.Contains(warning.Err.Error(), "remain after pruning paths for") {
+				warnings = append(warnings, warning)
+			}
+		}
+		return warnings
+	}
 	for i, tt := range input {
 		comment := fmt.Sprintf("case:%v sql: %s", i, tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = core.ToString(p)
+			output[i].Warns = testdata.ConvertSQLWarnToStrings(filterWarnings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		})
+		tk.Session().GetSessionVars().StmtCtx.TruncateWarnings(0)
 		require.Equal(t, output[i].Plan, core.ToString(p), comment)
-	}
-}
-
-func TestNominalSort(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	var input []string
-	var output []struct {
-		SQL    string
-		Plan   []string
-		Result []string
-	}
-	tk.MustExec("create table t (a int, b int, index idx_a(a), index idx_b(b))")
-	tk.MustExec("insert into t values(1, 1)")
-	tk.MustExec("insert into t values(1, 2)")
-	tk.MustExec("insert into t values(2, 4)")
-	tk.MustExec("insert into t values(3, 5)")
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
@@ -1615,278 +1194,14 @@ func TestHintFromDiffDatabase(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql: %s", i, tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = core.ToString(p)
 		})
 		require.Equal(t, output[i].Plan, core.ToString(p), comment)
-	}
-}
-
-func TestNthPlanHintWithExplain(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`drop table if exists test.tt`)
-	tk.MustExec(`create table test.tt (a int,b int, index(a), index(b));`)
-	tk.MustExec("insert into tt values (1, 1), (2, 2), (3, 4)")
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-	}
-
-	// This assertion makes sure a query with or without nth_plan() hint output exactly the same plan(including plan ID).
-	// The query below is the same as queries in the testdata except for nth_plan() hint.
-	// Currently, its output is the same as the second test case in the testdata, which is `output[1]`. If this doesn't
-	// hold in the future, you may need to modify this.
-	tk.MustQuery("explain format = 'brief' select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
-}
-
-func TestEnumIndex(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Plan   []string
-			Result []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(e enum('c','b','a',''), index idx(e))")
-	tk.MustExec("insert ignore into t values(0),(1),(2),(3),(4);")
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
-		})
-		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
-	}
-}
-
-func TestIssue27233(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Plan   []string
-			Result []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE `PK_S_MULTI_31` (\n  `COL1` tinyint(45) NOT NULL,\n  `COL2` tinyint(45) NOT NULL,\n  PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustExec("insert into PK_S_MULTI_31 values(122,100),(124,-22),(124,34),(127,103);")
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
-		})
-		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
-	}
-}
-
-func TestSelectionPartialPushDown(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL  string
-			Plan []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int, b int as (a+1) virtual)")
-	tk.MustExec("create table t2(a int, b int as (a+1) virtual, c int, key idx_a(a))")
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
-		})
-		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestIssue28316(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL  string
-			Plan []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
-		})
-		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestSkewDistinctAgg(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL  string
-			Plan []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE `t` (`a` int(11), `b` int(11), `c` int(11), `d` date)")
-	tk.MustExec("insert into t (a,b,c,d) value(1,4,5,'2019-06-01')")
-	tk.MustExec("insert into t (a,b,c,d) value(2,null,1,'2019-07-01')")
-	tk.MustExec("insert into t (a,b,c,d) value(3,4,5,'2019-08-01')")
-	tk.MustExec("insert into t (a,b,c,d) value(3,6,2,'2019-09-01')")
-	tk.MustExec("insert into t (a,b,c,d) value(10,4,null,'2020-06-01')")
-	tk.MustExec("insert into t (a,b,c,d) value(20,null,1,'2020-07-01')")
-	tk.MustExec("insert into t (a,b,c,d) value(30,4,5,'2020-08-01')")
-	tk.MustExec("insert into t (a,b,c,d) value(30,6,5,'2020-09-01')")
-	tk.MustQuery("select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) " +
-		"from t group by date_format(d,'%Y') order by df;").Check(
-		testkit.Rows("2019 9 3 3", "2020 90 3 2"))
-	tk.MustExec("set @@tidb_opt_skew_distinct_agg=1")
-	tk.MustQuery("select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) " +
-		"from t group by date_format(d,'%Y') order by df;").Check(
-		testkit.Rows("2019 9 3 3", "2020 90 3 2"))
-	tk.MustQuery("select count(distinct b), sum(c) from t group by a order by 1,2;").Check(
-		testkit.Rows("0 1", "0 1", "1 <nil>", "1 5", "2 7", "2 10"))
-	tk.MustQuery("select count(distinct b) from t group by date_format(d,'%Y') order by 1;").Check(
-		testkit.Rows("2", "2"))
-	tk.MustQuery("select count(a), count(distinct b), max(b) from t group by date_format(d,'%Y') order by 1,2,3;").Check(
-		testkit.Rows("4 2 6", "4 2 6"))
-	tk.MustQuery("select count(a), count(distinct b), max(b) from t group by date_format(d,'%Y'),c order by 1,2,3;").Check(
-		testkit.Rows("1 0 <nil>", "1 0 <nil>", "1 1 4", "1 1 6", "2 1 4", "2 2 6"))
-	tk.MustQuery("select avg(distinct b), count(a), sum(b) from t group by date_format(d,'%Y'),c order by 1,2,3;").Check(
-		testkit.Rows("<nil> 1 <nil>", "<nil> 1 <nil>", "4.0000 1 4", "4.0000 2 8", "5.0000 2 10", "6.0000 1 6"))
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + ts).Rows())
-		})
-		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestHJBuildAndProbeHint(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL     string
-			Plan    []string
-			Result  []string
-			Warning []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t1, t2, t3")
-	tk.MustExec("create table t1(a int primary key, b int not null)")
-	tk.MustExec("create table t2(a int primary key, b int not null)")
-	tk.MustExec("create table t3(a int primary key, b int not null)")
-	tk.MustExec("insert into t1 values(1,1),(2,2)")
-	tk.MustExec("insert into t2 values(1,1),(2,1)")
-	tk.MustExec("insert into t3 values(1,1),(2,1)")
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
-			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
-		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
-	}
-}
-
-func TestHJBuildAndProbeHint4StaticPartitionTable(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL     string
-			Plan    []string
-			Result  []string
-			Warning []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t1, t2, t3")
-	tk.MustExec(`create table t1(a int, b int) partition by hash(a) partitions 4`)
-	tk.MustExec(`create table t2(a int, b int) partition by hash(a) partitions 5`)
-	tk.MustExec(`create table t3(a int, b int) partition by hash(b) partitions 3`)
-	tk.MustExec("insert into t1 values(1,1),(2,2)")
-	tk.MustExec("insert into t2 values(1,1),(2,1)")
-	tk.MustExec("insert into t3 values(1,1),(2,1)")
-	tk.MustExec(`set @@tidb_partition_prune_mode="static"`)
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
-			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }
 
@@ -1953,18 +1268,9 @@ func TestHJBuildAndProbeHint4TiFlash(t *testing.T) {
 	tk.MustExec("insert into t3 values(1,1),(2,1)")
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		tableName := tblInfo.Name.L
-		if tableName == "t1" || tableName == "t2" || tableName == "t3" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t2")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t3")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	for i, ts := range input {
@@ -1995,17 +1301,7 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	tk.MustExec("create table employee(empid int, deptid int, salary decimal(10,2))")
 	tk.MustExec("set tidb_enforce_mpp=0")
 
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "employee" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "employee")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
@@ -2020,77 +1316,6 @@ func TestMPPSinglePartitionType(t *testing.T) {
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
 		})
 		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestNoDecorrelateHint(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL     string
-			Plan    []string
-			Result  []string
-			Warning []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int, b int)")
-	tk.MustExec("create table t2(a int primary key, b int)")
-	tk.MustExec("create table t3(a int, b int)")
-	tk.MustExec("insert into t1 values(1,1),(2,2)")
-	tk.MustExec("insert into t2 values(1,1),(2,1)")
-	tk.MustExec("insert into t3 values(1,1),(2,1)")
-
-	tk.MustExec("create table ta(id int, code int, name varchar(20), index idx_ta_id(id),index idx_ta_name(name), index idx_ta_code(code))")
-	tk.MustExec("create table tb(id int, code int, name varchar(20), index idx_tb_id(id),index idx_tb_name(name))")
-	tk.MustExec("create table tc(id int, code int, name varchar(20), index idx_tc_id(id),index idx_tc_name(name))")
-	tk.MustExec("create table td(id int, code int, name varchar(20), index idx_tc_id(id),index idx_tc_name(name))")
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
-			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
-		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
-	}
-}
-
-func TestCountStarForTikv(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL     string
-			Plan    []string
-			Warning []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=1")
-	tk.MustExec("create table t (a int(11) not null, b varchar(10) not null, c date not null, d char(1) not null, e bigint not null, f datetime not null, g bool not null, h bool )")
-	tk.MustExec("create table t_pick_row_id (a char(20) not null)")
-
-	// tikv
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }
 
@@ -2115,20 +1340,36 @@ func TestCountStarForTiFlash(t *testing.T) {
 
 	// tiflash
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		tableName := tblInfo.Name.L
-		if tableName == "t" || tableName == "t_pick_row_id" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t_pick_row_id")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestIssues49377Plan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists employee")
+	tk.MustExec("create table employee (employee_id int, name varchar(20), dept_id int)")
+
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
@@ -2184,18 +1425,8 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 	})
 
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		tableName := tblInfo.Name.L
-		if tableName == "tbl_15" || tableName == "tbl_16" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "tbl_15")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "tbl_16")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
@@ -2210,7 +1441,7 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 	}
 }
 
-func TestIndexMergeOrderPushDown(t *testing.T) {
+func TestPointgetIndexChoosen(t *testing.T) {
 	var (
 		input  []string
 		output []struct {
@@ -2225,23 +1456,21 @@ func TestIndexMergeOrderPushDown(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=1")
-	tk.MustExec("create table t (a int, b int, c int, index idx(a, c), index idx2(b, c))")
-	tk.MustExec("create table tcommon (a int, b int, c int, primary key(a, c), index idx2(b, c))")
-	tk.MustExec("create table thash(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c)) PARTITION BY HASH (`a`) PARTITIONS 4")
-
+	tk.MustExec(`CREATE TABLE t ( a int NOT NULL ,  b int NOT NULL,
+			c varchar(64) NOT NULL ,  d varchar(64) NOT NULL  ,
+			UNIQUE KEY ub (b),
+			UNIQUE KEY ubc (b, c));`)
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
 }
 
-func TestIndexMergeSinkLimit(t *testing.T) {
+// Test issue #46962 plan
+func TestAlwaysTruePredicateWithSubquery(t *testing.T) {
 	var (
 		input  []string
 		output []struct {
@@ -2256,19 +1485,52 @@ func TestIndexMergeSinkLimit(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=1")
-	tk.MustExec(" CREATE TABLE `t2` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL,  `c` int(11) DEFAULT NULL,  KEY `a` (`a`),  KEY `b` (`b`)) ")
-	tk.MustExec("insert into t2 values(1,2,1),(2,1,1),(3,3,1)")
-	tk.MustExec("create table t(a int, j json, index kj((cast(j as signed array))))")
-	tk.MustExec("insert into t values(1, '[1,2,3]')")
+	tk.MustExec(`CREATE TABLE t ( a int NOT NULL ,  b int NOT NULL ) `)
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+		})
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+// TestExplainExpand
+func TestExplainExpand(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table t(a int, b int, c int, d int, e int)")
+	tk.MustExec("create table s(a int, b int, c int, d int, e int)")
+	tk.MustExec("CREATE TABLE `sales` (`year` int(11) DEFAULT NULL, `country` varchar(20) DEFAULT NULL,  `product` varchar(32) DEFAULT NULL,  `profit` int(11) DEFAULT NULL, `whatever` int)")
+
+	// error test
+	err := tk.ExecToErr("explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(year);")
+	require.Equal(t, err.Error(), "[planner:3602]Argument #0 of GROUPING function is not in GROUP BY")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
-			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 		})
 		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
+}
+
+func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
+	// PhysicalApply is expected not to implement PhysicalJoin.
+	require.NotImplements(t, (*core.PhysicalJoin)(nil), new(core.PhysicalApply))
 }

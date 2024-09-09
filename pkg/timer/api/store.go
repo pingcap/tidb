@@ -155,7 +155,7 @@ func (c *TimerCond) FieldsSet(excludes ...unsafe.Pointer) (fields []string) {
 
 // Clear clears all fields.
 func (c *TimerCond) Clear() {
-	iterOptionalFields(reflect.ValueOf(c).Elem(), nil, func(name string, val optionalVal) bool {
+	iterOptionalFields(reflect.ValueOf(c).Elem(), nil, func(_ string, val optionalVal) bool {
 		val.Clear()
 		return true
 	})
@@ -279,7 +279,7 @@ func (u *TimerUpdate) FieldsSet(excludes ...unsafe.Pointer) (fields []string) {
 
 // Clear clears all fields.
 func (u *TimerUpdate) Clear() {
-	iterOptionalFields(reflect.ValueOf(u).Elem(), nil, func(name string, val optionalVal) bool {
+	iterOptionalFields(reflect.ValueOf(u).Elem(), nil, func(_ string, val optionalVal) bool {
 		val.Clear()
 		return true
 	})

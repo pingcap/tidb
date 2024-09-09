@@ -107,7 +107,7 @@ func testWindowAggMemFunc(t *testing.T, p windowMemTest) {
 	}
 }
 
-func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expression, orderByCols int, numRows int, results ...interface{}) windowTest {
+func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expression, orderByCols int, numRows int, results ...any) windowTest {
 	pt := windowTest{
 		dataType: types.NewFieldType(tp),
 		numRows:  numRows,
@@ -127,7 +127,7 @@ func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expre
 	return pt
 }
 
-func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols int, numRows int, results ...interface{}) windowTest {
+func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols int, numRows int, results ...any) windowTest {
 	pt := windowTest{
 		dataType: types.NewFieldType(tp),
 		numRows:  numRows,

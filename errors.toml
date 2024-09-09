@@ -16,9 +16,19 @@ error = '''
 backup range invalid
 '''
 
+["BR:Backup:ErrBackupKeyIsLocked"]
+error = '''
+backup key is locked
+'''
+
 ["BR:Backup:ErrBackupNoLeader"]
 error = '''
 backup no leader
+'''
+
+["BR:Backup:ErrBackupRegion"]
+error = '''
+backup region error
 '''
 
 ["BR:Common:ErrEnvNotSpecified"]
@@ -39,6 +49,11 @@ invalid argument
 ["BR:Common:ErrInvalidMetaFile"]
 error = '''
 invalid metafile: %s
+'''
+
+["BR:Common:ErrInvalidRange"]
+error = '''
+invalid restore range
 '''
 
 ["BR:Common:ErrUndefinedDbOrTable"]
@@ -94,6 +109,11 @@ unknown external storage error
 ["BR:KV:ErrKVClusterIDMismatch"]
 error = '''
 tikv cluster ID mismatch
+'''
+
+["BR:KV:ErrKVDiskFull"]
+error = '''
+disk is full
 '''
 
 ["BR:KV:ErrKVDownloadFailed"]
@@ -166,6 +186,11 @@ error = '''
 PD leader not found
 '''
 
+["BR:PD:ErrPDUknownScatterResult"]
+error = '''
+failed to wait region splitted
+'''
+
 ["BR:PD:ErrPDUpdateFailed"]
 error = '''
 failed to update PD
@@ -209,11 +234,6 @@ incompatible system table
 ["BR:Restore:ErrRestoreInvalidBackup"]
 error = '''
 invalid backup
-'''
-
-["BR:Restore:ErrRestoreInvalidRange"]
-error = '''
-invalid restore range
 '''
 
 ["BR:Restore:ErrRestoreInvalidRewrite"]
@@ -269,6 +289,11 @@ restore table ID mismatch
 ["BR:Restore:ErrRestoreWriteAndIngest"]
 error = '''
 failed to write and ingest
+'''
+
+["BR:Restore:ErrTablesAlreadyExisted"]
+error = '''
+tables already existed in restored cluster
 '''
 
 ["BR:Restore:ErrUnsupportedSysTable"]
@@ -551,9 +576,19 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
+["Lightning:Restore:ErrFoundDataConflictRecords"]
+error = '''
+found data conflict records in table %s, primary key is '%s', row data is '%s'
+'''
+
 ["Lightning:Restore:ErrFoundDuplicateKey"]
 error = '''
 found duplicate key '%s', value '%s'
+'''
+
+["Lightning:Restore:ErrFoundIndexConflictRecords"]
+error = '''
+found index conflict records in table %s, index name is '%s', unique key is '%s', primary key is '%s'
 '''
 
 ["Lightning:Restore:ErrInvalidMetaStatus"]
@@ -976,6 +1011,11 @@ error = '''
 This partition function is not allowed
 '''
 
+["ddl:1566"]
+error = '''
+Not allowed to use NULL value in VALUES LESS THAN
+'''
+
 ["ddl:1567"]
 error = '''
 Incorrect partition name
@@ -1343,7 +1383,7 @@ Unsupported clustered primary key type FLOAT/DOUBLE for TTL
 
 ["ddl:8200"]
 error = '''
-Unsupported shard_row_id_bits for table with primary key as row id
+Unsupported tidb_enable_dist_task setting. To utilize distributed task execution, please enable tidb_ddl_enable_fast_reorg first.
 '''
 
 ["ddl:8201"]
@@ -1509,6 +1549,16 @@ Job [%v] can't be resumed: %s
 ["ddl:8262"]
 error = '''
 Job [%v] has already been paused
+'''
+
+["ddl:8263"]
+error = '''
+The operation is not allowed while the bdr role of this cluster is set to %s.
+'''
+
+["ddl:8264"]
+error = '''
+Global Index is needed for index '%-.192s', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 '''
 
 ["domain:8027"]
@@ -1813,7 +1863,7 @@ The FORMAT '%s' is not supported
 
 ["executor:8158"]
 error = '''
-The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'
+The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'
 '''
 
 ["executor:8159"]
@@ -1951,6 +2001,11 @@ error = '''
 Division by 0
 '''
 
+["expression:1426"]
+error = '''
+Too big precision %d specified for column '%-.192s'. Maximum is %d.
+'''
+
 ["expression:1582"]
 error = '''
 Incorrect parameter count in the call to native function '%-.192s'
@@ -2001,6 +2056,11 @@ error = '''
 Invalid JSON text: %-.192s
 '''
 
+["json:3141"]
+error = '''
+Invalid JSON text in argument %d to function %s: "%s" at position %d.
+'''
+
 ["json:3143"]
 error = '''
 Invalid JSON path expression. The error is around character position %d.
@@ -2013,7 +2073,7 @@ Cannot create a JSON value from a string with CHARACTER SET '%s'.
 
 ["json:3149"]
 error = '''
-In this situation, path expressions may not contain the * and ** tokens or range selection.
+In this situation, path expressions may not contain the * and ** tokens or an array range.
 '''
 
 ["json:3150"]
@@ -2034,6 +2094,11 @@ JSON documents may not contain NULL member names.
 ["json:3165"]
 error = '''
 A path expression is not a path to a cell in an array.
+'''
+
+["json:3853"]
+error = '''
+Invalid JSON type in argument %d to function %s; an %s is required.
 '''
 
 ["json:8067"]
@@ -2816,6 +2881,11 @@ error = '''
 Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
 '''
 
+["schema:8257"]
+error = '''
+Cannot set resource group for a role
+'''
+
 ["server:1040"]
 error = '''
 Too many connections
@@ -3224,6 +3294,16 @@ error = '''
 ["types:3013"]
 error = '''
 Invalid size for column '%s'.
+'''
+
+["types:3153"]
+error = '''
+The path expression '$' is not allowed in this context.
+'''
+
+["types:3154"]
+error = '''
+The oneOrAll argument to %s may take these values: 'one' or 'all'.
 '''
 
 ["types:8029"]

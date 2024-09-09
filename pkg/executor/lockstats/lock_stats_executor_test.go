@@ -18,8 +18,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,11 +30,11 @@ func TestPopulatePartitionIDAndNames(t *testing.T) {
 	})
 
 	table := &ast.TableName{
-		Schema: model.NewCIStr("test"),
-		Name:   model.NewCIStr("t1"),
-		PartitionNames: []model.CIStr{
-			model.NewCIStr("p1"),
-			model.NewCIStr("p2"),
+		Schema: pmodel.NewCIStr("test"),
+		Name:   pmodel.NewCIStr("t1"),
+		PartitionNames: []pmodel.CIStr{
+			pmodel.NewCIStr("p1"),
+			pmodel.NewCIStr("p2"),
 		},
 	}
 
@@ -58,16 +59,16 @@ func TestPopulateTableAndPartitionIDs(t *testing.T) {
 
 	tables := []*ast.TableName{
 		{
-			Schema: model.NewCIStr("test"),
-			Name:   model.NewCIStr("t1"),
-			PartitionNames: []model.CIStr{
-				model.NewCIStr("p1"),
-				model.NewCIStr("p2"),
+			Schema: pmodel.NewCIStr("test"),
+			Name:   pmodel.NewCIStr("t1"),
+			PartitionNames: []pmodel.CIStr{
+				pmodel.NewCIStr("p1"),
+				pmodel.NewCIStr("p2"),
 			},
 		},
 		{
-			Schema: model.NewCIStr("test"),
-			Name:   model.NewCIStr("t2"),
+			Schema: pmodel.NewCIStr("test"),
+			Name:   pmodel.NewCIStr("t2"),
 		},
 	}
 
@@ -85,7 +86,7 @@ func TestPopulateTableAndPartitionIDs(t *testing.T) {
 func tInfo(id int, tableName string, partitionNames ...string) *model.TableInfo {
 	tbl := &model.TableInfo{
 		ID:   int64(id),
-		Name: model.NewCIStr(tableName),
+		Name: pmodel.NewCIStr(tableName),
 	}
 	if len(partitionNames) > 0 {
 		tbl.Partition = &model.PartitionInfo{
@@ -94,7 +95,7 @@ func tInfo(id int, tableName string, partitionNames ...string) *model.TableInfo 
 		for i, partitionName := range partitionNames {
 			tbl.Partition.Definitions = append(tbl.Partition.Definitions, model.PartitionDefinition{
 				ID:   int64(id + 1 + i),
-				Name: model.NewCIStr(partitionName),
+				Name: pmodel.NewCIStr(partitionName),
 			})
 		}
 	}

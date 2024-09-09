@@ -26,9 +26,26 @@ import (
 	"github.com/pingcap/log"
 )
 
+// Version represents the cgroup version.
+type Version int
+
+// cgroup versions.
+const (
+	Unknown Version = 0
+	V1      Version = 1
+	V2      Version = 2
+)
+
 // GetMemoryLimit attempts to retrieve the cgroup memory limit for the current
 // process.
 func GetMemoryLimit() (limit uint64, err error) {
+	limit, _, err = getCgroupMemLimit("/")
+	return
+}
+
+// GetCgroupMemLimit attempts to retrieve the cgroup memory limit for the current
+// process, and return cgroup version too.
+func GetCgroupMemLimit() (uint64, Version, error) {
 	return getCgroupMemLimit("/")
 }
 
@@ -118,41 +135,46 @@ func getCgroupMemUsage(root string) (usage uint64, err error) {
 }
 
 // root is always "/" in the production. It will be changed for testing.
-func getCgroupMemLimit(root string) (limit uint64, err error) {
+func getCgroupMemLimit(root string) (limit uint64, version Version, err error) {
+	version = Unknown
 	path, err := detectControlPath(filepath.Join(root, procPathCGroup), "memory")
 	if err != nil {
-		return 0, err
+		return 0, version, err
 	}
 
 	if path == "" {
 		log.Warn("no cgroup memory controller detected")
-		return 0, nil
+		return 0, version, nil
 	}
 
 	mount, ver, err := getCgroupDetails(filepath.Join(root, procPathMountInfo), path, "memory")
 	if err != nil {
-		return 0, err
+		return 0, version, err
 	}
 
 	if len(ver) == 2 {
+		version = V1
 		limit, err = detectMemLimitInV1(filepath.Join(root, mount[0]))
 		if err != nil {
+			version = V2
 			limit, err = detectMemLimitInV2(filepath.Join(root, mount[1], path))
 		}
 	} else {
 		switch ver[0] {
 		case 1:
 			// cgroupv1
+			version = V1
 			limit, err = detectMemLimitInV1(filepath.Join(root, mount[0]))
 		case 2:
 			// cgroupv2
+			version = V2
 			limit, err = detectMemLimitInV2(filepath.Join(root, mount[0], path))
 		default:
 			limit, err = 0, fmt.Errorf("detected unknown cgroup version index: %d", ver)
 		}
 	}
 
-	return limit, err
+	return limit, version, err
 }
 
 func detectMemLimitInV1(cRoot string) (limit uint64, err error) {
@@ -162,6 +184,12 @@ func detectMemLimitInV1(cRoot string) (limit uint64, err error) {
 // TODO(hawkingrei): this implementation was based on podman+criu environment.
 // It may cover not all the cases when v2 becomes more widely used in container
 // world.
+// In K8S env, the value hold in memory.max is the memory limit defined in pod definition,
+// the real memory limit should be the minimum value in the whole cgroup hierarchy
+// as in cgroup V1, but cgroup V2 lacks the feature, see this patch for more details:
+// https://lore.kernel.org/linux-kernel/ZctiM5RintD_D0Lt@host1.jankratochvil.net/T/
+// So, in cgroup V2, the value better be adjusted by some factor, like 0.9, to
+// avoid OOM. see taskexecutor/manager.go too.
 func detectMemLimitInV2(cRoot string) (limit uint64, err error) {
 	return readInt64Value(cRoot, cgroupV2MemLimit, 2)
 }

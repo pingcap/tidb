@@ -23,5 +23,6 @@ import (
 var Analyzer = mirror.NewAnalyzer()
 
 func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }

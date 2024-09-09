@@ -5,13 +5,13 @@ package metautil
 import (
 	"context"
 	"crypto/sha256"
+	"sync"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	mockstorage "github.com/pingcap/tidb/br/pkg/mock/storage"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/mock/gomock"
 )
 
 func checksum(m *backuppb.MetaFile) []byte {
@@ -23,9 +23,16 @@ func checksum(m *backuppb.MetaFile) []byte {
 	return sum[:]
 }
 
+func marshal(t *testing.T, m *backuppb.MetaFile) []byte {
+	data, err := m.Marshal()
+	require.NoError(t, err)
+	return data
+}
+
 func TestWalkMetaFileEmpty(t *testing.T) {
+	var mu sync.Mutex
 	files := []*backuppb.MetaFile{}
-	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
+	collect := func(m *backuppb.MetaFile) { mu.Lock(); defer mu.Unlock(); files = append(files, m) }
 	cipher := backuppb.CipherInfo{
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
@@ -44,6 +51,7 @@ func TestWalkMetaFileEmpty(t *testing.T) {
 }
 
 func TestWalkMetaFileLeaf(t *testing.T) {
+	var mu sync.Mutex
 	leaf := &backuppb.MetaFile{Schemas: []*backuppb.Schema{
 		{Db: []byte("db"), Table: []byte("table")},
 	}}
@@ -51,7 +59,7 @@ func TestWalkMetaFileLeaf(t *testing.T) {
 	cipher := backuppb.CipherInfo{
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
-	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
+	collect := func(m *backuppb.MetaFile) { mu.Lock(); defer mu.Unlock(); files = append(files, m) }
 	err := walkLeafMetaFile(context.Background(), nil, leaf, &cipher, collect)
 
 	require.NoError(t, err)
@@ -60,15 +68,15 @@ func TestWalkMetaFileLeaf(t *testing.T) {
 }
 
 func TestWalkMetaFileInvalid(t *testing.T) {
-	controller := gomock.NewController(t)
-	defer controller.Finish()
-	mockStorage := mockstorage.NewMockExternalStorage(controller)
+	fakeDataDir := t.TempDir()
+	store, err := storage.NewLocalStorage(fakeDataDir)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	leaf := &backuppb.MetaFile{Schemas: []*backuppb.Schema{
 		{Db: []byte("db"), Table: []byte("table")},
 	}}
-	mockStorage.EXPECT().ReadFile(ctx, "leaf").Return(leaf.Marshal())
+	store.WriteFile(ctx, "leaf", marshal(t, leaf))
 
 	root := &backuppb.MetaFile{MetaFiles: []*backuppb.File{
 		{Name: "leaf", Sha256: []byte{}},
@@ -78,53 +86,53 @@ func TestWalkMetaFileInvalid(t *testing.T) {
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
 	collect := func(m *backuppb.MetaFile) { panic("unreachable") }
-	err := walkLeafMetaFile(ctx, mockStorage, root, &cipher, collect)
+	err = walkLeafMetaFile(ctx, store, root, &cipher, collect)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ErrInvalidMetaFile")
 }
 
 func TestWalkMetaFile(t *testing.T) {
-	controller := gomock.NewController(t)
-	defer controller.Finish()
-	mockStorage := mockstorage.NewMockExternalStorage(controller)
+	fakeDataDir := t.TempDir()
+	store, err := storage.NewLocalStorage(fakeDataDir)
+	require.NoError(t, err)
 
 	ctx := context.Background()
-	expect := make([]*backuppb.MetaFile, 0, 6)
+	expect := make(map[string]*backuppb.MetaFile)
 	leaf31S1 := &backuppb.MetaFile{Schemas: []*backuppb.Schema{
 		{Db: []byte("db31S1"), Table: []byte("table31S1")},
 	}}
-	mockStorage.EXPECT().ReadFile(ctx, "leaf31S1").Return(leaf31S1.Marshal())
-	expect = append(expect, leaf31S1)
+	store.WriteFile(ctx, "leaf31S1", marshal(t, leaf31S1))
+	expect["db31S1"] = leaf31S1
 
 	leaf31S2 := &backuppb.MetaFile{Schemas: []*backuppb.Schema{
 		{Db: []byte("db31S2"), Table: []byte("table31S2")},
 	}}
-	mockStorage.EXPECT().ReadFile(ctx, "leaf31S2").Return(leaf31S2.Marshal())
-	expect = append(expect, leaf31S2)
+	store.WriteFile(ctx, "leaf31S2", marshal(t, leaf31S2))
+	expect["db31S2"] = leaf31S2
 
 	leaf32S1 := &backuppb.MetaFile{Schemas: []*backuppb.Schema{
 		{Db: []byte("db32S1"), Table: []byte("table32S1")},
 	}}
-	mockStorage.EXPECT().ReadFile(ctx, "leaf32S1").Return(leaf32S1.Marshal())
-	expect = append(expect, leaf32S1)
+	store.WriteFile(ctx, "leaf32S1", marshal(t, leaf32S1))
+	expect["db32S1"] = leaf32S1
 
 	node21 := &backuppb.MetaFile{MetaFiles: []*backuppb.File{
 		{Name: "leaf31S1", Sha256: checksum(leaf31S1)},
 		{Name: "leaf31S2", Sha256: checksum(leaf31S2)},
 	}}
-	mockStorage.EXPECT().ReadFile(ctx, "node21").Return(node21.Marshal())
+	store.WriteFile(ctx, "node21", marshal(t, node21))
 
 	node22 := &backuppb.MetaFile{MetaFiles: []*backuppb.File{
 		{Name: "leaf32S1", Sha256: checksum(leaf32S1)},
 	}}
-	mockStorage.EXPECT().ReadFile(ctx, "node22").Return(node22.Marshal())
+	store.WriteFile(ctx, "node22", marshal(t, node22))
 
 	leaf23S1 := &backuppb.MetaFile{Schemas: []*backuppb.Schema{
 		{Db: []byte("db23S1"), Table: []byte("table23S1")},
 	}}
-	mockStorage.EXPECT().ReadFile(ctx, "leaf23S1").Return(leaf23S1.Marshal())
-	expect = append(expect, leaf23S1)
+	store.WriteFile(ctx, "leaf23S1", marshal(t, leaf23S1))
+	expect["db23S1"] = leaf23S1
 
 	root := &backuppb.MetaFile{MetaFiles: []*backuppb.File{
 		{Name: "node21", Sha256: checksum(node21)},
@@ -132,17 +140,22 @@ func TestWalkMetaFile(t *testing.T) {
 		{Name: "leaf23S1", Sha256: checksum(leaf23S1)},
 	}}
 
+	var mu sync.Mutex
 	files := []*backuppb.MetaFile{}
 	cipher := backuppb.CipherInfo{
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
-	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
-	err := walkLeafMetaFile(ctx, mockStorage, root, &cipher, collect)
+	collect := func(m *backuppb.MetaFile) {
+		mu.Lock()
+		files = append(files, m)
+		mu.Unlock()
+	}
+	err = walkLeafMetaFile(ctx, store, root, &cipher, collect)
 	require.NoError(t, err)
 
 	require.Len(t, files, len(expect))
-	for i := range expect {
-		require.Equal(t, expect[i], files[i])
+	for _, file := range files {
+		require.Equal(t, expect[string(file.Schemas[0].Db)], file)
 	}
 }
 

@@ -26,7 +26,8 @@ func IsReadOnly(node Node) bool {
 	case *SelectStmt:
 		if st.LockInfo != nil {
 			switch st.LockInfo.LockType {
-			case SelectLockForUpdate, SelectLockForUpdateNoWait, SelectLockForUpdateWaitN:
+			case SelectLockForUpdate, SelectLockForUpdateNoWait, SelectLockForUpdateWaitN,
+				SelectLockForShare, SelectLockForShareNoWait:
 				return false
 			}
 		}
@@ -57,7 +58,7 @@ func IsReadOnly(node Node) bool {
 		return true
 	case *AdminStmt:
 		switch node.(*AdminStmt).Tp {
-		case AdminShowTelemetry, AdminShowDDL, AdminShowDDLJobs, AdminShowSlow,
+		case AdminShowDDL, AdminShowDDLJobs, AdminShowSlow,
 			AdminCaptureBindings, AdminShowNextRowID, AdminShowDDLJobQueries,
 			AdminShowDDLJobQueriesWithRange:
 			return true

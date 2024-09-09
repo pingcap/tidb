@@ -1,0 +1,12 @@
+[
+  {
+    "name": "TestConstantPropagateWithCollation",
+    "cases": [
+      "set names utf8",
+      "select * from t where name='a' and length(name)=1; -- without constant propagated",
+      "set names utf8mb4",
+      "select * from t where name='a' and length(name)=1; -- without constant propagated",
+      "select * from (select 'test' as b from t) n where length(b) > 2; -- can be substituted"
+    ]
+  }
+]

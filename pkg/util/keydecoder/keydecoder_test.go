@@ -18,7 +18,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -35,28 +36,28 @@ func TestDecodeKey(t *testing.T) {
 	table.MockTableFromMeta = tables.MockTableFromMeta
 	tableInfo1 := &model.TableInfo{
 		ID:   1,
-		Name: model.NewCIStr("table1"),
+		Name: pmodel.NewCIStr("table1"),
 		Indices: []*model.IndexInfo{
-			{ID: 1, Name: model.NewCIStr("index1"), State: model.StatePublic},
+			{ID: 1, Name: pmodel.NewCIStr("index1"), State: model.StatePublic},
 		},
 	}
-	tableInfo2 := &model.TableInfo{ID: 2, Name: model.NewCIStr("table2")}
+	tableInfo2 := &model.TableInfo{ID: 2, Name: pmodel.NewCIStr("table2")}
 	tableInfo3 := &model.TableInfo{
 		ID:   3,
-		Name: model.NewCIStr("table3"),
+		Name: pmodel.NewCIStr("table3"),
 		Columns: []*model.ColumnInfo{
-			{ID: 10, Name: model.NewCIStr("col"), State: model.StatePublic},
+			{ID: 10, Name: pmodel.NewCIStr("col"), State: model.StatePublic},
 		},
 		Indices: []*model.IndexInfo{
-			{ID: 4, Name: model.NewCIStr("index4"), State: model.StatePublic},
+			{ID: 4, Name: pmodel.NewCIStr("index4"), State: model.StatePublic},
 		},
 		Partition: &model.PartitionInfo{
-			Type:   model.PartitionTypeRange,
+			Type:   pmodel.PartitionTypeRange,
 			Expr:   "`col`",
 			Enable: true,
 			Definitions: []model.PartitionDefinition{
-				{ID: 5, Name: model.NewCIStr("p0"), LessThan: []string{"10"}},
-				{ID: 6, Name: model.NewCIStr("p1"), LessThan: []string{"MAXVALUE"}},
+				{ID: 5, Name: pmodel.NewCIStr("p0"), LessThan: []string{"10"}},
+				{ID: 6, Name: pmodel.NewCIStr("p1"), LessThan: []string{"MAXVALUE"}},
 			},
 		},
 	}
@@ -74,7 +75,7 @@ func TestDecodeKey(t *testing.T) {
 		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 	}, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, int64(1), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(1), decodedKey.TableID)
 	assert.Equal(t, "table1", decodedKey.TableName)
@@ -101,7 +102,7 @@ func TestDecodeKey(t *testing.T) {
 
 	decodedKey, err = DecodeKey(key, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, int64(1), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(2), decodedKey.TableID)
 	assert.Equal(t, "table2", decodedKey.TableName)
@@ -117,7 +118,7 @@ func TestDecodeKey(t *testing.T) {
 
 	values := types.MakeDatums("abc", 1)
 	sc := stmtctx.NewStmtCtx()
-	encodedValue, err := codec.EncodeKey(sc, nil, values...)
+	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, values...)
 	assert.Nil(t, err)
 	key = []byte{
 		't',
@@ -132,7 +133,7 @@ func TestDecodeKey(t *testing.T) {
 
 	decodedKey, err = DecodeKey(key, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, int64(1), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(1), decodedKey.TableID)
 	assert.Equal(t, "table1", decodedKey.TableName)
@@ -150,7 +151,7 @@ func TestDecodeKey(t *testing.T) {
 	key = []byte("t\x80\x00\x00\x00\x00\x00\x00\x05_r\x80\x00\x00\x00\x00\x00\x00\x0a")
 	decodedKey, err = DecodeKey(key, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, int64(1), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(3), decodedKey.TableID)
 	assert.Equal(t, "table3", decodedKey.TableName)
@@ -166,14 +167,14 @@ func TestDecodeKey(t *testing.T) {
 
 	// Index key in a partitioned table.
 	values = types.MakeDatums("abcde", 2)
-	encodedValue, err = codec.EncodeKey(sc, nil, values...)
+	encodedValue, err = codec.EncodeKey(sc.TimeZone(), nil, values...)
 	assert.Nil(t, err)
 	key = []byte("t\x80\x00\x00\x00\x00\x00\x00\x06_i\x80\x00\x00\x00\x00\x00\x00\x04")
 	key = append(key, encodedValue...)
 
 	decodedKey, err = DecodeKey(key, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, int64(1), decodedKey.DbID)
 	assert.Equal(t, "test", decodedKey.DbName)
 	assert.Equal(t, int64(3), decodedKey.TableID)
 	assert.Equal(t, "table3", decodedKey.TableName)

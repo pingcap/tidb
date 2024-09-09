@@ -18,7 +18,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -50,14 +49,14 @@ func (*rank) ResetPartialResult(pr PartialResult) {
 	p.rows = p.rows[:0]
 }
 
-func (*rank) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (*rank) UpdatePartialResult(_ AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Rank)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
 	memDelta += int64(len(rowsInGroup)) * DefRowSize
 	return memDelta, nil
 }
 
-func (r *rank) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (r *rank) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4Rank)(pr)
 	p.curIdx++
 	if p.curIdx == 1 {

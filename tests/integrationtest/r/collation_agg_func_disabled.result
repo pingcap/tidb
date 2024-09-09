@@ -36,8 +36,8 @@ upper(group_concat(distinct value order by 1))
 ABC,ABC,DEF
 desc format='brief' select group_concat(distinct value collate utf8mb4_bin order by 1) from t;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:group_concat(distinct Column#6 order by Column#7 separator ",")->Column#5
-└─Projection	10000.00	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#7
+StreamAgg	1.00	root		funcs:group_concat(distinct Column#6 order by Column#6 separator ",")->Column#5
+└─Projection	10000.00	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select upper(group_concat(distinct value collate utf8mb4_bin order by 1)) from t;
@@ -131,13 +131,10 @@ approx_count_distinct(value collate utf8mb4_bin, value1)
 create table tt(a char(10), b enum('a', 'B', 'c'), c set('a', 'B', 'c'), d json) collate utf8mb4_general_ci;
 insert into tt values ("a", "a", "a", JSON_OBJECT("a", "a"));
 insert into tt values ("A", "A", "A", JSON_OBJECT("A", "A"));
-Error 1265 (01000): Data truncated for column 'b' at row 1
 insert into tt values ("b", "b", "b", JSON_OBJECT("b", "b"));
-Error 1265 (01000): Data truncated for column 'b' at row 1
 insert into tt values ("B", "B", "B", JSON_OBJECT("B", "B"));
 insert into tt values ("c", "c", "c", JSON_OBJECT("c", "c"));
 insert into tt values ("C", "C", "C", JSON_OBJECT("C", "C"));
-Error 1265 (01000): Data truncated for column 'b' at row 1
 split table tt by (0), (1), (2), (3), (4), (5);
 TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
 6	1

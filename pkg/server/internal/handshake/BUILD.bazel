@@ -5,5 +5,4 @@ go_library(
     srcs = ["handshake.go"],
     importpath = "github.com/pingcap/tidb/pkg/server/internal/handshake",
     visibility = ["//pkg/server:__subpackages__"],
-    deps = ["@com_github_klauspost_compress//zstd"],
 )

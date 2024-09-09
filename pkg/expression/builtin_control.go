@@ -15,9 +15,9 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -38,6 +38,7 @@ var (
 	_ builtinFunc = &builtinCaseWhenTimeSig{}
 	_ builtinFunc = &builtinCaseWhenDurationSig{}
 	_ builtinFunc = &builtinCaseWhenJSONSig{}
+	_ builtinFunc = &builtinCaseWhenVectorFloat32Sig{}
 	_ builtinFunc = &builtinIfNullIntSig{}
 	_ builtinFunc = &builtinIfNullRealSig{}
 	_ builtinFunc = &builtinIfNullDecimalSig{}
@@ -45,6 +46,7 @@ var (
 	_ builtinFunc = &builtinIfNullTimeSig{}
 	_ builtinFunc = &builtinIfNullDurationSig{}
 	_ builtinFunc = &builtinIfNullJSONSig{}
+	_ builtinFunc = &builtinIfNullVectorFloat32Sig{}
 	_ builtinFunc = &builtinIfIntSig{}
 	_ builtinFunc = &builtinIfRealSig{}
 	_ builtinFunc = &builtinIfDecimalSig{}
@@ -52,6 +54,7 @@ var (
 	_ builtinFunc = &builtinIfTimeSig{}
 	_ builtinFunc = &builtinIfDurationSig{}
 	_ builtinFunc = &builtinIfJSONSig{}
+	_ builtinFunc = &builtinIfVectorFloat32Sig{}
 )
 
 func maxlen(lhsFlen, rhsFlen int) int {
@@ -136,14 +139,14 @@ func hasBinaryStr(args []*types.FieldType) bool {
 	return false
 }
 
-func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {
+func addCollateAndCharsetAndFlagFromArgs(ctx BuildContext, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {
 	switch funcName {
 	case ast.If, ast.Ifnull, ast.WindowFuncLead, ast.WindowFuncLag:
 		if len(args) != 2 {
 			panic("unexpected length of args for if/ifnull/lead/lag")
 		}
 		lexp, rexp := args[0], args[1]
-		lhs, rhs := lexp.GetType(), rexp.GetType()
+		lhs, rhs := lexp.GetType(ctx.GetEvalCtx()), rexp.GetType(ctx.GetEvalCtx())
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
 			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
 			if err != nil {
@@ -184,7 +187,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 		resultFieldType.SetCollate(ec.Collation)
 		resultFieldType.SetCharset(ec.Charset)
 		for i := range args {
-			if mysql.HasBinaryFlag(args[i].GetType().GetFlag()) || !types.IsNonBinaryStr(args[i].GetType()) {
+			if mysql.HasBinaryFlag(args[i].GetType(ctx.GetEvalCtx()).GetFlag()) || !types.IsNonBinaryStr(args[i].GetType(ctx.GetEvalCtx())) {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 				break
 			}
@@ -192,7 +195,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 	case ast.Coalesce: // TODO ast.Case and ast.Coalesce should be merged into the same branch
 		argTypes := make([]*types.FieldType, 0)
 		for _, arg := range args {
-			argTypes = append(argTypes, arg.GetType())
+			argTypes = append(argTypes, arg.GetType(ctx.GetEvalCtx()))
 		}
 
 		nonBinaryStrExist := hasNonBinaryStr(argTypes)
@@ -232,7 +235,7 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 }
 
 // InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, CASEWHEN, COALESCE, LEAD and LAG.
-func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Expression) (*types.FieldType, error) {
+func InferType4ControlFuncs(ctx BuildContext, funcName string, args ...Expression) (*types.FieldType, error) {
 	argsNum := len(args)
 	if argsNum == 0 {
 		panic("unexpected length 0 of args")
@@ -240,10 +243,10 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Exp
 	nullFields := make([]*types.FieldType, 0, argsNum)
 	notNullFields := make([]*types.FieldType, 0, argsNum)
 	for i := range args {
-		if args[i].GetType().GetType() == mysql.TypeNull {
-			nullFields = append(nullFields, args[i].GetType())
+		if args[i].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeNull {
+			nullFields = append(nullFields, args[i].GetType(ctx.GetEvalCtx()))
 		} else {
-			notNullFields = append(notNullFields, args[i].GetType())
+			notNullFields = append(notNullFields, args[i].GetType(ctx.GetEvalCtx()))
 		}
 	}
 	resultFieldType := &types.FieldType{}
@@ -307,7 +310,7 @@ type caseWhenFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -336,7 +339,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
 			return nil, err
 		}
-		argTps = append(argTps, args[i].GetType(), fieldTp.Clone())
+		argTps = append(argTps, args[i].GetType(ctx.GetEvalCtx()), fieldTp.Clone())
 	}
 	if l%2 == 1 {
 		argTps = append(argTps, fieldTp.Clone())
@@ -373,6 +376,11 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETJson:
 		sig = &builtinCaseWhenJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenJson)
+	case types.ETVectorFloat32:
+		sig = &builtinCaseWhenVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CaseWhenVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for CASE WHEN", tp)
 	}
 	return sig, nil
 }
@@ -389,7 +397,7 @@ func (b *builtinCaseWhenIntSig) Clone() builtinFunc {
 
 // evalInt evals a builtinCaseWhenIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
-func (b *builtinCaseWhenIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (ret int64, isNull bool, err error) {
+func (b *builtinCaseWhenIntSig) evalInt(ctx EvalContext, row chunk.Row) (ret int64, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -425,7 +433,7 @@ func (b *builtinCaseWhenRealSig) Clone() builtinFunc {
 
 // evalReal evals a builtinCaseWhenRealSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
-func (b *builtinCaseWhenRealSig) evalReal(ctx sessionctx.Context, row chunk.Row) (ret float64, isNull bool, err error) {
+func (b *builtinCaseWhenRealSig) evalReal(ctx EvalContext, row chunk.Row) (ret float64, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -461,7 +469,7 @@ func (b *builtinCaseWhenDecimalSig) Clone() builtinFunc {
 
 // evalDecimal evals a builtinCaseWhenDecimalSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
-func (b *builtinCaseWhenDecimalSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (ret *types.MyDecimal, isNull bool, err error) {
+func (b *builtinCaseWhenDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (ret *types.MyDecimal, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -497,7 +505,7 @@ func (b *builtinCaseWhenStringSig) Clone() builtinFunc {
 
 // evalString evals a builtinCaseWhenStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
-func (b *builtinCaseWhenStringSig) evalString(ctx sessionctx.Context, row chunk.Row) (ret string, isNull bool, err error) {
+func (b *builtinCaseWhenStringSig) evalString(ctx EvalContext, row chunk.Row) (ret string, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -533,7 +541,7 @@ func (b *builtinCaseWhenTimeSig) Clone() builtinFunc {
 
 // evalTime evals a builtinCaseWhenTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
-func (b *builtinCaseWhenTimeSig) evalTime(ctx sessionctx.Context, row chunk.Row) (ret types.Time, isNull bool, err error) {
+func (b *builtinCaseWhenTimeSig) evalTime(ctx EvalContext, row chunk.Row) (ret types.Time, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -569,7 +577,7 @@ func (b *builtinCaseWhenDurationSig) Clone() builtinFunc {
 
 // evalDuration evals a builtinCaseWhenDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
-func (b *builtinCaseWhenDurationSig) evalDuration(ctx sessionctx.Context, row chunk.Row) (ret types.Duration, isNull bool, err error) {
+func (b *builtinCaseWhenDurationSig) evalDuration(ctx EvalContext, row chunk.Row) (ret types.Duration, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -605,7 +613,7 @@ func (b *builtinCaseWhenJSONSig) Clone() builtinFunc {
 
 // evalJSON evals a builtinCaseWhenJSONSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
-func (b *builtinCaseWhenJSONSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (ret types.BinaryJSON, isNull bool, err error) {
+func (b *builtinCaseWhenJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (ret types.BinaryJSON, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -627,12 +635,46 @@ func (b *builtinCaseWhenJSONSig) evalJSON(ctx sessionctx.Context, row chunk.Row)
 	return ret, true, nil
 }
 
+type builtinCaseWhenVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCaseWhenVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinCaseWhenVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalVectorFloat32 evals a builtinCaseWhenVectorFloat32Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
+func (b *builtinCaseWhenVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (ret types.VectorFloat32, isNull bool, err error) {
+	var condition int64
+	args, l := b.getArgs(), len(b.getArgs())
+	for i := 0; i < l-1; i += 2 {
+		condition, isNull, err = args[i].EvalInt(ctx, row)
+		if err != nil {
+			return
+		}
+		if isNull || condition == 0 {
+			continue
+		}
+		return args[i+1].EvalVectorFloat32(ctx, row)
+	}
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
+	// else clause -> args[l-1]
+	// If case clause has else clause, l%2 == 1.
+	if l%2 == 1 {
+		return args[l-1].EvalVectorFloat32(ctx, row)
+	}
+	return ret, true, nil
+}
+
 type ifFunctionClass struct {
 	baseFunctionClass
 }
 
 // getFunction see https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
-func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -646,7 +688,7 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, args[0].GetType().Clone(), retTp.Clone(), retTp.Clone())
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, args[0].GetType(ctx.GetEvalCtx()).Clone(), retTp.Clone(), retTp.Clone())
 	if err != nil {
 		return nil, err
 	}
@@ -674,6 +716,11 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	case types.ETJson:
 		sig = &builtinIfJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfJson)
+	case types.ETVectorFloat32:
+		sig = &builtinIfVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_IfVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for IF()", evalTps)
 	}
 	return sig, nil
 }
@@ -688,7 +735,7 @@ func (b *builtinIfIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
+func (b *builtinIfIntSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(ctx, row)
 	if err != nil {
 		return 0, true, err
@@ -709,7 +756,7 @@ func (b *builtinIfRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfRealSig) evalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error) {
+func (b *builtinIfRealSig) evalReal(ctx EvalContext, row chunk.Row) (val float64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(ctx, row)
 	if err != nil {
 		return 0, true, err
@@ -730,7 +777,7 @@ func (b *builtinIfDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfDecimalSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
+func (b *builtinIfDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(ctx, row)
 	if err != nil {
 		return nil, true, err
@@ -751,7 +798,7 @@ func (b *builtinIfStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfStringSig) evalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error) {
+func (b *builtinIfStringSig) evalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(ctx, row)
 	if err != nil {
 		return "", true, err
@@ -772,7 +819,7 @@ func (b *builtinIfTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfTimeSig) evalTime(ctx sessionctx.Context, row chunk.Row) (ret types.Time, isNull bool, err error) {
+func (b *builtinIfTimeSig) evalTime(ctx EvalContext, row chunk.Row) (ret types.Time, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(ctx, row)
 	if err != nil {
 		return ret, true, err
@@ -793,7 +840,7 @@ func (b *builtinIfDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfDurationSig) evalDuration(ctx sessionctx.Context, row chunk.Row) (ret types.Duration, isNull bool, err error) {
+func (b *builtinIfDurationSig) evalDuration(ctx EvalContext, row chunk.Row) (ret types.Duration, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(ctx, row)
 	if err != nil {
 		return ret, true, err
@@ -814,7 +861,7 @@ func (b *builtinIfJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfJSONSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (ret types.BinaryJSON, isNull bool, err error) {
+func (b *builtinIfJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (ret types.BinaryJSON, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(ctx, row)
 	if err != nil {
 		return ret, true, err
@@ -825,15 +872,36 @@ func (b *builtinIfJSONSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (ret 
 	return b.args[2].EvalJSON(ctx, row)
 }
 
+type builtinIfVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinIfVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinIfVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinIfVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (ret types.VectorFloat32, isNull bool, err error) {
+	arg0, isNull0, err := b.args[0].EvalInt(ctx, row)
+	if err != nil {
+		return ret, true, err
+	}
+	if !isNull0 && arg0 != 0 {
+		return b.args[1].EvalVectorFloat32(ctx, row)
+	}
+	return b.args[2].EvalVectorFloat32(ctx, row)
+}
+
 type ifNullFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *ifNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	lhs, rhs := args[0].GetType(), args[1].GetType()
+	lhs, rhs := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
 	retTp, err := InferType4ControlFuncs(ctx, c.funcName, args[0], args[1])
 	if err != nil {
 		return nil, err
@@ -874,6 +942,11 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	case types.ETJson:
 		sig = &builtinIfNullJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullJson)
+	case types.ETVectorFloat32:
+		sig = &builtinIfNullVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_IfNullVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for IFNULL()", evalTps)
 	}
 	return sig, nil
 }
@@ -888,7 +961,7 @@ func (b *builtinIfNullIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinIfNullIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	arg0, isNull, err := b.args[0].EvalInt(ctx, row)
 	if !isNull || err != nil {
 		return arg0, err != nil, err
@@ -907,7 +980,7 @@ func (b *builtinIfNullRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullRealSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinIfNullRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	arg0, isNull, err := b.args[0].EvalReal(ctx, row)
 	if !isNull || err != nil {
 		return arg0, err != nil, err
@@ -926,7 +999,7 @@ func (b *builtinIfNullDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullDecimalSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinIfNullDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDecimal(ctx, row)
 	if !isNull || err != nil {
 		return arg0, err != nil, err
@@ -945,7 +1018,7 @@ func (b *builtinIfNullStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullStringSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (b *builtinIfNullStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	arg0, isNull, err := b.args[0].EvalString(ctx, row)
 	if !isNull || err != nil {
 		return arg0, err != nil, err
@@ -964,7 +1037,7 @@ func (b *builtinIfNullTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullTimeSig) evalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
+func (b *builtinIfNullTimeSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
 	arg0, isNull, err := b.args[0].EvalTime(ctx, row)
 	if !isNull || err != nil {
 		return arg0, err != nil, err
@@ -983,7 +1056,7 @@ func (b *builtinIfNullDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullDurationSig) evalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
+func (b *builtinIfNullDurationSig) evalDuration(ctx EvalContext, row chunk.Row) (types.Duration, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(ctx, row)
 	if !isNull || err != nil {
 		return arg0, err != nil, err
@@ -1002,11 +1075,30 @@ func (b *builtinIfNullJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullJSONSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
+func (b *builtinIfNullJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
 	arg0, isNull, err := b.args[0].EvalJSON(ctx, row)
 	if !isNull {
 		return arg0, err != nil, err
 	}
 	arg1, isNull, err := b.args[1].EvalJSON(ctx, row)
+	return arg1, isNull || err != nil, err
+}
+
+type builtinIfNullVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinIfNullVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinIfNullVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinIfNullVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	arg0, isNull, err := b.args[0].EvalVectorFloat32(ctx, row)
+	if !isNull {
+		return arg0, err != nil, err
+	}
+	arg1, isNull, err := b.args[1].EvalVectorFloat32(ctx, row)
 	return arg1, isNull || err != nil, err
 }

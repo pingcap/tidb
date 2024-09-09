@@ -23,10 +23,9 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -95,25 +94,18 @@ func buildObserveTableRanges(
 			continue
 		}
 
-		tables, err := m.ListTables(dbInfo.ID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(tables) == 0 {
-			log.Warn("It's not necessary to observe empty database",
-				zap.Stringer("db", dbInfo.Name))
-			continue
-		}
-
-		for _, tableInfo := range tables {
+		if err := m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
-				continue
+				return nil
 			}
+			log.Info("start to observe the table", zap.Stringer("db", dbInfo.Name), zap.Stringer("table", tableInfo.Name))
 
-			log.Info("observer table schema", zap.String("table", dbInfo.Name.O+"."+tableInfo.Name.O))
 			tableRanges := buildObserveTableRange(tableInfo)
 			ranges = append(ranges, tableRanges...)
+			return nil
+		}); err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 
@@ -142,6 +134,8 @@ func BuildObserveDataRanges(
 	if len(filterStr) == 1 && filterStr[0] == string("*.*") {
 		return buildObserverAllRange(), nil
 	}
+	// TODO: currently it's a dead code, the iterator metakvs can be optimized
+	//  to marshal only necessary fields.
 	return buildObserveTableRanges(storage, tableFilter, backupTS)
 }
 
@@ -313,7 +307,7 @@ func FastUnmarshalMetaData(
 	fn func(path string, rawMetaData []byte) error,
 ) error {
 	log.Info("use workers to speed up reading metadata files", zap.Uint("workers", metaDataWorkerPoolSize))
-	pool := utils.NewWorkerPool(metaDataWorkerPoolSize, "metadata")
+	pool := util.NewWorkerPool(metaDataWorkerPoolSize, "metadata")
 	eg, ectx := errgroup.WithContext(ctx)
 	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	err := s.WalkDir(ectx, opt, func(path string, size int64) error {

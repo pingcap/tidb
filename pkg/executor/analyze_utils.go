@@ -24,10 +24,49 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
+
+func adaptiveAnlayzeDistSQLConcurrency(ctx context.Context, sctx sessionctx.Context) int {
+	concurrency := sctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	if concurrency > 0 {
+		return concurrency
+	}
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
+	if !ok {
+		logutil.BgLogger().Warn("Information about TiKV store status can be gotten only when the storage is TiKV")
+		return variable.DefAnalyzeDistSQLScanConcurrency
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	pdCli, err := tikvHelper.TryGetPDHTTPClient()
+	if err != nil {
+		logutil.BgLogger().Warn("fail to TryGetPDHTTPClient", zap.Error(err))
+		return variable.DefAnalyzeDistSQLScanConcurrency
+	}
+	storesStat, err := pdCli.GetStores(ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("fail to get stores info", zap.Error(err))
+		return variable.DefAnalyzeDistSQLScanConcurrency
+	}
+	if storesStat.Count <= 5 {
+		return variable.DefAnalyzeDistSQLScanConcurrency
+	} else if storesStat.Count <= 10 {
+		return storesStat.Count
+	} else if storesStat.Count <= 20 {
+		return storesStat.Count * 2
+	} else if storesStat.Count <= 50 {
+		return storesStat.Count * 3
+	}
+	return storesStat.Count * 4
+}
 
 func getIntFromSessionVars(ctx sessionctx.Context, name string) (int, error) {
 	sessionVars := ctx.GetSessionVars()
@@ -54,7 +93,7 @@ func isAnalyzeWorkerPanic(err error) bool {
 	return err == errAnalyzeWorkerPanic || err == errAnalyzeOOM
 }
 
-func getAnalyzePanicErr(r interface{}) error {
+func getAnalyzePanicErr(r any) error {
 	if msg, ok := r.(string); ok {
 		if msg == globalPanicAnalyzeMemoryExceed {
 			return errors.Trace(errAnalyzeOOM)

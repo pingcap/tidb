@@ -1,8 +1,0 @@
-[lightning]
-max-error = 0  # this actually sets the type error
-
-[mydumper.csv]
-header = true
-
-[tikv-importer]
-duplicate-resolution = 'remove'

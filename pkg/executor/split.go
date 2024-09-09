@@ -25,9 +25,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -46,7 +47,7 @@ type SplitIndexRegionExec struct {
 	exec.BaseExecutor
 
 	tableInfo      *model.TableInfo
-	partitionNames []model.CIStr
+	partitionNames []pmodel.CIStr
 	indexInfo      *model.IndexInfo
 	lower          []types.Datum
 	upper          []types.Datum
@@ -164,8 +165,9 @@ func (e *SplitIndexRegionExec) getSplitIdxKeysFromValueList() (keys [][]byte, er
 func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromValueList(physicalID int64, keys [][]byte) ([][]byte, error) {
 	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
 	index := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
+	sc := e.Ctx().GetSessionVars().StmtCtx
 	for _, v := range e.valueLists {
-		idxKey, _, err := index.GenIndexKey(e.Ctx().GetSessionVars().StmtCtx, v, kv.IntHandle(math.MinInt64), nil)
+		idxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), v, kv.IntHandle(math.MinInt64), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -226,13 +228,14 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64
 	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
 	index := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
 	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
-	lowerIdxKey, _, err := index.GenIndexKey(e.Ctx().GetSessionVars().StmtCtx, e.lower, kv.IntHandle(math.MinInt64), nil)
+	sc := e.Ctx().GetSessionVars().StmtCtx
+	lowerIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), e.lower, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {
 		return nil, err
 	}
 	// Use math.MinInt64 as handle_id for the upper index key to avoid affecting calculate split point.
 	// If use math.MaxInt64 here, test of `TestSplitIndex` will report error.
-	upperIdxKey, _, err := index.GenIndexKey(e.Ctx().GetSessionVars().StmtCtx, e.upper, kv.IntHandle(math.MinInt64), nil)
+	upperIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), e.upper, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -324,11 +327,11 @@ type SplitTableRegionExec struct {
 	exec.BaseExecutor
 
 	tableInfo      *model.TableInfo
-	partitionNames []model.CIStr
+	partitionNames []pmodel.CIStr
 	lower          []types.Datum
 	upper          []types.Datum
 	num            int
-	handleCols     core.HandleCols
+	handleCols     util.HandleCols
 	valueLists     [][]types.Datum
 	splitKeys      [][]byte
 
@@ -823,8 +826,12 @@ func getRegionInfo(store helper.Storage, regions []regionMeta) ([]regionMeta, er
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
 	}
+	pdCli, err := tikvHelper.TryGetPDHTTPClient()
+	if err != nil {
+		return regions, err
+	}
 	for i := range regions {
-		regionInfo, err := tikvHelper.GetRegionInfoByID(regions[i].region.Id)
+		regionInfo, err := pdCli.GetRegionByID(context.TODO(), regions[i].region.Id)
 		if err != nil {
 			return nil, err
 		}

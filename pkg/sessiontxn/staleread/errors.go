@@ -13,12 +13,3 @@
 // limitations under the License.
 
 package staleread
-
-import (
-	mysql "github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-)
-
-var (
-	errAsOf = dbterror.ClassOptimizer.NewStd(mysql.ErrAsOf)
-)

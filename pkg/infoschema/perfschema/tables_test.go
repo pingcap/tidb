@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 	"go.opencensus.io/stats/view"
 )
 
@@ -152,12 +152,12 @@ func TestTiKVProfileCPU(t *testing.T) {
 	}
 
 	// mock PD profile
-	router.HandleFunc(pdapi.PProfProfile, copyHandler("testdata/test.pprof"))
-	router.HandleFunc(pdapi.PProfHeap, handlerFactory("heap"))
-	router.HandleFunc(pdapi.PProfMutex, handlerFactory("mutex"))
-	router.HandleFunc(pdapi.PProfAllocs, handlerFactory("allocs"))
-	router.HandleFunc(pdapi.PProfBlock, handlerFactory("block"))
-	router.HandleFunc(pdapi.PProfGoroutine, handlerFactory("goroutine", 2))
+	router.HandleFunc(pd.PProfProfile, copyHandler("testdata/test.pprof"))
+	router.HandleFunc(pd.PProfHeap, handlerFactory("heap"))
+	router.HandleFunc(pd.PProfMutex, handlerFactory("mutex"))
+	router.HandleFunc(pd.PProfAllocs, handlerFactory("allocs"))
+	router.HandleFunc(pd.PProfBlock, handlerFactory("block"))
+	router.HandleFunc(pd.PProfGoroutine, handlerFactory("goroutine", 2))
 
 	tk.MustQuery("select * from pd_profile_cpu where depth < 3")
 	warnings = tk.Session().GetSessionVars().StmtCtx.GetWarnings()

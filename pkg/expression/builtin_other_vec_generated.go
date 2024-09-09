@@ -20,13 +20,12 @@ import (
 	"cmp"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
-func (b *builtinInIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -54,7 +53,7 @@ func (b *builtinInIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 			hasNull[i] = true
 		}
 	}
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 	var compareResult int
 	args := b.args[1:]
 	if len(b.hashSet) != 0 {
@@ -85,7 +84,7 @@ func (b *builtinInIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 		if err := args[j].VecEvalInt(ctx, input, buf1); err != nil {
 			return err
 		}
-		isUnsigned := mysql.HasUnsignedFlag(args[j].GetType().GetFlag())
+		isUnsigned := mysql.HasUnsignedFlag(args[j].GetType(ctx).GetFlag())
 		args1 := buf1.Int64s()
 		buf1.MergeNulls(buf0)
 		for i := 0; i < n; i++ {
@@ -131,7 +130,7 @@ func (b *builtinInIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInStringSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -212,7 +211,7 @@ func (b *builtinInStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInDecimalSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInDecimalSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -302,7 +301,7 @@ func (b *builtinInDecimalSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInRealSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInRealSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -385,7 +384,7 @@ func (b *builtinInRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInTimeSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInTimeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -468,7 +467,7 @@ func (b *builtinInTimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInDurationSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInDurationSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -551,7 +550,7 @@ func (b *builtinInDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInJSONSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInJSONSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {

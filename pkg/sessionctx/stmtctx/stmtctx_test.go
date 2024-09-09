@@ -25,12 +25,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -81,6 +84,7 @@ func TestCopTasksDetails(t *testing.T) {
 func TestStatementContextPushDownFLags(t *testing.T) {
 	newStmtCtx := func(fn func(*stmtctx.StatementContext)) *stmtctx.StatementContext {
 		sc := stmtctx.NewStmtCtx()
+		sc.SetErrLevels(errctx.LevelMap{})
 		fn(sc)
 		return sc
 	}
@@ -94,17 +98,22 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InDeleteStmt = true }), 16},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InSelectStmt = true }), 32},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true)) }), 1},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true)) }), 2},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.OverflowAsWarning = true }), 64},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true)) }), 66},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true)) }), 128},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.DividedByZeroAsWarning = true }), 256},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) {
+			var levels errctx.LevelMap
+			levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+			sc.SetErrLevels(levels)
+		}), 256},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InLoadDataStmt = true }), 1024},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.InSelectStmt = true
 			sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
-		}), 34},
+		}), 98},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
-			sc.DividedByZeroAsWarning = true
+			var levels errctx.LevelMap
+			levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+			sc.SetErrLevels(levels)
 			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 		}), 257},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
@@ -127,7 +136,7 @@ func TestWeakConsistencyRead(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, c int, c1 int, unique index i(c))")
 
-	execAndCheck := func(sql string, rows [][]interface{}, isolationLevel kv.IsoLevel) {
+	execAndCheck := func(sql string, rows [][]any, isolationLevel kv.IsoLevel) {
 		ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 			require.Equal(t, req.IsolationLevel, isolationLevel)
 		})
@@ -169,21 +178,21 @@ func TestWeakConsistencyRead(t *testing.T) {
 }
 
 func TestMarshalSQLWarn(t *testing.T) {
-	warns := []stmtctx.SQLWarn{
+	warns := []contextutil.SQLWarn{
 		{
-			Level: stmtctx.WarnLevelError,
+			Level: contextutil.WarnLevelError,
 			Err:   errors.New("any error"),
 		},
 		{
-			Level: stmtctx.WarnLevelError,
+			Level: contextutil.WarnLevelError,
 			Err:   errors.Trace(errors.New("any error")),
 		},
 		{
-			Level: stmtctx.WarnLevelWarning,
+			Level: contextutil.WarnLevelWarning,
 			Err:   variable.ErrUnknownSystemVar.GenWithStackByArgs("unknown"),
 		},
 		{
-			Level: stmtctx.WarnLevelWarning,
+			Level: contextutil.WarnLevelWarning,
 			Err:   errors.Trace(variable.ErrUnknownSystemVar.GenWithStackByArgs("unknown")),
 		},
 	}
@@ -200,7 +209,7 @@ func TestMarshalSQLWarn(t *testing.T) {
 	// We only need that the results of `show warnings` are the same.
 	bytes, err := json.Marshal(warns)
 	require.NoError(t, err)
-	var newWarns []stmtctx.SQLWarn
+	var newWarns []contextutil.SQLWarn
 	err = json.Unmarshal(bytes, &newWarns)
 	require.NoError(t, err)
 	tk.Session().GetSessionVars().StmtCtx.SetWarnings(newWarns)
@@ -292,7 +301,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 }
 
 func TestStmtHintsClone(t *testing.T) {
-	hints := stmtctx.StmtHints{}
+	hints := hint.StmtHints{}
 	value := reflect.ValueOf(&hints).Elem()
 	for i := 0; i < value.NumField(); i++ {
 		field := value.Field(i)
@@ -318,10 +327,13 @@ func TestNewStmtCtx(t *testing.T) {
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.Same(t, time.UTC, sc.TimeZone())
 	require.Same(t, time.UTC, sc.TimeZone())
-	sc.AppendWarning(errors.New("err1"))
+	var levels errctx.LevelMap
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	sc.AppendWarning(errors.NewNoStackError("err1"))
 	warnings := sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err1", warnings[0].Err.Error())
 
 	tz := time.FixedZone("UTC+1", 2*60*60)
@@ -329,10 +341,11 @@ func TestNewStmtCtx(t *testing.T) {
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.Same(t, tz, sc.TimeZone())
 	require.Same(t, tz, sc.TimeZone())
-	sc.AppendWarning(errors.New("err2"))
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	sc.AppendWarning(errors.NewNoStackError("err2"))
 	warnings = sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err2", warnings[0].Err.Error())
 }
 
@@ -348,13 +361,18 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 
+	levels := errctx.LevelMap{}
+	sc.SetErrLevels(levels)
 	sc.SetTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
 	require.Equal(t, types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
 
 	sc.SetTypeFlags(types.FlagSkipASCIICheck | types.FlagSkipUTF8Check | types.FlagTruncateAsWarning)
 	require.Equal(t, types.FlagSkipASCIICheck|types.FlagSkipUTF8Check|types.FlagTruncateAsWarning, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
+	levels[errctx.ErrGroupTruncate] = errctx.LevelWarn
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
 }
 
 func TestResetStmtCtx(t *testing.T) {
@@ -363,14 +381,18 @@ func TestResetStmtCtx(t *testing.T) {
 
 	tz := time.FixedZone("UTC+1", 2*60*60)
 	sc.SetTimeZone(tz)
-	sc.SetTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
-	sc.AppendWarning(errors.New("err1"))
+	sc.SetTypeFlags(types.FlagIgnoreTruncateErr | types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
+	sc.AppendWarning(errors.NewNoStackError("err1"))
 	sc.InRestrictedSQL = true
 	sc.StmtType = "Insert"
 
 	require.Same(t, tz, sc.TimeZone())
-	require.Equal(t, types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
+	require.Equal(t, types.FlagIgnoreTruncateErr|types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, 1, len(sc.GetWarnings()))
+	levels := errctx.LevelMap{}
+	levels[errctx.ErrGroupTruncate] = errctx.LevelIgnore
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
 
 	sc.Reset()
 	require.Same(t, time.UTC, sc.TimeZone())
@@ -380,9 +402,98 @@ func TestResetStmtCtx(t *testing.T) {
 	require.False(t, sc.InRestrictedSQL)
 	require.Empty(t, sc.StmtType)
 	require.Equal(t, 0, len(sc.GetWarnings()))
-	sc.AppendWarning(errors.New("err2"))
+	sc.AppendWarning(errors.NewNoStackError("err2"))
 	warnings := sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err2", warnings[0].Err.Error())
+	levels = errctx.LevelMap{}
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+}
+
+func TestStmtCtxID(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	currentID := sc.CtxID()
+
+	cases := []struct {
+		fn func() *stmtctx.StatementContext
+	}{
+		{func() *stmtctx.StatementContext { return stmtctx.NewStmtCtx() }},
+		{func() *stmtctx.StatementContext { return stmtctx.NewStmtCtxWithTimeZone(time.Local) }},
+		{func() *stmtctx.StatementContext {
+			sc.Reset()
+			return sc
+		}},
+	}
+
+	for _, c := range cases {
+		ctxID := c.fn().CtxID()
+		require.Greater(t, ctxID, currentID)
+		currentID = ctxID
+	}
+}
+
+func TestErrCtx(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	// the default errCtx
+	err := types.ErrTruncated
+	require.Error(t, sc.HandleError(err))
+	levels := errctx.LevelMap{}
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelError
+
+	// set error levels
+	levels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelIgnore
+	sc.SetErrLevels(levels)
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+
+	// reset the types flags will re-initialize the error flag, but keeps the error levels unchanged except for ErrGroupTruncate
+	sc.SetTypeFlags(types.DefaultStmtFlags | types.FlagTruncateAsWarning)
+	require.NoError(t, sc.HandleError(err))
+	levels = errctx.LevelMap{}
+	levels[errctx.ErrGroupTruncate] = errctx.LevelWarn
+	levels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelIgnore
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+
+	// SetErrLevels will not affect ErrGroupTruncate
+	sc.SetErrLevels(errctx.LevelMap{})
+	levels = errctx.LevelMap{}
+	levels[errctx.ErrGroupTruncate] = errctx.LevelWarn
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+}
+
+func TestReservedRowIDAlloc(t *testing.T) {
+	var reserved stmtctx.ReservedRowIDAlloc
+	// no reserved by default
+	require.True(t, reserved.Exhausted())
+	id, ok := reserved.Consume()
+	require.False(t, ok)
+	require.Equal(t, int64(0), id)
+	// reset some ids
+	reserved.Reset(12, 15)
+	require.False(t, reserved.Exhausted())
+	id, ok = reserved.Consume()
+	require.True(t, ok)
+	require.Equal(t, int64(13), id)
+	id, ok = reserved.Consume()
+	require.True(t, ok)
+	require.Equal(t, int64(14), id)
+	id, ok = reserved.Consume()
+	require.True(t, ok)
+	require.Equal(t, int64(15), id)
+	// exhausted
+	require.True(t, reserved.Exhausted())
+	id, ok = reserved.Consume()
+	require.False(t, ok)
+	require.Equal(t, int64(0), id)
+}
+
+func BenchmarkErrCtx(b *testing.B) {
+	sc := stmtctx.NewStmtCtx()
+
+	for i := 0; i < b.N; i++ {
+		sc.ErrCtx()
+	}
 }

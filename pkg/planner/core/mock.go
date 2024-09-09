@@ -19,10 +19,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
@@ -51,20 +52,21 @@ func MockSignedTable() *model.TableInfo {
 	// indices: c_d_e, e, f, g, f_g, c_d_e_str, e_d_c_str_prefix
 	indices := []*model.IndexInfo{
 		{
-			Name: model.NewCIStr("c_d_e"),
+			ID:   1,
+			Name: pmodel.NewCIStr("c_d_e"),
 			Columns: []*model.IndexColumn{
 				{
-					Name:   model.NewCIStr("c"),
+					Name:   pmodel.NewCIStr("c"),
 					Length: types.UnspecifiedLength,
 					Offset: 2,
 				},
 				{
-					Name:   model.NewCIStr("d"),
+					Name:   pmodel.NewCIStr("d"),
 					Length: types.UnspecifiedLength,
 					Offset: 3,
 				},
 				{
-					Name:   model.NewCIStr("e"),
+					Name:   pmodel.NewCIStr("e"),
 					Length: types.UnspecifiedLength,
 					Offset: 4,
 				},
@@ -73,10 +75,11 @@ func MockSignedTable() *model.TableInfo {
 			Unique: true,
 		},
 		{
-			Name: model.NewCIStr("x"),
+			ID:   2,
+			Name: pmodel.NewCIStr("x"),
 			Columns: []*model.IndexColumn{
 				{
-					Name:   model.NewCIStr("e"),
+					Name:   pmodel.NewCIStr("e"),
 					Length: types.UnspecifiedLength,
 					Offset: 4,
 				},
@@ -85,10 +88,11 @@ func MockSignedTable() *model.TableInfo {
 			Unique: true,
 		},
 		{
-			Name: model.NewCIStr("f"),
+			ID:   3,
+			Name: pmodel.NewCIStr("f"),
 			Columns: []*model.IndexColumn{
 				{
-					Name:   model.NewCIStr("f"),
+					Name:   pmodel.NewCIStr("f"),
 					Length: types.UnspecifiedLength,
 					Offset: 8,
 				},
@@ -97,10 +101,11 @@ func MockSignedTable() *model.TableInfo {
 			Unique: true,
 		},
 		{
-			Name: model.NewCIStr("g"),
+			ID:   4,
+			Name: pmodel.NewCIStr("g"),
 			Columns: []*model.IndexColumn{
 				{
-					Name:   model.NewCIStr("g"),
+					Name:   pmodel.NewCIStr("g"),
 					Length: types.UnspecifiedLength,
 					Offset: 9,
 				},
@@ -108,15 +113,16 @@ func MockSignedTable() *model.TableInfo {
 			State: model.StatePublic,
 		},
 		{
-			Name: model.NewCIStr("f_g"),
+			ID:   5,
+			Name: pmodel.NewCIStr("f_g"),
 			Columns: []*model.IndexColumn{
 				{
-					Name:   model.NewCIStr("f"),
+					Name:   pmodel.NewCIStr("f"),
 					Length: types.UnspecifiedLength,
 					Offset: 8,
 				},
 				{
-					Name:   model.NewCIStr("g"),
+					Name:   pmodel.NewCIStr("g"),
 					Length: types.UnspecifiedLength,
 					Offset: 9,
 				},
@@ -125,20 +131,21 @@ func MockSignedTable() *model.TableInfo {
 			Unique: true,
 		},
 		{
-			Name: model.NewCIStr("c_d_e_str"),
+			ID:   6,
+			Name: pmodel.NewCIStr("c_d_e_str"),
 			Columns: []*model.IndexColumn{
 				{
-					Name:   model.NewCIStr("c_str"),
+					Name:   pmodel.NewCIStr("c_str"),
 					Length: types.UnspecifiedLength,
 					Offset: 5,
 				},
 				{
-					Name:   model.NewCIStr("d_str"),
+					Name:   pmodel.NewCIStr("d_str"),
 					Length: types.UnspecifiedLength,
 					Offset: 6,
 				},
 				{
-					Name:   model.NewCIStr("e_str"),
+					Name:   pmodel.NewCIStr("e_str"),
 					Length: types.UnspecifiedLength,
 					Offset: 7,
 				},
@@ -146,20 +153,21 @@ func MockSignedTable() *model.TableInfo {
 			State: model.StatePublic,
 		},
 		{
-			Name: model.NewCIStr("e_d_c_str_prefix"),
+			ID:   7,
+			Name: pmodel.NewCIStr("e_d_c_str_prefix"),
 			Columns: []*model.IndexColumn{
 				{
-					Name:   model.NewCIStr("e_str"),
+					Name:   pmodel.NewCIStr("e_str"),
 					Length: types.UnspecifiedLength,
 					Offset: 7,
 				},
 				{
-					Name:   model.NewCIStr("d_str"),
+					Name:   pmodel.NewCIStr("d_str"),
 					Length: types.UnspecifiedLength,
 					Offset: 6,
 				},
 				{
-					Name:   model.NewCIStr("c_str"),
+					Name:   pmodel.NewCIStr("c_str"),
 					Length: 10,
 					Offset: 5,
 				},
@@ -170,84 +178,84 @@ func MockSignedTable() *model.TableInfo {
 	pkColumn := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    0,
-		Name:      model.NewCIStr("a"),
+		Name:      pmodel.NewCIStr("a"),
 		FieldType: newLongType(),
 		ID:        1,
 	}
 	col0 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    1,
-		Name:      model.NewCIStr("b"),
+		Name:      pmodel.NewCIStr("b"),
 		FieldType: newLongType(),
 		ID:        2,
 	}
 	col1 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    2,
-		Name:      model.NewCIStr("c"),
+		Name:      pmodel.NewCIStr("c"),
 		FieldType: newLongType(),
 		ID:        3,
 	}
 	col2 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    3,
-		Name:      model.NewCIStr("d"),
+		Name:      pmodel.NewCIStr("d"),
 		FieldType: newLongType(),
 		ID:        4,
 	}
 	col3 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    4,
-		Name:      model.NewCIStr("e"),
+		Name:      pmodel.NewCIStr("e"),
 		FieldType: newLongType(),
 		ID:        5,
 	}
 	colStr1 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    5,
-		Name:      model.NewCIStr("c_str"),
+		Name:      pmodel.NewCIStr("c_str"),
 		FieldType: newStringType(),
 		ID:        6,
 	}
 	colStr2 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    6,
-		Name:      model.NewCIStr("d_str"),
+		Name:      pmodel.NewCIStr("d_str"),
 		FieldType: newStringType(),
 		ID:        7,
 	}
 	colStr3 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    7,
-		Name:      model.NewCIStr("e_str"),
+		Name:      pmodel.NewCIStr("e_str"),
 		FieldType: newStringType(),
 		ID:        8,
 	}
 	col4 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    8,
-		Name:      model.NewCIStr("f"),
+		Name:      pmodel.NewCIStr("f"),
 		FieldType: newLongType(),
 		ID:        9,
 	}
 	col5 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    9,
-		Name:      model.NewCIStr("g"),
+		Name:      pmodel.NewCIStr("g"),
 		FieldType: newLongType(),
 		ID:        10,
 	}
 	col6 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    10,
-		Name:      model.NewCIStr("h"),
+		Name:      pmodel.NewCIStr("h"),
 		FieldType: newLongType(),
 		ID:        11,
 	}
 	col7 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    11,
-		Name:      model.NewCIStr("i_date"),
+		Name:      pmodel.NewCIStr("i_date"),
 		FieldType: newDateType(),
 		ID:        12,
 	}
@@ -260,9 +268,10 @@ func MockSignedTable() *model.TableInfo {
 	col5.SetFlag(mysql.NotNullFlag)
 	col6.SetFlag(mysql.NoDefaultValueFlag)
 	table := &model.TableInfo{
+		ID:         1,
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5, col6, col7},
 		Indices:    indices,
-		Name:       model.NewCIStr("t"),
+		Name:       pmodel.NewCIStr("t"),
 		PKIsHandle: true,
 	}
 	return table
@@ -275,10 +284,10 @@ func MockUnsignedTable() *model.TableInfo {
 	// indeices: b, b_c
 	indices := []*model.IndexInfo{
 		{
-			Name: model.NewCIStr("b"),
+			Name: pmodel.NewCIStr("b"),
 			Columns: []*model.IndexColumn{
 				{
-					Name:   model.NewCIStr("b"),
+					Name:   pmodel.NewCIStr("b"),
 					Length: types.UnspecifiedLength,
 					Offset: 1,
 				},
@@ -287,15 +296,15 @@ func MockUnsignedTable() *model.TableInfo {
 			Unique: true,
 		},
 		{
-			Name: model.NewCIStr("b_c"),
+			Name: pmodel.NewCIStr("b_c"),
 			Columns: []*model.IndexColumn{
 				{
-					Name:   model.NewCIStr("b"),
+					Name:   pmodel.NewCIStr("b"),
 					Length: types.UnspecifiedLength,
 					Offset: 1,
 				},
 				{
-					Name:   model.NewCIStr("c"),
+					Name:   pmodel.NewCIStr("c"),
 					Length: types.UnspecifiedLength,
 					Offset: 2,
 				},
@@ -306,21 +315,21 @@ func MockUnsignedTable() *model.TableInfo {
 	pkColumn := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    0,
-		Name:      model.NewCIStr("a"),
+		Name:      pmodel.NewCIStr("a"),
 		FieldType: newLongType(),
 		ID:        1,
 	}
 	col0 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    1,
-		Name:      model.NewCIStr("b"),
+		Name:      pmodel.NewCIStr("b"),
 		FieldType: newLongType(),
 		ID:        2,
 	}
 	col1 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    2,
-		Name:      model.NewCIStr("c"),
+		Name:      pmodel.NewCIStr("c"),
 		FieldType: newLongType(),
 		ID:        3,
 	}
@@ -329,9 +338,10 @@ func MockUnsignedTable() *model.TableInfo {
 	col0.SetFlag(mysql.NotNullFlag)
 	col1.SetFlag(mysql.UnsignedFlag)
 	table := &model.TableInfo{
+		ID:         2,
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1},
 		Indices:    indices,
-		Name:       model.NewCIStr("t2"),
+		Name:       pmodel.NewCIStr("t2"),
 		PKIsHandle: true,
 	}
 	return table
@@ -343,14 +353,14 @@ func MockNoPKTable() *model.TableInfo {
 	col0 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    1,
-		Name:      model.NewCIStr("a"),
+		Name:      pmodel.NewCIStr("a"),
 		FieldType: newLongType(),
 		ID:        2,
 	}
 	col1 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    2,
-		Name:      model.NewCIStr("b"),
+		Name:      pmodel.NewCIStr("b"),
 		FieldType: newLongType(),
 		ID:        3,
 	}
@@ -358,8 +368,9 @@ func MockNoPKTable() *model.TableInfo {
 	col0.SetFlag(mysql.NotNullFlag)
 	col1.SetFlag(mysql.UnsignedFlag)
 	table := &model.TableInfo{
+		ID:         3,
 		Columns:    []*model.ColumnInfo{col0, col1},
-		Name:       model.NewCIStr("t3"),
+		Name:       pmodel.NewCIStr("t3"),
 		PKIsHandle: true,
 	}
 	return table
@@ -371,24 +382,25 @@ func MockView() *model.TableInfo {
 	col0 := &model.ColumnInfo{
 		State:  model.StatePublic,
 		Offset: 0,
-		Name:   model.NewCIStr("b"),
+		Name:   pmodel.NewCIStr("b"),
 		ID:     1,
 	}
 	col1 := &model.ColumnInfo{
 		State:  model.StatePublic,
 		Offset: 1,
-		Name:   model.NewCIStr("c"),
+		Name:   pmodel.NewCIStr("c"),
 		ID:     2,
 	}
 	col2 := &model.ColumnInfo{
 		State:  model.StatePublic,
 		Offset: 2,
-		Name:   model.NewCIStr("d"),
+		Name:   pmodel.NewCIStr("d"),
 		ID:     3,
 	}
-	view := &model.ViewInfo{SelectStmt: selectStmt, Security: model.SecurityDefiner, Definer: &auth.UserIdentity{Username: "root", Hostname: ""}, Cols: []model.CIStr{col0.Name, col1.Name, col2.Name}}
+	view := &model.ViewInfo{SelectStmt: selectStmt, Security: pmodel.SecurityDefiner, Definer: &auth.UserIdentity{Username: "root", Hostname: ""}, Cols: []pmodel.CIStr{col0.Name, col1.Name, col2.Name}}
 	table := &model.TableInfo{
-		Name:    model.NewCIStr("v"),
+		ID:      4,
+		Name:    pmodel.NewCIStr("v"),
 		Columns: []*model.ColumnInfo{col0, col1, col2},
 		View:    view,
 	}
@@ -396,7 +408,7 @@ func MockView() *model.TableInfo {
 }
 
 // MockContext is only used for plan related tests.
-func MockContext() sessionctx.Context {
+func MockContext() *mock.Context {
 	ctx := mock.NewContext()
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{},
@@ -406,6 +418,7 @@ func MockContext() sessionctx.Context {
 		Client: &mock.Client{},
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
+	ctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
 	do := domain.NewMockDomain()
 	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
@@ -423,12 +436,12 @@ func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema
 	cols = append(cols, &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    last.Offset + 1,
-		Name:      model.NewCIStr("ptn"),
+		Name:      pmodel.NewCIStr("ptn"),
 		FieldType: newLongType(),
 		ID:        last.ID + 1,
 	})
 	partition := &model.PartitionInfo{
-		Type:        model.PartitionTypeRange,
+		Type:        pmodel.PartitionTypeRange,
 		Expr:        "ptn",
 		Enable:      true,
 		Definitions: definitions,
@@ -444,29 +457,30 @@ func MockRangePartitionTable() *model.TableInfo {
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
-			Name:     model.NewCIStr("p1"),
+			Name:     pmodel.NewCIStr("p1"),
 			LessThan: []string{"16"},
 		},
 		{
 			ID:       42,
-			Name:     model.NewCIStr("p2"),
+			Name:     pmodel.NewCIStr("p2"),
 			LessThan: []string{"32"},
 		},
 	}
 	tableInfo := MockSignedTable()
-	tableInfo.Name = model.NewCIStr("pt1")
+	tableInfo.ID = 5
+	tableInfo.Name = pmodel.NewCIStr("pt1")
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
 	cols = append(cols, tableInfo.Columns...)
 	last := tableInfo.Columns[len(tableInfo.Columns)-1]
 	cols = append(cols, &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    last.Offset + 1,
-		Name:      model.NewCIStr("ptn"),
+		Name:      pmodel.NewCIStr("ptn"),
 		FieldType: newLongType(),
 		ID:        last.ID + 1,
 	})
 	partition := &model.PartitionInfo{
-		Type:        model.PartitionTypeRange,
+		Type:        pmodel.PartitionTypeRange,
 		Expr:        "ptn",
 		Enable:      true,
 		Definitions: definitions,
@@ -481,27 +495,28 @@ func MockHashPartitionTable() *model.TableInfo {
 	definitions := []model.PartitionDefinition{
 		{
 			ID:   51,
-			Name: model.NewCIStr("p1"),
+			Name: pmodel.NewCIStr("p1"),
 		},
 		{
 			ID:   52,
-			Name: model.NewCIStr("p2"),
+			Name: pmodel.NewCIStr("p2"),
 		},
 	}
 	tableInfo := MockSignedTable()
-	tableInfo.Name = model.NewCIStr("pt2")
+	tableInfo.ID = 6
+	tableInfo.Name = pmodel.NewCIStr("pt2")
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
 	cols = append(cols, tableInfo.Columns...)
 	last := tableInfo.Columns[len(tableInfo.Columns)-1]
 	cols = append(cols, &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    last.Offset + 1,
-		Name:      model.NewCIStr("ptn"),
+		Name:      pmodel.NewCIStr("ptn"),
 		FieldType: newLongType(),
 		ID:        last.ID + 1,
 	})
 	partition := &model.PartitionInfo{
-		Type:        model.PartitionTypeHash,
+		Type:        pmodel.PartitionTypeHash,
 		Expr:        "ptn",
 		Enable:      true,
 		Definitions: definitions,
@@ -517,7 +532,7 @@ func MockListPartitionTable() *model.TableInfo {
 	definitions := []model.PartitionDefinition{
 		{
 			ID:   61,
-			Name: model.NewCIStr("p1"),
+			Name: pmodel.NewCIStr("p1"),
 			InValues: [][]string{
 				{
 					"1",
@@ -526,7 +541,7 @@ func MockListPartitionTable() *model.TableInfo {
 		},
 		{
 			ID:   62,
-			Name: model.NewCIStr("p2"),
+			Name: pmodel.NewCIStr("p2"),
 			InValues: [][]string{
 				{
 					"2",
@@ -535,19 +550,20 @@ func MockListPartitionTable() *model.TableInfo {
 		},
 	}
 	tableInfo := MockSignedTable()
-	tableInfo.Name = model.NewCIStr("pt3")
+	tableInfo.ID = 7
+	tableInfo.Name = pmodel.NewCIStr("pt3")
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
 	cols = append(cols, tableInfo.Columns...)
 	last := tableInfo.Columns[len(tableInfo.Columns)-1]
 	cols = append(cols, &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    last.Offset + 1,
-		Name:      model.NewCIStr("ptn"),
+		Name:      pmodel.NewCIStr("ptn"),
 		FieldType: newLongType(),
 		ID:        last.ID + 1,
 	})
 	partition := &model.PartitionInfo{
-		Type:        model.PartitionTypeList,
+		Type:        pmodel.PartitionTypeList,
 		Expr:        "ptn",
 		Enable:      true,
 		Definitions: definitions,
@@ -565,10 +581,10 @@ func MockStateNoneColumnTable() *model.TableInfo {
 	// indeices: b
 	indices := []*model.IndexInfo{
 		{
-			Name: model.NewCIStr("b"),
+			Name: pmodel.NewCIStr("b"),
 			Columns: []*model.IndexColumn{
 				{
-					Name:   model.NewCIStr("b"),
+					Name:   pmodel.NewCIStr("b"),
 					Length: types.UnspecifiedLength,
 					Offset: 1,
 				},
@@ -580,21 +596,21 @@ func MockStateNoneColumnTable() *model.TableInfo {
 	pkColumn := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    0,
-		Name:      model.NewCIStr("a"),
+		Name:      pmodel.NewCIStr("a"),
 		FieldType: newLongType(),
 		ID:        1,
 	}
 	col0 := &model.ColumnInfo{
 		State:     model.StatePublic,
 		Offset:    1,
-		Name:      model.NewCIStr("b"),
+		Name:      pmodel.NewCIStr("b"),
 		FieldType: newLongType(),
 		ID:        2,
 	}
 	col1 := &model.ColumnInfo{
 		State:     model.StateNone,
 		Offset:    2,
-		Name:      model.NewCIStr("c"),
+		Name:      pmodel.NewCIStr("c"),
 		FieldType: newLongType(),
 		ID:        3,
 	}
@@ -602,9 +618,10 @@ func MockStateNoneColumnTable() *model.TableInfo {
 	col0.SetFlag(mysql.NotNullFlag)
 	col1.SetFlag(mysql.UnsignedFlag)
 	table := &model.TableInfo{
+		ID:         8,
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1},
 		Indices:    indices,
-		Name:       model.NewCIStr("T_StateNoneColumn"),
+		Name:       pmodel.NewCIStr("T_StateNoneColumn"),
 		PKIsHandle: true,
 	}
 	return table

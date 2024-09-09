@@ -20,8 +20,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -70,11 +72,11 @@ func (s *mockPubSubDataSinkStream) Context() context.Context {
 	return context.Background()
 }
 
-func (s *mockPubSubDataSinkStream) SendMsg(m interface{}) error {
+func (s *mockPubSubDataSinkStream) SendMsg(m any) error {
 	return nil
 }
 
-func (s *mockPubSubDataSinkStream) RecvMsg(m interface{}) error {
+func (s *mockPubSubDataSinkStream) RecvMsg(m any) error {
 	return nil
 }
 
@@ -85,6 +87,8 @@ func TestPubSubDataSink(t *testing.T) {
 		_ = ds.run()
 	}()
 
+	panicPath := "github.com/pingcap/tidb/pkg/util/topsql/reporter/mockGrpcLogPanic"
+	require.NoError(t, failpoint.Enable(panicPath, "panic"))
 	err := ds.TrySend(&ReportData{
 		DataRecords: []tipb.TopSQLRecord{{
 			SqlDigest:  []byte("S1"),
@@ -117,4 +121,5 @@ func TestPubSubDataSink(t *testing.T) {
 	mockStream.Unlock()
 
 	ds.OnReporterClosing()
+	require.NoError(t, failpoint.Disable(panicPath))
 }

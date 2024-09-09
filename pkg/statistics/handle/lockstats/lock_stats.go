@@ -21,7 +21,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	pkgutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -37,18 +39,18 @@ const (
 
 // statsLockImpl implements the util.StatsLock interface.
 type statsLockImpl struct {
-	pool util.SessionPool
+	pool pkgutil.SessionPool
 }
 
 // NewStatsLock creates a new StatsLock.
-func NewStatsLock(pool util.SessionPool) util.StatsLock {
+func NewStatsLock(pool pkgutil.SessionPool) types.StatsLock {
 	return &statsLockImpl{pool: pool}
 }
 
 // LockTables add locked tables id to store.
 // - tables: tables that will be locked.
 // Return the message of skipped tables and error.
-func (sl *statsLockImpl) LockTables(tables map[int64]*util.StatsLockTable) (skipped string, err error) {
+func (sl *statsLockImpl) LockTables(tables map[int64]*types.StatsLockTable) (skipped string, err error) {
 	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
 		skipped, err = AddLockedTables(sctx, tables)
 		return err
@@ -78,7 +80,7 @@ func (sl *statsLockImpl) LockPartitions(
 // RemoveLockedTables remove tables from table locked records.
 // - tables: tables of which will be unlocked.
 // Return the message of skipped tables and error.
-func (sl *statsLockImpl) RemoveLockedTables(tables map[int64]*util.StatsLockTable) (skipped string, err error) {
+func (sl *statsLockImpl) RemoveLockedTables(tables map[int64]*types.StatsLockTable) (skipped string, err error) {
 	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
 		skipped, err = RemoveLockedTables(sctx, tables)
 		return err
@@ -139,7 +141,7 @@ var (
 // Return the message of skipped tables and error.
 func AddLockedTables(
 	sctx sessionctx.Context,
-	tables map[int64]*util.StatsLockTable,
+	tables map[int64]*types.StatsLockTable,
 ) (string, error) {
 	// Load tables to check duplicate before insert.
 	lockedTables, err := QueryLockedTables(sctx)
@@ -155,7 +157,7 @@ func AddLockedTables(
 			ids = append(ids, pid)
 		}
 	}
-	logutil.StatsLogger.Info("lock table",
+	logutil.StatsLogger().Info("lock table",
 		zap.Any("tables", tables),
 	)
 
@@ -209,7 +211,7 @@ func AddLockedPartitions(
 		pNames = append(pNames, pName)
 	}
 
-	logutil.StatsLogger.Info("lock partitions",
+	logutil.StatsLogger().Info("lock partitions",
 		zap.Int64("tableID", tid),
 		zap.String("tableName", tableName),
 		zap.Int64s("partitionIDs", pids),
@@ -290,7 +292,7 @@ func generateStableSkippedPartitionsMessage(ids []int64, tableName string, skipp
 func insertIntoStatsTableLocked(sctx sessionctx.Context, tid int64) error {
 	_, _, err := util.ExecRows(sctx, insertSQL, tid, tid)
 	if err != nil {
-		logutil.StatsLogger.Error("error occurred when insert mysql.stats_table_locked", zap.Error(err))
+		logutil.StatsLogger().Error("error occurred when insert mysql.stats_table_locked", zap.Error(err))
 		return err
 	}
 	return nil

@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/conn",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/config",
         "//br/pkg/conn/util",
         "//br/pkg/errors",
         "//br/pkg/glue",
@@ -45,11 +46,12 @@ go_test(
     ],
     embed = [":conn"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = [
+        "//br/pkg/config",
         "//br/pkg/conn/util",
         "//br/pkg/pdutil",
-        "//br/pkg/utils",
+        "//br/pkg/utiltest",
         "//pkg/testkit/testsetup",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
@@ -59,5 +61,6 @@ go_test(
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_multierr//:multierr",
     ],
 )

@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/memo"
@@ -68,7 +68,7 @@ func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *planner
 	base := baseImpl{plan: reader}
 	impl := &TableReaderImpl{
 		baseImpl:    base,
-		tblInfo:     source.TableInfo(),
+		tblInfo:     source.TableInfo,
 		tblColHists: source.TblColHists,
 	}
 	return impl
@@ -167,7 +167,7 @@ func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, source *plannercore.DataSource) *IndexReaderImpl {
 	return &IndexReaderImpl{
 		baseImpl:    baseImpl{plan: reader},
-		tblInfo:     source.TableInfo(),
+		tblInfo:     source.TableInfo,
 		tblColHists: source.TblColHists,
 	}
 }

@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "alloc.go",
         "chunk.go",
+        "chunk_in_disk.go",
         "chunk_util.go",
         "codec.go",
         "column.go",
@@ -31,6 +32,7 @@ go_library(
         "//pkg/util/hack",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_golang_x_sys//cpu",
@@ -43,6 +45,7 @@ go_test(
     timeout = "short",
     srcs = [
         "alloc_test.go",
+        "chunk_in_disk_test.go",
         "chunk_test.go",
         "chunk_util_test.go",
         "codec_test.go",
@@ -62,11 +65,11 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/collate",
         "//pkg/util/memory",
+        "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",

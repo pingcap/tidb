@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -194,6 +193,9 @@ type Allocator interface {
 	// RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
 	RebaseSeq(newBase int64) (int64, bool, error)
 
+	// Transfer transfor the ownership of this allocator to another table
+	Transfer(databaseID, tableID int64) error
+
 	// Base return the current base of Allocator.
 	Base() int64
 	// End is only used for test.
@@ -260,7 +262,7 @@ type allocator struct {
 	base  int64
 	end   int64
 	store kv.Storage
-	// dbID is current database's ID.
+	// dbID is database ID where it was created.
 	dbID          int64
 	tbID          int64
 	tbVersion     uint16
@@ -301,7 +303,7 @@ func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 	var autoID int64
 	startTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
 		var err1 error
 		autoID, err1 = alloc.getIDAccessor(txn).Get()
 		if err1 != nil {
@@ -314,6 +316,22 @@ func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 		return int64(uint64(autoID) + 1), err
 	}
 	return autoID + 1, err
+}
+
+// Transfer implements autoid.Allocator Transfer interface.
+func (alloc *allocator) Transfer(databaseID, tableID int64) error {
+	if alloc.dbID == databaseID && alloc.tbID == tableID {
+		return nil
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
+		return alloc.getIDAccessor(txn).CopyTo(databaseID, tableID)
+	})
+	if err == nil {
+		alloc.dbID = databaseID
+		alloc.tbID = tableID
+	}
+	return err
 }
 
 func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64, allocIDs bool) error {
@@ -339,7 +357,7 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64
 	var newBase, newEnd uint64
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
 		if allocatorStats != nil {
 			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
 		}
@@ -399,7 +417,7 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 	var newBase, newEnd int64
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
 		if allocatorStats != nil {
 			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
 		}
@@ -440,7 +458,7 @@ func (alloc *allocator) rebase4Sequence(requiredBase int64) (int64, bool, error)
 	startTime := time.Now()
 	alreadySatisfied := false
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
 		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		currentEnd, err := acc.SequenceValue().Get()
 		if err != nil {
@@ -498,7 +516,7 @@ func (alloc *allocator) ForceRebase(requiredBase int64) error {
 	defer alloc.mu.Unlock()
 	startTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
 		idAcc := alloc.getIDAccessor(txn)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -574,12 +592,12 @@ func newSinglePointAlloc(r Requirement, dbID, tblID int64, isUnsigned bool) *sin
 		isUnsigned: isUnsigned,
 		keyspaceID: keyspaceID,
 	}
-	if r.GetEtcdClient() == nil {
+	if r.AutoIDClient() == nil {
 		// Only for test in mockstore
-		spa.clientDiscover = clientDiscover{}
+		spa.ClientDiscover = &ClientDiscover{}
 		spa.mu.AutoIDAllocClient = MockForTest(r.Store())
 	} else {
-		spa.clientDiscover = clientDiscover{etcdCli: r.GetEtcdClient()}
+		spa.ClientDiscover = r.AutoIDClient()
 	}
 
 	// mockAutoIDChange failpoint is not implemented in this allocator, so fallback to use the default one.
@@ -594,7 +612,7 @@ func newSinglePointAlloc(r Requirement, dbID, tblID int64, isUnsigned bool) *sin
 // Requirement is the parameter required by NewAllocator
 type Requirement interface {
 	Store() kv.Storage
-	GetEtcdClient() *clientv3.Client
+	AutoIDClient() *ClientDiscover
 }
 
 // NewAllocator returns a new auto increment id generator on the store.
@@ -652,10 +670,9 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 // TODO: Handle allocators when changing Table ID during ALTER TABLE t PARTITION BY ...
 
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
-func NewAllocatorsFromTblInfo(r Requirement, schemaID int64, tblInfo *model.TableInfo) Allocators {
+func NewAllocatorsFromTblInfo(r Requirement, dbID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
-	dbID := tblInfo.GetDBID(schemaID)
-	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
+	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIDCache)
 	tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
 
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
@@ -934,11 +951,13 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
-	logutil.Logger(context.TODO()).Debug("alloc N signed ID",
-		zap.Uint64("from ID", uint64(alloc.base)),
-		zap.Uint64("to ID", uint64(alloc.base+n1)),
-		zap.Int64("table ID", alloc.tbID),
-		zap.Int64("database ID", alloc.dbID))
+	if logutil.BgLogger().Core().Enabled(zap.DebugLevel) {
+		logutil.BgLogger().Debug("alloc N signed ID",
+			zap.Uint64("from ID", uint64(alloc.base)),
+			zap.Uint64("to ID", uint64(alloc.base+n1)),
+			zap.Int64("table ID", alloc.tbID),
+			zap.Int64("database ID", alloc.dbID))
+	}
 	mini = alloc.base
 	alloc.base += n1
 	return mini, alloc.base, nil
@@ -1066,7 +1085,7 @@ func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err
 	var newBase, newEnd int64
 	startTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
-	err = kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
 		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		var (
 			err1    error

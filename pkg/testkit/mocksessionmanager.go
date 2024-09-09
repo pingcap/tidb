@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 )
@@ -35,11 +36,11 @@ type MockSessionManager struct {
 	SerID    uint64
 	TxnInfo  []*txninfo.TxnInfo
 	Dom      *domain.Domain
-	Conn     map[uint64]session.Session
+	Conn     map[uint64]sessiontypes.Session
 	mu       sync.Mutex
 	ConAttrs map[uint64]map[string]string
 
-	internalSessions map[interface{}]struct{}
+	internalSessions map[any]struct{}
 }
 
 // ShowTxnList is to show txn list.
@@ -111,7 +112,7 @@ func (msm *MockSessionManager) GetConAttrs(user *auth.UserIdentity) map[uint64]m
 }
 
 // Kill implements the SessionManager.Kill interface.
-func (*MockSessionManager) Kill(uint64, bool, bool) {
+func (*MockSessionManager) Kill(uint64, bool, bool, bool) {
 }
 
 // KillAllConnections implements the SessionManager.KillAllConnections interface.
@@ -127,23 +128,18 @@ func (msm *MockSessionManager) ServerID() uint64 {
 	return msm.SerID
 }
 
-// GetAutoAnalyzeProcID implement SessionManager interface.
-func (msm *MockSessionManager) GetAutoAnalyzeProcID() uint64 {
-	return uint64(1)
-}
-
 // StoreInternalSession is to store internal session.
-func (msm *MockSessionManager) StoreInternalSession(s interface{}) {
+func (msm *MockSessionManager) StoreInternalSession(s any) {
 	msm.mu.Lock()
 	if msm.internalSessions == nil {
-		msm.internalSessions = make(map[interface{}]struct{})
+		msm.internalSessions = make(map[any]struct{})
 	}
 	msm.internalSessions[s] = struct{}{}
 	msm.mu.Unlock()
 }
 
 // DeleteInternalSession is to delete the internal session pointer from the map in the SessionManager
-func (msm *MockSessionManager) DeleteInternalSession(s interface{}) {
+func (msm *MockSessionManager) DeleteInternalSession(s any) {
 	msm.mu.Lock()
 	delete(msm.internalSessions, s)
 	msm.mu.Unlock()
@@ -155,6 +151,17 @@ func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	defer msm.mu.Unlock()
 	ret := make([]uint64, 0, len(msm.internalSessions))
 	for internalSess := range msm.internalSessions {
+		// Ref the implementation of `GetInternalSessionStartTSList` on the real session manager. The `TxnInfo` is more
+		// accurate, because if a session is pending, the `StartTS` in `sessVars.TxnCtx` will not be updated. For example,
+		// if there is not DDL for a long time, the minimal internal session start ts will not have any progress.
+		if se, ok := internalSess.(interface{ TxnInfo() *txninfo.TxnInfo }); ok {
+			txn := se.TxnInfo()
+			if txn != nil {
+				ret = append(ret, txn.StartTS)
+			}
+			continue
+		}
+
 		se := internalSess.(sessionctx.Context)
 		sessVars := se.GetSessionVars()
 		sessVars.TxnCtxMu.Lock()
@@ -171,12 +178,12 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 		processInfo := se.ShowProcess()
 		ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
 		if !ok {
-			msm.Kill(se.GetSessionVars().ConnectionID, false, false)
+			msm.Kill(se.GetSessionVars().ConnectionID, false, false, false)
 			continue
 		}
 		_, ok = ddl.Statement.(*ast.FlashBackToTimestampStmt)
 		if !ok {
-			msm.Kill(se.GetSessionVars().ConnectionID, false, false)
+			msm.Kill(se.GetSessionVars().ConnectionID, false, false, false)
 			continue
 		}
 	}

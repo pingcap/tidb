@@ -64,6 +64,11 @@ func (*gbkChineseCICollator) Pattern() WildcardPattern {
 	return &gbkChineseCIPattern{}
 }
 
+// Clone implements Collator interface.
+func (*gbkChineseCICollator) Clone() Collator {
+	return new(gbkChineseCICollator)
+}
+
 type gbkChineseCIPattern struct {
 	patChars []rune
 	patTypes []byte
@@ -76,7 +81,7 @@ func (p *gbkChineseCIPattern) Compile(patternStr string, escape byte) {
 
 // DoMatch implements WildcardPattern interface.
 func (p *gbkChineseCIPattern) DoMatch(str string) bool {
-	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
+	return stringutil.DoMatchCustomized(str, p.patChars, p.patTypes, func(a, b rune) bool {
 		return gbkChineseCISortKey(a) == gbkChineseCISortKey(b)
 	})
 }

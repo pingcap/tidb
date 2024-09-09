@@ -20,13 +20,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -43,20 +43,39 @@ var GetEtcdClient = getEtcdClient
 
 // CheckRequirements checks the requirements for IMPORT INTO.
 // we check the following things here:
-//  1. target table should be empty
-//  2. no CDC or PiTR tasks running
+//   - when import from file
+//     1. there is no active job on the target table
+//     2. the total file size > 0
+//     3. if global sort, thread count >= 16 and have required privileges
+//   - target table should be empty
+//   - no CDC or PiTR tasks running
 //
-// todo: check if there's running lightning tasks?
 // we check them one by one, and return the first error we meet.
 func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec.SQLExecutor) error {
-	if err := e.checkTotalFileSize(); err != nil {
-		return err
+	if e.DataSourceType == DataSourceTypeFile {
+		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cnt > 0 {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there is active job on the target table already")
+		}
+		if err := e.checkTotalFileSize(); err != nil {
+			return err
+		}
+		// run global sort with < 8 thread might OOM on ingest step
+		// TODO: remove this limit after control memory usage.
+		if e.IsGlobalSort() && e.ThreadCnt < 8 {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("global sort requires at least 8 threads")
+		}
 	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
 	}
-	if err := e.checkCDCPiTRTasks(ctx); err != nil {
-		return err
+	if !e.DisablePrecheck {
+		if err := e.checkCDCPiTRTasks(ctx); err != nil {
+			return err
+		}
 	}
 	if e.IsGlobalSort() {
 		return e.checkGlobalSortStorePrivilege(ctx)
@@ -75,7 +94,7 @@ func (e *LoadDataController) checkTotalFileSize() error {
 }
 
 func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.SQLExecutor) error {
-	sql := fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(e.DBName, e.Table.Meta().Name.L))
+	sql := common.SprintfWithIdentifiers("SELECT 1 FROM %s.%s USE INDEX() LIMIT 1", e.DBName, e.Table.Meta().Name.L)
 	rs, err := conn.ExecuteInternal(ctx, sql)
 	if err != nil {
 		return err
@@ -111,7 +130,7 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, cli.GetClient())
+	nameSet, err := cdcutil.GetRunningChangefeeds(ctx, cli.GetClient())
 	if err != nil {
 		return errors.Trace(err)
 	}

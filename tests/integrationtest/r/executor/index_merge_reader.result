@@ -514,3 +514,23 @@ a	b	c
 1	2	4
 1	1	1
 rollback;
+drop table if exists t1;
+create table t1(pk varchar(100) primary key, c1 int, c2 int, index idx1(c1), index idx2(c2));
+insert into t1 values('TXwuGSfZfrgVbTksgvQBilqiUXlNEXzyXNqWRTCidzXFbrkpGFJalRMdVGQOAOojditwludthMcitNqNtvirGAudSNBtdIkpJIHQ', 1, 1), ('LSiKhgTNnuyjdBtuKKuRgzrcxbHrIlfxSkEuooaPYwfOBVQfNYAyatHiWvmUWRUvBLvXmpqAJUWRXXHFCLCjuJqFbVxQdUxqRuqW', 1, 1), ('qCOSFbvtmansHENQaAQbnyYOwCTPctlejpbpueHbtzskmPOazrMWdcMLaYjyfxYQUgDDjCnAnnExepNqwYIzHVjNVndlOzFaAOcf', 1, 1), ('qBqdtPyXIqLKynGNHnRlrufuUCZPqhxUYEqIrYERnQdqXRjVWcoYclxYXoqdpQboKydzhOHOWBwtmcXzGwCWQVdbpozvIaXxiBQj', 1, 1), ('TXZlGHnXOiSWGyRafAqworFmxuadHRTHcYyzLqZMzIMGUUBQmgiIJKQOqbHhoPEKbYBgfPDZJwwqgnCbMxZKaZfvGyVRRUOgRhoq', 1, 1), ('SwFEtKDfPDQpsyxTdTruPyNDLvEOLRdQtSttxJmgBuZiVKsflHCDZaGvkLHMqhHqLayfbZFrxUHzWHgfoPFCWCdCHScabWRNCHCL', 1, 1), ('BuZhnsTMGNtMJtrjjdMMrguutSpiLnZNCdgiNkWDPymzIymcujjBtsnKCAVRSErvbzPaOwLTTPWkGmbXltqOJXmkXnSWWlWaaBqe', 1, 1), ('LuJCpJrLUwDJutwBDtGEsGduteBWPHeGLVhmVJYVrmjunKNuplEeWDCMIAxHPoiRmdPnXneQEQWRvJkPBoXOPaGZhhFLFgGraLmH', 1, 1), ('JKJwMlPmymduJWOmKLFBmZyCFrcUvKcGQkzJmzGjuFoZweyCBptswEPHTkaIhWEEBMWzNBawtfYKKAugBNlxcwmpJSfuIAUSIxeG', 1, 1), ('IqQbehKwleoSUnwxrVLKSbzRqlEFfkwQtRtIfaVpEGfESyGjDJeAOWQPRYVQYvlPNPROQEraCqwQTzanPSrsnUvEXHSxcYjUJvzk', 1, 1), ('zNHmiBGCLUUEDgMAeIGuTgNJFPBtePpxcQrQlgnRlvosJfeYbhRfJdfMwXIRlXxVoOowhEvPhMQPlplzkUfjjmzdJKwGATvfDAiT', 1, 1), ('OjQvpfdsHSdZUAmGfmtQaYKYONAFHGNLeLKRYECqshxygiOzfKkqRwSYGgClqqnpHqPMZpqsjIYSalziqSfMbbtmmzxkOVgglVOh', 1, 1), ('dXXZaWDwdfhjIysLTNMSfwvoEBJhWOVpJnfXFofWSWMfMbUlRgAkobxoCxXPXNUWzAQczbQclQpvIvvATHHcQgdXUvwSTHqLXZny', 1, 1), ('haPqYVwFNUkedfIKPOPyUxIvbSkaUbsEWNvnDtXZsQQqafIhDXlajYpuXOSYiOwGJYAMVLUvXfwOIuyHKElzJHpOUdCiQiXRHubI', 1, 1), ('nQzOwSsVBjCpehVVmLeyYwyVEwYGAfkhCtkkaKyiXzYCRPRVZpNVnOXGbuWrQEgTuPEPFPApUaYLdCtyBEQulFEwyHlORrMfIJxr', 1, 1), ('ksGDopwNPvpjeCtAMaTrznDSgCLpRDQoCdsahWSjwumVEJITbNBPAAtkoxHuwmNQsryoILqCPBPiUSxAWjnFEdtxDIgEtqDiFvpO', 1, 1), ('AdWEZYzxCMhfcZseNVmNQpyqJrVKcKaZpKKcwZXfDPeIBMzkLzpJpOenidMBtBPBIbaiqfpSxBnGtRHAksBOgpigQTVomZzJhCFb', 1, 1), ('bVMNkLOAuRHqnCtGvVPLvmVSKihYFotmHTjObiAIARHawZTruAabGpFxeYxYTTFRxteFYyBfkBfiSEIFvOPquDnlVRNUUubssEMz', 1, 1), ('kXmcjqMYzGxvHBRRCovSTWavDnVajKLlxguJgniJeNkWQUxjHjYjBsveLfojybWkbqHBVzrOoqgXFrDnnRJPcybmnuAEUTPUoIjO', 1, 1), ('rVXzZDKudOpWCBuRCoQCpukHxenZnsaptDeJCCFzxMVvNucFwLKIiSceLsqUHHQuEfAIygjQCCkIbfInGthSnoLdNGWbsLDsxnrY', 1, 1);
+explain format='brief' select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;
+id	estRows	task	access object	operator info
+Projection	1104.45	root		executor__index_merge_reader.t1.c1
+└─IndexMerge	1104.45	root		type: intersection
+  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:idx1(c1)	range:[-inf,1024), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:idx2(c2)	range:[-inf,1024), keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	1104.45	cop[tikv]	table:t1	keep order:false, stats:pseudo
+set global tidb_mem_oom_action='CANCEL';
+set @@tidb_mem_quota_query = 4000;
+select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+set global tidb_mem_oom_action = DEFAULT;
+set @@tidb_mem_quota_query = default;
+drop table if exists t;
+create table t(a int, b int, c int, index(b, a), index(c, a));
+select * from t use index(b, c) where b=2 or c=3 order by a limit 10000000000000000;
+a	b	c

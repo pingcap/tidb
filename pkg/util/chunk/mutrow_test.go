@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
@@ -29,12 +28,12 @@ func TestMutRow(t *testing.T) {
 	allTypes := newAllTypes()
 	mutRow := MutRowFromTypes(allTypes)
 	row := mutRow.ToRow()
-	sc := stmtctx.NewStmtCtx()
+	typeCtx := types.DefaultStmtNoWarningContext
 	for i := 0; i < row.Len(); i++ {
 		val := zeroValForType(allTypes[i])
 		d := row.GetDatum(i, allTypes[i])
 		d2 := types.NewDatum(val)
-		cmp, err := d.Compare(sc.TypeCtx(), &d2, collate.GetCollator(allTypes[i].GetCollate()))
+		cmp, err := d.Compare(typeCtx, &d2, collate.GetCollator(allTypes[i].GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
@@ -79,7 +78,7 @@ func TestMutRow(t *testing.T) {
 
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDuration)}
 	chk := New(retTypes, 1, 1)
-	dur, _, err := types.ParseDuration(sc.TypeCtx(), "01:23:45", 0)
+	dur, _, err := types.ParseDuration(typeCtx, "01:23:45", 0)
 	require.NoError(t, err)
 	chk.AppendDuration(0, dur)
 	mutRow = MutRowFromTypes(retTypes)
@@ -161,7 +160,7 @@ func BenchmarkMutRowFromDatums(b *testing.B) {
 
 func BenchmarkMutRowFromValues(b *testing.B) {
 	b.ReportAllocs()
-	values := []interface{}{1, "abc"}
+	values := []any{1, "abc"}
 	for i := 0; i < b.N; i++ {
 		MutRowFromValues(values)
 	}

@@ -41,10 +41,11 @@ var Analyzer = &analysis.Analyzer{
 }
 
 func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
+func run(pass *analysis.Pass) (any, error) {
 	gasConfig := gosec.NewConfig()
 	enabledRules := rules.Generate(func(id string) bool {
 		if id == "G104" || id == "G103" || id == "G101" || id == "G201" {
@@ -82,7 +83,6 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		if err != nil {
 			panic(err)
 		}
-		text := fmt.Sprintf("[%s] %s: %s", Name, i.RuleID, i.What) // TODO: use severity and confidence
 		var r *result.Range
 		line, err := strconv.Atoi(i.Line)
 		if err != nil {
@@ -92,8 +92,8 @@ func run(pass *analysis.Pass) (interface{}, error) {
 			}
 			line = r.From
 		}
-
-		pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), line, 1)), text)
+		pass.Reportf(token.Pos(tf.Base()+util.FindOffset(string(fileContent), line, 1)),
+			"[%s] %s: %s", Name, i.RuleID, i.What) // TODO: use severity and confidence
 	}
 
 	return nil, nil

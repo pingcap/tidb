@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -33,13 +32,10 @@ import (
 
 func TestMain(m *testing.M) {
 	server.RunInGoTest = true
+	server.RunInGoTestChan = make(chan struct{})
 	testsetup.SetupForCommonTest()
 	topsqlstate.EnableTopSQL()
 	unistore.CheckResourceTagForTopSQLInGoTest = true
-
-	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
-	// Set schema lease to avoid it from making CI slow.
-	session.SetSchemaLease(0)
 
 	tikv.EnableFailpoints()
 
@@ -56,6 +52,7 @@ func TestMain(m *testing.M) {
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("time.Sleep"),
 		goleak.IgnoreTopFunction("database/sql.(*Tx).awaitDone"),

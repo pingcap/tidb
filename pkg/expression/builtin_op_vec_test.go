@@ -100,12 +100,12 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 // the construction time. If this slice is exhausted, it falls back to
 // the fallback generator.
 type givenValsGener struct {
-	given    []interface{}
+	given    []any
 	idx      int
 	fallback dataGenerator
 }
 
-func (g *givenValsGener) gen() interface{} {
+func (g *givenValsGener) gen() any {
 	if g.idx >= len(g.given) {
 		return g.fallback.gen()
 	}
@@ -114,7 +114,7 @@ func (g *givenValsGener) gen() interface{} {
 	return v
 }
 
-func makeGivenValsOrDefaultGener(vals []interface{}, eType types.EvalType) *givenValsGener {
+func makeGivenValsOrDefaultGener(vals []any, eType types.EvalType) *givenValsGener {
 	g := &givenValsGener{}
 	g.given = vals
 	g.fallback = newDefaultGener(0.2, eType)
@@ -123,7 +123,7 @@ func makeGivenValsOrDefaultGener(vals []interface{}, eType types.EvalType) *give
 
 func makeBinaryLogicOpDataGeners() []dataGenerator {
 	// TODO: rename this to makeBinaryOpDataGenerator, since the BIT ops are also using it?
-	pairs := [][]interface{}{
+	pairs := [][]any{
 		{nil, nil},
 		{0, nil},
 		{nil, 0},
@@ -136,7 +136,7 @@ func makeBinaryLogicOpDataGeners() []dataGenerator {
 		{-1, 1},
 	}
 
-	maybeToInt64 := func(v interface{}) interface{} {
+	maybeToInt64 := func(v any) any {
 		if v == nil {
 			return nil
 		}
@@ -144,8 +144,8 @@ func makeBinaryLogicOpDataGeners() []dataGenerator {
 	}
 
 	n := len(pairs)
-	arg0s := make([]interface{}, n)
-	arg1s := make([]interface{}, n)
+	arg0s := make([]any, n)
+	arg1s := make([]any, n)
 	for i, p := range pairs {
 		arg0s[i] = maybeToInt64(p[0])
 		arg1s[i] = maybeToInt64(p[1])
@@ -172,27 +172,27 @@ func TestBuiltinUnaryMinusIntSig(t *testing.T) {
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
 
-	require.False(t, mysql.HasUnsignedFlag(col0.GetType().GetFlag()))
+	require.False(t, mysql.HasUnsignedFlag(col0.GetType(ctx).GetFlag()))
 	input.AppendInt64(0, 233333)
-	require.Nil(t, f.vecEvalInt(ctx, input, result))
+	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
 	require.Equal(t, int64(-233333), result.GetInt64(0))
 	input.Reset()
 	input.AppendInt64(0, math.MinInt64)
-	require.NotNil(t, f.vecEvalInt(ctx, input, result))
+	require.Error(t, vecEvalType(ctx, f, types.ETInt, input, result))
 	input.Column(0).SetNull(0, true)
-	require.NoError(t, f.vecEvalInt(ctx, input, result))
+	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
 	require.True(t, result.IsNull(0))
 
-	col0.GetType().AddFlag(mysql.UnsignedFlag)
-	require.True(t, mysql.HasUnsignedFlag(col0.GetType().GetFlag()))
+	col0.GetType(ctx).AddFlag(mysql.UnsignedFlag)
+	require.True(t, mysql.HasUnsignedFlag(col0.GetType(ctx).GetFlag()))
 	input.Reset()
 	input.AppendUint64(0, 233333)
-	require.NoError(t, f.vecEvalInt(ctx, input, result))
+	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
 	require.Equal(t, int64(-233333), result.GetInt64(0))
 	input.Reset()
 	input.AppendUint64(0, -(math.MinInt64)+1)
-	require.NotNil(t, f.vecEvalInt(ctx, input, result))
+	require.Error(t, vecEvalType(ctx, f, types.ETInt, input, result))
 	input.Column(0).SetNull(0, true)
-	require.NoError(t, f.vecEvalInt(ctx, input, result))
+	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
 	require.True(t, result.IsNull(0))
 }

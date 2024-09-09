@@ -91,8 +91,8 @@ const (
 	CSVDialectSnowflake
 	// CSVDialectRedshift is the dialect of Redshift
 	CSVDialectRedshift
-	// CSVDialectBase64 is a dialect require base64 binary format, only used for test now.
-	CSVDialectBase64
+	// CSVDialectBigQuery is the dialect of BigQuery
+	CSVDialectBigQuery
 )
 
 // BinaryFormat is the format of binary data
@@ -113,7 +113,7 @@ var DialectBinaryFormatMap = map[CSVDialect]BinaryFormat{
 	CSVDialectDefault:   BinaryFormatUTF8,
 	CSVDialectSnowflake: BinaryFormatHEX,
 	CSVDialectRedshift:  BinaryFormatHEX,
-	CSVDialectBase64:    BinaryFormatBase64,
+	CSVDialectBigQuery:  BinaryFormatBase64,
 }
 
 // Config is the dump config for dumpling
@@ -175,15 +175,16 @@ type Config struct {
 	TiDBMemQuotaQuery   uint64
 	FileSize            uint64
 	StatementSize       uint64
-	SessionParams       map[string]interface{}
+	SessionParams       map[string]any
 	Tables              DatabaseTables
 	CollationCompatible string
 	CsvOutputDialect    CSVDialect
 
-	Labels       prometheus.Labels       `json:"-"`
-	PromFactory  promutil.Factory        `json:"-"`
-	PromRegistry promutil.Registry       `json:"-"`
-	ExtStorage   storage.ExternalStorage `json:"-"`
+	Labels        prometheus.Labels       `json:"-"`
+	PromFactory   promutil.Factory        `json:"-"`
+	PromRegistry  promutil.Registry       `json:"-"`
+	ExtStorage    storage.ExternalStorage `json:"-"`
+	MinTLSVersion uint16                  `json:"-"`
 
 	IOTotalBytes *atomic.Uint64
 	Net          string
@@ -231,7 +232,7 @@ func DefaultConfig() *Config {
 		CsvDelimiter:             "\"",
 		CsvSeparator:             ",",
 		CsvLineTerminator:        "\r\n",
-		SessionParams:            make(map[string]interface{}),
+		SessionParams:            make(map[string]any),
 		OutputFileTemplate:       DefaultOutputFileTemplate,
 		PosAfterConnect:          false,
 		CollationCompatible:      LooseCollationCompatible,
@@ -276,10 +277,14 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	} else {
 		// Use TLS first.
 		driverCfg.AllowFallbackToPlaintext = true
+		minTLSVersion := uint16(tls.VersionTLS12)
+		if conf.MinTLSVersion != 0 {
+			minTLSVersion = conf.MinTLSVersion
+		}
 		/* #nosec G402 */
 		driverCfg.TLS = &tls.Config{
 			InsecureSkipVerify: true,
-			MinVersion:         tls.VersionTLS10,
+			MinVersion:         minTLSVersion,
 			NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 		}
 	}
@@ -351,7 +356,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagTransactionalConsistency, true, "Only support transactional consistency")
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
-	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift' now")
+	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -519,7 +524,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	if conf.SessionParams == nil {
-		conf.SessionParams = make(map[string]interface{})
+		conf.SessionParams = make(map[string]any)
 	}
 
 	tablesList, err := flags.GetStringSlice(flagTablesList)
@@ -690,6 +695,8 @@ func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 		return CSVDialectSnowflake, nil
 	case "redshift":
 		return CSVDialectRedshift, nil
+	case "bigquery":
+		return CSVDialectBigQuery, nil
 	default:
 		return CSVDialectDefault, errors.Errorf("unknown output dialect %s", outputDialect)
 	}
@@ -752,6 +759,7 @@ func buildTLSConfig(conf *Config) error {
 		util.WithCertAndKeyPath(conf.Security.CertPath, conf.Security.KeyPath),
 		util.WithCAContent(conf.Security.SSLCABytes),
 		util.WithCertAndKeyContent(conf.Security.SSLCertBytes, conf.Security.SSLKeyBytes),
+		util.WithMinTLSVersion(conf.MinTLSVersion),
 	)
 	if err != nil {
 		return errors.Trace(err)

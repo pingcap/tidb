@@ -17,8 +17,10 @@ package executor
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"runtime/pprof"
 	"strings"
@@ -56,12 +58,14 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 }
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
-	newISBuilder, err := infoschema.NewBuilder(nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	data := infoschema.NewData()
+	newISBuilder := infoschema.NewBuilder(nil, nil, data, variable.SchemaCacheSize.Load() > 0)
+	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
-	is := newISBuilder.Build()
-	tbl, err := is.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
+	is := newISBuilder.Build(math.MaxUint64)
+	tbl, err := is.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +112,7 @@ select * from t;`
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	sctx := mock.NewContext()
+	sctx.ResetSessionAndStmtTimeZone(loc)
 	sctx.GetSessionVars().TimeZone = loc
 	_, err = parseSlowLog(sctx, reader)
 	require.Error(t, err)
@@ -138,6 +143,12 @@ func TestParseSlowLogFile(t *testing.T) {
 # Plan_from_binding: true
 # Succ: false
 # IsExplicitTxn: true
+# Resource_group: default
+# Request_unit_read: 2.158
+# Request_unit_write: 2.123
+# Time_queued_by_rc: 0.05
+# Tidb_cpu_usage: 0.01
+# Tikv_cpu_usage: 0.021
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
 use test;
@@ -146,7 +157,7 @@ select * from t;`
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().TimeZone = loc
+	ctx.ResetSessionAndStmtTimeZone(loc)
 	rows, err := parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
@@ -164,7 +175,7 @@ select * from t;`
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,0,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`,update t set i = 1;,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
@@ -187,7 +198,7 @@ select * from t;`
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,0,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`,update t set i = 1;,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
@@ -246,7 +257,7 @@ func TestParseSlowLogFileSerial(t *testing.T) {
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().TimeZone = loc
+	ctx.ResetSessionAndStmtTimeZone(loc)
 	// test for bufio.Scanner: token too long.
 	slowLog := bytes.NewBufferString(
 		`# Time: 2019-04-28T15:24:04.309074+08:00
@@ -314,7 +325,7 @@ select * from t;`)
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().TimeZone = loc
+	ctx.ResetSessionAndStmtTimeZone(loc)
 	_, err = parseSlowLog(ctx, scanner)
 	require.NoError(t, err)
 
@@ -361,133 +372,153 @@ select 7;`
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowQueryFile = fileName3
 	})
-	fileNames := []string{fileName0, fileName1, fileName2, fileName3}
-	prepareLogs(t, logData, fileNames)
-	defer func() {
-		removeFiles(fileNames)
-	}()
-
-	cases := []struct {
-		startTime string
-		endTime   string
-		files     []string
-		querys    []string
-	}{
-		{
-			startTime: "2020-02-15T18:00:00.000000+08:00",
-			endTime:   "2020-02-17T20:00:00.000000+08:00",
-			files:     []string{fileName1, fileName2, fileName3},
-			querys: []string{
-				"select 1;",
-				"select 2;",
-				"select 3;",
-				"select 4;",
-				"select 5;",
-				"select 6;",
-			},
-		},
-		{
-			startTime: "2020-02-15T18:00:02.000000+08:00",
-			endTime:   "2020-02-16T20:00:00.000000+08:00",
-			files:     []string{fileName1, fileName2, fileName3},
-			querys: []string{
-				"select 2;",
-				"select 3;",
-				"select 4;",
-				"select 5;",
-			},
-		},
-		{
-			startTime: "2020-02-16T18:00:03.000000+08:00",
-			endTime:   "2020-02-16T18:59:00.000000+08:00",
-			files:     []string{fileName2},
-			querys: []string{
-				"select 4;",
-			},
-		},
-		{
-			startTime: "2020-02-16T18:00:03.000000+08:00",
-			endTime:   "2020-02-16T20:00:00.000000+08:00",
-			files:     []string{fileName2, fileName3},
-			querys: []string{
-				"select 4;",
-				"select 5;",
-			},
-		},
-		{
-			startTime: "2020-02-16T19:00:00.000000+08:00",
-			endTime:   "2020-02-17T17:00:00.000000+08:00",
-			files:     []string{fileName3},
-			querys: []string{
-				"select 5;",
-			},
-		},
-		{
-			startTime: "2010-01-01T00:00:00.000000+08:00",
-			endTime:   "2010-01-01T01:00:00.000000+08:00",
-			files:     []string{},
-		},
-		{
-			startTime: "2020-03-01T00:00:00.000000+08:00",
-			endTime:   "2010-03-01T01:00:00.000000+08:00",
-			files:     []string{},
-		},
-		{
-			startTime: "",
-			endTime:   "",
-			files:     []string{fileName3},
-			querys: []string{
-				"select 5;",
-				"select 6;",
-				"select 7;",
-			},
-		},
-		{
-			startTime: "2020-04-15T18:00:05.299063744+08:00",
-			endTime:   "2020-04-15T18:00:05.299063744+08:00",
-			files:     []string{fileName3},
-			querys: []string{
-				"select 7;",
-			},
-		},
-	}
-
-	loc, err := time.LoadLocation("Asia/Shanghai")
-	require.NoError(t, err)
-	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone = loc
-	sctx.GetSessionVars().SlowQueryFile = fileName3
-	for i, cas := range cases {
-		extractor := &plannercore.SlowQueryExtractor{Enable: len(cas.startTime) > 0 && len(cas.endTime) > 0}
-		if extractor.Enable {
-			startTime, err := ParseTime(cas.startTime)
-			require.NoError(t, err)
-			endTime, err := ParseTime(cas.endTime)
-			require.NoError(t, err)
-			extractor.TimeRanges = []*plannercore.TimeRange{{StartTime: startTime, EndTime: endTime}}
+	for k := 0; k < 2; k++ {
+		// k = 0 for normal files
+		// k = 1 for compressed files
+		var fileNames []string
+		if k == 0 {
+			fileNames = []string{fileName0, fileName1, fileName2, fileName3}
+		} else {
+			fileNames = []string{fileName0 + ".gz", fileName1 + ".gz", fileName2 + ".gz", fileName3}
 		}
-		retriever, err := newSlowQueryRetriever()
+		prepareLogs(t, logData, fileNames)
+
+		cases := []struct {
+			startTime string
+			endTime   string
+			files     []string
+			querys    []string
+		}{
+			{
+				startTime: "2020-02-15T18:00:00.000000+08:00",
+				endTime:   "2020-02-17T20:00:00.000000+08:00",
+				files:     []string{fileName1, fileName2, fileName3},
+				querys: []string{
+					"select 1;",
+					"select 2;",
+					"select 3;",
+					"select 4;",
+					"select 5;",
+					"select 6;",
+				},
+			},
+			{
+				startTime: "2020-02-15T18:00:02.000000+08:00",
+				endTime:   "2020-02-16T20:00:00.000000+08:00",
+				files:     []string{fileName1, fileName2, fileName3},
+				querys: []string{
+					"select 2;",
+					"select 3;",
+					"select 4;",
+					"select 5;",
+				},
+			},
+			{
+				startTime: "2020-02-16T18:00:03.000000+08:00",
+				endTime:   "2020-02-16T18:59:00.000000+08:00",
+				files:     []string{fileName2},
+				querys: []string{
+					"select 4;",
+				},
+			},
+			{
+				startTime: "2020-02-16T18:00:03.000000+08:00",
+				endTime:   "2020-02-16T20:00:00.000000+08:00",
+				files:     []string{fileName2, fileName3},
+				querys: []string{
+					"select 4;",
+					"select 5;",
+				},
+			},
+			{
+				startTime: "2020-02-16T19:00:00.000000+08:00",
+				endTime:   "2020-02-17T17:00:00.000000+08:00",
+				files:     []string{fileName3},
+				querys: []string{
+					"select 5;",
+				},
+			},
+			{
+				startTime: "2010-01-01T00:00:00.000000+08:00",
+				endTime:   "2010-01-01T01:00:00.000000+08:00",
+				files:     []string{},
+			},
+			{
+				startTime: "2020-03-01T00:00:00.000000+08:00",
+				endTime:   "2010-03-01T01:00:00.000000+08:00",
+				files:     []string{},
+			},
+			{
+				startTime: "",
+				endTime:   "",
+				files:     []string{fileName3},
+				querys: []string{
+					"select 5;",
+					"select 6;",
+					"select 7;",
+				},
+			},
+			{
+				startTime: "2020-04-15T18:00:05.299063744+08:00",
+				endTime:   "2020-04-15T18:00:05.299063744+08:00",
+				files:     []string{fileName3},
+				querys: []string{
+					"select 7;",
+				},
+			},
+		}
+
+		loc, err := time.LoadLocation("Asia/Shanghai")
 		require.NoError(t, err)
-		retriever.extractor = extractor
-		err = retriever.initialize(context.Background(), sctx)
-		require.NoError(t, err)
-		comment := fmt.Sprintf("case id: %v", i)
-		require.Equal(t, len(retriever.files), len(cas.files), comment)
-		if len(retriever.files) > 0 {
-			reader := bufio.NewReader(retriever.files[0].file)
-			rows, err := parseLog(retriever, sctx, reader)
-			require.NoError(t, err)
-			require.Equal(t, len(rows), len(cas.querys), comment)
-			for i, row := range rows {
-				require.Equal(t, row[len(row)-1].GetString(), cas.querys[i], comment)
+		sctx := mock.NewContext()
+		sctx.ResetSessionAndStmtTimeZone(loc)
+		sctx.GetSessionVars().SlowQueryFile = fileName3
+		for i, cas := range cases {
+			extractor := &plannercore.SlowQueryExtractor{Enable: len(cas.startTime) > 0 && len(cas.endTime) > 0}
+			if extractor.Enable {
+				startTime, err := ParseTime(cas.startTime)
+				require.NoError(t, err)
+				endTime, err := ParseTime(cas.endTime)
+				require.NoError(t, err)
+				extractor.TimeRanges = []*plannercore.TimeRange{{StartTime: startTime, EndTime: endTime}}
 			}
-		}
+			retriever, err := newSlowQueryRetriever()
+			require.NoError(t, err)
+			retriever.extractor = extractor
+			err = retriever.initialize(context.Background(), sctx)
+			require.NoError(t, err)
+			comment := fmt.Sprintf("compressed: %v, case id: %v", k, i)
+			if len(retriever.files) > 0 {
+				var reader *bufio.Reader
+				reader, err := retriever.getNextReader()
+				require.NoError(t, err, comment)
+				rows, err := parseLog(retriever, sctx, reader)
+				require.NoError(t, err, comment)
+				require.Equal(t, len(rows), len(cas.querys), comment)
+				for i, row := range rows {
+					require.Equal(t, row[len(row)-1].GetString(), cas.querys[i], comment)
+				}
+			}
 
-		for i, file := range retriever.files {
-			require.Equal(t, file.file.Name(), cas.files[i])
-			require.NoError(t, file.file.Close())
+			if k == 0 {
+				require.Equal(t, len(retriever.files), len(cas.files), comment)
+				for i, file := range retriever.files {
+					require.Equal(t, file.file.Name(), cas.files[i], comment)
+				}
+			} else {
+				// for compressed file, sometimes it will contains one more file.
+				require.True(t, (len(retriever.files) == len(cas.files)) || (len(retriever.files) == len(cas.files)+1), comment)
+				var fileNames []string
+				for _, file := range retriever.files {
+					fileNames = append(fileNames, strings.TrimSuffix(file.file.Name(), ".gz"))
+				}
+				for _, file := range cas.files {
+					require.Contains(t, fileNames, file, comment)
+				}
+			}
+			require.NoError(t, retriever.close())
 		}
-		require.NoError(t, retriever.close())
+		removeFiles(fileNames)
 	}
 }
 
@@ -504,8 +535,8 @@ func TestSplitbyColon(t *testing.T) {
 		},
 		{
 			"123a",
-			[]string{},
 			[]string{"123a"},
+			[]string{},
 		},
 		{
 			"1a: 2b",
@@ -521,6 +552,36 @@ func TestSplitbyColon(t *testing.T) {
 			"1a: [2b,3c] 4d: 5e",
 			[]string{"1a", "4d"},
 			[]string{"[2b,3c]", "5e"},
+		},
+		{
+			"1a: [2b,[3c: 3cc]] 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"[2b,[3c: 3cc]]", "5e"},
+		},
+		{
+			"1a: {2b 3c} 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"{2b 3c}", "5e"},
+		},
+		{
+			"1a: {2b,3c} 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"{2b,3c}", "5e"},
+		},
+		{
+			"1a: {2b,{3c: 3cc}} 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"{2b,{3c: 3cc}}", "5e"},
+		},
+		{
+			"1a: {{{2b,{3c: 3cc}} 4d: 5e",
+			nil,
+			nil,
+		},
+		{
+			"1a: [2b,[3c: 3cc]]]] 4d: 5e",
+			nil,
+			nil,
 		},
 		{
 
@@ -629,7 +690,7 @@ select 9;`
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone = loc
+	sctx.ResetSessionAndStmtTimeZone(loc)
 	sctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
 		extractor := &plannercore.SlowQueryExtractor{Enable: len(cas.startTime) > 0 && len(cas.endTime) > 0, Desc: true}
@@ -713,11 +774,21 @@ func checkGoroutineExists(keyword string) bool {
 
 func prepareLogs(t *testing.T, logData []string, fileNames []string) {
 	writeFile := func(file string, data string) {
-		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-		require.NoError(t, err)
-		_, err = f.Write([]byte(data))
-		require.NoError(t, err)
-		require.NoError(t, f.Close())
+		if strings.HasSuffix(file, ".gz") {
+			f, err := os.Create(file)
+			require.NoError(t, err)
+			gz := gzip.NewWriter(f)
+			_, err = gz.Write([]byte(data))
+			require.NoError(t, err)
+			require.NoError(t, gz.Close())
+			require.NoError(t, f.Close())
+		} else {
+			f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+			require.NoError(t, err)
+			_, err = f.Write([]byte(data))
+			require.NoError(t, err)
+			require.NoError(t, f.Close())
+		}
 	}
 
 	for i, log := range logData {
@@ -729,4 +800,28 @@ func removeFiles(fileNames []string) {
 	for _, fileName := range fileNames {
 		os.Remove(fileName)
 	}
+}
+
+func TestIssue54324(t *testing.T) {
+	f, err := os.CreateTemp("", "test-tidb-slow-query-issue54324")
+	require.NoError(t, err)
+	defer os.Remove(f.Name()) // clean up
+
+	w := bufio.NewWriter(f)
+	for i := 0; i < 8191; i++ {
+		w.WriteByte('x')
+	}
+	w.WriteByte('\n')
+	for i := 0; i < 4096; i++ {
+		w.WriteByte('a')
+	}
+	require.NoError(t, w.Flush())
+
+	stat, err := f.Stat()
+	require.NoError(t, err)
+	endCursor := stat.Size()
+	lines, readBytes, err := readLastLines(context.Background(), f, endCursor)
+	require.NoError(t, err)
+	require.Len(t, lines, 2)
+	require.Equal(t, readBytes, 8192+4096)
 }

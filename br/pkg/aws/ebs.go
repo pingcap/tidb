@@ -11,14 +11,19 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/client"
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/cloudwatch"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -31,18 +36,61 @@ const (
 )
 
 type EC2Session struct {
-	ec2 ec2iface.EC2API
+	ec2              ec2iface.EC2API
+	cloudwatchClient *cloudwatch.CloudWatch
 	// aws operation concurrency
 	concurrency uint
 }
 
 type VolumeAZs map[string]string
 
+type ebsBackupRetryer struct {
+	delegate request.Retryer
+}
+
+func (e *ebsBackupRetryer) MaxRetries() int {
+	return e.delegate.MaxRetries()
+}
+
+var backOffTimeOverride = map[string]time.Duration{
+	// From the SDK:
+	// Sadly it seems there isn't an exported operation name...
+	// const opCreateSnapshots = "CreateSnapshots"
+	// The quota for create snapshots is 5 per minute.
+	// Back off for a longer time so we won't excced it.
+	"CreateSnapshots": 20 * time.Second,
+	// const opCreateVolume = "CreateVolume"
+	"CreateVolume": 20 * time.Second,
+}
+
+func (e *ebsBackupRetryer) RetryRules(r *request.Request) time.Duration {
+	backOff := e.delegate.RetryRules(r)
+	if override, ok := backOffTimeOverride[r.Operation.Name]; ok {
+		backOff = max(override, backOff)
+	}
+	log.Warn(
+		"Retrying an operation.",
+		logutil.ShortError(r.Error),
+		zap.Duration("backoff", backOff),
+		zap.StackSkip("stack", 1),
+	)
+	return backOff
+}
+
+func (e *ebsBackupRetryer) ShouldRetry(r *request.Request) bool {
+	return e.delegate.ShouldRetry(r)
+}
+
 func NewEC2Session(concurrency uint, region string) (*EC2Session, error) {
 	// aws-sdk has builtin exponential backoff retry mechanism, see:
 	// https://github.com/aws/aws-sdk-go/blob/db4388e8b9b19d34dcde76c492b17607cd5651e2/aws/client/default_retryer.go#L12-L16
 	// with default retryer & max-retry=9, we will wait for at least 30s in total
 	awsConfig := aws.NewConfig().WithMaxRetries(9).WithRegion(region)
+	defRetry := new(client.DefaultRetryer)
+	ourRetry := ebsBackupRetryer{
+		delegate: defRetry,
+	}
+	awsConfig.Retryer = ourRetry
 	// TiDB Operator need make sure we have the correct permission to call aws api(through aws env variables)
 	// we may change this behaviour in the future.
 	sessionOptions := session.Options{Config: *awsConfig}
@@ -51,7 +99,8 @@ func NewEC2Session(concurrency uint, region string) (*EC2Session, error) {
 		return nil, errors.Trace(err)
 	}
 	ec2Session := ec2.New(sess)
-	return &EC2Session{ec2: ec2Session, concurrency: concurrency}, nil
+	cloudwatchClient := cloudwatch.New(sess)
+	return &EC2Session{ec2: ec2Session, cloudwatchClient: cloudwatchClient, concurrency: concurrency}, nil
 }
 
 // CreateSnapshots is the mainly steps to control the data volume snapshots.
@@ -70,7 +119,11 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 		}
 	}
 
-	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshots")
+	tags := []*ec2.Tag{
+		ec2Tag("TiDBCluster-BR-Snapshot", "new"),
+	}
+
+	workerPool := util.NewWorkerPool(e.concurrency, "create snapshots")
 	for i := range backupInfo.TiKVComponent.Stores {
 		store := backupInfo.TiKVComponent.Stores[i]
 		volumes := store.Volumes
@@ -133,6 +186,12 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
 				// Copy tags from source volume
 				createSnapshotInput.SetCopyTagsFromSource("volume")
+				createSnapshotInput.SetTagSpecifications([]*ec2.TagSpecification{
+					{
+						ResourceType: aws.String(ec2.ResourceTypeSnapshot),
+						Tags:         tags,
+					},
+				})
 				resp, err := e.createSnapshotsWithRetry(context.TODO(), &createSnapshotInput)
 
 				if err != nil {
@@ -238,6 +297,9 @@ func (e *EC2Session) WaitSnapshotsCreated(snapIDMap map[string]string, progress 
 			if *s.State == ec2.SnapshotStateCompleted {
 				log.Info("snapshot completed", zap.String("id", *s.SnapshotId))
 				totalVolumeSize += *s.VolumeSize
+			} else if *s.State == ec2.SnapshotStateError {
+				log.Error("snapshot failed", zap.String("id", *s.SnapshotId), zap.String("error", utils.GetOrZero(s.StateMessage)))
+				return 0, errors.Errorf("snapshot %s failed", *s.SnapshotId)
 			} else {
 				log.Debug("snapshot creating...", zap.Stringer("snap", s))
 				uncompletedSnapshots = append(uncompletedSnapshots, s.SnapshotId)
@@ -261,7 +323,7 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 
 	var deletedCnt atomic.Int32
 	eg, _ := errgroup.WithContext(context.Background())
-	workerPool := utils.NewWorkerPool(e.concurrency, "delete snapshot")
+	workerPool := util.NewWorkerPool(e.concurrency, "delete snapshot")
 	for i := range pendingSnaps {
 		snapID := pendingSnaps[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {
@@ -324,8 +386,39 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 	return snapshotsIDsMap, eg.Wait()
 }
 
-// waitDataFSREnabled waits FSR for data volume snapshots are all enabled
+// waitDataFSREnabled waits FSR for data volume snapshots are all enabled and also have enough credit balance
 func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) error {
+	resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{SnapshotIds: snapShotIDs})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(resp.Snapshots) <= 0 {
+		return errors.Errorf("specified snapshot [%s] is not found", *snapShotIDs[0])
+	}
+
+	// Wait that all snapshot has enough fsr credit balance
+	log.Info("Start check and wait all snapshots have enough fsr credit balance")
+
+	startIdx := 0
+	retryCount := 0
+	for startIdx < len(snapShotIDs) {
+		creditBalance, _ := e.getFSRCreditBalance(snapShotIDs[startIdx], targetAZ)
+		if creditBalance != nil && *creditBalance >= 1.0 {
+			startIdx++
+			retryCount = 0
+		} else {
+			if creditBalance == nil {
+				// For invalid calling, retry 3 times
+				if retryCount >= 3 {
+					return errors.Errorf("cloudwatch metrics for %s operation failed after retrying", *snapShotIDs[startIdx])
+				}
+				retryCount++
+			}
+			// Retry for both invalid calling and not enough fsr credit at 3 minute intervals
+			time.Sleep(3 * time.Minute)
+		}
+	}
+
 	// Create a map to store the strings as keys
 	pendingSnapshots := make(map[string]struct{})
 
@@ -376,6 +469,51 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 		}
 		pendingSnapshots = uncompletedSnapshots
 	}
+}
+
+// getFSRCreditBalance is used to get maximum fsr credit balance of snapshot for last 5 minutes
+func (e *EC2Session) getFSRCreditBalance(snapshotID *string, targetAZ string) (*float64, error) {
+	// Set the time range to query for metrics
+	startTime := time.Now().Add(-5 * time.Minute)
+	endTime := time.Now()
+
+	// Prepare the input for the GetMetricStatisticsWithContext API call
+	input := &cloudwatch.GetMetricStatisticsInput{
+		StartTime:  aws.Time(startTime),
+		EndTime:    aws.Time(endTime),
+		Namespace:  aws.String("AWS/EBS"),
+		MetricName: aws.String("FastSnapshotRestoreCreditsBalance"),
+		Dimensions: []*cloudwatch.Dimension{
+			{
+				Name:  aws.String("SnapshotId"),
+				Value: snapshotID,
+			},
+			{
+				Name:  aws.String("AvailabilityZone"),
+				Value: aws.String(targetAZ),
+			},
+		},
+		Period:     aws.Int64(300),
+		Statistics: []*string{aws.String("Maximum")},
+	}
+
+	log.Info("metrics input", zap.Any("input", input))
+
+	// Call cloudwatchClient API to retrieve the FastSnapshotRestoreCreditsBalance metric data
+	resp, err := e.cloudwatchClient.GetMetricStatisticsWithContext(context.Background(), input)
+	if err != nil {
+		log.Error("GetMetricStatisticsWithContext failed", zap.Error(err))
+		return nil, errors.Trace(err)
+	}
+
+	// parse the response
+	if len(resp.Datapoints) == 0 {
+		log.Warn("No result for metric FastSnapshotRestoreCreditsBalance returned", zap.Stringp("snapshot", snapshotID))
+		return nil, nil
+	}
+	result := resp.Datapoints[0]
+	log.Info("credit balance", zap.Stringp("snapshot", snapshotID), zap.Float64p("credit", result.Maximum))
+	return result.Maximum, nil
 }
 
 // DisableDataFSR disables FSR for data volume snapshots
@@ -447,7 +585,7 @@ func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, specifiedAZ string) map[s
 // CreateVolumes create volumes from snapshots
 // if err happens in the middle, return half-done result
 // returned map: store id -> old volume id -> new volume id
-func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, targetAZ string) (map[string]string, error) {
+func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64, encrypted bool, targetAZ string) (map[string]string, error) {
 	template := ec2.CreateVolumeInput{
 		VolumeType: &volumeType,
 	}
@@ -457,6 +595,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 	if throughput > 0 {
 		template.SetThroughput(throughput)
 	}
+	template.Encrypted = &encrypted
 
 	newVolumeIDMap := make(map[string]string)
 	var mutex sync.Mutex
@@ -467,7 +606,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 		newVolumeIDMap[oldVol.ID] = *newVol.VolumeId
 	}
 
-	workerPool := utils.NewWorkerPool(e.concurrency, "create volume")
+	workerPool := util.NewWorkerPool(e.concurrency, "create volume")
 	for i := range meta.TiKVComponent.Stores {
 		store := meta.TiKVComponent.Stores[i]
 		for j := range store.Volumes {
@@ -502,10 +641,12 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 					return errors.Errorf("specified snapshot [%s] is not found", oldVol.SnapshotID)
 				}
 
-				// Copy tags from source snapshots
+				// Copy tags from source snapshots, but avoid recursive tagging
 				for j := range resp.Snapshots[0].Tags {
-					tags = append(tags,
-						ec2Tag("snapshot/"+aws.StringValue(resp.Snapshots[0].Tags[j].Key), aws.StringValue(resp.Snapshots[0].Tags[j].Value)))
+					if !strings.HasPrefix(aws.StringValue(resp.Snapshots[0].Tags[j].Key), "snapshot/") {
+						tags = append(tags,
+							ec2Tag("snapshot/"+aws.StringValue(resp.Snapshots[0].Tags[j].Key), aws.StringValue(resp.Snapshots[0].Tags[j].Value)))
+					}
 				}
 
 				req.SetTagSpecifications([]*ec2.TagSpecification{
@@ -528,7 +669,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 	return newVolumeIDMap, eg.Wait()
 }
 
-func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress glue.Progress) (int64, error) {
+func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress glue.Progress, fsrEnabledRequired bool) (int64, error) {
 	pendingVolumes := make([]*string, 0, len(volumeIDMap))
 	for oldVolID := range volumeIDMap {
 		newVolumeID := volumeIDMap[oldVolID]
@@ -548,7 +689,11 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 			return 0, errors.Trace(err)
 		}
 
-		createdVolumeSize, unfinishedVolumes := e.HandleDescribeVolumesResponse(resp)
+		createdVolumeSize, unfinishedVolumes, err := e.HandleDescribeVolumesResponse(resp, fsrEnabledRequired)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+
 		progress.IncBy(int64(len(pendingVolumes) - len(unfinishedVolumes)))
 		totalVolumeSize += createdVolumeSize
 		pendingVolumes = unfinishedVolumes
@@ -566,7 +711,7 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 
 	var deletedCnt atomic.Int32
 	eg, _ := errgroup.WithContext(context.Background())
-	workerPool := utils.NewWorkerPool(e.concurrency, "delete volume")
+	workerPool := util.NewWorkerPool(e.concurrency, "delete volume")
 	for i := range pendingVolumes {
 		volID := pendingVolumes[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {
@@ -591,12 +736,16 @@ func ec2Tag(key, val string) *ec2.Tag {
 	return &ec2.Tag{Key: &key, Value: &val}
 }
 
-func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput) (int64, []*string) {
+func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutput, fsrEnabledRequired bool) (int64, []*string, error) {
 	totalVolumeSize := int64(0)
 
 	var unfinishedVolumes []*string
 	for _, volume := range resp.Volumes {
 		if *volume.State == ec2.VolumeStateAvailable {
+			if fsrEnabledRequired && volume.FastRestored != nil && !*volume.FastRestored {
+				log.Error("snapshot fsr is not enabled for the volume", zap.String("volume", *volume.SnapshotId))
+				return 0, nil, errors.Errorf("Snapshot [%s] of volume [%s] is not fsr enabled", *volume.SnapshotId, *volume.VolumeId)
+			}
 			log.Info("volume is available", zap.String("id", *volume.VolumeId))
 			totalVolumeSize += *volume.Size
 		} else {
@@ -605,5 +754,5 @@ func (e *EC2Session) HandleDescribeVolumesResponse(resp *ec2.DescribeVolumesOutp
 		}
 	}
 
-	return totalVolumeSize, unfinishedVolumes
+	return totalVolumeSize, unfinishedVolumes, nil
 }

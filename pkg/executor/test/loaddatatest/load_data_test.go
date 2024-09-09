@@ -15,11 +15,12 @@
 package loaddatatest
 
 import (
-	"context"
+	"fmt"
+	"io"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -34,25 +35,26 @@ type testCase struct {
 
 func checkCases(
 	tests []testCase,
-	ld *executor.LoadDataWorker,
+	loadSQL string,
 	t *testing.T,
 	tk *testkit.TestKit,
 	ctx sessionctx.Context,
 	selectSQL, deleteSQL string,
 ) {
 	for _, tt := range tests {
-		parser, err := mydump.NewCSVParser(
-			context.Background(),
-			ld.GetController().GenerateCSVConfig(),
-			mydump.NewStringReader(string(tt.data)),
-			1,
-			nil,
-			false,
-			nil)
-		require.NoError(t, err)
+		var reader io.ReadCloser = mydump.NewStringReader(string(tt.data))
+		var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (
+			r io.ReadCloser, err error,
+		) {
+			return reader, nil
+		}
 
-		err = ld.TestLoadLocal(parser)
-		require.NoError(t, err)
+		ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+		tk.MustExec(loadSQL)
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+		for _, w := range warnings {
+			fmt.Printf("warnnig: %#v\n", w.Err.Error())
+		}
 		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
 		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)
@@ -80,7 +82,7 @@ func TestLoadDataInitParam(t *testing.T) {
 
 	// null def values
 	testFunc := func(sql string, expectedNullDef []string, expectedNullOptEnclosed bool) {
-		require.NoError(t, tk.ExecToErr(sql))
+		require.ErrorContains(t, tk.ExecToErr(sql), "reader is nil")
 		defer ctx.SetValue(executor.LoadDataVarKey, nil)
 		ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
 		require.True(t, ok)
@@ -102,11 +104,26 @@ func TestLoadDataInitParam(t *testing.T) {
 		[]string{"NULL"}, false)
 
 	// positive case
-	require.NoError(t, tk.ExecToErr("load data local infile '/a' format 'sql file' into table load_data_test"))
+	require.ErrorContains(
+		t, tk.ExecToErr(
+			"load data local infile '/a' format 'sql file' into table"+
+				" load_data_test",
+		), "reader is nil",
+	)
 	ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NoError(t, tk.ExecToErr("load data local infile '/a' into table load_data_test fields terminated by 'a'"))
+	require.ErrorContains(
+		t, tk.ExecToErr(
+			"load data local infile '/a' into table load_data_test fields"+
+				" terminated by 'a'",
+		), "reader is nil",
+	)
 	ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NoError(t, tk.ExecToErr("load data local infile '/a' format 'delimited data' into table load_data_test fields terminated by 'a'"))
+	require.ErrorContains(
+		t, tk.ExecToErr(
+			"load data local infile '/a' format 'delimited data' into"+
+				" table load_data_test fields terminated by 'a'",
+		), "reader is nil",
+	)
 	ctx.SetValue(executor.LoadDataVarKey, nil)
 
 	// According to https://dev.mysql.com/doc/refman/8.0/en/load-data.html , fixed-row format should be used when fields
@@ -130,12 +147,8 @@ func TestLoadData(t *testing.T) {
 	tk.MustExec(createSQL)
 	err = tk.ExecToErr("load data infile '/tmp/nonexistence.csv' into table load_data_test")
 	require.Error(t, err)
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
+	loadSQL := "load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test"
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
@@ -164,10 +177,11 @@ func TestLoadData(t *testing.T) {
 		{[]byte("\t2\t3\t4\t5\n"), []string{"10|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("\t2\t34\t5\n"), []string{"11|2|34|5"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 
 	// lines starting symbol is "" and terminated symbol length is 2, ReadOneBatchRows returns data is nil
-	ld.GetController().LinesTerminatedBy = "||"
+	loadSQL = "load data local infile '/tmp/nonexistence." +
+		"csv' ignore into table load_data_test lines terminated by '||'"
 	tests = []testCase{
 		{[]byte("0\t2\t3\t4\t5||"), []string{"12|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 		{[]byte("1\t2\t3\t4\t5||"), []string{"1|2|3|4"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
@@ -179,12 +193,11 @@ func TestLoadData(t *testing.T) {
 			[]string{"4|2|3|4", "5|22|33|<nil>", "6|222|<nil>|<nil>"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
 		{[]byte("6\t2\t34\t5||"), []string{"6|2|34|5"}, trivialMsg},
 	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 
 	// fields and lines aren't default, ReadOneBatchRows returns data is nil
-	ld.GetController().FieldsTerminatedBy = "\\"
-	ld.GetController().LinesStartingBy = "xxx"
-	ld.GetController().LinesTerminatedBy = "|!#^"
+	loadSQL = "load data local infile '/tmp/nonexistence.csv' " +
+		`ignore into table load_data_test fields terminated by '\\' lines starting by 'xxx' terminated by '|!#^'`
 	tests = []testCase{
 		{[]byte("xxx|!#^"), []string{"13|<nil>|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx\\|!#^"), []string{"14|0|<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
@@ -219,7 +232,7 @@ func TestLoadData(t *testing.T) {
 			[]string{"25|2|3|4", "27|222|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx\\2\\34\\5|!#^"), []string{"28|2|34|5"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 
 	// TODO: not support it now
 	// lines starting symbol is the same as terminated symbol, ReadOneBatchRows returns data is nil
@@ -258,21 +271,25 @@ func TestLoadData(t *testing.T) {
 	//checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 
 	// test line terminator in field quoter
-	ld.GetController().LinesTerminatedBy = "\n"
-	ld.GetController().FieldsEnclosedBy = `"`
+	loadSQL = "load data local infile '/tmp/nonexistence.csv' " +
+		"ignore into table load_data_test " +
+		"fields terminated by '\\\\' enclosed by '\\\"' " +
+		"lines starting by 'xxx' terminated by '\\n'"
 	tests = []testCase{
 		{[]byte("xxx1\\1\\\"2\n\"\\3\nxxx4\\4\\\"5\n5\"\\6"), []string{"1|1|2\n|3", "4|4|5\n5|6"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 
-	ld.GetController().LinesTerminatedBy = "#\n"
-	ld.GetController().FieldsTerminatedBy = "#"
+	loadSQL = "load data local infile '/tmp/nonexistence.csv' " +
+		"ignore into table load_data_test " +
+		"fields terminated by '#' enclosed by '\\\"' " +
+		"lines starting by 'xxx' terminated by '#\\n'"
 	tests = []testCase{
 		{[]byte("xxx1#\nxxx2#\n"), []string{"1|<nil>|<nil>|<nil>", "2|<nil>|<nil>|<nil>"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 		{[]byte("xxx1#2#3#4#\nnxxx2#3#4#5#\n"), []string{"1|2|3|4", "2|3|4|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("xxx1#2#\"3#\"#\"4\n\"#\nxxx2#3#\"#4#\n\"#5#\n"), []string{"1|2|3#|4", "2|3|#4#\n|5"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 
 	// TODO: now support it now
 	//ld.LinesInfo.Terminated = "#"
@@ -293,12 +310,8 @@ func TestLoadDataEscape(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test"
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
 	// test escape
 	tests := []testCase{
 		// data1 = nil, data2 != nil
@@ -314,7 +327,7 @@ func TestLoadDataEscape(t *testing.T) {
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
@@ -324,12 +337,8 @@ func TestLoadDataSpecifiedColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)")
+	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)"
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
 	// test
 	tests := []testCase{
 		{[]byte("7\ta string\n"), []string{"1|7|a string|0"}, trivialMsg},
@@ -342,7 +351,7 @@ func TestLoadDataSpecifiedColumns(t *testing.T) {
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
 func TestLoadDataIgnoreLines(t *testing.T) {
@@ -350,19 +359,15 @@ func TestLoadDataIgnoreLines(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ignore 1 lines")
+	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test ignore 1 lines"
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
 	tests := []testCase{
 		{[]byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
 func TestLoadDataNULL(t *testing.T) {
@@ -374,13 +379,9 @@ func TestLoadDataNULL(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id VARCHAR(20), value VARCHAR(20)) CHARACTER SET utf8")
-	tk.MustExec(`load data local infile '/tmp/nonexistence.csv' into table load_data_test
-FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`)
+	loadSQL := `load data local infile '/tmp/nonexistence.csv' into table load_data_test
+FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
 	tests := []testCase{
 		{
 			[]byte(`NULL,"NULL"
@@ -392,7 +393,7 @@ FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`)
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
 func TestLoadDataReplace(t *testing.T) {
@@ -401,19 +402,15 @@ func TestLoadDataReplace(t *testing.T) {
 	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
 	tk.MustExec("CREATE TABLE load_data_replace (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL)")
 	tk.MustExec("INSERT INTO load_data_replace VALUES(1,'val 1'),(2,'val 2')")
-	tk.MustExec("LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE load_data_replace")
+	loadSQL := "LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE load_data_replace"
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
 	tests := []testCase{
 		{[]byte("1\tline1\n2\tline2\n"), []string{"1|line1", "2|line2"}, "Records: 2  Deleted: 2  Skipped: 0  Warnings: 0"},
 		{[]byte("2\tnew line2\n3\tnew line3\n"), []string{"1|line1", "2|new line2", "3|new line3"}, "Records: 2  Deleted: 1  Skipped: 0  Warnings: 0"},
 	}
 	deleteSQL := "DO 1"
 	selectSQL := "TABLE load_data_replace;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
 // TestLoadDataOverflowBigintUnsigned related to issue 6360
@@ -422,19 +419,15 @@ func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (a bigint unsigned);")
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test"
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
 	tests := []testCase{
 		{[]byte("-1\n-18446744073709551615\n-18446744073709551616\n"), []string{"0", "0", "0"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
 		{[]byte("-9223372036854775809\n18446744073709551616\n"), []string{"0", "18446744073709551615"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
 func TestLoadDataWithUppercaseUserVars(t *testing.T) {
@@ -442,19 +435,15 @@ func TestLoadDataWithUppercaseUserVars(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (a int, b int);")
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (@V1)" +
-		" set a = @V1, b = @V1*100")
+	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test (@V1)" +
+		" set a = @V1, b = @V1*100"
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
 	tests := []testCase{
 		{[]byte("1\n2\n"), []string{"1|100", "2|200"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
 func TestLoadDataIntoPartitionedTable(t *testing.T) {
@@ -465,14 +454,21 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 		"partition p0 values less than (4)," +
 		"partition p1 values less than (7)," +
 		"partition p2 values less than (11))")
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table range_t fields terminated by ','")
 	ctx := tk.Session().(sessionctx.Context)
-	ld := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-
+	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table range_t fields terminated by ','"
 	tests := []testCase{
 		{[]byte("1,2\n3,4\n5,6\n7,8\n9,10\n"), []string{"1|2", "3|4", "5|6", "7|8", "9|10"}, "Records: 5  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	deleteSQL := "delete from range_t"
 	selectSQL := "select * from range_t order by a;"
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+}
+
+func TestLoadDataFromServerFile(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table load_data_test (a int)")
+	err := tk.ExecToErr("load data infile 'remote.csv' into table load_data_test")
+	require.ErrorContains(t, err, "[executor:8154]Don't support load data from tidb-server's disk.")
 }

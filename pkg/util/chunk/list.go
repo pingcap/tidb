@@ -15,6 +15,8 @@
 package chunk
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -33,6 +35,9 @@ type List struct {
 	consumedIdx int             // chunk index in "chunks", has been consumed.
 }
 
+// RowPtrSize shows the size of RowPtr
+const RowPtrSize = int(unsafe.Sizeof(RowPtr{}))
+
 // RowPtr is used to get a row from a list.
 // It is only valid for the list that returns it.
 type RowPtr struct {
@@ -40,16 +45,21 @@ type RowPtr struct {
 	RowIdx uint32
 }
 
-// NewList creates a new List with field types, init chunk size and max chunk size.
-func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
+// NewListWithMemTracker creates a new List with field types, init chunk size, max chunk size and memory tracker.
+func NewListWithMemTracker(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int, tracker *memory.Tracker) *List {
 	l := &List{
 		fieldTypes:    fieldTypes,
 		initChunkSize: initChunkSize,
 		maxChunkSize:  maxChunkSize,
-		memTracker:    memory.NewTracker(memory.LabelForChunkList, -1),
+		memTracker:    tracker,
 		consumedIdx:   -1,
 	}
 	return l
+}
+
+// NewList creates a new List with field types, init chunk size and max chunk size.
+func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
+	return NewListWithMemTracker(fieldTypes, initChunkSize, maxChunkSize, memory.NewTracker(memory.LabelForChunkList, -1))
 }
 
 // GetMemTracker returns the memory tracker of this List.

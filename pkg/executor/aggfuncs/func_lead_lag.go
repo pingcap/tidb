@@ -18,7 +18,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -50,7 +49,7 @@ func (*baseLeadLag) ResetPartialResult(pr PartialResult) {
 	p.curIdx = 0
 }
 
-func (*baseLeadLag) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (*baseLeadLag) UpdatePartialResult(_ AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4LeadLag)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
 	memDelta += int64(len(rowsInGroup)) * DefRowSize
@@ -61,7 +60,7 @@ type lead struct {
 	baseLeadLag
 }
 
-func (v *lead) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (v *lead) AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4LeadLag)(pr)
 	var err error
 	if p.curIdx+v.offset < uint64(len(p.rows)) {
@@ -81,7 +80,7 @@ type lag struct {
 	baseLeadLag
 }
 
-func (v *lag) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (v *lag) AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4LeadLag)(pr)
 	var err error
 	if p.curIdx >= v.offset {

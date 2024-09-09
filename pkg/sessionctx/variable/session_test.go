@@ -16,6 +16,7 @@ package variable_test
 
 import (
 	"context"
+	"math/rand"
 	"strconv"
 	"sync"
 	"testing"
@@ -151,7 +152,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
 	seVar.ConnectionID = 1
 	seVar.SessionAlias = "aliasabc"
-	// the out put of the loged CurrentDB should be 'test', should be to lower cased.
+	// the output of the logged CurrentDB should be 'test', should be to lower cased.
 	seVar.CurrentDB = "TeST"
 	seVar.InRestrictedSQL = true
 	seVar.StmtCtx.WaitLockLeaseTime = 1
@@ -189,7 +190,7 @@ func TestSlowLogFormat(t *testing.T) {
 		ColumnStatsLoadStatus: map[int64]string{2: "unInitialized"},
 	}
 
-	copTasks := &stmtctx.CopTasksDetails{
+	copTasks := &execdetails.CopTasksDetails{
 		NumCopTasks:       10,
 		AvgProcessTime:    time.Second,
 		P90ProcessTime:    time.Second * 2,
@@ -258,7 +259,11 @@ func TestSlowLogFormat(t *testing.T) {
 # Succ: true
 # IsExplicitTxn: true
 # IsSyncStatsFailed: false
-# IsWriteCacheTable: true`
+# IsWriteCacheTable: true
+# Resource_group: rg1
+# Request_unit_read: 50
+# Request_unit_write: 100.56
+# Time_queued_by_rc: 0.134`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
@@ -296,8 +301,14 @@ func TestSlowLogFormat(t *testing.T) {
 		ExecRetryTime:     5*time.Second + time.Millisecond*100,
 		IsExplicitTxn:     true,
 		IsWriteCacheTable: true,
-		UsedStats:         map[int64]*stmtctx.UsedStatsInfoForTable{1: usedStats1, 2: usedStats2},
+		UsedStats:         &stmtctx.UsedStatsInfo{},
+		ResourceGroupName: "rg1",
+		RRU:               50.0,
+		WRU:               100.56,
+		WaitRUDuration:    134 * time.Millisecond,
 	}
+	logItems.UsedStats.RecordUsedInfo(1, usedStats1)
+	logItems.UsedStats.RecordUsedInfo(2, usedStats2)
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
 
@@ -461,33 +472,33 @@ func TestGetReuseChunk(t *testing.T) {
 
 	// SetAlloc efficient
 	sessVars.SetAlloc(nil)
-	require.Nil(t, sessVars.ChunkPool.Alloc)
+	require.False(t, sessVars.IsAllocValid())
 	require.False(t, sessVars.GetUseChunkAlloc())
 	// alloc is nil ，Allocate memory from the system
-	chk1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
+	chk1 := sessVars.GetChunkAllocator().Alloc(fieldTypes, 10, 10)
 	require.NotNil(t, chk1)
 
 	chunkReuseMap := make(map[*chunk.Chunk]struct{}, 14)
 	columnReuseMap := make(map[*chunk.Column]struct{}, 14)
 
 	alloc := chunk.NewAllocator()
-	sessVars.EnableReuseCheck = true
+	sessVars.EnableReuseChunk = true
 	sessVars.SetAlloc(alloc)
-	require.NotNil(t, sessVars.ChunkPool.Alloc)
-	require.Equal(t, alloc, sessVars.ChunkPool.Alloc)
+	require.True(t, sessVars.IsAllocValid())
 	require.False(t, sessVars.GetUseChunkAlloc())
 
 	//tries to apply from the cache
 	initCap := 10
-	chk1 = sessVars.GetNewChunkWithCapacity(fieldTypes, initCap, initCap, sessVars.ChunkPool.Alloc)
+	chk1 = sessVars.GetChunkAllocator().Alloc(fieldTypes, initCap, initCap)
 	require.NotNil(t, chk1)
 	chunkReuseMap[chk1] = struct{}{}
 	for i := 0; i < chk1.NumCols(); i++ {
 		columnReuseMap[chk1.Column(i)] = struct{}{}
 	}
+	require.True(t, sessVars.GetUseChunkAlloc())
 
 	alloc.Reset()
-	chkres1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
+	chkres1 := sessVars.GetChunkAllocator().Alloc(fieldTypes, 10, 10)
 	require.NotNil(t, chkres1)
 	_, exist := chunkReuseMap[chkres1]
 	require.True(t, exist)
@@ -495,14 +506,14 @@ func TestGetReuseChunk(t *testing.T) {
 		_, exist := columnReuseMap[chkres1.Column(i)]
 		require.True(t, exist)
 	}
-	allocpool := variable.ReuseChunkPool{Alloc: alloc}
 
-	sessVars.ClearAlloc(&allocpool.Alloc, false)
-	require.Equal(t, alloc, allocpool.Alloc)
+	var allocpool chunk.Allocator = alloc
+	sessVars.ClearAlloc(&allocpool, false)
+	require.Equal(t, alloc, allocpool)
 
-	sessVars.ClearAlloc(&allocpool.Alloc, true)
-	require.NotEqual(t, allocpool.Alloc, alloc)
-	require.Nil(t, sessVars.ChunkPool.Alloc)
+	sessVars.ClearAlloc(&allocpool, true)
+	require.NotEqual(t, allocpool, alloc)
+	require.False(t, sessVars.IsAllocValid())
 }
 
 func TestUserVarConcurrently(t *testing.T) {
@@ -535,4 +546,108 @@ func TestUserVarConcurrently(t *testing.T) {
 	})
 	wg.Wait()
 	cancel()
+}
+
+func TestSetStatus(t *testing.T) {
+	sv := variable.NewSessionVars(nil)
+	require.True(t, sv.IsAutocommit())
+	sv.SetStatusFlag(mysql.ServerStatusInTrans, true)
+	require.True(t, sv.InTxn())
+	sv.SetStatusFlag(mysql.ServerStatusCursorExists, true)
+	require.True(t, sv.InTxn())
+	sv.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	require.True(t, sv.HasStatusFlag(mysql.ServerStatusCursorExists))
+	require.False(t, sv.InTxn())
+	require.Equal(t, mysql.ServerStatusAutocommit|mysql.ServerStatusCursorExists, sv.Status())
+}
+
+func TestMapDeltaCols(t *testing.T) {
+	for _, c := range []struct {
+		m    map[int64]int64
+		cols variable.DeltaColsMap
+		r    map[int64]int64
+	}{
+		{},
+		{
+			cols: map[int64]int64{1: 2},
+			r:    map[int64]int64{1: 2},
+		},
+		{
+			m: map[int64]int64{1: 2},
+			r: map[int64]int64{1: 2},
+		},
+		{
+			m:    map[int64]int64{1: 3, 3: 5, 5: 7},
+			cols: map[int64]int64{1: 2, 3: -4, 6: 8},
+			r:    map[int64]int64{1: 5, 3: 1, 5: 7, 6: 8},
+		},
+	} {
+		originalCols := make(map[int64]int64)
+		for k, v := range c.cols {
+			originalCols[k] = v
+		}
+
+		m2 := c.cols.UpdateColSizeMap(c.m)
+		require.Equal(t, c.r, m2)
+		if c.m == nil {
+			if len(c.cols) == 0 {
+				require.Nil(t, m2)
+			}
+		} else {
+			require.Equal(t, m2, c.m)
+		}
+
+		if c.cols != nil {
+			// deltaCols not change
+			require.Equal(t, originalCols, map[int64]int64(c.cols))
+		}
+	}
+}
+
+func TestRowIDShardGenerator(t *testing.T) {
+	g := variable.NewRowIDShardGenerator(rand.New(rand.NewSource(12345)), 128) // #nosec G404)
+	// default settings
+	require.Equal(t, 128, g.GetShardStep())
+	shard := g.GetCurrentShard(127)
+	require.Equal(t, int64(3535546008), shard)
+	require.Equal(t, shard, g.GetCurrentShard(1))
+	// reset alloc step
+	g.SetShardStep(5)
+	require.Equal(t, 5, g.GetShardStep())
+	// generate shard in step
+	shard = g.GetCurrentShard(1)
+	require.Equal(t, int64(1371624976), shard)
+	require.Equal(t, shard, g.GetCurrentShard(1))
+	require.Equal(t, shard, g.GetCurrentShard(1))
+	require.Equal(t, shard, g.GetCurrentShard(2))
+	// generate shard in next step
+	shard = g.GetCurrentShard(1)
+	require.Equal(t, int64(895725277), shard)
+	// set step will reset clear remain
+	g.SetShardStep(5)
+	require.NotEqual(t, shard, g.GetCurrentShard(1))
+}
+
+func TestUserVars(t *testing.T) {
+	vars := variable.NewUserVars()
+	vars.SetUserVarVal("a", types.NewIntDatum(1))
+	vars.SetUserVarVal("b", types.NewStringDatum("v2"))
+	dt, ok := vars.GetUserVarVal("a")
+	require.True(t, ok)
+	require.Equal(t, types.NewIntDatum(1), dt)
+
+	vars.SetUserVarType("a", types.NewFieldType(mysql.TypeLonglong))
+	tp, ok := vars.GetUserVarType("a")
+	require.True(t, ok)
+	require.Equal(t, types.NewFieldType(mysql.TypeLonglong), tp)
+
+	vars.UnsetUserVar("a")
+	_, ok = vars.GetUserVarVal("a")
+	require.False(t, ok)
+	_, ok = vars.GetUserVarType("a")
+	require.False(t, ok)
+
+	dt, ok = vars.GetUserVarVal("b")
+	require.True(t, ok)
+	require.Equal(t, types.NewStringDatum("v2"), dt)
 }

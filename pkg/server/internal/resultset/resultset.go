@@ -16,8 +16,10 @@ package resultset
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/types"
@@ -30,11 +32,13 @@ type ResultSet interface {
 	Columns() []*column.Info
 	NewChunk(chunk.Allocator) *chunk.Chunk
 	Next(context.Context, *chunk.Chunk) error
-	Close() error
+	Close()
 	// IsClosed checks whether the result set is closed.
 	IsClosed() bool
 	FieldTypes() []*types.FieldType
 	SetPreparedStmt(stmt *core.PlanCacheStmt)
+	Finish() error
+	TryDetach() (ResultSet, bool, error)
 }
 
 var _ ResultSet = &tidbResultSet{}
@@ -52,6 +56,10 @@ type tidbResultSet struct {
 	preparedStmt *core.PlanCacheStmt
 	columns      []*column.Info
 	closed       int32
+	// finishLock is a mutex used to synchronize access to the `Next`,`Finish` and `Close` functions of the adapter.
+	// It ensures that only one goroutine can access the `Next`,`Finish` and `Close` functions at a time, preventing race conditions.
+	// When we terminate the current SQL externally (e.g., kill query), an additional goroutine would be used to call the `Finish` function.
+	finishLock sync.Mutex
 }
 
 func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
@@ -59,16 +67,29 @@ func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 }
 
 func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.Chunk) error {
+	trs.finishLock.Lock()
+	defer trs.finishLock.Unlock()
 	return trs.recordSet.Next(ctx, req)
 }
 
-func (trs *tidbResultSet) Close() error {
-	if !atomic.CompareAndSwapInt32(&trs.closed, 0, 1) {
-		return nil
+func (trs *tidbResultSet) Finish() error {
+	if trs.finishLock.TryLock() {
+		defer trs.finishLock.Unlock()
+		if x, ok := trs.recordSet.(interface{ Finish() error }); ok {
+			return x.Finish()
+		}
 	}
-	err := trs.recordSet.Close()
+	return nil
+}
+
+func (trs *tidbResultSet) Close() {
+	trs.finishLock.Lock()
+	defer trs.finishLock.Unlock()
+	if !atomic.CompareAndSwapInt32(&trs.closed, 0, 1) {
+		return
+	}
+	terror.Call(trs.recordSet.Close)
 	trs.recordSet = nil
-	return err
 }
 
 // IsClosed implements ResultSet.IsClosed interface.
@@ -91,7 +112,7 @@ func (trs *tidbResultSet) Columns() []*column.Info {
 	// for prepare statement, try to get cached columnInfo array
 	if trs.preparedStmt != nil {
 		ps := trs.preparedStmt
-		if colInfos, ok := ps.ColumnInfos.([]*column.Info); ok {
+		if colInfos, ok := ps.PointGet.ColumnInfos.([]*column.Info); ok {
 			trs.columns = colInfos
 		}
 	}
@@ -103,7 +124,7 @@ func (trs *tidbResultSet) Columns() []*column.Info {
 		if trs.preparedStmt != nil {
 			// if Info struct has allocated object,
 			// here maybe we need deep copy Info to do caching
-			trs.preparedStmt.ColumnInfos = trs.columns
+			trs.preparedStmt.PointGet.ColumnInfos = trs.columns
 		}
 	}
 	return trs.columns
@@ -121,4 +142,23 @@ func (trs *tidbResultSet) FieldTypes() []*types.FieldType {
 // SetPreparedStmt implements ResultSet.SetPreparedStmt interface.
 func (trs *tidbResultSet) SetPreparedStmt(stmt *core.PlanCacheStmt) {
 	trs.preparedStmt = stmt
+}
+
+// TryDetach creates a new `ResultSet` which doesn't depend on the current session context.
+func (trs *tidbResultSet) TryDetach() (ResultSet, bool, error) {
+	detachableRecordSet, ok := trs.recordSet.(sqlexec.DetachableRecordSet)
+	if !ok {
+		return nil, false, nil
+	}
+
+	recordSet, detached, err := detachableRecordSet.TryDetach()
+	if !detached || err != nil {
+		return nil, detached, err
+	}
+
+	return &tidbResultSet{
+		recordSet:    recordSet,
+		preparedStmt: trs.preparedStmt,
+		columns:      trs.columns,
+	}, true, nil
 }

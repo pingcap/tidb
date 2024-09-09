@@ -15,14 +15,21 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 func TestShowPlacement(t *testing.T) {
@@ -47,6 +54,7 @@ func TestShowPlacement(t *testing.T) {
 	tk.MustExec("create placement policy pa1 " +
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1,cn-east-2\"" +
+		"SURVIVAL_PREFERENCES=\"[zone, dc, host]\"" +
 		"SCHEDULE=\"EVEN\"")
 	defer tk.MustExec("drop placement policy pa1")
 
@@ -80,26 +88,26 @@ func TestShowPlacement(t *testing.T) {
 	defer tk.MustExec("drop table if exists db2.t2")
 
 	tk.MustQuery("show placement").Check(testkit.Rows(
-		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
+		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" NULL",
 		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" NULL",
 		"POLICY pb1 CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" NULL",
 		"DATABASE db2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" PENDING",
 		"TABLE db2.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" PENDING",
-		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
-		"TABLE test.t3 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
+		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" PENDING",
+		"TABLE test.t3 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" PENDING",
 		"TABLE test.t3 PARTITION p0 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" PENDING",
-		"TABLE test.t3 PARTITION p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
-		"TABLE test.t3 PARTITION p2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
+		"TABLE test.t3 PARTITION p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" PENDING",
+		"TABLE test.t3 PARTITION p2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" PENDING",
 	))
 
 	tk.MustQuery("show placement like 'POLICY%'").Check(testkit.Rows(
-		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
+		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" NULL",
 		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" NULL",
 		"POLICY pb1 CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" NULL",
 	))
 
 	tk.MustQuery("show placement like 'POLICY pa%'").Check(testkit.Rows(
-		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
+		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SURVIVAL_PREFERENCES=\"[zone, dc, host]\" NULL",
 		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" NULL",
 	))
 
@@ -377,12 +385,16 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 	tk.MustExec("create database db2")
 	defer tk.MustExec("drop database db2")
 
+	tk.MustQuery("show placement").Check(testkit.Rows())
+
 	// prepare policy
 	tk.MustExec("create placement policy p1 " +
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1,cn-east-2\"" +
 		"SCHEDULE=\"EVEN\"")
 	defer tk.MustExec("drop placement policy p1")
+
+	tk.MustQuery("show placement").Check(testkit.Rows("POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL"))
 
 	tk.MustExec("create placement policy p2 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\" FOLLOWERS=4")
 	defer tk.MustExec("drop placement policy p2")
@@ -404,19 +416,19 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 
 	// before grant
 	err := tk1.ExecToErr("show placement for table test.t1")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+	require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 	err = tk1.ExecToErr("show placement for table test.t1 partition p1")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+	require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 	err = tk1.ExecToErr("show placement for table test.t2")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t2").Error())
+	require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t2").Error())
 
 	err = tk1.ExecToErr("show placement for table test.t3")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t3").Error())
+	require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t3").Error())
 
 	err = tk1.ExecToErr("show placement for table db2.t1")
-	require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+	require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 	tk1.MustQuery("show placement").Check(testkit.Rows(
 		"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
@@ -452,22 +464,99 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 		))
 
 		err = tk1.ExecToErr("show placement for table test.t2")
-		require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t2").Error())
+		require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t2").Error())
 
 		err = tk1.ExecToErr("show placement for table test.t3")
-		require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t3").Error())
+		require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t3").Error())
 
 		err = tk1.ExecToErr("show placement for table db2.t1")
-		require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+		require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 		// do revoke
 		tk.MustExec(fmt.Sprintf("revoke %s from 'user1'@'%%'", priv))
 		err = tk1.ExecToErr("show placement for table test.t1")
-		require.EqualError(t, err, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+		require.EqualError(t, err, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 		tk1.MustQuery("show placement").Check(testkit.Rows(
 			"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
 			"POLICY p2 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" NULL",
 		))
 	}
+}
+
+type mockPDCli struct {
+	pdhttp.Client
+	mock.Mock
+}
+
+func (cli *mockPDCli) GetRegionsReplicatedStateByKeyRange(ctx context.Context, r *pdhttp.KeyRange) (string, error) {
+	args := cli.Called(ctx, r)
+	return args.String(0), args.Error(1)
+}
+
+func TestShowPlacementHandleRegionStatus(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create placement policy p1 followers=1")
+
+	cli := &mockPDCli{}
+	recoverCli := infosync.SetPDHttpCliForTest(cli)
+	defer recoverCli()
+
+	mockGetState := func(tblName, partition string, state string) *mock.Call {
+		is := tk.Session().GetDomainInfoSchema()
+		tbl, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr(tblName))
+		require.NoError(t, err)
+		tblID := tbl.ID
+		if partition != "" {
+			tblID = tbl.GetPartitionInfo().GetPartitionIDByName(partition)
+		}
+		startKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(tblID))
+		endKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(tblID+1))
+		keyRange := pdhttp.NewKeyRange(startKey, endKey)
+		return cli.On("GetRegionsReplicatedStateByKeyRange", mock.Anything, keyRange).
+			Return(state, nil).
+			Once()
+	}
+
+	// test for normal table
+	tk.MustExec("create table t1(a int) placement policy p1")
+	for _, ret := range []string{"PENDING", "INPROGRESS", "REPLICATED"} {
+		mockGetState("t1", "", ret)
+		expected := ret
+		if ret == "REPLICATED" {
+			expected = "SCHEDULED"
+		}
+		tk.MustQuery("show placement for table t1").Check(testkit.Rows("TABLE test.t1 FOLLOWERS=1 " + expected))
+		cli.AssertExpectations(t)
+	}
+
+	// test for partition table with placement settings in table
+	tk.MustExec("create table tp1 (id int) PLACEMENT POLICY p1 PARTITION BY RANGE (id) (" +
+		"PARTITION p0 VALUES LESS THAN (100)," +
+		"PARTITION p1 VALUES LESS THAN (1000)," +
+		"PARTITION p2 VALUES LESS THAN (10000)" +
+		")")
+	// All replicated
+	mockGetState("tp1", "", "REPLICATED")
+	mockGetState("tp1", "p0", "REPLICATED")
+	mockGetState("tp1", "p1", "REPLICATED")
+	mockGetState("tp1", "p2", "REPLICATED")
+	tk.MustQuery("show placement for table tp1").Check(testkit.Rows("TABLE test.tp1 FOLLOWERS=1 SCHEDULED"))
+	cli.AssertExpectations(t)
+	// one partition pending will cause tab in pending status
+	mockGetState("tp1", "", "REPLICATED")
+	mockGetState("tp1", "p0", "REPLICATED")
+	mockGetState("tp1", "p1", "PENDING")
+	tk.MustQuery("show placement for table tp1").Check(testkit.Rows("TABLE test.tp1 FOLLOWERS=1 PENDING"))
+	cli.AssertExpectations(t)
+	// show placement for partition
+	mockGetState("tp1", "p0", "PENDING")
+	mockGetState("tp1", "p1", "INPROGRESS")
+	mockGetState("tp1", "p2", "REPLICATED")
+	tk.MustQuery("show placement for table tp1 partition p0").Check(testkit.Rows("TABLE test.tp1 PARTITION p0 FOLLOWERS=1 PENDING"))
+	tk.MustQuery("show placement for table tp1 partition p1").Check(testkit.Rows("TABLE test.tp1 PARTITION p1 FOLLOWERS=1 INPROGRESS"))
+	tk.MustQuery("show placement for table tp1 partition p2").Check(testkit.Rows("TABLE test.tp1 PARTITION p2 FOLLOWERS=1 SCHEDULED"))
+	cli.AssertExpectations(t)
 }

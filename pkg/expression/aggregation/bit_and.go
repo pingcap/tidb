@@ -17,6 +17,7 @@ package aggregation
 import (
 	"math"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -26,20 +27,21 @@ type bitAndFunction struct {
 	aggFunction
 }
 
-func (bf *bitAndFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext {
-	evalCtx := bf.aggFunction.CreateContext(sc)
+func (bf *bitAndFunction) CreateContext(ctx expression.EvalContext) *AggEvaluateContext {
+	evalCtx := bf.aggFunction.CreateContext(ctx)
 	evalCtx.Value.SetUint64(math.MaxUint64)
 	return evalCtx
 }
 
-func (*bitAndFunction) ResetContext(_ *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+func (*bitAndFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
+	evalCtx.Ctx = ctx
 	evalCtx.Value.SetUint64(math.MaxUint64)
 }
 
 // Update implements Aggregation interface.
 func (bf *bitAndFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	a := bf.Args[0]
-	value, err := a.Eval(row)
+	value, err := a.Eval(evalCtx.Ctx, row)
 	if err != nil {
 		return err
 	}

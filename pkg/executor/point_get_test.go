@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -37,26 +36,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
-
-func TestForUpdateRetry(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	_, err := tk.Exec("drop table if exists t")
-	require.NoError(t, err)
-	tk.MustExec("create table t(pk int primary key, c int)")
-	tk.MustExec("insert into t values (1, 1), (2, 2)")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t where pk = 1 for update")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("update t set c = c + 1 where pk = 1")
-	tk.MustExec("update t set c = c + 1 where pk = 2")
-	tk.MustGetErrCode("commit", errno.ErrForUpdateCantRetry)
-}
 
 func TestSelectCheckVisibility(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -103,13 +82,13 @@ func TestReturnValues(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t where a = 'b' for update").Check(testkit.Rows("b 2"))
 	tid := external.GetTableByName(t, tk, "test", "t").Meta().ID
-	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewStringDatum("b"))
+	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewStringDatum("b"))
 	require.NoError(t, err)
 	pk := tablecodec.EncodeIndexSeekKey(tid, 1, idxVal)
 	txnCtx := tk.Session().GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(pk)
 	require.True(t, ok)
-	handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, false)
+	handle, err := tablecodec.DecodeHandleInIndexValue(val)
 	require.NoError(t, err)
 	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, handle)
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(rowKey)
@@ -247,39 +226,6 @@ func TestPartitionMemCacheReadLock(t *testing.T) {
 	tk.MustQuery("select _tidb_rowid from point where id = -2").Check(testkit.Rows("2"))
 
 	mustExecDDL(tk, t, "unlock tables", dom)
-}
-
-func TestPointGetWriteLock(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableTableLock = true
-	})
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
-	tk.MustExec("insert point values (1, 1, 'a')")
-	tk.MustExec("insert point values (2, 2, 'b')")
-	tk.MustExec("lock tables point write")
-	tk.MustQuery(`select * from point where id = 1;`).Check(testkit.Rows(
-		`1 1 a`,
-	))
-	rows := tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	require.Len(t, rows, 1)
-	explain := fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*num_rpc.*", explain)
-	tk.MustExec("unlock tables")
-
-	tk.MustExec("update point set c = 3 where id = 1")
-	tk.MustExec("lock tables point write")
-	tk.MustQuery(`select * from point where id = 1;`).Check(testkit.Rows(
-		`1 3 a`,
-	))
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	require.Len(t, rows, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*num_rpc.*", explain)
-	tk.MustExec("unlock tables")
 }
 
 func TestPointGetLockExistKey(t *testing.T) {

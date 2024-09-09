@@ -49,7 +49,6 @@ package expression
 import (
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -62,7 +61,7 @@ import (
 
 var builtinCaseWhenVec = template.Must(template.New("builtinCaseWhenVec").Parse(`
 {{ range .Sigs }}{{ with .Arg0 }}
-func (b *builtinCaseWhen{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCaseWhen{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if .Fixed }}
 	result.Resize{{ .TypeNameInColumn }}(n, false)
@@ -101,7 +100,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sess
 	return nil
 }
 
-func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	args, l := b.getArgs(), len(b.getArgs())
 	whens := make([]*chunk.Column, l/2)
@@ -112,8 +111,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionct
 	thensSlice := make([][]{{.TypeNameGo}}, l/2)
 	var eLseSlice []{{.TypeNameGo}}
 	{{- end }}
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 
 	for j := 0; j < l-1; j+=2 {
 		bufWhen, err := b.bufAllocator.get()
@@ -122,10 +120,10 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionct
 		}
 		defer b.bufAllocator.put(bufWhen)
 		err = args[j].VecEvalInt(ctx, input, bufWhen)
-		afterWarns := sc.WarningCount()
+		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
+				truncateWarnings(ctx, beforeWarns)
 			}
 			return b.fallbackEval{{ .TypeName }}(ctx, input, result)
 		}
@@ -138,10 +136,10 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionct
 		}
 		defer b.bufAllocator.put(bufThen)
 		err = args[j+1].VecEval{{ .TypeName }}(ctx, input, bufThen)
-		afterWarns = sc.WarningCount()
+		afterWarns = warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
+				truncateWarnings(ctx, beforeWarns)
 			}
 			return b.fallbackEval{{ .TypeName }}(ctx, input, result)
 		}
@@ -160,10 +158,10 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionct
 		}
 		defer b.bufAllocator.put(bufElse)
 		err = args[l-1].VecEval{{ .TypeName }}(ctx, input, bufElse)
-		afterWarns := sc.WarningCount()
+		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
+				truncateWarnings(ctx, beforeWarns)
 			}
 			return b.fallbackEval{{ .TypeName }}(ctx, input, result)
 		}
@@ -228,7 +226,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vectorized() bool {
 
 var builtinIfNullVec = template.Must(template.New("builtinIfNullVec").Parse(`
 {{ range .Sigs }}{{ with .Arg0 }}
-func (b *builtinIfNull{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIfNull{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if .Fixed }}
 	result.Resize{{ .TypeNameInColumn }}(n, false)
@@ -267,7 +265,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sessio
 	return nil
 }
 
-func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if .Fixed }}
 	if err := b.args[0].VecEval{{ .TypeName }}(ctx, input, result); err != nil {
@@ -278,13 +276,12 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, buf1)
-	afterWarns := sc.WarningCount()
+	afterWarns := warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {
 		if afterWarns > beforeWarns {
-      		sc.TruncateWarnings(int(beforeWarns))
+      		truncateWarnings(ctx, beforeWarns)
 		}
       	return b.fallbackEval{{ .TypeName }}(ctx, input, result)
    	}
@@ -310,13 +307,12 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, buf1)
-	afterWarns := sc.WarningCount()
+	afterWarns := warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {
 		if afterWarns > beforeWarns {
-      		sc.TruncateWarnings(int(beforeWarns))
+      		truncateWarnings(ctx, beforeWarns)
 		}
       	return b.fallbackEval{{ .TypeName }}(ctx, input,result)
    	}
@@ -344,7 +340,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vectorized() bool {
 
 var builtinIfVec = template.Must(template.New("builtinIfVec").Parse(`
 {{ range .Sigs }}{{ with .Arg0 }}
-func (b *builtinIf{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIf{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if .Fixed }}
 	result.Resize{{ .TypeNameInColumn }}(n, false)
@@ -383,7 +379,7 @@ func (b *builtinIf{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sessionctx
 	return nil
 }
 
-func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -393,8 +389,7 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.Cont
 	if err := b.args[0].VecEvalInt(ctx, input, buf0); err != nil {
 		return err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 {{- if .Fixed }}
 	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, result)
 {{- else }}
@@ -405,10 +400,10 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.Cont
 	defer b.bufAllocator.put(buf1)
 	err = b.args[1].VecEval{{ .TypeName }}(ctx, input, buf1)
 {{- end }}
-	afterWarns := sc.WarningCount()
+	afterWarns := warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {
 		if afterWarns > beforeWarns {
-      		sc.TruncateWarnings(int(beforeWarns))
+      		truncateWarnings(ctx, beforeWarns)
 		}
       	return b.fallbackEval{{ .TypeName }}(ctx, input, result)
    	}
@@ -419,10 +414,10 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.Cont
 	}
 	defer b.bufAllocator.put(buf2)
 	err = b.args[2].VecEval{{ .TypeName }}(ctx, input, buf2)
-	afterWarns = sc.WarningCount()
+	afterWarns = warningCount(ctx)
 	if err != nil || afterWarns > beforeWarns {
 		if afterWarns > beforeWarns {
-      		sc.TruncateWarnings(int(beforeWarns))
+      		truncateWarnings(ctx, beforeWarns)
 		}
       	return b.fallbackEval{{ .TypeName }}(ctx, input, result)
    	}
@@ -507,7 +502,7 @@ type controlIntGener struct {
 	defaultGener
 }
 
-func (g *controlIntGener) gen() interface{} {
+func (g *controlIntGener) gen() any {
 	if rand.Float64() < g.zeroRation {
 		return int64(0)
 	}

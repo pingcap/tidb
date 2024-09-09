@@ -15,28 +15,12 @@
 package placement
 
 import (
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/util/codec"
+	pd "github.com/tikv/pd/client/http"
 	"gopkg.in/yaml.v2"
-)
-
-// PeerRoleType is the expected peer type of the placement rule.
-type PeerRoleType string
-
-const (
-	// Voter can either match a leader peer or follower peer.
-	Voter PeerRoleType = "voter"
-	// Leader matches a leader.
-	Leader PeerRoleType = "leader"
-	// Follower matches a follower.
-	Follower PeerRoleType = "follower"
-	// Learner matches a learner.
-	Learner PeerRoleType = "learner"
 )
 
 const (
@@ -45,117 +29,9 @@ const (
 	attributeEvictLeader = "evict-leader"
 )
 
-// RuleGroupConfig defines basic config of rule group
-type RuleGroupConfig struct {
-	ID       string `json:"id"`
-	Index    int    `json:"index"`
-	Override bool   `json:"override"`
-}
-
-// Rule is the core placement rule struct. Check https://github.com/tikv/pd/blob/master/server/schedule/placement/rule.go.
-type Rule struct {
-	GroupID        string       `json:"group_id"`
-	ID             string       `json:"id"`
-	Index          int          `json:"index,omitempty"`
-	Override       bool         `json:"override,omitempty"`
-	StartKeyHex    string       `json:"start_key"`
-	EndKeyHex      string       `json:"end_key"`
-	Role           PeerRoleType `json:"role"`
-	Count          int          `json:"count"`
-	Constraints    Constraints  `json:"label_constraints,omitempty"`
-	LocationLabels []string     `json:"location_labels,omitempty"`
-}
-
-var _ json.Marshaler = (*TiFlashRule)(nil)
-var _ json.Unmarshaler = (*TiFlashRule)(nil)
-
-// TiFlashRule extends Rule with other necessary fields.
-type TiFlashRule struct {
-	GroupID        string
-	ID             string
-	Index          int
-	Override       bool
-	Role           PeerRoleType
-	Count          int
-	Constraints    Constraints
-	LocationLabels []string
-	IsolationLevel string
-	StartKey       []byte
-	EndKey         []byte
-}
-
-type tiFlashRule struct {
-	GroupID        string       `json:"group_id"`
-	ID             string       `json:"id"`
-	Index          int          `json:"index,omitempty"`
-	Override       bool         `json:"override,omitempty"`
-	Role           PeerRoleType `json:"role"`
-	Count          int          `json:"count"`
-	Constraints    Constraints  `json:"label_constraints,omitempty"`
-	LocationLabels []string     `json:"location_labels,omitempty"`
-	IsolationLevel string       `json:"isolation_level,omitempty"`
-	StartKeyHex    string       `json:"start_key"`
-	EndKeyHex      string       `json:"end_key"`
-}
-
-// MarshalJSON implements json.Marshaler interface for TiFlashRule.
-func (r *TiFlashRule) MarshalJSON() ([]byte, error) {
-	return json.Marshal(&tiFlashRule{
-		GroupID:        r.GroupID,
-		ID:             r.ID,
-		Index:          r.Index,
-		Override:       r.Override,
-		Role:           r.Role,
-		Count:          r.Count,
-		Constraints:    r.Constraints,
-		LocationLabels: r.LocationLabels,
-		IsolationLevel: r.IsolationLevel,
-		StartKeyHex:    hex.EncodeToString(codec.EncodeBytes(nil, r.StartKey)),
-		EndKeyHex:      hex.EncodeToString(codec.EncodeBytes(nil, r.EndKey)),
-	})
-}
-
-// UnmarshalJSON implements json.Unmarshaler interface for TiFlashRule.
-func (r *TiFlashRule) UnmarshalJSON(bytes []byte) error {
-	var rule tiFlashRule
-	if err := json.Unmarshal(bytes, &rule); err != nil {
-		return err
-	}
-	*r = TiFlashRule{
-		GroupID:        rule.GroupID,
-		ID:             rule.ID,
-		Index:          rule.Index,
-		Override:       rule.Override,
-		Role:           rule.Role,
-		Count:          rule.Count,
-		Constraints:    rule.Constraints,
-		LocationLabels: rule.LocationLabels,
-		IsolationLevel: rule.IsolationLevel,
-	}
-
-	startKey, err := hex.DecodeString(rule.StartKeyHex)
-	if err != nil {
-		return err
-	}
-
-	endKey, err := hex.DecodeString(rule.EndKeyHex)
-	if err != nil {
-		return err
-	}
-
-	_, r.StartKey, err = codec.DecodeBytes(startKey, nil)
-	if err != nil {
-		return err
-	}
-
-	_, r.EndKey, err = codec.DecodeBytes(endKey, nil)
-
-	return err
-}
-
 // RuleBuilder is used to build the Rules from a constraint string.
 type RuleBuilder struct {
-	role                        PeerRoleType
+	role                        pd.PeerRoleType
 	replicasNum                 uint64
 	skipCheckReplicasConsistent bool
 	constraintStr               string
@@ -167,7 +43,7 @@ func NewRuleBuilder() *RuleBuilder {
 }
 
 // SetRole sets the role of the rule.
-func (b *RuleBuilder) SetRole(role PeerRoleType) *RuleBuilder {
+func (b *RuleBuilder) SetRole(role pd.PeerRoleType) *RuleBuilder {
 	b.role = role
 	return b
 }
@@ -192,14 +68,14 @@ func (b *RuleBuilder) SetConstraintStr(constraintStr string) *RuleBuilder {
 
 // BuildRulesWithDictConstraintsOnly constructs []*Rule from a yaml-compatible representation of
 // 'dict' constraints.
-func (b *RuleBuilder) BuildRulesWithDictConstraintsOnly() ([]*Rule, error) {
+func (b *RuleBuilder) BuildRulesWithDictConstraintsOnly() ([]*pd.Rule, error) {
 	return newRulesWithDictConstraints(b.role, b.constraintStr)
 }
 
 // BuildRules constructs []*Rule from a yaml-compatible representation of
 // 'array' or 'dict' constraints.
 // Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
-func (b *RuleBuilder) BuildRules() ([]*Rule, error) {
+func (b *RuleBuilder) BuildRules() ([]*pd.Rule, error) {
 	rules, err := newRules(b.role, b.replicasNum, b.constraintStr)
 	// check if replicas is consistent
 	if err == nil {
@@ -219,11 +95,11 @@ func (b *RuleBuilder) BuildRules() ([]*Rule, error) {
 
 // NewRule constructs *Rule from role, count, and constraints. It is here to
 // consistent the behavior of creating new rules.
-func NewRule(role PeerRoleType, replicas uint64, cnst Constraints) *Rule {
-	return &Rule{
-		Role:        role,
-		Count:       int(replicas),
-		Constraints: cnst,
+func NewRule(role pd.PeerRoleType, replicas uint64, cnst []pd.LabelConstraint) *pd.Rule {
+	return &pd.Rule{
+		Role:             role,
+		Count:            int(replicas),
+		LabelConstraints: cnst,
 	}
 }
 
@@ -242,7 +118,7 @@ func getYamlMapFormatError(str string) error {
 // newRules constructs []*Rule from a yaml-compatible representation of
 // 'array' or 'dict' constraints.
 // Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
-func newRules(role PeerRoleType, replicas uint64, cnstr string) (rules []*Rule, err error) {
+func newRules(role pd.PeerRoleType, replicas uint64, cnstr string) (rules []*pd.Rule, err error) {
 	cnstbytes := []byte(cnstr)
 	constraints1, err1 := NewConstraintsFromYaml(cnstbytes)
 	if err1 == nil {
@@ -268,8 +144,8 @@ func newRules(role PeerRoleType, replicas uint64, cnstr string) (rules []*Rule, 
 
 // newRulesWithDictConstraints constructs []*Rule from a yaml-compatible representation of
 // 'dict' constraints.
-func newRulesWithDictConstraints(role PeerRoleType, cnstr string) ([]*Rule, error) {
-	rules := []*Rule{}
+func newRulesWithDictConstraints(role pd.PeerRoleType, cnstr string) ([]*pd.Rule, error) {
+	rules := []*pd.Rule{}
 	cnstbytes := []byte(cnstr)
 	constraints2 := map[string]int{}
 	err2 := yaml.UnmarshalStrict(cnstbytes, &constraints2)
@@ -301,16 +177,4 @@ func newRulesWithDictConstraints(role PeerRoleType, cnstr string) ([]*Rule, erro
 	}
 
 	return nil, fmt.Errorf("%w: should be [constraint1, ...] or {constraint1: cnt1, ...}, error %s, or any yaml compatible representation", ErrInvalidConstraintsFormat, err2)
-}
-
-// Clone is used to duplicate a RuleOp for safe modification.
-// Note that it is a shallow copy: Constraints is not cloned.
-func (r *Rule) Clone() *Rule {
-	n := &Rule{}
-	*n = *r
-	return n
-}
-
-func (r *Rule) String() string {
-	return fmt.Sprintf("%+v", *r)
 }

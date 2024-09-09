@@ -18,7 +18,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 var _ AutoIDAccessor = &autoIDAccessor{}
@@ -28,6 +28,7 @@ type AutoIDAccessor interface {
 	Get() (int64, error)
 	Put(val int64) error
 	Inc(step int64) (int64, error)
+	CopyTo(databaseID, tableID int64) error
 	Del() error
 }
 
@@ -54,17 +55,17 @@ func (a *autoIDAccessor) Put(val int64) error {
 // Inc implements the interface AutoIDAccessor.
 func (a *autoIDAccessor) Inc(step int64) (int64, error) {
 	m := a.m
+	// Note that the databaseID may not match the current table,
+	// it may come from the original schema id the table was created
+	// in, but to allow concurrent use across renames etc. we keep
+	// the full ID (Schema ID + Table ID) as is.
+	// Meaning we cannot verify only the schema id.
+	// And a rename may have happened before the first id is set,
+	// as well as dropping the original schema.
+	// So no Schema ID or Table ID verifications can be done.
 	dbKey := m.dbKey(a.databaseID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-	// Check if table exists.
-	tableKey := m.tableKey(a.tableID)
-	if err := m.checkTableExists(dbKey, tableKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	return m.txn.HInc(dbKey, a.idEncodeFn(a.tableID), step)
+	tblKey := a.idEncodeFn(a.tableID)
+	return m.txn.HInc(dbKey, tblKey, step)
 }
 
 // Del implements the interface AutoIDAccessor.
@@ -78,6 +79,17 @@ func (a *autoIDAccessor) Del() error {
 }
 
 var _ AutoIDAccessors = &autoIDAccessors{}
+
+// CopyTo implements the interface AutoIDAccessor.
+// It's used to copy the current meta to another table after rename table
+func (a *autoIDAccessor) CopyTo(databaseID, tableID int64) error {
+	curr, err := a.Get()
+	if err != nil {
+		return err
+	}
+	m := a.m
+	return m.txn.HSet(m.dbKey(databaseID), a.idEncodeFn(tableID), []byte(strconv.FormatInt(curr, 10)))
+}
 
 // AutoIDAccessors represents all the auto IDs of a table.
 type AutoIDAccessors interface {
@@ -191,26 +203,4 @@ type AutoIDGroup struct {
 	RowID       int64
 	IncrementID int64
 	RandomID    int64
-}
-
-// BackupAndRestoreAutoIDs changes the meta key-values to fetch & delete
-// all the auto IDs from an old table, and set them to a new table.
-func BackupAndRestoreAutoIDs(m *Meta, databaseID, tableID int64, newDatabaseID, newTableID int64) (err error) {
-	acc := NewAutoIDAccessors(m, databaseID, tableID)
-	autoIDs, err := acc.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	overwriteIDs := databaseID == newDatabaseID && tableID == newTableID
-	if !overwriteIDs {
-		err = acc.Del()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	err = NewAutoIDAccessors(m, newDatabaseID, newTableID).Put(autoIDs)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
 }

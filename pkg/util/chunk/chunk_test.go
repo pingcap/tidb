@@ -24,7 +24,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -544,8 +543,8 @@ func TestGetDecimalDatum(t *testing.T) {
 	decType := types.NewFieldType(mysql.TypeNewDecimal)
 	decType.SetFlen(4)
 	decType.SetDecimal(2)
-	sc := stmtctx.NewStmtCtx()
-	decDatum, err := datum.ConvertTo(sc.TypeCtx(), decType)
+	typeCtx := types.DefaultStmtNoWarningContext
+	decDatum, err := datum.ConvertTo(typeCtx, decType)
 	require.NoError(t, err)
 
 	chk := NewChunkWithCapacity([]*types.FieldType{decType}, 32)

@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime"
 	"slices"
 	"strconv"
 	"time"
@@ -33,17 +32,26 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lock"
+	tablelock "github.com/pingcap/tidb/pkg/lock/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -54,7 +62,7 @@ import (
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
-var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, types.NameSlice, error)
+var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error)
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
@@ -62,58 +70,34 @@ var AllowCartesianProduct = atomic.NewBool(true)
 // IsReadOnly check whether the ast.Node is a read only statement.
 var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
-const (
-	flagGcSubstitute uint64 = 1 << iota
-	flagPrunColumns
-	flagStabilizeResults
-	flagBuildKeyInfo
-	flagDecorrelate
-	flagSemiJoinRewrite
-	flagEliminateAgg
-	flagSkewDistinctAgg
-	flagEliminateProjection
-	flagMaxMinEliminate
-	flagConstantPropagation
-	flagPredicatePushDown
-	flagEliminateOuterJoin
-	flagPartitionProcessor
-	flagCollectPredicateColumnsPoint
-	flagPushDownAgg
-	flagDeriveTopNFromWindow
-	flagPredicateSimplification
-	flagPushDownTopN
-	flagSyncWaitStatsLoadPoint
-	flagJoinReOrder
-	flagPrunColumnsAgain
-	flagPushDownSequence
-	flagResolveExpand
-)
+const initialMaxCores uint64 = 10000
 
-var optRuleList = []logicalOptRule{
-	&gcSubstituter{},
-	&columnPruner{},
-	&resultReorder{},
-	&buildKeySolver{},
-	&decorrelateSolver{},
-	&semiJoinRewriter{},
-	&aggregationEliminator{},
-	&skewDistinctAggRewriter{},
-	&projectionEliminator{},
-	&maxMinEliminator{},
-	&constantPropagationSolver{},
-	&ppdSolver{},
-	&outerJoinEliminator{},
-	&partitionProcessor{},
-	&collectPredicateColumnsPoint{},
-	&aggregationPushDownSolver{},
-	&deriveTopNFromWindow{},
-	&predicateSimplification{},
-	&pushDownTopNOptimizer{},
-	&syncWaitStatsLoadPoint{},
-	&joinReOrderSolver{},
-	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
-	&pushDownSequenceSolver{},
-	&resolveExpand{},
+var optRuleList = []base.LogicalOptRule{
+	&GcSubstituter{},
+	&ColumnPruner{},
+	&ResultReorder{},
+	&rule.BuildKeySolver{},
+	&DecorrelateSolver{},
+	&SemiJoinRewriter{},
+	&AggregationEliminator{},
+	&SkewDistinctAggRewriter{},
+	&ProjectionEliminator{},
+	&MaxMinEliminator{},
+	&rule.ConstantPropagationSolver{},
+	&ConvertOuterToInnerJoin{},
+	&PPDSolver{},
+	&OuterJoinEliminator{},
+	&PartitionProcessor{},
+	&CollectPredicateColumnsPoint{},
+	&AggregationPushDownSolver{},
+	&DeriveTopNFromWindow{},
+	&PredicateSimplification{},
+	&PushDownTopNOptimizer{},
+	&SyncWaitStatsLoadPoint{},
+	&JoinReOrderSolver{},
+	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&PushDownSequenceSolver{},
+	&ResolveExpand{},
 }
 
 // Interaction Rule List
@@ -121,66 +105,18 @@ var optRuleList = []logicalOptRule{
 1. The related rule has been trigger and changed the plan
 2. The interaction rule is enabled
 */
-var optInteractionRuleList = map[logicalOptRule]logicalOptRule{}
-
-type logicalOptimizeOp struct {
-	// tracer is goring to track optimize steps during rule optimizing
-	tracer *tracing.LogicalOptimizeTracer
-}
-
-func defaultLogicalOptimizeOption() *logicalOptimizeOp {
-	return &logicalOptimizeOp{}
-}
-
-func (op *logicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.LogicalOptimizeTracer) *logicalOptimizeOp {
-	op.tracer = tracer
-	return op
-}
-
-func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, before LogicalPlan) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.BuildPlanTrace())
-}
-
-func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp string, reason, action func() string) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason(), action())
-}
-
-func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	op.tracer.RecordFinalLogicalPlan(final.BuildPlanTrace())
-}
-
-// logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
-type logicalOptRule interface {
-	/* Return Parameters:
-	1. LogicalPlan: The optimized LogicalPlan after rule is applied
-	2. bool: Used to judge whether the plan is changed or not by logical rule.
-		 If the plan is changed, it will return true.
-		 The default value is false. It means that no interaction rule will be triggered.
-	3. error: If there is error during the rule optimizer, it will be thrown
-	*/
-	optimize(context.Context, LogicalPlan, *logicalOptimizeOp) (LogicalPlan, bool, error)
-	name() string
-}
+var optInteractionRuleList = map[base.LogicalOptRule]base.LogicalOptRule{}
 
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
-func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, error) {
+func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, infoSchema infoschema.InfoSchema) (base.Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
-	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), infoSchema, utilhint.NewQBHintHandler(nil))
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, err
 	}
-	if logic, ok := p.(LogicalPlan); ok {
+	if logic, ok := p.(base.LogicalPlan); ok {
 		RecheckCTE(logic)
 	}
 	return p, err
@@ -190,15 +126,22 @@ func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node 
 func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs []visitInfo) error {
 	for _, v := range vs {
 		if v.privilege == mysql.ExtendedPriv {
-			if !pm.RequestDynamicVerification(activeRoles, v.dynamicPriv, v.dynamicWithGrant) {
+			hasPriv := false
+			for _, priv := range v.dynamicPrivs {
+				hasPriv = hasPriv || pm.RequestDynamicVerification(activeRoles, priv, v.dynamicWithGrant)
+				if hasPriv {
+					break
+				}
+			}
+			if !hasPriv {
 				if v.err == nil {
-					return ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPriv)
+					return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPrivs)
 				}
 				return v.err
 			}
 		} else if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
 			if v.err == nil {
-				return ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
+				return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
 			}
 			return v.err
 		}
@@ -209,7 +152,7 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 // VisitInfo4PrivCheck generates privilege check infos because privilege check of local temporary tables is different
 // with normal tables. `CREATE` statement needs `CREATE TEMPORARY TABLE` privilege from the database, and subsequent
 // statements do not need any privileges.
-func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo) (privVisitInfo []visitInfo) {
+func VisitInfo4PrivCheck(ctx context.Context, is infoschema.InfoSchema, node ast.Node, vs []visitInfo) (privVisitInfo []visitInfo) {
 	if node == nil {
 		return vs
 	}
@@ -231,7 +174,7 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 				}
 			} else {
 				// `CREATE TABLE LIKE tmp` or `CREATE TABLE FROM SELECT tmp` in the future.
-				if needCheckTmpTablePriv(is, v) {
+				if needCheckTmpTablePriv(ctx, is, v) {
 					privVisitInfo = append(privVisitInfo, v)
 				}
 			}
@@ -244,7 +187,7 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 			privVisitInfo = make([]visitInfo, 0, len(vs))
 			if stmt.TemporaryKeyword != ast.TemporaryLocal {
 				for _, v := range vs {
-					if needCheckTmpTablePriv(is, v) {
+					if needCheckTmpTablePriv(ctx, is, v) {
 						privVisitInfo = append(privVisitInfo, v)
 					}
 				}
@@ -256,7 +199,7 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 	default:
 		privVisitInfo = make([]visitInfo, 0, len(vs))
 		for _, v := range vs {
-			if needCheckTmpTablePriv(is, v) {
+			if needCheckTmpTablePriv(ctx, is, v) {
 				privVisitInfo = append(privVisitInfo, v)
 			}
 		}
@@ -264,10 +207,10 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 	return
 }
 
-func needCheckTmpTablePriv(is infoschema.InfoSchema, v visitInfo) bool {
+func needCheckTmpTablePriv(ctx context.Context, is infoschema.InfoSchema, v visitInfo) bool {
 	if v.db != "" && v.table != "" {
 		// Other statements on local temporary tables except `CREATE` do not check any privileges.
-		tb, err := is.TableByName(model.NewCIStr(v.db), model.NewCIStr(v.table))
+		tb, err := is.TableByName(ctx, pmodel.NewCIStr(v.db), pmodel.NewCIStr(v.table))
 		// If the table doesn't exist, we do not report errors to avoid leaking the existence of the table.
 		if err == nil && tb.Meta().TempTableType == model.TempTableLocal {
 			return false
@@ -277,7 +220,7 @@ func needCheckTmpTablePriv(is infoschema.InfoSchema, v visitInfo) bool {
 }
 
 // CheckTableLock checks the table lock.
-func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visitInfo) error {
+func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema, vs []visitInfo) error {
 	if !config.TableLockEnabled() {
 		return nil
 	}
@@ -296,7 +239,7 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	return nil
 }
 
-func checkStableResultMode(sctx sessionctx.Context) bool {
+func checkStableResultMode(sctx base.PlanContext) bool {
 	s := sctx.GetSessionVars()
 	st := s.StmtCtx
 	return s.EnableStableResultMode && (!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
@@ -307,33 +250,21 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 // The returned logical plan is necessary for generating plans for Common Table Expressions (CTEs).
 func doOptimize(
 	ctx context.Context,
-	sctx sessionctx.Context,
+	sctx base.PlanContext,
 	flag uint64,
-	logic LogicalPlan,
-) (LogicalPlan, PhysicalPlan, float64, error) {
+	logic base.LogicalPlan,
+) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
-	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
-	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
-		flag |= flagPrunColumnsAgain
-	}
-	if checkStableResultMode(logic.SCtx()) {
-		flag |= flagStabilizeResults
-	}
-	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
-		// When we use the straight Join Order hint, we should disable the join reorder optimization.
-		flag &= ^flagJoinReOrder
-	}
-	flag |= flagCollectPredicateColumnsPoint
-	flag |= flagSyncWaitStatsLoadPoint
+	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, nil, 0, err
 	}
 
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
-		return nil, nil, 0, errors.Trace(ErrCartesianProductUnsupported)
+		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
-	planCounter := PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
+	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
 	if planCounter == 0 {
 		planCounter = -1
 	}
@@ -341,10 +272,7 @@ func doOptimize(
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	finalPlan, err := postOptimize(ctx, sctx, physical)
-	if err != nil {
-		return nil, nil, 0, err
-	}
+	finalPlan := postOptimize(ctx, sctx, physical)
 
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
@@ -355,13 +283,33 @@ func doOptimize(
 	return logic, finalPlan, cost, nil
 }
 
+func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
+	// If there is something after flagPrunColumns, do FlagPruneColumnsAgain.
+	if flag&rule.FlagPruneColumns > 0 && flag-rule.FlagPruneColumns > rule.FlagPruneColumns {
+		flag |= rule.FlagPruneColumnsAgain
+	}
+	if checkStableResultMode(logic.SCtx()) {
+		flag |= rule.FlagStabilizeResults
+	}
+	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
+		// When we use the straight Join Order hint, we should disable the join reorder optimization.
+		flag &= ^rule.FlagJoinReOrder
+	}
+	flag |= rule.FlagCollectPredicateColumnsPoint
+	flag |= rule.FlagSyncWaitStatsLoadPoint
+	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
+	}
+	return flag
+}
+
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(
 	ctx context.Context,
-	sctx sessionctx.Context,
+	sctx base.PlanContext,
 	flag uint64,
-	logic LogicalPlan,
-) (PhysicalPlan, float64, error) {
+	logic base.LogicalPlan,
+) (base.PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -373,7 +321,7 @@ func DoOptimize(
 
 // refineCETrace will adjust the content of CETrace.
 // Currently, it will (1) deduplicate trace records, (2) sort the trace records (to make it easier in the tests) and (3) fill in the table name.
-func refineCETrace(sctx sessionctx.Context) {
+func refineCETrace(sctx base.PlanContext) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
 	slices.SortFunc(stmtCtx.OptimizerCETrace, func(i, j *tracing.CETraceRecord) int {
@@ -409,16 +357,16 @@ func refineCETrace(sctx sessionctx.Context) {
 }
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.
-func mergeContinuousSelections(p PhysicalPlan) {
+func mergeContinuousSelections(p base.PhysicalPlan) {
 	if sel, ok := p.(*PhysicalSelection); ok {
 		for {
-			childSel := sel.children[0]
+			childSel := sel.Children()[0]
 			tmp, ok := childSel.(*PhysicalSelection)
 			if !ok {
 				break
 			}
 			sel.Conditions = append(sel.Conditions, tmp.Conditions...)
-			sel.SetChild(0, tmp.children[0])
+			sel.SetChild(0, tmp.Children()[0])
 		}
 	}
 	for _, child := range p.Children() {
@@ -432,17 +380,14 @@ func mergeContinuousSelections(p PhysicalPlan) {
 	}
 }
 
-func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPlan) (PhysicalPlan, error) {
+func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan) base.PhysicalPlan {
 	// some cases from update optimize will require avoiding projection elimination.
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
-	err := prunePhysicalColumns(sctx, plan)
-	if err != nil {
-		return nil, err
-	}
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
+	plan = avoidColumnEvaluatorForProjBelowUnion(plan)
 	plan = enableParallelApply(sctx, plan)
 	handleFineGrainedShuffle(ctx, sctx, plan)
 	propagateProbeParents(plan, nil)
@@ -450,10 +395,10 @@ func postOptimize(ctx context.Context, sctx sessionctx.Context, plan PhysicalPla
 	disableReuseChunkIfNeeded(sctx, plan)
 	tryEnableLateMaterialization(sctx, plan)
 	generateRuntimeFilter(sctx, plan)
-	return plan, nil
+	return plan
 }
 
-func generateRuntimeFilter(sctx sessionctx.Context, plan PhysicalPlan) {
+func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsRuntimeFilterEnabled() || sctx.GetSessionVars().InRestrictedSQL {
 		return
 	}
@@ -469,144 +414,6 @@ func generateRuntimeFilter(sctx sessionctx.Context, plan PhysicalPlan) {
 		zap.Duration("Cost", time.Since(startRFGenerator)))
 }
 
-// prunePhysicalColumns currently only work for MPP(HashJoin<-Exchange).
-// Here add projection instead of pruning columns directly for safety considerations.
-// And projection is cheap here for it saves the network cost and work in memory.
-func prunePhysicalColumns(sctx sessionctx.Context, plan PhysicalPlan) error {
-	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
-			err := prunePhysicalColumnsInternal(sctx, tableReader.tablePlan)
-			if err != nil {
-				return err
-			}
-		}
-	} else {
-		for _, child := range plan.Children() {
-			return prunePhysicalColumns(sctx, child)
-		}
-	}
-	return nil
-}
-
-func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
-	for _, eqCond := range p.EqualConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
-	}
-	for _, neCond := range p.NAEqualConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(neCond)...)
-	}
-	for _, leftCond := range p.LeftConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(leftCond)...)
-	}
-	for _, rightCond := range p.RightConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(rightCond)...)
-	}
-	for _, otherCond := range p.OtherConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
-	}
-	lChild := p.children[0]
-	rChild := p.children[1]
-	for _, col := range parentUsedCols {
-		if lChild.Schema().Contains(col) {
-			leftCols = append(leftCols, col)
-		} else if rChild.Schema().Contains(col) {
-			rightCols = append(rightCols, col)
-		}
-	}
-	return leftCols, rightCols
-}
-
-func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
-	var err error
-	joinUsed := expression.GetUsedList(joinUsedCols, sender.Schema())
-	hashCols := make([]*expression.Column, len(sender.HashCols))
-	for i, mppCol := range sender.HashCols {
-		hashCols[i] = mppCol.Col
-	}
-	hashUsed := expression.GetUsedList(hashCols, sender.Schema())
-
-	needPrune := false
-	usedExprs := make([]expression.Expression, len(sender.Schema().Columns))
-	prunedSchema := sender.Schema().Clone()
-	for i := len(joinUsed) - 1; i >= 0; i-- {
-		usedExprs[i] = sender.Schema().Columns[i]
-		if !joinUsed[i] && !hashUsed[i] {
-			needPrune = true
-			usedExprs = append(usedExprs[:i], usedExprs[i+1:]...)
-			prunedSchema.Columns = append(prunedSchema.Columns[:i], prunedSchema.Columns[i+1:]...)
-		}
-	}
-
-	if needPrune && len(sender.children) > 0 {
-		ch := sender.children[0]
-		proj := PhysicalProjection{
-			Exprs: usedExprs,
-		}.Init(sctx, ch.StatsInfo(), ch.SelectBlockOffset())
-
-		proj.SetSchema(prunedSchema)
-		proj.SetChildren(ch)
-		sender.children[0] = proj
-
-		// Resolve Indices from bottom to up
-		err = proj.ResolveIndicesItself()
-		if err != nil {
-			return err
-		}
-		err = sender.ResolveIndicesItself()
-		if err != nil {
-			return err
-		}
-		err = hashJoin.ResolveIndicesItself()
-		if err != nil {
-			return err
-		}
-	}
-	return err
-}
-
-func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) error {
-	var err error
-	switch x := plan.(type) {
-	case *PhysicalHashJoin:
-		schemaColumns := x.Schema().Clone().Columns
-		leftCols, rightCols := x.extractUsedCols(schemaColumns)
-		matchPattern := false
-		for i := 0; i <= 1; i++ {
-			// Pattern: HashJoin <- ExchangeReceiver <- ExchangeSender
-			matchPattern = false
-			var exchangeSender *PhysicalExchangeSender
-			if receiver, ok := x.children[i].(*PhysicalExchangeReceiver); ok {
-				exchangeSender, matchPattern = receiver.children[0].(*PhysicalExchangeSender)
-			}
-
-			if matchPattern {
-				if i == 0 {
-					err = prunePhysicalColumnForHashJoinChild(sctx, x, leftCols, exchangeSender)
-				} else {
-					err = prunePhysicalColumnForHashJoinChild(sctx, x, rightCols, exchangeSender)
-				}
-				if err != nil {
-					return nil
-				}
-			}
-
-			/// recursively travel the physical plan
-			err = prunePhysicalColumnsInternal(sctx, x.children[i])
-			if err != nil {
-				return nil
-			}
-		}
-	default:
-		for _, child := range x.Children() {
-			err = prunePhysicalColumnsInternal(sctx, child)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 // tryEnableLateMaterialization tries to push down some filter conditions to the table scan operator
 // @brief: push down some filter conditions to the table scan operator
 // @param: sctx: session context
@@ -616,14 +423,14 @@ func prunePhysicalColumnsInternal(sctx sessionctx.Context, plan PhysicalPlan) er
 //   - Only the filter conditions with high selectivity should be pushed down.
 //   - The filter conditions which contain heavy cost functions should not be pushed down.
 //   - Filter conditions that apply to the same column are either pushed down or not pushed down at all.
-func tryEnableLateMaterialization(sctx sessionctx.Context, plan PhysicalPlan) {
+func tryEnableLateMaterialization(sctx base.PlanContext, plan base.PhysicalPlan) {
 	// check if EnableLateMaterialization is set
 	if sctx.GetSessionVars().EnableLateMaterialization && !sctx.GetSessionVars().TiFlashFastScan {
 		predicatePushDownToTableScan(sctx, plan)
 	}
 	if sctx.GetSessionVars().EnableLateMaterialization && sctx.GetSessionVars().TiFlashFastScan {
 		sc := sctx.GetSessionVars().StmtCtx
-		sc.AppendWarning(errors.New("FastScan is not compatible with late materialization, late materialization is disabled"))
+		sc.AppendWarning(errors.NewNoStackError("FastScan is not compatible with late materialization, late materialization is disabled"))
 	}
 }
 
@@ -657,7 +464,7 @@ countStarRewrite: datasource pick k1 instead of row_id
 
 Rewritten Query: select count(k1) from table
 */
-func countStarRewrite(plan PhysicalPlan) {
+func countStarRewrite(plan base.PhysicalPlan) {
 	countStarRewriteInternal(plan)
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
 		countStarRewrite(tableReader.tablePlan)
@@ -668,7 +475,7 @@ func countStarRewrite(plan PhysicalPlan) {
 	}
 }
 
-func countStarRewriteInternal(plan PhysicalPlan) {
+func countStarRewriteInternal(plan base.PhysicalPlan) {
 	// match pattern any agg(count(constant)) -> tablefullscan(tiflash)
 	var physicalAgg *basePhysicalAgg
 	switch x := plan.(type) {
@@ -679,7 +486,7 @@ func countStarRewriteInternal(plan PhysicalPlan) {
 	default:
 		return
 	}
-	if len(physicalAgg.GroupByItems) > 0 || len(physicalAgg.children) != 1 {
+	if len(physicalAgg.GroupByItems) > 0 || len(physicalAgg.Children()) != 1 {
 		return
 	}
 	for _, aggFunc := range physicalAgg.AggFuncs {
@@ -746,7 +553,7 @@ func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs [
 // < 0: fine grained shuffle is disabled.
 // > 0: use TiFlashFineGrainedShuffleStreamCount as stream count.
 // == 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise set status as uninitialized.
-func handleFineGrainedShuffle(ctx context.Context, sctx sessionctx.Context, plan PhysicalPlan) {
+func handleFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan) {
 	streamCount := sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
 	if streamCount < 0 {
 		return
@@ -766,10 +573,10 @@ func handleFineGrainedShuffle(ctx context.Context, sctx sessionctx.Context, plan
 	setupFineGrainedShuffle(ctx, sctx, &streamCountInfo, &tiflashServerCountInfo, plan)
 }
 
-func setupFineGrainedShuffle(ctx context.Context, sctx sessionctx.Context, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan PhysicalPlan) {
+func setupFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan base.PhysicalPlan) {
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
 		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
-			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*basePhysicalPlan, 1)}
+			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*physicalop.BasePhysicalPlan, 1)}
 			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.tablePlan, &helper, streamCountInfo, tiflashServerCountInfo)
 		}
 	} else {
@@ -790,7 +597,7 @@ const (
 
 type fineGrainedShuffleHelper struct {
 	shuffleTarget shuffleTarget
-	plans         []*basePhysicalPlan
+	plans         []*physicalop.BasePhysicalPlan
 	joinKeysCount int
 }
 
@@ -813,14 +620,12 @@ func (h *fineGrainedShuffleHelper) clear() {
 	h.joinKeysCount = 0
 }
 
-func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysicalPlan) {
+func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *physicalop.BasePhysicalPlan) {
 	h.shuffleTarget = t
 	h.plans = append(h.plans, p)
 }
 
-// calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers, and divide by 2
-// return false, 0 if any err happens
-func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx sessionctx.Context, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
 		if err == nil {
@@ -829,11 +634,10 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 			failpoint.Return(false, 0)
 		}
 	})
-	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
+	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
 	if err != nil {
 		return false, 0
 	}
-	var initialMaxCores uint64 = 10000
 	var minLogicalCores = initialMaxCores // set to a large enough value here
 	for _, row := range rows {
 		if row[4].GetString() == "cpu-logical-cores" {
@@ -844,20 +648,25 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 		}
 	}
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
-	if minLogicalCores > 1 && minLogicalCores != initialMaxCores {
-		if runtime.GOARCH == "amd64" {
-			// In most x86-64 platforms, `Thread(s) per core` is 2
-			return true, minLogicalCores / 2
-		}
-		// ARM cpus don't implement Hyper-threading.
+	return true, minLogicalCores
+}
+
+// calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers
+// return false, 0 if any err happens
+func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+	valid, minLogicalCores := getTiFlashServerMinLogicalCores(ctx, sctx, serversInfo)
+	if !valid {
+		return false, 0
+	}
+	if minLogicalCores != initialMaxCores {
+		// use logical core number as the stream count, the same as TiFlash's default max_threads: https://github.com/pingcap/tiflash/blob/v7.5.0/dbms/src/Interpreters/SettingsCommon.h#L166
 		return true, minLogicalCores
-		// Other platforms are too rare to consider
 	}
 
 	return false, 0
 }
 
-func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Context, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, exchangeColCount int, splitLimit uint64) (applyFlag bool, streamCount uint64) {
+func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, exchangeColCount int, splitLimit uint64) (applyFlag bool, streamCount uint64) {
 	switch (*streamCountInfo).itemStatus {
 	case unInitialized:
 		streamCount = 4 // assume 8c node in cluster as minimal, stream count is 8 / 2 = 4
@@ -870,7 +679,7 @@ func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Cont
 	var tiflashServerCount uint64
 	switch (*tiflashServerCountInfo).itemStatus {
 	case unInitialized:
-		serversInfo, err := infoschema.GetTiFlashServerInfo(sctx)
+		serversInfo, err := infoschema.GetTiFlashServerInfo(sctx.GetStore())
 		if err != nil {
 			(*tiflashServerCountInfo).itemStatus = failed
 			(*tiflashServerCountInfo).itemValue = 0
@@ -898,7 +707,7 @@ func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Cont
 		return true, streamCount
 	}
 
-	serversInfo, err := infoschema.GetTiFlashServerInfo(sctx)
+	serversInfo, err := infoschema.GetTiFlashServerInfo(sctx.GetStore())
 	if err != nil {
 		(*tiflashServerCountInfo).itemStatus = failed
 		(*tiflashServerCountInfo).itemValue = 0
@@ -917,7 +726,7 @@ func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx sessionctx.Cont
 	return applyFlag, streamCount
 }
 
-func inferFineGrainedShuffleStreamCountForWindow(ctx context.Context, sctx sessionctx.Context, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) (streamCount uint64) {
+func inferFineGrainedShuffleStreamCountForWindow(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) (streamCount uint64) {
 	switch (*streamCountInfo).itemStatus {
 	case unInitialized:
 		if (*tiflashServerCountInfo).itemStatus == failed {
@@ -926,7 +735,7 @@ func inferFineGrainedShuffleStreamCountForWindow(ctx context.Context, sctx sessi
 			break
 		}
 
-		serversInfo, err := infoschema.GetTiFlashServerInfo(sctx)
+		serversInfo, err := infoschema.GetTiFlashServerInfo(sctx.GetStore())
 		if err != nil {
 			setDefaultStreamCount(streamCountInfo)
 			streamCount = (*streamCountInfo).itemValue
@@ -963,40 +772,40 @@ func setDefaultStreamCount(streamCountInfo *tiflashClusterInfo) {
 	(*streamCountInfo).itemValue = variable.DefStreamCountWhenMaxThreadsNotSet
 }
 
-func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Context, plan PhysicalPlan, helper *fineGrainedShuffleHelper, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) {
+func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan, helper *fineGrainedShuffleHelper, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) {
 	switch x := plan.(type) {
 	case *PhysicalWindow:
 		// Do not clear the plans because window executor will keep the data partition.
 		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
 		// which will break data partition.
-		helper.updateTarget(window, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		helper.updateTarget(window, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalSort:
 		if x.IsPartialSort {
 			// Partial sort will keep the data partition.
-			helper.plans = append(helper.plans, &x.basePhysicalPlan)
+			helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		} else {
 			// Global sort will break the data partition.
 			helper.clear()
 		}
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalSelection:
-		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalProjection:
-		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalExchangeReceiver:
-		helper.plans = append(helper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalHashAgg:
 		// Todo: allow hash aggregation's output still benefits from fine grained shuffle
-		aggHelper := fineGrainedShuffleHelper{shuffleTarget: hashAgg, plans: []*basePhysicalPlan{}}
-		aggHelper.plans = append(aggHelper.plans, &x.basePhysicalPlan)
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], &aggHelper, streamCountInfo, tiflashServerCountInfo)
+		aggHelper := fineGrainedShuffleHelper{shuffleTarget: hashAgg, plans: []*physicalop.BasePhysicalPlan{}}
+		aggHelper.plans = append(aggHelper.plans, &x.BasePhysicalPlan)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], &aggHelper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalHashJoin:
-		child0 := x.children[0]
-		child1 := x.children[1]
+		child0 := x.Children()[0]
+		child1 := x.Children()[1]
 		buildChild := child0
 		probChild := child1
 		joinKeys := x.LeftJoinKeys
@@ -1007,12 +816,12 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 			probChild = child0
 		}
 		if len(joinKeys) > 0 { // Not cross join
-			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
-			buildHelper.plans = append(buildHelper.plans, &x.basePhysicalPlan)
+			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*physicalop.BasePhysicalPlan{}}
+			buildHelper.plans = append(buildHelper.plans, &x.BasePhysicalPlan)
 			buildHelper.joinKeysCount = len(joinKeys)
 			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		} else {
-			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
+			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*physicalop.BasePhysicalPlan{}}
 			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		}
 		// don't apply fine grained shuffle for probe side
@@ -1053,10 +862,10 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 		}
 		// exchange sender will break the data partition.
 		helper.clear()
-		setupFineGrainedShuffleInternal(ctx, sctx, x.children[0], helper, streamCountInfo, tiflashServerCountInfo)
+		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	default:
 		for _, child := range x.Children() {
-			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
+			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*physicalop.BasePhysicalPlan{}}
 			setupFineGrainedShuffleInternal(ctx, sctx, child, &childHelper, streamCountInfo, tiflashServerCountInfo)
 		}
 	}
@@ -1065,8 +874,8 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 // propagateProbeParents doesn't affect the execution plan, it only sets the probeParents field of a PhysicalPlan.
 // It's for handling the inconsistency between row count in the statsInfo and the recorded actual row count. Please
 // see comments in PhysicalPlan for details.
-func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
-	plan.setProbeParents(probeParents)
+func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalPlan) {
+	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
 	case *PhysicalApply, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
 		if join, ok := plan.(interface{ getInnerChildIdx() int }); ok {
@@ -1074,7 +883,7 @@ func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
 
 			// The core logic of this method:
 			// Record every Apply and Index Join we met, record it in a slice, and set it in their inner children.
-			newParents := make([]PhysicalPlan, len(probeParents), len(probeParents)+1)
+			newParents := make([]base.PhysicalPlan, len(probeParents), len(probeParents)+1)
 			copy(newParents, probeParents)
 			newParents = append(newParents, plan)
 			propagateProbeParents(plan.Children()[join.getInnerChildIdx()], newParents)
@@ -1098,7 +907,7 @@ func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
 	}
 }
 
-func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
+func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.PhysicalPlan {
 	if !sctx.GetSessionVars().EnableParallelApply {
 		return plan
 	}
@@ -1111,14 +920,17 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 	if apply, ok := plan.(*PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
 		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
-		_, err := SafeClone(apply.Children()[apply.InnerChildIdx])
+		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
 		supportClone := err == nil // limitation 2
 		if noOrder && supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
 		} else {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Some apply operators can not be executed in parallel"))
+			if err != nil {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
+			} else {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Some apply operators can not be executed in parallel"))
+			}
 		}
-
 		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
 		// so we only invoke recursively for its outer child.
 		apply.SetChild(outerIdx, enableParallelApply(sctx, apply.Children()[outerIdx]))
@@ -1131,29 +943,29 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 }
 
 // LogicalOptimizeTest is just exported for test.
-func LogicalOptimizeTest(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
+func LogicalOptimizeTest(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
 	return logicalOptimize(ctx, flag, logic)
 }
 
-func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
+func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	opt := defaultLogicalOptimizeOption()
+	opt := optimizetrace.DefaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {
 		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
 		tracer := &tracing.LogicalOptimizeTracer{
 			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
 		}
-		opt = opt.withEnableOptimizeTracer(tracer)
+		opt = opt.WithEnableOptimizeTracer(tracer)
 		defer func() {
 			vars.StmtCtx.OptimizeTracer.Logical = tracer
 		}()
 	}
 	var err error
-	var againRuleList []logicalOptRule
+	var againRuleList []base.LogicalOptRule
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
@@ -1161,9 +973,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
+		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		var planChanged bool
-		logic, planChanged, err = rule.optimize(ctx, logic, opt)
+		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -1176,28 +988,28 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 
 	// Trigger the interaction rule
 	for i, rule := range againRuleList {
-		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
-		logic, _, err = rule.optimize(ctx, logic, opt)
+		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
+		logic, _, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	opt.recordFinalLogicalPlan(logic)
+	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace)
 	return logic, err
 }
 
-func isLogicalRuleDisabled(r logicalOptRule) bool {
-	disabled := DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(r.name())
+func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
+	disabled := DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(r.Name())
 	return disabled
 }
 
-func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan PhysicalPlan, cost float64, err error) {
+func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	if _, err := logic.recursiveDeriveStats(nil); err != nil {
+	if _, err := logic.RecursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
 
@@ -1208,14 +1020,14 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	opt := defaultPhysicalOptimizeOption()
+	opt := optimizetrace.DefaultPhysicalOptimizeOption()
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
 		tracer := &tracing.PhysicalOptimizeTracer{
 			PhysicalPlanCostDetails: make(map[string]*tracing.PhysicalPlanCostDetail),
 			Candidates:              make(map[int]*tracing.CandidatePlanTrace),
 		}
-		opt = opt.withEnableOptimizeTracer(tracer)
+		opt = opt.WithEnableOptimizeTracer(tracer)
 		defer func() {
 			r := recover()
 			if r != nil {
@@ -1229,35 +1041,51 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 	}
 
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	t, _, err := logic.findBestTask(prop, planCounter, opt)
+	t, _, err := logic.FindBestTask(prop, planCounter, opt)
 	if err != nil {
 		return nil, 0, err
 	}
 	if *planCounter > 0 {
-		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range"))
+		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The parameter of nth_plan() is out of range"))
 	}
-	if t.invalid() {
+	if t.Invalid() {
 		errMsg := "Can't find a proper physical plan for this query"
 		if config.GetGlobalConfig().DisaggregatedTiFlash && !logic.SCtx().GetSessionVars().IsMPPAllowed() {
 			errMsg += ": cop and batchCop are not allowed in disaggregated tiflash mode, you should turn on tidb_allow_mpp switch"
 		}
-		return nil, 0, ErrInternal.GenWithStackByArgs(errMsg)
+		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
 
-	if err = t.plan().ResolveIndices(); err != nil {
+	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = getPlanCost(t.plan(), property.RootTaskType, NewDefaultPlanCostOption())
-	return t.plan(), cost, err
+	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+	return t.Plan(), cost, err
+}
+
+// avoidColumnEvaluatorForProjBelowUnion sets AvoidColumnEvaluator to false for the projection operator which is a child of Union operator.
+func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPlan {
+	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
+		x, ok := p.(*PhysicalUnionAll)
+		if ok {
+			for _, child := range x.Children() {
+				if proj, ok := child.(*PhysicalProjection); ok {
+					proj.AvoidColumnEvaluator = true
+				}
+			}
+		}
+		return true
+	})
+	return p
 }
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.
-func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) PhysicalPlan {
+func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.PhysicalPlan {
 	var pointGet *PointGetPlan
 	var batchPointGet *BatchPointGetPlan
 	var physLock *PhysicalLock
 	var unionScan *PhysicalUnionScan
-	iteratePhysicalPlan(p, func(p PhysicalPlan) bool {
+	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
 		if len(p.Children()) > 1 {
 			return false
 		}
@@ -1292,7 +1120,7 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 			batchPointGet.LockWaitTime = waitTime
 		}
 	}
-	return transformPhysicalPlan(p, func(p PhysicalPlan) PhysicalPlan {
+	return transformPhysicalPlan(p, func(p base.PhysicalPlan) base.PhysicalPlan {
 		if p == physLock {
 			return p.Children()[0]
 		}
@@ -1303,7 +1131,7 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 	})
 }
 
-func iteratePhysicalPlan(p PhysicalPlan, f func(p PhysicalPlan) bool) {
+func iteratePhysicalPlan(p base.PhysicalPlan, f func(p base.PhysicalPlan) bool) {
 	if !f(p) {
 		return
 	}
@@ -1312,16 +1140,16 @@ func iteratePhysicalPlan(p PhysicalPlan, f func(p PhysicalPlan) bool) {
 	}
 }
 
-func transformPhysicalPlan(p PhysicalPlan, f func(p PhysicalPlan) PhysicalPlan) PhysicalPlan {
+func transformPhysicalPlan(p base.PhysicalPlan, f func(p base.PhysicalPlan) base.PhysicalPlan) base.PhysicalPlan {
 	for i, child := range p.Children() {
 		p.Children()[i] = transformPhysicalPlan(child, f)
 	}
 	return f(p)
 }
 
-func existsCartesianProduct(p LogicalPlan) bool {
-	if join, ok := p.(*LogicalJoin); ok && len(join.EqualConditions) == 0 {
-		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
+func existsCartesianProduct(p base.LogicalPlan) bool {
+	if join, ok := p.(*logicalop.LogicalJoin); ok && len(join.EqualConditions) == 0 {
+		return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
 	}
 	for _, child := range p.Children() {
 		if existsCartesianProduct(child) {
@@ -1334,14 +1162,7 @@ func existsCartesianProduct(p LogicalPlan) bool {
 // DefaultDisabledLogicalRulesList indicates the logical rules which should be banned.
 var DefaultDisabledLogicalRulesList *atomic.Value
 
-func init() {
-	expression.EvalAstExpr = evalAstExpr
-	expression.RewriteAstExpr = rewriteAstExpr
-	DefaultDisabledLogicalRulesList = new(atomic.Value)
-	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
-}
-
-func disableReuseChunkIfNeeded(sctx sessionctx.Context, plan PhysicalPlan) {
+func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsAllocValid() {
 		return
 	}
@@ -1356,7 +1177,7 @@ func disableReuseChunkIfNeeded(sctx sessionctx.Context, plan PhysicalPlan) {
 }
 
 // checkOverlongColType Check if read field type is long field.
-func checkOverlongColType(sctx sessionctx.Context, plan PhysicalPlan) bool {
+func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
 	if plan == nil {
 		return false
 	}
@@ -1379,7 +1200,7 @@ func existsOverlongType(schema *expression.Schema) bool {
 	for _, column := range schema.Columns {
 		switch column.RetType.GetType() {
 		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-			mysql.TypeBlob, mysql.TypeJSON:
+			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
 			return true
 		case mysql.TypeVarString, mysql.TypeVarchar:
 			// if the column is varchar and the length of

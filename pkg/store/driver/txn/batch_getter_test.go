@@ -16,6 +16,7 @@ package txn
 import (
 	"context"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
@@ -41,7 +42,7 @@ func TestBufferBatchGetter(t *testing.T) {
 	require.NoError(t, buffer.Set(ka, []byte("a2")))
 	require.NoError(t, buffer.Delete(kb))
 
-	batchGetter := NewBufferBatchGetter(buffer, middle, snap)
+	batchGetter := NewBufferBatchGetter(&mockBufferBatchGetterStore{buffer}, middle, snap)
 	result, err := batchGetter.BatchGet(context.Background(), []kv.Key{ka, kb, kc, kd})
 	require.NoError(t, err)
 	require.Len(t, result, 3)
@@ -104,4 +105,13 @@ func (s *mockBatchGetterStore) Set(k kv.Key, v []byte) error {
 
 func (s *mockBatchGetterStore) Delete(k kv.Key) error {
 	return s.Set(k, []byte{})
+}
+
+type mockBufferBatchGetterStore struct {
+	*mockBatchGetterStore
+}
+
+func (s *mockBufferBatchGetterStore) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	kvKeys := *(*[]kv.Key)(unsafe.Pointer(&keys))
+	return s.mockBatchGetterStore.BatchGet(ctx, kvKeys)
 }

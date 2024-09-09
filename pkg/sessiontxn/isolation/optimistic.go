@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -109,7 +110,7 @@ func (p *OptimisticTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
 // It will use MaxTS as the startTS in autocommit txn for some plans.
-func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) (err error) {
+func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err error) {
 	if p.optimizeWithMaxTS || p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
 	}
@@ -120,7 +121,7 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) 
 		return nil
 	}
 
-	realPlan, ok := plan.(plannercore.Plan)
+	realPlan, ok := plan.(base.Plan)
 	if !ok {
 		return nil
 	}
@@ -129,10 +130,7 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) 
 		realPlan = execute.Plan
 	}
 
-	ok, err = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx, realPlan)
-	if err != nil {
-		return err
-	}
+	ok = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx.GetSessionVars(), realPlan)
 
 	if ok {
 		sessVars := p.sctx.GetSessionVars()

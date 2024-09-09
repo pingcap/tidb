@@ -19,21 +19,21 @@ import (
 	"encoding/json"
 	"strconv"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-var _ dispatcher.CleanUpRoutine = (*ImportCleanUpS3)(nil)
+var _ scheduler.CleanUpRoutine = (*ImportCleanUpS3)(nil)
 
-// ImportCleanUpS3 implements dispatcher.CleanUpRoutine.
+// ImportCleanUpS3 implements scheduler.CleanUpRoutine.
 type ImportCleanUpS3 struct {
 }
 
-func newImportCleanUpS3() dispatcher.CleanUpRoutine {
+func newImportCleanUpS3() scheduler.CleanUpRoutine {
 	return &ImportCleanUpS3{}
 }
 
@@ -73,5 +73,5 @@ func (*ImportCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 }
 
 func init() {
-	dispatcher.RegisterDispatcherCleanUpFactory(proto.ImportInto, newImportCleanUpS3)
+	scheduler.RegisterSchedulerCleanUpFactory(proto.ImportInto, newImportCleanUpS3)
 }

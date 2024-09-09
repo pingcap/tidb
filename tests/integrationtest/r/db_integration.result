@@ -1,0 +1,33 @@
+DROP TABLE IF EXISTS u1,u2;
+CREATE TABLE u1 (id INT PRIMARY KEY, c1 VARCHAR(36) DEFAULT UUID());
+CREATE TABLE u2 (id INT PRIMARY KEY, c1 VARBINARY(16) DEFAULT UUID_TO_BIN(UUID()));
+ALTER TABLE u1 ADD COLUMN c2 VARCHAR(36) DEFAULT (UUID());
+Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
+ALTER TABLE u2 ADD COLUMN c2 VARBINARY(16) DEFAULT UUID_TO_BIN(UUID(), 1);
+Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
+INSERT INTO u1(id) VALUES (1),(2),(3);
+INSERT INTO u2(id) VALUES (1),(2),(3);
+SELECT IS_UUID(c1) FROM u1;
+IS_UUID(c1)
+1
+1
+1
+SELECT IS_UUID(BIN_TO_UUID(c1)) FROM u2;
+IS_UUID(BIN_TO_UUID(c1))
+1
+1
+1
+SHOW CREATE TABLE u1;
+Table	Create Table
+u1	CREATE TABLE `u1` (
+  `id` int(11) NOT NULL,
+  `c1` varchar(36) DEFAULT (uuid()),
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+SHOW CREATE TABLE u2;
+Table	Create Table
+u2	CREATE TABLE `u2` (
+  `id` int(11) NOT NULL,
+  `c1` varbinary(16) DEFAULT (uuid_to_bin(uuid())),
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin

@@ -6,10 +6,11 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/history",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/statistics/handle/cache",
         "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",

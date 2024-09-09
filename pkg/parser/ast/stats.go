@@ -35,8 +35,9 @@ type AnalyzeTableStmt struct {
 	AnalyzeOpts    []AnalyzeOpt
 
 	// IndexFlag is true when we only analyze indices for a table.
-	IndexFlag   bool
-	Incremental bool
+	IndexFlag       bool
+	Incremental     bool
+	NoWriteToBinLog bool
 	// HistogramOperation is set in "ANALYZE TABLE ... UPDATE/DROP HISTOGRAM ..." statement.
 	HistogramOperation HistogramOperationType
 	// ColumnNames indicate the columns whose statistics need to be collected.
@@ -97,10 +98,14 @@ type AnalyzeOpt struct {
 
 // Restore implements Node interface.
 func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ANALYZE ")
+	if n.NoWriteToBinLog {
+		ctx.WriteKeyWord("NO_WRITE_TO_BINLOG ")
+	}
 	if n.Incremental {
-		ctx.WriteKeyWord("ANALYZE INCREMENTAL TABLE ")
+		ctx.WriteKeyWord("INCREMENTAL TABLE ")
 	} else {
-		ctx.WriteKeyWord("ANALYZE TABLE ")
+		ctx.WriteKeyWord("TABLE ")
 	}
 	for i, table := range n.TableNames {
 		if i != 0 {

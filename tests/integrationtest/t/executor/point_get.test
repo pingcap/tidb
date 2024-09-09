@@ -289,8 +289,8 @@ create table t1 (a int, b decimal(10,0), c int, primary key(a,b));
 create table t2 (a varchar(20), b int, primary key(a), unique key(b));
 insert into t1 values(1,1,1),(2,2,2),(3,3,3);
 insert into t2 values('111',1),('222',2),('333',3);
-analyze table t1;
-analyze table t2;
+analyze table t1 all columns;
+analyze table t2 all columns;
 explain format = 'brief' select * from t1 where a = 1 and b = 1 and c = 1;
 --sorted_result
 select * from t1 where a = 1 and b = 1 and c = 1;
@@ -335,3 +335,22 @@ connection default;
 disconnect conn1;
 execute s;
 set @@tidb_enable_plan_replayer_capture=default;
+
+# TestPointGetWriteLock
+drop table if exists point;
+create table point (id int primary key, c int, d varchar(10), unique c_d (c, d));
+insert point values (1, 1, 'a');
+insert point values (2, 2, 'b');
+lock tables point write;
+select * from point where id = 1;
+--replace_regex /.*num_rpc.*/.*num_rpc.*/
+explain analyze select * from point where id = 1;
+unlock tables;
+
+update point set c = 3 where id = 1;
+lock tables point write;
+select * from point where id = 1;
+--replace_regex /.*num_rpc.*/.*num_rpc.*/
+explain analyze select * from point where id = 1;
+unlock tables;
+

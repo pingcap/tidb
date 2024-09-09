@@ -178,4 +178,3 @@ set @@group_concat_max_len = 18446744073709551616;
 set @@group_concat_max_len='hello';
 set global group_concat_max_len = default;
 set @@session.group_concat_max_len = default;
-

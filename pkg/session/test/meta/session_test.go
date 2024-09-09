@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -63,6 +64,8 @@ func TestInitMetaTable(t *testing.T) {
 
 		metaInTest.ID = metaInMySQL.ID
 		metaInMySQL.UpdateTS = metaInTest.UpdateTS
+		metaInTest.DBID = 0
+		metaInMySQL.DBID = 0
 		require.True(t, reflect.DeepEqual(metaInMySQL, metaInTest))
 	}
 }
@@ -71,7 +74,7 @@ func TestMetaTableRegion(t *testing.T) {
 	enableSplitTableRegionVal := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, enableSplitTableRegionVal)
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 
 	tk := testkit.NewTestKit(t, store)
 

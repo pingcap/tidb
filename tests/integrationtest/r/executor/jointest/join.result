@@ -220,7 +220,7 @@ insert into t1 values(1, 100), (2, 100), (3, 100), (4, 100), (5, 100);
 insert into t2 select a*100, b*100 from t1;
 explain format = 'brief' select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;
 id	estRows	task	access object	operator info
-MergeJoin	10000.00	root		left outer join, left key:executor__jointest__join.t1.a, right key:executor__jointest__join.t2.a, left cond:[ne(executor__jointest__join.t1.a, 3)]
+MergeJoin	10000.00	root		left outer join, left key:executor__jointest__join.t1.a, right key:executor__jointest__join.t2.a, left cond:ne(executor__jointest__join.t1.a, 3)
 ├─TableReader(Build)	6666.67	root		data:TableRangeScan
 │ └─TableRangeScan	6666.67	cop[tikv]	table:t2	range:[-inf,3), (3,+inf], keep order:true, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -1363,7 +1363,7 @@ create table t(id int primary key);
 create table s(id int);
 insert into t values(1), (2);
 insert into s values(2), (2);
-select *, (select count(id) from s where id = t.id) from t;
+select *, (select count(id) from s where id = t.id) from t order by id;
 id	(select count(id) from s where id = t.id)
 1	0
 2	2
@@ -1561,3 +1561,45 @@ set sql_mode=default;
 set @@tidb_hash_join_concurrency=default;
 set @@tidb_hashagg_partial_concurrency=default;
 set @@tidb_hashagg_final_concurrency=default;
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+set tidb_mem_quota_query = 1 << 18;
+set global tidb_mem_oom_action = 'CANCEL';
+set global tidb_enable_tmp_storage_on_oom = off;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+set tidb_mem_quota_query = default;
+set global tidb_mem_oom_action = default;
+set global tidb_enable_tmp_storage_on_oom = default;
+SET GLOBAL tidb_mem_oom_action='LOG';
+set @@tidb_mem_quota_query=1;
+drop table if exists t, t1;
+create table t(c1 int, c2 int);
+create table t1(c1 int, c2 int);
+insert into t values(1,1),(2,2);
+insert into t1 values(2,3),(4,4);
+select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1;
+c1	c2	c1	c2
+2	2	2	3
+drop table if exists t1,t2,t3,t4;
+create table t1 (c int, b int);
+create table t2 (a int, b int);
+create table t3 (b int, c int);
+create table t4 (y int, c int);
+select * from t1 natural join (t3 cross join t4);
+Error 1052 (23000): Column 'c' in from clause is ambiguous
+select * from (t3 cross join t4) natural join t1;
+Error 1052 (23000): Column 'c' in from clause is ambiguous
+select * from (t1 join t2 on t1.b=t2.b) natural join (t3 natural join t4);
+Error 1052 (23000): Column 'b' in from clause is ambiguous
+select * from (t3 natural join t4) natural join (t1 join t2 on t1.b=t2.b);
+Error 1052 (23000): Column 'b' in from clause is ambiguous

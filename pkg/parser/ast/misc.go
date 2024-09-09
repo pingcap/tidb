@@ -552,12 +552,8 @@ func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 
 // Prepared represents a prepared statement.
 type Prepared struct {
-	Stmt          StmtNode
-	StmtType      string
-	Params        []ParamMarkerExpr
-	SchemaVersion int64
-	CachedPlan    interface{}
-	CachedNames   interface{}
+	Stmt     StmtNode
+	StmtType string
 }
 
 // ExecuteStmt is a statement to execute PreparedStmt.
@@ -800,6 +796,8 @@ const (
 	SetNames = "SetNAMES"
 	// SetCharset is the const for set charset stmt.
 	SetCharset = "SetCharset"
+	// TiDBCloudStorageURI is the const for set tidb_cloud_storage_uri stmt.
+	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
 )
 
 // VariableAssignment is a variable assignment struct.
@@ -838,7 +836,10 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.Name)
 		ctx.WritePlain("=")
 	}
-	if err := n.Value.Restore(ctx); err != nil {
+	if n.Name == TiDBCloudStorageURI {
+		// need to redact the url for safety when `show processlist;`
+		ctx.WritePlain(RedactURL(n.Value.(ValueExpr).GetString()))
+	} else if err := n.Value.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore VariableAssignment.Value")
 	}
 	if n.ExtendValue != nil {
@@ -974,6 +975,13 @@ func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*FlushStmt)
+	for i, t := range n.Tables {
+		node, ok := t.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Tables[i] = node.(*TableName)
+	}
 	return v.Leave(n)
 }
 
@@ -1107,6 +1115,15 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 		n.Variables[i] = node.(*VariableAssignment)
 	}
 	return v.Leave(n)
+}
+
+// SecureText implements SensitiveStatement interface.
+// need to redact the tidb_cloud_storage_url for safety when `show processlist;`
+func (n *SetStmt) SecureText() string {
+	redactedStmt := *n
+	var sb strings.Builder
+	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	return sb.String()
 }
 
 // SetConfigStmt is the statement to set cluster configs.
@@ -1572,6 +1589,7 @@ const (
 	PasswordLockTimeUnbounded
 	UserCommentType
 	UserAttributeType
+	PasswordRequireCurrentDefault
 
 	UserResourceGroupName
 )
@@ -1953,6 +1971,40 @@ func (n *DropUserStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type StringOrUserVar struct {
+	node
+	StringLit string
+	UserVar   *VariableExpr
+}
+
+func (n *StringOrUserVar) Restore(ctx *format.RestoreCtx) error {
+	if len(n.StringLit) > 0 {
+		ctx.WriteString(n.StringLit)
+	}
+	if n.UserVar != nil {
+		if err := n.UserVar.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ColumnNameOrUserVar.UserVar")
+		}
+	}
+	return nil
+}
+
+func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
+	newNode, skipChild := v.Enter(n)
+	if skipChild {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*StringOrUserVar)
+	if n.UserVar != nil {
+		node, ok = n.UserVar.Accept(v)
+		if !ok {
+			return node, false
+		}
+		n.UserVar = node.(*VariableExpr)
+	}
+	return v.Leave(n)
+}
+
 // CreateBindingStmt creates sql binding hint.
 type CreateBindingStmt struct {
 	stmtNode
@@ -1960,7 +2012,7 @@ type CreateBindingStmt struct {
 	GlobalScope bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
-	PlanDigest  string
+	PlanDigests []*StringOrUserVar
 }
 
 func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
@@ -1972,7 +2024,14 @@ func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	if n.OriginNode == nil {
 		ctx.WriteKeyWord("BINDING FROM HISTORY USING PLAN DIGEST ")
-		ctx.WriteString(n.PlanDigest)
+		for i, v := range n.PlanDigests {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore CreateBindingStmt.PlanDigests[%d]", i)
+			}
+		}
 	} else {
 		ctx.WriteKeyWord("BINDING FOR ")
 		if err := n.OriginNode.Restore(ctx); err != nil {
@@ -2003,6 +2062,14 @@ func (n *CreateBindingStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.HintedNode = hintedNode.(StmtNode)
+	} else {
+		for i, digest := range n.PlanDigests {
+			newDigest, ok := digest.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.PlanDigests[i] = newDigest.(*StringOrUserVar)
+		}
 	}
 	return v.Leave(n)
 }
@@ -2014,7 +2081,7 @@ type DropBindingStmt struct {
 	GlobalScope bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
-	SQLDigest   string
+	SQLDigests  []*StringOrUserVar
 }
 
 func (n *DropBindingStmt) Restore(ctx *format.RestoreCtx) error {
@@ -2027,7 +2094,14 @@ func (n *DropBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("BINDING FOR ")
 	if n.OriginNode == nil {
 		ctx.WriteKeyWord("SQL DIGEST ")
-		ctx.WriteString(n.SQLDigest)
+		for i, v := range n.SQLDigests {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore CreateBindingStmt.PlanDigests[%d]", i)
+			}
+		}
 	} else {
 		if err := n.OriginNode.Restore(ctx); err != nil {
 			return errors.Trace(err)
@@ -2061,6 +2135,14 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 				return n, false
 			}
 			n.HintedNode = hintedNode.(StmtNode)
+		}
+	} else {
+		for i, digest := range n.SQLDigests {
+			newDigest, ok := digest.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.SQLDigests[i] = newDigest.(*StringOrUserVar)
 		}
 	}
 	return v.Leave(n)
@@ -2291,7 +2373,7 @@ type AdminStmtType int
 
 // Admin statement types.
 const (
-	AdminShowDDL = iota + 1
+	AdminShowDDL AdminStmtType = iota + 1
 	AdminCheckTable
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
@@ -2314,10 +2396,11 @@ const (
 	AdminCaptureBindings
 	AdminEvolveBindings
 	AdminReloadBindings
-	AdminShowTelemetry
-	AdminResetTelemetryID
 	AdminReloadStatistics
 	AdminFlushPlanCache
+	AdminSetBDRRole
+	AdminShowBDRRole
+	AdminUnsetBDRRole
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2325,6 +2408,15 @@ type HandleRange struct {
 	Begin int64
 	End   int64
 }
+
+// BDRRole represents the role of the cluster in BDR mode.
+type BDRRole string
+
+const (
+	BDRRolePrimary   BDRRole = "primary"
+	BDRRoleSecondary BDRRole = "secondary"
+	BDRRoleNone      BDRRole = ""
+)
 
 type StatementScope int
 
@@ -2413,6 +2505,7 @@ type AdminStmt struct {
 	Where          ExprNode
 	StatementScope StatementScope
 	LimitSimple    LimitSimple
+	BDRRole        BDRRole
 }
 
 // Restore implements Node interface.
@@ -2553,10 +2646,6 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EVOLVE BINDINGS")
 	case AdminReloadBindings:
 		ctx.WriteKeyWord("RELOAD BINDINGS")
-	case AdminShowTelemetry:
-		ctx.WriteKeyWord("SHOW TELEMETRY")
-	case AdminResetTelemetryID:
-		ctx.WriteKeyWord("RESET TELEMETRY_ID")
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
 	case AdminFlushPlanCache:
@@ -2567,6 +2656,19 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		} else if n.StatementScope == StatementScopeGlobal {
 			ctx.WriteKeyWord("FLUSH GLOBAL PLAN_CACHE")
 		}
+	case AdminSetBDRRole:
+		switch n.BDRRole {
+		case BDRRolePrimary:
+			ctx.WriteKeyWord("SET BDR ROLE PRIMARY")
+		case BDRRoleSecondary:
+			ctx.WriteKeyWord("SET BDR ROLE SECONDARY")
+		default:
+			return errors.New("Unsupported BDR role")
+		}
+	case AdminShowBDRRole:
+		ctx.WriteKeyWord("SHOW BDR ROLE")
+	case AdminUnsetBDRRole:
+		ctx.WriteKeyWord("UNSET BDR ROLE")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
@@ -3207,6 +3309,9 @@ const (
 	BRIEOptionCheckpoint
 	BRIEOptionStartTS
 	BRIEOptionUntilTS
+	BRIEOptionChecksumConcurrency
+	BRIEOptionEncryptionMethod
+	BRIEOptionEncryptionKeyFile
 	// backup options
 	BRIEOptionBackupTimeAgo
 	BRIEOptionBackupTS
@@ -3214,10 +3319,16 @@ const (
 	BRIEOptionLastBackupTS
 	BRIEOptionLastBackupTSO
 	BRIEOptionGCTTL
+	BRIEOptionCompressionLevel
+	BRIEOptionCompression
+	BRIEOptionIgnoreStats
+	BRIEOptionLoadStats
 	// restore options
 	BRIEOptionOnline
 	BRIEOptionFullBackupStorage
 	BRIEOptionRestoredTS
+	BRIEOptionWaitTiflashReady
+	BRIEOptionWithSysTable
 	// import options
 	BRIEOptionAnalyze
 	BRIEOptionBackend
@@ -3337,6 +3448,24 @@ func (kind BRIEOptionType) String() string {
 		return "UNTIL_TS"
 	case BRIEOptionGCTTL:
 		return "GC_TTL"
+	case BRIEOptionWaitTiflashReady:
+		return "WAIT_TIFLASH_READY"
+	case BRIEOptionWithSysTable:
+		return "WITH_SYS_TABLE"
+	case BRIEOptionIgnoreStats:
+		return "IGNORE_STATS"
+	case BRIEOptionLoadStats:
+		return "LOAD_STATS"
+	case BRIEOptionChecksumConcurrency:
+		return "CHECKSUM_CONCURRENCY"
+	case BRIEOptionCompressionLevel:
+		return "COMPRESSION_LEVEL"
+	case BRIEOptionCompression:
+		return "COMPRESSION_TYPE"
+	case BRIEOptionEncryptionMethod:
+		return "ENCRYPTION_METHOD"
+	case BRIEOptionEncryptionKeyFile:
+		return "ENCRYPTION_KEY_FILE"
 	default:
 		return ""
 	}
@@ -3365,7 +3494,7 @@ func (opt *BRIEOption) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(opt.Tp.String())
 	ctx.WritePlain(" = ")
 	switch opt.Tp {
-	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL:
+	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL, BRIEOptionCompression, BRIEOptionEncryptionMethod, BRIEOptionEncryptionKeyFile:
 		ctx.WriteString(opt.StrValue)
 	case BRIEOptionBackupTimeAgo:
 		ctx.WritePlainf("%d ", opt.UintValue/1000)
@@ -3517,45 +3646,6 @@ func (n *BRIEStmt) SecureText() string {
 	return sb.String()
 }
 
-type LoadDataActionTp int
-
-const (
-	LoadDataPause LoadDataActionTp = iota
-	LoadDataResume
-	LoadDataCancel
-	LoadDataDrop
-)
-
-// LoadDataActionStmt represent PAUSE/RESUME/CANCEL/DROP LOAD DATA JOB statement.
-type LoadDataActionStmt struct {
-	stmtNode
-
-	Tp    LoadDataActionTp
-	JobID int64
-}
-
-func (n *LoadDataActionStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
-}
-
-func (n *LoadDataActionStmt) Restore(ctx *format.RestoreCtx) error {
-	switch n.Tp {
-	case LoadDataPause:
-		ctx.WriteKeyWord("PAUSE LOAD DATA JOB ")
-	case LoadDataResume:
-		ctx.WriteKeyWord("RESUME LOAD DATA JOB ")
-	case LoadDataCancel:
-		ctx.WriteKeyWord("CANCEL LOAD DATA JOB ")
-	case LoadDataDrop:
-		ctx.WriteKeyWord("DROP LOAD DATA JOB ")
-	default:
-		return errors.Errorf("invalid load data action type: %d", n.Tp)
-	}
-	ctx.WritePlainf("%d", n.JobID)
-	return nil
-}
-
 type ImportIntoActionTp string
 
 const (
@@ -3627,12 +3717,12 @@ type TableOptimizerHint struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html#optimizer-hints-execution-time
 	// - MAX_EXECUTION_TIME  => uint64
 	// - MEMORY_QUOTA        => int64
-	// - QUERY_TYPE          => model.CIStr
+	// - QUERY_TYPE          => CIStr
 	//
 	// Time Range is used to hint the time range of inspection tables
 	// e.g: select /*+ time_range('','') */ * from information_schema.inspection_result.
 	// - TIME_RANGE          => ast.HintTimeRange
-	// - READ_FROM_STORAGE   => model.CIStr
+	// - READ_FROM_STORAGE   => CIStr
 	// - USE_TOJA            => bool
 	// - NTH_PLAN            => int64
 	HintData interface{}
@@ -3663,9 +3753,11 @@ type HintTable struct {
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
-	if ht.DBName.L != "" {
-		ctx.WriteName(ht.DBName.String())
-		ctx.WriteKeyWord(".")
+	if !ctx.Flags.HasWithoutSchemaNameFlag() {
+		if ht.DBName.L != "" {
+			ctx.WriteName(ht.DBName.String())
+			ctx.WriteKeyWord(".")
+		}
 	}
 	ctx.WriteName(ht.TableName.String())
 	if ht.QBName.L != "" {
@@ -3716,7 +3808,9 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join", "broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
+		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
+		"no_index_join", "no_index_hash_join", "no_index_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")
@@ -3774,7 +3868,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		hintData := n.HintData.(HintSetVar)
 		ctx.WritePlain(hintData.VarName)
 		ctx.WritePlain(" = ")
-		ctx.WritePlain(hintData.Value)
+		ctx.WriteString(hintData.Value)
 	}
 	ctx.WritePlain(")")
 	return nil
@@ -4022,44 +4116,21 @@ const (
 // QueryWatchOption is used for parsing manual management of watching runaway queries option.
 type QueryWatchOption struct {
 	stmtNode
-	Tp        QueryWatchOptionType
-	StrValue  model.CIStr
-	IntValue  int32
-	ExprValue ExprNode
-	BoolValue bool
+	Tp                  QueryWatchOptionType
+	ResourceGroupOption *QueryWatchResourceGroupOption
+	ActionOption        *ResourceGroupRunawayActionOption
+	TextOption          *QueryWatchTextOption
 }
 
+// Restore implements Node interface.
 func (n *QueryWatchOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case QueryWatchResourceGroup:
-		ctx.WriteKeyWord("RESOURCE GROUP ")
-		if n.ExprValue != nil {
-			if err := n.ExprValue.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.ExprValue)
-			}
-		} else {
-			ctx.WriteName(n.StrValue.O)
-		}
+		return n.ResourceGroupOption.restore(ctx)
 	case QueryWatchAction:
-		ctx.WriteKeyWord("ACTION ")
-		ctx.WritePlain("= ")
-		ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
+		return n.ActionOption.Restore(ctx)
 	case QueryWatchType:
-		if n.BoolValue {
-			ctx.WriteKeyWord("SQL TEXT ")
-			ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
-			ctx.WriteKeyWord(" TO ")
-		} else {
-			switch n.IntValue {
-			case int32(model.WatchSimilar):
-				ctx.WriteKeyWord("SQL DIGEST ")
-			case int32(model.WatchPlan):
-				ctx.WriteKeyWord("PLAN DIGEST ")
-			}
-		}
-		if err := n.ExprValue.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.ExprValue)
-		}
+		return n.TextOption.Restore(ctx)
 	}
 	return nil
 }
@@ -4071,12 +4142,26 @@ func (n *QueryWatchOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*QueryWatchOption)
-	if n.ExprValue != nil {
-		node, ok := n.ExprValue.Accept(v)
+	if n.ResourceGroupOption != nil && n.ResourceGroupOption.GroupNameExpr != nil {
+		node, ok := n.ResourceGroupOption.GroupNameExpr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.ExprValue = node.(ExprNode)
+		n.ResourceGroupOption.GroupNameExpr = node.(ExprNode)
+	}
+	if n.ActionOption != nil {
+		node, ok := n.ActionOption.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ActionOption = node.(*ResourceGroupRunawayActionOption)
+	}
+	if n.TextOption != nil {
+		node, ok := n.TextOption.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.TextOption = node.(*QueryWatchTextOption)
 	}
 	return v.Leave(n)
 }
@@ -4088,4 +4173,67 @@ func CheckQueryWatchAppend(ops []*QueryWatchOption, newOp *QueryWatchOption) boo
 		}
 	}
 	return true
+}
+
+// QueryWatchResourceGroupOption is used for parsing the query watch resource group name.
+type QueryWatchResourceGroupOption struct {
+	GroupNameStr  model.CIStr
+	GroupNameExpr ExprNode
+}
+
+func (n *QueryWatchResourceGroupOption) restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RESOURCE GROUP ")
+	if n.GroupNameExpr != nil {
+		if err := n.GroupNameExpr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.GroupNameExpr)
+		}
+	} else {
+		ctx.WriteName(n.GroupNameStr.String())
+	}
+	return nil
+}
+
+// QueryWatchTextOption is used for parsing the query watch text option.
+type QueryWatchTextOption struct {
+	node
+	Type          model.RunawayWatchType
+	PatternExpr   ExprNode
+	TypeSpecified bool
+}
+
+// Restore implements Node interface.
+func (n *QueryWatchTextOption) Restore(ctx *format.RestoreCtx) error {
+	if n.TypeSpecified {
+		ctx.WriteKeyWord("SQL TEXT ")
+		ctx.WriteKeyWord(n.Type.String())
+		ctx.WriteKeyWord(" TO ")
+	} else {
+		switch n.Type {
+		case model.WatchSimilar:
+			ctx.WriteKeyWord("SQL DIGEST ")
+		case model.WatchPlan:
+			ctx.WriteKeyWord("PLAN DIGEST ")
+		}
+	}
+	if err := n.PatternExpr.Restore(ctx); err != nil {
+		return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.PatternExpr)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *QueryWatchTextOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*QueryWatchTextOption)
+	if n.PatternExpr != nil {
+		node, ok := n.PatternExpr.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.PatternExpr = node.(ExprNode)
+	}
+	return v.Leave(n)
 }

@@ -49,7 +49,7 @@ func (encodingBase) ToLower(src string) string {
 
 func (b encodingBase) IsValid(src []byte) bool {
 	isValid := true
-	b.self.Foreach(src, opFromUTF8, func(from, to []byte, ok bool) bool {
+	b.self.Foreach(src, opFromUTF8, func(_, _ []byte, ok bool) bool {
 		isValid = ok
 		return ok
 	})

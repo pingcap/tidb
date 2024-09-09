@@ -24,7 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
@@ -39,6 +40,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 	}
 	testsetup.SetupForCommonTest()
@@ -66,7 +68,7 @@ func (is *mockedInfoSchema) AddTable(tempType model.TempTableType, id ...int64) 
 	return is
 }
 
-func (is *mockedInfoSchema) TableByID(tblID int64) (table.Table, bool) {
+func (is *mockedInfoSchema) TableByID(_ context.Context, tblID int64) (table.Table, bool) {
 	tempType, ok := is.tables[tblID]
 	if !ok {
 		return nil, false
@@ -74,10 +76,10 @@ func (is *mockedInfoSchema) TableByID(tblID int64) (table.Table, bool) {
 
 	tblInfo := &model.TableInfo{
 		ID:   tblID,
-		Name: model.NewCIStr(fmt.Sprintf("tb%d", tblID)),
+		Name: pmodel.NewCIStr(fmt.Sprintf("tb%d", tblID)),
 		Columns: []*model.ColumnInfo{{
 			ID:        1,
-			Name:      model.NewCIStr("col1"),
+			Name:      pmodel.NewCIStr("col1"),
 			Offset:    0,
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			State:     model.StatePublic,
@@ -101,14 +103,14 @@ func newMockedSnapshot(retriever *mockedRetriever) *mockedSnapshot {
 	return &mockedSnapshot{mockedRetriever: retriever}
 }
 
-func (s *mockedSnapshot) SetOption(_ int, _ interface{}) {
+func (s *mockedSnapshot) SetOption(_ int, _ any) {
 	require.FailNow(s.t, "SetOption not supported")
 }
 
 type methodInvoke struct {
 	Method string
-	Args   []interface{}
-	Ret    []interface{}
+	Args   []any
+	Ret    []any
 }
 
 type mockedRetriever struct {
@@ -117,7 +119,7 @@ type mockedRetriever struct {
 	dataMap map[string][]byte
 	invokes []*methodInvoke
 
-	allowInvokes map[string]interface{}
+	allowInvokes map[string]any
 	errorMap     map[string]error
 }
 
@@ -149,7 +151,7 @@ func (r *mockedRetriever) InjectMethodError(method string, err error) *mockedRet
 }
 
 func (r *mockedRetriever) SetAllowedMethod(methods ...string) *mockedRetriever {
-	r.allowInvokes = make(map[string]interface{})
+	r.allowInvokes = make(map[string]any)
 	for _, m := range methods {
 		r.allowInvokes[m] = struct{}{}
 	}
@@ -173,7 +175,7 @@ func (r *mockedRetriever) Get(ctx context.Context, k kv.Key) (val []byte, err er
 			err = kv.ErrNotExist
 		}
 	}
-	r.appendInvoke("Get", []interface{}{ctx, k}, []interface{}{val, err})
+	r.appendInvoke("Get", []any{ctx, k}, []any{val, err})
 	return
 }
 
@@ -189,7 +191,7 @@ func (r *mockedRetriever) BatchGet(ctx context.Context, keys []kv.Key) (data map
 		}
 	}
 
-	r.appendInvoke("BatchGet", []interface{}{ctx, keys}, []interface{}{data, err})
+	r.appendInvoke("BatchGet", []any{ctx, keys}, []any{data, err})
 	return
 }
 
@@ -213,7 +215,7 @@ func (r *mockedRetriever) Iter(k kv.Key, upperBound kv.Key) (iter kv.Iterator, e
 		}
 		iter = mockIter
 	}
-	r.appendInvoke("Iter", []interface{}{k, upperBound}, []interface{}{iter, err})
+	r.appendInvoke("Iter", []any{k, upperBound}, []any{iter, err})
 	return
 }
 
@@ -233,11 +235,11 @@ func (r *mockedRetriever) IterReverse(k kv.Key, lowerBound kv.Key) (iter kv.Iter
 		}
 		iter = mockIter
 	}
-	r.appendInvoke("IterReverse", []interface{}{k}, []interface{}{iter, err})
+	r.appendInvoke("IterReverse", []any{k}, []any{iter, err})
 	return
 }
 
-func (r *mockedRetriever) appendInvoke(method string, args []interface{}, ret []interface{}) {
+func (r *mockedRetriever) appendInvoke(method string, args []any, ret []any) {
 	r.invokes = append(r.invokes, &methodInvoke{
 		Method: method,
 		Args:   args,

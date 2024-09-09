@@ -18,14 +18,13 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 // vecEvalDecimal evals a builtinGreatestDecimalSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestDecimalSig) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGreatestDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -59,7 +58,7 @@ func (b *builtinGreatestDecimalSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeastDecimalSig) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLeastDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -94,7 +93,7 @@ func (b *builtinLeastDecimalSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeastIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLeastIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -129,7 +128,7 @@ func (b *builtinLeastIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGreatestIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGreatestIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -168,7 +167,7 @@ func (b *builtinGEIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGEIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGEIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	var err error
 	var buf0, buf1 *chunk.Column
@@ -190,7 +189,7 @@ func (b *builtinGEIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfGE(result.Int64s())
 	return nil
@@ -200,7 +199,7 @@ func (b *builtinLeastRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeastRealSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLeastRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -235,7 +234,7 @@ func (b *builtinLeastStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeastStringSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLeastStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalString(ctx, input, result); err != nil {
 		return err
 	}
@@ -288,7 +287,7 @@ func (b *builtinEQIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinEQIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinEQIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	var err error
 	var buf0, buf1 *chunk.Column
@@ -310,7 +309,7 @@ func (b *builtinEQIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfEQ(result.Int64s())
 	return nil
@@ -320,7 +319,7 @@ func (b *builtinNEIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinNEIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinNEIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	var err error
 	var buf0, buf1 *chunk.Column
@@ -342,7 +341,7 @@ func (b *builtinNEIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfNE(result.Int64s())
 	return nil
@@ -352,7 +351,7 @@ func (b *builtinGTIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGTIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGTIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	var err error
 	var buf0, buf1 *chunk.Column
@@ -374,7 +373,7 @@ func (b *builtinGTIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfGT(result.Int64s())
 	return nil
@@ -384,7 +383,7 @@ func (b *builtinNullEQIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinNullEQIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinNullEQIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -403,7 +402,7 @@ func (b *builtinNullEQIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Ch
 	if err := b.args[1].VecEvalInt(ctx, input, buf1); err != nil {
 		return err
 	}
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()), buf0, buf1, result)
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
 		isNull0 := buf0.IsNull(i)
@@ -423,7 +422,7 @@ func (b *builtinIntervalIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIntervalIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIntervalIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	var err error
 	if err = b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
@@ -437,9 +436,9 @@ func (b *builtinIntervalIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.
 			continue
 		}
 		if b.hasNullable {
-			idx, err = b.linearSearch(ctx, v, mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), b.args[1:], input.GetRow(i))
+			idx, err = b.linearSearch(ctx, v, mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()), b.args[1:], input.GetRow(i))
 		} else {
-			idx, err = b.binSearch(ctx, v, mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), b.args[1:], input.GetRow(i))
+			idx, err = b.binSearch(ctx, v, mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()), b.args[1:], input.GetRow(i))
 		}
 		if err != nil {
 			return err
@@ -453,7 +452,7 @@ func (b *builtinIntervalRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIntervalRealSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIntervalRealSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -490,7 +489,7 @@ func (b *builtinLEIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLEIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLEIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	var err error
 	var buf0, buf1 *chunk.Column
@@ -512,7 +511,7 @@ func (b *builtinLEIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfLE(result.Int64s())
 	return nil
@@ -522,7 +521,7 @@ func (b *builtinLTIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLTIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLTIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	var err error
 	var buf0, buf1 *chunk.Column
@@ -544,7 +543,7 @@ func (b *builtinLTIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 	}
 
 	result.ResizeInt64(n, false)
-	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()), buf0, buf1, result)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()), mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()), buf0, buf1, result)
 	result.MergeNulls(buf0, buf1)
 	vecResOfLT(result.Int64s())
 	return nil
@@ -634,8 +633,7 @@ func (b *builtinGreatestCmpStringAsTimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	sc := ctx.GetSessionVars().StmtCtx
+func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	dstStrings := make([]string, n)
@@ -654,7 +652,7 @@ func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(ctx sessionctx.Context
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
 			argTimeStr := string(result.GetBytes(i))
 			var err error
-			argTimeStr, err = doTimeConversionForGL(b.cmpAsDate, ctx, sc, argTimeStr)
+			argTimeStr, err = doTimeConversionForGL(b.cmpAsDate, ctx, argTimeStr)
 			if err != nil {
 				return err
 			}
@@ -680,7 +678,7 @@ func (b *builtinGreatestRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGreatestRealSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGreatestRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -715,8 +713,7 @@ func (b *builtinLeastCmpStringAsTimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
-	sc := ctx.GetSessionVars().StmtCtx
+func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
 	dstStrings := make([]string, n)
@@ -735,7 +732,7 @@ func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(ctx sessionctx.Context, i
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
 			argTimeStr := string(result.GetBytes(i))
 			var err error
-			argTimeStr, err = doTimeConversionForGL(b.cmpAsDate, ctx, sc, argTimeStr)
+			argTimeStr, err = doTimeConversionForGL(b.cmpAsDate, ctx, argTimeStr)
 			if err != nil {
 				return err
 			}
@@ -761,7 +758,7 @@ func (b *builtinGreatestStringSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGreatestStringSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGreatestStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalString(ctx, input, result); err != nil {
 		return err
 	}
@@ -813,7 +810,7 @@ func (b *builtinGreatestTimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGreatestTimeSig) vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGreatestTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -838,11 +835,11 @@ func (b *builtinGreatestTimeSig) vecEvalTime(ctx sessionctx.Context, input *chun
 			}
 		}
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
 	for rowIdx := 0; rowIdx < n; rowIdx++ {
 		resTimes := result.Times()
-		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc.TypeCtx(), resTimeTp)
+		resTimes[rowIdx], err = resTimes[rowIdx].Convert(tc, resTimeTp)
 		if err != nil {
 			return err
 		}
@@ -854,7 +851,7 @@ func (b *builtinLeastTimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeastTimeSig) vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLeastTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -879,11 +876,11 @@ func (b *builtinLeastTimeSig) vecEvalTime(ctx sessionctx.Context, input *chunk.C
 			}
 		}
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
 	for rowIdx := 0; rowIdx < n; rowIdx++ {
 		resTimes := result.Times()
-		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc.TypeCtx(), resTimeTp)
+		resTimes[rowIdx], err = resTimes[rowIdx].Convert(tc, resTimeTp)
 		if err != nil {
 			return err
 		}
@@ -895,7 +892,7 @@ func (b *builtinGreatestDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGreatestDurationSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGreatestDurationSig) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -927,7 +924,7 @@ func (b *builtinLeastDurationSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeastDurationSig) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLeastDurationSig) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {

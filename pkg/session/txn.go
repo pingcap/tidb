@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -113,7 +113,9 @@ func (txn *LazyTxn) initStmtBuf() {
 	}
 	buf := txn.Transaction.GetMemBuffer()
 	txn.initCnt = buf.Len()
-	txn.stagingHandle = buf.Staging()
+	if !txn.IsPipelined() {
+		txn.stagingHandle = buf.Staging()
+	}
 }
 
 // countHint is estimated count of mutations.
@@ -131,7 +133,7 @@ func (txn *LazyTxn) flushStmtBuf() {
 	buf := txn.Transaction.GetMemBuffer()
 
 	if txn.lazyUniquenessCheckEnabled {
-		keysNeedSetPersistentPNE := kv.FindKeysInStage(buf, txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) bool {
+		keysNeedSetPersistentPNE := kv.FindKeysInStage(buf, txn.stagingHandle, func(_ kv.Key, flags kv.KeyFlags, _ []byte) bool {
 			return flags.HasPresumeKeyNotExists()
 		})
 		for _, key := range keysNeedSetPersistentPNE {
@@ -139,7 +141,9 @@ func (txn *LazyTxn) flushStmtBuf() {
 		}
 	}
 
-	buf.Release(txn.stagingHandle)
+	if !txn.IsPipelined() {
+		buf.Release(txn.stagingHandle)
+	}
 	txn.initCnt = buf.Len()
 }
 
@@ -148,7 +152,9 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 		return
 	}
 	buf := txn.Transaction.GetMemBuffer()
-	buf.Cleanup(txn.stagingHandle)
+	if !txn.IsPipelined() {
+		buf.Cleanup(txn.stagingHandle)
+	}
 	txn.initCnt = buf.Len()
 
 	txn.mu.Lock()
@@ -208,6 +214,14 @@ func (txn *LazyTxn) SetMemoryFootprintChangeHook(hook func(uint64)) {
 	txn.Transaction.SetMemoryFootprintChangeHook(hook)
 }
 
+// MemHookSet returns whether the memory footprint change hook is set.
+func (txn *LazyTxn) MemHookSet() bool {
+	if txn.Transaction == nil {
+		return false
+	}
+	return txn.Transaction.MemHookSet()
+}
+
 // Valid implements the kv.Transaction interface.
 func (txn *LazyTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
@@ -256,7 +270,7 @@ func (txn *LazyTxn) GoString() string {
 }
 
 // GetOption implements the GetOption
-func (txn *LazyTxn) GetOption(opt int) interface{} {
+func (txn *LazyTxn) GetOption(opt int) any {
 	if txn.Transaction == nil {
 		if opt == kv.TxnScope {
 			return ""
@@ -307,13 +321,20 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context, sctx sessionctx.Co
 		txn.mu.TxnInfo.AllSQLDigests)
 
 	// set resource group name for kv request such as lock pessimistic keys.
-	kv.SetTxnResourceGroup(txn, sctx.GetSessionVars().ResourceGroupName)
+	kv.SetTxnResourceGroup(txn, sctx.GetSessionVars().StmtCtx.ResourceGroupName)
+	// overwrite entry size limit by sys var.
+	if entrySizeLimit := sctx.GetSessionVars().TxnEntrySizeLimit; entrySizeLimit > 0 {
+		txn.SetOption(kv.SizeLimits, kv.TxnSizeLimits{
+			Entry: entrySizeLimit,
+			Total: kv.TxnTotalSizeLimit.Load(),
+		})
+	}
 
 	return nil
 }
 
 func (txn *LazyTxn) changeToInvalid() {
-	if txn.stagingHandle != kv.InvalidStagingHandle {
+	if txn.stagingHandle != kv.InvalidStagingHandle && !txn.IsPipelined() {
 		txn.Transaction.GetMemBuffer().Cleanup(txn.stagingHandle)
 	}
 	txn.stagingHandle = kv.InvalidStagingHandle
@@ -569,7 +590,7 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 	keys := make([]kv.Key, 0, txn.countHint())
 	buf := txn.Transaction.GetMemBuffer()
 	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
-		if !keyNeedToLock(k, v, flags) {
+		if !KeyNeedToLock(k, v, flags) {
 			return
 		}
 		keys = append(keys, k)
@@ -603,7 +624,8 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 	return txn, nil
 }
 
-func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
+// KeyNeedToLock returns true if the key need to lock.
+func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.
@@ -675,15 +697,19 @@ func (txnFailFuture) Wait() (uint64, error) {
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	future   oracle.Future
-	store    kv.Storage
-	txnScope string
+	future    oracle.Future
+	store     kv.Storage
+	txnScope  string
+	pipelined bool
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
 	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
+		if tf.pipelined {
+			return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS), tikv.WithPipelinedMemDB())
+		}
 		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
 	} else if config.GetGlobalConfig().Store == "unistore" {
 		return nil, err
@@ -691,13 +717,17 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
+	if tf.pipelined {
+		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithPipelinedMemDB())
+	}
 	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
 }
 
 // HasDirtyContent checks whether there's dirty update on the given table.
 // Put this function here is to avoid cycle import.
 func (s *session) HasDirtyContent(tid int64) bool {
-	if s.txn.Transaction == nil {
+	// There should not be dirty content in a txn with pipelined memdb, and it also doesn't support Iter function.
+	if s.txn.Transaction == nil || s.txn.Transaction.IsPipelined() {
 		return false
 	}
 	seekKey := tablecodec.EncodeTablePrefix(tid)

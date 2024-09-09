@@ -47,7 +47,7 @@ func TestBasicTxnState(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("tikvclient/beforePessimisticLock", "pause"))
 	defer func() { require.NoError(t, failpoint.Disable("tikvclient/beforePessimisticLock")) }()
-	ch := make(chan interface{})
+	ch := make(chan any)
 	go func() {
 		tk.MustExec("select * from t for update;")
 		ch <- nil
@@ -260,7 +260,7 @@ func TestTxnInfoWithPreparedStmt(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 	require.NoError(t, failpoint.Enable("tikvclient/beforePessimisticLock", "pause"))
-	ch := make(chan interface{})
+	ch := make(chan any)
 	go func() {
 		tk.MustExec("execute s1 using @v")
 		ch <- nil
@@ -294,7 +294,7 @@ func TestTxnInfoWithScalarSubquery(t *testing.T) {
 	_, s1Digest := parser.NormalizeDigest("select * from t where a = (select b from t where a = 2)")
 
 	require.NoError(t, failpoint.Enable("tikvclient/beforePessimisticLock", "pause"))
-	ch := make(chan interface{})
+	ch := make(chan any)
 	go func() {
 		tk.MustExec("update t set b = b + 1 where a = (select b from t where a = 2)")
 		ch <- nil
@@ -323,7 +323,7 @@ func TestTxnInfoWithPSProtocol(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, failpoint.Enable("tikvclient/beforePrewrite", "pause"))
-	ch := make(chan interface{})
+	ch := make(chan any)
 	go func() {
 		_, err := tk.Session().ExecutePreparedStmt(context.Background(), idInsert, expression.Args2Expressions4Test(1))
 		require.NoError(t, err)

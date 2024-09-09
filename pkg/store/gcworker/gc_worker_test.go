@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,12 +30,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
@@ -143,10 +143,10 @@ type mockGCWorkerSuite struct {
 }
 
 func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite) {
-	return createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore)
+	return createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, config.DefSchemaLease)
 }
 
-func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType) (s *mockGCWorkerSuite) {
+func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType, schemaLease time.Duration) (s *mockGCWorkerSuite) {
 	s = new(mockGCWorkerSuite)
 	hijackClient := func(client tikv.Client) tikv.Client {
 		s.client = &mockGCWorkerClient{Client: client}
@@ -171,7 +171,7 @@ func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreTyp
 	require.NoError(t, err)
 	store.GetOracle().Close()
 	store.(tikv.Storage).SetOracle(s.oracle)
-	dom := bootstrap(t, store, 0)
+	dom := bootstrap(t, store, schemaLease)
 	s.store, s.dom = store, dom
 
 	s.tikvStore = s.store.(tikv.Storage)
@@ -340,7 +340,10 @@ func TestMinStartTS(t *testing.T) {
 }
 
 func TestPrepareGC(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	// as we are adjusting the base TS, we need a larger schema lease to avoid
+	// the info schema outdated error. as we keep adding offset to time oracle,
+	// so we need set a very large lease.
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 220*time.Minute)
 
 	now, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
@@ -538,13 +541,13 @@ func TestGetGCConcurrency(t *testing.T) {
 	require.NoError(t, err)
 	concurrency, err := s.gcWorker.getGCConcurrency(ctx)
 	require.NoError(t, err)
-	require.Equal(t, concurrencyConfig, concurrency)
+	require.Equal(t, concurrencyConfig, concurrency.v)
 
 	err = s.gcWorker.saveValueToSysTable(gcAutoConcurrencyKey, booleanTrue)
 	require.NoError(t, err)
 	concurrency, err = s.gcWorker.getGCConcurrency(ctx)
 	require.NoError(t, err)
-	require.Len(t, s.cluster.GetAllStores(), concurrency)
+	require.Len(t, s.cluster.GetAllStores(), concurrency.v)
 }
 
 func TestDoGC(t *testing.T) {
@@ -595,38 +598,6 @@ func TestCheckGCMode(t *testing.T) {
 	require.NoError(t, err)
 	useDistributedGC = s.gcWorker.checkUseDistributedGC()
 	require.True(t, useDistributedGC)
-}
-
-func TestCheckScanLockMode(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	usePhysical, err := s.gcWorker.checkUsePhysicalScanLock()
-	require.NoError(t, err)
-	require.False(t, usePhysical)
-	require.Equal(t, usePhysical, gcScanLockModeDefault == gcScanLockModePhysical)
-
-	// Now the row must be set to the default value.
-	str, err := s.gcWorker.loadValueFromSysTable(gcScanLockModeKey)
-	require.NoError(t, err)
-	require.Equal(t, gcScanLockModeDefault, str)
-
-	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModePhysical)
-	require.NoError(t, err)
-	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
-	require.NoError(t, err)
-	require.True(t, usePhysical)
-
-	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, gcScanLockModeLegacy)
-	require.NoError(t, err)
-	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
-	require.NoError(t, err)
-	require.False(t, usePhysical)
-
-	err = s.gcWorker.saveValueToSysTable(gcScanLockModeKey, "invalid_mode")
-	require.NoError(t, err)
-	usePhysical, err = s.gcWorker.checkUsePhysicalScanLock()
-	require.NoError(t, err)
-	require.False(t, usePhysical)
 }
 
 func TestNeedsGCOperationForStore(t *testing.T) {
@@ -688,6 +659,11 @@ func TestDeleteRangesFailure(t *testing.T) {
 				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
 			}()
 
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob"))
+			}()
+
 			// Put some delete range tasks.
 			se := createSession(s.gcWorker.store)
 			defer se.Close()
@@ -733,7 +709,7 @@ func TestDeleteRangesFailure(t *testing.T) {
 
 			sendReqCh := make(chan SentReq, 20)
 
-			// The request sent to the specified key and store wil fail.
+			// The request sent to the specified key and store will fail.
 			var (
 				failKey   []byte
 				failStore *metapb.Store
@@ -771,7 +747,7 @@ func TestDeleteRangesFailure(t *testing.T) {
 				failKey = ranges[0].StartKey
 				failStore = stores[0]
 
-				err = deleteRangeFunc(gcContext(), 20, 1)
+				err = deleteRangeFunc(gcContext(), 20, gcConcurrency{1, false})
 				require.NoError(t, err)
 
 				s.checkDestroyRangeReq(t, sendReqCh, ranges, stores)
@@ -787,7 +763,7 @@ func TestDeleteRangesFailure(t *testing.T) {
 				failStore = nil
 
 				// Delete the remaining range again.
-				err = deleteRangeFunc(gcContext(), 20, 1)
+				err = deleteRangeFunc(gcContext(), 20, gcConcurrency{1, false})
 				require.NoError(t, err)
 				s.checkDestroyRangeReq(t, sendReqCh, ranges[:1], stores)
 
@@ -804,6 +780,59 @@ func TestDeleteRangesFailure(t *testing.T) {
 			test(true)
 		})
 	}
+}
+
+func TestConcurrentDeleteRanges(t *testing.T) {
+	// make sure the parallelization of deleteRanges works
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob"))
+	}()
+
+	s := createGCWorkerSuite(t)
+	se := createSession(s.gcWorker.store)
+	defer se.Close()
+	_, err := se.Execute(gcContext(), `INSERT INTO mysql.gc_delete_range VALUES
+("1", "2", "31", "32", "10"),
+("3", "4", "33", "34", "10"),
+("5", "6", "35", "36", "15"),
+("7", "8", "37", "38", "15"),
+("9", "10", "39", "40", "15")
+	`)
+	require.NoError(t, err)
+
+	ranges, err := util.LoadDeleteRanges(gcContext(), se, 20)
+	require.NoError(t, err)
+	require.Len(t, ranges, 5)
+
+	stores, err := s.gcWorker.getStoresForGC(context.Background())
+	require.NoError(t, err)
+	require.Len(t, stores, 3)
+	sort.Slice(stores, func(i, j int) bool { return stores[i].Address < stores[j].Address })
+
+	sendReqCh := make(chan SentReq, 20)
+	s.client.unsafeDestroyRangeHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		sendReqCh <- SentReq{req, addr}
+		resp := &tikvrpc.Response{
+			Resp: &kvrpcpb.UnsafeDestroyRangeResponse{},
+		}
+		return resp, nil
+	}
+	defer func() { s.client.unsafeDestroyRangeHandler = nil }()
+
+	err = s.gcWorker.deleteRanges(gcContext(), 20, gcConcurrency{3, false})
+	require.NoError(t, err)
+
+	s.checkDestroyRangeReq(t, sendReqCh, ranges, stores)
+
+	se = createSession(s.gcWorker.store)
+	remainingRanges, err := util.LoadDeleteRanges(gcContext(), se, 20)
+	se.Close()
+	require.NoError(t, err)
+	require.Len(t, remainingRanges, 0)
 }
 
 type SentReq struct {
@@ -846,6 +875,16 @@ Loop:
 
 func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2", "return(true)"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
+	}()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJob"))
+	}()
 
 	s := createGCWorkerSuite(t)
 	// Put some delete range tasks.
@@ -901,7 +940,7 @@ func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	}
 	defer func() { s.client.deleteRangeHandler = nil }()
 
-	err = s.gcWorker.deleteRanges(gcContext(), 8, 1)
+	err = s.gcWorker.deleteRanges(gcContext(), 8, gcConcurrency{1, false})
 	require.NoError(t, err)
 
 	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[:1])
@@ -912,7 +951,7 @@ func TestUnsafeDestroyRangeForRaftkv2(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ranges[1:], remainingRanges)
 
-	err = s.gcWorker.deleteRanges(gcContext(), 20, 1)
+	err = s.gcWorker.deleteRanges(gcContext(), 20, gcConcurrency{1, false})
 	require.NoError(t, err)
 
 	s.checkDestroyRangeReqV2(t, sendReqCh, ranges[1:])
@@ -954,7 +993,9 @@ Loop:
 }
 
 func TestLeaderTick(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	// as we are adjusting the base TS, we need a larger schema lease to avoid
+	// the info schema outdated error.
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, time.Hour)
 
 	gcSafePointCacheInterval = 0
 
@@ -1145,7 +1186,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/DisablePaging"))
 	}()
-	s := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV)
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV, config.DefSchemaLease)
 
 	var (
 		firstAccess    = true
@@ -1248,7 +1289,7 @@ func TestRunGCJob(t *testing.T) {
 	useDistributedGC := s.gcWorker.checkUseDistributedGC()
 	require.True(t, useDistributedGC)
 	safePoint := s.mustAllocTs(t)
-	err := s.gcWorker.runGCJob(gcContext(), safePoint, 1)
+	err := s.gcWorker.runGCJob(gcContext(), safePoint, gcConcurrency{1, false})
 	require.NoError(t, err)
 
 	pdSafePoint := s.mustGetSafePointFromPd(t)
@@ -1263,7 +1304,7 @@ func TestRunGCJob(t *testing.T) {
 	require.Equal(t, safePoint, etcdSafePoint)
 
 	// Test distributed mode with safePoint regressing (although this is impossible)
-	err = s.gcWorker.runGCJob(gcContext(), safePoint-1, 1)
+	err = s.gcWorker.runGCJob(gcContext(), safePoint-1, gcConcurrency{1, false})
 	require.Error(t, err)
 
 	// Central mode is deprecated in v5.0, fallback to distributed mode if it's set.
@@ -1274,7 +1315,7 @@ func TestRunGCJob(t *testing.T) {
 
 	p := s.createGCProbe(t, "k1")
 	safePoint = s.mustAllocTs(t)
-	err = s.gcWorker.runGCJob(gcContext(), safePoint, 1)
+	err = s.gcWorker.runGCJob(gcContext(), safePoint, gcConcurrency{1, false})
 	require.NoError(t, err)
 	s.checkCollected(t, p)
 
@@ -1403,499 +1444,6 @@ func (s *mockGCWorkerSuite) loadEtcdSafePoint(t *testing.T) uint64 {
 	return res
 }
 
-func makeMergedChannel(t *testing.T, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*txnlock.Lock) {
-	scanner := &mergeLockScanner{}
-	channels := make([]chan scanLockResult, 0, count)
-	receivers := make([]*receiver, 0, count)
-	storeIDs := make([]uint64, 0, count)
-
-	for i := 0; i < count; i++ {
-		ch := make(chan scanLockResult, 10)
-		receiver := &receiver{
-			Ch:      ch,
-			StoreID: uint64(i),
-		}
-
-		channels = append(channels, ch)
-		receivers = append(receivers, receiver)
-		storeIDs = append(storeIDs, uint64(i))
-	}
-
-	resultCh := make(chan []*txnlock.Lock)
-	// Initializing and getting result from scanner is blocking operations. Collect the result in a separated thread.
-	go func() {
-		scanner.startWithReceivers(receivers)
-		// Get a batch of a enough-large size to get all results.
-		result := scanner.NextBatch(1000)
-		require.Less(t, len(result), 1000)
-		resultCh <- result
-	}()
-
-	return scanner, channels, storeIDs, resultCh
-}
-
-func (s *mockGCWorkerSuite) makeMergedMockClient(t *testing.T, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*txnlock.Lock) {
-	stores := s.cluster.GetAllStores()
-	require.Len(t, stores, count)
-
-	storeIDs := make([]uint64, count)
-	for i := 0; i < count; i++ {
-		storeIDs[i] = stores[i].Id
-	}
-
-	const scanLockLimit = 3
-
-	storesMap, err := s.gcWorker.getStoresMapForGC(gcContext())
-	require.NoError(t, err)
-	scanner := newMergeLockScanner(100000, s.client, storesMap)
-	scanner.scanLockLimit = scanLockLimit
-	channels := make([]chan scanLockResult, 0, len(stores))
-
-	for range stores {
-		ch := make(chan scanLockResult, 10)
-
-		channels = append(channels, ch)
-	}
-
-	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-		for i, store := range stores {
-			if store.Address == addr {
-				locks := make([]*kvrpcpb.LockInfo, 0, 3)
-				errStr := ""
-				for j := 0; j < scanLockLimit; j++ {
-					res, ok := <-channels[i]
-					if !ok {
-						break
-					}
-					if res.Err != nil {
-						errStr = res.Err.Error()
-						locks = nil
-						break
-					}
-					lockInfo := &kvrpcpb.LockInfo{Key: res.Lock.Key, LockVersion: res.Lock.TxnID}
-					locks = append(locks, lockInfo)
-				}
-
-				return &tikvrpc.Response{
-					Resp: &kvrpcpb.PhysicalScanLockResponse{
-						Locks: locks,
-						Error: errStr,
-					},
-				}, nil
-			}
-		}
-		return nil, errors.Errorf("No store in the cluster has address %v", addr)
-	}
-
-	resultCh := make(chan []*txnlock.Lock)
-	// Initializing and getting result from scanner is blocking operations. Collect the result in a separated thread.
-	go func() {
-		err := scanner.Start(gcContext())
-		require.NoError(t, err)
-		// Get a batch of a enough-large size to get all results.
-		result := scanner.NextBatch(1000)
-		require.Less(t, len(result), 1000)
-		resultCh <- result
-	}()
-
-	return scanner, channels, storeIDs, resultCh
-}
-
-func TestMergeLockScanner(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	// Shortcuts to make the following test code simpler
-
-	// Get stores by index, and get their store IDs.
-	makeIDSet := func(storeIDs []uint64, indices ...uint64) map[uint64]interface{} {
-		res := make(map[uint64]interface{})
-		for _, i := range indices {
-			res[storeIDs[i]] = nil
-		}
-		return res
-	}
-
-	makeLock := func(key string, ts uint64) *txnlock.Lock {
-		return &txnlock.Lock{Key: []byte(key), TxnID: ts}
-	}
-
-	makeLockList := func(locks ...*txnlock.Lock) []*txnlock.Lock {
-		res := make([]*txnlock.Lock, 0, len(locks))
-		res = append(res, locks...)
-		return res
-	}
-
-	makeLockListByKey := func(keys ...string) []*txnlock.Lock {
-		res := make([]*txnlock.Lock, 0, len(keys))
-		for _, key := range keys {
-			res = append(res, makeLock(key, 0))
-		}
-		return res
-	}
-
-	sendLocks := func(ch chan<- scanLockResult, locks ...*txnlock.Lock) {
-		for _, lock := range locks {
-			ch <- scanLockResult{Lock: lock}
-		}
-	}
-
-	sendLocksByKey := func(ch chan<- scanLockResult, keys ...string) []*txnlock.Lock {
-		locks := make([]*txnlock.Lock, 0, len(keys))
-		for _, key := range keys {
-			locks = append(locks, makeLock(key, 0))
-		}
-		sendLocks(ch, locks...)
-		return locks
-	}
-
-	sendErr := func(ch chan<- scanLockResult) {
-		ch <- scanLockResult{Err: errors.New("error")}
-	}
-
-	// No lock.
-	scanner, sendCh, storeIDs, resCh := makeMergedChannel(t, 1)
-	close(sendCh[0])
-	require.Len(t, <-resCh, 0)
-	require.Equal(t, makeIDSet(storeIDs, 0), scanner.GetSucceededStores())
-
-	scanner, sendCh, storeIDs, resCh = makeMergedChannel(t, 1)
-	locks := sendLocksByKey(sendCh[0], "a", "b", "c")
-	close(sendCh[0])
-	require.Equal(t, locks, <-resCh)
-	require.Equal(t, makeIDSet(storeIDs, 0), scanner.GetSucceededStores())
-
-	// Send locks with error
-	scanner, sendCh, storeIDs, resCh = makeMergedChannel(t, 1)
-	locks = sendLocksByKey(sendCh[0], "a", "b", "c")
-	sendErr(sendCh[0])
-	close(sendCh[0])
-	require.Equal(t, locks, <-resCh)
-	require.Equal(t, makeIDSet(storeIDs), scanner.GetSucceededStores())
-
-	// Merge sort locks with different keys.
-	scanner, sendCh, storeIDs, resCh = makeMergedChannel(t, 2)
-	locks = sendLocksByKey(sendCh[0], "a", "c", "e")
-	time.Sleep(time.Millisecond * 100)
-	locks = append(locks, sendLocksByKey(sendCh[1], "b", "d", "f")...)
-	close(sendCh[0])
-	close(sendCh[1])
-	sort.Slice(locks, func(i, j int) bool {
-		return bytes.Compare(locks[i].Key, locks[j].Key) < 0
-	})
-	require.Equal(t, locks, <-resCh)
-	require.Equal(t, makeIDSet(storeIDs, 0, 1), scanner.GetSucceededStores())
-
-	// Merge sort locks with different timestamps.
-	scanner, sendCh, storeIDs, resCh = makeMergedChannel(t, 2)
-	sendLocks(sendCh[0], makeLock("a", 0), makeLock("a", 1))
-	time.Sleep(time.Millisecond * 100)
-	sendLocks(sendCh[1], makeLock("a", 1), makeLock("a", 2), makeLock("b", 0))
-	close(sendCh[0])
-	close(sendCh[1])
-	require.Equal(t, makeLockList(makeLock("a", 0), makeLock("a", 1), makeLock("a", 2), makeLock("b", 0)), <-resCh)
-	require.Equal(t, makeIDSet(storeIDs, 0, 1), scanner.GetSucceededStores())
-
-	for _, useMock := range []bool{false, true} {
-		channel := makeMergedChannel
-		if useMock {
-			channel = s.makeMergedMockClient
-		}
-
-		scanner, sendCh, storeIDs, resCh = channel(t, 3)
-		sendLocksByKey(sendCh[0], "a", "d", "g", "h")
-		time.Sleep(time.Millisecond * 100)
-		sendLocksByKey(sendCh[1], "a", "d", "f", "h")
-		time.Sleep(time.Millisecond * 100)
-		sendLocksByKey(sendCh[2], "b", "c", "e", "h")
-		close(sendCh[0])
-		close(sendCh[1])
-		close(sendCh[2])
-		require.Equal(t, makeLockListByKey("a", "b", "c", "d", "e", "f", "g", "h"), <-resCh)
-		require.Equal(t, makeIDSet(storeIDs, 0, 1, 2), scanner.GetSucceededStores())
-
-		scanner, sendCh, storeIDs, resCh = channel(t, 3)
-		sendLocksByKey(sendCh[0], "a", "d", "g", "h")
-		time.Sleep(time.Millisecond * 100)
-		sendLocksByKey(sendCh[1], "a", "d", "f", "h")
-		time.Sleep(time.Millisecond * 100)
-		sendLocksByKey(sendCh[2], "b", "c", "e", "h")
-		sendErr(sendCh[0])
-		close(sendCh[0])
-		close(sendCh[1])
-		close(sendCh[2])
-		require.Equal(t, makeLockListByKey("a", "b", "c", "d", "e", "f", "g", "h"), <-resCh)
-		require.Equal(t, makeIDSet(storeIDs, 1, 2), scanner.GetSucceededStores())
-
-		scanner, sendCh, storeIDs, resCh = channel(t, 3)
-		sendLocksByKey(sendCh[0], "a\x00", "a\x00\x00", "b", "b\x00")
-		sendLocksByKey(sendCh[1], "a", "a\x00\x00", "a\x00\x00\x00", "c")
-		sendLocksByKey(sendCh[2], "1", "a\x00", "a\x00\x00", "b")
-		close(sendCh[0])
-		close(sendCh[1])
-		close(sendCh[2])
-		require.Equal(t, makeLockListByKey("1", "a", "a\x00", "a\x00\x00", "a\x00\x00\x00", "b", "b\x00", "c"), <-resCh)
-		require.Equal(t, makeIDSet(storeIDs, 0, 1, 2), scanner.GetSucceededStores())
-
-		scanner, sendCh, storeIDs, resCh = channel(t, 3)
-		sendLocks(sendCh[0], makeLock("a", 0), makeLock("d", 0), makeLock("g", 0), makeLock("h", 0))
-		sendLocks(sendCh[1], makeLock("a", 1), makeLock("b", 0), makeLock("c", 0), makeLock("d", 1))
-		sendLocks(sendCh[2], makeLock("e", 0), makeLock("g", 1), makeLock("g", 2), makeLock("h", 0))
-		close(sendCh[0])
-		close(sendCh[1])
-		close(sendCh[2])
-		locks := makeLockList(
-			makeLock("a", 0),
-			makeLock("a", 1),
-			makeLock("b", 0),
-			makeLock("c", 0),
-			makeLock("d", 0),
-			makeLock("d", 1),
-			makeLock("e", 0),
-			makeLock("g", 0),
-			makeLock("g", 1),
-			makeLock("g", 2),
-			makeLock("h", 0))
-		require.Equal(t, locks, <-resCh)
-		require.Equal(t, makeIDSet(storeIDs, 0, 1, 2), scanner.GetSucceededStores())
-	}
-}
-
-func TestResolveLocksPhysical(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	alwaysSucceedHandler := func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-		switch req.Type {
-		case tikvrpc.CmdPhysicalScanLock:
-			return &tikvrpc.Response{Resp: &kvrpcpb.PhysicalScanLockResponse{Locks: nil, Error: ""}}, nil
-		case tikvrpc.CmdRegisterLockObserver:
-			return &tikvrpc.Response{Resp: &kvrpcpb.RegisterLockObserverResponse{Error: ""}}, nil
-		case tikvrpc.CmdCheckLockObserver:
-			return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: true, Locks: nil}}, nil
-		case tikvrpc.CmdRemoveLockObserver:
-			return &tikvrpc.Response{Resp: &kvrpcpb.RemoveLockObserverResponse{Error: ""}}, nil
-		default:
-			panic("unreachable")
-		}
-	}
-	alwaysFailHandler := func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-		switch req.Type {
-		case tikvrpc.CmdPhysicalScanLock:
-			return &tikvrpc.Response{Resp: &kvrpcpb.PhysicalScanLockResponse{Locks: nil, Error: "error"}}, nil
-		case tikvrpc.CmdRegisterLockObserver:
-			return &tikvrpc.Response{Resp: &kvrpcpb.RegisterLockObserverResponse{Error: "error"}}, nil
-		case tikvrpc.CmdCheckLockObserver:
-			return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "error", IsClean: false, Locks: nil}}, nil
-		case tikvrpc.CmdRemoveLockObserver:
-			return &tikvrpc.Response{Resp: &kvrpcpb.RemoveLockObserverResponse{Error: "error"}}, nil
-		default:
-			panic("unreachable")
-		}
-	}
-	reset := func() {
-		s.client.physicalScanLockHandler = alwaysSucceedHandler
-		s.client.registerLockObserverHandler = alwaysSucceedHandler
-		s.client.checkLockObserverHandler = alwaysSucceedHandler
-		s.client.removeLockObserverHandler = alwaysSucceedHandler
-	}
-
-	ctx := gcContext()
-	var safePoint uint64 = 10000
-
-	// No lock
-	reset()
-	physicalUsed, err := s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.True(t, physicalUsed)
-	require.NoError(t, err)
-
-	// Should fall back on the legacy mode when fails to register lock observers.
-	reset()
-	s.client.registerLockObserverHandler = alwaysFailHandler
-	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.False(t, physicalUsed)
-	require.NoError(t, err)
-
-	// Should fall back when fails to resolve locks.
-	reset()
-	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-		locks := []*kvrpcpb.LockInfo{{Key: []byte{0}}}
-		return &tikvrpc.Response{Resp: &kvrpcpb.PhysicalScanLockResponse{Locks: locks, Error: ""}}, nil
-	}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/resolveLocksAcrossRegionsErr", "return(100)"))
-	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.False(t, physicalUsed)
-	require.NoError(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/resolveLocksAcrossRegionsErr"))
-
-	// Shouldn't fall back when fails to scan locks less than 3 times.
-	reset()
-	var returnError uint32 = 1
-	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-		if atomic.CompareAndSwapUint32(&returnError, 1, 0) {
-			return alwaysFailHandler(addr, req)
-		}
-		return alwaysSucceedHandler(addr, req)
-	}
-	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.True(t, physicalUsed)
-	require.NoError(t, err)
-
-	// Should fall back if reaches retry limit
-	reset()
-	s.client.physicalScanLockHandler = alwaysFailHandler
-	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.False(t, physicalUsed)
-	require.NoError(t, err)
-
-	// Should fall back when one registered store is dirty.
-	reset()
-	s.client.checkLockObserverHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-		return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
-	}
-	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.False(t, physicalUsed)
-	require.NoError(t, err)
-
-	// When fails to check lock observer in a store, we assume the store is dirty.
-	// Should fall back when fails to check lock observers.
-	reset()
-	s.client.checkLockObserverHandler = alwaysFailHandler
-	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.False(t, physicalUsed)
-	require.NoError(t, err)
-
-	// Shouldn't fall back when the dirty store is newly added.
-	reset()
-	var wg sync.WaitGroup
-	wg.Add(1)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/beforeCheckLockObservers", "pause"))
-	go func() {
-		defer wg.Done()
-		physicalUsed, err := s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-		require.True(t, physicalUsed)
-		require.NoError(t, err)
-	}()
-	// Sleep to let the goroutine pause.
-	time.Sleep(500 * time.Millisecond)
-	s.cluster.AddStore(100, "store100")
-	once := true
-	s.client.checkLockObserverHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-		// The newly added store returns IsClean=false for the first time.
-		if addr == "store100" && once {
-			once = false
-			return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
-		}
-		return alwaysSucceedHandler(addr, req)
-	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/beforeCheckLockObservers"))
-	wg.Wait()
-
-	// Shouldn't fall back when a store is removed.
-	reset()
-	wg.Add(1)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/beforeCheckLockObservers", "pause"))
-	go func() {
-		defer wg.Done()
-		physicalUsed, err := s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-		require.True(t, physicalUsed)
-		require.NoError(t, err)
-	}()
-	// Sleep to let the goroutine pause.
-	time.Sleep(500 * time.Millisecond)
-	s.cluster.RemoveStore(100)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/beforeCheckLockObservers"))
-	wg.Wait()
-
-	// Should fall back when a cleaned store becomes dirty.
-	reset()
-	wg.Add(1)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/beforeCheckLockObservers", "pause"))
-	go func() {
-		defer wg.Done()
-		physicalUsed, err := s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-		require.False(t, physicalUsed)
-		require.NoError(t, err)
-	}()
-	// Sleep to let the goroutine pause.
-	time.Sleep(500 * time.Millisecond)
-	store := s.cluster.GetAllStores()[0]
-	var onceClean uint32 = 1
-	s.cluster.AddStore(100, "store100")
-	var onceDirty uint32 = 1
-	s.client.checkLockObserverHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-		switch addr {
-		case "store100":
-			// The newly added store returns IsClean=false for the first time.
-			if atomic.CompareAndSwapUint32(&onceDirty, 1, 0) {
-				return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
-			}
-			return alwaysSucceedHandler(addr, req)
-		case store.Address:
-			// The store returns IsClean=true for the first time.
-			if atomic.CompareAndSwapUint32(&onceClean, 1, 0) {
-				return alwaysSucceedHandler(addr, req)
-			}
-			return &tikvrpc.Response{Resp: &kvrpcpb.CheckLockObserverResponse{Error: "", IsClean: false, Locks: nil}}, nil
-		default:
-			return alwaysSucceedHandler(addr, req)
-		}
-	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/beforeCheckLockObservers"))
-	wg.Wait()
-
-	// Shouldn't fall back when fails to remove lock observers.
-	reset()
-	s.client.removeLockObserverHandler = alwaysFailHandler
-	physicalUsed, err = s.gcWorker.resolveLocks(ctx, safePoint, 3, true)
-	require.True(t, physicalUsed)
-	require.NoError(t, err)
-}
-
-func TestPhysicalScanLockDeadlock(t *testing.T) {
-	s := createGCWorkerSuite(t)
-
-	ctx := gcContext()
-	stores := s.cluster.GetAllStores()
-	require.Greater(t, len(stores), 1)
-
-	s.client.physicalScanLockHandler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-		require.Equal(t, stores[0].Address, addr)
-		scanReq := req.PhysicalScanLock()
-		scanLockLimit := int(scanReq.Limit)
-		locks := make([]*kvrpcpb.LockInfo, 0, scanReq.Limit)
-		for i := 0; i < scanLockLimit; i++ {
-			// The order of keys doesn't matter.
-			locks = append(locks, &kvrpcpb.LockInfo{Key: []byte{byte(i)}})
-		}
-		return &tikvrpc.Response{
-			Resp: &kvrpcpb.PhysicalScanLockResponse{
-				Locks: locks,
-				Error: "",
-			},
-		}, nil
-	}
-
-	// Sleep 1000ms to let the main goroutine block on sending tasks.
-	// Inject error to the goroutine resolving locks so that the main goroutine will block forever if it doesn't handle channels properly.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/resolveLocksAcrossRegionsErr", "return(1000)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/resolveLocksAcrossRegionsErr"))
-	}()
-
-	done := make(chan interface{})
-	go func() {
-		defer close(done)
-		storesMap := map[uint64]*metapb.Store{stores[0].Id: stores[0]}
-		succeeded, err := s.gcWorker.physicalScanAndResolveLocks(ctx, 10000, storesMap)
-		require.Nil(t, succeeded)
-		require.EqualError(t, err, "injectedError")
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "physicalScanAndResolveLocks blocks")
-	}
-}
-
 func TestGCPlacementRules(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
@@ -1904,7 +1452,7 @@ func TestGCPlacementRules(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
 	}()
 
-	gcPlacementRuleCache := make(map[int64]interface{})
+	var gcPlacementRuleCache sync.Map
 	deletePlacementRuleCounter := 0
 	require.NoError(t, failpoint.EnableWith("github.com/pingcap/tidb/pkg/store/gcworker/gcDeletePlacementRuleCounter", "return", func() error {
 		deletePlacementRuleCounter++
@@ -1931,9 +1479,11 @@ func TestGCPlacementRules(t *testing.T) {
 
 	// do gc
 	dr := util.DelRangeTask{JobID: 1, ElementID: 10}
-	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
+	err = doGCPlacementRules(createSession(s.store), 1, dr, &gcPlacementRuleCache)
 	require.NoError(t, err)
-	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
+	v, ok := gcPlacementRuleCache.Load(int64(10))
+	require.True(t, ok)
+	require.Equal(t, struct{}{}, v)
 	require.Equal(t, 1, deletePlacementRuleCounter)
 
 	// check bundle deleted after gc
@@ -1943,9 +1493,11 @@ func TestGCPlacementRules(t *testing.T) {
 	require.True(t, got.IsEmpty())
 
 	// gc the same table id repeatedly
-	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
+	err = doGCPlacementRules(createSession(s.store), 1, dr, &gcPlacementRuleCache)
 	require.NoError(t, err)
-	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
+	v, ok = gcPlacementRuleCache.Load(int64(10))
+	require.True(t, ok)
+	require.Equal(t, struct{}{}, v)
 	require.Equal(t, 1, deletePlacementRuleCounter)
 }
 
@@ -1963,7 +1515,7 @@ func TestGCLabelRules(t *testing.T) {
 }
 
 func TestGCWithPendingTxn(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 30*time.Minute)
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -2014,7 +1566,9 @@ func TestGCWithPendingTxn(t *testing.T) {
 }
 
 func TestGCWithPendingTxn2(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	// as we are adjusting the base TS, we need a larger schema lease to avoid
+	// the info schema outdated error.
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 10*time.Minute)
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -2084,7 +1638,9 @@ func TestGCWithPendingTxn2(t *testing.T) {
 }
 
 func TestSkipGCAndOnlyResolveLock(t *testing.T) {
-	s := createGCWorkerSuite(t)
+	// as we are adjusting the base TS, we need a larger schema lease to avoid
+	// the info schema outdated error.
+	s := createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore, 10*time.Minute)
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -2153,4 +1709,38 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 		require.NoError(t, err)
 	})
 	return dom
+}
+
+func TestCalcDeleteRangeConcurrency(t *testing.T) {
+	testCases := []struct {
+		name        string
+		concurrency gcConcurrency
+		rangeNum    int
+		expected    int
+	}{
+		{"Auto: Low concurrency, few ranges", gcConcurrency{16, true}, 50000, 1},
+		{"Auto: High concurrency, many ranges", gcConcurrency{400, true}, 1000000, 10},
+		{"Auto: High concurrency, few ranges", gcConcurrency{400, true}, 50000, 1},
+		{"Auto: Low concurrency, many ranges", gcConcurrency{16, true}, 1000000, 4},
+		{"Non-auto: Low concurrency", gcConcurrency{16, false}, 1000000, 4},
+		{"Non-auto: High concurrency", gcConcurrency{400, false}, 50000, 100},
+		{"Edge case: Zero concurrency", gcConcurrency{0, true}, 100000, 1},
+		{"Edge case: Zero ranges", gcConcurrency{100, true}, 0, 1},
+		{"Large range number", gcConcurrency{400, true}, 10000000, 100},
+		{"Exact RequestsPerThread", gcConcurrency{400, true}, 200000, 2},
+	}
+
+	w := &GCWorker{}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := w.calcDeleteRangeConcurrency(tc.concurrency, tc.rangeNum)
+			if result != tc.expected {
+				t.Errorf("Expected %d, but got %d", tc.expected, result)
+			}
+			if result < 1 {
+				t.Errorf("Result should never be less than 1, but got %d", result)
+			}
+		})
+	}
 }

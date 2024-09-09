@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 )
 
 func TestNewFromYaml(t *testing.T) {
@@ -32,34 +33,34 @@ func TestNewConstraint(t *testing.T) {
 	type TestCase struct {
 		name  string
 		input string
-		label Constraint
+		label pd.LabelConstraint
 		err   error
 	}
 	tests := []TestCase{
 		{
 			name:  "normal",
 			input: "+zone=bj",
-			label: Constraint{
+			label: pd.LabelConstraint{
 				Key:    "zone",
-				Op:     In,
+				Op:     pd.In,
 				Values: []string{"bj"},
 			},
 		},
 		{
 			name:  "normal with spaces",
 			input: "-  dc  =  sh  ",
-			label: Constraint{
+			label: pd.LabelConstraint{
 				Key:    "dc",
-				Op:     NotIn,
+				Op:     pd.NotIn,
 				Values: []string{"sh"},
 			},
 		},
 		{
 			name:  "not tiflash",
 			input: "-engine  =  tiflash  ",
-			label: Constraint{
+			label: pd.LabelConstraint{
 				Key:    "engine",
-				Op:     NotIn,
+				Op:     pd.NotIn,
 				Values: []string{"tiflash"},
 			},
 		},
@@ -126,7 +127,7 @@ func TestNewConstraint(t *testing.T) {
 func TestRestoreConstraint(t *testing.T) {
 	type TestCase struct {
 		name   string
-		input  Constraint
+		input  pd.LabelConstraint
 		output string
 		err    error
 	}
@@ -158,8 +159,8 @@ func TestRestoreConstraint(t *testing.T) {
 
 	tests = append(tests, TestCase{
 		name: "no values",
-		input: Constraint{
-			Op:     In,
+		input: pd.LabelConstraint{
+			Op:     pd.In,
 			Key:    "dc",
 			Values: []string{},
 		},
@@ -168,8 +169,8 @@ func TestRestoreConstraint(t *testing.T) {
 
 	tests = append(tests, TestCase{
 		name: "multiple values",
-		input: Constraint{
-			Op:     In,
+		input: pd.LabelConstraint{
+			Op:     pd.In,
 			Key:    "dc",
 			Values: []string{"dc1", "dc2"},
 		},
@@ -178,7 +179,7 @@ func TestRestoreConstraint(t *testing.T) {
 
 	tests = append(tests, TestCase{
 		name: "invalid op",
-		input: Constraint{
+		input: pd.LabelConstraint{
 			Op:     "[",
 			Key:    "dc",
 			Values: []string{},
@@ -187,7 +188,7 @@ func TestRestoreConstraint(t *testing.T) {
 	})
 
 	for _, test := range tests {
-		output, err := test.input.Restore()
+		output, err := RestoreConstraint(&test.input)
 		comment := fmt.Sprintf("%s: %v", test.name, err)
 		if test.err == nil {
 			require.NoError(t, err, comment)
@@ -201,8 +202,8 @@ func TestRestoreConstraint(t *testing.T) {
 func TestCompatibleWith(t *testing.T) {
 	type TestCase struct {
 		name   string
-		i1     Constraint
-		i2     Constraint
+		i1     pd.LabelConstraint
+		i2     pd.LabelConstraint
 		output ConstraintCompatibility
 	}
 	var tests []TestCase
@@ -258,6 +259,6 @@ func TestCompatibleWith(t *testing.T) {
 	})
 
 	for _, test := range tests {
-		require.Equal(t, test.output, test.i1.CompatibleWith(&test.i2), test.name)
+		require.Equal(t, test.output, ConstraintCompatibleWith(&test.i1, &test.i2), test.name)
 	}
 }

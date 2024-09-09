@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -86,7 +86,7 @@ type ImportParameters struct {
 	FileLocation string `json:"file-location"`
 	Format       string `json:"format"`
 	// only include what user specified, not include default value.
-	Options map[string]interface{} `json:"options,omitempty"`
+	Options map[string]any `json:"options,omitempty"`
 }
 
 var _ fmt.Stringer = &ImportParameters{}
@@ -156,18 +156,22 @@ func GetJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, user str
 		return nil, err
 	}
 	if !hasSuperPriv && info.CreatedBy != user {
-		return nil, core.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
 	}
 	return info, nil
 }
 
 // GetActiveJobCnt returns the count of active import jobs.
 // Active import jobs include pending and running jobs.
-func GetActiveJobCnt(ctx context.Context, conn sqlexec.SQLExecutor) (int64, error) {
+func GetActiveJobCnt(ctx context.Context, conn sqlexec.SQLExecutor, tableSchema, tableName string) (int64, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 
-	sql := `select count(1) from mysql.tidb_import_jobs where status in (%?, %?)`
-	rs, err := conn.ExecuteInternal(ctx, sql, jobStatusPending, JobStatusRunning)
+	sql := `select count(1) from mysql.tidb_import_jobs
+			where status in (%?, %?)
+				and table_schema = %? and table_name = %?;
+			`
+	rs, err := conn.ExecuteInternal(ctx, sql, jobStatusPending, JobStatusRunning,
+		tableSchema, tableName)
 	if err != nil {
 		return 0, err
 	}
@@ -327,7 +331,7 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	sql := baseQuerySQL
-	args := []interface{}{}
+	args := []any{}
 	if !hasSuperPriv {
 		sql += " WHERE created_by = %?"
 		args = append(args, user)
@@ -360,7 +364,7 @@ func CancelJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err 
 	sql := `UPDATE mysql.tidb_import_jobs
 			SET update_time = CURRENT_TIMESTAMP(6), status = %?, error_message = 'cancelled by user'
 			WHERE id = %? AND status IN (%?, %?);`
-	args := []interface{}{jogStatusCancelled, jobID, jobStatusPending, JobStatusRunning}
+	args := []any{jogStatusCancelled, jobID, jobStatusPending, JobStatusRunning}
 	_, err = conn.ExecuteInternal(ctx, sql, args...)
 	return err
 }

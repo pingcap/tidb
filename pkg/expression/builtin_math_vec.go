@@ -20,14 +20,14 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
-func (b *builtinLog1ArgSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLog1ArgSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -37,7 +37,8 @@ func (b *builtinLog1ArgSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chu
 			continue
 		}
 		if f64s[i] <= 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+			tc := typeCtx(ctx)
+			tc.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log(f64s[i])
@@ -50,7 +51,7 @@ func (b *builtinLog1ArgSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLog2Sig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLog2Sig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -60,7 +61,8 @@ func (b *builtinLog2Sig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk,
 			continue
 		}
 		if f64s[i] <= 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+			tc := typeCtx(ctx)
+			tc.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log2(f64s[i])
@@ -73,7 +75,7 @@ func (b *builtinLog2Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLog10Sig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLog10Sig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -83,7 +85,8 @@ func (b *builtinLog10Sig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk
 			continue
 		}
 		if f64s[i] <= 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+			tc := typeCtx(ctx)
+			tc.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log10(f64s[i])
@@ -96,7 +99,7 @@ func (b *builtinLog10Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSqrtSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSqrtSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -118,7 +121,7 @@ func (b *builtinSqrtSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAcosSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAcosSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -140,7 +143,7 @@ func (b *builtinAcosSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAsinSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAsinSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -162,7 +165,7 @@ func (b *builtinAsinSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAtan1ArgSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAtan1ArgSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -180,7 +183,7 @@ func (b *builtinAtan1ArgSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAtan2ArgsSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAtan2ArgsSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
@@ -213,7 +216,7 @@ func (b *builtinAtan2ArgsSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCosSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCosSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -231,7 +234,7 @@ func (b *builtinCosSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCotSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCotSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -259,7 +262,7 @@ func (b *builtinCotSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinDegreesSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinDegreesSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -277,7 +280,7 @@ func (b *builtinDegreesSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinExpSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinExpSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -288,7 +291,7 @@ func (b *builtinExpSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, 
 		}
 		exp := math.Exp(f64s[i])
 		if math.IsInf(exp, 0) || math.IsNaN(exp) {
-			s := fmt.Sprintf("exp(%s)", b.args[0].String())
+			s := fmt.Sprintf("exp(%s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable))
 			if err := types.ErrOverflow.GenWithStackByArgs("DOUBLE", s); err != nil {
 				return err
 			}
@@ -302,7 +305,7 @@ func (b *builtinExpSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRadiansSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRadiansSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -320,7 +323,7 @@ func (b *builtinRadiansSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSinSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSinSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -338,7 +341,7 @@ func (b *builtinSinSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTanSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTanSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -356,7 +359,7 @@ func (b *builtinTanSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAbsDecSig) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAbsDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalDecimal(ctx, input, result); err != nil {
 		return err
 	}
@@ -381,7 +384,7 @@ func (b *builtinAbsDecSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRoundDecSig) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRoundDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalDecimal(ctx, input, result); err != nil {
 		return err
 	}
@@ -403,7 +406,7 @@ func (b *builtinRoundDecSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinPowSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinPowSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf1, err := b.bufAllocator.get()
 	if err != nil {
@@ -439,7 +442,7 @@ func (b *builtinPowSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinFloorRealSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinFloorRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -457,7 +460,7 @@ func (b *builtinFloorRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLog2ArgsSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLog2ArgsSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -479,7 +482,8 @@ func (b *builtinLog2ArgsSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Ch
 			continue
 		}
 		if d[i] <= 0 || d[i] == 1 || x[i] <= 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+			tc := typeCtx(ctx)
+			tc.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		}
 		d[i] = math.Log(x[i]) / math.Log(d[i])
@@ -491,7 +495,7 @@ func (b *builtinLog2ArgsSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCeilRealSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCeilRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -509,7 +513,7 @@ func (b *builtinCeilRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRoundRealSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRoundRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -527,7 +531,7 @@ func (b *builtinRoundRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRoundWithFracRealSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRoundWithFracRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -557,7 +561,7 @@ func (b *builtinRoundWithFracRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTruncateRealSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTruncateRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -587,7 +591,7 @@ func (b *builtinTruncateRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAbsRealSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAbsRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -602,7 +606,7 @@ func (b *builtinAbsRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAbsIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAbsIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}
@@ -625,7 +629,7 @@ func (b *builtinAbsIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRoundIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRoundIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return b.args[0].VecEvalInt(ctx, input, result)
 }
 
@@ -633,7 +637,7 @@ func (b *builtinRoundIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRoundWithFracIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRoundWithFracIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}
@@ -667,7 +671,7 @@ func (b *builtinCRC32Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCRC32Sig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -692,7 +696,7 @@ func (b *builtinPISig) vectorized() bool {
 	return true
 }
 
-func (b *builtinPISig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinPISig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
@@ -706,7 +710,7 @@ func (b *builtinRandSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRandSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRandSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
@@ -720,7 +724,7 @@ func (b *builtinRandWithSeedFirstGenSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRandWithSeedFirstGenSig) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRandWithSeedFirstGenSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -750,7 +754,7 @@ func (b *builtinCeilIntToDecSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCeilIntToDecSig) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCeilIntToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -766,7 +770,7 @@ func (b *builtinCeilIntToDecSig) vecEvalDecimal(ctx sessionctx.Context, input *c
 
 	i64s := buf.Int64s()
 	d := result.Decimals()
-	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -784,7 +788,7 @@ func (b *builtinTruncateIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTruncateIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTruncateIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}
@@ -802,7 +806,7 @@ func (b *builtinTruncateIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
-	if mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
 		return nil
 	}
 
@@ -827,7 +831,7 @@ func (b *builtinTruncateUintSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTruncateUintSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTruncateUintSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}
@@ -846,7 +850,7 @@ func (b *builtinTruncateUintSig) vecEvalInt(ctx sessionctx.Context, input *chunk
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
-	if mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
 		return nil
 	}
 
@@ -872,7 +876,7 @@ func (b *builtinCeilDecToDecSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCeilDecToDecSig) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCeilDecToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	if err := b.args[0].VecEvalDecimal(ctx, input, result); err != nil {
 		return err
@@ -901,7 +905,7 @@ func (b *builtinFloorDecToDecSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinFloorDecToDecSig) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinFloorDecToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	if err := b.args[0].VecEvalDecimal(ctx, input, result); err != nil {
 		return err
@@ -936,7 +940,7 @@ func (b *builtinTruncateDecimalSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTruncateDecimalSig) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTruncateDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	if err := b.args[0].VecEvalDecimal(ctx, input, result); err != nil {
 		return err
@@ -970,7 +974,7 @@ func (b *builtinRoundWithFracDecSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRoundWithFracDecSig) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRoundWithFracDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	if err := b.args[0].VecEvalDecimal(ctx, input, result); err != nil {
 		return err
@@ -1005,7 +1009,7 @@ func (b *builtinFloorIntToDecSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinFloorIntToDecSig) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinFloorIntToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1021,7 +1025,7 @@ func (b *builtinFloorIntToDecSig) vecEvalDecimal(ctx sessionctx.Context, input *
 
 	i64s := buf.Int64s()
 	d := result.Decimals()
-	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1039,7 +1043,7 @@ func (b *builtinSignSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinSignSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinSignSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1073,7 +1077,7 @@ func (b *builtinConvSig) vectorized() bool {
 	return false
 }
 
-func (b *builtinConvSig) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinConvSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf1, err := b.bufAllocator.get()
 	if err != nil {
@@ -1124,7 +1128,7 @@ func (b *builtinAbsUIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinAbsUIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinAbsUIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return b.args[0].VecEvalInt(ctx, input, result)
 }
 
@@ -1132,7 +1136,7 @@ func (b *builtinCeilDecToIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCeilDecToIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCeilDecToIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -1170,7 +1174,7 @@ func (b *builtinCeilIntToIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCeilIntToIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCeilIntToIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return b.args[0].VecEvalInt(ctx, input, result)
 }
 
@@ -1178,7 +1182,7 @@ func (b *builtinFloorIntToIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinFloorIntToIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinFloorIntToIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return b.args[0].VecEvalInt(ctx, input, result)
 }
 
@@ -1186,7 +1190,7 @@ func (b *builtinFloorDecToIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinFloorDecToIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinFloorDecToIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {

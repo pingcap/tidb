@@ -18,7 +18,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -67,6 +67,9 @@ func (s *Schema) String() string {
 
 // Clone copies the total schema.
 func (s *Schema) Clone() *Schema {
+	if s == nil {
+		return nil
+	}
 	cols := make([]*Column, 0, s.Len())
 	keys := make([]KeyInfo, 0, len(s.Keys))
 	for _, col := range s.Columns {
@@ -78,6 +81,24 @@ func (s *Schema) Clone() *Schema {
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
 	return schema
+}
+
+// ExprReferenceSchema checks if any column of this expression are from the schema.
+func ExprReferenceSchema(expr Expression, schema *Schema) bool {
+	switch v := expr.(type) {
+	case *Column:
+		return schema.Contains(v)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			if ExprReferenceSchema(arg, schema) {
+				return true
+			}
+		}
+		return false
+	case *CorrelatedColumn, *Constant:
+		return false
+	}
+	return false
 }
 
 // ExprFromSchema checks if all columns of this expression are from the same schema.
@@ -110,7 +131,7 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 // IsUniqueKey checks if this column is a unique key.
 func (s *Schema) IsUniqueKey(col *Column) bool {
 	for _, key := range s.Keys {
-		if len(key) == 1 && key[0].Equal(nil, col) {
+		if len(key) == 1 && key[0].EqualColumn(col) {
 			return true
 		}
 	}
@@ -120,7 +141,7 @@ func (s *Schema) IsUniqueKey(col *Column) bool {
 // IsUnique checks if this column is a unique key which may contain duplicate nulls .
 func (s *Schema) IsUnique(col *Column) bool {
 	for _, key := range s.UniqueKeys {
-		if len(key) == 1 && key[0].Equal(nil, col) {
+		if len(key) == 1 && key[0].EqualColumn(col) {
 			return true
 		}
 	}
@@ -268,7 +289,7 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 }
 
 // GetUsedList shows whether each column in schema is contained in usedCols.
-func GetUsedList(usedCols []*Column, schema *Schema) []bool {
+func GetUsedList(ctx EvalContext, usedCols []*Column, schema *Schema) []bool {
 	tmpSchema := NewSchema(usedCols...)
 	used := make([]bool, schema.Len())
 	for i, col := range schema.Columns {
@@ -278,7 +299,7 @@ func GetUsedList(usedCols []*Column, schema *Schema) []bool {
 			// When cols are a generated expression col, compare them in terms of virtual expr.
 			if expr, ok := col.VirtualExpr.(*ScalarFunction); ok && used[i] {
 				for j, colToCompare := range schema.Columns {
-					if !used[j] && j != i && (expr).Equal(nil, colToCompare.VirtualExpr) && col.RetType.Equal(colToCompare.RetType) {
+					if !used[j] && j != i && (expr).Equal(ctx, colToCompare.VirtualExpr) && col.RetType.Equal(colToCompare.RetType) {
 						used[j] = true
 					}
 				}

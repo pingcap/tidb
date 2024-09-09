@@ -27,15 +27,14 @@ import (
 )
 
 type memFile struct {
-	Data atomic.Value // the atomic value is a byte slice, which can only be get/set atomically
+	Data atomic.Pointer[[]byte]
 }
 
-// GetData gets the underlying byte slice of the atomic value
+// GetData gets the underlying byte slice of the atomic pointer
 func (f *memFile) GetData() []byte {
 	var fileData []byte
-	fileDataVal := f.Data.Load()
-	if fileDataVal != nil {
-		fileData = fileDataVal.([]byte)
+	if p := f.Data.Load(); p != nil {
+		fileData = *p
 	}
 	return fileData
 }
@@ -110,10 +109,10 @@ func (s *MemStorage) WriteFile(ctx context.Context, name string, data []byte) er
 	defer s.rwm.Unlock()
 	theFile, ok := s.dataStore[name]
 	if ok {
-		theFile.Data.Store(fileData)
+		theFile.Data.Store(&fileData)
 	} else {
 		theFile := new(memFile)
-		theFile.Data.Store(fileData)
+		theFile.Data.Store(&fileData)
 		s.dataStore[name] = theFile
 	}
 	return nil
@@ -253,9 +252,6 @@ func (s *MemStorage) Create(ctx context.Context, name string, _ *WriterOption) (
 	}
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
-	if _, ok := s.dataStore[name]; ok {
-		return nil, errors.Errorf("the file already exists: %s", name)
-	}
 	theFile := new(memFile)
 	s.dataStore[name] = theFile
 	return &memFileWriter{
@@ -284,6 +280,11 @@ func (s *MemStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	s.dataStore[newFileName] = theFile
 	delete(s.dataStore, oldFileName)
 	return nil
+}
+
+// Close implements ExternalStorage interface.
+func (s *MemStorage) Close() {
+	s.dataStore = nil
 }
 
 // memFileReader is the struct to read data from an opend mem storage file
@@ -352,7 +353,7 @@ func (w *memFileWriter) Close(ctx context.Context) error {
 		// continue on
 	}
 	fileData := append([]byte{}, w.buf.Bytes()...)
-	w.file.Data.Store(fileData)
+	w.file.Data.Store(&fileData)
 	w.isClosed.Store(true)
 	return nil
 }

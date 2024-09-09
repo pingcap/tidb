@@ -18,34 +18,48 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // bindinfo metrics.
 var (
-	BindUsageCounter *prometheus.CounterVec
-	BindTotalGauge   *prometheus.GaugeVec
-	BindMemoryUsage  *prometheus.GaugeVec
+	BindingCacheHitCounter  prometheus.Counter
+	BindingCacheMissCounter prometheus.Counter
+	BindingCacheMemUsage    prometheus.Gauge
+	BindingCacheMemLimit    prometheus.Gauge
+	BindingCacheNumBindings prometheus.Gauge
 )
 
 // InitBindInfoMetrics initializes bindinfo metrics.
 func InitBindInfoMetrics() {
-	BindUsageCounter = NewCounterVec(
+	BindingCacheHitCounter = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
-			Subsystem: "bindinfo",
-			Name:      "bind_usage_counter",
-			Help:      "Counter of query using sql bind",
-		}, []string{LabelScope})
-
-	BindTotalGauge = NewGaugeVec(
+			Subsystem: "server",
+			Name:      "binding_cache_hit_total",
+			Help:      "Counter of binding cache hit.",
+		})
+	BindingCacheMissCounter = NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "binding_cache_miss_total",
+			Help:      "Counter of binding cache miss.",
+		})
+	BindingCacheMemUsage = NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
-			Subsystem: "bindinfo",
-			Name:      "bind_total_gauge",
-			Help:      "Total number of sql bind",
-		}, []string{LabelScope, LblType})
-
-	BindMemoryUsage = NewGaugeVec(
+			Subsystem: "server",
+			Name:      "binding_cache_mem_usage",
+			Help:      "Memory usage of binding cache.",
+		})
+	BindingCacheMemLimit = NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
-			Subsystem: "bindinfo",
-			Name:      "bind_memory_usage",
-			Help:      "Memory usage of sql bind",
-		}, []string{LabelScope, LblType})
+			Subsystem: "server",
+			Name:      "binding_cache_mem_limit",
+			Help:      "Memory limit of binding cache.",
+		})
+	BindingCacheNumBindings = NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "binding_cache_num_bindings",
+			Help:      "Number of bindings in binding cache.",
+		})
 }

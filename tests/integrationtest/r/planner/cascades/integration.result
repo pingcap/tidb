@@ -971,3 +971,26 @@ a	b
 1	11
 2	22
 3	33
+SET SESSION tidb_opt_fix_control = '44262:ON';
+drop table if exists pt1;
+create table pt1(a bigint, b bigint) partition by hash(a) partitions 4;
+insert into pt1 values(1,10);
+insert into pt1 values(2,20);
+insert into pt1 values(3,30);
+insert into pt1 values(4,40);
+insert into pt1 values(5,50);
+set @@tidb_enable_cascades_planner = 1;
+explain select * from pt1 order by a;
+id	estRows	task	access object	operator info
+Sort_11	10000.00	root		planner__cascades__integration.pt1.a
+└─TableReader_9	10000.00	root	partition:all	data:TableFullScan_10
+  └─TableFullScan_10	10000.00	cop[tikv]	table:pt1	keep order:false, stats:pseudo
+select * from pt1 order by a;
+a	b
+1	10
+2	20
+3	30
+4	40
+5	50
+set session tidb_opt_fix_control = default;
+set @@tidb_enable_cascades_planner = default;

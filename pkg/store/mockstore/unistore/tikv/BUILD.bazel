@@ -18,7 +18,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/store/mockstore/unistore/client",
         "//pkg/store/mockstore/unistore/config",
         "//pkg/store/mockstore/unistore/cophandler",

@@ -164,7 +164,7 @@ func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) 
 	return conn, nil
 }
 
-func (mgr *StoreManager) WithConn(ctx context.Context, storeID uint64, f func(*grpc.ClientConn)) error {
+func (mgr *StoreManager) RemoveConn(ctx context.Context, storeID uint64) error {
 	if ctx.Err() != nil {
 		return errors.Trace(ctx.Err())
 	}
@@ -174,8 +174,27 @@ func (mgr *StoreManager) WithConn(ctx context.Context, storeID uint64, f func(*g
 
 	if conn, ok := mgr.grpcClis.clis[storeID]; ok {
 		// Find a cached backup client.
-		f(conn)
+		err := conn.Close()
+		if err != nil {
+			log.Warn("close backup connection failed, ignore it", zap.Uint64("storeID", storeID))
+		}
+		delete(mgr.grpcClis.clis, storeID)
 		return nil
+	}
+	return nil
+}
+
+func (mgr *StoreManager) TryWithConn(ctx context.Context, storeID uint64, f func(*grpc.ClientConn) error) error {
+	if ctx.Err() != nil {
+		return errors.Trace(ctx.Err())
+	}
+
+	mgr.grpcClis.mu.Lock()
+	defer mgr.grpcClis.mu.Unlock()
+
+	if conn, ok := mgr.grpcClis.clis[storeID]; ok {
+		// Find a cached backup client.
+		return f(conn)
 	}
 
 	conn, err := mgr.getGrpcConnLocked(ctx, storeID)
@@ -184,32 +203,27 @@ func (mgr *StoreManager) WithConn(ctx context.Context, storeID uint64, f func(*g
 	}
 	// Cache the conn.
 	mgr.grpcClis.clis[storeID] = conn
-	f(conn)
-	return nil
+	return f(conn)
+}
+
+func (mgr *StoreManager) WithConn(ctx context.Context, storeID uint64, f func(*grpc.ClientConn)) error {
+	return mgr.TryWithConn(ctx, storeID, func(cc *grpc.ClientConn) error { f(cc); return nil })
 }
 
 // ResetBackupClient reset the connection for backup client.
 func (mgr *StoreManager) ResetBackupClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
-	if ctx.Err() != nil {
-		return nil, errors.Trace(ctx.Err())
+	var (
+		conn *grpc.ClientConn
+		err  error
+	)
+	err = mgr.RemoveConn(ctx, storeID)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	mgr.grpcClis.mu.Lock()
 	defer mgr.grpcClis.mu.Unlock()
 
-	if conn, ok := mgr.grpcClis.clis[storeID]; ok {
-		// Find a cached backup client.
-		log.Info("Reset backup client", zap.Uint64("storeID", storeID))
-		err := conn.Close()
-		if err != nil {
-			log.Warn("close backup connection failed, ignore it", zap.Uint64("storeID", storeID))
-		}
-		delete(mgr.grpcClis.clis, storeID)
-	}
-	var (
-		conn *grpc.ClientConn
-		err  error
-	)
 	for retry := 0; retry < resetRetryTimes; retry++ {
 		conn, err = mgr.getGrpcConnLocked(ctx, storeID)
 		if err != nil {

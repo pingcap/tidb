@@ -23,10 +23,12 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -96,7 +98,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 			onlyOnceItems++
 		}
 	}
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[j].cnt })
+	slices.SortStableFunc(sorted, func(i, j dataCnt) int { return -cmp.Compare(i.cnt, j.cnt) })
 	failpoint.Inject("StabilizeV1AnalyzeTopN", func(val failpoint.Value) {
 		if val.(bool) {
 			// The earlier TopN entry will modify the CMSketch, therefore influence later TopN entry's row count.
@@ -213,18 +215,6 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 	return (cnt == 0 || (cnt > c.defaultValue && cnt < 2*(c.count/uint64(c.width)))) && c.defaultValue > 0
 }
 
-func updateValueBytes(c *CMSketch, t *TopN, d []byte, count uint64) {
-	h1, h2 := murmur3.Sum128(d)
-	if oriCount, ok := t.QueryTopN(nil, d); ok {
-		if count > oriCount {
-			t.updateTopNWithDelta(d, count-oriCount, true)
-		} else {
-			t.updateTopNWithDelta(d, oriCount-count, false)
-		}
-	}
-	c.setValue(h1, h2, count)
-}
-
 // setValue sets the count for value that hashed into (h1, h2), and update defaultValue if necessary.
 func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
 	oriCount := c.queryHashValue(nil, h1, h2)
@@ -257,12 +247,17 @@ func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 }
 
 // QueryValue is used to query the count of specified value.
-func QueryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
+func QueryValue(sctx context.PlanContext, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
 	var sc *stmtctx.StatementContext
+	tz := time.UTC
 	if sctx != nil {
 		sc = sctx.GetSessionVars().StmtCtx
+		tz = sc.TimeZone()
 	}
-	rawData, err := tablecodec.EncodeValue(sc, nil, val)
+	rawData, err := tablecodec.EncodeValue(tz, nil, val)
+	if sc != nil {
+		err = sc.HandleError(err)
+	}
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -283,7 +278,7 @@ func (c *CMSketch) QueryBytes(d []byte) uint64 {
 }
 
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (c *CMSketch) queryHashValue(sctx sessionctx.Context, h1, h2 uint64) (result uint64) {
+func (c *CMSketch) queryHashValue(sctx context.PlanContext, h1, h2 uint64) (result uint64) {
 	vals := make([]uint32, c.depth)
 	originVals := make([]uint32, c.depth)
 	minValue := uint32(math.MaxUint32)
@@ -530,6 +525,13 @@ type TopN struct {
 	TopN []TopNMeta
 }
 
+// Scale scales the TopN by the given factor.
+func (c *TopN) Scale(scaleFactor float64) {
+	for i := range c.TopN {
+		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
+	}
+}
+
 // AppendTopN appends a topn into the TopN struct.
 func (c *TopN) AppendTopN(data []byte, count uint64) {
 	if c == nil {
@@ -615,7 +617,7 @@ type TopNMeta struct {
 
 // QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (c *TopN) QueryTopN(sctx sessionctx.Context, d []byte) (result uint64, found bool) {
+func (c *TopN) QueryTopN(sctx context.PlanContext, d []byte) (result uint64, found bool) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -671,19 +673,15 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 	if c == nil {
 		return 0, false
 	}
-	idx = sort.Search(len(c.TopN), func(i int) bool {
-		cmpRst := bytes.Compare(c.TopN[i].Encoded, d)
-		if cmpRst == 0 {
-			match = true
-		}
-		return cmpRst >= 0
+	idx, match = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
+		return bytes.Compare(a.Encoded, b)
 	})
 	return idx, match
 }
 
 // BetweenCount estimates the row count for interval [l, r).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (c *TopN) BetweenCount(sctx sessionctx.Context, l, r []byte) (result uint64) {
+func (c *TopN) BetweenCount(sctx context.PlanContext, l, r []byte) (result uint64) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -848,8 +846,8 @@ func SortTopnMeta(topnMetas []TopNMeta) {
 
 // TopnMetaCompare compare topnMeta
 func TopnMetaCompare(i, j TopNMeta) int {
-	c := cmp.Compare(i.Count, j.Count)
-	if c == 0 {
+	c := cmp.Compare(j.Count, i.Count)
+	if c != 0 {
 		return c
 	}
 	return bytes.Compare(i.Encoded, j.Encoded)

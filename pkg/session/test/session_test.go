@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -37,13 +37,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
@@ -65,13 +66,6 @@ func TestSchemaCheckerSQL(t *testing.T) {
 	tk.MustExec(`create table t1 (id int, c int);`)
 	// insert data
 	tk.MustExec(`insert into t values(1, 1);`)
-
-	// The schema version is out of date in the first transaction, but the SQL can be retried.
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk.MustExec(`begin;`)
-	tk1.MustExec(`alter table t add index idx(c);`)
-	tk.MustExec(`insert into t values(2, 2);`)
-	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
 	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
@@ -158,7 +152,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 	}()
 	require.Error(t, domain.GetDomain(tk.Session()).Reload())
 
-	lease := domain.GetDomain(tk.Session()).DDL().GetLease()
+	lease := domain.GetDomain(tk.Session()).GetSchemaLease()
 	time.Sleep(lease * 2)
 
 	// Make sure executing insert statement is failed when server is invalid.
@@ -294,9 +288,9 @@ func TestParseWithParams(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
-	exec := se.(sqlexec.RestrictedSQLExecutor)
+	exec := se.GetRestrictedSQLExecutor()
 
-	// test compatibility with ExcuteInternal
+	// test compatibility with ExecuteInternal
 	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
 	require.NoError(t, err)
 
@@ -348,11 +342,12 @@ func TestDoDDLJobQuit(t *testing.T) {
 	require.NoError(t, err)
 	defer se.Close()
 
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop", `return`))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop")) }()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop", func() {
+		_ = dom.DDL().Stop()
+	})
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, &ast.CreateDatabaseStmt{Name: model.NewCIStr("testschema")})
+	err = dom.DDLExecutor().CreateSchema(se, &ast.CreateDatabaseStmt{Name: model.NewCIStr("testschema")})
 	require.Equal(t, "context canceled", err.Error())
 }
 
@@ -408,7 +403,7 @@ func TestStmtHints(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 	tk.MustExec("select /*+ MEMORY_QUOTA(0 GB) */ 1;")
-	val = int64(0)
+	val = int64(-1)
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "Setting the MEMORY_QUOTA to 0 means no memory limit")
@@ -419,11 +414,11 @@ func TestStmtHints(t *testing.T) {
 	val = int64(1) * 1024 * 1024
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 
-	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */  into t1 select /*+ MEMORY_QUOTA(3 MB) */ * from t1;")
+	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */  into t1 select /*+ MEMORY_QUOTA(1 MB) */ * from t1;")
 	val = int64(1) * 1024 * 1024
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
-	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[util:3126]Hint MEMORY_QUOTA(`3145728`) is ignored as conflicting/duplicated.")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 2)
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[planner:3126]Hint MEMORY_QUOTA(`1048576`) is ignored as conflicting/duplicated.")
 
 	// Test NO_INDEX_MERGE hint
 	tk.Session().GetSessionVars().SetEnableIndexMerge(true)
@@ -572,52 +567,6 @@ func TestFieldText(t *testing.T) {
 	}
 }
 
-// TestRowLock . See http://dev.mysql.com/doc/refman/5.7/en/commit.html.
-func TestRowLock(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-
-	tk.MustExec("drop table if exists t")
-	txn, err := tk.Session().Txn(true)
-	require.True(t, kv.ErrInvalidTxn.Equal(err))
-	require.False(t, txn.Valid())
-	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
-	tk.MustExec("insert t values (11, 2, 3)")
-	tk.MustExec("insert t values (12, 2, 3)")
-	tk.MustExec("insert t values (13, 2, 3)")
-
-	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk1.MustExec("begin")
-	tk1.MustExec("update t set c2=21 where c1=11")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update t set c2=211 where c1=11")
-	tk2.MustExec("commit")
-
-	// tk1 will retry and the final value is 21
-	tk1.MustExec("commit")
-
-	// Check the result is correct
-	tk.MustQuery("select c2 from t where c1=11").Check(testkit.Rows("21"))
-
-	tk1.MustExec("begin")
-	tk1.MustExec("update t set c2=21 where c1=11")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update t set c2=22 where c1=12")
-	tk2.MustExec("commit")
-
-	tk1.MustExec("commit")
-}
-
 func TestMatchIdentity(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -663,31 +612,6 @@ func TestMatchIdentity(t *testing.T) {
 	// FIXME: we *should* match example.com instead
 	// as long as skip-name-resolve is not set (DEFAULT)
 	require.Equal(t, "%", identity.Hostname)
-}
-
-func TestBinaryReadOnly(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (i int key)")
-	id, _, _, err := tk.Session().PrepareStmt("select i from t where i = ?")
-	require.NoError(t, err)
-	id2, _, _, err := tk.Session().PrepareStmt("insert into t values (?)")
-	require.NoError(t, err)
-	tk.MustExec("set autocommit = 0")
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	require.Equal(t, 0, session.GetHistory(tk.Session()).Count())
-	tk.MustExec("insert into t values (1)")
-	require.Equal(t, 1, session.GetHistory(tk.Session()).Count())
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id2, expression.Args2Expressions4Test(2))
-	require.NoError(t, err)
-	require.Equal(t, 2, session.GetHistory(tk.Session()).Count())
-	tk.MustExec("commit")
 }
 
 func TestHandleAssertionFailureForPartitionedTable(t *testing.T) {
@@ -798,7 +722,7 @@ func TestRequestSource(t *testing.T) {
 
 func TestEmptyInitSQLFile(t *testing.T) {
 	// A non-existent sql file would stop the bootstrap of the tidb cluster
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = "non-existent.sql"
 	defer func() {
@@ -832,7 +756,7 @@ func TestInitSystemVariable(t *testing.T) {
 
 	// Create a mock store
 	// Set the config parameter for initialize sql file
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = initializeSQLFile.Name()
 	defer func() {
@@ -921,7 +845,7 @@ DROP USER root;
 	_, err = sqlFiles[1].WriteString("drop user cloud_admin;")
 	require.NoError(t, err)
 
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
 	defer func() {
@@ -973,6 +897,78 @@ DROP USER root;
 	dom.Close()
 }
 
+func TestBootstrapSQLWithExtension(t *testing.T) {
+	authChecks := []*extension.AuthPlugin{{
+		Name: "my_auth_plugin",
+		AuthenticateUser: func(request extension.AuthenticateRequest) error {
+			return nil
+		},
+		ValidateAuthString: func(pwdHash string) bool {
+			return pwdHash != ""
+		},
+		GenerateAuthString: func(pwd string) (string, bool) {
+			return pwd, pwd != ""
+		},
+		RequiredClientSidePlugin: mysql.AuthNativePassword,
+	}}
+
+	require.NoError(t, extension.Register(
+		"extension_authentication_plugin",
+		extension.WithCustomAuthPlugins(authChecks),
+		extension.WithCustomSysVariables([]*variable.SysVar{
+			{
+				Scope:          variable.ScopeGlobal,
+				Name:           "extension_authentication_plugin",
+				Value:          mysql.AuthNativePassword,
+				Type:           variable.TypeEnum,
+				PossibleValues: []string{authChecks[0].Name},
+			},
+		}),
+	))
+	require.NoError(t, extension.Setup())
+	ext, err := extension.GetExtensions()
+	require.NoError(t, err)
+
+	sqlFile, err := os.CreateTemp("", "TestBootstrapSQLWithExtension.sql")
+	require.NoError(t, err)
+	defer func() {
+		path := sqlFile.Name()
+		err = sqlFile.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+	// Create a user with the custom auth plugin.
+	_, err = sqlFile.WriteString(`CREATE USER myuser IDENTIFIED WITH my_auth_plugin BY 'password';`)
+	require.NoError(t, err)
+
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = sqlFile.Name()
+	defer func() {
+		require.NoError(t, store.Close())
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	// Bootstrap with the sql file
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	se := session.CreateSessionAndSetID(t, store)
+	se.SetExtensions(ext.NewSessionExtensions())
+	ctx := context.Background()
+	// 'myuser' has been created successfully
+	r := session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'myuser'`)
+	require.NoError(t, err)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, "myuser", row.GetString(0))
+	require.NoError(t, r.Close())
+	dom.Close()
+}
+
 func TestErrorHappenWhileInit(t *testing.T) {
 	// 1. parser error in sql file (1.sql) makes the bootstrap panic
 	// 2. other errors in sql file (2.sql) will be ignored
@@ -999,7 +995,7 @@ insert into test.t values ("abc"); -- invalid statement
 `)
 	require.NoError(t, err)
 
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
 	defer func() {
@@ -1015,7 +1011,7 @@ insert into test.t values ("abc"); -- invalid statement
 	session.DisableRunBootstrapSQLFileInTest()
 
 	// Bootstrap with the second sql file, which would not been executed.
-	store, err = mockstore.NewMockStore()
+	store, err = mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -39,11 +40,11 @@ import (
 
 // statsGCImpl implements StatsGC interface.
 type statsGCImpl struct {
-	statsHandle util.StatsHandle
+	statsHandle types.StatsHandle
 }
 
 // NewStatsGC creates a new StatsGC.
-func NewStatsGC(statsHandle util.StatsHandle) util.StatsGC {
+func NewStatsGC(statsHandle types.StatsHandle) types.StatsGC {
 	return &statsGCImpl{
 		statsHandle: statsHandle,
 	}
@@ -75,9 +76,12 @@ func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 // GCStats will garbage collect the useless stats' info.
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
-func GCStats(sctx sessionctx.Context,
-	statsHandle util.StatsHandle,
-	is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
+func GCStats(
+	sctx sessionctx.Context,
+	statsHandle types.StatsHandle,
+	is infoschema.InfoSchema,
+	ddlLease time.Duration,
+) (err error) {
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
 	lease := max(statsHandle.Lease(), ddlLease)
@@ -108,7 +112,7 @@ func GCStats(sctx sessionctx.Context,
 		if err := gcTableStats(sctx, statsHandle, is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
-		_, existed := is.TableByID(row.GetInt64(0))
+		_, existed := is.TableByID(context.Background(), row.GetInt64(0))
 		if !existed {
 			if err := gcHistoryStatsFromKV(sctx, row.GetInt64(0)); err != nil {
 				return errors.Trace(err)
@@ -263,7 +267,7 @@ func removeDeletedExtendedStats(sctx sessionctx.Context, version uint64) (err er
 
 // gcTableStats GC this table's stats.
 func gcTableStats(sctx sessionctx.Context,
-	statsHandler util.StatsHandle,
+	statsHandler types.StatsHandle,
 	is infoschema.InfoSchema, physicalID int64) error {
 	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
 	if err != nil {
@@ -384,7 +388,7 @@ func writeGCTimestampToKV(sctx sessionctx.Context, newTS uint64) error {
 
 // MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
 func MarkExtendedStatsDeleted(sctx sessionctx.Context,
-	statsCache util.StatsCache,
+	statsCache types.StatsCache,
 	statsName string, tableID int64, ifExists bool) (statsVer uint64, err error) {
 	rows, _, err := util.ExecRows(sctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
 	if err != nil {

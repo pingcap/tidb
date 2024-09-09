@@ -28,19 +28,20 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -49,21 +50,22 @@ import (
 type baseBuiltinFunc struct {
 	bufAllocator columnBufferAllocator
 	args         []Expression
-	tp           *types.FieldType
+	tp           *types.FieldType `plan-cache-clone:"shallow"`
 	pbCode       tipb.ScalarFuncSig
 	ctor         collate.Collator
 
-	childrenVectorized bool
-	childrenReversed   bool
-
+	childrenVectorized     bool
 	childrenVectorizedOnce *sync.Once
-	childrenReversedOnce   *sync.Once
 
 	collationInfo
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
+}
+
+func (*baseBuiltinFunc) RequiredOptionalEvalProps() (set OptionalEvalPropKeySet) {
+	return
 }
 
 // metadata returns the metadata of a function.
@@ -87,7 +89,7 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuiltinFunc) {
+func adjustNullFlagForReturnType(ctx EvalContext, funcName string, args []Expression, bf baseBuiltinFunc) {
 	if functionSetForReturnTypeAlwaysNotNull.Exist(funcName) {
 		bf.tp.AddFlag(mysql.NotNullFlag)
 	} else if functionSetForReturnTypeAlwaysNullable.Exist(funcName) {
@@ -95,7 +97,7 @@ func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuil
 	} else if functionSetForReturnTypeNotNullOnNotNull.Exist(funcName) {
 		returnNullable := false
 		for _, arg := range args {
-			if !mysql.HasNotNullFlag(arg.GetType().GetFlag()) {
+			if !mysql.HasNotNullFlag(arg.GetType(ctx).GetFlag()) {
 				returnNullable = true
 				break
 			}
@@ -108,7 +110,7 @@ func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuil
 	}
 }
 
-func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression, tp *types.FieldType) (baseBuiltinFunc, error) {
+func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
@@ -121,7 +123,6 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   tp,
@@ -130,7 +131,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
-	adjustNullFlagForReturnType(funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
 }
 
@@ -153,6 +154,8 @@ func newReturnFieldTypeForBaseBuiltinFunc(funcName string, retType types.EvalTyp
 		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDurationWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
 	case types.ETJson:
 		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxBlobWidth).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
+	case types.ETVectorFloat32:
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeTiDBVectorFloat32).SetFlag(mysql.BinaryFlag).SetFlen(types.UnspecifiedLength).BuildP()
 	}
 	if mysql.HasBinaryFlag(fieldType.GetFlag()) && fieldType.GetType() != mysql.TypeJSON {
 		fieldType.SetCharset(charset.CharsetBin)
@@ -167,7 +170,7 @@ func newReturnFieldTypeForBaseBuiltinFunc(funcName string, retType types.EvalTyp
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs to be determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
@@ -192,7 +195,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
@@ -201,6 +204,10 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 			args[i] = WrapWithCastAsDuration(ctx, args[i])
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
+		case types.ETVectorFloat32:
+			args[i] = WrapWithCastAsVectorFloat32(ctx, args[i])
+		default:
+			return baseBuiltinFunc{}, errors.Errorf("%s is not supported", argTps[i])
 		}
 	}
 
@@ -208,7 +215,6 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   fieldType,
@@ -218,7 +224,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
-	adjustNullFlagForReturnType(funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
 }
 
@@ -226,7 +232,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 // argTps indicates the field types of the args, retType indicates the return type of the built-in function.
 // newBaseBuiltinFuncWithTp and newBaseBuiltinFuncWithFieldTypes are essentially the same, but newBaseBuiltinFuncWithFieldTypes uses FieldType to cast args.
 // If there are specific requirements for decimal/datetime/timestamp, newBaseBuiltinFuncWithFieldTypes should be used, such as if,ifnull and casewhen.
-func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []Expression, retType types.EvalType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
@@ -253,14 +259,14 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName, false)
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		// https://github.com/pingcap/tidb/issues/44196
 		// For decimal/datetime/timestamp/duration types, it is necessary to ensure that decimal are consistent with the output type,
 		// so adding a cast function here.
 		case types.ETDecimal, types.ETDatetime, types.ETTimestamp, types.ETDuration:
-			if !args[i].GetType().Equal(argTps[i]) {
+			if !args[i].GetType(ctx.GetEvalCtx()).Equal(argTps[i]) {
 				args[i] = BuildCastFunction(ctx, args[i], argTps[i])
 			}
 		}
@@ -270,7 +276,6 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   fieldType,
@@ -280,20 +285,16 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
-	adjustNullFlagForReturnType(funcName, args, bf)
+	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
 	return bf, nil
 }
 
 // newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldType charset and collation.
 // do not check and compute collation.
-func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
-	if ctx == nil {
-		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
-	}
+func newBaseBuiltinFuncWithFieldType(tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   tp,
@@ -307,85 +308,72 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
-func (*baseBuiltinFunc) vecEvalInt(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalInt(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalInt() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) vecEvalReal(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalReal(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalReal() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) vecEvalString(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalString(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalString() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) vecEvalDecimal(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalDecimal(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalDecimal() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) vecEvalTime(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalTime(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalTime() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) vecEvalDuration(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalDuration(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalDuration() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) vecEvalJSON(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalJSON(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalJSON() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalInt(sessionctx.Context, chunk.Row) (int64, bool, error) {
+func (*baseBuiltinFunc) vecEvalVectorFloat32(EvalContext, *chunk.Chunk, *chunk.Column) error {
+	return errors.Errorf("baseBuiltinFunc.vecEvalVectorFloat32() should never be called, please contact the TiDB team for help")
+}
+
+func (*baseBuiltinFunc) evalInt(EvalContext, chunk.Row) (int64, bool, error) {
 	return 0, false, errors.Errorf("baseBuiltinFunc.evalInt() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalReal(sessionctx.Context, chunk.Row) (float64, bool, error) {
+func (*baseBuiltinFunc) evalReal(EvalContext, chunk.Row) (float64, bool, error) {
 	return 0, false, errors.Errorf("baseBuiltinFunc.evalReal() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalString(sessionctx.Context, chunk.Row) (string, bool, error) {
+func (*baseBuiltinFunc) evalString(EvalContext, chunk.Row) (string, bool, error) {
 	return "", false, errors.Errorf("baseBuiltinFunc.evalString() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalDecimal(sessionctx.Context, chunk.Row) (*types.MyDecimal, bool, error) {
+func (*baseBuiltinFunc) evalDecimal(EvalContext, chunk.Row) (*types.MyDecimal, bool, error) {
 	return nil, false, errors.Errorf("baseBuiltinFunc.evalDecimal() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalTime(sessionctx.Context, chunk.Row) (types.Time, bool, error) {
+func (*baseBuiltinFunc) evalTime(EvalContext, chunk.Row) (types.Time, bool, error) {
 	return types.ZeroTime, false, errors.Errorf("baseBuiltinFunc.evalTime() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalDuration(sessionctx.Context, chunk.Row) (types.Duration, bool, error) {
+func (*baseBuiltinFunc) evalDuration(EvalContext, chunk.Row) (types.Duration, bool, error) {
 	return types.Duration{}, false, errors.Errorf("baseBuiltinFunc.evalDuration() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalJSON(sessionctx.Context, chunk.Row) (types.BinaryJSON, bool, error) {
+func (*baseBuiltinFunc) evalJSON(EvalContext, chunk.Row) (types.BinaryJSON, bool, error) {
 	return types.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
+}
+
+func (*baseBuiltinFunc) evalVectorFloat32(EvalContext, chunk.Row) (types.VectorFloat32, bool, error) {
+	return types.ZeroVectorFloat32, false, errors.Errorf("baseBuiltinFunc.evalVectorFloat32() should never be called, please contact the TiDB team for help")
 }
 
 func (*baseBuiltinFunc) vectorized() bool {
 	return false
-}
-
-func (*baseBuiltinFunc) supportReverseEval() bool {
-	return false
-}
-
-func (b *baseBuiltinFunc) isChildrenReversed() bool {
-	b.childrenReversedOnce.Do(func() {
-		b.childrenReversed = true
-		for _, arg := range b.args {
-			if !arg.SupportReverseEval() {
-				b.childrenReversed = false
-				break
-			}
-		}
-	})
-	return b.childrenReversed
-}
-
-func (*baseBuiltinFunc) reverseEval(*stmtctx.StatementContext, types.Datum, types.RoundingType) (types.Datum, error) {
-	return types.Datum{}, errors.Errorf("baseBuiltinFunc.reverseEvalInt() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) isChildrenVectorized() bool {
@@ -417,7 +405,7 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	return b.tp
 }
 
-func (b *baseBuiltinFunc) equal(ctx sessionctx.Context, fun builtinFunc) bool {
+func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 	funArgs := fun.getArgs()
 	if len(funArgs) != len(b.args) {
 		return false
@@ -439,8 +427,9 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.pbCode = from.pbCode
 	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
-	b.childrenReversedOnce = new(sync.Once)
-	b.ctor = from.ctor
+	if from.ctor != nil {
+		b.ctor = from.ctor.Clone()
+	}
 }
 
 func (*baseBuiltinFunc) Clone() builtinFunc {
@@ -484,62 +473,54 @@ type vecBuiltinFunc interface {
 	isChildrenVectorized() bool
 
 	// vecEvalInt evaluates this builtin function in a vectorized manner.
-	vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// vecEvalReal evaluates this builtin function in a vectorized manner.
-	vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// vecEvalString evaluates this builtin function in a vectorized manner.
-	vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// vecEvalDecimal evaluates this builtin function in a vectorized manner.
-	vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// vecEvalTime evaluates this builtin function in a vectorized manner.
-	vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	vecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// vecEvalDuration evaluates this builtin function in a vectorized manner.
-	vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	vecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// vecEvalJSON evaluates this builtin function in a vectorized manner.
-	vecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-}
+	vecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
-// reverseBuiltinFunc evaluates the exactly one column value in the function when given a result for expression.
-// For example, the builtinFunc is builtinArithmeticPlusRealSig(2.3, builtinArithmeticMinusRealSig(Column, 3.4))
-// when given the result like 1.0, then the ReverseEval should evaluate the column value 1.0 - 2.3 + 3.4 = 2.1
-type reverseBuiltinFunc interface {
-	// supportReverseEval checks whether the builtinFunc support reverse evaluation.
-	supportReverseEval() bool
-	// isChildrenReversed checks whether the builtinFunc's children support reverse evaluation.
-	isChildrenReversed() bool
-	// reverseEval evaluates the only one column value with given function result.
-	reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
+	// vecEvalVectorFloat32 evaluates this builtin function in a vectorized manner.
+	vecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 }
 
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
+	contextopt.RequireOptionalEvalProps
 	vecBuiltinFunc
-	reverseBuiltinFunc
 
 	// evalInt evaluates int result of builtinFunc by given row.
-	evalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error)
+	evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error)
 	// evalReal evaluates real representation of builtinFunc by given row.
-	evalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error)
+	evalReal(ctx EvalContext, row chunk.Row) (val float64, isNull bool, err error)
 	// evalString evaluates string representation of builtinFunc by given row.
-	evalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error)
+	evalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error)
 	// evalDecimal evaluates decimal representation of builtinFunc by given row.
-	evalDecimal(ctx sessionctx.Context, row chunk.Row) (val *types.MyDecimal, isNull bool, err error)
+	evalDecimal(ctx EvalContext, row chunk.Row) (val *types.MyDecimal, isNull bool, err error)
 	// evalTime evaluates DATE/DATETIME/TIMESTAMP representation of builtinFunc by given row.
-	evalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error)
+	evalTime(ctx EvalContext, row chunk.Row) (val types.Time, isNull bool, err error)
 	// evalDuration evaluates duration representation of builtinFunc by given row.
-	evalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error)
+	evalDuration(ctx EvalContext, row chunk.Row) (val types.Duration, isNull bool, err error)
 	// evalJSON evaluates JSON representation of builtinFunc by given row.
-	evalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
+	evalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
+	evalVectorFloat32(ctx EvalContext, row chunk.Row) (val types.VectorFloat32, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// equal check if this function equals to another function.
-	equal(sessionctx.Context, builtinFunc) bool
+	equal(EvalContext, builtinFunc) bool
 	// getRetTp returns the return type of the built-in function.
 	getRetTp() *types.FieldType
 	// setPbCode sets pbCode for signature.
@@ -593,7 +574,7 @@ func VerifyArgsWrapper(name string, l int) error {
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
-	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
+	getFunction(ctx BuildContext, args []Expression) (builtinFunc, error)
 	// verifyArgsByCount verifies the count of parameters.
 	verifyArgsByCount(l int) error
 }
@@ -771,7 +752,7 @@ var funcs = map[string]functionClass{
 	ast.Lower:           &lowerFunctionClass{baseFunctionClass{ast.Lower, 1, 1}},
 	ast.Lpad:            &lpadFunctionClass{baseFunctionClass{ast.Lpad, 3, 3}},
 	ast.LTrim:           &lTrimFunctionClass{baseFunctionClass{ast.LTrim, 1, 1}},
-	ast.Mid:             &substringFunctionClass{baseFunctionClass{ast.Mid, 3, 3}},
+	ast.Mid:             &substringFunctionClass{baseFunctionClass{ast.Mid, 2, 3}},
 	ast.MakeSet:         &makeSetFunctionClass{baseFunctionClass{ast.MakeSet, 2, -1}},
 	ast.Oct:             &octFunctionClass{baseFunctionClass{ast.Oct, 1, 1}},
 	ast.OctetLength:     &lengthFunctionClass{baseFunctionClass{ast.OctetLength, 1, 1}},
@@ -941,6 +922,7 @@ var funcs = map[string]functionClass{
 	ast.JSONMergePreserve: &jsonMergePreserveFunctionClass{baseFunctionClass{ast.JSONMergePreserve, 2, -1}},
 	ast.JSONPretty:        &jsonPrettyFunctionClass{baseFunctionClass{ast.JSONPretty, 1, 1}},
 	ast.JSONQuote:         &jsonQuoteFunctionClass{baseFunctionClass{ast.JSONQuote, 1, 1}},
+	ast.JSONSchemaValid:   &jsonSchemaValidFunctionClass{baseFunctionClass{ast.JSONSchemaValid, 2, 2}},
 	ast.JSONSearch:        &jsonSearchFunctionClass{baseFunctionClass{ast.JSONSearch, 3, -1}},
 	ast.JSONStorageFree:   &jsonStorageFreeFunctionClass{baseFunctionClass{ast.JSONStorageFree, 1, 1}},
 	ast.JSONStorageSize:   &jsonStorageSizeFunctionClass{baseFunctionClass{ast.JSONStorageSize, 1, 1}},
@@ -948,8 +930,21 @@ var funcs = map[string]functionClass{
 	ast.JSONKeys:          &jsonKeysFunctionClass{baseFunctionClass{ast.JSONKeys, 1, 2}},
 	ast.JSONLength:        &jsonLengthFunctionClass{baseFunctionClass{ast.JSONLength, 1, 2}},
 
+	// vector functions (TiDB extension)
+	ast.VecDims:                 &vecDimsFunctionClass{baseFunctionClass{ast.VecDims, 1, 1}},
+	ast.VecL1Distance:           &vecL1DistanceFunctionClass{baseFunctionClass{ast.VecL1Distance, 2, 2}},
+	ast.VecL2Distance:           &vecL2DistanceFunctionClass{baseFunctionClass{ast.VecL2Distance, 2, 2}},
+	ast.VecNegativeInnerProduct: &vecNegativeInnerProductFunctionClass{baseFunctionClass{ast.VecNegativeInnerProduct, 2, 2}},
+	ast.VecCosineDistance:       &vecCosineDistanceFunctionClass{baseFunctionClass{ast.VecCosineDistance, 2, 2}},
+	ast.VecL2Norm:               &vecL2NormFunctionClass{baseFunctionClass{ast.VecL2Norm, 1, 1}},
+	ast.VecFromText:             &vecFromTextFunctionClass{baseFunctionClass{ast.VecFromText, 1, 1}},
+	ast.VecAsText:               &vecAsTextFunctionClass{baseFunctionClass{ast.VecAsText, 1, 1}},
+
 	// TiDB internal function.
-	ast.TiDBDecodeKey: &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
+	ast.TiDBDecodeKey:       &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
+	ast.TiDBMVCCInfo:        &tidbMVCCInfoFunctionClass{baseFunctionClass: baseFunctionClass{ast.TiDBMVCCInfo, 1, 1}},
+	ast.TiDBEncodeRecordKey: &tidbEncodeRecordKeyClass{baseFunctionClass{ast.TiDBEncodeRecordKey, 3, -1}},
+	ast.TiDBEncodeIndexKey:  &tidbEncodeIndexKeyClass{baseFunctionClass{ast.TiDBEncodeIndexKey, 4, -1}},
 	// This function is used to show tidb-server version info.
 	ast.TiDBVersion:          &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
 	ast.TiDBIsDDLOwner:       &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
@@ -1058,11 +1053,51 @@ func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
 	if b.childrenVectorizedOnce != nil {
 		sum += onceSize
 	}
-	if b.childrenReversedOnce != nil {
-		sum += onceSize
-	}
 	for _, e := range b.args {
 		sum += e.MemoryUsage()
 	}
 	return
+}
+
+type builtinFuncCacheItem[T any] struct {
+	ctxID uint64
+	item  T
+}
+
+type builtinFuncCache[T any] struct {
+	sync.Mutex
+	cached atomic.Pointer[builtinFuncCacheItem[T]]
+}
+
+func (c *builtinFuncCache[T]) getCache(ctxID uint64) (v T, ok bool) {
+	if p := c.cached.Load(); p != nil && p.ctxID == ctxID {
+		return p.item, true
+	}
+	return v, false
+}
+
+func (c *builtinFuncCache[T]) getOrInitCache(ctx EvalContext, constructCache func() (T, error)) (T, error) {
+	intest.Assert(constructCache != nil)
+	ctxID := ctx.CtxID()
+	if item, ok := c.getCache(ctxID); ok {
+		return item, nil
+	}
+
+	c.Lock()
+	defer c.Unlock()
+	if item, ok := c.getCache(ctxID); ok {
+		return item, nil
+	}
+
+	item, err := constructCache()
+	if err != nil {
+		var def T
+		return def, err
+	}
+
+	c.cached.Store(&builtinFuncCacheItem[T]{
+		ctxID: ctxID,
+		item:  item,
+	})
+	return item, nil
 }

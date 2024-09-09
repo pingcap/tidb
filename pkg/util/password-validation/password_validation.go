@@ -21,6 +21,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
@@ -51,11 +52,9 @@ func ValidateDictionaryPassword(pwd string, globalVars *variable.GlobalVarAccess
 }
 
 // ValidateUserNameInPassword checks whether pwd exists in the dictionary.
-func ValidateUserNameInPassword(pwd string, sessionVars *variable.SessionVars) (string, error) {
-	currentUser := sessionVars.User
-	globalVars := sessionVars.GlobalVarsAccessor
+func ValidateUserNameInPassword(pwd string, currentUser *auth.UserIdentity, globalVars *variable.GlobalVarAccessor) (string, error) {
 	pwdBytes := hack.Slice(pwd)
-	if checkUserName, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordCheckUserName); err != nil {
+	if checkUserName, err := (*globalVars).GetGlobalSysVar(variable.ValidatePasswordCheckUserName); err != nil {
 		return "", err
 	} else if currentUser != nil && variable.TiDBOptOn(checkUserName) {
 		for _, username := range []string{currentUser.AuthUsername, currentUser.Username} {
@@ -140,7 +139,7 @@ func ValidatePassword(sessionVars *variable.SessionVars, pwd string) error {
 	if err != nil {
 		return err
 	}
-	if warn, err := ValidateUserNameInPassword(pwd, sessionVars); err != nil {
+	if warn, err := ValidateUserNameInPassword(pwd, sessionVars.User, &sessionVars.GlobalVarsAccessor); err != nil {
 		return err
 	} else if len(warn) > 0 {
 		return variable.ErrNotValidPassword.GenWithStackByArgs(warn)

@@ -23,9 +23,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
 
 func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) {
@@ -57,7 +59,7 @@ func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) 
 	cc.extensions.OnConnectionEvent(tp, info)
 }
 
-func (cc *clientConn) onExtensionStmtEnd(node interface{}, stmtCtxValid bool, err error, args ...param.BinaryParam) {
+func (cc *clientConn) onExtensionStmtEnd(node any, stmtCtxValid bool, err error, args ...param.BinaryParam) {
 	if !cc.extensions.HasStmtEventListeners() {
 		return
 	}
@@ -89,9 +91,7 @@ func (cc *clientConn) onExtensionStmtEnd(node interface{}, stmtCtxValid bool, er
 		// TODO: the `BinaryParam` is parsed two times: one in the `Execute` method and one here. It would be better to
 		// eliminate one of them by storing the parsed result.
 		typectx := ctx.GetSessionVars().StmtCtx.TypeCtx()
-		typectx = types.NewContext(typectx.Flags(), typectx.Location(), func(_ error) {
-			// ignore all warnings
-		})
+		typectx = types.NewContext(typectx.Flags(), typectx.Location(), contextutil.IgnoreWarn)
 		params, _ := param.ExecArgs(typectx, args)
 		info.executeStmt = &ast.ExecuteStmt{
 			PrepStmt:   prepared,
@@ -213,10 +213,27 @@ func (e *stmtEventInfo) AffectedRows() uint64 {
 }
 
 func (e *stmtEventInfo) RelatedTables() []stmtctx.TableEntry {
-	if e.sc == nil {
-		return nil
+	if useDB, ok := e.stmtNode.(*ast.UseStmt); ok {
+		return []stmtctx.TableEntry{{DB: useDB.DBName}}
 	}
-	return e.sc.Tables
+	if e.sc != nil && e.err == nil {
+		return e.sc.Tables
+	}
+	nodeW := resolve.NewNodeW(e.stmtNode)
+	tableNames := core.ExtractTableList(nodeW, false)
+	tableEntries := make([]stmtctx.TableEntry, 0, len(tableNames))
+	for i, tableName := range tableNames {
+		if tableName != nil {
+			tableEntries = append(tableEntries, stmtctx.TableEntry{
+				Table: tableName.Name.L,
+				DB:    tableName.Schema.L,
+			})
+			if tableEntries[i].DB == "" {
+				tableEntries[i].DB = e.sessVars.CurrentDB
+			}
+		}
+	}
+	return tableEntries
 }
 
 func (e *stmtEventInfo) GetError() error {

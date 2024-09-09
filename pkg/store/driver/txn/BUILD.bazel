@@ -16,7 +16,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/binloginfo",
         "//pkg/store/driver/error",
@@ -25,6 +25,7 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",

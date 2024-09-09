@@ -62,6 +62,11 @@ func (*generalCICollator) Pattern() WildcardPattern {
 	return &ciPattern{}
 }
 
+// Clone implements Collator interface.
+func (*generalCICollator) Clone() Collator {
+	return new(generalCICollator)
+}
+
 type ciPattern struct {
 	patChars []rune
 	patTypes []byte
@@ -74,7 +79,7 @@ func (p *ciPattern) Compile(patternStr string, escape byte) {
 
 // Compile implements WildcardPattern interface.
 func (p *ciPattern) DoMatch(str string) bool {
-	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
+	return stringutil.DoMatchCustomized(str, p.patChars, p.patTypes, func(a, b rune) bool {
 		return convertRuneGeneralCI(a) == convertRuneGeneralCI(b)
 	})
 }

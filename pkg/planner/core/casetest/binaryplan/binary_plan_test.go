@@ -136,6 +136,6 @@ func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 			output[i].BinaryPlan = binary
 		})
 		simplifyAndCheckBinaryPlan(t, binary)
-		require.Equal(t, output[i].BinaryPlan, binary)
+		require.Equal(t, output[i].BinaryPlan, binary, comment)
 	}
 }

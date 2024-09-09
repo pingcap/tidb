@@ -131,7 +131,7 @@ func (l *latches) release(keyHashes []uint64) {
 	}
 }
 
-func newRegionCtx(meta *metapb.Region, latches *latches, _ interface{}) *regionCtx {
+func newRegionCtx(meta *metapb.Region, latches *latches, _ any) *regionCtx {
 	regCtx := &regionCtx{
 		meta:        meta,
 		latches:     latches,

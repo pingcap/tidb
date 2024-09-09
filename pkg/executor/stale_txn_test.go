@@ -15,13 +15,17 @@
 package executor_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -30,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
 
 func TestExactStalenessTransaction(t *testing.T) {
@@ -46,7 +52,7 @@ func TestExactStalenessTransaction(t *testing.T) {
 			preSQL:           "begin",
 			sql:              `START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`,
 			IsStaleness:      true,
-			expectPhysicalTS: 1599321600000,
+			expectPhysicalTS: time.Date(2020, 9, 6, 0, 0, 0, 0, time.Local).UnixMilli(),
 			zone:             "sh",
 		},
 		{
@@ -61,7 +67,7 @@ func TestExactStalenessTransaction(t *testing.T) {
 			preSQL:           "begin",
 			sql:              `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness('2015-09-21 00:07:01', NOW());`,
 			IsStaleness:      true,
-			expectPhysicalTS: 1442765221000,
+			expectPhysicalTS: time.Date(2015, 9, 21, 0, 7, 1, 0, time.Local).UnixMilli(),
 			zone:             "bj",
 		},
 		{
@@ -539,7 +545,7 @@ func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 	}{
 		{
 			sql:          `SET TRANSACTION READ ONLY as of timestamp '2021-04-21 00:42:12'`,
-			expectedTS:   424394603102208000,
+			expectedTS:   oracle.GoTimeToTS(time.Date(2021, 4, 21, 0, 42, 12, 0, time.Local)),
 			injectSafeTS: 0,
 		},
 		{
@@ -580,7 +586,7 @@ func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 	require.Equal(t, "start transaction read only as of is forbidden after set transaction read only as of", err.Error())
 
 	tk.MustExec("begin")
-	require.Equal(t, uint64(424394603102208000), tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
+	require.Equal(t, oracle.GoTimeToTS(time.Date(2021, 4, 21, 0, 42, 12, 0, time.Local)), tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
 	tk.MustExec("commit")
 	tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00'`)
 }
@@ -588,11 +594,14 @@ func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 	errMsg1 := ".*only support read-only statement during read-only staleness transactions.*"
 	errMsg2 := ".*select lock hasn't been supported in stale read yet.*"
+	errMsg3 := "GetForUpdateTS not supported for stalenessTxnProvider"
 	testcases := []struct {
 		name       string
 		sql        string
 		isValidate bool
 		errMsg     string
+		// Only validate when transaction has not started
+		isValidateWithoutStart bool
 	}{
 		{
 			name:       "select statement",
@@ -602,7 +611,12 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 		{
 			name:       "explain statement",
 			sql:        `explain insert into t (id) values (1);`,
-			isValidate: true,
+			isValidate: false,
+			errMsg:     errMsg3,
+			// Explain will not start a transaction,
+			// but if one is already started,
+			// it will use it for getting the
+			isValidateWithoutStart: true,
 		},
 		{
 			name:       "explain analyze insert statement",
@@ -746,17 +760,17 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 			tk.MustExec(testcase.sql)
 		} else {
 			err := tk.ExecToErr(testcase.sql)
-			require.Error(t, err)
-			require.Regexp(t, testcase.errMsg, err.Error())
+			require.Error(t, err, "name: %s stmt: %s", testcase.name, testcase.sql)
+			require.Regexp(t, testcase.errMsg, err.Error(), "name: %s stmt: %s", testcase.name, testcase.sql)
 		}
 		tk.MustExec("commit")
 		tk.MustExec("set transaction read only as of timestamp NOW(3);")
-		if testcase.isValidate {
+		if testcase.isValidate || testcase.isValidateWithoutStart {
 			tk.MustExec(testcase.sql)
 		} else {
 			err := tk.ExecToErr(testcase.sql)
-			require.Error(t, err)
-			require.Regexp(t, testcase.errMsg, err.Error())
+			require.Error(t, err, "name: %s stmt: %s", testcase.name, testcase.sql)
+			require.Regexp(t, testcase.errMsg, err.Error(), "name: %s stmt: %s", testcase.name, testcase.sql)
 		}
 		// clean the status
 		tk.MustExec("set transaction read only as of timestamp ''")
@@ -884,6 +898,14 @@ func TestSetTransactionInfoSchema(t *testing.T) {
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
+
+	for _, cacheSize := range []int{units.GiB, 0} {
+		tk.MustExec("set @@global.tidb_schema_cache_size = ?", cacheSize)
+		testSetTransactionInfoSchema(t, tk)
+	}
+}
+
+func testSetTransactionInfoSchema(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
@@ -1315,21 +1337,6 @@ func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
 }
 
-func TestIssue33728(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int primary key, v int)")
-	err := tk.ExecToErr("select * from t1 as of timestamp NULL")
-	require.Error(t, err)
-	require.Equal(t, "[planner:8135]invalid as of timestamp: as of timestamp cannot be NULL", err.Error())
-
-	err = tk.ExecToErr("start transaction read only as of timestamp NULL")
-	require.Error(t, err)
-	require.Equal(t, "[planner:8135]invalid as of timestamp: as of timestamp cannot be NULL", err.Error())
-}
-
 func TestStalePrepare(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1342,7 +1349,7 @@ func TestStalePrepare(t *testing.T) {
 	require.Nil(t, err)
 	tk.MustExec("prepare stmt from \"select * from t as of timestamp now(3) - interval 1000 microsecond order by id asc\"")
 
-	var expected [][]interface{}
+	var expected [][]any
 	for i := 0; i < 20; i++ {
 		tk.MustExec("insert into t values(?)", i)
 		time.Sleep(2 * time.Millisecond) // sleep 2ms to ensure staleread_ts > commit_ts.
@@ -1379,4 +1386,46 @@ func TestStaleTSO(t *testing.T) {
 		// Make sure the now() expr is evaluated from the stale ts provider.
 		tk.MustQuery("select * from t as of timestamp " + expr + " order by id asc").Check(testkit.Rows("1"))
 	}
+}
+
+func TestStaleReadNoBackoff(t *testing.T) {
+	cfg := config.GetGlobalConfig()
+	cfg.Labels = map[string]string{"zone": "us-east-1a"}
+	config.StoreGlobalConfig(cfg)
+	require.Equal(t, "us-east-1a", config.GetGlobalConfig().GetTiKVConfig().TxnScope)
+
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int primary key)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set session tidb_read_staleness = -1;")
+	tk.MustExec("set session tidb_replica_read='closest-replicas'")
+
+	// sleep 1s so stale read can see schema.
+	time.Sleep(time.Second)
+
+	failStaleReadCtx := interceptor.WithRPCInterceptor(context.Background(), interceptor.NewRPCInterceptor("fail-stale-read", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+		return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+			if getRequest, ok := req.Req.(*kvrpcpb.GetRequest); ok {
+				if ctx := getRequest.GetContext(); ctx != nil && ctx.StaleRead && !ctx.IsRetryRequest {
+					return &tikvrpc.Response{Resp: &kvrpcpb.GetResponse{RegionError: &errorpb.Error{
+						DataIsNotReady: &errorpb.DataIsNotReady{},
+					}}}, nil
+				}
+			}
+			return next(target, req)
+		}
+	}))
+
+	res := tk.MustQueryWithContext(failStaleReadCtx, "explain analyze select * from t where id = 1")
+	resBuff := bytes.NewBufferString("")
+	for _, row := range res.Rows() {
+		_, _ = fmt.Fprintf(resBuff, "%s\t", row)
+	}
+	explain := resBuff.String()
+	require.Regexp(t, ".*rpc_errors:{data_is_not_ready:1.*", explain)
+	require.NotRegexp(t, ".*dataNotReady_backoff.*", explain)
 }

@@ -34,8 +34,8 @@ import (
 
 // SliceToMap converts slice to map
 // nolint:unused
-func SliceToMap(slice []string) map[string]interface{} {
-	sMap := make(map[string]interface{})
+func SliceToMap(slice []string) map[string]any {
+	sMap := make(map[string]any)
 	for _, str := range slice {
 		sMap[str] = struct{}{}
 	}
@@ -43,8 +43,8 @@ func SliceToMap(slice []string) map[string]interface{} {
 }
 
 // StringsToInterfaces converts string slice to interface slice
-func StringsToInterfaces(strs []string) []interface{} {
-	is := make([]interface{}, 0, len(strs))
+func StringsToInterfaces(strs []string) []any {
+	is := make([]any, 0, len(strs))
 	for _, str := range strs {
 		is = append(is, str)
 	}
@@ -66,7 +66,7 @@ func StringsToInterfaces(strs []string) []interface{} {
 //	fmt.Println(resp.IP)
 //
 // nolint:unused
-func GetJSON(client *http.Client, url string, v interface{}) error {
+func GetJSON(client *http.Client, url string, v any) error {
 	resp, err := client.Get(url)
 	if err != nil {
 		return errors.Trace(err)
@@ -82,21 +82,6 @@ func GetJSON(client *http.Client, url string, v interface{}) error {
 	}
 
 	return errors.Trace(json.NewDecoder(resp.Body).Decode(v))
-}
-
-// ChanMap creates a channel which applies the function over the input Channel.
-// Hint of Resource Leakage:
-// In golang, channel isn't an interface so we must create a goroutine for handling the inputs.
-// Hence the input channel must be closed properly or this function may leak a goroutine.
-func ChanMap[T, R any](c <-chan T, f func(T) R) <-chan R {
-	outCh := make(chan R)
-	go func() {
-		defer close(outCh)
-		for item := range c {
-			outCh <- f(item)
-		}
-	}()
-	return outCh
 }
 
 // Str2Int64Map converts a string to a map[int64]struct{}.
@@ -121,9 +106,8 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
 	logFields = append(logFields, execDetail.ToZapFields()...)
-	if copTaskInfo := info.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
-		logFields = append(logFields, copTaskInfo.ToZapFields()...)
-	}
+	copTaskInfo := info.StmtCtx.CopTasksDetails()
+	logFields = append(logFields, copTaskInfo.ToZapFields()...)
 	if statsInfo := info.StatsInfo(info.Plan); len(statsInfo) > 0 {
 		var buf strings.Builder
 		firstComma := false
@@ -170,15 +154,14 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	var sql string
 	if len(info.Info) > 0 {
 		sql = info.Info
-		if info.RedactSQL {
-			sql = parser.Normalize(sql)
-		}
+		sql = parser.Normalize(sql, info.RedactSQL)
 	}
 	if len(sql) > logSQLLen && needTruncateSQL {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
 	logFields = append(logFields, zap.String("sql", sql))
 	logFields = append(logFields, zap.String("session_alias", info.SessionAlias))
+	logFields = append(logFields, zap.Uint64("affected rows", info.StmtCtx.AffectedRows()))
 	return logFields
 }
 
@@ -298,9 +281,11 @@ func IsInCorrectIdentifierName(name string) bool {
 }
 
 // GetRecoverError gets the error from recover.
-func GetRecoverError(r interface{}) error {
+func GetRecoverError(r any) error {
 	if err, ok := r.(error); ok {
-		return err
+		// Runtime panic also implements error interface.
+		// So do not forget to add stack info for it.
+		return errors.Trace(err)
 	}
 	return errors.Errorf("%v", r)
 }

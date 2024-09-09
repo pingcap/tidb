@@ -15,27 +15,13 @@
 package ddl
 
 import (
-	"encoding/hex"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
 var (
-	serverID          = "server_id"
-	ddlSchemaVersion  = "ddl_schema_version"
-	ddlJobID          = "ddl_job_id"
-	ddlJobAction      = "ddl_job_action"
-	ddlJobStartTS     = "ddl_job_start_ts"
-	ddlJobState       = "ddl_job_state"
-	ddlJobError       = "ddl_job_error"
-	ddlJobRows        = "ddl_job_row_count"
-	ddlJobSchemaState = "ddl_job_schema_state"
-	ddlJobSchemaID    = "ddl_job_schema_id"
-	ddlJobTableID     = "ddl_job_table_id"
-	ddlJobSnapshotVer = "ddl_job_snapshot_ver"
-	ddlJobReorgHandle = "ddl_job_reorg_handle"
-	ddlJobArgs        = "ddl_job_args"
+	serverID         = "server_id"
+	ddlSchemaVersion = "ddl_schema_version"
 )
 
 // GetScope gets the status variables scope.
@@ -45,43 +31,19 @@ func (*ddl) GetScope(_ string) variable.ScopeFlag {
 }
 
 // Stats returns the DDL statistics.
-func (d *ddl) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{})
-	m[serverID] = d.uuid
-	var ddlInfo *Info
-
+func (d *ddl) Stats(_ *variable.SessionVars) (map[string]any, error) {
 	s, err := d.sessPool.Get()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer d.sessPool.Put(s)
-	ddlInfo, err = GetDDLInfoWithNewTxn(s)
+
+	ddlInfo, err := GetDDLInfoWithNewTxn(s)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	m := make(map[string]any)
+	m[serverID] = d.uuid
 	m[ddlSchemaVersion] = ddlInfo.SchemaVer
-	// TODO: Get the owner information.
-	if len(ddlInfo.Jobs) == 0 {
-		return m, nil
-	}
-	// TODO: Add all job information if needed.
-	job := ddlInfo.Jobs[0]
-	m[ddlJobID] = job.ID
-	m[ddlJobAction] = job.Type.String()
-	m[ddlJobStartTS] = job.StartTS
-	m[ddlJobState] = job.State.String()
-	m[ddlJobRows] = job.RowCount
-	if job.Error == nil {
-		m[ddlJobError] = ""
-	} else {
-		m[ddlJobError] = job.Error.Error()
-	}
-	m[ddlJobSchemaState] = job.SchemaState.String()
-	m[ddlJobSchemaID] = job.SchemaID
-	m[ddlJobTableID] = job.TableID
-	m[ddlJobSnapshotVer] = job.SnapshotVer
-	m[ddlJobReorgHandle] = hex.EncodeToString(ddlInfo.ReorgHandle)
-	m[ddlJobArgs] = job.Args
 	return m, nil
 }

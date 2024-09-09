@@ -195,13 +195,13 @@ func TestMemStoreManipulateBytes(t *testing.T) {
 	testBytes := []byte(testStr)
 	require.Nil(t, store.WriteFile(ctx, "/aaa.txt", testBytes))
 	testBytes[3] = '2'
-	require.Equal(t, testStr, string(store.dataStore["/aaa.txt"].Data.Load().([]byte)))
+	require.Equal(t, testStr, string(*store.dataStore["/aaa.txt"].Data.Load()))
 
 	readBytes, err := store.ReadFile(ctx, "/aaa.txt")
 	require.Nil(t, err)
 	require.Equal(t, testStr, string(readBytes))
 	readBytes[3] = '2'
-	require.Equal(t, testStr, string(store.dataStore["/aaa.txt"].Data.Load().([]byte)))
+	require.Equal(t, testStr, string(*store.dataStore["/aaa.txt"].Data.Load()))
 }
 
 func TestMemStoreWriteDuringWalkDir(t *testing.T) {

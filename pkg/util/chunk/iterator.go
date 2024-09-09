@@ -53,9 +53,12 @@ type Iterator interface {
 	Error() error
 }
 
-// NewIterator4Slice returns a Iterator for Row slice.
-func NewIterator4Slice(rows []Row) Iterator {
-	return &Iterator4Slice{rows: rows}
+// NewIterator4Slice returns a *Iterator4Slice for Row slice.
+func NewIterator4Slice(rows []Row) *Iterator4Slice {
+	return &Iterator4Slice{
+		rows:   rows,
+		cursor: 0,
+	}
 }
 
 // Iterator4Slice is used to iterate rows inside a slice.
@@ -179,6 +182,11 @@ func (it *Iterator4Chunk) Len() int {
 // GetChunk returns the chunk stored in the Iterator4Chunk
 func (it *Iterator4Chunk) GetChunk() *Chunk {
 	return it.chk
+}
+
+// ResetChunk reset the chunk this iter holds
+func (it *Iterator4Chunk) ResetChunk(chk *Chunk) {
+	it.chk = chk
 }
 
 // Error returns none-nil error if anything wrong happens during the iteration.

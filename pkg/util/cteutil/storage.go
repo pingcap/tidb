@@ -15,13 +15,12 @@
 package cteutil
 
 import (
-	"sync"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
 
 var _ Storage = &StorageRC{}
@@ -89,6 +88,9 @@ type Storage interface {
 	GetMemTracker() *memory.Tracker
 	GetDiskTracker() *disk.Tracker
 	ActionSpill() *chunk.SpillDiskAction
+
+	GetMemBytes() int64
+	GetDiskBytes() int64
 }
 
 // StorageRC implements Storage interface using RowContainer.
@@ -99,7 +101,7 @@ type StorageRC struct {
 	refCnt  int
 	chkSize int
 	iter    int
-	mu      sync.Mutex
+	mu      syncutil.Mutex
 	done    bool
 }
 
@@ -268,4 +270,14 @@ func (s *StorageRC) ActionSpillForTest() *chunk.SpillDiskAction {
 
 func (s *StorageRC) valid() bool {
 	return s.refCnt > 0 && s.rc != nil
+}
+
+// GetMemBytes returns memory bytes used by row container.
+func (s *StorageRC) GetMemBytes() int64 {
+	return s.rc.GetMemTracker().BytesConsumed()
+}
+
+// GetDiskBytes returns disk bytes used by row container.
+func (s *StorageRC) GetDiskBytes() int64 {
+	return s.rc.GetDiskTracker().BytesConsumed()
 }

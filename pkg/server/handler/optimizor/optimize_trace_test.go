@@ -49,12 +49,13 @@ func TestDumpOptimizeTraceAPI(t *testing.T) {
 	require.NoError(t, err)
 	server.SetDomain(dom)
 
-	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-server2.RunInGoTestChan
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	client.WaitUntilServerOnline()
 
 	statsHandler := optimizor.NewStatsHandler(dom)

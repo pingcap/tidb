@@ -17,7 +17,7 @@
 set -eux
 
 # restart service without tiflash
-source $( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/../_utils/run_services
+source $UTILS_DIR/run_services
 start_services --no-tiflash
 
 BACKUP_DIR=$TEST_DIR/"txn_backup"

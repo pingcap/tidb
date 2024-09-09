@@ -899,7 +899,7 @@ create database ListDefaultPrune;
 use ListDefaultPrune;
 create table t (a int, b int) partition by list columns (a,b) (partition p1 values in ((1,1)), partition p2 values in ((2,2)), partition pDef default);
 insert into t values (1,1),(2,2),(1,2),(2,1),(3,3),(2,3),(1,4);
-analyze table t;
+analyze table t all columns;
 --sorted_result
 select * from t where a in (1,2) and b in (1,2);
 --sorted_result
@@ -917,14 +917,14 @@ explain format='brief' select * from t where a = 1 and b = 1;
 drop table t;
 create table t (a int, b int) partition by list columns (a,b) (partition p1 values in ((1,1), (1,2)), partition p2 values in ((2,2),(2,1)), partition pDef default);
 insert into t values (1,1),(2,2),(1,2),(2,1),(3,3),(2,3),(1,4);
-analyze table t;
+analyze table t all columns;
 --sorted_result
 select * from t where a in (1,2) and b in (1,2);
 explain format='brief' select * from t where a in (1,2) and b in (1,2);
 drop table t;
 create table t (a int, b int) partition by list columns (a) (partition p1 values in (1), partition p2 values in (2), partition pDef default);
 insert into t values (1,1),(2,2),(1,2),(2,1),(3,3),(2,3),(1,4);
-analyze table t;
+analyze table t all columns;
 --sorted_result
 select * from t where a in (1,2);
 explain format='brief' select * from t where a in (1,2);
@@ -942,7 +942,7 @@ CREATE TABLE t(a tinyint unsigned,  b tinyint unsigned) PARTITION BY RANGE COLUM
 			PARTITION p2 VALUES LESS THAN (30,255),
 			PARTITION p3 VALUES LESS THAN (MAXVALUE, 0));
 insert into t values(20, 30);
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a = 20;
 explain format='brief' select * from t where a > 10 and a <= 20;
 --sorted_result
@@ -1011,4 +1011,28 @@ select * from test1 where partition_no = 200000;
 select * from test1 where partition_no >= 200000;
 drop database issue43459;
 
+
+# TestIssue50082
+use planner__core__partition_pruner;
+drop table if exists t;
+create table t(a bigint unsigned)
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (5086706),
+ PARTITION `p1` VALUES LESS THAN (7268292),
+ PARTITION `p2` VALUES LESS THAN (16545422),
+ PARTITION `p3` VALUES LESS THAN (9223372036854775810));
+desc select * from t where a BETWEEN -6895222 AND 3125507;
+desc select * from t where a > 9223372036854775808;
+desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
+
+drop table if exists t;
+create table t(a bigint)
+PARTITION BY RANGE (`a`)
+(PARTITION `p0` VALUES LESS THAN (5086706),
+ PARTITION `p1` VALUES LESS THAN (7268292),
+ PARTITION `p2` VALUES LESS THAN (16545422),
+ PARTITION `p3` VALUES LESS THAN (9223372036854775807));
+desc select * from t where a BETWEEN -6895222 AND 3125507;
+desc select * from t where a > 9223372036854775808;
+desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
 

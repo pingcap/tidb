@@ -69,15 +69,15 @@ id	estRows	task	access object	operator info
 Batch_Point_Get	5.00	root	table:t	handle:[1 2 3 4 5], keep order:false, desc:false
 explain format = 'brief' select * from t where a in (1, 2, 3, 1, 2);
 id	estRows	task	access object	operator info
-Batch_Point_Get	5.00	root	table:t	handle:[1 2 3 1 2], keep order:false, desc:false
+Batch_Point_Get	5.00	root	table:t	handle:[1 2 3], keep order:false, desc:false
 begin;
 explain format = 'brief' select * from t where a in (1, 2, 3, 1, 2) FOR UPDATE;
 id	estRows	task	access object	operator info
-Batch_Point_Get	5.00	root	table:t	handle:[1 2 3 1 2], keep order:false, desc:false, lock
+Batch_Point_Get	5.00	root	table:t	handle:[1 2 3], keep order:false, desc:false, lock
 rollback;
 explain format = 'brief' select * from t where (a) in ((1), (2), (3), (1), (2));
 id	estRows	task	access object	operator info
-Batch_Point_Get	5.00	root	table:t	handle:[1 2 3 1 2], keep order:false, desc:false
+Batch_Point_Get	5.00	root	table:t	handle:[1 2 3], keep order:false, desc:false
 drop table if exists t;
 create table t(a int, b int, c int, unique key idx_ab(a, b));
 insert into t values(1, 2, 3), (2, 3, 4), (3, 4, 5), (4, 5, 6);
@@ -586,3 +586,36 @@ select * from t2 where col1 = 0x000039;
 COL1
  9
 drop table t1, t2;
+drop table if exists fu;
+create table fu (id int primary key, val int);
+insert into fu values (6, 6);
+explain format = 'brief' select * from fu where id = 6 for update;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:fu	handle:6
+select * from fu where id = 6 for update;
+id	val
+6	6
+begin;
+explain format = 'brief' select * from fu where id = 6 for update;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:fu	handle:6, lock
+select * from fu where id = 6 for update;
+id	val
+6	6
+rollback;
+set @@session.autocommit = 0;
+explain format = 'brief' select * from fu where id = 6 for update;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:fu	handle:6, lock
+select * from fu where id = 6 for update;
+id	val
+6	6
+rollback;
+set @@session.autocommit = default;
+drop table if exists tbllock;
+create table tbllock(id int, c int);
+insert into tbllock values(1, 2), (2, 2);
+lock table tbllock read;
+update tbllock set c = 3 where id = 2;
+Error 1099 (HY000): Table 'tbllock' was locked with a READ lock and can't be updated
+unlock tables;

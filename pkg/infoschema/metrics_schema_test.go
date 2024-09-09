@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/prometheus/prometheus/promql"
+	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,7 +63,7 @@ func TestMetricSchemaDef(t *testing.T) {
 			require.Equalf(t, "instance", def.Labels[0], "metrics table %v: expect `instance`is the first label but got %v", name, def.Labels)
 		}
 
-		_, err := promql.ParseExpr(mockGenPromQL(def.PromQL))
+		_, err := parser.ParseExpr(mockGenPromQL(def.PromQL))
 		require.NoError(t, err, "fail to parser PromQL %s", def.PromQL)
 	}
 }

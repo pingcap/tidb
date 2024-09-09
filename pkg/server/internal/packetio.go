@@ -157,13 +157,18 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 	}
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
+
 	sequence := header[3]
-
 	if sequence != p.sequence {
-		return nil, server_err.ErrInvalidSequence.GenWithStack(
+		err := server_err.ErrInvalidSequence.GenWithStack(
 			"invalid sequence, received %d while expecting %d", sequence, p.sequence)
+		if p.compressionAlgorithm == mysql.CompressionNone {
+			return nil, err
+		}
+		// To be compatible with MariaDB Connector/J 2.x,
+		// ignore sequence check and print a log when compression protocol is active.
+		terror.Log(err)
 	}
-
 	p.sequence++
 
 	// Accumulated payload length exceeds the limit.
@@ -362,13 +367,12 @@ func (cw *compressedWriter) Flush() error {
 	// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_compression_packet.html
 	// suggests a MIN_COMPRESS_LENGTH of 50.
 	minCompressLength := 50
-	zlibCompressDefaultLevel := 6
 	data := cw.buf.Bytes()
 	cw.buf.Reset()
 
 	switch cw.compressionAlgorithm {
 	case mysql.CompressionZlib:
-		w, err = zlib.NewWriterLevel(&payload, zlibCompressDefaultLevel)
+		w, err = zlib.NewWriterLevel(&payload, mysql.ZlibCompressDefaultLevel)
 	case mysql.CompressionZstd:
 		w, err = zstd.NewWriter(&payload, zstd.WithEncoderLevel(cw.zstdLevel))
 	default:

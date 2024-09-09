@@ -54,20 +54,20 @@ func TestHandle(t *testing.T) {
 	require.Len(t, m.cache.infos, 0)
 
 	// test add prefix, add suffix is similar
-	vals, poss, err := m.HandleRowValue("test", "xxx", []string{"age", "id"}, []interface{}{1, "1"})
+	vals, poss, err := m.HandleRowValue("test", "xxx", []string{"age", "id"}, []any{1, "1"})
 	require.NoError(t, err)
-	require.Equal(t, []interface{}{1, "instance_id:1"}, vals)
+	require.Equal(t, []any{1, "instance_id:1"}, vals)
 	require.Equal(t, []int{-1, 1}, poss)
 
 	// test cache
-	vals, poss, err = m.HandleRowValue("test", "xxx", []string{"name"}, []interface{}{1, "1"})
+	vals, poss, err = m.HandleRowValue("test", "xxx", []string{"name"}, []any{1, "1"})
 	require.NoError(t, err)
-	require.Equal(t, []interface{}{1, "instance_id:1"}, vals)
+	require.Equal(t, []any{1, "instance_id:1"}, vals)
 	require.Equal(t, []int{-1, 1}, poss)
 
 	// test resetCache
 	m.resetCache()
-	_, _, err = m.HandleRowValue("test", "xxx", []string{"name"}, []interface{}{"1"})
+	_, _, err = m.HandleRowValue("test", "xxx", []string{"name"}, []any{"1"})
 	require.Error(t, err)
 
 	// test DDL
@@ -241,21 +241,21 @@ func TestPartitionID(t *testing.T) {
 	}
 
 	// test wrong type
-	_, err := partitionID(info, []interface{}{1, "ha"})
+	_, err := partitionID(info, []any{1, "ha"})
 	require.Error(t, err)
 
 	// test exceed maxOriginID
-	_, err = partitionID(info, []interface{}{"ha", 1 << 44})
+	_, err = partitionID(info, []any{"ha", 1 << 44})
 	require.Error(t, err)
 
-	vals, err := partitionID(info, []interface{}{"ha", 1})
+	vals, err := partitionID(info, []any{"ha", 1})
 	require.NoError(t, err)
-	require.Equal(t, []interface{}{"ha", int64(2<<59 | 1<<52 | 1<<44 | 1)}, vals)
+	require.Equal(t, []any{"ha", int64(2<<59 | 1<<52 | 1<<44 | 1)}, vals)
 
 	info.instanceID = 0
-	vals, err = partitionID(info, []interface{}{"ha", "123"})
+	vals, err = partitionID(info, []any{"ha", "123"})
 	require.NoError(t, err)
-	require.Equal(t, []interface{}{"ha", fmt.Sprintf("%d", int64(1<<52|1<<44|123))}, vals)
+	require.Equal(t, []any{"ha", fmt.Sprintf("%d", int64(1<<52|1<<44|123))}, vals)
 }
 
 func TestCaseSensitive(t *testing.T) {
@@ -271,8 +271,8 @@ func TestCaseSensitive(t *testing.T) {
 	require.Len(t, m.cache.infos, 0)
 
 	// test add prefix, add suffix is similar
-	vals, poss, err := m.HandleRowValue("test", "xxx", []string{"age", "id"}, []interface{}{1, "1"})
+	vals, poss, err := m.HandleRowValue("test", "xxx", []string{"age", "id"}, []any{1, "1"})
 	require.NoError(t, err)
-	require.Equal(t, []interface{}{1, "1"}, vals)
+	require.Equal(t, []any{1, "1"}, vals)
 	require.Nil(t, poss)
 }

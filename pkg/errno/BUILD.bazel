@@ -16,10 +16,12 @@ go_test(
     name = "errno_test",
     timeout = "short",
     srcs = [
+        "errname_test.go",
         "infoschema_test.go",
         "main_test.go",
     ],
     embed = [":errno"],
+    embedsrcs = ["errcode.go"],
     flaky = True,
     deps = [
         "//pkg/testkit/testsetup",

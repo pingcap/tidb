@@ -10,6 +10,7 @@ go_library(
         "//pkg/util/cgroup",
         "//pkg/util/mathutil",
         "@com_github_cloudfoundry_gosigar//:gosigar",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",

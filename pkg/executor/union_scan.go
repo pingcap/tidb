@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -63,6 +63,9 @@ type UnionScanExec struct {
 	// used with dynamic prune mode
 	// < 0 if not used.
 	physTblIDIdx int
+
+	// partitionIDMap are only required by union scan with global index.
+	partitionIDMap map[int64]struct{}
 
 	keepOrder bool
 	compareExec
@@ -153,8 +156,9 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		mutableRow.SetDatums(row...)
 
+		sctx := us.Ctx()
 		for _, idx := range us.virtualColumnIndex {
-			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(mutableRow.ToRow())
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
@@ -171,7 +175,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			mutableRow.SetDatum(idx, castDatum)
 		}
 
-		matched, _, err := expression.EvalBool(us.Ctx(), us.conditionsWithVirCol, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, mutableRow.ToRow())
 		if err != nil {
 			return err
 		}
@@ -187,7 +191,7 @@ func (us *UnionScanExec) Close() error {
 	us.cursor4AddRows = nil
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
-	return us.Children(0).Close()
+	return exec.Close(us.Children(0))
 }
 
 // getOneRow gets one result row from dirty table or child.
@@ -290,7 +294,7 @@ type compareExec struct {
 	usedIndex []int
 	desc      bool
 	// handleCols is the handle's position of the below scan plan.
-	handleCols plannercore.HandleCols
+	handleCols plannerutil.HandleCols
 }
 
 func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret int, err error) {

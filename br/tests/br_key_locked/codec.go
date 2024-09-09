@@ -56,13 +56,15 @@ func (c *codecPDClient) ScanRegions(
 	startKey []byte,
 	endKey []byte,
 	limit int,
+	opts ...pd.GetRegionOption,
 ) ([]*pd.Region, error) {
 	startKey = codec.EncodeBytes(nil, startKey)
 	if len(endKey) > 0 {
 		endKey = codec.EncodeBytes(nil, endKey)
 	}
 
-	regions, err := c.Client.ScanRegions(ctx, startKey, endKey, limit)
+	//nolint:staticcheck
+	regions, err := c.Client.ScanRegions(ctx, startKey, endKey, limit, opts...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

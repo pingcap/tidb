@@ -159,3 +159,8 @@ func getLLLIssuesForFile(filename string, maxLineLen int, tabSpaces string) ([]r
 
 	return res, nil
 }
+
+func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
+	util.SkipAnalyzer(Analyzer)
+}

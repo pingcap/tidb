@@ -86,7 +86,7 @@ func ParseDirectives(files []*ast.File, fset *token.FileSet) []Directive {
 	return dirs
 }
 
-func doDirectives(pass *analysis.Pass) (interface{}, error) {
+func doDirectives(pass *analysis.Pass) (any, error) {
 	return ParseDirectives(pass.Files, pass.Fset), nil
 }
 
@@ -104,11 +104,34 @@ var Directives = &analysis.Analyzer{
 func SkipAnalyzer(analyzer *analysis.Analyzer) {
 	analyzer.Requires = append(analyzer.Requires, Directives)
 	oldRun := analyzer.Run
-	analyzer.Run = func(p *analysis.Pass) (interface{}, error) {
+	analyzer.Run = func(p *analysis.Pass) (any, error) {
 		pass := *p
+
+		// skip running analysis on files by excluding them from `pass.Files`
+		ignoreFiles := make(map[string]struct{})
+		dirs := pass.ResultOf[Directives].([]Directive)
+		for _, dir := range dirs {
+			cmd := dir.Command
+			switch cmd {
+			case skipFile:
+				ignorePos := report.DisplayPosition(pass.Fset, dir.Node.Pos())
+				ignoreFiles[ignorePos.Filename] = struct{}{}
+			default:
+				continue
+			}
+		}
+
+		newPassFiles := make([]*ast.File, 0, len(pass.Files))
+		for _, f := range p.Files {
+			pos := pass.Fset.PositionFor(f.Pos(), false)
+			if _, ok := ignoreFiles[pos.Filename]; !ok {
+				newPassFiles = append(newPassFiles, f)
+			}
+		}
+		pass.Files = newPassFiles
+
 		oldReport := p.Report
 		pass.Report = func(diag analysis.Diagnostic) {
-			dirs := pass.ResultOf[Directives].([]Directive)
 			for _, dir := range dirs {
 				cmd := dir.Command
 				linters := dir.Linters
@@ -125,9 +148,8 @@ func SkipAnalyzer(analyzer *analysis.Analyzer) {
 						}
 					}
 				case skipFile:
-					ignorePos := report.DisplayPosition(pass.Fset, dir.Node.Pos())
 					nodePos := report.DisplayPosition(pass.Fset, diag.Pos)
-					if ignorePos.Filename == nodePos.Filename {
+					if _, ok := ignoreFiles[nodePos.Filename]; ok {
 						return
 					}
 				default:
@@ -136,6 +158,26 @@ func SkipAnalyzer(analyzer *analysis.Analyzer) {
 			}
 			oldReport(diag)
 		}
+		return oldRun(&pass)
+	}
+}
+
+// SkipAnalyzerByConfig updates an analyzer to skip files according to `exclude_files`
+func SkipAnalyzerByConfig(analyzer *analysis.Analyzer) {
+	oldRun := analyzer.Run
+	analyzer.Run = func(p *analysis.Pass) (any, error) {
+		pass := *p
+
+		// modify the `p.Files` according to the `shouldRun`
+		newPassFiles := make([]*ast.File, 0, len(pass.Files))
+		for _, f := range p.Files {
+			pos := pass.Fset.PositionFor(f.Pos(), false)
+			if shouldRun(analyzer.Name, pos.Filename) {
+				newPassFiles = append(newPassFiles, f)
+			}
+		}
+		pass.Files = newPassFiles
+
 		return oldRun(&pass)
 	}
 }

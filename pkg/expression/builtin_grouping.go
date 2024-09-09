@@ -20,7 +20,6 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -39,7 +38,7 @@ type groupingImplFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *groupingImplFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *groupingImplFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -227,7 +226,7 @@ func (b *BuiltinGroupingImplSig) grouping(groupingID uint64) int64 {
 }
 
 // evalInt evals a builtinGroupingSig.
-func (b *BuiltinGroupingImplSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *BuiltinGroupingImplSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	if !b.isMetaInited {
 		return 0, false, errors.Errorf("Meta data is not initialized")
 	}
@@ -259,7 +258,7 @@ func (b *BuiltinGroupingImplSig) groupingVec(groupingIds *chunk.Column, rowNum i
 	}
 }
 
-func (b *BuiltinGroupingImplSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *BuiltinGroupingImplSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if !b.isMetaInited {
 		return errors.Errorf("Meta data is not initialized")
 	}

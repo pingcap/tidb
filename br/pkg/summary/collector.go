@@ -38,7 +38,7 @@ const (
 type LogCollector interface {
 	SetUnit(unit string)
 
-	CollectSuccessUnit(name string, unitCount int, arg interface{})
+	CollectSuccessUnit(name string, unitCount int, arg any)
 
 	CollectFailureUnit(name string, reason error)
 
@@ -121,7 +121,7 @@ func (tc *logCollector) SetUnit(unit string) {
 	tc.unit = unit
 }
 
-func (tc *logCollector) CollectSuccessUnit(name string, unitCount int, arg interface{}) {
+func (tc *logCollector) CollectSuccessUnit(name string, unitCount int, arg any) {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
 

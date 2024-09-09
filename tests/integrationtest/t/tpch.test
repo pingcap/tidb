@@ -1,7 +1,6 @@
-set tidb_cost_model_version=1;
 # http://www.tpc.org/tpc_documents_current_versions/pdf/tpc-h_v2.17.1.pdf
-CREATE DATABASE IF NOT EXISTS TPCH;
-USE TPCH;
+CREATE DATABASE IF NOT EXISTS TPCH50;
+USE TPCH50;
 CREATE TABLE IF NOT EXISTS nation  ( N_NATIONKEY  INTEGER NOT NULL,
                             N_NAME       CHAR(25) NOT NULL,
                             N_REGIONKEY  INTEGER NOT NULL,

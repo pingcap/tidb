@@ -15,16 +15,17 @@
 package rowcodec
 
 import (
+	"encoding/binary"
+	"hash/crc32"
 	"math"
 	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"go.uber.org/multierr"
 )
 
 // Encoder is used to encode a row.
@@ -38,16 +39,21 @@ type Encoder struct {
 
 // Encode encodes a row from a datums slice.
 // `buf` is not truncated before encoding.
-func (encoder *Encoder) Encode(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum, buf []byte, checksums ...uint32) ([]byte, error) {
+// This function may return both a valid encoded bytes and an error (actually `"pingcap/errors".ErrorGroup`). If the caller
+// expects to handle these errors according to `SQL_MODE` or other configuration, please refer to `pkg/errctx`.
+// the caller needs to ensure the key is not nil if checksum is required.
+func (encoder *Encoder) Encode(loc *time.Location, colIDs []int64, values []types.Datum, checksum Checksum, buf []byte) ([]byte, error) {
 	encoder.reset()
 	encoder.appendColVals(colIDs, values)
 	numCols, notNullIdx := encoder.reformatCols()
-	err := encoder.encodeRowCols(sc, numCols, notNullIdx)
+	err := encoder.encodeRowCols(loc, numCols, notNullIdx)
 	if err != nil {
 		return nil, err
 	}
-	encoder.setChecksums(checksums...)
-	return encoder.row.toBytes(buf), nil
+	if checksum == nil {
+		checksum = NoChecksum{}
+	}
+	return checksum.encode(encoder, buf)
 }
 
 func (encoder *Encoder) reset() {
@@ -131,14 +137,15 @@ func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
 	return
 }
 
-func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, notNullIdx int) error {
+func (encoder *Encoder) encodeRowCols(loc *time.Location, numCols, notNullIdx int) error {
 	r := &encoder.row
+	var errs error
 	for i := 0; i < notNullIdx; i++ {
 		d := encoder.values[i]
 		var err error
-		r.data, err = encodeValueDatum(sc, d, r.data)
+		r.data, err = encodeValueDatum(loc, d, r.data)
 		if err != nil {
-			return err
+			errs = multierr.Append(errs, err)
 		}
 		// handle convert to large
 		if len(r.data) > math.MaxUint16 && !r.large() {
@@ -158,12 +165,12 @@ func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, not
 			r.offsets[i] = uint16(len(r.data))
 		}
 	}
-	return nil
+	return errs
 }
 
 // encodeValueDatum encodes one row datum entry into bytes.
 // due to encode as value, this method will flatten value type like tablecodec.flatten
-func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byte) (nBuffer []byte, err error) {
+func encodeValueDatum(loc *time.Location, d *types.Datum, buffer []byte) (nBuffer []byte, err error) {
 	switch d.Kind() {
 	case types.KindInt64:
 		buffer = encodeInt(buffer, d.GetInt64())
@@ -174,8 +181,8 @@ func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byt
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := d.GetMysqlTime()
-		if t.Type() == mysql.TypeTimestamp && sc != nil && sc.TimeZone() != time.UTC {
-			err = t.ConvertTimeZone(sc.TimeZone(), time.UTC)
+		if t.Type() == mysql.TypeTimestamp && loc != nil && loc != time.UTC {
+			err = t.ConvertTimeZone(loc, time.UTC)
 			if err != nil {
 				return
 			}
@@ -195,7 +202,7 @@ func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byt
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		var val uint64
-		val, err = d.GetBinaryLiteral().ToInt(sc.TypeCtxOrDefault())
+		val, err = d.GetBinaryLiteral().ToInt(types.StrictContext)
 		if err != nil {
 			return
 		}
@@ -204,20 +211,49 @@ func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byt
 		buffer = codec.EncodeFloat(buffer, d.GetFloat64())
 	case types.KindMysqlDecimal:
 		buffer, err = codec.EncodeDecimal(buffer, d.GetMysqlDecimal(), d.Length(), d.Frac())
-		if err != nil && sc != nil {
-			if terror.ErrorEqual(err, types.ErrTruncated) {
-				err = sc.HandleTruncate(err)
-			} else if terror.ErrorEqual(err, types.ErrOverflow) {
-				err = sc.HandleOverflow(err, err)
-			}
-		}
 	case types.KindMysqlJSON:
 		j := d.GetMysqlJSON()
 		buffer = append(buffer, j.TypeCode)
 		buffer = append(buffer, j.Value...)
+	case types.KindVectorFloat32:
+		v := d.GetVectorFloat32()
+		buffer = v.SerializeTo(buffer)
 	default:
 		err = errors.Errorf("unsupport encode type %d", d.Kind())
 	}
 	nBuffer = buffer
 	return
+}
+
+// Checksum is used to calculate and append checksum data into the raw bytes
+type Checksum interface {
+	encode(encoder *Encoder, buf []byte) ([]byte, error)
+}
+
+// NoChecksum indicates no checksum is encoded into the returned raw bytes.
+type NoChecksum struct{}
+
+func (NoChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
+	encoder.flags &^= rowFlagChecksum // revert checksum flag
+	return encoder.toBytes(buf), nil
+}
+
+const checksumVersionRaw byte = 1
+
+// RawChecksum indicates encode the raw bytes checksum and append it to the raw bytes.
+type RawChecksum struct {
+	Key []byte
+}
+
+func (c RawChecksum) encode(encoder *Encoder, buf []byte) ([]byte, error) {
+	encoder.flags |= rowFlagChecksum
+	encoder.checksumHeader &^= checksumFlagExtra   // revert extra checksum flag
+	encoder.checksumHeader &^= checksumMaskVersion // revert checksum version
+	encoder.checksumHeader |= checksumVersionRaw   // set checksum version
+	valueBytes := encoder.toBytes(buf)
+	valueBytes = append(valueBytes, encoder.checksumHeader)
+	encoder.checksum1 = crc32.Checksum(valueBytes, crc32.IEEETable)
+	encoder.checksum1 = crc32.Update(encoder.checksum1, crc32.IEEETable, c.Key)
+	valueBytes = binary.LittleEndian.AppendUint32(valueBytes, encoder.checksum1)
+	return valueBytes, nil
 }

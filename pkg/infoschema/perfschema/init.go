@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
 )
@@ -36,7 +36,7 @@ var once sync.Once
 //
 // import _ "github.com/pingcap/tidb/perfschema"
 //
-// This function depends on plan/core.init(), which initialize the expression.EvalAstExpr function.
+// This function depends on plan/core.init(), which initialize the expression.EvalSimpleAst function.
 // The initialize order is a problem if init() is used as the function name.
 func Init() {
 	initOnce := func() {
@@ -61,17 +61,18 @@ func Init() {
 			for i, c := range meta.Columns {
 				c.ID = int64(i) + 1
 			}
+			meta.DBID = dbID
 		}
 		dbInfo := &model.DBInfo{
 			ID:      dbID,
 			Name:    util.PerformanceSchemaName,
 			Charset: mysql.DefaultCharset,
 			Collate: mysql.DefaultCollationName,
-			Tables:  tbls,
 		}
+		dbInfo.Deprecated.Tables = tbls
 		infoschema.RegisterVirtualTable(dbInfo, tableFromMeta)
 	}
-	if expression.EvalAstExpr != nil {
+	if expression.EvalSimpleAst != nil {
 		once.Do(initOnce)
 	}
 }

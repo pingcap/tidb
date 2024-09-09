@@ -18,12 +18,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -136,7 +138,7 @@ func checkDefaultCollationForUTF8MB4(vars *SessionVars, normalizedValue string, 
 
 func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	if normalizedValue == "" {
-		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
+		return normalizedValue, errors.Trace(ErrWrongValueForVar.FastGenByArgs(argName, "NULL"))
 	}
 	cs, err := charset.GetCharsetInfo(normalizedValue)
 	if err != nil {
@@ -147,14 +149,14 @@ func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 
 // checkReadOnly requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
 func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag, offlineMode bool) (string, error) {
-	errMsg := ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+	errMsg := ErrFunctionsNoopImpl.FastGenByArgs("READ ONLY")
 	if offlineMode {
-		errMsg = ErrFunctionsNoopImpl.GenWithStackByArgs("OFFLINE MODE")
+		errMsg = ErrFunctionsNoopImpl.FastGenByArgs("OFFLINE MODE")
 	}
 	if TiDBOptOn(normalizedValue) {
 		if scope == ScopeSession && vars.NoopFuncsMode != OnInt {
 			if vars.NoopFuncsMode == OffInt {
-				return Off, errMsg
+				return Off, errors.Trace(errMsg)
 			}
 			vars.StmtCtx.AppendWarning(errMsg)
 		}
@@ -164,7 +166,7 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 				return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
 			}
 			if val == Off {
-				return Off, errMsg
+				return Off, errors.Trace(errMsg)
 			}
 			if val == Warn {
 				vars.StmtCtx.AppendWarning(errMsg)
@@ -176,7 +178,7 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 
 func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 	if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
-		returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
+		returnErr := ErrUnsupportedIsolationLevel.FastGenByArgs(normalizedValue)
 		if !TiDBOptOn(vars.systems[TiDBSkipIsolationLevelCheck]) {
 			return normalizedValue, ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
 		}
@@ -362,7 +364,7 @@ func tidbOptFloat64(opt string, defaultVal float64) float64 {
 func parseMemoryLimit(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
 	defer func() {
 		if err == nil && byteSize > 0 && byteSize < (512<<20) {
-			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimit, originalValue))
+			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBServerMemoryLimit, originalValue))
 			byteSize = 512 << 20
 			normalizedStr = "512MB"
 		}
@@ -407,14 +409,26 @@ func parseByteSize(s string) (byteSize uint64, normalizedStr string) {
 	if n, err := fmt.Sscanf(s, "%dKB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 10, fmt.Sprintf("%dKB", byteSize)
 	}
+	if n, err := fmt.Sscanf(s, "%dKiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 10, fmt.Sprintf("%dKiB", byteSize)
+	}
 	if n, err := fmt.Sscanf(s, "%dMB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 20, fmt.Sprintf("%dMB", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dMiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 20, fmt.Sprintf("%dMiB", byteSize)
 	}
 	if n, err := fmt.Sscanf(s, "%dGB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 30, fmt.Sprintf("%dGB", byteSize)
 	}
+	if n, err := fmt.Sscanf(s, "%dGiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 30, fmt.Sprintf("%dGiB", byteSize)
+	}
 	if n, err := fmt.Sscanf(s, "%dTB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 40, fmt.Sprintf("%dTB", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dTiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 40, fmt.Sprintf("%dTiB", byteSize)
 	}
 	return 0, ""
 }
@@ -441,7 +455,7 @@ func parseTSFromNumberOrTime(s *SessionVars, sVal string) (uint64, error) {
 		return tso, nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx.TypeCtx(), sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
+	t, err := types.ParseTime(s.StmtCtx.TypeCtx(), sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return 0, err
 	}
@@ -456,7 +470,7 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		return nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx.TypeCtx(), sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
+	t, err := types.ParseTime(s.StmtCtx.TypeCtx(), sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return err
 	}
@@ -542,6 +556,7 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.JSONMergePreserve: {},
 	ast.JSONPretty:        {},
 	ast.JSONQuote:         {},
+	ast.JSONSchemaValid:   {},
 	ast.JSONSearch:        {},
 	ast.JSONStorageSize:   {},
 	ast.JSONDepth:         {},
@@ -585,4 +600,35 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 		}
 	}
 	return skipTypes
+}
+
+var (
+	// SchemaCacheSizeLowerBound will adjust the schema cache size to this value if
+	// it is lower than this value.
+	SchemaCacheSizeLowerBound uint64 = 512 * units.MiB
+	// SchemaCacheSizeLowerBoundStr is the string representation of
+	// SchemaCacheSizeLowerBound.
+	SchemaCacheSizeLowerBoundStr = "512MB"
+)
+
+func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
+	defer func() {
+		if err == nil && byteSize > 0 && byteSize < SchemaCacheSizeLowerBound {
+			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBSchemaCacheSize, originalValue))
+			byteSize = SchemaCacheSizeLowerBound
+			normalizedStr = SchemaCacheSizeLowerBoundStr
+		}
+		if err == nil && byteSize > math.MaxInt64 {
+			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBSchemaCacheSize, originalValue))
+			byteSize = math.MaxInt64
+			normalizedStr = strconv.Itoa(math.MaxInt64)
+		}
+	}()
+
+	bt, str := parseByteSize(normalizedValue)
+	if str != "" {
+		return bt, str, nil
+	}
+
+	return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSchemaCacheSize, originalValue)
 }

@@ -2,13 +2,28 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "ddl",
-    srcs = ["ddl.go"],
+    srcs = [
+        "ddl.go",
+        "drop_partition.go",
+        "exchange_partition.go",
+        "reorganize_partition.go",
+        "truncate_partition.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/ddl",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/parser/model",
+        "//pkg/ddl/util",
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/lockstats",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -17,10 +32,12 @@ go_test(
     timeout = "short",
     srcs = ["ddl_test.go"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 18,
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/planner/cardinality",
+        "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//pkg/types",
         "//pkg/util/mock",

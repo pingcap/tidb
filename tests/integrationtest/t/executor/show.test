@@ -64,7 +64,7 @@ create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JO
 show create table t;
 
 # TestShowHistogramsInFlight
-show histograms_in_flight;
+# show histograms_in_flight;  // it is unstable.
 
 # TestShowOpenTables
 show open tables;
@@ -174,6 +174,9 @@ create database test2;
 create table test1.t1 (id int key, b int, index(b));
 create table test2.t2 (id int key, b int, foreign key fk(b) references test1.t1(id));
 show create table test2.t2;
+drop database if exists test1;
+drop database if exists test2;
+
 drop table if exists t;
 create table t(a int, b char(10) as ('a'));
 show create table t;
@@ -427,3 +430,8 @@ select * from information_schema.COLLATIONS;
 show character set like '%utf8mb4%';
 select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
 set @@session.default_collation_for_utf8mb4=default;
+
+# TestShowPreSplitRegionsForAutoRandomTables
+DROP TABLE IF EXISTS `t`;
+CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=4;
+SHOW CREATE TABLE `t`;

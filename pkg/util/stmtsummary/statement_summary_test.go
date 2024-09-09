@@ -22,20 +22,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
-func emptyPlanGenerator() (string, string) {
-	return "", ""
+func emptyPlanGenerator() (string, string, any) {
+	return "", "", nil
 }
 
 func fakePlanDigestGenerator() string {
@@ -74,16 +77,17 @@ func TestAddStatement(t *testing.T) {
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.PrewriteBackoffTypes = make([]string, 0)
 	key := &stmtSummaryByDigestKey{
-		schemaName: stmtExecInfo1.SchemaName,
-		digest:     stmtExecInfo1.Digest,
-		planDigest: stmtExecInfo1.PlanDigest,
+		schemaName:        stmtExecInfo1.SchemaName,
+		digest:            stmtExecInfo1.Digest,
+		planDigest:        stmtExecInfo1.PlanDigest,
+		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
-	samplePlan, _ := stmtExecInfo1.PlanGenerator()
+	samplePlan, _, _ := stmtExecInfo1.PlanGenerator()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	expectedSummaryElement := stmtSummaryByDigestElement{
 		beginTime:            now + 60,
 		endTime:              now + 1860,
-		sampleSQL:            stmtExecInfo1.OriginalSQL,
+		sampleSQL:            stmtExecInfo1.OriginalSQL.String(),
 		samplePlan:           samplePlan,
 		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
 		execCount:            1,
@@ -137,6 +141,15 @@ func TestAddStatement(t *testing.T) {
 		sumAffectedRows:      stmtExecInfo1.StmtCtx.AffectedRows(),
 		firstSeen:            stmtExecInfo1.StartTime,
 		lastSeen:             stmtExecInfo1.StartTime,
+		StmtRUSummary: StmtRUSummary{
+			SumRRU:            stmtExecInfo1.RUDetail.RRU(),
+			MaxRRU:            stmtExecInfo1.RUDetail.RRU(),
+			SumWRU:            stmtExecInfo1.RUDetail.WRU(),
+			MaxWRU:            stmtExecInfo1.RUDetail.WRU(),
+			SumRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
+			MaxRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
+		},
+		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	history := list.New()
@@ -159,7 +172,7 @@ func TestAddStatement(t *testing.T) {
 	// greater than that of the first statement.
 	stmtExecInfo2 := &StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    "original_sql2",
+		OriginalSQL:    stringutil.StringerStr("original_sql2"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
@@ -168,7 +181,7 @@ func TestAddStatement(t *testing.T) {
 		TotalLatency:   20000,
 		ParseLatency:   200,
 		CompileLatency: 2000,
-		CopTasks: &stmtctx.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksDetails{
 			NumCopTasks:       20,
 			AvgProcessTime:    2000,
 			P90ProcessTime:    20000,
@@ -225,11 +238,13 @@ func TestAddStatement(t *testing.T) {
 				}, CalleeAddress: "202",
 			},
 		},
-		StmtCtx:   sc,
-		MemMax:    20000,
-		DiskMax:   20000,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
-		Succeed:   true,
+		StmtCtx:           sc,
+		MemMax:            20000,
+		DiskMax:           20000,
+		StartTime:         time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
+		Succeed:           true,
+		RUDetail:          util.NewRUDetailsWith(123.0, 45.6, 2*time.Second),
+		ResourceGroupName: "rg1",
 	}
 	stmtExecInfo2.StmtCtx.AddAffectedRows(200)
 	expectedSummaryElement.execCount++
@@ -284,6 +299,12 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.maxDisk = stmtExecInfo2.DiskMax
 	expectedSummaryElement.sumAffectedRows += stmtExecInfo2.StmtCtx.AffectedRows()
 	expectedSummaryElement.lastSeen = stmtExecInfo2.StartTime
+	expectedSummaryElement.SumRRU += stmtExecInfo2.RUDetail.RRU()
+	expectedSummaryElement.MaxRRU = stmtExecInfo2.RUDetail.RRU()
+	expectedSummaryElement.SumWRU += stmtExecInfo2.RUDetail.WRU()
+	expectedSummaryElement.MaxWRU = stmtExecInfo2.RUDetail.WRU()
+	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo2.RUDetail.RUWaitDuration()
+	expectedSummaryElement.MaxRUWaitDuration = stmtExecInfo2.RUDetail.RUWaitDuration()
 
 	ssMap.AddStatement(stmtExecInfo2)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -294,7 +315,7 @@ func TestAddStatement(t *testing.T) {
 	// less than that of the first statement.
 	stmtExecInfo3 := &StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    "original_sql3",
+		OriginalSQL:    stringutil.StringerStr("original_sql3"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
@@ -303,7 +324,7 @@ func TestAddStatement(t *testing.T) {
 		TotalLatency:   1000,
 		ParseLatency:   50,
 		CompileLatency: 500,
-		CopTasks: &stmtctx.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksDetails{
 			NumCopTasks:       2,
 			AvgProcessTime:    100,
 			P90ProcessTime:    300,
@@ -361,11 +382,13 @@ func TestAddStatement(t *testing.T) {
 				CalleeAddress: "302",
 			},
 		},
-		StmtCtx:   sc,
-		MemMax:    200,
-		DiskMax:   200,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
-		Succeed:   true,
+		StmtCtx:           sc,
+		MemMax:            200,
+		DiskMax:           200,
+		StartTime:         time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
+		Succeed:           true,
+		RUDetail:          util.NewRUDetailsWith(0.12, 0.34, 5*time.Microsecond),
+		ResourceGroupName: "rg1",
 	}
 	stmtExecInfo3.StmtCtx.AddAffectedRows(20000)
 	expectedSummaryElement.execCount++
@@ -397,6 +420,9 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.sumDisk += stmtExecInfo3.DiskMax
 	expectedSummaryElement.sumAffectedRows += stmtExecInfo3.StmtCtx.AffectedRows()
 	expectedSummaryElement.firstSeen = stmtExecInfo3.StartTime
+	expectedSummaryElement.SumRRU += stmtExecInfo3.RUDetail.RRU()
+	expectedSummaryElement.SumWRU += stmtExecInfo3.RUDetail.WRU()
+	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo3.RUDetail.RUWaitDuration()
 
 	ssMap.AddStatement(stmtExecInfo3)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -408,9 +434,10 @@ func TestAddStatement(t *testing.T) {
 	stmtExecInfo4.SchemaName = "schema2"
 	stmtExecInfo4.ExecDetail.CommitDetail = nil
 	key = &stmtSummaryByDigestKey{
-		schemaName: stmtExecInfo4.SchemaName,
-		digest:     stmtExecInfo4.Digest,
-		planDigest: stmtExecInfo4.PlanDigest,
+		schemaName:        stmtExecInfo4.SchemaName,
+		digest:            stmtExecInfo4.Digest,
+		planDigest:        stmtExecInfo4.PlanDigest,
+		resourceGroupName: stmtExecInfo4.ResourceGroupName,
 	}
 	ssMap.AddStatement(stmtExecInfo4)
 	require.Equal(t, 2, ssMap.summaryMap.Size())
@@ -421,9 +448,10 @@ func TestAddStatement(t *testing.T) {
 	stmtExecInfo5 := stmtExecInfo1
 	stmtExecInfo5.Digest = "digest2"
 	key = &stmtSummaryByDigestKey{
-		schemaName: stmtExecInfo5.SchemaName,
-		digest:     stmtExecInfo5.Digest,
-		planDigest: stmtExecInfo4.PlanDigest,
+		schemaName:        stmtExecInfo5.SchemaName,
+		digest:            stmtExecInfo5.Digest,
+		planDigest:        stmtExecInfo4.PlanDigest,
+		resourceGroupName: stmtExecInfo5.ResourceGroupName,
 	}
 	ssMap.AddStatement(stmtExecInfo5)
 	require.Equal(t, 3, ssMap.summaryMap.Size())
@@ -434,9 +462,10 @@ func TestAddStatement(t *testing.T) {
 	stmtExecInfo6 := stmtExecInfo1
 	stmtExecInfo6.PlanDigest = "plan_digest2"
 	key = &stmtSummaryByDigestKey{
-		schemaName: stmtExecInfo6.SchemaName,
-		digest:     stmtExecInfo6.Digest,
-		planDigest: stmtExecInfo6.PlanDigest,
+		schemaName:        stmtExecInfo6.SchemaName,
+		digest:            stmtExecInfo6.Digest,
+		planDigest:        stmtExecInfo6.PlanDigest,
+		resourceGroupName: stmtExecInfo6.ResourceGroupName,
 	}
 	ssMap.AddStatement(stmtExecInfo6)
 	require.Equal(t, 4, ssMap.summaryMap.Size())
@@ -446,17 +475,18 @@ func TestAddStatement(t *testing.T) {
 	// Test for plan too large
 	stmtExecInfo7 := stmtExecInfo1
 	stmtExecInfo7.PlanDigest = "plan_digest7"
-	stmtExecInfo7.PlanGenerator = func() (string, string) {
+	stmtExecInfo7.PlanGenerator = func() (string, string, any) {
 		buf := make([]byte, MaxEncodedPlanSizeInBytes+1)
 		for i := range buf {
 			buf[i] = 'a'
 		}
-		return string(buf), ""
+		return string(buf), "", nil
 	}
 	key = &stmtSummaryByDigestKey{
-		schemaName: stmtExecInfo7.SchemaName,
-		digest:     stmtExecInfo7.Digest,
-		planDigest: stmtExecInfo7.PlanDigest,
+		schemaName:        stmtExecInfo7.SchemaName,
+		digest:            stmtExecInfo7.Digest,
+		planDigest:        stmtExecInfo7.PlanDigest,
+		resourceGroupName: stmtExecInfo7.ResourceGroupName,
 	}
 	ssMap.AddStatement(stmtExecInfo7)
 	require.Equal(t, 5, ssMap.summaryMap.Size())
@@ -544,7 +574,9 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			ssElement1.maxMem != ssElement2.maxMem ||
 			ssElement1.sumAffectedRows != ssElement2.sumAffectedRows ||
 			!ssElement1.firstSeen.Equal(ssElement2.firstSeen) ||
-			!ssElement1.lastSeen.Equal(ssElement2.lastSeen) {
+			!ssElement1.lastSeen.Equal(ssElement2.lastSeen) ||
+			ssElement1.resourceGroupName != ssElement2.resourceGroupName ||
+			ssElement1.StmtRUSummary != ssElement2.StmtRUSummary {
 			return false
 		}
 		if len(ssElement1.backoffTypes) != len(ssElement2.backoffTypes) {
@@ -570,7 +602,7 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 	return true
 }
 
-func match(t *testing.T, row []types.Datum, expected ...interface{}) {
+func match(t *testing.T, row []types.Datum, expected ...any) {
 	require.Equal(t, len(expected), len(row))
 	for i := range row {
 		got := fmt.Sprintf("%v", row[i].GetValue())
@@ -589,7 +621,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 
 	stmtExecInfo := &StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    "original_sql1",
+		OriginalSQL:    stringutil.StringerStr("original_sql1"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
@@ -598,7 +630,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 		TotalLatency:   10000,
 		ParseLatency:   100,
 		CompileLatency: 1000,
-		CopTasks: &stmtctx.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksDetails{
 			NumCopTasks:       10,
 			AvgProcessTime:    1000,
 			P90ProcessTime:    10000,
@@ -656,11 +688,14 @@ func generateAnyExecInfo() *StmtExecInfo {
 				CalleeAddress: "129",
 			},
 		},
-		StmtCtx:   sc,
-		MemMax:    10000,
-		DiskMax:   10000,
-		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
-		Succeed:   true,
+		StmtCtx:           sc,
+		MemMax:            10000,
+		DiskMax:           10000,
+		StartTime:         time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),
+		Succeed:           true,
+		ResourceGroupName: "rg1",
+		RUDetail:          util.NewRUDetailsWith(1.1, 2.5, 2*time.Millisecond),
+		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(100)},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
@@ -759,12 +794,21 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 		PrevSampleTextStr,
 		PlanDigestStr,
 		PlanStr,
+		AvgRequestUnitReadStr,
+		MaxRequestUnitReadStr,
+		AvgRequestUnitWriteStr,
+		MaxRequestUnitWriteStr,
+		AvgQueuedRcTimeStr,
+		MaxQueuedRcTimeStr,
+		ResourceGroupName,
+		AvgTidbCPUTimeStr,
+		AvgTikvCPUTimeStr,
 	}
 	cols := make([]*model.ColumnInfo, len(columnNames))
 	for i := range columnNames {
 		cols[i] = &model.ColumnInfo{
 			ID:     int64(i),
-			Name:   model.NewCIStr(columnNames[i]),
+			Name:   pmodel.NewCIStr(columnNames[i]),
 			Offset: i,
 		}
 	}
@@ -789,7 +833,7 @@ func TestToDatum(t *testing.T) {
 	e := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval+1800, 0).In(time.UTC)), mysql.TypeTimestamp, types.DefaultFsp)
 	f := types.NewTime(types.FromGoTime(stmtExecInfo1.StartTime), mysql.TypeTimestamp, types.DefaultFsp)
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
-	expectedDatum := []interface{}{n, e, "Select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
+	expectedDatum := []any{n, e, "Select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
 		"db1.tb1,db2.tb2", "a", stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
@@ -816,7 +860,9 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
-		f, f, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
+		f, f, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
+		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
+		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime)}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	match(t, datums[0], expectedDatum...)
 	datums = reader.GetStmtSummaryHistoryRows()
@@ -837,7 +883,7 @@ func TestToDatum(t *testing.T) {
 	ssMap.AddStatement(stmtExecInfo2)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	datums = reader.GetStmtSummaryCurrentRows()
-	expectedEvictedDatum := []interface{}{n, e, "", "<nil>", "<nil>", "",
+	expectedEvictedDatum := []any{n, e, "", "<nil>", "<nil>", "",
 		"<nil>", "<nil>", stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency), int64(stmtExecInfo1.TotalLatency),
 		int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.ParseLatency), int64(stmtExecInfo1.CompileLatency),
@@ -864,7 +910,9 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
-		f, f, 0, 0, 0, "", "", "", ""}
+		f, f, 0, 0, 0, "", "", "", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
+		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
+		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime)}
 	expectedDatum[4] = stmtExecInfo2.Digest
 	match(t, datums[0], expectedDatum...)
 	match(t, datums[1], expectedEvictedDatum...)
@@ -939,9 +987,10 @@ func TestMaxStmtCount(t *testing.T) {
 	// LRU cache should work.
 	for i := loops - 10; i < loops; i++ {
 		key := &stmtSummaryByDigestKey{
-			schemaName: stmtExecInfo1.SchemaName,
-			digest:     fmt.Sprintf("digest%d", i),
-			planDigest: stmtExecInfo1.PlanDigest,
+			schemaName:        stmtExecInfo1.SchemaName,
+			digest:            fmt.Sprintf("digest%d", i),
+			planDigest:        stmtExecInfo1.PlanDigest,
+			resourceGroupName: stmtExecInfo1.ResourceGroupName,
 		}
 		_, ok := sm.Get(key)
 		require.True(t, ok)
@@ -980,15 +1029,16 @@ func TestMaxSQLLength(t *testing.T) {
 	str := strings.Repeat("a", length)
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.OriginalSQL = str
+	stmtExecInfo1.OriginalSQL = stringutil.StringerStr(str)
 	stmtExecInfo1.NormalizedSQL = str
 	ssMap.AddStatement(stmtExecInfo1)
 
 	key := &stmtSummaryByDigestKey{
-		schemaName: stmtExecInfo1.SchemaName,
-		digest:     stmtExecInfo1.Digest,
-		planDigest: stmtExecInfo1.PlanDigest,
-		prevDigest: stmtExecInfo1.PrevSQLDigest,
+		schemaName:        stmtExecInfo1.SchemaName,
+		digest:            stmtExecInfo1.Digest,
+		planDigest:        stmtExecInfo1.PlanDigest,
+		prevDigest:        stmtExecInfo1.PrevSQLDigest,
+		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	value, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)
@@ -1079,7 +1129,7 @@ func TestDisableStmtSummary(t *testing.T) {
 	ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo2 := stmtExecInfo1
-	stmtExecInfo2.OriginalSQL = "original_sql2"
+	stmtExecInfo2.OriginalSQL = stringutil.StringerStr("original_sql2")
 	stmtExecInfo2.NormalizedSQL = "normalized_sql2"
 	stmtExecInfo2.Digest = "digest2"
 	ssMap.AddStatement(stmtExecInfo2)
@@ -1153,7 +1203,7 @@ func TestGetMoreThanCntBindableStmt(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.OriginalSQL = "insert 1"
+	stmtExecInfo1.OriginalSQL = stringutil.StringerStr("insert 1")
 	stmtExecInfo1.NormalizedSQL = "insert ?"
 	stmtExecInfo1.StmtCtx.StmtType = "Insert"
 	ssMap.AddStatement(stmtExecInfo1)
@@ -1193,9 +1243,10 @@ func TestRefreshCurrentSummary(t *testing.T) {
 	ssMap.beginTimeForCurInterval = now + 10
 	stmtExecInfo1 := generateAnyExecInfo()
 	key := &stmtSummaryByDigestKey{
-		schemaName: stmtExecInfo1.SchemaName,
-		digest:     stmtExecInfo1.Digest,
-		planDigest: stmtExecInfo1.PlanDigest,
+		schemaName:        stmtExecInfo1.SchemaName,
+		digest:            stmtExecInfo1.Digest,
+		planDigest:        stmtExecInfo1.PlanDigest,
+		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	ssMap.AddStatement(stmtExecInfo1)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
@@ -1243,9 +1294,10 @@ func TestSummaryHistory(t *testing.T) {
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	key := &stmtSummaryByDigestKey{
-		schemaName: stmtExecInfo1.SchemaName,
-		digest:     stmtExecInfo1.Digest,
-		planDigest: stmtExecInfo1.PlanDigest,
+		schemaName:        stmtExecInfo1.SchemaName,
+		digest:            stmtExecInfo1.Digest,
+		planDigest:        stmtExecInfo1.PlanDigest,
+		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	for i := 0; i < 11; i++ {
 		ssMap.beginTimeForCurInterval = now + int64(i+1)*10
@@ -1315,10 +1367,11 @@ func TestPrevSQL(t *testing.T) {
 	stmtExecInfo1.PrevSQLDigest = "prevSQLDigest"
 	ssMap.AddStatement(stmtExecInfo1)
 	key := &stmtSummaryByDigestKey{
-		schemaName: stmtExecInfo1.SchemaName,
-		digest:     stmtExecInfo1.Digest,
-		planDigest: stmtExecInfo1.PlanDigest,
-		prevDigest: stmtExecInfo1.PrevSQLDigest,
+		schemaName:        stmtExecInfo1.SchemaName,
+		digest:            stmtExecInfo1.Digest,
+		planDigest:        stmtExecInfo1.PlanDigest,
+		prevDigest:        stmtExecInfo1.PrevSQLDigest,
+		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	_, ok := ssMap.summaryMap.Get(key)
@@ -1347,9 +1400,10 @@ func TestEndTime(t *testing.T) {
 	stmtExecInfo1 := generateAnyExecInfo()
 	ssMap.AddStatement(stmtExecInfo1)
 	key := &stmtSummaryByDigestKey{
-		schemaName: stmtExecInfo1.SchemaName,
-		digest:     stmtExecInfo1.Digest,
-		planDigest: stmtExecInfo1.PlanDigest,
+		schemaName:        stmtExecInfo1.SchemaName,
+		digest:            stmtExecInfo1.Digest,
+		planDigest:        stmtExecInfo1.PlanDigest,
+		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	value, ok := ssMap.summaryMap.Get(key)
@@ -1396,9 +1450,10 @@ func TestPointGet(t *testing.T) {
 	stmtExecInfo1.PlanDigestGen = fakePlanDigestGenerator
 	ssMap.AddStatement(stmtExecInfo1)
 	key := &stmtSummaryByDigestKey{
-		schemaName: stmtExecInfo1.SchemaName,
-		digest:     stmtExecInfo1.Digest,
-		planDigest: "",
+		schemaName:        stmtExecInfo1.SchemaName,
+		digest:            stmtExecInfo1.Digest,
+		planDigest:        "",
+		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	value, ok := ssMap.summaryMap.Get(key)

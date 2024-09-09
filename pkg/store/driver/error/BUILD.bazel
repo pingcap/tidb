@@ -10,6 +10,8 @@ go_library(
         "//pkg/kv",
         "//pkg/parser/terror",
         "//pkg/util/dbterror",
+        "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_pd_client//errs",

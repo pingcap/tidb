@@ -31,26 +31,13 @@ import (
 
 // LFU is a LFU based on the ristretto.Cache
 type LFU struct {
-	cache        *ristretto.Cache
+	cache *ristretto.Cache
+	// This is a secondary cache layer used to store all tables,
+	// including those that have been evicted from the primary cache.
 	resultKeySet *keySetShard
 	cost         atomic.Int64
 	closed       atomic.Bool
 	closeOnce    sync.Once
-}
-
-var testMode = false
-
-// adjustMemCost adjusts the memory cost according to the total memory cost.
-// When the total memory cost is 0, the memory cost is set to half of the total memory.
-func adjustMemCost(totalMemCost int64) (result int64, err error) {
-	if totalMemCost == 0 {
-		memTotal, err := memory.MemTotal()
-		if err != nil {
-			return 0, err
-		}
-		return int64(memTotal / 2), nil
-	}
-	return totalMemCost, nil
 }
 
 // NewLFU creates a new LFU cache.
@@ -67,22 +54,37 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	result := &LFU{}
 	bufferItems := int64(64)
 
-	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        max(min(cost/128, 1_000_000), 10), // assume the cost per table stats is 128
-		MaxCost:            cost,
-		BufferItems:        bufferItems,
-		OnEvict:            result.onEvict,
-		OnExit:             result.onExit,
-		OnReject:           result.onReject,
-		IgnoreInternalCost: testMode,
-		Metrics:            testMode,
-	})
+	cache, err := ristretto.NewCache(
+		&ristretto.Config{
+			NumCounters:        max(min(cost/128, 1_000_000), 10), // assume the cost per table stats is 128
+			MaxCost:            cost,
+			BufferItems:        bufferItems,
+			OnEvict:            result.onEvict,
+			OnExit:             result.onExit,
+			OnReject:           result.onReject,
+			IgnoreInternalCost: intest.InTest,
+			Metrics:            intest.InTest,
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
 	result.cache = cache
 	result.resultKeySet = newKeySetShard()
 	return result, err
+}
+
+// adjustMemCost adjusts the memory cost according to the total memory cost.
+// When the total memory cost is 0, the memory cost is set to half of the total memory.
+func adjustMemCost(totalMemCost int64) (result int64, err error) {
+	if totalMemCost == 0 {
+		memTotal, err := memory.MemTotal()
+		if err != nil {
+			return 0, err
+		}
+		return int64(memTotal / 2), nil
+	}
+	return totalMemCost, nil
 }
 
 // Get implements statsCacheInner
@@ -124,15 +126,6 @@ func (s *LFU) Values() []*statistics.Table {
 	return result
 }
 
-// DropEvicted drop stats for table column/index
-func DropEvicted(item statistics.TableCacheItem) {
-	if !item.IsStatsInitialized() ||
-		item.GetEvictedStatus() == statistics.AllEvicted {
-		return
-	}
-	item.DropUnnecessaryData()
-}
-
 func (s *LFU) onReject(item *ristretto.Item) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -167,12 +160,7 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
 	table := item.Value.(*statistics.Table).Copy()
-	for _, column := range table.Columns {
-		DropEvicted(column)
-	}
-	for _, indix := range table.Indices {
-		DropEvicted(indix)
-	}
+	table.DropEvicted()
 	s.resultKeySet.AddKeyValue(int64(item.Key), table)
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.
@@ -205,8 +193,9 @@ func (s *LFU) onExit(val any) {
 	if s.closed.Load() {
 		return
 	}
-	s.addCost(
-		-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
+	s.triggerEvict()
+	// Subtract the memory usage of the table from the total memory usage.
+	s.addCost(-val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 }
 
 // Len implements statsCacheInner

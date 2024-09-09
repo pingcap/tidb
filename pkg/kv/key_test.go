@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,13 +36,13 @@ import (
 func TestPartialNext(t *testing.T) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	// keyA represents a multi column index.
-	keyA, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"), types.NewDatum("def"))
+	keyA, err := codec.EncodeValue(sc.TimeZone(), nil, types.NewDatum("abc"), types.NewDatum("def"))
 	require.NoError(t, err)
-	keyB, err := codec.EncodeValue(sc, nil, types.NewDatum("abca"), types.NewDatum("def"))
+	keyB, err := codec.EncodeValue(sc.TimeZone(), nil, types.NewDatum("abca"), types.NewDatum("def"))
 	require.NoError(t, err)
 
 	// We only use first column value to seek.
-	seekKey, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"))
+	seekKey, err := codec.EncodeValue(sc.TimeZone(), nil, types.NewDatum("abc"))
 	require.NoError(t, err)
 
 	nextKey := Key(seekKey).Next()
@@ -149,7 +150,7 @@ func TestHandle(t *testing.T) {
 
 func TestPaddingHandle(t *testing.T) {
 	dec := types.NewDecFromInt(1)
-	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.NewDecimalDatum(dec))
+	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx().TimeZone(), nil, types.NewDecimalDatum(dec))
 	assert.Nil(t, err)
 	assert.Less(t, len(encoded), 9)
 
@@ -167,21 +168,33 @@ func TestHandleMap(t *testing.T) {
 	m := NewHandleMap()
 	h := IntHandle(1)
 
+	assert.Equal(t, SizeofHandleMap, m.MemUsage())
+
 	m.Set(h, 1)
 	v, ok := m.Get(h)
 	assert.True(t, ok)
 	assert.Equal(t, 1, v)
+
+	assert.Equal(t, SizeofHandleMap+size.SizeOfInt64+size.SizeOfInterface, m.MemUsage())
 
 	m.Delete(h)
 	v, ok = m.Get(h)
 	assert.False(t, ok)
 	assert.Nil(t, v)
 
+	assert.Equal(t, SizeofHandleMap, m.MemUsage())
+
 	ch := testutil.MustNewCommonHandle(t, 100, "abc")
 	m.Set(ch, "a")
 	v, ok = m.Get(ch)
 	assert.True(t, ok)
 	assert.Equal(t, "a", v)
+
+	{
+		key := string(ch.Encoded())
+		sz := size.SizeOfString + int64(len(key)) + SizeofStrHandleVal
+		assert.Equal(t, SizeofHandleMap+sz, m.MemUsage())
+	}
 
 	m.Delete(ch)
 	v, ok = m.Get(ch)
@@ -196,7 +209,7 @@ func TestHandleMap(t *testing.T) {
 	assert.Equal(t, 3, m.Len())
 
 	cnt := 0
-	m.Range(func(h Handle, val interface{}) bool {
+	m.Range(func(h Handle, val any) bool {
 		cnt++
 		if h.Equal(ch) {
 			assert.Equal(t, "a", val)
@@ -229,7 +242,7 @@ func TestHandleMapWithPartialHandle(t *testing.T) {
 	m.Set(ih, 3)
 
 	dec := types.NewDecFromInt(1)
-	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.NewDecimalDatum(dec))
+	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx().TimeZone(), nil, types.NewDecimalDatum(dec))
 	assert.Nil(t, err)
 	assert.Less(t, len(encoded), 9)
 
@@ -285,7 +298,7 @@ func TestMemAwareHandleMapWithPartialHandle(t *testing.T) {
 	m.Set(ih, 3)
 
 	dec := types.NewDecFromInt(1)
-	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.NewDecimalDatum(dec))
+	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx().TimeZone(), nil, types.NewDecimalDatum(dec))
 	assert.Nil(t, err)
 	assert.Less(t, len(encoded), 9)
 
@@ -324,6 +337,15 @@ func TestKeyRangeDefinition(t *testing.T) {
 	// And same default value.
 	require.Equal(t, (*coprocessor.KeyRange)(unsafe.Pointer(&r1)), &r2)
 	require.Equal(t, &r1, (*KeyRange)(unsafe.Pointer(&r2)))
+
+	s := []KeyRange{{
+		StartKey: []byte("s1"),
+		EndKey:   []byte("e1"),
+	}, {
+		StartKey: []byte("s2"),
+		EndKey:   []byte("e2"),
+	}}
+	require.Equal(t, int64(168), KeyRangeSliceMemUsage(s))
 }
 
 func BenchmarkIsPoint(b *testing.B) {
@@ -381,7 +403,7 @@ func BenchmarkMemAwareHandleMap(b *testing.B) {
 			if i%2 == 0 {
 				handles[i] = IntHandle(i)
 			} else {
-				handleBytes, _ := codec.EncodeKey(&sc, nil, types.NewIntDatum(int64(i)))
+				handleBytes, _ := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(int64(i)))
 				handles[i], _ = NewCommonHandle(handleBytes)
 			}
 		}
@@ -403,7 +425,7 @@ func BenchmarkNativeHandleMap(b *testing.B) {
 			if i%2 == 0 {
 				handles[i] = IntHandle(i)
 			} else {
-				handleBytes, _ := codec.EncodeKey(&sc, nil, types.NewIntDatum(int64(i)))
+				handleBytes, _ := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(int64(i)))
 				handles[i], _ = NewCommonHandle(handleBytes)
 			}
 		}

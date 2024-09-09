@@ -12,6 +12,8 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//pkg/config",
+        "//pkg/errno",
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/parser",
@@ -20,8 +22,10 @@ go_test(
         "//pkg/testkit",
         "//pkg/util",
         "//tests/realtikvtest",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikvrpc",
         "@io_opencensus_go//stats/view",
     ],
 )

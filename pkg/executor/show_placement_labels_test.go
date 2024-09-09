@@ -18,22 +18,22 @@ import (
 	gjson "encoding/json"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 )
 
 func TestShowPlacementLabelsBuilder(t *testing.T) {
 	cases := []struct {
-		stores  [][]*helper.StoreLabel
-		expects [][]interface{}
+		stores  [][]*pd.StoreLabel
+		expects [][]any
 	}{
 		{
 			stores:  nil,
 			expects: nil,
 		},
 		{
-			stores: [][]*helper.StoreLabel{
+			stores: [][]*pd.StoreLabel{
 				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r3"}, {Key: "host", Value: "h1"}},
 				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r1"}, {Key: "host", Value: "h2"}},
 				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r2"}, {Key: "host", Value: "h2"}},
@@ -41,7 +41,7 @@ func TestShowPlacementLabelsBuilder(t *testing.T) {
 				nil,
 				{{Key: "k1", Value: "v1"}},
 			},
-			expects: [][]interface{}{
+			expects: [][]any{
 				{"host", []string{"h1", "h2"}},
 				{"k1", []string{"v1"}},
 				{"rack", []string{"r1", "r2", "r3"}},
@@ -51,7 +51,7 @@ func TestShowPlacementLabelsBuilder(t *testing.T) {
 	}
 
 	b := &showPlacementLabelsResultBuilder{}
-	toBinaryJSON := func(obj interface{}) (bj types.BinaryJSON) {
+	toBinaryJSON := func(obj any) (bj types.BinaryJSON) {
 		d, err := gjson.Marshal(obj)
 		require.NoError(t, err)
 		err = bj.UnmarshalJSON(d)

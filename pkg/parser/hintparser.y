@@ -80,6 +80,7 @@ import (
 	hintSetVar              "SET_VAR"
 	hintResourceGroup       "RESOURCE_GROUP"
 	hintQBName              "QB_NAME"
+	hintHypoIndex           "HYPO_INDEX"
 
 	/* TiDB hint names */
 	hintAggToCop              "AGG_TO_COP"
@@ -353,6 +354,27 @@ TableOptimizerHintOpt:
 			HintData: model.NewCIStr($4),
 		}
 	}
+|	hintIdentifier '(' QueryBlockOpt hintIntLit ')'
+	/* The hints below are pseudo hint. They are unsupported hints */
+	{
+		parser.warnUnsupportedHint($1)
+		$$ = nil
+	}
+|	hintIdentifier '(' PartitionList ')'
+	{
+		parser.warnUnsupportedHint($1)
+		$$ = nil
+	}
+|	hintIdentifier '(' PartitionList CommaOpt hintIntLit ')'
+	{
+		parser.warnUnsupportedHint($1)
+		$$ = nil
+	}
+|	hintIdentifier '(' Identifier '=' Value ')'
+	{
+		parser.warnUnsupportedHint($1)
+		$$ = nil
+	}
 
 StorageOptimizerHintOpt:
 	"READ_FROM_STORAGE" '(' QueryBlockOpt HintStorageTypeAndTableList ')'
@@ -625,6 +647,7 @@ SupportedTableLevelOptimizerHintName:
 |	"HASH_JOIN_BUILD"
 |	"HASH_JOIN_PROBE"
 |	"LEADING"
+|	"HYPO_INDEX"
 
 UnsupportedIndexLevelOptimizerHintName:
 	"INDEX_MERGE"
@@ -712,6 +735,7 @@ Identifier:
 |	"SET_VAR"
 |	"RESOURCE_GROUP"
 |	"QB_NAME"
+|	"HYPO_INDEX"
 /* TiDB hint names */
 |	"AGG_TO_COP"
 |	"LIMIT_TO_COP"

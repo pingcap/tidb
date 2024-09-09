@@ -202,10 +202,10 @@ select group_concat(name order by name separator '.') from t use index(idx);
 group_concat(name order by name separator '.')
 aaa.bbb
 update t set name = 'aaaaa' where name = 'bbb';
-Error 1062 (23000): Duplicate entry 'aaaaa' for key 't.PRIMARY'
+Error 1062 (23000): Duplicate entry 'aa' for key 't.PRIMARY'
 update ignore t set name = 'aaaaa' where name = 'bbb';
 Level	Code	Message
-Warning	1062	Duplicate entry 'aaaaa' for key 't.PRIMARY'
+Warning	1062	Duplicate entry 'aa' for key 't.PRIMARY'
 admin check table t;
 drop table if exists t1, t2;
 create table t1  (c_str varchar(40), c_decimal decimal(12, 6) , primary key(c_str(8)));
@@ -439,7 +439,7 @@ bbbbb	-48
 insert into t values ('bb', 0);
 Error 1062 (23000): Duplicate entry 'b' for key 't.PRIMARY'
 insert into t values ('aa', 0);
-Error 1062 (23000): Duplicate entry 'aa' for key 't.PRIMARY'
+Error 1062 (23000): Duplicate entry 'a' for key 't.PRIMARY'
 commit;
 select * from t;
 col_1	col_2

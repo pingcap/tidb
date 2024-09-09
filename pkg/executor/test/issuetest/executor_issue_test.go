@@ -24,11 +24,13 @@ import (
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -169,18 +171,45 @@ func TestIssue28650(t *testing.T) {
 }
 
 func TestIssue30289(t *testing.T) {
-	fpName := "github.com/pingcap/tidb/pkg/executor/issue30289"
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/issue30289"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
-	require.EqualError(t, err, "issue30289 build return error")
+	useHashJoinV2 := []bool{true, false}
+	for _, hashJoinV2 := range useHashJoinV2 {
+		join.SetEnableHashJoinV2(hashJoinV2)
+		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
+		require.EqualError(t, err, "issue30289 build return error")
+	}
+}
+
+func TestIssue51998(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/issue51998"
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
+	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	useHashJoinV2 := []bool{true, false}
+	for _, hashJoinV2 := range useHashJoinV2 {
+		join.SetEnableHashJoinV2(hashJoinV2)
+		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
+		require.EqualError(t, err, "issue51998 build return error")
+	}
 }
 
 func TestIssue29498(t *testing.T) {
@@ -576,7 +605,7 @@ func TestIssue42662(t *testing.T) {
 	sm := &testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
 	}
-	sm.Conn = make(map[uint64]session.Session)
+	sm.Conn = make(map[uint64]sessiontypes.Session)
 	sm.Conn[tk.Session().GetSessionVars().ConnectionID] = tk.Session()
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
@@ -592,38 +621,142 @@ func TestIssue42662(t *testing.T) {
 	tk.MustExec("set global tidb_server_memory_limit='1600MB'")
 	tk.MustExec("set global tidb_server_memory_limit_sess_min_size=128*1024*1024")
 	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/issue42662_1", `return(true)`))
-	// tk.Session() should be marked as MemoryTop1Tracker but not killed.
-	tk.MustQuery("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
+	defer join.SetEnableHashJoinV2(isHashJoinV2Enabled)
+	useHashJoinV2 := []bool{true, false}
+	for _, hashJoinV2 := range useHashJoinV2 {
+		join.SetEnableHashJoinV2(hashJoinV2)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1", `return(true)`))
+		// tk.Session() should be marked as MemoryTop1Tracker but not killed.
+		tk.MustQuery("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
 
-	// try to trigger the kill top1 logic
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2", `return(true)`))
-	time.Sleep(1 * time.Second)
+		// try to trigger the kill top1 logic
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2", `return(true)`))
+		time.Sleep(1 * time.Second)
 
-	// no error should be returned
-	tk.MustQuery("select count(*) from t1")
-	tk.MustQuery("select count(*) from t1")
+		// no error should be returned
+		tk.MustQuery("select count(*) from t1")
+		tk.MustQuery("select count(*) from t1")
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/issue42662_1"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
+	}
 }
 
-func TestIssue48007(t *testing.T) {
-	// Test no leak
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+func TestIssue50393(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
-	}
-	tk.Session().SetSessionManager(sm)
-	dom.ExpensiveQueryHandle().SetSessionManager(sm)
-	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
-	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
+
 	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE `partsupp` (  `PS_PARTKEY` bigint(20) NOT NULL,`PS_SUPPKEY` bigint(20) NOT NULL,`PS_AVAILQTY` bigint(20) NOT NULL,`PS_SUPPLYCOST` decimal(15,2) NOT NULL,`PS_COMMENT` varchar(199) NOT NULL,PRIMARY KEY (`PS_PARTKEY`,`PS_SUPPKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustExec("CREATE TABLE `supplier` (`S_SUPPKEY` bigint(20) NOT NULL,`S_NAME` char(25) NOT NULL,`S_ADDRESS` varchar(40) NOT NULL,`S_NATIONKEY` bigint(20) NOT NULL,`S_PHONE` char(15) NOT NULL,`S_ACCTBAL` decimal(15,2) NOT NULL,`S_COMMENT` varchar(101) NOT NULL,PRIMARY KEY (`S_SUPPKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustExec("CREATE TABLE `nation` (`N_NATIONKEY` bigint(20) NOT NULL,`N_NAME` char(25) NOT NULL,`N_REGIONKEY` bigint(20) NOT NULL,`N_COMMENT` varchar(152) DEFAULT NULL,PRIMARY KEY (`N_NATIONKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustExec("set @@tidb_mem_quota_query=128;")
-	err := tk.ExecToErr("explain select ps_partkey, sum(ps_supplycost * ps_availqty) as value from partsupp, supplier, nation where ps_suppkey = s_suppkey and s_nationkey = n_nationkey and n_name = 'MOZAMBIQUE' group by ps_partkey having sum(ps_supplycost * ps_availqty) > ( select sum(ps_supplycost * ps_availqty) * 0.0001000000 from partsupp, supplier, nation where ps_suppkey = s_suppkey and s_nationkey = n_nationkey and n_name = 'MOZAMBIQUE' ) order by value desc;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
+	tk.MustExec("drop table if exists t1, t2")
+
+	tk.MustExec("create table t1 (a blob)")
+	tk.MustExec("create table t2 (a blob)")
+	tk.MustExec("insert into t1 values (0xC2A0)")
+	tk.MustExec("insert into t2 values (0xC2)")
+	tk.MustQuery("select count(*) from t1,t2 where t1.a like concat(\"%\",t2.a,\"%\")").Check(testkit.Rows("1"))
+}
+
+func TestIssue51874(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().AllowProjectionPushDown = true
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t2")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create table t2 (i int)")
+	tk.MustExec("insert into t values (5, 6), (1, 7)")
+	tk.MustExec("insert into t2 values (10), (100)")
+	tk.MustQuery("select (select sum(a) over () from t2 limit 1) from t;").Check(testkit.Rows("10", "2"))
+}
+
+func TestIssue51777(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().AllowProjectionPushDown = true
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0, t1")
+	tk.MustExec("create table t0 (c_k int)")
+	tk.MustExec("create table t1 (c_pv int)")
+	tk.MustExec("insert into t0 values(-2127559046),(-190905159),(-171305020),(-59638845),(98004414),(2111663670),(2137868682),(2137868682),(2142611610)")
+	tk.MustExec("insert into t1 values(-2123227448), (2131706870), (-2071508387), (2135465388), (2052805244), (-2066000113)")
+	tk.MustQuery("SELECT ( select  (ref_4.c_pv <= ref_3.c_k) as c0 from t1 as ref_4 order by c0 asc limit 1) as p2 FROM t0 as ref_3 order by p2;").Check(testkit.Rows("0", "0", "0", "0", "0", "0", "1", "1", "1"))
+}
+
+func TestIssue52978(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (-1790816583),(2049821819), (-1366665321), (536581933), (-1613686445)")
+	tk.MustQuery("select min(truncate(cast(-26340 as double), ref_11.a)) as c3 from t as ref_11;").Check(testkit.Rows("-26340"))
+	tk.MustExec("drop table if exists t")
+}
+
+func TestIssue53221(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(20))")
+	tk.MustExec("insert into t values ('')")
+	tk.MustExec("insert into t values ('')")
+	err := tk.QueryToErr("select regexp_like('hello', t.a) from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	err = tk.QueryToErr("select regexp_instr('hello', t.a) from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	err = tk.QueryToErr("select regexp_substr('hello', t.a) from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	err = tk.QueryToErr("select regexp_replace('hello', t.a, 'd') from test.t")
+	require.ErrorContains(t, err, "Empty pattern is invalid")
+
+	tk.MustExec("drop table if exists t")
+}
+
+func TestIndexReaderIssue53871AndIssue54160(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int key auto_increment, b int, c int, index idx (b), index idx2(c))")
+	tk.MustExec(" insert into t () values (), (), (), (), (), (), (), ();")
+	for i := 0; i < 9; i++ {
+		tk.MustExec("insert into t (b) select b from t;")
+	}
+	tk.MustExec(`update t set b = rand() * 10000, c = rand() * 10000;`)
+	tk.MustQuery("select count(c) from t use index(idx);").Check(testkit.Rows("4096")) // full scan to resolve uncommitted lock.
+	tk.MustQuery("select count(b) from t use index(idx2);").Check(testkit.Rows("4096"))
+	tk.MustQuery("select count(*) from t ignore index(idx, idx2)").Check(testkit.Rows("4096"))
+	tk.MustExec("analyze table t")
+	// Test Index Lookup Reader query.
+	rows := tk.MustQuery("explain analyze select * from t use index(idx) where b > 0;").Rows()
+	require.Len(t, rows, 3)
+	require.Regexp(t, ".*IndexLookUp.*table_task: {total_time: .*, num: 1, .*", fmt.Sprintf("%v", rows[0]))
+	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[1]))
+	require.Regexp(t, ".*TableRowIDScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[2]))
+	// Test Index Merge Reader query.
+	rows = tk.MustQuery("explain analyze select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where b > 5000 or c > 5000;").Rows()
+	require.Len(t, rows, 4)
+	require.Regexp(t, ".*IndexMerge.*table_task:{num:2, .*", fmt.Sprintf("%v", rows[0]))
+	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[1]))
+	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[2]))
+	require.Regexp(t, ".*TableRowIDScan.*rpc_info.*Cop:{num_rpc:2, total_time:.*", fmt.Sprintf("%v", rows[3]))
+}
+
+func TestCalculateBatchSize(t *testing.T) {
+	require.Equal(t, 20000, executor.CalculateBatchSize(50000, 1024, 20000))
+	require.Equal(t, 20000, executor.CalculateBatchSize(18000, 1024, 20000))
+	require.Equal(t, 8192, executor.CalculateBatchSize(5000, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(1024, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(10, 1024, 20000))
+	require.Equal(t, 258, executor.CalculateBatchSize(10, 1024, 258))
+	require.Equal(t, 1024, executor.CalculateBatchSize(0, 1024, 20000))
 }

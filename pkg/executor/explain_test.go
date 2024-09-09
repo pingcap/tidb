@@ -172,29 +172,6 @@ func checkExecutionInfo(t *testing.T, tk *testkit.TestKit, sql string) {
 	}
 }
 
-func TestExplainAnalyzeActRowsNotEmpty(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int, index (a))")
-	tk.MustExec("insert into t values (1, 1)")
-
-	checkActRowsNotEmpty(t, tk, "explain analyze select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333")
-}
-
-func checkActRowsNotEmpty(t *testing.T, tk *testkit.TestKit, sql string) {
-	actRowsCol := 2
-	rows := tk.MustQuery(sql).Rows()
-	for _, row := range rows {
-		strs := make([]string, len(row))
-		for i, c := range row {
-			strs[i] = c.(string)
-		}
-		require.NotEqual(t, "", strs[actRowsCol])
-	}
-}
-
 func checkActRows(t *testing.T, tk *testkit.TestKit, sql string, expected []string) {
 	actRowsCol := 2
 	rows := tk.MustQuery("explain analyze " + sql).Rows()
@@ -493,4 +470,18 @@ func TestExplainFormatInCtx(t *testing.T) {
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 		}
 	}
+}
+
+func TestExplainImportFromSelect(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tk.MustExec("create table t_o (a int primary key)")
+	tk.MustExec("insert into t values (2)")
+	rs := tk.MustQuery("explain import into t_o from select * from t").Rows()
+	require.Contains(t, rs[0][0], "ImportInto")
+	require.Contains(t, rs[1][0], "TableReader")
+	require.Contains(t, rs[2][0], "TableFullScan")
 }

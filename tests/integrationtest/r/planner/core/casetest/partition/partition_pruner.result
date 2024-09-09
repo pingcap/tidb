@@ -835,8 +835,8 @@ CREATE TABLE `tx1` (`ID` varchar(13), `a` varchar(13), `b` varchar(4000), `ltype
 CREATE TABLE `tx2` (`ID` varchar(13), `rid` varchar(12), `a` varchar(9), `b` varchar(8), `c` longtext, `d` varchar(12), `ltype` int(5) NOT NULL) PARTITION BY LIST (`ltype`) (PARTITION `p1` VALUES IN (501), PARTITION `p2` VALUES IN (502));
 insert into tx1 values(1,1,1,501);
 insert into tx2 values(1,1,1,1,1,1,501);
-analyze table tx1;
-analyze table tx2;
+analyze table tx1 all columns;
+analyze table tx2 all columns;
 select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
 ID	a	b	ltype	ID	rid	a	b	c	d	ltype
 1	1	1	501	1	1	1	1	1	1	501
@@ -856,7 +856,7 @@ HashJoin	1.22	root		inner join, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) 
 drop table tx2;
 CREATE TABLE `tx2` (`ID` varchar(13), `rid` varchar(12), `a` varchar(9), `b` varchar(8), `c` longtext, `d` varchar(12), `ltype` int(5) NOT NULL) PARTITION BY LIST COLUMNS (`ltype`,d) (PARTITION `p1` VALUES IN ((501,1)), PARTITION `p2` VALUES IN ((502,1)));
 insert into tx2 values(1,1,1,1,1,1,501);
-analyze table tx2;
+analyze table tx2 all columns;
 select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
 ID	a	b	ltype	ID	rid	a	b	c	d	ltype
 1	1	1	501	1	1	1	1	1	1	501
@@ -873,3 +873,12 @@ HashJoin	1.22	root		inner join, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) 
   └─TableReader	9.99	root		data:Selection
     └─Selection	9.99	cop[tikv]		eq(issue42135.tx2.rid, "1"), not(isnull(issue42135.tx2.id))
       └─TableFullScan	10000.00	cop[tikv]	table:tx2, partition:p2	keep order:false, stats:pseudo
+create table t (a varchar(255), b int primary key nonclustered, key (a)) partition by key(b) partitions 3;
+insert into t values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6);
+analyze table t;
+select * from t where b = 2 and a like 'abc';
+a	b
+abc	2
+select * from t where b = 2;
+a	b
+abc	2

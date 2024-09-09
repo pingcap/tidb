@@ -22,9 +22,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -61,12 +61,9 @@ func CopySampleItems(items []*SampleItem) []*SampleItem {
 	return n
 }
 
-// SortSampleItems shallow copies and sorts a slice of SampleItem.
-func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) ([]*SampleItem, error) {
-	sortedItems := make([]*SampleItem, len(items))
-	copy(sortedItems, items)
+func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
 	var err error
-	slices.SortStableFunc(sortedItems, func(i, j *SampleItem) int {
+	slices.SortStableFunc(items, func(i, j *SampleItem) int {
 		var cmp int
 		cmp, err = i.Value.Compare(sc.TypeCtx(), &j.Value, collate.GetBinaryCollator())
 		if err != nil {
@@ -74,7 +71,7 @@ func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) ([]*Samp
 		}
 		return cmp
 	})
-	return sortedItems, err
+	return err
 }
 
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.
@@ -259,7 +256,8 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 						return nil, nil, err
 					}
 					decodedVal.SetBytesAsString(s.Collators[i].Key(decodedVal.GetString()), decodedVal.Collation(), uint32(decodedVal.Length()))
-					encodedKey, err := tablecodec.EncodeValue(s.Sc, nil, decodedVal)
+					encodedKey, err := tablecodec.EncodeValue(s.Sc.TimeZone(), nil, decodedVal)
+					err = s.Sc.HandleError(err)
 					if err != nil {
 						return nil, nil, err
 					}
@@ -275,7 +273,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 }
 
 // RowToDatums converts row to datum slice.
-func RowToDatums(row chunk.Row, fields []*ast.ResultField) []types.Datum {
+func RowToDatums(row chunk.Row, fields []*resolve.ResultField) []types.Datum {
 	datums := make([]types.Datum, len(fields))
 	for i, f := range fields {
 		datums[i] = row.GetDatum(i, &f.Column.FieldType)
@@ -306,7 +304,8 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 		if err != nil {
 			return err
 		}
-		data, err := tablecodec.EncodeValue(sc, nil, d)
+		data, err := tablecodec.EncodeValue(sc.TimeZone(), nil, d)
+		err = sc.HandleError(err)
 		if err != nil {
 			return err
 		}

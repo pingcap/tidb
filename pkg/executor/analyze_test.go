@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -62,7 +63,6 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	}()
 	var dom *domain.Domain
 	session.DisableStats4Test()
-	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer dom.Close()
@@ -77,7 +77,7 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	tk.MustExec("analyze table t")
 
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	table, err := is.TableByName(model.NewCIStr("test_index_extract_topn"), model.NewCIStr("t"))
+	table, err := is.TableByName(context.Background(), model.NewCIStr("test_index_extract_topn"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
@@ -85,19 +85,20 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	// Construct TopN, should be (1, 1) -> 2 and (1, 2) -> 2
 	topn := statistics.NewTopN(2)
 	{
-		key1, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(1))
+		key1, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(1), types.NewIntDatum(1))
 		require.NoError(t, err)
 		topn.AppendTopN(key1, 2)
-		key2, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(2))
+		key2, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(1), types.NewIntDatum(2))
 		require.NoError(t, err)
 		topn.AppendTopN(key2, 2)
 	}
-	for _, idx := range tbl.Indices {
+	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		ok, err := checkHistogram(tk.Session().GetSessionVars().StmtCtx, &idx.Histogram)
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.True(t, idx.TopN.Equal(topn))
-	}
+		return false
+	})
 }
 
 func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
@@ -106,6 +107,11 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int) partition by hash(id) partitions 4")
+	tk.MustExec("select * from t where id = 0")
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	statsHandle := do.StatsHandle()
+	require.NoError(t, statsHandle.DumpColStatsUsageToKV())
 	testcases := []struct {
 		concurrency string
 	}{
@@ -143,9 +149,9 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("insert into t (id) values (%v)", j))
 		}
 	}
-	var expected [][]interface{}
+	var expected [][]any
 	for i := 1; i <= 20; i++ {
-		expected = append(expected, []interface{}{
+		expected = append(expected, []any{
 			strconv.FormatInt(int64(i), 10), "500",
 		})
 	}

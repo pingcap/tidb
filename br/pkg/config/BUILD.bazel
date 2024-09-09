@@ -2,12 +2,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "config",
-    srcs = ["ebs.go"],
+    srcs = [
+        "ebs.go",
+        "kv.go",
+    ],
     importpath = "github.com/pingcap/tidb/br/pkg/config",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/metautil",
         "//br/pkg/storage",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_masterminds_semver//:semver",
         "@com_github_pingcap_errors//:errors",
         "@io_k8s_api//core/v1:core",

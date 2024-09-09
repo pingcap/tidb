@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -39,6 +40,21 @@ var (
 	TiDBStrictIntegerDisplayWidth bool
 )
 
+// IHasher is internal usage represent cascades/base.Hasher
+type IHasher interface {
+	HashBool(val bool)
+	HashInt(val int)
+	HashInt64(val int64)
+	HashUint64(val uint64)
+	HashFloat64(val float64)
+	HashRune(val rune)
+	HashString(val string)
+	HashByte(val byte)
+	HashBytes(val []byte)
+	Reset()
+	Sum64() uint64
+}
+
 // FieldType records field type information.
 type FieldType struct {
 	// tp is type of the field
@@ -58,6 +74,68 @@ type FieldType struct {
 	elemsIsBinaryLit []bool
 	array            bool
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
+}
+
+// Hash64 implements the cascades/base.Hasher.<0th> interface.
+func (ft *FieldType) Hash64(h IHasher) {
+	h.HashByte(ft.tp)
+	h.HashUint64(uint64(ft.flag))
+	h.HashInt(ft.flen)
+	h.HashInt(ft.decimal)
+	h.HashString(ft.charset)
+	h.HashString(ft.collate)
+	h.HashInt(len(ft.elems))
+	for _, elem := range ft.elems {
+		h.HashString(elem)
+	}
+	h.HashInt(len(ft.elemsIsBinaryLit))
+	for _, elem := range ft.elemsIsBinaryLit {
+		h.HashBool(elem)
+	}
+	h.HashBool(ft.array)
+}
+
+// Equals implements the cascades/base.Hasher.<1th> interface.
+func (ft *FieldType) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var ft2 *FieldType
+	switch x := other.(type) {
+	case *FieldType:
+		ft2 = x
+	case FieldType:
+		ft2 = &x
+	default:
+		return false
+	}
+	ok := ft.tp == ft2.tp &&
+		ft.flag == ft2.flag &&
+		ft.flen == ft2.flen &&
+		ft.decimal == ft2.decimal &&
+		ft.charset == ft2.charset &&
+		ft.collate == ft2.collate &&
+		ft.array == ft2.array
+	if !ok {
+		return false
+	}
+	if len(ft.elems) != len(ft2.elems) {
+		return false
+	}
+	for i, one := range ft.elems {
+		if one != ft2.elems[i] {
+			return false
+		}
+	}
+	if len(ft.elemsIsBinaryLit) != len(ft2.elemsIsBinaryLit) {
+		return false
+	}
+	for i, one := range ft.elemsIsBinaryLit {
+		if one != ft2.elemsIsBinaryLit[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // NewFieldType returns a FieldType,
@@ -81,7 +159,7 @@ func (ft *FieldType) IsDecimalValid() bool {
 // IsVarLengthType Determine whether the column type is a variable-length type
 func (ft *FieldType) IsVarLengthType() bool {
 	switch ft.GetType() {
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeJSON, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeJSON, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeTiDBVectorFloat32:
 		return true
 	default:
 		return false
@@ -289,7 +367,7 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	// because flen for them is useless.
 	// The decimal field can be ignored if the type is int or string.
 	tpEqual := (ft.GetType() == other.GetType()) || (ft.GetType() == mysql.TypeVarchar && other.GetType() == mysql.TypeVarString) || (ft.GetType() == mysql.TypeVarString && other.GetType() == mysql.TypeVarchar)
-	flenEqual := ft.flen == other.flen || (ft.EvalType() == ETReal && ft.decimal == UnspecifiedLength)
+	flenEqual := ft.flen == other.flen || (ft.EvalType() == ETReal && ft.decimal == UnspecifiedLength) || ft.EvalType() == ETJson
 	ignoreDecimal := ft.EvalType() == ETInt || ft.EvalType() == ETString
 	partialEqual := tpEqual &&
 		(ignoreDecimal || ft.decimal == other.decimal) &&
@@ -297,15 +375,10 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 		ft.collate == other.collate &&
 		flenEqual &&
 		mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
-	if !partialEqual || len(ft.elems) != len(other.elems) {
+	if !partialEqual {
 		return false
 	}
-	for i := range ft.elems {
-		if ft.elems[i] != other.elems[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(ft.elems, other.elems)
 }
 
 // PartialEqual checks whether two FieldType objects are equal.
@@ -346,6 +419,8 @@ func (ft *FieldType) EvalType() EvalType {
 		return ETDuration
 	case mysql.TypeJSON:
 		return ETJson
+	case mysql.TypeTiDBVectorFloat32:
+		return ETVectorFloat32
 	case mysql.TypeEnum, mysql.TypeSet:
 		if ft.flag&mysql.EnumSetAsIntFlag > 0 {
 			return ETInt
@@ -427,6 +502,10 @@ func (ft *FieldType) CompactStr() string {
 		}
 	case mysql.TypeYear:
 		suffix = fmt.Sprintf("(%d)", ft.flen)
+	case mysql.TypeTiDBVectorFloat32:
+		if ft.flen != UnspecifiedLength {
+			suffix = fmt.Sprintf("(%d)", ft.flen)
+		}
 	case mysql.TypeNull:
 		suffix = "(0)"
 	}
@@ -585,6 +664,8 @@ func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx, explicitCharset b
 		ctx.WriteKeyWord("FLOAT")
 	case mysql.TypeYear:
 		ctx.WriteKeyWord("YEAR")
+	case mysql.TypeTiDBVectorFloat32:
+		ctx.WriteKeyWord("VECTOR")
 	}
 	if ft.array {
 		ctx.WritePlain(" ")

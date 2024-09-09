@@ -594,6 +594,21 @@ func TestAdminRepairTableRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
+func TestAdminOptimizeTableRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"OPTIMIZE TABLE t", "OPTIMIZE TABLE `t`"},
+		{"OPTIMIZE LOCAL TABLE t", "OPTIMIZE NO_WRITE_TO_BINLOG TABLE `t`"},
+		{"OPTIMIZE NO_WRITE_TO_BINLOG TABLE t", "OPTIMIZE NO_WRITE_TO_BINLOG TABLE `t`"},
+		{"OPTIMIZE TABLE t1, t2", "OPTIMIZE TABLE `t1`, `t2`"},
+		{"optimize table t1,t2", "OPTIMIZE TABLE `t1`, `t2`"},
+		{"optimize tables t1, t2", "OPTIMIZE TABLE `t1`, `t2`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
 func TestSequenceRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"create sequence seq", "CREATE SEQUENCE `seq`"},
@@ -917,4 +932,64 @@ func TestTableOptionTTLRestoreWithTTLEnableOffFlag(t *testing.T) {
 		}
 		runNodeRestoreTestWithFlagsStmtChange(t, testCases, "%s", extractNodeFunc, ca.flags)
 	}
+}
+
+func TestResourceGroupDDLStmtRestore(t *testing.T) {
+	createTestCases := []NodeRestoreTestCase{
+		{
+			"CREATE RESOURCE GROUP IF NOT EXISTS rg1 RU_PER_SEC = 500 BURSTABLE",
+			"CREATE RESOURCE GROUP IF NOT EXISTS `rg1` RU_PER_SEC = 500, BURSTABLE = TRUE",
+		},
+		{
+			"CREATE RESOURCE GROUP IF NOT EXISTS rg2 RU_PER_SEC = 600",
+			"CREATE RESOURCE GROUP IF NOT EXISTS `rg2` RU_PER_SEC = 600",
+		},
+		{
+			"CREATE RESOURCE GROUP IF NOT EXISTS rg3 RU_PER_SEC = 100 PRIORITY = HIGH",
+			"CREATE RESOURCE GROUP IF NOT EXISTS `rg3` RU_PER_SEC = 100, PRIORITY = HIGH",
+		},
+		{
+			"CREATE RESOURCE GROUP IF NOT EXISTS rg1 RU_PER_SEC = 500 QUERY_LIMIT=(EXEC_ELAPSED='60s', ACTION=COOLDOWN)",
+			"CREATE RESOURCE GROUP IF NOT EXISTS `rg1` RU_PER_SEC = 500, QUERY_LIMIT = (EXEC_ELAPSED = '60s' ACTION = COOLDOWN)",
+		},
+		{
+			"CREATE RESOURCE GROUP IF NOT EXISTS rg1 RU_PER_SEC = 500 QUERY_LIMIT=(ACTION=SWITCH_GROUP(rg2))",
+			"CREATE RESOURCE GROUP IF NOT EXISTS `rg1` RU_PER_SEC = 500, QUERY_LIMIT = (ACTION = SWITCH_GROUP(`rg2`))",
+		},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*CreateResourceGroupStmt)
+	}
+	runNodeRestoreTest(t, createTestCases, "%s", extractNodeFunc)
+
+	alterTestCase := []NodeRestoreTestCase{
+		{
+			"ALTER RESOURCE GROUP rg1 QUERY_LIMIT=(EXEC_ELAPSED='60s', ACTION=KILL, WATCH=SIMILAR DURATION='10m')",
+			"ALTER RESOURCE GROUP `rg1` QUERY_LIMIT = (EXEC_ELAPSED = '60s' ACTION = KILL WATCH = SIMILAR DURATION = '10m')",
+		},
+		{
+			"ALTER RESOURCE GROUP rg1 QUERY_LIMIT=(EXEC_ELAPSED='1m', ACTION=SWITCH_GROUP(rg2), WATCH=SIMILAR DURATION='10m')",
+			"ALTER RESOURCE GROUP `rg1` QUERY_LIMIT = (EXEC_ELAPSED = '1m' ACTION = SWITCH_GROUP(`rg2`) WATCH = SIMILAR DURATION = '10m')",
+		},
+		{
+			"ALTER RESOURCE GROUP rg1 QUERY_LIMIT=NULL",
+			"ALTER RESOURCE GROUP `rg1` QUERY_LIMIT = NULL",
+		},
+		{
+			"ALTER RESOURCE GROUP `default` BACKGROUND=(TASK_TYPES='br,ddl')",
+			"ALTER RESOURCE GROUP `default` BACKGROUND = (TASK_TYPES = 'br,ddl')",
+		},
+		{
+			"ALTER RESOURCE GROUP `default` BACKGROUND=NULL",
+			"ALTER RESOURCE GROUP `default` BACKGROUND = NULL",
+		},
+		{
+			"ALTER RESOURCE GROUP `default` BACKGROUND=(TASK_TYPES='')",
+			"ALTER RESOURCE GROUP `default` BACKGROUND = (TASK_TYPES = '')",
+		},
+	}
+	extractNodeFunc = func(node Node) Node {
+		return node.(*AlterResourceGroupStmt)
+	}
+	runNodeRestoreTest(t, alterTestCase, "%s", extractNodeFunc)
 }

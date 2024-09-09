@@ -30,8 +30,5 @@ go_test(
     srcs = ["require_test.go"],
     embed = [":testutil"],
     flaky = True,
-    deps = [
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
-    ],
+    deps = ["@com_github_stretchr_testify//require"],
 )

@@ -17,16 +17,16 @@ package temptable
 import (
 	"bytes"
 	"context"
+	"maps"
 	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"golang.org/x/exp/maps"
 )
 
 var (
@@ -183,7 +183,7 @@ func (i *TemporaryTableSnapshotInterceptor) iterTable(tblID int64, snap kv.Snaps
 }
 
 func (i *TemporaryTableSnapshotInterceptor) temporaryTableInfoByID(tblID int64) (*model.TableInfo, bool) {
-	if tbl, ok := i.is.TableByID(tblID); ok {
+	if tbl, ok := i.is.TableByID(context.Background(), tblID); ok {
 		tblInfo := tbl.Meta()
 		if tblInfo.TempTableType != model.TempTableNone {
 			return tblInfo, true

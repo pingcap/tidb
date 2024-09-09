@@ -237,8 +237,16 @@ func (bj BinaryJSON) GetOpaque() Opaque {
 	}
 }
 
-// GetTime gets the time value
+// GetTime gets the time value with default fsp
+//
+// Deprecated: use GetTimeWithFsp instead. The `BinaryJSON` doesn't contain the fsp information, so the caller
+// should always provide the fsp.
 func (bj BinaryJSON) GetTime() Time {
+	return bj.GetTimeWithFsp(DefaultFsp)
+}
+
+// GetTimeWithFsp gets the time value with given fsp
+func (bj BinaryJSON) GetTimeWithFsp(fsp int) Time {
 	coreTime := CoreTime(bj.GetUint64())
 
 	tp := mysql.TypeDate
@@ -248,7 +256,7 @@ func (bj BinaryJSON) GetTime() Time {
 		tp = mysql.TypeTimestamp
 	}
 
-	return NewTime(coreTime, tp, DefaultFsp)
+	return NewTime(coreTime, tp, fsp)
 }
 
 // GetDuration gets the duration value
@@ -506,7 +514,7 @@ func ParseBinaryJSONFromString(s string) (bj BinaryJSON, err error) {
 		err = ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
 		return
 	}
-	if err = bj.UnmarshalJSON(data); err != nil && !ErrJSONObjectKeyTooLong.Equal(err) {
+	if err = bj.UnmarshalJSON(data); err != nil && !ErrJSONObjectKeyTooLong.Equal(err) && !ErrJSONDocumentTooDeep.Equal(err) {
 		err = ErrInvalidJSONText.GenWithStackByArgs(err)
 	}
 	return
@@ -516,7 +524,7 @@ func ParseBinaryJSONFromString(s string) (bj BinaryJSON, err error) {
 func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 	var decoder = json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
-	var in interface{}
+	var in any
 	err := decoder.Decode(&in)
 	if err != nil {
 		return errors.Trace(err)
@@ -628,7 +636,7 @@ func (bj BinaryJSON) GetValue() any {
 }
 
 // CreateBinaryJSON creates a BinaryJSON from interface.
-func CreateBinaryJSON(in interface{}) BinaryJSON {
+func CreateBinaryJSON(in any) BinaryJSON {
 	bj, err := CreateBinaryJSONWithCheck(in)
 	if err != nil {
 		panic(err)
@@ -637,7 +645,7 @@ func CreateBinaryJSON(in interface{}) BinaryJSON {
 }
 
 // CreateBinaryJSONWithCheck creates a BinaryJSON from interface with error check.
-func CreateBinaryJSONWithCheck(in interface{}) (BinaryJSON, error) {
+func CreateBinaryJSONWithCheck(in any) (BinaryJSON, error) {
 	typeCode, buf, err := appendBinaryJSON(nil, in)
 	if err != nil {
 		return BinaryJSON{}, err
@@ -650,7 +658,7 @@ func CreateBinaryJSONWithCheck(in interface{}) (BinaryJSON, error) {
 	return bj, nil
 }
 
-func appendBinaryJSON(buf []byte, in interface{}) (JSONTypeCode, []byte, error) {
+func appendBinaryJSON(buf []byte, in any) (JSONTypeCode, []byte, error) {
 	var typeCode byte
 	var err error
 	switch x := in.(type) {
@@ -684,13 +692,13 @@ func appendBinaryJSON(buf []byte, in interface{}) (JSONTypeCode, []byte, error) 
 	case BinaryJSON:
 		typeCode = x.TypeCode
 		buf = append(buf, x.Value...)
-	case []interface{}:
+	case []any:
 		typeCode = JSONTypeCodeArray
 		buf, err = appendBinaryArray(buf, x)
 		if err != nil {
 			return typeCode, nil, errors.Trace(err)
 		}
-	case map[string]interface{}:
+	case map[string]any:
 		typeCode = JSONTypeCodeObject
 		buf, err = appendBinaryObject(buf, x)
 		if err != nil {
@@ -805,7 +813,7 @@ func appendBinaryUint32(buf []byte, v uint32) []byte {
 	return buf
 }
 
-func appendBinaryArray(buf []byte, array []interface{}) ([]byte, error) {
+func appendBinaryArray(buf []byte, array []any) ([]byte, error) {
 	docOff := len(buf)
 	buf = appendUint32(buf, uint32(len(array)))
 	buf = appendZero(buf, dataSizeOff)
@@ -823,7 +831,7 @@ func appendBinaryArray(buf []byte, array []interface{}) ([]byte, error) {
 	return buf, nil
 }
 
-func appendBinaryValElem(buf []byte, docOff, valEntryOff int, val interface{}) ([]byte, error) {
+func appendBinaryValElem(buf []byte, docOff, valEntryOff int, val any) ([]byte, error) {
 	var typeCode JSONTypeCode
 	var err error
 	elemDocOff := len(buf)
@@ -846,10 +854,10 @@ func appendBinaryValElem(buf []byte, docOff, valEntryOff int, val interface{}) (
 
 type field struct {
 	key string
-	val interface{}
+	val any
 }
 
-func appendBinaryObject(buf []byte, x map[string]interface{}) ([]byte, error) {
+func appendBinaryObject(buf []byte, x map[string]any) ([]byte, error) {
 	docOff := len(buf)
 	buf = appendUint32(buf, uint32(len(x)))
 	buf = appendZero(buf, dataSizeOff)

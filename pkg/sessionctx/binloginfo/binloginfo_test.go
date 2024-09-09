@@ -86,8 +86,6 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/driver/txn/mockSyncBinlogCommit", `return(true)`))
 
 	s = new(binlogSuite)
-	store := testkit.CreateMockStore(t)
-	s.store = store
 	unixFile := "/tmp/mock-binlog-pump" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	l, err := net.Listen("unix", unixFile)
 	require.NoError(t, err)
@@ -105,12 +103,16 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite) {
 	require.NoError(t, err)
 	require.NotNil(t, clientCon)
 
+	s.client = binloginfo.MockPumpsClient(binlog.NewPumpClient(clientCon))
+	ddl.GetPumpClient = func() *pumpcli.PumpsClient {
+		return s.client
+	}
+
+	store := testkit.CreateMockStore(t)
+	s.store = store
 	tk := testkit.NewTestKit(t, s.store)
 	sessionDomain := domain.GetDomain(tk.Session().(sessionctx.Context))
 	s.ddl = sessionDomain.DDL()
-
-	s.client = binloginfo.MockPumpsClient(binlog.NewPumpClient(clientCon))
-	s.ddl.SetBinlogClient(s.client)
 
 	t.Cleanup(func() {
 		clientCon.Close()

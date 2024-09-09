@@ -74,6 +74,9 @@ func (a *AnalyzeResult) DestroyAndPutToPool() {
 	for _, f := range a.Fms {
 		f.DestroyAndPutToPool()
 	}
+	for _, h := range a.Hist {
+		h.DestroyAndPutToPool()
+	}
 }
 
 // AnalyzeResults represents the analyze results of a task.
@@ -85,6 +88,7 @@ type AnalyzeResults struct {
 	TableID  AnalyzeTableID
 	Count    int64
 	StatsVer int
+	// Snapshot is the snapshot timestamp when we start the analysis job.
 	Snapshot uint64
 	// BaseCount is the original count in mysql.stats_meta at the beginning of analyze.
 	BaseCount int64

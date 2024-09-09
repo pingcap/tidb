@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/metrics",
         "//pkg/parser/mysql",
+        "//pkg/resourcegroup",
         "@com_github_prometheus_client_golang//prometheus",
     ],
 )

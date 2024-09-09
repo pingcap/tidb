@@ -20,6 +20,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -100,26 +103,26 @@ func TestBatchRetrieverHelper(t *testing.T) {
 
 func TestEqualDatumsAsBinary(t *testing.T) {
 	tests := []struct {
-		a    []interface{}
-		b    []interface{}
+		a    []any
+		b    []any
 		same bool
 	}{
 		// Positive cases
-		{[]interface{}{1}, []interface{}{1}, true},
-		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
-		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
+		{[]any{1}, []any{1}, true},
+		{[]any{1, "aa"}, []any{1, "aa"}, true},
+		{[]any{1, "aa", 1}, []any{1, "aa", 1}, true},
 
 		// negative cases
-		{[]interface{}{1}, []interface{}{2}, false},
-		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
-		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
+		{[]any{1}, []any{2}, false},
+		{[]any{1, "a"}, []any{1, "aaaaaa"}, false},
+		{[]any{1, "aa", 3}, []any{1, "aa", 2}, false},
 
 		// Corner cases
-		{[]interface{}{}, []interface{}{}, true},
-		{[]interface{}{nil}, []interface{}{nil}, true},
-		{[]interface{}{}, []interface{}{1}, false},
-		{[]interface{}{1}, []interface{}{1, 1}, false},
-		{[]interface{}{nil}, []interface{}{1}, false},
+		{[]any{}, []any{}, true},
+		{[]any{nil}, []any{nil}, true},
+		{[]any{}, []any{1}, false},
+		{[]any{1}, []any{1, 1}, false},
+		{[]any{nil}, []any{1}, false},
 	}
 	ctx := core.MockContext()
 	base := exec.NewBaseExecutor(ctx, nil, 0)
@@ -132,4 +135,45 @@ func TestEqualDatumsAsBinary(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, tt.same, res)
 	}
+}
+
+func TestEncodePasswordWithPlugin(t *testing.T) {
+	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
+	u := &ast.UserSpec{
+		User: &auth.UserIdentity{
+			Username: "test",
+		},
+		AuthOpt: &ast.AuthOption{
+			ByAuthString: false,
+			AuthString:   "xxx",
+			HashString:   hashString,
+		},
+	}
+
+	p := &extension.AuthPlugin{
+		ValidateAuthString: func(s string) bool {
+			return false
+		},
+		GenerateAuthString: func(s string) (string, bool) {
+			if s == "xxx" {
+				return "xxxxxxx", true
+			}
+			return "", false
+		},
+	}
+
+	u.AuthOpt.ByAuthString = false
+	_, ok := encodePassword(u, p)
+	require.False(t, ok)
+
+	u.AuthOpt.AuthString = "xxx"
+	u.AuthOpt.ByAuthString = true
+	pwd, ok := encodePassword(u, p)
+	require.True(t, ok)
+	require.Equal(t, "xxxxxxx", pwd)
+
+	u.AuthOpt = nil
+	pwd, ok = encodePassword(u, p)
+	require.True(t, ok)
+	require.Equal(t, "", pwd)
 }
