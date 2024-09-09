@@ -222,7 +222,7 @@
               }
             ],
             "Plan": [
-              "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(len:78)->Column#1",
+              "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
@@ -363,7 +363,7 @@
               }
             ],
             "Plan": [
-              "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(len:78)->Column#1",
+              "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
@@ -786,7 +786,7 @@
               }
             ],
             "Plan": [
-              "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(len:78)->Column#1",
+              "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(10,0) BINARY)->Column#1",
               "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
