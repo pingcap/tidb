@@ -5,6 +5,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -65,7 +66,7 @@ var backOffTimeOverride = map[string]time.Duration{
 func (e *ebsBackupRetryer) RetryRules(r *request.Request) time.Duration {
 	backOff := e.delegate.RetryRules(r)
 	if override, ok := backOffTimeOverride[r.Operation.Name]; ok {
-		backOff = max(override, backOff)
+		backOff = math.Max(override, backOff)
 	}
 	log.Warn(
 		"Retrying an operation.",
