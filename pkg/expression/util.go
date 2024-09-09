@@ -454,12 +454,29 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			if substituted {
 				flag := v.RetType.GetFlag()
 				var e Expression
+				var err error
 				if v.FuncName.L == ast.Cast {
-					if f, ok := v.Function.(*baseBuiltinCastStringFunc); ok && f.isExplicitCharSet {
-						e = BuildCastFunctionExplicitCharset(ctx, newArg, v.RetType)
-					} else {
-						e = BuildCastFunction(ctx, newArg, v.RetType)
+					switch f := v.Function.(type) {
+					case *builtinCastIntAsStringSig:
+						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
+					case *builtinCastRealAsStringSig:
+						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
+					case *builtinCastDecimalAsStringSig:
+						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
+					case *builtinCastStringAsStringSig:
+						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
+					case *builtinCastTimeAsStringSig:
+						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
+					case *builtinCastDurationAsStringSig:
+						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
+					case *builtinCastJSONAsStringSig:
+						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
+					case *builtinCastVectorFloat32AsStringSig:
+						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
+					default:
+						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, false)
 					}
+					terror.Log(err)
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
 					e = v.Clone()

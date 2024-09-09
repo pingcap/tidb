@@ -2308,13 +2308,6 @@ func BuildCastFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (
 	return
 }
 
-// BuildCastFunctionExplicitCharset builds a CAST ScalarFunction from the Expression.
-func BuildCastFunctionExplicitCharset(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false, true)
-	terror.Log(err)
-	return
-}
-
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
 func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType, inUnion bool, isExplicitCharSet bool) (res Expression, err error) {
 	argType := expr.GetType(ctx.GetEvalCtx())
