@@ -2277,7 +2277,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 		if hasGlobalIndex(tblInfo) {
 			oldTblInfo := getTableInfoWithDroppingPartitions(tblInfo)
 			var done bool
-			done, err = w.cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx, t, job, oldTblInfo, physicalTableIDs, nil)
+			done, err = w.cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx, t, job, oldTblInfo, physicalTableIDs)
 			if err != nil || !done {
 				return ver, errors.Trace(err)
 			}
@@ -2329,7 +2329,7 @@ func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) 
 	tblInfo.TiFlashReplica.AvailablePartitionIDs = ids
 }
 
-func handleTiFlashForTruncatePartition(t *meta.Meta, schemaName string, tblInfo *model.TableInfo, oldIDs, newIDs []int64) error {
+func handleTiFlashForTruncatePartition(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo, oldIDs, newIDs []int64) error {
 	if tblInfo.TiFlashReplica == nil {
 		return nil
 	}
@@ -2346,17 +2346,16 @@ func handleTiFlashForTruncatePartition(t *meta.Meta, schemaName string, tblInfo 
 		}
 	}
 
-	if err := clearTruncatePartitionTiFlashStatus(tblInfo, newPartitions, oldIDs); err != nil {
+	if err := clearTruncatePartitionTiflashStatus(tblInfo, newPartitions, oldIDs); err != nil {
 		return err
 	}
 
 	// TODO: Add tests for bundles and label rules!
-	return updateTruncatePartitionLabelRules(t, schemaName, oldPartitions, newPartitions, tblInfo, oldIDs)
+	return updateTruncatePartitionLabelRules(job, t, oldPartitions, newPartitions, tblInfo, oldIDs)
 }
 
-func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldIDs, newIDs []int64) (bool, error) {
+func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldIDs []int64) (bool, error) {
 
-	physicalTableIDs := oldIDs
 	tbl, err := getTable(jobCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -2387,7 +2386,7 @@ func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext
 	}
 	defer w.sessPool.Put(sctx)
 	rh := newReorgHandler(sess.NewSession(sctx))
-	reorgInfo, err := getReorgInfoFromPartitions(jobCtx.oldDDLCtx.jobContext(job.ID, job.ReorgMeta), jobCtx, rh, job, dbInfo, pt, physicalTableIDs, elements)
+	reorgInfo, err := getReorgInfoFromPartitions(jobCtx.oldDDLCtx.jobContext(job.ID, job.ReorgMeta), jobCtx, rh, job, dbInfo, pt, oldIDs, elements)
 
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
@@ -2399,7 +2398,7 @@ func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext
 			func() {
 				dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
 			}, false)
-		return w.cleanupGlobalIndexes(pt, physicalTableIDs, reorgInfo)
+		return w.cleanupGlobalIndexes(pt, oldIDs, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
@@ -2531,7 +2530,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		// So to keep the Global Index consistent, we will still keep it up-to-date with
 		// the old partitions, as well as the new partitions.
 
-		err = handleTiFlashForTruncatePartition(t, job.SchemaName, tblInfo, oldIDs, newIDs)
+		err = handleTiFlashForTruncatePartition(job, t, tblInfo, oldIDs, newIDs)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -2547,7 +2546,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 
 		if hasGlobalIndex(tblInfo) {
 			var done bool
-			done, err = w.cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx, t, job, tblInfo, oldIDs, newIDs)
+			done, err = w.cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx, t, job, tblInfo, oldIDs)
 			if err != nil || !done {
 				return ver, errors.Trace(err)
 			}
@@ -2599,7 +2598,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	return ver, errors.Trace(err)
 }
 
-func clearTruncatePartitionTiFlashStatus(tblInfo *model.TableInfo, newPartitions []model.PartitionDefinition, oldIDs []int64) error {
+func clearTruncatePartitionTiflashStatus(tblInfo *model.TableInfo, newPartitions []model.PartitionDefinition, oldIDs []int64) error {
 	// Clear the tiflash replica available status.
 	if tblInfo.TiFlashReplica != nil {
 		e := infosync.ConfigureTiFlashPDForPartitions(true, &newPartitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID)
@@ -2617,7 +2616,7 @@ func clearTruncatePartitionTiFlashStatus(tblInfo *model.TableInfo, newPartitions
 	return nil
 }
 
-func updateTruncatePartitionLabelRules(t *meta.Meta, schemaName string, oldPartitions, newPartitions []model.PartitionDefinition, tblInfo *model.TableInfo, oldIDs []int64) error {
+func updateTruncatePartitionLabelRules(job *model.Job, t *meta.Meta, oldPartitions, newPartitions []model.PartitionDefinition, tblInfo *model.TableInfo, oldIDs []int64) error {
 	bundles, err := placement.NewPartitionListBundles(t, newPartitions)
 	if err != nil {
 		return errors.Trace(err)
@@ -2645,10 +2644,10 @@ func updateTruncatePartitionLabelRules(t *meta.Meta, schemaName string, oldParti
 		return errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
-	tableID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, schemaName, tblInfo.Name.L)
+	tableID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L)
 	oldPartRules := make([]string, 0, len(oldIDs))
 	for _, newPartition := range newPartitions {
-		oldPartRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, schemaName, tblInfo.Name.L, newPartition.Name.L)
+		oldPartRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, newPartition.Name.L)
 		oldPartRules = append(oldPartRules, oldPartRuleID)
 	}
 
@@ -2660,17 +2659,15 @@ func updateTruncatePartitionLabelRules(t *meta.Meta, schemaName string, oldParti
 	newPartIDs := getPartitionIDs(tblInfo)
 	newRules := make([]*label.Rule, 0, len(oldIDs)+1)
 	if tr, ok := rules[tableID]; ok {
-		newRules = append(newRules, tr.Clone().Reset(schemaName, tblInfo.Name.L, "", append(newPartIDs, tblInfo.ID)...))
+		newRules = append(newRules, tr.Clone().Reset(job.SchemaName, tblInfo.Name.L, "", append(newPartIDs, tblInfo.ID)...))
 	}
 
 	for idx, newPartition := range newPartitions {
 		if pr, ok := rules[oldPartRules[idx]]; ok {
-			newRules = append(newRules, pr.Clone().Reset(schemaName, tblInfo.Name.L, newPartition.Name.L, newPartition.ID))
+			newRules = append(newRules, pr.Clone().Reset(job.SchemaName, tblInfo.Name.L, newPartition.Name.L, newPartition.ID))
 		}
 	}
 
-	// One for adding the new partitions
-	// and one for removing the old ones?
 	patch := label.NewRulePatch(newRules, []string{})
 	err = infosync.UpdateLabelRules(context.TODO(), patch)
 	if err != nil {
