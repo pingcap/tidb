@@ -313,17 +313,6 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "select /*+ %s */ * from t1 join t2", extractNodeFunc)
 }
 
-func TestChangeStmtRestore(t *testing.T) {
-	testCases := []NodeRestoreTestCase{
-		{"CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
-		{"CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
-	}
-	extractNodeFunc := func(node ast.Node) ast.Node {
-		return node.(*ast.ChangeStmt)
-	}
-	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
-}
-
 func TestBRIESecureText(t *testing.T) {
 	testCases := []struct {
 		input   string

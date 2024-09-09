@@ -854,7 +854,6 @@ import (
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
-	drainer                    "DRAINER"
 	dry                        "DRY"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
@@ -863,7 +862,6 @@ import (
 	nodeState                  "NODE_STATE"
 	optimistic                 "OPTIMISTIC"
 	pessimistic                "PESSIMISTIC"
-	pump                       "PUMP"
 	region                     "REGION"
 	regions                    "REGIONS"
 	reset                      "RESET"
@@ -964,7 +962,6 @@ import (
 	AlterSequenceStmt          "Alter sequence statement"
 	AnalyzeTableStmt           "Analyze table statement"
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
-	BinlogStmt                 "Binlog base64 statement"
 	BRIEStmt                   "BACKUP or RESTORE statement"
 	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
 	CommitStmt                 "COMMIT statement"
@@ -1040,7 +1037,6 @@ import (
 	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
-	ChangeStmt                 "Change statement"
 	SetBindingStmt             "Set binding statement"
 	SetRoleStmt                "Set active role statement"
 	SetDefaultRoleStmt         "Set default statement for some user"
@@ -3404,12 +3400,6 @@ BeginTransactionStmt:
 			ReadOnly: true,
 			AsOf:     $5.(*ast.AsOfClause),
 		}
-	}
-
-BinlogStmt:
-	"BINLOG" stringLit
-	{
-		$$ = &ast.BinlogStmt{Str: $2}
 	}
 
 ColumnDef:
@@ -7078,12 +7068,10 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
-|	"DRAINER"
 |	"JOBS"
 |	"JOB"
 |	"NODE_ID"
 |	"NODE_STATE"
-|	"PUMP"
 |	"SAMPLES"
 |	"SAMPLERATE"
 |	"SESSION_STATES"
@@ -10638,25 +10626,6 @@ SetOpr:
 SetOprOpt:
 	DefaultTrueDistinctOpt
 
-/********************Change Statement*******************************/
-ChangeStmt:
-	"CHANGE" "PUMP" "TO" "NODE_STATE" eq stringLit forKwd "NODE_ID" stringLit
-	{
-		$$ = &ast.ChangeStmt{
-			NodeType: ast.PumpType,
-			State:    $6,
-			NodeID:   $9,
-		}
-	}
-|	"CHANGE" "DRAINER" "TO" "NODE_STATE" eq stringLit forKwd "NODE_ID" stringLit
-	{
-		$$ = &ast.ChangeStmt{
-			NodeType: ast.DrainerType,
-			State:    $6,
-			NodeID:   $9,
-		}
-	}
-
 /********************Set Statement*******************************/
 SetStmt:
 	"SET" VariableAssignmentList
@@ -11526,12 +11495,6 @@ ShowStmt:
 			Tp: ast.ShowMasterStatus,
 		}
 	}
-|	"SHOW" "BINARY" "LOG" "STATUS"
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowBinlogStatus,
-		}
-	}
 |	"SHOW" Replica "STATUS"
 	// From MySQL 8.0.22, use SHOW REPLICA STATUS in place of SHOW SLAVE STATUS,
 	// which is deprecated from that release. In releases before MySQL 8.0.22,
@@ -11845,18 +11808,6 @@ ShowTargetFilterable:
 			Tp: ast.ShowProcedureStatus,
 		}
 	}
-|	"PUMP" "STATUS"
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowPumpStatus,
-		}
-	}
-|	"DRAINER" "STATUS"
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowDrainerStatus,
-		}
-	}
 |	"FUNCTION" "STATUS"
 	{
 		// This statement is similar to SHOW PROCEDURE STATUS but for stored functions.
@@ -12155,7 +12106,6 @@ Statement:
 |	AlterResourceGroupStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
-|	BinlogStmt
 |	BRIEStmt
 |	CommitStmt
 |	DeallocateStmt
@@ -12163,7 +12113,6 @@ Statement:
 |	ExecuteStmt
 |	ExplainStmt
 |	CalibrateResourceStmt
-|	ChangeStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt

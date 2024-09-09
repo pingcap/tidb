@@ -33,7 +33,6 @@ var (
 	_ StmtNode = &AlterUserStmt{}
 	_ StmtNode = &AlterRangeStmt{}
 	_ StmtNode = &BeginStmt{}
-	_ StmtNode = &BinlogStmt{}
 	_ StmtNode = &CommitStmt{}
 	_ StmtNode = &CreateUserStmt{}
 	_ StmtNode = &DeallocateStmt{}
@@ -656,31 +655,6 @@ func (n *BeginStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*BeginStmt)
-	return v.Leave(n)
-}
-
-// BinlogStmt is an internal-use statement.
-// We just parse and ignore it.
-// See http://dev.mysql.com/doc/refman/5.7/en/binlog.html
-type BinlogStmt struct {
-	stmtNode
-	Str string
-}
-
-// Restore implements Node interface.
-func (n *BinlogStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("BINLOG ")
-	ctx.WriteString(n.Str)
-	return nil
-}
-
-// Accept implements Node Accept interface.
-func (n *BinlogStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*BinlogStmt)
 	return v.Leave(n)
 }
 

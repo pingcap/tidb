@@ -181,9 +181,6 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeSetSessionStates(ctx, x)
 	case *ast.KillStmt:
 		err = e.executeKillStmt(ctx, x)
-	case *ast.BinlogStmt:
-		// We just ignore it.
-		return nil
 	case *ast.DropStatsStmt:
 		err = e.executeDropStats(ctx, x)
 	case *ast.SetRoleStmt:
