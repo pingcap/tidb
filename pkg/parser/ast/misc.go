@@ -2005,6 +2005,7 @@ func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 	return v.Leave(n)
 }
 
+// RecommendIndexStmt is a statement to recommend index.
 type RecommendIndexStmt struct {
 	stmtNode
 
