@@ -473,11 +473,16 @@ type baseBuiltinCastStringFunc struct {
 }
 
 func newBaseBuiltinCastStringFunc(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType, isExplicitCharSet bool) (baseBuiltinCastStringFunc, error) {
-	bf, err := newBaseBuiltinFunc(ctx, funcName, args, tp)
-	if err != nil {
-		return baseBuiltinCastStringFunc{}, err
-	}
+	var bf baseBuiltinFunc
+	var err error
 	if isExplicitCharSet {
+		bf = baseBuiltinFunc{
+			bufAllocator:           newLocalColumnPool(),
+			childrenVectorizedOnce: new(sync.Once),
+
+			args: args,
+			tp:   tp,
+		}
 		bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
 		bf.setCollator(collate.GetCollator(tp.GetCollate()))
 		bf.SetCoercibility(CoercibilityExplicit)
@@ -485,6 +490,11 @@ func newBaseBuiltinCastStringFunc(ctx BuildContext, funcName string, args []Expr
 			bf.SetRepertoire(ASCII)
 		} else {
 			bf.SetRepertoire(UNICODE)
+		}
+	} else {
+		bf, err = newBaseBuiltinFunc(ctx, funcName, args, tp)
+		if err != nil {
+			return baseBuiltinCastStringFunc{}, err
 		}
 	}
 	return baseBuiltinCastStringFunc{

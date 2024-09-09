@@ -16,9 +16,9 @@
 TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
 
-build=1
+build=0
 mysql_tester="./mysql_tester"
-tidb_server=""
+tidb_server="../../bin/tidb-server"
 portgenerator=""
 mysql_tester_log="./integration-test.out"
 tests=""

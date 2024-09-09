@@ -279,9 +279,8 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 	case ast.Cast:
 		// We assume all the cast are implicit.
 		ec = &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), args[0].GetType(ctx.GetEvalCtx()).GetCharset(), args[0].GetType(ctx.GetEvalCtx()).GetCollate()}
-		// Non-string type cast to string type should use @@character_set_connection and @@collation_connection.
-		// String type cast to string type should keep its original charset and collation. It should not happen.
-		if retType == types.ETString && argTps[0] != types.ETString {
+		// Cast to string type should use @@character_set_connection and @@collation_connection.
+		if retType == types.ETString {
 			ec.Charset, ec.Collation = ctx.GetCharsetInfo()
 		}
 		return ec, nil
