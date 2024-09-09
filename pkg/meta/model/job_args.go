@@ -69,7 +69,7 @@ func (a *CreateSchemaArgs) fillJob(job *Job) {
 func GetCreateSchemaArgs(job *Job) (*CreateSchemaArgs, error) {
 	if job.Version == JobVersion1 {
 		dbInfo := &DBInfo{}
-		err := job.DecodeArgs(&dbInfo)
+		err := job.DecodeArgs(dbInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -724,17 +724,17 @@ var (
 	}
 )
 
-func fillFinishedRawArgs(job *model.Job, args model.FinishedJobArgs) {
+func genFinishedJob(job *model.Job, args model.FinishedJobArgs) *model.Job {
 	job.FillFinishedArgs(args)
-	_, _ = job.Encode(true)
-	// clear it as job from history table doesn't have it.
-	job.Args = nil
+	bytes, _ := job.Encode(true)
+	resJob := &model.Job{}
+	_ = resJob.Decode(bytes)
+	return resJob
 }
 
 func init() {
-	dropSchemaJob = &model.Job{Version: model.GetJobVerInUse(), Type: model.ActionDropSchema,
-		SchemaID: mDDLJobDBOldID}
-	fillFinishedRawArgs(dropSchemaJob, &model.DropSchemaArgs{AllDroppedTableIDs: []int64{71, 72, 73, 74, 75}})
+	dropSchemaJob = genFinishedJob(&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionDropSchema,
+		SchemaID: mDDLJobDBOldID}, &model.DropSchemaArgs{AllDroppedTableIDs: []int64{71, 72, 73, 74, 75}})
 }
 
 type mockInsertDeleteRange struct {
