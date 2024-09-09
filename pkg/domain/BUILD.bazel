@@ -63,6 +63,7 @@ go_library(
         "//pkg/statistics",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/autoanalyze",
+        "//pkg/statistics/handle/cache",
         "//pkg/statistics/handle/initstats",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/util",
