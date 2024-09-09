@@ -14162,19 +14162,19 @@ SetBindingStmt:
 	}
 
 RecommendIndexStmt:
-	"RECOMMEND" "INDEX" "FOR" stringLit
+	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "recommend",
-			SQL:    $4,
+			Action: "run",
+			SQL:    $5,
 		}
 
 		$$ = x
 	}
-|	"RECOMMEND" "INDEX"
+|	"RECOMMEND" "INDEX" "RUN"
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "recommend",
+			Action: "run",
 		}
 
 		$$ = x

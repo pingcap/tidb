@@ -2019,7 +2019,8 @@ type RecommendIndexStmt struct {
 func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("RECOMMEND INDEX")
 	switch n.Action {
-	case "recommend":
+	case "run":
+		ctx.WriteKeyWord(" RUN")
 		if n.SQL != "" {
 			ctx.WriteKeyWord(" FOR ")
 			ctx.WriteString(n.SQL)
