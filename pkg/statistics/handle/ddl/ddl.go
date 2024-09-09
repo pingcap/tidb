@@ -116,21 +116,6 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 				return err
 			}
 		}
-	case model.ActionAddTablePartition:
-		globalTableInfo, addedPartitionInfo := t.GetAddPartitionInfo()
-		for _, def := range addedPartitionInfo.Definitions {
-			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
-				return err
-			}
-		}
-	case model.ActionTruncateTablePartition:
-		if err := h.onTruncatePartitions(t); err != nil {
-			return err
-		}
-	case model.ActionDropTablePartition:
-		if err := h.onDropPartitions(t); err != nil {
-			return err
-		}
 	case model.ActionExchangeTablePartition:
 		if err := h.onExchangeAPartition(t); err != nil {
 			return err
@@ -206,6 +191,21 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			if err := h.statsWriter.UpdateStatsMetaVersionForGC(id); err != nil {
 				return err
 			}
+		}
+	case model.ActionAddTablePartition:
+		globalTableInfo, addedPartitionInfo := e.GetAddPartitionInfo()
+		for _, def := range addedPartitionInfo.Definitions {
+			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
+				return err
+			}
+		}
+	case model.ActionTruncateTablePartition:
+		if err := h.onTruncatePartitions(e); err != nil {
+			return err
+		}
+	case model.ActionDropTablePartition:
+		if err := h.onDropPartitions(e); err != nil {
+			return err
 		}
 	}
 	return nil
