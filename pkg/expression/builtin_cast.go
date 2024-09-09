@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -297,19 +296,9 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinCastStringFunc(ctx, c.funcName, args, c.tp, c.isExplicitCharSet)
 	if err != nil {
 		return nil, err
-	}
-	if c.isExplicitCharSet {
-		bf.SetCharsetAndCollation(c.tp.GetCharset(), c.tp.GetCollate())
-		bf.setCollator(collate.GetCollator(c.tp.GetCollate()))
-		bf.SetCoercibility(CoercibilityExplicit)
-		if c.tp.GetCharset() == charset.CharsetASCII {
-			bf.SetRepertoire(ASCII)
-		} else {
-			bf.SetRepertoire(UNICODE)
-		}
 	}
 	if args[0].GetType(ctx.GetEvalCtx()).Hybrid() {
 		sig = &builtinCastStringAsStringSig{bf}
@@ -910,12 +899,12 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row)
 }
 
 type builtinCastIntAsStringSig struct {
-	baseBuiltinFunc
+	baseBuiltinCastStringFunc
 }
 
 func (b *builtinCastIntAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastIntAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
 	return newSig
 }
 
@@ -1227,12 +1216,12 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 }
 
 type builtinCastRealAsStringSig struct {
-	baseBuiltinFunc
+	baseBuiltinCastStringFunc
 }
 
 func (b *builtinCastRealAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastRealAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
 	return newSig
 }
 
@@ -1382,12 +1371,12 @@ func (b *builtinCastDecimalAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (re
 }
 
 type builtinCastDecimalAsStringSig struct {
-	baseBuiltinFunc
+	baseBuiltinCastStringFunc
 }
 
 func (b *builtinCastDecimalAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastDecimalAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
 	return newSig
 }
 
@@ -1492,12 +1481,12 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(ctx EvalContext, row chun
 }
 
 type builtinCastStringAsStringSig struct {
-	baseBuiltinFunc
+	baseBuiltinCastStringFunc
 }
 
 func (b *builtinCastStringAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastStringAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
 	return newSig
 }
 
@@ -1809,12 +1798,12 @@ func (b *builtinCastTimeAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 }
 
 type builtinCastTimeAsStringSig struct {
-	baseBuiltinFunc
+	baseBuiltinCastStringFunc
 }
 
 func (b *builtinCastTimeAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastTimeAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
 	return newSig
 }
 
@@ -1948,12 +1937,12 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(ctx EvalContext, row chunk
 }
 
 type builtinCastDurationAsStringSig struct {
-	baseBuiltinFunc
+	baseBuiltinCastStringFunc
 }
 
 func (b *builtinCastDurationAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastDurationAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
 	return newSig
 }
 
@@ -2090,12 +2079,12 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 }
 
 type builtinCastJSONAsStringSig struct {
-	baseBuiltinFunc
+	baseBuiltinCastStringFunc
 }
 
 func (b *builtinCastJSONAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastJSONAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
 	return newSig
 }
 
@@ -2112,12 +2101,12 @@ func (b *builtinCastJSONAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 }
 
 type builtinCastVectorFloat32AsStringSig struct {
-	baseBuiltinFunc
+	baseBuiltinCastStringFunc
 }
 
 func (b *builtinCastVectorFloat32AsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastVectorFloat32AsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
 	return newSig
 }
 

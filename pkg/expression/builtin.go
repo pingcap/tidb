@@ -464,6 +464,47 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 	}
 }
 
+// // baseBuiltinCastStringFunc will be used in every struct created by `castAsStringFunctionClass`.
+type baseBuiltinCastStringFunc struct {
+	baseBuiltinFunc
+
+	// isExplicitCharSet indicates whether cast function set the charset info explicit.
+	isExplicitCharSet bool
+}
+
+func newBaseBuiltinCastStringFunc(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType, isExplicitCharSet bool) (baseBuiltinCastStringFunc, error) {
+	bf, err := newBaseBuiltinFunc(ctx, funcName, args, tp)
+	if err != nil {
+		return baseBuiltinCastStringFunc{}, err
+	}
+	if isExplicitCharSet {
+		bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
+		bf.setCollator(collate.GetCollator(tp.GetCollate()))
+		bf.SetCoercibility(CoercibilityExplicit)
+		if tp.GetCharset() == charset.CharsetASCII {
+			bf.SetRepertoire(ASCII)
+		} else {
+			bf.SetRepertoire(UNICODE)
+		}
+	}
+	return baseBuiltinCastStringFunc{
+		baseBuiltinFunc:   bf,
+		isExplicitCharSet: isExplicitCharSet,
+	}, nil
+}
+
+func newBaseBuiltinCastStringFuncFromBaseBuiltinFunc(builtinFunc baseBuiltinFunc, isExplicitCharSet bool) baseBuiltinCastStringFunc {
+	return baseBuiltinCastStringFunc{
+		baseBuiltinFunc:   builtinFunc,
+		isExplicitCharSet: isExplicitCharSet,
+	}
+}
+
+func (b *baseBuiltinCastStringFunc) cloneFrom(from *baseBuiltinCastStringFunc) {
+	b.baseBuiltinFunc.cloneFrom(&from.baseBuiltinFunc)
+	b.isExplicitCharSet = from.isExplicitCharSet
+}
+
 // vecBuiltinFunc contains all vectorized methods for a builtin function.
 type vecBuiltinFunc interface {
 	// vectorized returns if this builtin function itself supports vectorized evaluation.

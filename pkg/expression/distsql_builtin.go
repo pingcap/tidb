@@ -48,7 +48,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_CastIntAsReal:
 		f = &builtinCastIntAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastIntAsString:
-		f = &builtinCastIntAsStringSig{base}
+		f = &builtinCastIntAsStringSig{newBaseBuiltinCastStringFuncFromBaseBuiltinFunc(base, false)}
 	case tipb.ScalarFuncSig_CastIntAsDecimal:
 		f = &builtinCastIntAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastIntAsTime:
@@ -62,7 +62,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_CastRealAsReal:
 		f = &builtinCastRealAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastRealAsString:
-		f = &builtinCastRealAsStringSig{base}
+		f = &builtinCastRealAsStringSig{newBaseBuiltinCastStringFuncFromBaseBuiltinFunc(base, false)}
 	case tipb.ScalarFuncSig_CastRealAsDecimal:
 		f = &builtinCastRealAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastRealAsTime:
@@ -76,7 +76,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_CastDecimalAsReal:
 		f = &builtinCastDecimalAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastDecimalAsString:
-		f = &builtinCastDecimalAsStringSig{base}
+		f = &builtinCastDecimalAsStringSig{newBaseBuiltinCastStringFuncFromBaseBuiltinFunc(base, false)}
 	case tipb.ScalarFuncSig_CastDecimalAsDecimal:
 		f = &builtinCastDecimalAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastDecimalAsTime:
@@ -90,7 +90,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_CastStringAsReal:
 		f = &builtinCastStringAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastStringAsString:
-		f = &builtinCastStringAsStringSig{base}
+		f = &builtinCastStringAsStringSig{newBaseBuiltinCastStringFuncFromBaseBuiltinFunc(base, false)}
 	case tipb.ScalarFuncSig_CastStringAsDecimal:
 		f = &builtinCastStringAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastStringAsTime:
@@ -104,7 +104,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_CastTimeAsReal:
 		f = &builtinCastTimeAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastTimeAsString:
-		f = &builtinCastTimeAsStringSig{base}
+		f = &builtinCastTimeAsStringSig{newBaseBuiltinCastStringFuncFromBaseBuiltinFunc(base, false)}
 	case tipb.ScalarFuncSig_CastTimeAsDecimal:
 		f = &builtinCastTimeAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastTimeAsTime:
@@ -118,7 +118,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_CastDurationAsReal:
 		f = &builtinCastDurationAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastDurationAsString:
-		f = &builtinCastDurationAsStringSig{base}
+		f = &builtinCastDurationAsStringSig{newBaseBuiltinCastStringFuncFromBaseBuiltinFunc(base, false)}
 	case tipb.ScalarFuncSig_CastDurationAsDecimal:
 		f = &builtinCastDurationAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastDurationAsTime:
@@ -132,7 +132,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_CastJsonAsReal:
 		f = &builtinCastJSONAsRealSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastJsonAsString:
-		f = &builtinCastJSONAsStringSig{base}
+		f = &builtinCastJSONAsStringSig{newBaseBuiltinCastStringFuncFromBaseBuiltinFunc(base, false)}
 	case tipb.ScalarFuncSig_CastJsonAsDecimal:
 		f = &builtinCastJSONAsDecimalSig{newBaseBuiltinCastFunc(base, false)}
 	case tipb.ScalarFuncSig_CastJsonAsTime:
@@ -1077,7 +1077,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		// TODO: set the `cannotConvertStringAsWarning` accordingly
 		f = &builtinInternalFromBinarySig{base, false}
 	case tipb.ScalarFuncSig_CastVectorFloat32AsString:
-		f = &builtinCastVectorFloat32AsStringSig{base}
+		f = &builtinCastVectorFloat32AsStringSig{newBaseBuiltinCastStringFuncFromBaseBuiltinFunc(base, false)}
 	case tipb.ScalarFuncSig_CastVectorFloat32AsVectorFloat32:
 		f = &builtinCastVectorFloat32AsVectorFloat32Sig{base}
 	case tipb.ScalarFuncSig_LTVectorFloat32:
