@@ -207,7 +207,7 @@ type IndexReaderExecutor struct {
 	// kvRanges are only used for union scan.
 	kvRanges         []kv.KeyRange
 	dagPB            *tipb.DAGRequest
-	startTS          uint64
+	getStartTS       func(bool) (uint64, error)
 	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
@@ -330,7 +330,6 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 	var builder distsql.RequestBuilder
 	builder.SetKeyRanges(r).
 		SetDAGRequest(e.dagPB).
-		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
@@ -381,17 +380,24 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		if err != nil {
 			return err
 		}
+		e.dctx.GetStartTS = e.getStartTS
 		e.result, err = e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 		if err != nil {
 			return err
 		}
+		e.dctx.GetStartTS = nil
 	} else {
+		startTS, err := e.getStartTS(false)
+		if err != nil {
+			return err
+		}
 		kvReqs := make([]*kv.Request, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
 			kvReq, err := e.buildKVReq([]kv.KeyRange{kvRange})
 			if err != nil {
 				return err
 			}
+			kvReq.StartTs = startTS
 			kvReqs = append(kvReqs, kvReq)
 		}
 		var results []distsql.SelectResult

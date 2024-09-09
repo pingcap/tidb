@@ -2998,6 +2998,27 @@ func (cli *TestServerClient) RunTestIssue54254(t *testing.T) {
 	})
 }
 
+func (cli *TestServerClient) RunTestDebugCs(t *testing.T) {
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		MustExec(ctx, t, conn, "use test")
+		MustExec(ctx, t, conn, "create table t (a int key, b int, c int, index idx(b))")
+
+		stmt, err := conn.PrepareContext(ctx, "select b from t where b between ? and ?;")
+		require.NoError(t, err)
+		row, err := stmt.Query(1, 3)
+		require.NoError(t, err)
+		require.NoError(t, row.Close())
+		row, err = stmt.Query(2, 4)
+		require.NoError(t, err)
+		require.NoError(t, row.Close())
+	})
+}
+
 func runTestInSchemaState(
 	t *testing.T,
 	conn *sql.Conn,

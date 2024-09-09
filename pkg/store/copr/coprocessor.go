@@ -92,7 +92,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, op
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars, option)
 	}
-	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	ctx = interceptor.WithRPCInterceptor(ctx, interceptor.GetRPCInterceptorFromCtx(ctx))
 	enabledRateLimitAction := option.EnabledRateLimitAction
@@ -101,6 +100,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, op
 	if errRes != nil {
 		return errRes
 	}
+	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	if sessionMemTracker != nil && enabledRateLimitAction {
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
@@ -177,6 +177,14 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 			reqType = "hit"
 		}
 	}
+	if option.GetStartTS != nil && req.StartTs == 0 {
+		startTS, err := option.GetStartTS(len(tasks) <= 1)
+		if err != nil {
+			return nil, copErrorResponse{err}
+		}
+		req.StartTs = startTS
+	}
+
 	tidbmetrics.DistSQLCoprClosestReadCounter.WithLabelValues(reqType).Inc()
 	if err != nil {
 		return nil, copErrorResponse{err}
@@ -201,6 +209,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	// the start_ts could conflict with another pipelined-txn's start_ts.
 	// in which case the locks of same ts cannot be ignored.
 	// We rely on the assumption: start_ts is not from PD => this is a stale read.
+
 	if !req.IsStaleness {
 		it.resolvedLocks.Put(req.StartTs)
 	}

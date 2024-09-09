@@ -19,6 +19,8 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"slices"
 	"strconv"
@@ -70,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -3798,9 +3801,29 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	} else {
 		physicalTableID = is.Table.ID
 	}
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		return nil, err
+
+	forDataReaderBuilder := b.forDataReaderBuilder
+	dataReaderTS := b.dataReaderTS
+	stmtForUpdate := b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt
+	getStartTS := func(tryUseMaxTS bool) (uint64, error) {
+		if forDataReaderBuilder {
+			return dataReaderTS, nil
+		}
+
+		txnManager := sessiontxn.GetTxnManager(b.ctx)
+		if stmtForUpdate {
+			return txnManager.GetStmtForUpdateTS()
+		}
+		if tryUseMaxTS {
+			ctxProvider := txnManager.GetContextProvider()
+			if optimisticTxnCtxProvider := ctxProvider.(*isolation.OptimisticTxnContextProvider); optimisticTxnCtxProvider != nil {
+				if optimisticTxnCtxProvider.TryOptimizeWithMaxTS {
+					logutil.BgLogger().Info("use max uint64 as tso", zap.String("sql", b.ctx.GetSessionVars().StmtCtx.OriginalSQL))
+					return uint64(math.MaxUint64), nil
+				}
+			}
+		}
+		return txnManager.GetStmtReadTS()
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
 
@@ -3809,7 +3832,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
 		indexUsageReporter:         b.buildIndexUsageReporter(v),
 		dagPB:                      dagReq,
-		startTS:                    startTS,
+		getStartTS:                 getStartTS,
 		txnScope:                   b.txnScope,
 		readReplicaScope:           b.readReplicaScope,
 		isStaleness:                b.isStaleness,

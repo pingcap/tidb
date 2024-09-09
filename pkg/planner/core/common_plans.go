@@ -1449,6 +1449,26 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	}
 }
 
+func IsIndexReaderByAutoCommit(vars *variable.SessionVars, p base.Plan) bool {
+	if !IsAutoCommitTxn(vars) {
+		return false
+	}
+	return isIndexReader(p)
+}
+
+func isIndexReader(p base.Plan) bool {
+	switch x := p.(type) {
+	case *PhysicalIndexReader:
+		return true
+	case *PhysicalProjection:
+		return isIndexReader(x.Children()[0])
+	case *PhysicalStreamAgg:
+		return isIndexReader(x.Children()[0])
+	default:
+		return false
+	}
+}
+
 // IsAutoCommitTxn checks if session is in autocommit mode and not InTxn
 // used for fast plan like point get
 func IsAutoCommitTxn(vars *variable.SessionVars) bool {
