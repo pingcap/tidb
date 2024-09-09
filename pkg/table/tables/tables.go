@@ -882,7 +882,6 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	}
 	key := t.RecordKey(recordID)
 	var setPresume bool
-	// TODO: If PK is Global index, use DupKeyCheckInPlace
 	if opt.DupKeyCheck() != table.DupKeyCheckSkip {
 		if t.meta.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV

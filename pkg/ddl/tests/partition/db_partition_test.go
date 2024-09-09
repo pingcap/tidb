@@ -3746,3 +3746,17 @@ func checkGlobalAndPK(t *testing.T, tk *testkit.TestKit, name string, indexes in
 		require.True(t, idxInfo.Primary)
 	}
 }
+
+func TestTruncateSinglePhase(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int primary key , b varchar(255)) partition by hash(a) partitions 3`)
+	ctx := tk.Session()
+	dom := domain.GetDomain(ctx)
+	schemaVersion := dom.InfoSchema().SchemaMetaVersion()
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
+	tk.MustExec(`alter table t truncate partition p1`)
+	// Without global index, truncate partition should be a single state change
+	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
+}

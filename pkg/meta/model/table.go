@@ -874,15 +874,21 @@ func (pi *PartitionInfo) GlobalIndexPartitionIDsToIgnore() []int64 {
 	// write only => should not see NewPartitionIDs
 	// delete only => should not see DroppingPartitions
 	// Drop partition:
-	// TODO: Make same changes as in Truncate Partition!
+	// TODO: Make similar changes as in Truncate Partition:
+	// Add a state blocking read and write in the partitions to be dropped,
+	// to avoid situations like https://github.com/pingcap/tidb/issues/55888
 	// Add partition:
-	// TODO: ???
-	// Currently not filtering anything, TODO: make multi-step if Global Index?
+	// TODO: Add tests!
 	// Exchange Partition:
 	// Currently blocked for GlobalIndex
-	// TODO: Also handle Exchange Partition?!?
-	// Reorganize Partition
-	// write only => nothing, and has not NewPartitionIDs set!
+	// Reorganize Partition:
+	// Nothing, since it will create a new copy of the global index.
+	// This is due to the global index needs to have two partitions for the same index key
+	// TODO: Should we extend the GlobalIndex to have multiple partitions?
+	// Maybe from PK/_tidb_rowid + Partition ID
+	// to PK/_tidb_rowid + Partition ID + Valid from Schema Version,
+	// with support for two entries?
+	// If so, could we then replace this?
 	switch pi.DDLAction {
 	case ActionTruncateTablePartition:
 		switch pi.DDLState {
@@ -899,23 +905,23 @@ func (pi *PartitionInfo) GlobalIndexPartitionIDsToIgnore() []int64 {
 			return ids
 		}
 	case ActionDropTablePartition:
-		if len(pi.DroppingDefinitions) > 0 ||
-			len(pi.AddingDefinitions) > 0 {
+		if len(pi.DroppingDefinitions) > 0 && pi.DDLState == StateDeleteOnly {
 			ids := make([]int64, 0, len(pi.DroppingDefinitions))
 			for _, def := range pi.DroppingDefinitions {
-				if pi.DDLState == StateDeleteOnly {
-					ids = append(ids, def.ID)
-				}
+				ids = append(ids, def.ID)
 			}
-			/*
-				//TODO: When should this take effect?
-				for _, def := range pi.AddingDefinitions {
-					ids = append(ids, def.ID)
-				}
-			*/
 			return ids
 		}
-		// TODO: Should we also handle ADD PARTITION for RANGE and LIST?
+	case ActionAddTablePartition:
+		// TODO: Add tests for ADD PARTITION multi-domain with Global Index!
+		if len(pi.AddingDefinitions) > 0 {
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, def := range pi.AddingDefinitions {
+				ids = append(ids, def.ID)
+			}
+			return ids
+		}
+		// Not supporting Global Indexes: case ActionExchangeTablePartition
 	}
 	return nil
 }
@@ -936,7 +942,7 @@ type PartitionDefinition struct {
 	Comment            string         `json:"comment,omitempty"`
 }
 
-// Clone clones ConstraintInfo.
+// Clone clones PartitionDefinition.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
 	nci.LessThan = make([]string, len(ci.LessThan))
