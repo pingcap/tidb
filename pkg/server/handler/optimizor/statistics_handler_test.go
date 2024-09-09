@@ -160,7 +160,7 @@ func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHa
 	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
 	is := statHandle.Domain().InfoSchema()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.SyncStatsWorker(context.Background(), is))
+	require.NoError(t, h.SyncStats(context.Background(), is))
 }
 
 func testDumpPartitionTableStats(t *testing.T, client *testserverclient.TestServerClient, handler *optimizor.StatsHandler) {
@@ -202,7 +202,7 @@ func preparePartitionData(t *testing.T, client *testserverclient.TestServerClien
 	tk.MustExec("analyze table test2")
 	is := statHandle.Domain().InfoSchema()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.SyncStatsWorker(context.Background(), is))
+	require.NoError(t, h.SyncStats(context.Background(), is))
 }
 
 func prepare4DumpHistoryStats(t *testing.T, client *testserverclient.TestServerClient) {

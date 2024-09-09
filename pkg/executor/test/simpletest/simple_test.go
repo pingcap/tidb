@@ -581,7 +581,7 @@ func TestDropStats(t *testing.T) {
 	require.False(t, statsTbl.Pseudo)
 
 	testKit.MustExec("drop stats t")
-	require.Nil(t, h.SyncStatsWorker(context.Background(), is))
+	require.Nil(t, h.SyncStats(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo)
 
@@ -591,7 +591,7 @@ func TestDropStats(t *testing.T) {
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t")
-	require.Nil(t, h.SyncStatsWorker(context.Background(), is))
+	require.Nil(t, h.SyncStats(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo)
 	h.SetLease(0)
@@ -622,7 +622,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	require.False(t, statsTbl2.Pseudo)
 
 	testKit.MustExec("drop stats t1, t2")
-	require.Nil(t, h.SyncStatsWorker(context.Background(), is))
+	require.Nil(t, h.SyncStats(context.Background(), is))
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	require.True(t, statsTbl1.Pseudo)
 	statsTbl2 = h.GetTableStats(tableInfo2)
@@ -636,7 +636,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t1, t2")
-	require.Nil(t, h.SyncStatsWorker(context.Background(), is))
+	require.Nil(t, h.SyncStats(context.Background(), is))
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	require.True(t, statsTbl1.Pseudo)
 	statsTbl2 = h.GetTableStats(tableInfo2)

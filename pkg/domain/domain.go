@@ -2389,7 +2389,7 @@ func (do *Domain) syncStatsWorker() {
 		case <-do.exit:
 			return
 		case <-cache.StatsCacheUpdateChan:
-			err := do.StatsHandle().SyncStatsWorker(ctx, do.InfoSchema())
+			err := do.StatsHandle().SyncStats(ctx, do.InfoSchema())
 			if err != nil {
 				logutil.BgLogger().Warn("update stats info failed", zap.Error(err))
 			}

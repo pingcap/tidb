@@ -56,7 +56,7 @@ func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.SyncStatsWorker(context.Background(), is)
+	err = h.SyncStats(context.Background(), is)
 	require.NoError(t, err)
 
 	// Reset one partition stats.

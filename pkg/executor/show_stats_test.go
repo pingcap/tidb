@@ -354,7 +354,7 @@ func TestShowStatsExtended(t *testing.T) {
 		"s1 2",
 		"s2 2",
 	))
-	dom.StatsHandle().SyncStatsWorker(context.Background(), dom.InfoSchema())
+	dom.StatsHandle().SyncStats(context.Background(), dom.InfoSchema())
 	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
 	require.Len(t, result.Rows(), 0)
 }

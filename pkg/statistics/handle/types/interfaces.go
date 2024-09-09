@@ -172,8 +172,8 @@ type StatsCache interface {
 	// TriggerSyncStats is to trigger UpdateWorker to work
 	TriggerSyncStats()
 
-	// SyncStatsWorker reads stats meta from store and updates the stats map.
-	SyncStatsWorker(ctx context.Context, is infoschema.InfoSchema) error
+	// SyncStats reads stats meta from store and updates the stats map.
+	SyncStats(ctx context.Context, is infoschema.InfoSchema) error
 
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)

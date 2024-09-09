@@ -74,8 +74,8 @@ func (*StatsCacheImpl) TriggerSyncStats() {
 	}
 }
 
-// SyncStatsWorker reads stats meta from store and updates the stats map.
-func (s *StatsCacheImpl) SyncStatsWorker(ctx context.Context, is infoschema.InfoSchema) error {
+// SyncStats reads stats meta from store and updates the stats map.
+func (s *StatsCacheImpl) SyncStats(ctx context.Context, is infoschema.InfoSchema) error {
 	start := time.Now()
 	lastVersion := s.getLastVersion()
 	var (
