@@ -75,15 +75,22 @@ func testRenameTable(
 
 func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, oldSchemaIDs, newSchemaIDs []int64, newTableNames []*pmodel.CIStr, oldTableIDs []int64, oldSchemaNames, oldTableNames []*pmodel.CIStr) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		Type:       model.ActionRenameTables,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{oldSchemaIDs, newSchemaIDs, newTableNames, oldTableIDs, oldSchemaNames, oldTableNames},
-		CtxVars:    []any{append(oldSchemaIDs, newSchemaIDs...), oldTableIDs},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: oldSchemaNames[0].L, Table: oldTableNames[0].L},
 			{Database: oldSchemaNames[0].L, Table: newTableNames[0].L},
 		},
 	}
+	job.FillArgs(&model.RenameTablesArgs{
+		OldSchemaIDs:   oldSchemaIDs,
+		NewSchemaIDs:   newSchemaIDs,
+		NewTableNames:  newTableNames,
+		TableIDs:       oldTableIDs,
+		OldSchemaNames: oldSchemaNames,
+		OldTableNames:  oldTableNames,
+	})
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 
