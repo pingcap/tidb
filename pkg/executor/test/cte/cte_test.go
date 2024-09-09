@@ -284,7 +284,7 @@ func Test53454(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int, key(a));")
 	tk.MustExec("create table t2 (a int, b int, key(a));")
 	tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern=on;")
-	tk.MustQuery("desc with cte as (select a, count(b) from t2 group by a) select /*+ INL_JOIN(cte) */  * from t1, cte where t1.a=cte.a;").Check(testkit.Rows(
+	tk.MustQuery("desc SELECT /*+ INL_JOIN(subquery) */ t1.*, subquery.* FROM t1 JOIN ( SELECT a, COUNT(b) AS count_b FROM t2 GROUP BY a) AS subquery ON t1.a = subquery.a;").Check(testkit.Rows(
 		"Projection_13 9990.00 root  test.t1.a, test.t1.b, test.t2.a, Column#13",
 		"└─HashJoin_46 9990.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
 		"  ├─HashAgg_71(Build) 7992.00 root  group by:test.t2.a, funcs:count(Column#29)->Column#13, funcs:firstrow(test.t2.a)->test.t2.a",

@@ -3724,6 +3724,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 
 	var currentLayerCTEs []*cteInfo
 	if sel.With != nil {
+		if !b.ctx.GetSessionVars().InRestrictedSQL {
+			fmt.Println("here")
+		}
 		l := len(b.outerCTEs)
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
