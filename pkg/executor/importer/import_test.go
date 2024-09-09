@@ -268,15 +268,13 @@ func TestInitParameters(t *testing.T) {
 			{
 				Name: cloudStorageURIOption,
 				Value: &expression.Constant{
-					Value: types.NewStringDatum("s3://this-is-for-storage/path?access-key=aaa&secret-access-key=bbb"),
+					Value: types.NewStringDatum("s3://this-is-for-storage/path?access-key=aaaaaa&secret-access-key=bbbbbb"),
 				},
 			},
 		},
 	}))
 	urlEqual(t, "s3://bucket/path?access-key=xxxxxx&secret-access-key=xxxxxx", p.Parameters.FileLocation)
 	require.Len(t, p.Parameters.Options, 1)
-	fmt.Println(p.Parameters.Options[cloudStorageURIOption].(string))
-	fmt.Println("+++++")
 	urlEqual(t, "s3://this-is-for-storage/path?access-key=xxxxxx&secret-access-key=xxxxxx",
 		p.Parameters.Options[cloudStorageURIOption].(string))
 
