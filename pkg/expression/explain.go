@@ -176,8 +176,8 @@ func (expr *Constant) format(dt types.Datum) string {
 	case types.KindString, types.KindBytes, types.KindMysqlJSON:
 		{
 			str := dt.GetString()
-			if len(str) > 64 {
-				return fmt.Sprintf("\"%s\"...(len:%d)", str[:64], len(str))
+			if len(str) > 128 {
+				return fmt.Sprintf("\"%s\"...(len:%d)", str[:128], len(str))
 			}
 			return fmt.Sprintf("\"%v\"", dt.GetValue())
 		}
@@ -199,13 +199,7 @@ func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, 
 			}
 		case *Constant:
 			v := expr.StringWithCtx(ctx, errors.RedactLogDisable)
-			length := 64
-			if len(v) < length {
-				redact.WriteRedact(builder, v, redactMode)
-			} else {
-				redact.WriteRedact(builder, v[:length], redactMode)
-				fmt.Fprintf(builder, "(len:%d)", len(v))
-			}
+			redact.WriteRedact(builder, v, redactMode)
 			builder.WriteString("->")
 			builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
 		default:

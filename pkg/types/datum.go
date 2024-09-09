@@ -2141,16 +2141,27 @@ func (d *Datum) ToBytes() ([]byte, error) {
 
 // StringTruncate truncate a long string.
 func (d *Datum) StringTruncate() string {
+	const maxLen = 128
 	switch d.Kind() {
-	case KindString, KindBytes, KindMysqlJSON:
+	case KindString, KindBytes:
 		{
 			str := d.GetString()
-			if len(str) > 64 {
-				return fmt.Sprintf("%s...(len:%d)", str[:64], len(str))
+			if len(str) > maxLen {
+				// This efficiently returns the truncated string without
+				// less possible allocations.
+				return fmt.Sprintf("%s...(len:%d)", str[:maxLen], len(str))
 			}
 			return str
 		}
+	case KindMysqlJSON:
+		// For now we can only stringify then truncate.
+		str := d.GetMysqlJSON().String()
+		if len(str) > maxLen {
+			return fmt.Sprintf("%s...(len:%d)", str[:maxLen], len(str))
+		}
+		return str
 	}
+
 	return fmt.Sprintf("%v", d.GetValue())
 }
 

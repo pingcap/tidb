@@ -268,7 +268,7 @@ func TestInitParameters(t *testing.T) {
 			{
 				Name: cloudStorageURIOption,
 				Value: &expression.Constant{
-					Value: types.NewStringDatum("s3://this-is-for-storage/path?access-key=aaa&secret-access-key=bbb"),
+					Value: types.NewStringDatum("s3://this-is-for-storage/path?access-key=aaaaaa&secret-access-key=bbbbbb"),
 				},
 			},
 		},

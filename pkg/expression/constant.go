@@ -153,7 +153,7 @@ func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 		return c.DeferredExpr.StringWithCtx(ctx, redact)
 	}
 	if redact == perrors.RedactLogDisable {
-		return fmt.Sprintf("%v", c.Value.StringTruncate())
+		return c.Value.StringTruncate()
 	} else if redact == perrors.RedactLogMarker {
 		return fmt.Sprintf("‹%v›", c.Value.StringTruncate())
 	}
