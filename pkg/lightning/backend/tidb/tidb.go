@@ -299,16 +299,11 @@ func (*targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.Check
 // stmtKey defines key for stmtCache.
 type stmtKey struct {
 	query string
-	// `hash` is the hash value of this object.
-	hash []byte
 }
 
 // Hash implements SimpleLRUCache.Key.
 func (k *stmtKey) Hash() []byte {
-	if len(k.hash) == 0 {
-		return hack.Slice(k.query)
-	}
-	return k.hash
+	return hack.Slice(k.query)
 }
 
 type tidbBackend struct {
@@ -831,14 +826,15 @@ stmtLoop:
 				if ok {
 					prepStmt = stmt.(*sql.Stmt)
 				} else if stmt, err := be.db.PrepareContext(ctx, query); err == nil {
-					prepStmt = stmt
 					be.stmtCacheMutex.Lock()
 					// check again if the key is already in the cache
 					// to avoid override existing stmt without closing it
-					if _, ok := be.stmtCache.Get(key); !ok {
+					if cachedStmt, ok := be.stmtCache.Get(key); !ok {
+						prepStmt = stmt
 						be.stmtCache.Put(key, stmt)
 					} else {
-						defer prepStmt.Close()
+						prepStmt = cachedStmt.(*sql.Stmt)
+						stmt.Close()
 					}
 					be.stmtCacheMutex.Unlock()
 				} else {
