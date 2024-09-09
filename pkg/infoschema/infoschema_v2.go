@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -1412,20 +1413,18 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 	}
 }
 
-type specialAttributeFilter func(*model.TableInfo) bool
-
 // TTLAttribute is the TTL attribute filter used by ListTablesWithSpecialAttribute.
-var TTLAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+var TTLAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.State == model.StatePublic && t.TTLInfo != nil
 }
 
 // TiFlashAttribute is the TiFlashReplica attribute filter used by ListTablesWithSpecialAttribute.
-var TiFlashAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+var TiFlashAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.TiFlashReplica != nil
 }
 
 // PlacementPolicyAttribute is the Placement Policy attribute filter used by ListTablesWithSpecialAttribute.
-var PlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+var PlacementPolicyAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	if t.PlacementPolicyRef != nil {
 		return true
 	}
@@ -1441,7 +1440,7 @@ var PlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) b
 
 // AllPlacementPolicyAttribute is the Placement Policy attribute filter used by ListTablesWithSpecialAttribute.
 // Different from PlacementPolicyAttribute, Partition.Enable flag will be ignored.
-var AllPlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+var AllPlacementPolicyAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	if t.PlacementPolicyRef != nil {
 		return true
 	}
@@ -1456,17 +1455,17 @@ var AllPlacementPolicyAttribute specialAttributeFilter = func(t *model.TableInfo
 }
 
 // TableLockAttribute is the Table Lock attribute filter used by ListTablesWithSpecialAttribute.
-var TableLockAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+var TableLockAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.Lock != nil
 }
 
 // ForeignKeysAttribute is the ForeignKeys attribute filter used by ListTablesWithSpecialAttribute.
-var ForeignKeysAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+var ForeignKeysAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return len(t.ForeignKeys) > 0
 }
 
 // PartitionAttribute is the Partition attribute filter used by ListTablesWithSpecialAttribute.
-var PartitionAttribute specialAttributeFilter = func(t *model.TableInfo) bool {
+var PartitionAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.GetPartitionInfo() != nil
 }
 
@@ -1475,13 +1474,13 @@ func hasSpecialAttributes(t *model.TableInfo) bool {
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.
-var AllSpecialAttribute specialAttributeFilter = hasSpecialAttributes
+var AllSpecialAttribute infoschemacontext.SpecialAttributeFilter = hasSpecialAttributes
 
-func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult {
-	ret := make([]tableInfoResult, 0, 10)
+func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter infoschemacontext.SpecialAttributeFilter) []infoschemacontext.TableInfoResult {
+	ret := make([]infoschemacontext.TableInfoResult, 0, 10)
 	var currDB string
 	var lastTableID int64
-	var res tableInfoResult
+	var res infoschemacontext.TableInfoResult
 	is.Data.tableInfoResident.Reverse(func(item tableInfoItem) bool {
 		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
 			// Skip the versions that we are not looking for.
@@ -1503,13 +1502,13 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter specialAttributeFi
 
 		if currDB == "" {
 			currDB = item.dbName.L
-			res = tableInfoResult{DBName: item.dbName}
+			res = infoschemacontext.TableInfoResult{DBName: item.dbName}
 			res.TableInfos = append(res.TableInfos, item.tableInfo)
 		} else if currDB == item.dbName.L {
 			res.TableInfos = append(res.TableInfos, item.tableInfo)
 		} else {
 			ret = append(ret, res)
-			res = tableInfoResult{DBName: item.dbName}
+			res = infoschemacontext.TableInfoResult{DBName: item.dbName}
 			res.TableInfos = append(res.TableInfos, item.tableInfo)
 		}
 		return true

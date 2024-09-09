@@ -19,6 +19,7 @@ import (
 	"math"
 	"testing"
 
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -454,7 +455,7 @@ func TestReferredFKInfo(t *testing.T) {
 }
 
 func updateTableSpecialAttribute(t *testing.T, dbInfo *model.DBInfo, tblInfo *model.TableInfo, builder *Builder, r autoid.Requirement,
-	actionType model.ActionType, ver int64, filter specialAttributeFilter, add bool) *model.TableInfo {
+	actionType model.ActionType, ver int64, filter infoschemacontext.SpecialAttributeFilter, add bool) *model.TableInfo {
 	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err := r.Store().Begin()
 	require.NoError(t, err)

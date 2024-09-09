@@ -22,6 +22,15 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 )
 
+// SpecialAttributeFilter is used to filter tables with special attributes.
+type SpecialAttributeFilter func(*model.TableInfo) bool
+
+// TableInfoResult is used to store the result of ListTablesWithSpecialAttribute.
+type TableInfoResult struct {
+	DBName     pmodel.CIStr
+	TableInfos []*model.TableInfo
+}
+
 // MetaOnlyInfoSchema is a workaround.
 // Due to circular dependency cannot return the complete interface.
 // But MetaOnlyInfoSchema is widely used for scenes that require meta only, so we give a convenience for that.
@@ -37,6 +46,7 @@ type MetaOnlyInfoSchema interface {
 	SchemaAndTable
 	AllSchemaNames() []pmodel.CIStr
 	SchemaSimpleTableInfos(ctx stdctx.Context, schema pmodel.CIStr) ([]*model.TableNameInfo, error)
+	ListTablesWithSpecialAttribute(filter SpecialAttributeFilter) []TableInfoResult
 	Misc
 }
 

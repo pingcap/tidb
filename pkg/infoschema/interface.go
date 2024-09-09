@@ -31,6 +31,5 @@ type InfoSchema interface {
 	TableByName(ctx stdctx.Context, schema, table pmodel.CIStr) (table.Table, error)
 	TableByID(ctx stdctx.Context, id int64) (table.Table, bool)
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
-	ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult
 	base() *infoSchema
 }
