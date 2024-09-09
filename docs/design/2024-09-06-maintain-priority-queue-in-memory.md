@@ -61,7 +61,7 @@ We can try to keep the priority queue in memory to solve the above issues instea
 
 In the current implementation, we use a weighted scoring approach to maintain the queue, which is our current scoring criteria.
 
-Score table:
+Indicators table:
 
 | Name                 | Meaning                                                                                                                                                                                       | Score                                                                                                                                                                                                                                                                                                               | Data Source                  |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
@@ -70,7 +70,7 @@ Score table:
 | Analysis Interval    | Time since the last analysis execution for the table. The bigger interval should have a higher priority than the smaller interval.                                                            | Applying a logarithmic transformation, namely log10(1 + Analysis Interval). To further compress the rate of growth for larger values, we can consider taking the logarithmic square root of x. The final formula is log10(1 + √Analysis Interval). [Check the graph.](https://www.desmos.com/calculator/plhtkfqhx9) | Stats Cache                  |
 | Special Event        | For example, the table has a new index but it hasn't been analyzed yet.                                                                                                                       | HasNewIndexWithoutStats: 2                                                                                                                                                                                                                                                                                          | Table Info (Scan all tables) |
 
-The final score is the weighted sum of the above four factors.
+The final score is the weighted sum of the above four indicators.
 
 ```go
 priority_score = (0.6 * math.Log10(1 + ChangeRatio) +
