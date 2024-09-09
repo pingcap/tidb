@@ -1106,3 +1106,41 @@ func TestRenameMultiTables(t *testing.T) {
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
 }
+
+func TestDefShardTables(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@session.tidb_enable_clustered_index = off")
+	tk.MustExec("set @@session.tidb_shard_row_id_bits = 4")
+	tk.MustExec("set @@session.tidb_pre_split_regions = 4")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int primary key)")
+	result := tk.MustQuery("show create table t")
+	createSQL := result.Rows()[0][1]
+	expected := "CREATE TABLE `t` (\n  `i` int(11) NOT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=4 */"
+	require.Equal(t, expected, createSQL)
+
+	// test for manual setup shard_row_id_bits and pre_split_regions
+	tk.MustExec("create table t0 (i int primary key) /*T! SHARD_ROW_ID_BITS=2 PRE_SPLIT_REGIONS=2 */")
+	result = tk.MustQuery("show create table t0")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `t0` (\n  `i` int(11) NOT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=2 PRE_SPLIT_REGIONS=2 */"
+	require.Equal(t, expected, createSQL)
+
+	// test for clustered index table
+	tk.MustExec("set @@session.tidb_enable_clustered_index = on")
+	tk.MustExec("create table t1 (i int primary key)")
+	result = tk.MustQuery("show create table t1")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `t1` (\n  `i` int(11) NOT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	require.Equal(t, expected, createSQL)
+
+	// test for global temporary table
+	tk.MustExec("create global temporary table tengine (id int) engine = 'innodb' on commit delete rows")
+	result = tk.MustQuery("show create table tengine")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE GLOBAL TEMPORARY TABLE `tengine` (\n  `id` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+	require.Equal(t, expected, createSQL)
+}
