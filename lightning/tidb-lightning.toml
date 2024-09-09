@@ -125,6 +125,7 @@ addr = "127.0.0.1:8287"
 # duplicate-resolution = 'none'
 # Maximum KV size of SST files produced in the 'local' backend. This should be the same as
 # the TiKV region size to avoid further region splitting. The default value is 96 MiB.
+# If the configuration value is less than TiKV's region size, it will be adjusted to TiKV's region size.
 #region-split-size = '96MiB'
 # write key-values pairs to tikv batch size
 #send-kv-pairs = 32768

@@ -781,6 +781,7 @@ import (
 	substring             "SUBSTRING"
 	sum                   "SUM"
 	survivalPreferences   "SURVIVAL_PREFERENCES"
+	switchGroup           "SWITCH_GROUP"
 	target                "TARGET"
 	taskTypes             "TASK_TYPES"
 	tidbJson              "TIDB_JSON"
@@ -1819,6 +1820,13 @@ ResourceGroupRunawayActionOption:
 	{
 		$$ = &ast.ResourceGroupRunawayActionOption{Type: model.RunawayActionKill}
 	}
+|	"SWITCH_GROUP" '(' ResourceGroupName ')'
+	{
+		$$ = &ast.ResourceGroupRunawayActionOption{
+			Type:            model.RunawayActionSwitchGroup,
+			SwitchGroupName: model.NewCIStr($3),
+		}
+	}
 
 DirectResourceGroupRunawayOption:
 	"EXEC_ELAPSED" EqOpt stringLit
@@ -1829,7 +1837,7 @@ DirectResourceGroupRunawayOption:
 			return 1
 		}
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp: ast.RunawayRule,
+			Tp: model.RunawayRule,
 			RuleOption: &ast.ResourceGroupRunawayRuleOption{
 				ExecElapsed: $3,
 			},
@@ -1838,7 +1846,7 @@ DirectResourceGroupRunawayOption:
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
 	{
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp:           ast.RunawayAction,
+			Tp:           model.RunawayAction,
 			ActionOption: $3.(*ast.ResourceGroupRunawayActionOption),
 		}
 	}
@@ -1856,7 +1864,7 @@ DirectResourceGroupRunawayOption:
 			}
 		}
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp: ast.RunawayWatch,
+			Tp: model.RunawayWatch,
 			WatchOption: &ast.ResourceGroupRunawayWatchOption{
 				Type:     $3.(model.RunawayWatchType),
 				Duration: dur,
@@ -7209,6 +7217,7 @@ NotKeywordToken:
 |	"EXEC_ELAPSED"
 |	"DRYRUN"
 |	"COOLDOWN"
+|	"SWITCH_GROUP"
 |	"WATCH"
 |	"SIMILAR"
 |	"QUERY_LIMIT"

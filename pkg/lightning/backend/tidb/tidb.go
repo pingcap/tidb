@@ -38,7 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -161,7 +162,7 @@ func (b *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DB
 				return e
 			}
 			dbInfo := &model.DBInfo{
-				Name: model.NewCIStr(dbName),
+				Name: pmodel.NewCIStr(dbName),
 			}
 			results = append(results, dbInfo)
 		}
@@ -213,7 +214,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 			}
 			if tableName != curTableName {
 				curTable = &model.TableInfo{
-					Name:       model.NewCIStr(tableName),
+					Name:       pmodel.NewCIStr(tableName),
 					State:      model.StatePublic,
 					PKIsHandle: true,
 				}
@@ -234,7 +235,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 			ft := types.FieldType{}
 			ft.SetFlag(flag)
 			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
-				Name:                model.NewCIStr(columnName),
+				Name:                pmodel.NewCIStr(columnName),
 				Offset:              curColOffset,
 				State:               model.StatePublic,
 				FieldType:           ft,

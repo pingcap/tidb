@@ -38,9 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -785,7 +786,7 @@ func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInf
 }
 
 // CreateTable implements glue.Session
-func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableOption) error {
+func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName pmodel.CIStr, table *model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return BRIECreateTable(gs.se, dbName, table, "", cs...)
 }
 

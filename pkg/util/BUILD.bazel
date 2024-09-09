@@ -29,6 +29,7 @@ go_library(
         "//pkg/config",
         "//pkg/infoschema/context",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser",
         "//pkg/parser/auth",
@@ -44,6 +45,7 @@ go_library(
         "//pkg/util/execdetails",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "//pkg/util/ppcpuusage",
         "//pkg/util/tls",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
@@ -82,6 +84,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

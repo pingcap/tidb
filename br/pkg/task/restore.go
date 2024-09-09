@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -32,10 +33,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/spf13/cobra"
@@ -1118,6 +1121,11 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
 		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
+		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
+		// If the command is from BRIE SQL, the ddl.EnableSplitTableRegion is TiDB config split-table.
+		// Notice that `split-region-on-table` configure from TiKV split on the region having data, it may trigger after restore done.
+		// It's recommended to enable TiDB configure `split-table` instead.
+		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
 		updateCh,
 	); err != nil {
 		return errors.Trace(err)
@@ -1516,7 +1524,7 @@ func PreCheckTableClusterIndex(
 		if job.Type == model.ActionCreateTable {
 			tableInfo := job.BinlogInfo.TableInfo
 			if tableInfo != nil {
-				oldTableInfo, err := restore.GetTableSchema(dom, model.NewCIStr(job.SchemaName), tableInfo.Name)
+				oldTableInfo, err := restore.GetTableSchema(dom, pmodel.NewCIStr(job.SchemaName), tableInfo.Name)
 				// table exists in database
 				if err == nil {
 					if tableInfo.IsCommonHandle != oldTableInfo.IsCommonHandle {

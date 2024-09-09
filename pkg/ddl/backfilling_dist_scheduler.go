@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -447,7 +447,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	startKey := kvMeta.StartKey
 	var endKey kv.Key
 	for {
-		endKeyOfGroup, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
 		if err != nil {
 			return nil, err
 		}
@@ -464,6 +464,10 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
 				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 		}
+		rangeJobKeys := make([][]byte, 0, len(interiorRangeJobKeys)+2)
+		rangeJobKeys = append(rangeJobKeys, startKey)
+		rangeJobKeys = append(rangeJobKeys, interiorRangeJobKeys...)
+		rangeJobKeys = append(rangeJobKeys, endKey)
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*external.SortedKVMeta{{
 				StartKey:    startKey,

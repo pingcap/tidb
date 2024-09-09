@@ -155,6 +155,7 @@ func TestAssertDeepClonedEqual(t *testing.T) {
 	AssertDeepClonedEqual(t, a, a, WithPointerComparePath([]string{"$"}))
 
 	// For slice
+	AssertDeepClonedEqual(t, []int(nil), []int(nil))
 	AssertDeepClonedEqual(t, []int{1, 2, 3}, []int{1, 2, 3})
 	shouldFail(t, func(t require.TestingT) {
 		AssertDeepClonedEqual(t, []int{1, 2, 3}, []int{1, 2, 4})
@@ -175,6 +176,7 @@ func TestAssertDeepClonedEqual(t *testing.T) {
 	})
 
 	// For map
+	AssertDeepClonedEqual(t, map[int]int(nil), map[int]int(nil))
 	AssertDeepClonedEqual(t, map[int]int{1: 2, 2: 3}, map[int]int{1: 2, 2: 3})
 	shouldFail(t, func(t require.TestingT) {
 		AssertDeepClonedEqual(t, map[int]int{1: 2, 2: 3}, map[int]int{1: 2, 3: 4})
@@ -196,6 +198,9 @@ func TestAssertDeepClonedEqual(t *testing.T) {
 	AssertDeepClonedEqual(t, a1, a1, WithPointerComparePath([]string{"$"}))
 
 	// For function
+	var nilFunc1 func()
+	var nilFunc2 func()
+	AssertDeepClonedEqual(t, nilFunc1, nilFunc2)
 	AssertDeepClonedEqual(t, TestAssertDeepClonedEqual, TestAssertDeepClonedEqual, WithPointerComparePath([]string{"$"}))
 	shouldFail(t, func(t require.TestingT) {
 		AssertDeepClonedEqual(t, func() {}, func() {})

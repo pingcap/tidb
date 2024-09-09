@@ -56,8 +56,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -867,12 +868,12 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		Tp:                    v.Tp,
 		CountWarningsOrErrors: v.CountWarningsOrErrors,
-		DBName:                model.NewCIStr(v.DBName),
+		DBName:                pmodel.NewCIStr(v.DBName),
 		Table:                 v.Table,
 		Partition:             v.Partition,
 		Column:                v.Column,
 		IndexName:             v.IndexName,
-		ResourceGroupName:     model.NewCIStr(v.ResourceGroupName),
+		ResourceGroupName:     pmodel.NewCIStr(v.ResourceGroupName),
 		Flag:                  v.Flag,
 		Roles:                 v.Roles,
 		User:                  v.User,
@@ -3049,7 +3050,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	for _, task := range v.ColTasks {
 		columns, _, err := expression.ColumnInfos2ColumnsAndNames(
 			exprCtx,
-			model.NewCIStr(task.AnalyzeInfo.DBName),
+			pmodel.NewCIStr(task.AnalyzeInfo.DBName),
 			task.TblInfo.Name,
 			task.ColsInfo,
 			task.TblInfo,
@@ -3467,6 +3468,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	e := &TableReaderExecutor{
 		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
 		tableReaderExecutorContext: newTableReaderExecutorContext(b.ctx),
+		indexUsageReporter:         b.buildIndexUsageReporter(v),
 		dagPB:                      dagReq,
 		startTS:                    startTS,
 		txnScope:                   b.txnScope,
@@ -4167,13 +4169,13 @@ type tableStatsPreloader interface {
 	LoadTableStats(sessionctx.Context)
 }
 
-func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader) (indexUsageReporter *exec.IndexUsageReporter) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if b.ctx.GetSessionVars().StmtCtx.IndexUsageCollector != nil &&
+func buildIndexUsageReporter(ctx sessionctx.Context, plan tableStatsPreloader) (indexUsageReporter *exec.IndexUsageReporter) {
+	sc := ctx.GetSessionVars().StmtCtx
+	if ctx.GetSessionVars().StmtCtx.IndexUsageCollector != nil &&
 		sc.RuntimeStatsColl != nil {
 		// Preload the table stats. If the statement is a point-get or execute, the planner may not have loaded the
 		// stats.
-		plan.LoadTableStats(b.ctx)
+		plan.LoadTableStats(ctx)
 
 		statsMap := sc.GetUsedStatsInfo(false)
 		indexUsageReporter = exec.NewIndexUsageReporter(
@@ -4182,6 +4184,10 @@ func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader) (ind
 	}
 
 	return indexUsageReporter
+}
+
+func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader) (indexUsageReporter *exec.IndexUsageReporter) {
+	return buildIndexUsageReporter(b.ctx, plan)
 }
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) exec.Executor {
@@ -5320,7 +5326,7 @@ func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, p
 
 func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPartInfo *plannercore.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
 	var pruningConds []expression.Expression
-	var partitionNames []model.CIStr
+	var partitionNames []pmodel.CIStr
 	var columns []*expression.Column
 	var columnNames types.NameSlice
 	if planPartInfo != nil {

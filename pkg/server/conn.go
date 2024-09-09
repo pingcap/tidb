@@ -65,11 +65,11 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -1310,7 +1310,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cmd := data[0]
 	data = data[1:]
 	if topsqlstate.TopSQLEnabled() {
-		defer pprof.SetGoroutineLabels(ctx)
+		rawCtx := ctx
+		defer pprof.SetGoroutineLabels(rawCtx)
+		sqlID := cc.ctx.GetSessionVars().SQLCPUUsages.AllocNewSQLID()
+		ctx = topsql.AttachAndRegisterProcessInfo(ctx, cc.connectionID, sqlID)
 	}
 	if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
@@ -1350,6 +1353,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	vars := cc.ctx.GetSessionVars()
 	// reset killed for each request
 	vars.SQLKiller.Reset()
+	vars.SQLCPUUsages.ResetCPUTimes()
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
 	}

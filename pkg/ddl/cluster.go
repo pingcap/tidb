@@ -34,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -821,7 +821,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 	case model.StateWriteReorganization:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
-			asyncNotifyEvent(jobCtx, statsutil.NewFlashbackClusterEvent())
+			asyncNotifyEvent(jobCtx, statsutil.NewFlashbackClusterEvent(), job)
 			job.State = model.JobStateDone
 			job.SchemaState = model.StatePublic
 			return ver, nil
@@ -844,7 +844,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 			}
 		}
 
-		asyncNotifyEvent(jobCtx, statsutil.NewFlashbackClusterEvent())
+		asyncNotifyEvent(jobCtx, statsutil.NewFlashbackClusterEvent(), job)
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
 		return updateSchemaVersion(jobCtx, t, job)

@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -77,6 +78,40 @@ func deniedByBDRWhenModifyColumn(newFieldType, oldFieldType types.FieldType, opt
 	}
 
 	if len(options) == 2 && defaultValue && comment {
+		return false
+	}
+
+	return true
+}
+
+// DeniedByBDR checks whether the DDL is denied by BDR.
+func DeniedByBDR(role ast.BDRRole, action model.ActionType, job *model.Job) (denied bool) {
+	ddlType, ok := model.ActionBDRMap[action]
+	switch role {
+	case ast.BDRRolePrimary:
+		if !ok {
+			return true
+		}
+
+		// Can't add unique index on primary role.
+		if job != nil && (action == model.ActionAddIndex || action == model.ActionAddPrimaryKey) &&
+			len(job.Args) >= 1 && job.Args[0].(bool) {
+			// job.Args[0] is unique when job.Type is ActionAddIndex or ActionAddPrimaryKey.
+			return true
+		}
+
+		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
+			return false
+		}
+	case ast.BDRRoleSecondary:
+		if !ok {
+			return true
+		}
+		if ddlType == model.UnmanagementDDL {
+			return false
+		}
+	default:
+		// if user do not set bdr role, we will not deny any ddl as `none`
 		return false
 	}
 

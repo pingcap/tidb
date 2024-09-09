@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
@@ -90,25 +90,6 @@ type ColAndIdxExistenceMap struct {
 	colAnalyzed map[int64]bool
 	idxInfoMap  map[int64]*model.IndexInfo
 	idxAnalyzed map[int64]bool
-}
-
-// SomeAnalyzed checks whether some part of the table is analyzed.
-// The newly added column/index might not have its stats.
-func (m *ColAndIdxExistenceMap) SomeAnalyzed() bool {
-	if m == nil {
-		return false
-	}
-	for _, v := range m.colAnalyzed {
-		if v {
-			return true
-		}
-	}
-	for _, v := range m.idxAnalyzed {
-		if v {
-			return true
-		}
-	}
-	return false
 }
 
 // Has checks whether a column/index stats exists.
@@ -774,7 +755,11 @@ func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCn
 	if analyzeRowCount <= 0 {
 		return coll.RealtimeCount, coll.ModifyCount
 	}
-	scale := idxStats.TotalRowCount() / analyzeRowCount
+	idxTotalRowCount := idxStats.TotalRowCount()
+	if idxTotalRowCount <= 0 {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
+	scale := idxTotalRowCount / analyzeRowCount
 	return int64(float64(coll.RealtimeCount) * scale), int64(float64(coll.ModifyCount) * scale)
 }
 
