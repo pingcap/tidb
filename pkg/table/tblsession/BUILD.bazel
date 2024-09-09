@@ -28,7 +28,6 @@ go_test(
         "//pkg/meta/model",
         "//pkg/sessionctx/variable",
         "//pkg/table",
-        "//pkg/testkit",
         "//pkg/util/mock",
         "@com_github_pingcap_tipb//go-binlog",
         "@com_github_stretchr_testify//require",
