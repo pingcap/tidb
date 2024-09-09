@@ -746,10 +746,8 @@ func verifyNoOverflowShardBits(s *sess.Pool, tbl table.Table, shardRowIDBits uin
 }
 
 func onRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var oldSchemaID int64
-	var oldSchemaName pmodel.CIStr
-	var tableName pmodel.CIStr
-	if err := job.DecodeArgs(&oldSchemaID, &tableName, &oldSchemaName); err != nil {
+	args, err := model.GetRenameTableArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -759,7 +757,7 @@ func onRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 		return finishJobRenameTable(jobCtx, t, job)
 	}
 	newSchemaID := job.SchemaID
-	err := checkTableNotExists(jobCtx.infoCache, newSchemaID, tableName.L)
+	err = checkTableNotExists(jobCtx.infoCache, newSchemaID, args.NewTableName.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -767,17 +765,18 @@ func onRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, args.OldSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	oldTableName := tblInfo.Name
-	ver, err = checkAndRenameTables(t, job, tblInfo, oldSchemaID, job.SchemaID, &oldSchemaName, &tableName)
+	ver, err = checkAndRenameTables(t, job, tblInfo, args.OldSchemaID, job.SchemaID, &args.SchemaName, &args.NewTableName)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	fkh := newForeignKeyHelper()
-	err = adjustForeignKeyChildTableInfoAfterRenameTable(jobCtx.infoCache, t, job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
+	err = adjustForeignKeyChildTableInfoAfterRenameTable(jobCtx.infoCache, t,
+		job, &fkh, tblInfo, args.SchemaName, oldTableName, args.NewTableName, newSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

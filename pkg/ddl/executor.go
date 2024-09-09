@@ -4263,14 +4263,15 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		Type:           model.ActionRenameTable,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		Args:           []any{schemas[0].ID, newIdent.Name, schemas[0].Name},
-		CtxVars:        []any{[]int64{schemas[0].ID, schemas[1].ID}, []int64{tableID}},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: schemas[0].Name.L, Table: oldIdent.Name.L},
 			{Database: schemas[1].Name.L, Table: newIdent.Name.L},
 		},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+
+	args := model.NewRenameTableArgs(schemas[0].ID, schemas[1].ID, schemas[0].Name, tableID, newIdent.Name)
+	job.FillArgs(args)
 
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)

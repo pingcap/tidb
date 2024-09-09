@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 )
 
 // getOrDecodeArgsV2 get the argsV2 from job, if the argsV2 is nil, decode rawArgsV2
@@ -108,4 +109,99 @@ func GetTruncateTableArgsAfterRun(job *Job) (*TruncateTableArgs, error) {
 		return nil, errors.Trace(err)
 	}
 	return argsV2, nil
+}
+
+// RenameTableArgs is the arguements for rename table DDL job.
+type RenameTableArgs struct {
+	// for Args
+	OldSchemaID  int64        `json:"old_schema_id,omitempty"`
+	SchemaName   pmodel.CIStr `json:"schema_name,omitempty"`
+	NewTableName pmodel.CIStr `json:"new_table_name,omitempty"`
+
+	// for CtxVars
+	// SchemaIDs contains {oldSchemaID, newSchemaID}
+	SchemaIDs []int64 `json:"-"`
+	// TableIDs contains {tableID}
+	TableIDs []int64 `json:"-"`
+}
+
+func (rt *RenameTableArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{rt.OldSchemaID, rt.NewTableName, rt.SchemaName}
+		job.CtxVars = []any{rt.SchemaIDs, rt.TableIDs}
+	} else {
+		job.ArgsV2 = rt
+	}
+}
+
+// NewRenameTableArgs creates a struct with given parameters.
+func NewRenameTableArgs(
+	oldSchemaID int64, newSchemaID int64, schemaName pmodel.CIStr,
+	tableID int64, newTableName pmodel.CIStr,
+) *RenameTableArgs {
+	return &RenameTableArgs{
+		OldSchemaID:  oldSchemaID,
+		SchemaName:   schemaName,
+		NewTableName: newTableName,
+		SchemaIDs:    []int64{oldSchemaID, newSchemaID},
+		TableIDs:     []int64{tableID},
+	}
+}
+
+// GetRenameTableArgs get the arguements from job.
+func GetRenameTableArgs(job *Job) (*RenameTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			oldSchemaID  int64
+			schemaName   pmodel.CIStr
+			newTableName pmodel.CIStr
+		)
+
+		// decode args and cache in args.
+		if len(job.Args) == 0 {
+			err := job.DecodeArgs(&oldSchemaID, &newTableName, &schemaName)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			job.Args = []any{oldSchemaID, newTableName, schemaName}
+		} else {
+			oldSchemaID = job.Args[0].(int64)
+			schemaName = job.Args[1].(pmodel.CIStr)
+			newTableName = job.Args[2].(pmodel.CIStr)
+		}
+
+		args := RenameTableArgs{
+			OldSchemaID:  oldSchemaID,
+			SchemaName:   schemaName,
+			NewTableName: newTableName,
+		}
+		if len(job.CtxVars) > 0 {
+			args.SchemaIDs = job.CtxVars[0].([]int64)
+			args.TableIDs = job.CtxVars[1].([]int64)
+		}
+		return &args, nil
+	}
+
+	argsV2, err := getOrDecodeArgsV2[*RenameTableArgs](job)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return argsV2, err
+}
+
+// GetRenameTableUniqueIDs gets unique IDs from job for rename table type.
+func GetRenameTableUniqueIDs(job *Job, schema bool) []int64 {
+	args := &RenameTableArgs{}
+
+	if job.Version == JobVersion1 {
+		args.SchemaIDs = job.CtxVars[0].([]int64)
+		args.TableIDs = job.CtxVars[1].([]int64)
+	} else {
+		args = job.ArgsV2.(*RenameTableArgs)
+	}
+
+	if schema {
+		return args.SchemaIDs
+	}
+	return args.TableIDs
 }
