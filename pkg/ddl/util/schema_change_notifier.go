@@ -120,6 +120,7 @@ func NewDropTableEvent(
 
 // GetDropTableInfo returns the table info of the SchemaChangeEvent whose type is ActionDropTable.
 func (s *SchemaChangeEvent) GetDropTableInfo() (newTableInfo *model.TableInfo) {
+	intest.Assert(s.tp == model.ActionDropTable)
 	return s.oldTableInfo
 }
 
@@ -137,6 +138,7 @@ func NewAddColumnEvent(
 
 // GetAddColumnInfo returns the table info of the SchemaChangeEvent whose type is ActionAddColumn.
 func (s *SchemaChangeEvent) GetAddColumnInfo() (newTableInfo *model.TableInfo, newColumnInfo []*model.ColumnInfo) {
+	intest.Assert(s.tp == model.ActionAddColumn)
 	return s.newTableInfo, s.columnInfos
 }
 
@@ -154,6 +156,7 @@ func NewModifyColumnEvent(
 
 // GetModifyColumnInfo returns the table info of and column info the SchemaChangeEvent whose type is ActionModifyColumn.
 func (s *SchemaChangeEvent) GetModifyColumnInfo() (newTableInfo *model.TableInfo, modifiedColumnInfo []*model.ColumnInfo) {
+	intest.Assert(s.tp == model.ActionModifyColumn)
 	return s.newTableInfo, s.columnInfos
 }
 
