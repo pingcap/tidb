@@ -52,7 +52,7 @@ func check(ctx context.Context, t *testing.T, tk *testkit.TestKit,
 		return
 	}
 
-	var indexes []string
+	indexes := make([]string, 0, len(r))
 	for _, result := range r {
 		indexes = append(indexes, fmt.Sprintf("%v.%v.%v", result.Database, result.Table, strings.Join(result.IndexColumns, "_")))
 	}
