@@ -242,7 +242,7 @@ func (req *MPPBuildTasksRequest) ToString() string {
 	sb := strings.Builder{}
 	if req.KeyRanges != nil { // Non-partiton
 		for i, keyRange := range req.KeyRanges {
-			sb.WriteString("ranid" + strconv.Itoa(i))
+			sb.WriteString("range_id" + strconv.Itoa(i))
 			sb.WriteString(keyRange.StartKey.String())
 			sb.WriteString(keyRange.EndKey.String())
 		}
@@ -250,9 +250,9 @@ func (req *MPPBuildTasksRequest) ToString() string {
 	}
 	// Partition
 	for _, partitionIDAndRange := range req.PartitionIDAndRanges {
-		sb.WriteString("parid" + strconv.Itoa(int(partitionIDAndRange.ID)))
+		sb.WriteString("partition_id" + strconv.Itoa(int(partitionIDAndRange.ID)))
 		for i, keyRange := range partitionIDAndRange.KeyRanges {
-			sb.WriteString("ranid" + strconv.Itoa(i))
+			sb.WriteString("range_id" + strconv.Itoa(i))
 			sb.WriteString(keyRange.StartKey.String())
 			sb.WriteString(keyRange.EndKey.String())
 		}
