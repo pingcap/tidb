@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/stretchr/testify/require"
@@ -2718,6 +2719,7 @@ func (cli *testServerClient) runTestIssue53634(t *testing.T, ts *tidbTestSuite, 
 
 		conn, err := dbt.GetDB().Conn(ctx)
 		require.NoError(t, err)
+		MustExec(ctx, t, conn, "set global tidb_enable_metadata_lock=1")
 		MustExec(ctx, t, conn, "create database test_db_state default charset utf8 default collate utf8_bin")
 		MustExec(ctx, t, conn, "use test_db_state")
 		MustExec(ctx, t, conn, `CREATE TABLE stock (
@@ -2829,6 +2831,7 @@ func runTestInSchemaState(
 	} else {
 		callback.OnJobRunBeforeExported = cbFunc1
 	}
+	t.Logf("enable mdl:%v", variable.EnableMDL.Load())
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	d.SetHook(callback)
