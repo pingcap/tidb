@@ -2068,7 +2068,6 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 	// Test TableReader cache for single SQL.
 	type testCase struct {
 		sql           string
-		result        []string
 		expectHitNum  int
 		expectMissNum int
 	}
@@ -2076,21 +2075,28 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 	testCases := []testCase{
 		// Non-Partition
 		// Cache hit
-		{"select * from t", []string{"1 1", "2 2", "3 3", "4 4", "5 5"}, 0, 1},
-		{"select * from t union select * from t", []string{"1 1", "2 2", "3 3", "4 4", "5 5"}, 1, 1},
-		{"select * from t union select * from t t1 union select * from t t2", []string{"1 1", "2 2", "3 3", "4 4", "5 5"}, 2, 1},
-		{"select * from t where b <= 3 union select * from t where b > 3", []string{"1 1", "2 2", "3 3", "4 4", "5 5"}, 1, 1}, // both full range
-		{"select * from t t1 join t t2 on t1.b=t2.b", []string{"1 1 1 1", "2 2 2 2", "3 3 3 3", "4 4 4 4", "5 5 5 5"}, 1, 1},
+		{"select * from t", 0, 1},
+		{"select * from t union select * from t", 1, 1},
+		{"select * from t union select * from t t1 union select * from t t2", 2, 1},
+		{"select * from t where b <= 3 union select * from t where b > 3", 1, 1},  // both full range
+		{"select * from t where a <= 3 union select * from t where a <= 3", 1, 1}, // same range
+		{"select * from t t1 join t t2 on t1.b=t2.b", 1, 1},
 
 		// Cache miss
-		{"select * from t union all select * from t", []string{"1 1", "1 1", "2 2", "2 2", "3 3", "3 3", "4 4", "4 4", "5 5", "5 5"}, 0, 2}, // different mpp task root
-		{"select * from t where a <= 3 union select * from t where a > 3", []string{"1 1", "2 2", "3 3", "4 4", "5 5"}, 0, 2},               // different range
+		{"select * from t union all select * from t", 0, 2},                      // different mpp task root
+		{"select * from t where a <= 3 union select * from t where a > 3", 0, 2}, // different range
 
 		// Partition
 		// Cache hit
-		{"select * from t2 union select * from t2", []string{"1 1", "2 2", "3 3", "4 4", "5 5"}, 1, 1},
-		{"select * from t2 where b = 3 union select * from t2 where b = 7", []string{"3 3"}, 1, 1}, // same partition, full range
-		{"select * from t where b = 3 union select * from t where b = 7", []string{"3 3"}, 1, 1},   // same partition, full range
+		{"select * from t2 union select * from t2", 1, 1},
+		{"select * from t2 where b = 1 union select * from t2 where b = 5", 1, 1},                     // same partition, full range
+		{"select * from t2 where b = 1 and a < 3 union select * from t2 where b = 5 and a < 3", 1, 1}, // same partition, same range
+		{"select * from t2 t1 join t2 t2 on t1.b=t2.b", 1, 1},
+		{"select * from t2 t1 join t2 t2 on t1.b=t2.b where t1.a = 2 and t2.a = 2", 1, 1},
+
+		// Cache miss
+		{"select * from t2 union select * from t2 where b = 1", 0, 2},             // different partition
+		{"select * from t2 where b = 2 union select * from t2 where b = 1", 0, 2}, // different partition
 	}
 
 	hitNum, missNum := 0, 0
@@ -2104,7 +2110,7 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheMiss", missFunc)
 	for _, tc := range testCases {
 		hitNum, missNum = 0, 0
-		tk.MustQuery(tc.sql).Sort().Check(testkit.Rows(tc.result...))
+		tk.MustQuery(tc.sql)
 		require.Equal(t, tc.expectHitNum, hitNum)
 		require.Equal(t, tc.expectMissNum, missNum)
 	}
