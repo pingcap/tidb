@@ -488,6 +488,7 @@ go_test(
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_model//go",
         "@com_github_prometheus_common//model",
+        "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//testutils",

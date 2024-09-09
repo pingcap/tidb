@@ -86,6 +86,8 @@ type EvalContext interface {
 	GetDefaultWeekFormatMode() string
 	// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
 	GetDivPrecisionIncrement() int
+	// GetUserVarsReader returns the `UserVarsReader` to read user vars.
+	GetUserVarsReader() variable.UserVarsReader
 	// RequestVerification verifies user privilege
 	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
 	// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.

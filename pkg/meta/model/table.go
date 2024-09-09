@@ -214,14 +214,6 @@ func (t *TableInfo) GetUpdateTime() time.Time {
 	return TSConvert2Time(t.UpdateTS)
 }
 
-// GetAutoIDSchemaID returns the schema ID that was used to create an allocator.
-func (t *TableInfo) GetAutoIDSchemaID(dbID int64) int64 {
-	if t.AutoIDSchemaID != 0 {
-		return t.AutoIDSchemaID
-	}
-	return dbID
-}
-
 // Clone clones TableInfo.
 func (t *TableInfo) Clone() *TableInfo {
 	nt := *t

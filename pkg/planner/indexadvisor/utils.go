@@ -16,6 +16,7 @@ package indexadvisor
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -399,7 +400,7 @@ func CollectIndexableColumnsFromQuery(q Query, opt Optimizer) (s.Set[Column], er
 			for _, schemaName := range schemaNames {
 				cols, err := opt.PossibleColumns(schemaName, x.Name.L)
 				if err != nil {
-					l().Warn("failed to get possible columns",
+					advisorLogger().Warn("failed to get possible columns",
 						zap.String("schema", schemaName),
 						zap.String("column", x.Name.L))
 					continue
@@ -410,7 +411,7 @@ func CollectIndexableColumnsFromQuery(q Query, opt Optimizer) (s.Set[Column], er
 			for _, c := range possibleColumns {
 				colType, err := opt.ColumnType(c)
 				if err != nil {
-					l().Warn("failed to get column type",
+					advisorLogger().Warn("failed to get column type",
 						zap.String("schema", c.SchemaName),
 						zap.String("table", c.TableName),
 						zap.String("column", c.ColumnName))
@@ -468,6 +469,58 @@ func isIndexableColumnType(tp *types.FieldType) bool {
 	return false
 }
 
-func l() *zap.Logger {
+func advisorLogger() *zap.Logger {
 	return logutil.BgLogger().With(zap.String("component", "index_advisor"))
+}
+
+// chooseBestIndexSet chooses the best index set from the given index sets.
+func chooseBestIndexSet(
+	querySet s.Set[Query], optimizer Optimizer,
+	indexSets []s.Set[Index]) (bestSet s.Set[Index], bestCost IndexSetCost, err error) {
+	for i, indexSet := range indexSets {
+		cost, err := evaluateIndexSetCost(querySet, optimizer, indexSet)
+		if err != nil {
+			return nil, bestCost, err
+		}
+		if i == 0 || cost.Less(bestCost) {
+			bestSet = indexSet
+			bestCost = cost
+		}
+	}
+	return bestSet, bestCost, nil
+}
+
+// evaluateIndexSetCost evaluates the workload cost under the given indexes.
+func evaluateIndexSetCost(
+	querySet s.Set[Query], optimizer Optimizer,
+	indexSet s.Set[Index]) (IndexSetCost, error) {
+	qs := querySet.ToList()
+	sqls := make([]string, 0, len(qs))
+	for _, q := range qs {
+		sqls = append(sqls, q.Text)
+	}
+	costs := make([]float64, 0, len(sqls))
+	for _, sql := range sqls {
+		cost, err := optimizer.QueryPlanCost(sql, indexSet.ToList()...)
+		if err != nil {
+			return IndexSetCost{}, err
+		}
+		costs = append(costs, cost)
+	}
+
+	var workloadCost float64
+	queries := querySet.ToList()
+	for i, cost := range costs {
+		query := queries[i]
+		workloadCost += cost * float64(query.Frequency)
+	}
+	var totCols int
+	keys := make([]string, 0, indexSet.Size())
+	for _, index := range indexSet.ToList() {
+		totCols += len(index.Columns)
+		keys = append(keys, index.Key())
+	}
+	sort.Strings(keys)
+
+	return IndexSetCost{workloadCost, totCols, strings.Join(keys, ",")}, nil
 }
