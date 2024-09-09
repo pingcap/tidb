@@ -283,7 +283,7 @@ func executeHashJoinExecAndGetError(t *testing.T, hashJoinExec *HashJoinV2Exec) 
 	for {
 		err = hashJoinExec.Next(tmpCtx, chk)
 		if err != nil {
-			return err
+			break
 		}
 
 		if chk.NumRows() == 0 {
@@ -291,7 +291,7 @@ func executeHashJoinExecAndGetError(t *testing.T, hashJoinExec *HashJoinV2Exec) 
 		}
 		chk.Reset()
 	}
-	err = hashJoinExec.Close()
+	require.NoError(t, hashJoinExec.Close())
 	return err
 }
 

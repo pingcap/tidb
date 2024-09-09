@@ -17,7 +17,6 @@ package join
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"math/rand"
 	"runtime/trace"
@@ -28,7 +27,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -358,7 +356,7 @@ func getPartitionMaskOffset(partitionNumber uint) int {
 
 // SetupPartitionInfo set up partitionNumber and partitionMaskOffset based on concurrency
 func (hCtx *HashJoinCtxV2) SetupPartitionInfo() {
-	// hCtx.partitionNumber = genHashJoinPartitionNumber(hCtx.Concurrency) // TODO
+	hCtx.partitionNumber = genHashJoinPartitionNumber(hCtx.Concurrency)
 	hCtx.partitionMaskOffset = getPartitionMaskOffset(hCtx.partitionNumber)
 }
 
@@ -390,13 +388,6 @@ type ProbeWorkerV2 struct {
 	// We build individual joinProbe for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	JoinProbe ProbeV2
-
-	outputRowNum int
-}
-
-func (w *ProbeWorkerV2) printAndReset() {
-	log.Info(fmt.Sprintf("xzxdebug probe output row num %d", w.outputRowNum))
-	w.outputRowNum = 0
 }
 
 func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
@@ -408,7 +399,6 @@ func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
 
 func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 	probeTime := int64(0)
-	defer w.printAndReset() // TODO remove
 	if w.HashJoinCtx.stats != nil {
 		start := time.Now()
 		defer func() {
@@ -422,12 +412,6 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 	}
 
 	chunkNum := inDisk.NumChunks()
-
-	restoredRowNum := 0
-
-	defer func() {
-		log.Info(fmt.Sprintf("xzxdebug restored probe row num %d", restoredRowNum))
-	}()
 
 	for i := 0; i < chunkNum; i++ {
 		select {
@@ -444,13 +428,11 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 			break
 		}
 
-		err = triggerIntest(3)
+		err = triggerIntest(2)
 		if err != nil {
 			joinResult.err = err
 			break
 		}
-
-		restoredRowNum += chk.NumRows()
 
 		start := time.Now()
 		waitTime := int64(0)
@@ -467,9 +449,6 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 	}
 
 	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		if joinResult.err == nil {
-			w.outputRowNum += joinResult.chk.NumRows()
-		}
 		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		w.joinChkResourceCh <- joinResult.chk
@@ -484,8 +463,6 @@ type BuildWorkerV2 struct {
 	HasNullableKey bool
 	WorkerID       uint
 	builder        *rowTableBuilder
-
-	buildRowNum int
 }
 
 func (b *BuildWorkerV2) getSegmentsInRowTable(partID int) []*rowTableSegment {
@@ -511,7 +488,7 @@ func (w *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, cost *int64) e
 	return nil
 }
 
-func (w *BuildWorkerV2) restoreAndPrebuildImpl(i int, inDisk *chunk.DataInDiskByChunks, fetcherAndWorkerSyncer *sync.WaitGroup, hasErr bool, cost *int64) (err error) {
+func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestoreImpl(i int, inDisk *chunk.DataInDiskByChunks, fetcherAndWorkerSyncer *sync.WaitGroup, hasErr bool, cost *int64) (err error) {
 	defer func() {
 		fetcherAndWorkerSyncer.Done()
 
@@ -541,8 +518,6 @@ func (w *BuildWorkerV2) restoreAndPrebuildImpl(i int, inDisk *chunk.DataInDiskBy
 		return err
 	}
 
-	w.buildRowNum += chk.NumRows()
-
 	err = w.processOneRestoredChunk(chk, cost)
 	if err != nil {
 		return err
@@ -558,11 +533,6 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 		}
 	}()
 
-	defer func() {
-		log.Info(fmt.Sprintf("xzxdebug build restored row num %d, indisk: [row %d, chunk %d]", w.buildRowNum, inDisk.NumRows(), inDisk.NumChunks()))
-		w.buildRowNum = 0
-	}()
-
 	partitionNumber := w.HashJoinCtx.partitionNumber
 	hashJoinCtx := w.HashJoinCtx
 
@@ -576,7 +546,7 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 			break
 		}
 
-		err := w.restoreAndPrebuildImpl(i, inDisk, fetcherAndWorkerSyncer, hasErr, &cost)
+		err := w.splitPartitionAndAppendToRowTableForRestoreImpl(i, inDisk, fetcherAndWorkerSyncer, hasErr, &cost)
 		if err != nil {
 			hasErr = true
 			handleErr(err, errCh, doneCh)
@@ -701,6 +671,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		return err
 	}
 	e.prepared = false
+	e.inRestore = false
 	needScanRowTableAfterProbeDone := e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
 	e.HashJoinCtxV2.needScanRowTableAfterProbeDone = needScanRowTableAfterProbeDone
 	if e.RightAsBuildSide {
@@ -924,6 +895,13 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 			w.HashJoinCtx.joinResultCh <- joinResult
 			return
 		}
+
+		err := triggerIntest(4)
+		if err != nil {
+			w.HashJoinCtx.joinResultCh <- &hashjoinWorkerResult{err: err}
+			return
+		}
+
 		if joinResult.chk.IsFull() {
 			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
@@ -932,10 +910,11 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 			}
 		}
 	}
-	if joinResult == nil {
-		return
-	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+
+	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		w.HashJoinCtx.joinResultCh <- joinResult
+	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
+		w.joinChkResourceCh <- joinResult.chk
 	}
 }
 
@@ -969,7 +948,6 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 		failpoint.Inject("processOneProbeChunkPanic", nil)
 		if joinResult.chk.IsFull() {
 			waitStart := time.Now()
-			w.outputRowNum += joinResult.chk.NumRows()
 			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
 			waitTime += int64(time.Since(waitStart))
@@ -983,7 +961,6 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 
 func (w *ProbeWorkerV2) runJoinWorker() {
 	probeTime := int64(0)
-	defer w.printAndReset()
 	if w.HashJoinCtx.stats != nil {
 		start := time.Now()
 		defer func() {
@@ -1017,6 +994,12 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 			break
 		}
 
+		err := triggerIntest(2)
+		if err != nil {
+			joinResult.err = err
+			break
+		}
+
 		start := time.Now()
 		waitTime := int64(0)
 		ok, waitTime, joinResult = w.processOneProbeChunk(probeSideResult, joinResult)
@@ -1037,9 +1020,6 @@ func (w *ProbeWorkerV2) runJoinWorker() {
 	}
 
 	if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		if joinResult.err == nil {
-			w.outputRowNum += joinResult.chk.NumRows()
-		}
 		w.HashJoinCtx.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
 		w.joinChkResourceCh <- joinResult.chk
@@ -1067,9 +1047,6 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 
 	lastRound := 0
 	for {
-		if e.inRestore {
-			log.Info("xzxdebug start a restore round")
-		}
 		e.fetchAndBuildHashTable(ctx)
 		e.fetchAndProbeHashTable(ctx)
 
@@ -1186,6 +1163,7 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 
 	if isBalanced {
 		for partIdx, subTable := range subTables {
+			_ = triggerIntest(5)
 			segmentsLen := len(subTable.rowData.segments)
 			select {
 			case <-doneCh:
@@ -1360,7 +1338,7 @@ func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh c
 			return
 		}
 
-		err = triggerIntest(3)
+		err = triggerIntest(2)
 		if err != nil {
 			errCh <- err
 			return
@@ -1466,6 +1444,10 @@ func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
 		w.HashJoinCtx.hashTableContext.build(task)
 		failpoint.Inject("buildHashTablePanic", nil)
 		cost += int64(time.Since(start))
+		err := triggerIntest(5)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1575,7 +1557,7 @@ func triggerIntest(errProbability int) error {
 	failpoint.Inject("slowWorkers", func(val failpoint.Value) {
 		if val.(bool) {
 			num := rand.Intn(100000)
-			if num < 4 {
+			if num < 2 {
 				time.Sleep(time.Duration(num) * time.Millisecond)
 			}
 		}
@@ -1586,9 +1568,9 @@ func triggerIntest(errProbability int) error {
 		if val.(bool) {
 			num := rand.Intn(100000)
 			if num < errProbability/2 {
-				panic("Random panic")
+				panic("Random failpoint panic")
 			} else if num < errProbability {
-				err = errors.New("Random error is triggered")
+				err = errors.New("Random failpoint error is triggered")
 			}
 		}
 	})

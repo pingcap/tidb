@@ -16,7 +16,6 @@ package join
 
 import (
 	"bytes"
-	"fmt"
 	"hash"
 	"hash/fnv"
 	"slices"
@@ -24,7 +23,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -361,6 +359,11 @@ func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.
 					return err
 				}
 				h.tmpSpillBuildSideChunks[workerID].Reset()
+
+				err = triggerIntest(2)
+				if err != nil {
+					return err
+				}
 			}
 
 			h.tmpSpillBuildSideChunks[workerID].AppendInt64(0, int64(seg.hashValues[i]))
@@ -444,6 +447,12 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 		return err
 	}
 	h.hashJoinExec.hashTableContext.memoryTracker.Consume(-totalReleasedMemory)
+
+	err := triggerIntest(10)
+	if err != nil {
+		return err
+	}
+	
 	return nil
 }
 
@@ -498,7 +507,11 @@ func (h *hashJoinSpillHelper) reset() {
 }
 
 func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
-	// TODO add random failpoint
+	err := triggerIntest(10)
+	if err != nil {
+		return err
+	}
+	
 	if lastRound+1 > h.hashJoinExec.maxSpillRound {
 		return errors.NewNoStackError(exceedMaxSpillRoundErrInfo)
 	}
@@ -532,16 +545,6 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 			round:           lastRound + 1,
 		}
 		h.stack.push(rd)
-
-		buildRowNum := 0
-		probeRowNum := 0
-		for _, inDisk := range buildInDisks {
-			buildRowNum += int(inDisk.NumRows())
-		}
-		for _, inDisk := range probeInDisks {
-			probeRowNum += int(inDisk.NumRows())
-		}
-		log.Info(fmt.Sprintf("xzxdebug part %d build %d probe %d", i, buildRowNum, probeRowNum))
 	}
 
 	// Reset something as spill may still be triggered during restoring

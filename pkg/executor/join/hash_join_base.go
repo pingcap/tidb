@@ -178,6 +178,15 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 			}
 			return
 		}
+
+		err = triggerIntest(2)
+		if err != nil {
+			hashJoinCtx.joinResultCh <- &hashjoinWorkerResult{
+				err: err,
+			}
+			return
+		}
+
 		if !hasWaitedForBuild {
 			failpoint.Inject("issue30289", func(val failpoint.Value) {
 				if val.(bool) {
