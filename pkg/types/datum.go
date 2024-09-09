@@ -556,7 +556,7 @@ func (d *Datum) GetValue() any {
 // but truncated (for example, for strings, only first 64 bytes is printed).
 // This function is useful in contexts like EXPLAIN.
 func (d *Datum) TruncatedStringify() string {
-	const maxLen = 64
+	const maxLen = 128
 
 	switch d.k {
 	case KindString, KindBytes:
