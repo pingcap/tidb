@@ -205,7 +205,6 @@ type Config struct {
 	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
 	PDClient                   tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
-	Binlog                     Binlog                  `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery        bool                    `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	PessimisticTxn             PessimisticTxn          `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	MaxIndexLength             int                     `toml:"max-index-length" json:"max-index-length"`
@@ -813,19 +812,6 @@ type ProxyProtocol struct {
 	Fallbackable bool `toml:"fallbackable" json:"fallbackable"`
 }
 
-// Binlog is the config for binlog.
-type Binlog struct {
-	Enable bool `toml:"enable" json:"enable"`
-	// If IgnoreError is true, when writing binlog meets error, TiDB would
-	// ignore the error.
-	IgnoreError  bool   `toml:"ignore-error" json:"ignore-error"`
-	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
-	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
-	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
-	// The strategy for sending binlog to pump, value can be "range" or "hash" now.
-	Strategy string `toml:"strategy" json:"strategy"`
-}
-
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
 	// The max count of retry for a single statement in a pessimistic transaction.
@@ -1046,10 +1032,6 @@ var defaultConf = Config{
 	},
 	PDClient:   defTiKVCfg.PDClient,
 	TiKVClient: defTiKVCfg.TiKVClient,
-	Binlog: Binlog{
-		WriteTimeout: "15s",
-		Strategy:     "range",
-	},
 	Plugin: Plugin{
 		Dir:  "/data/deploy/plugin",
 		Load: "",
