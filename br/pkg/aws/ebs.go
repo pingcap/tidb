@@ -66,7 +66,7 @@ func (e *ebsBackupRetryer) RetryRules(r *request.Request) time.Duration {
 	backOff := e.delegate.RetryRules(r)
 	if override, ok := backOffTimeOverride[r.Operation.Name]; ok {
 		if override > backOff {
-			    backOff = override
+		       backOff = override
 		}
 	}
 	log.Warn(
