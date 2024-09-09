@@ -18,11 +18,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
-	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
@@ -43,18 +41,6 @@ func TestSessionMutateContextFields(t *testing.T) {
 	ctx := tblsession.NewMutateContext(sctx)
 	// expression
 	require.True(t, sctx.GetExprCtx() == ctx.GetExprCtx())
-	// binlog
-	sctx.GetSessionVars().BinlogClient = nil
-	binlogSupport, ok := ctx.GetBinlogSupport()
-	require.False(t, ok)
-	require.Nil(t, binlogSupport)
-	sctx.GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
-	binlogSupport, ok = ctx.GetBinlogSupport()
-	require.True(t, ok)
-	require.NotNil(t, binlogSupport)
-	binlogMutation := binlogSupport.GetBinlogMutation(1234)
-	require.NotNil(t, binlogMutation)
-	require.Same(t, sctx.StmtGetMutation(1234), binlogMutation)
 	// ConnectionID
 	sctx.GetSessionVars().ConnectionID = 12345
 	require.Equal(t, uint64(12345), ctx.ConnectionID())

@@ -3469,7 +3469,7 @@ const (
 	InnodbFastShutdown = "innodb_fast_shutdown"
 	// InnodbLockWaitTimeout is the name for 'innodb_lock_wait_timeout' system variable.
 	InnodbLockWaitTimeout = "innodb_lock_wait_timeout"
-	// SQLLogBin is the name for 'sql_log_bin' system variable.
+	// MaxSortLength is the name for 'max_sort_length' system variable.
 	MaxSortLength = "max_sort_length"
 	// MaxSpRecursionDepth is the name for 'max_sp_recursion_depth' system variable.
 	MaxSpRecursionDepth = "max_sp_recursion_depth"

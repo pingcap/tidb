@@ -1470,16 +1470,6 @@ func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
 }
 
-<<<<<<< HEAD
-func getBinlogSupport(ctx table.MutateContext, tblInfo *model.TableInfo) (tblctx.BinlogSupport, bool) {
-	if tblInfo.TempTableType != model.TempTableNone || ctx.InRestrictedSQL() {
-		return nil, false
-	}
-	return ctx.GetBinlogSupport()
-}
-
-=======
->>>>>>> fdaaa68f67 (Remove binlog related codes.)
 func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
 	return CanSkip(t.Meta(), col, value)
 }
