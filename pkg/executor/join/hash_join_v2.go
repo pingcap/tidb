@@ -301,7 +301,7 @@ type HashJoinCtxV2 struct {
 	ProbeFilter                    expression.CNFExprs
 	OtherCondition                 expression.CNFExprs
 	hashTableContext               *hashTableContext
-	hashTableMeta                  *TableMeta
+	hashTableMeta                  *joinTableMeta
 	needScanRowTableAfterProbeDone bool
 
 	LUsed, RUsed                                 []int

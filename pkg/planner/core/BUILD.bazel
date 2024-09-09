@@ -11,6 +11,7 @@ go_library(
         "encode.go",
         "exhaust_physical_plans.go",
         "explain.go",
+        "expression_codec_fn.go",
         "expression_rewriter.go",
         "find_best_task.go",
         "flat_plan.go",

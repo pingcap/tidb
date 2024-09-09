@@ -12,6 +12,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/ddl",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/ddl/util",
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/sessionctx",

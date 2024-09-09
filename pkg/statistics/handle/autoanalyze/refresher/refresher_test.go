@@ -201,6 +201,7 @@ func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	require.Equal(t, 2, r.Jobs.Len())
 	// Analyze t1 first.
 	require.True(t, r.AnalyzeHighestPriorityTables())
+	r.WaitAutoAnalyzeFinishedForTest()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// The table is analyzed.
@@ -218,6 +219,7 @@ func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	require.Equal(t, int64(6), tblStats2.ModifyCount)
 	// Do one more round.
 	require.True(t, r.AnalyzeHighestPriorityTables())
+	r.WaitAutoAnalyzeFinishedForTest()
 	// t2 is analyzed.
 	pid2 = tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 = handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -263,6 +265,7 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	require.Equal(t, 3, r.Jobs.Len())
 	// Analyze tables concurrently.
 	require.True(t, r.AnalyzeHighestPriorityTables())
+	r.WaitAutoAnalyzeFinishedForTest()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Check if t1 and t2 are analyzed (they should be, as they have more new data).
@@ -289,6 +292,7 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 
 	// Do one more round to analyze t3.
 	require.True(t, r.AnalyzeHighestPriorityTables())
+	r.WaitAutoAnalyzeFinishedForTest()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 
@@ -315,6 +319,7 @@ func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	r.RebuildTableAnalysisJobQueue()
 	// No jobs in the queue.
 	r.AnalyzeHighestPriorityTables()
+	r.WaitAutoAnalyzeFinishedForTest()
 	// The table is not analyzed.
 	is := dom.InfoSchema()
 	tbl1, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
@@ -351,6 +356,7 @@ func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	insertFailedJobForPartitionWithStartTime(tk, "test", "t1", "p0", startTime)
 
 	r.AnalyzeHighestPriorityTables()
+	r.WaitAutoAnalyzeFinishedForTest()
 	// t2 is analyzed.
 	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)

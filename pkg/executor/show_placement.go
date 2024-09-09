@@ -503,13 +503,9 @@ func fetchPartitionScheduleState(ctx context.Context, scheduleState map[int64]in
 }
 
 func fetchTablePartitionScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo, state infosync.PlacementScheduleState) (infosync.PlacementScheduleState, error) {
-	var (
-		schedule infosync.PlacementScheduleState
-		err      error
-	)
 	if table.GetPartitionInfo() != nil {
 		for _, part := range table.GetPartitionInfo().Definitions {
-			schedule, err = fetchScheduleState(ctx, scheduleState, part.ID)
+			schedule, err := fetchScheduleState(ctx, scheduleState, part.ID)
 			if err != nil {
 				return infosync.PlacementScheduleStatePending, err
 			}
@@ -520,7 +516,7 @@ func fetchTablePartitionScheduleState(ctx context.Context, scheduleState map[int
 		}
 	}
 
-	return schedule, nil
+	return state, nil
 }
 
 func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo) (infosync.PlacementScheduleState, error) {
