@@ -75,14 +75,18 @@ func TestJobCodec(t *testing.T) {
 	// job1: table ID is 2
 	var err error
 	job1 := &Job{
-		Version:    JobVersion1,
+		Version:    GetJobVerInUse(),
 		ID:         2,
 		TableID:    2,
 		SchemaID:   1,
 		Type:       ActionRenameTable,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{int64(3), model.NewCIStr("new_table_name")},
 	}
+	job1.FillArgs(&RenameTableArgs{
+		OldSchemaID:  3,
+		NewTableName: model.NewCIStr("new_table_name"),
+	})
+
 	job1.RawArgs, err = json.Marshal(job1.Args)
 	require.NoError(t, err)
 	isDependent, err := job.IsDependentOn(job1)

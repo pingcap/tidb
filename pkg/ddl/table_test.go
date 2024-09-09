@@ -52,17 +52,26 @@ func testRenameTable(
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
-		SchemaID:   newSchemaID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionRenameTable,
+		SchemaID: newSchemaID,
+		TableID:  tblInfo.ID,
+		Type:     model.ActionRenameTable,
+		Version:  model.GetJobVerInUse(),
+
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{oldSchemaID, tblInfo.Name, oldSchemaName},
-		CtxVars:    []any{[]int64{oldSchemaID, newSchemaID}, []int64{tblInfo.ID}},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: oldSchemaName.L, Table: tblInfo.Name.L},
 			{Database: newSchemaName.L, Table: tblInfo.Name.L},
 		},
 	}
+	args := model.RenameTableArgs{
+		OldSchemaID:  oldSchemaID,
+		SchemaName:   oldSchemaName,
+		NewTableName: tblInfo.Name,
+		SchemaIDs:    []int64{oldSchemaID, newSchemaID},
+		TableIDs:     []int64{tblInfo.ID},
+	}
+	job.FillArgs(&args)
+
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 
@@ -76,6 +85,7 @@ func testRenameTable(
 func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, oldSchemaIDs, newSchemaIDs []int64, newTableNames []*pmodel.CIStr, oldTableIDs []int64, oldSchemaNames, oldTableNames []*pmodel.CIStr) *model.Job {
 	job := &model.Job{
 		Type:       model.ActionRenameTables,
+		Version:    model.GetJobVerInUse(),
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{oldSchemaIDs, newSchemaIDs, newTableNames, oldTableIDs, oldSchemaNames, oldTableNames},
 		CtxVars:    []any{append(oldSchemaIDs, newSchemaIDs...), oldTableIDs},
@@ -84,6 +94,7 @@ func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTes
 			{Database: oldSchemaNames[0].L, Table: newTableNames[0].L},
 		},
 	}
+
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 
