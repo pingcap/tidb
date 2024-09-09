@@ -40,7 +40,7 @@ func TestIndexAdvisorForSQL(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int)`)
 
-	checkResult(t, tk, `recommend index for 'select a from t where a=1'`, "test.t.a")
-	checkResult(t, tk, `recommend index for 'select a from t where a=1 and b=1'`, "test.t.a,b")
-	checkResult(t, tk, `recommend index for 'select a from t where a=1 and c=1'`, "test.t.a,c")
+	checkResult(t, tk, `recommend index run for 'select a from t where a=1'`, "test.t.a")
+	checkResult(t, tk, `recommend index run for 'select a from t where a=1 and b=1'`, "test.t.a,b")
+	checkResult(t, tk, `recommend index run for 'select a from t where a=1 and c=1'`, "test.t.a,c")
 }

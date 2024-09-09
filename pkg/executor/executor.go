@@ -2703,7 +2703,7 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.done = true
 
-	if e.Action != "recommend" {
+	if e.Action != "run" {
 		return fmt.Errorf("unsupported action: %s", e.Action)
 	}
 

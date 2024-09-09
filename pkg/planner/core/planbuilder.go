@@ -5650,7 +5650,7 @@ func (b *PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan,
 	}
 
 	switch v.Action {
-	case "recommend":
+	case "run":
 		if v.SQL == "" {
 			return nil, errors.New("recommend index SQL is empty")
 		}
