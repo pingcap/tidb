@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
@@ -287,7 +288,7 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 	}
 	defer sa.statsHandle.SPool().Put(se)
 	sctx := se.(sessionctx.Context)
-	if err := sa.statsHandle.SyncStats(context.Background(), sctx.GetInfoSchema().(infoschema.InfoSchema)); err != nil {
+	if err := sa.statsHandle.SyncStats(context.Background(), sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()); err != nil {
 		statslogutil.StatsLogger().Error("Failed to handle auto analyze", zap.Error(err))
 		return
 	}
