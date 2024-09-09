@@ -831,7 +831,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 				job.RowCount = 0
 				return false, ver, nil
 			}
-			var pdLeaderAddr string
+			pdLeaderAddr := config.GetGlobalConfig().Path
 			if d != nil {
 				//nolint:forcetypeassert
 				pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
