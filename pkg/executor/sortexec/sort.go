@@ -16,10 +16,12 @@ package sortexec
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -55,6 +57,7 @@ type SortExec struct {
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
+	// TODO delete this variable in the future and remove the unparallel sort
 	IsUnparallel bool
 
 	finishCh chan struct{}
@@ -94,6 +97,13 @@ type SortExec struct {
 	enableTmpStorageOnOOM bool
 }
 
+// When fetcher and workers are not created, we need to initiatively close these channels
+func (e *SortExec) closeChannels() {
+	close(e.Parallel.resultChannel)
+	close(e.Parallel.chunkChannel)
+	close(e.Parallel.closeSync)
+}
+
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
 	// TopN not initializes `e.finishCh` but it will call the Close function
@@ -110,8 +120,7 @@ func (e *SortExec) Close() error {
 		}
 	} else if e.finishCh != nil {
 		if e.fetched.CompareAndSwap(false, true) {
-			close(e.Parallel.resultChannel)
-			close(e.Parallel.chunkChannel)
+			e.closeChannels()
 		} else {
 			for range e.Parallel.chunkChannel {
 				e.Parallel.fetcherAndWorkerSyncer.Done()
@@ -124,11 +133,9 @@ func (e *SortExec) Close() error {
 		// will use `e.Parallel.workers` and `e.Parallel.merger`.
 		channel.Clear(e.Parallel.resultChannel)
 		for i := range e.Parallel.workers {
-			e.Parallel.workers[i].batchRows = nil
-			e.Parallel.workers[i].localSortedRows = nil
-			e.Parallel.workers[i].sortedRowsIter = nil
-			e.Parallel.workers[i].merger = nil
-			e.Parallel.workers[i].memTracker.ReplaceBytesUsed(0)
+			if e.Parallel.workers[i] != nil {
+				e.Parallel.workers[i].reset()
+			}
 		}
 		e.Parallel.merger = nil
 		if e.Parallel.spillAction != nil {
@@ -160,7 +167,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	}
 
-	e.IsUnparallel = true
+	e.IsUnparallel = false
 	if e.IsUnparallel {
 		e.Unparallel.Idx = 0
 		e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
@@ -169,7 +176,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
 		e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
-		e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
+		e.Parallel.resultChannel = make(chan rowWithError, 10)
 		e.Parallel.closeSync = make(chan struct{})
 		e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
 		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
@@ -185,24 +192,10 @@ func (e *SortExec) Open(ctx context.Context) error {
 	return exec.Open(ctx, e.Children(0))
 }
 
-// InitInParallelModeForTest is a function for test
-// After system variable is added, we can delete this function
-func (e *SortExec) InitInParallelModeForTest() {
-	e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
-	e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
-	e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
-	e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
-	e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
-	e.Parallel.closeSync = make(chan struct{})
-	e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
-	e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
-	e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
-	for i := range e.Parallel.sortedRowsIters {
-		e.Parallel.sortedRowsIters[i] = chunk.NewIterator4Slice(nil)
-	}
-	if e.enableTmpStorageOnOOM {
-		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Parallel.spillAction)
-	}
+// InitUnparallelModeForTest is for unit test
+func (e *SortExec) InitUnparallelModeForTest() {
+	e.Unparallel.Idx = 0
+	e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
 }
 
 // Next implements the Executor Next interface.
@@ -272,9 +265,18 @@ func (e *SortExec) InitInParallelModeForTest() {
 */
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.fetched.CompareAndSwap(false, true) {
-		e.initCompareFuncs()
-		e.buildKeyColumns()
-		err := e.fetchChunks(ctx)
+		err := e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
+		if err != nil {
+			e.closeChannels()
+			return err
+		}
+
+		err = e.buildKeyColumns()
+		if err != nil {
+			e.closeChannels()
+			return err
+		}
+		err = e.fetchChunks(ctx)
 		if err != nil {
 			return err
 		}
@@ -350,7 +352,7 @@ func (e *SortExec) generateResultWithMultiWayMerge() error {
 func (e *SortExec) generateResultFromDisk() error {
 	inDiskNum := len(e.Parallel.spillHelper.sortedRowsInDisk)
 	if inDiskNum == 0 {
-		panic("inDiskNum can't be 0 when we generate result with spill triggered")
+		return nil
 	}
 
 	// Spill is triggered only once
@@ -392,7 +394,7 @@ func (e *SortExec) generateResultFromMemory() (bool, error) {
 	}
 
 	maxChunkSize := e.MaxChunkSize()
-	resBuf := make([]rowWithError, 0, maxChunkSize)
+	resBuf := make([]rowWithError, 0, 3)
 	idx := int64(0)
 	var row chunk.Row
 	for {
@@ -710,6 +712,14 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 			e.Parallel.resultChannel <- rowWithError{err: err}
 		}
 
+		failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+			if val.(bool) {
+				if e.Ctx().GetSessionVars().ConnectionID == 123456 {
+					e.Ctx().GetSessionVars().MemTracker.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
+				}
+			}
+		})
+
 		// We must place it after the spill as workers will process its received
 		// chunks after channel is closed and this will cause data race.
 		close(e.Parallel.chunkChannel)
@@ -753,20 +763,44 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 	}
 }
 
-func (e *SortExec) initCompareFuncs() {
+func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) error {
+	var err error
+	failpoint.Inject("ParallelSortRandomFail", func(val failpoint.Value) {
+		if val.(bool) {
+			randNum := rand.Int31n(10000)
+			if randNum < 500 {
+				err = errors.NewNoStackError("return error by random failpoint")
+			}
+		}
+	})
+	if err != nil {
+		return err
+	}
+
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
 	for i := range e.ByItems {
-		keyType := e.ByItems[i].Expr.GetType()
+		keyType := e.ByItems[i].Expr.GetType(ctx)
 		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
+		if e.keyCmpFuncs[i] == nil {
+			return errors.Errorf("Sort executor not supports type %s", types.TypeStr(keyType.GetType()))
+		}
 	}
+	return nil
 }
 
-func (e *SortExec) buildKeyColumns() {
+func (e *SortExec) buildKeyColumns() error {
 	e.keyColumns = make([]int, 0, len(e.ByItems))
 	for _, by := range e.ByItems {
-		col := by.Expr.(*expression.Column)
-		e.keyColumns = append(e.keyColumns, col.Index)
+		switch col := by.Expr.(type) {
+		case *expression.Column:
+			e.keyColumns = append(e.keyColumns, col.Index)
+		case *expression.Constant:
+			// Ignore constant as constant can not affect the sorted result
+		default:
+			return errors.NewNoStackError("Get unexpected expression")
+		}
 	}
+	return nil
 }
 
 func (e *SortExec) lessRow(rowI, rowJ chunk.Row) int {

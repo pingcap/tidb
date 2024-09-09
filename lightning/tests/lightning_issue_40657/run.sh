@@ -24,7 +24,7 @@ run_lightning -d "$CUR/data1"
 run_sql 'admin check table test.t'
 run_sql 'select count(*) from test.t'
 check_contains 'count(*): 4'
-run_sql 'select count(*) from lightning_task_info.conflict_error_v3'
+run_sql 'select count(*) from lightning_task_info.conflict_view'
 check_contains 'count(*): 2'
 
 run_sql 'truncate table test.t'

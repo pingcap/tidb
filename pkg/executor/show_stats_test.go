@@ -15,10 +15,12 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -34,7 +36,7 @@ func TestShowStatsMeta(t *testing.T) {
 	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("create table t1 (a int, b int)")
-	tk.MustExec("analyze table t, t1")
+	tk.MustExec("analyze table t, t1 all columns")
 	result := tk.MustQuery("show stats_meta")
 	result = result.Sort()
 	require.Len(t, result.Rows(), 2)
@@ -76,11 +78,11 @@ func TestShowStatsHistograms(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	result := tk.MustQuery("show stats_histograms")
 	require.Len(t, result.Rows(), 2)
 	tk.MustExec("insert into t values(1,1)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	result = tk.MustQuery("show stats_histograms").Sort()
 	require.Len(t, result.Rows(), 2)
 	require.Equal(t, "a", result.Rows()[0][3])
@@ -292,7 +294,7 @@ func TestShowStatusSnapshot(t *testing.T) {
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 
-	for _, cacheSize := range []int{1024, 0} {
+	for _, cacheSize := range []int{units.GiB, 0} {
 		tk.MustExec("set @@global.tidb_schema_cache_size = ?", cacheSize)
 		tk.MustExec("create table t (a int);")
 		snapshotTime := time.Now()
@@ -352,7 +354,7 @@ func TestShowStatsExtended(t *testing.T) {
 		"s1 2",
 		"s2 2",
 	))
-	dom.StatsHandle().Update(dom.InfoSchema())
+	dom.StatsHandle().Update(context.Background(), dom.InfoSchema())
 	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
 	require.Len(t, result.Rows(), 0)
 }
@@ -367,9 +369,9 @@ func TestShowColumnStatsUsage(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
 
 	is := dom.InfoSchema()
-	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	t1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
-	t2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	t2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, null, '2021-10-20 08:00:00')", t1.Meta().ID, t1.Meta().Columns[0].ID))
 	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, '2021-10-20 09:00:00', null)", t2.Meta().ID, t2.Meta().Columns[0].ID))
@@ -406,7 +408,7 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Equal(t, "test", rows[0][0])
 	require.Equal(t, "t", rows[0][1])
 	require.Equal(t, "", rows[0][2])
-	require.Equal(t, "analyze table all columns with 256 buckets, 500 topn, 1 samplerate", rows[0][3])
+	require.Equal(t, "analyze table all indexes, all columns with 256 buckets, 100 topn, 1 samplerate", rows[0][3])
 	require.Equal(t, "2", rows[0][4])
 	checkTime := func(val any) {
 		str, ok := val.(string)

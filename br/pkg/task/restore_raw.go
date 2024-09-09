@@ -14,7 +14,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -92,14 +94,10 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	// sometimes we have pooled the connections.
 	// sending heartbeats in idle times is useful.
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
-	client.SetConcurrency(uint(cfg.Concurrency))
-	if cfg.Online {
-		client.EnableOnline()
-	}
-	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
+	client.SetConcurrencyPerStore(cfg.ConcurrencyPerStore.Value)
 	err = client.Init(g, mgr.GetStorage())
 	defer client.Close()
 	if err != nil {
@@ -148,16 +146,17 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		!cfg.LogProgress)
 
 	// RawKV restore does not need to rewrite keys.
-	err = restore.SplitRanges(ctx, client, ranges, updateCh, true)
+	err = client.SplitPoints(ctx, getEndKeys(ranges), updateCh, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	restoreSchedulers, _, err := restorePreWork(ctx, client, mgr, true)
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.SwitchModeInterval, mgr.GetTLSConfig())
+	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer restorePostWork(ctx, client, restoreSchedulers)
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
 
 	err = client.RestoreRaw(ctx, cfg.StartKey, cfg.EndKey, files, updateCh)
 	if err != nil {
@@ -170,4 +169,12 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
 	return nil
+}
+
+func getEndKeys(ranges []rtree.RangeStats) [][]byte {
+	endKeys := make([][]byte, 0, len(ranges))
+	for _, rg := range ranges {
+		endKeys = append(endKeys, rg.EndKey)
+	}
+	return endKeys
 }

@@ -19,10 +19,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
@@ -71,7 +71,6 @@ type schemaValidator struct {
 	lease              time.Duration
 	latestSchemaVer    int64
 	restartSchemaVer   int64
-	latestInfoSchema   infoschema.InfoSchema
 	do                 *Domain
 	latestSchemaExpire time.Time
 	// deltaSchemaInfos is a queue that maintain the history of changes.
@@ -80,6 +79,7 @@ type schemaValidator struct {
 
 // NewSchemaValidator returns a SchemaValidator structure.
 func NewSchemaValidator(lease time.Duration, do *Domain) SchemaValidator {
+	intest.Assert(lease > 0, "lease should be greater than 0")
 	return &schemaValidator{
 		isStarted:        true,
 		lease:            lease,
@@ -112,7 +112,7 @@ func (s *schemaValidator) Restart() {
 	defer s.mux.Unlock()
 	s.isStarted = true
 	if s.do != nil {
-		// When this instance reconnects PD, we should record the latest schema verion after mustReload(),
+		// When this instance reconnects PD, we should record the latest schema version after mustReload(),
 		// to prevent write txns using a stale schema version by aborting them before commit.
 		// However, the problem still exists for read-only txns.
 		s.restartSchemaVer = s.do.InfoSchema().SchemaMetaVersion()
@@ -140,9 +140,6 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 
 	// Renew the lease.
 	s.latestSchemaVer = currVer
-	if s.do != nil {
-		s.latestInfoSchema = s.do.InfoSchema()
-	}
 	leaseGrantTime := oracle.GetTimeFromTS(leaseGrantTS)
 	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
 	s.latestSchemaExpire = leaseExpire
@@ -241,9 +238,6 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 		logutil.BgLogger().Info("the schema version is too old, TiDB and PD maybe unhealthy after the transaction started",
 			zap.Int64("schemaVer", schemaVer))
 		return nil, ResultFail
-	}
-	if s.lease == 0 {
-		return nil, ResultSucc
 	}
 
 	// Schema changed, result decided by whether related tables change.

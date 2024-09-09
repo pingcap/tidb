@@ -37,9 +37,6 @@ single_point_fault() {
         outage-after-request)
             wait_file_exist "$hint_get_backup_client"
             kv_outage -d 30 -i $victim;;
-        outage-at-finegrained)
-            wait_file_exist "$hint_finegrained"
-            kv_outage --kill -i $victim;;
         shutdown)
             wait_file_exist "$hint_backup_start"
             kv_outage --kill -i $victim;;

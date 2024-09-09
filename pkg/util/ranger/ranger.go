@@ -172,10 +172,11 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 			// see issue #20101: overflow when converting integer to year
 		} else if newTp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
-		} else if newTp.GetType() == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
-			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
+		} else if (newTp.GetType() == mysql.TypeNewDecimal || mysql.IsIntegerType(newTp.GetType()) || newTp.GetType() == mysql.TypeFloat) && terror.ErrorEqual(err, types.ErrOverflow) {
+			// Ignore the types.ErrOverflow when we convert TypeNewDecimal/TypeTiny/TypeShort/TypeInt24/TypeLong/TypeLonglong/TypeFloat values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
+			// tests in TestIndexRange/TestIndexRangeForDecimal
 		} else if point.value.Kind() == types.KindMysqlTime && newTp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
 			// See issue #28424: query failed after add index
 			// Ignore conversion from Date[Time] to Timestamp since it must be either out of range or impossible date, which will not match a point select
@@ -731,21 +732,39 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 func points2EqOrInCond(ctx expression.BuildContext, points []*point, col *expression.Column) expression.Expression {
 	// len(points) cannot be 0 here, since we impose early termination in ExtractEqAndInCondition
 	// Constant and Column args should have same RetType, simply get from first arg
-	retType := col.GetType()
+	retType := col.GetType(ctx.GetEvalCtx())
 	args := make([]expression.Expression, 0, len(points)/2)
 	args = append(args, col)
+	orArgs := make([]expression.Expression, 0, 2)
 	for i := 0; i < len(points); i = i + 2 {
-		value := &expression.Constant{
-			Value:   points[i].value,
-			RetType: retType,
+		if points[i].value.IsNull() {
+			orArgs = append(orArgs, expression.NewFunctionInternal(ctx, ast.IsNull, retType, col))
+		} else {
+			value := &expression.Constant{
+				Value:   points[i].value,
+				RetType: retType,
+			}
+			args = append(args, value)
 		}
-		args = append(args, value)
 	}
-	funcName := ast.EQ
-	if len(args) > 2 {
-		funcName = ast.In
+	var result expression.Expression
+	if len(args) > 1 {
+		funcName := ast.EQ
+		if len(args) > 2 {
+			funcName = ast.In
+		}
+		result = expression.NewFunctionInternal(ctx, funcName, col.GetType(ctx.GetEvalCtx()), args...)
 	}
-	return expression.NewFunctionInternal(ctx, funcName, col.GetType(), args...)
+	if len(orArgs) == 0 {
+		return result
+	}
+	if result != nil {
+		orArgs = append(orArgs, result)
+	}
+	if len(orArgs) == 1 {
+		return orArgs[0]
+	}
+	return expression.NewFunctionInternal(ctx, ast.LogicOr, col.GetType(ctx.GetEvalCtx()), orArgs...)
 }
 
 // RangesToString print a list of Ranges into a string which can appear in an SQL as a condition.

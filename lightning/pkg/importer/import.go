@@ -56,7 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/driver"
@@ -407,6 +407,12 @@ func NewImportControllerWithPauser(
 		}
 		p.TaskType = taskType
 
+		// TODO: we should not need to check config here.
+		// Instead, we should perform the following during switch mode:
+		//  1. for each tikv, try to switch mode without any ranges.
+		//  2. if it returns normally, it means the store is using a raft-v1 engine.
+		//  3. if it returns the `partitioned-raft-kv only support switch mode with range set` error,
+		//     it means the store is a raft-v2 engine and we will include the ranges from now on.
 		isRaftKV2, err := common.IsRaftKV2(ctx, db)
 		if err != nil {
 			log.FromContext(ctx).Warn("check isRaftKV2 failed", zap.Error(err))
@@ -634,8 +640,10 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 		log.FromContext(ctx).Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
 		os.Exit(0)
 	})
-	if err := rc.loadDesiredTableInfos(ctx); err != nil {
-		return err
+	if rc.cfg.TikvImporter.AddIndexBySQL {
+		if err := rc.loadDesiredTableInfos(ctx); err != nil {
+			return err
+		}
 	}
 
 	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`

@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -31,17 +31,18 @@ import (
 	"go.uber.org/zap"
 )
 
-type collectPredicateColumnsPoint struct{}
+// CollectPredicateColumnsPoint collects the columns that are used in the predicates.
+type CollectPredicateColumnsPoint struct{}
 
-func (collectPredicateColumnsPoint) optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements LogicalOptRule.<0th> interface.
+func (CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
 	}
-	predicateNeeded := variable.EnableColumnTracking.Load()
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	histNeeded := syncWait > 0
-	predicateColumns, histNeededColumns, visitedPhysTblIDs := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
+	predicateColumns, histNeededColumns, visitedPhysTblIDs := CollectColumnStatsUsage(plan, histNeeded)
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
@@ -73,13 +74,16 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan base.Logica
 	return plan, planChanged, nil
 }
 
-func (collectPredicateColumnsPoint) name() string {
+// Name implements the base.LogicalOptRule.<1st> interface.
+func (CollectPredicateColumnsPoint) Name() string {
 	return "collect_predicate_columns_point"
 }
 
-type syncWaitStatsLoadPoint struct{}
+// SyncWaitStatsLoadPoint sync-wait for stats load point.
+type SyncWaitStatsLoadPoint struct{}
 
-func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+// Optimize implements the base.LogicalOptRule.<0th> interface.
+func (SyncWaitStatsLoadPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
@@ -91,7 +95,8 @@ func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan base.LogicalPlan,
 	return plan, planChanged, err
 }
 
-func (syncWaitStatsLoadPoint) name() string {
+// Name implements the base.LogicalOptRule.<1st> interface.
+func (SyncWaitStatsLoadPoint) Name() string {
 	return "sync_wait_stats_load_point"
 }
 
@@ -299,7 +304,7 @@ func recordSingleTableRuntimeStats(sctx base.PlanContext, tblID int64) (stats *s
 	dom := domain.GetDomain(sctx)
 	statsHandle := dom.StatsHandle()
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	tbl, ok := is.TableByID(tblID)
+	tbl, ok := is.TableByID(context.Background(), tblID)
 	if !ok {
 		return nil, false, nil
 	}

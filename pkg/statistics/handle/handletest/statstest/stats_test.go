@@ -15,6 +15,7 @@
 package statstest
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -22,8 +23,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,9 +37,10 @@ func TestStatsCache(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("insert into t values(1, 2)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1", "c2")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -49,7 +54,7 @@ func TestStatsCache(t *testing.T) {
 	// If index is build, but stats is not updated. statsTbl can also work.
 	require.False(t, statsTbl.Pseudo)
 	// But the added index will not work.
-	require.Nil(t, statsTbl.Indices[int64(1)])
+	require.Nil(t, statsTbl.GetIdx(int64(1)))
 
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -58,7 +63,7 @@ func TestStatsCache(t *testing.T) {
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -68,7 +73,7 @@ func TestStatsCache(t *testing.T) {
 	is = do.InfoSchema()
 
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -78,11 +83,12 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int,c3 int)")
+	testKit.MustExec("create table t (c1 int, c2 int, c3 int)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1", "c2", "c3")
 	testKit.MustExec("insert into t values(1, 2, 3)")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -100,7 +106,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	// If index is build, but stats is not updated. statsTbl can also work.
 	require.False(t, statsTbl.Pseudo)
 	// But the added index will not work.
-	require.Nil(t, statsTbl.Indices[int64(1)])
+	require.Nil(t, statsTbl.GetIdx(int64(1)))
 
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -111,7 +117,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -123,7 +129,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	is = do.InfoSchema()
 
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -139,9 +145,10 @@ func TestStatsStoreAndLoad(t *testing.T) {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("create index idx_t on t(c2)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1")
 	do := dom
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 
@@ -149,7 +156,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
 
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl2.Pseudo)
@@ -173,11 +180,11 @@ func testInitStatsMemTrace(t *testing.T) {
 	is := dom.InfoSchema()
 	h.Clear()
 	require.Equal(t, h.MemConsumed(), int64(0))
-	require.NoError(t, h.InitStats(is))
+	require.NoError(t, h.InitStats(context.Background(), is))
 
 	var memCostTot int64
 	for i := 1; i < 10; i++ {
-		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
 		require.NoError(t, err)
 		tStats := h.GetTableStats(tbl.Meta())
 		memCostTot += tStats.MemoryUsage().TotalMemUsage
@@ -252,32 +259,20 @@ func TestInitStats(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
 	// `Lease` is not 0, so here we just change it.
 	h.SetLease(time.Millisecond)
 
 	h.Clear()
-	require.NoError(t, h.InitStats(is))
+	require.NoError(t, h.InitStats(context.Background(), is))
 	table0 := h.GetTableStats(tbl.Meta())
-	cols := table0.Columns
-	require.Equal(t, uint8(0x36), cols[1].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x37), cols[2].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x38), cols[3].LastAnalyzePos.GetBytes()[0])
+	require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
 	h.Clear()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	// Index and pk are loaded.
 	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
-column:1 ndv:6 totColSize:0
-num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
-num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
-num: 1 lower_bound: 3 upper_bound: 3 repeats: 1 ndv: 0
-num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
-num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
-num: 1 lower_bound: 6 upper_bound: 6 repeats: 1 ndv: 0
-column:2 ndv:6 totColSize:6
-column:3 ndv:6 totColSize:6
 index:1 ndv:6
 num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
 num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
@@ -313,54 +308,76 @@ func TestInitStats51358(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil"))
 	}()
-	require.NoError(t, h.InitStats(is))
+	require.NoError(t, h.InitStats(context.Background(), is))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	stats := h.GetTableStats(tbl.Meta())
+	stats.ForEachColumnImmutable(func(_ int64, column *statistics.Column) bool {
+		if mysql.HasPriKeyFlag(column.Info.GetFlag()) {
+			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
+			require.Nil(t, column.TopN)
+		}
+		require.False(t, column.IsFullLoad())
+		return false
+	})
 }
 
 func TestInitStatsVer2(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		config.GetGlobalConfig().Performance.LiteInitStats = false
-		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
-	})
-	initStatsVer2(t)
+	originValue := config.GetGlobalConfig().Performance.LiteInitStats
+	concurrentlyInitStatsValue := config.GetGlobalConfig().Performance.ConcurrentlyInitStats
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = concurrentlyInitStatsValue
+	}()
+	config.GetGlobalConfig().Performance.LiteInitStats = false
+	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
+	initStatsVer2(t, false)
 }
 
 func TestInitStatsVer2Concurrency(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		config.GetGlobalConfig().Performance.LiteInitStats = false
-		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
-	})
-	initStatsVer2(t)
+	originValue := config.GetGlobalConfig().Performance.LiteInitStats
+	concurrentlyInitStatsValue := config.GetGlobalConfig().Performance.ConcurrentlyInitStats
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = originValue
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = concurrentlyInitStatsValue
+	}()
+	config.GetGlobalConfig().Performance.LiteInitStats = false
+	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
+	initStatsVer2(t, true)
 }
 
-func initStatsVer2(t *testing.T) {
+func initStatsVer2(t *testing.T, isConcurrency bool) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("create table t(a int, b int, c int, index idx(a), index idxab(a, b))")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (4, 4, 4), (4, 4, 4)")
 	tk.MustExec("analyze table t with 2 topn, 3 buckets")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
 	// `Lease` is not 0, so here we just change it.
 	h.SetLease(time.Millisecond)
 
 	h.Clear()
-	require.NoError(t, h.InitStats(is))
+	require.NoError(t, h.InitStats(context.Background(), is))
 	table0 := h.GetTableStats(tbl.Meta())
-	cols := table0.Columns
-	require.Equal(t, uint8(0x33), cols[1].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x33), cols[2].LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x33), cols[3].LastAnalyzePos.GetBytes()[0])
+	if isConcurrency {
+		require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
+	} else {
+		require.Equal(t, uint8(0x33), table0.GetCol(1).LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x33), table0.GetCol(2).LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x33), table0.GetCol(3).LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
+		require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
+	}
 	h.Clear()
-	require.NoError(t, h.InitStats(is))
+	require.NoError(t, h.InitStats(context.Background(), is))
 	table1 := h.GetTableStats(tbl.Meta())
 	internal.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
@@ -379,6 +396,6 @@ func TestInitStatsIssue41938(t *testing.T) {
 	// `InitStats` is only called when `Lease` is not 0, so here we just change it.
 	h.SetLease(time.Millisecond)
 	h.Clear()
-	require.NoError(t, h.InitStats(dom.InfoSchema()))
+	require.NoError(t, h.InitStats(context.Background(), dom.InfoSchema()))
 	h.SetLease(0)
 }

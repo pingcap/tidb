@@ -18,9 +18,9 @@ DDL_JOBS	CREATE TABLE `DDL_JOBS` (
   `SCHEMA_ID` bigint(21) DEFAULT NULL,
   `TABLE_ID` bigint(21) DEFAULT NULL,
   `ROW_COUNT` bigint(21) DEFAULT NULL,
-  `CREATE_TIME` datetime DEFAULT NULL,
-  `START_TIME` datetime DEFAULT NULL,
-  `END_TIME` datetime DEFAULT NULL,
+  `CREATE_TIME` datetime(6) DEFAULT NULL,
+  `START_TIME` datetime(6) DEFAULT NULL,
+  `END_TIME` datetime(6) DEFAULT NULL,
   `STATE` varchar(64) DEFAULT NULL,
   `QUERY` text DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -67,6 +67,7 @@ SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_NAME = 't1' or TABLE
 count(*)
 2
 drop table mysql.t1, mysql.t2, mysql.t3;
+drop table test.t1;
 create table infoschema__infoschema.t4(a int, INDEX i1 (a));
 create table infoschema__infoschema.t5(a int, INDEX i1 (a));
 insert into infoschema__infoschema.t4 values(1);
@@ -115,6 +116,7 @@ Projection_4	8000.00	root		Column#5, Column#10
   └─MemTableScan_6	10000.00	root	table:TABLES	table_schema:["infoschema__infoschema"]
 select engine, DATA_LENGTH from information_schema.tables where lower(table_name) = 't5' and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
 engine	DATA_LENGTH
+InnoDB	8
 explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or lower(table_name) = 't5') and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
 id	estRows	task	access object	operator info
 Projection_4	8000.00	root		Column#5, Column#10
@@ -130,3 +132,307 @@ MemTableScan_5	10000.00	root	table:TABLES	table_name:["T4","t4"], table_schema:[
 select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
 engine	DATA_LENGTH
 InnoDB	8
+drop table infoschema__infoschema.t4;
+drop table infoschema__infoschema.t5;
+create table pt1(a int primary key, b int) partition by hash(a) partitions 4;
+create table pt2(a int primary key, b int) partition by hash(a) partitions 4;
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_schema = 'infoschema__infoschema';
+TABLE_NAME	PARTITION_NAME
+pt1	p0
+pt1	p1
+pt1	p2
+pt1	p3
+pt2	p0
+pt2	p1
+pt2	p2
+pt2	p3
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt1' and table_schema = 'infoschema__infoschema';
+TABLE_NAME	PARTITION_NAME
+pt1	p0
+pt1	p1
+pt1	p2
+pt1	p3
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt2' and table_schema = 'infoschema__infoschema';
+TABLE_NAME	PARTITION_NAME
+pt2	p0
+pt2	p1
+pt2	p2
+pt2	p3
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt0' and table_schema = 'infoschema__infoschema';
+TABLE_NAME	PARTITION_NAME
+drop table pt1;
+drop table pt2;
+create database test1;
+create database test2;
+create table test1.t1(a int, b int, index idx(b));
+create table test2.t2(a int, b int, index idx(a));
+select TABLE_SCHEMA, TABLE_NAME, KEY_NAME from information_schema.tidb_indexes where table_schema = 'test1';
+TABLE_SCHEMA	TABLE_NAME	KEY_NAME
+test1	t1	idx
+select TABLE_SCHEMA, TABLE_NAME, KEY_NAME from information_schema.tidb_indexes where table_schema = 'test1' and table_name = 't1';
+TABLE_SCHEMA	TABLE_NAME	KEY_NAME
+test1	t1	idx
+select TABLE_SCHEMA, TABLE_NAME, KEY_NAME from information_schema.tidb_indexes where table_schema = 'test1' and table_name = 't2';
+TABLE_SCHEMA	TABLE_NAME	KEY_NAME
+select TABLE_SCHEMA, TABLE_NAME, KEY_NAME from information_schema.tidb_indexes where table_name = 't2';
+TABLE_SCHEMA	TABLE_NAME	KEY_NAME
+test2	t2	idx
+drop table test1.t1, test2.t2;
+set global tidb_enable_check_constraint = true;
+create table test1.t1 (a int check(a > 10) not enforced, b int, constraint c1 check (a < b));
+create table test2.t2 (a int check(a < 10), b int, constraint c2 check (a = b));
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.check_constraints;
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test1	c1
+test1	t1_chk_1
+test2	c2
+test2	t2_chk_1
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.check_constraints where constraint_schema = 'test1';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test1	c1
+test1	t1_chk_1
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.check_constraints where constraint_schema = 'test2';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test2	c2
+test2	t2_chk_1
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.check_constraints where constraint_schema = 'test2' and constraint_name = 'c2';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test2	c2
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.check_constraints where constraint_schema = 'test2' and constraint_name = 'c1';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.check_constraints;
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test1	c1
+test1	t1_chk_1
+test2	c2
+test2	t2_chk_1
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.tidb_check_constraints;
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test1	c1
+test1	t1_chk_1
+test2	c2
+test2	t2_chk_1
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.tidb_check_constraints where constraint_schema = 'test1';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test1	c1
+test1	t1_chk_1
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.tidb_check_constraints where constraint_schema = 'test2' and table_name = 't2';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test2	c2
+test2	t2_chk_1
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.tidb_check_constraints where constraint_schema = 'test1' and table_name = 't1' and constraint_name = 'c1';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test1	c1
+drop table test1.t1, test2.t2;
+CREATE TABLE test1.t11 (id INT NOT NULL AUTO_INCREMENT, PRIMARY KEY (id));
+CREATE TABLE test1.t12 (
+id INT NOT NULL AUTO_INCREMENT,
+name varchar(255) NOT NULL,
+parent_id INT DEFAULT NULL,
+PRIMARY KEY (id),
+CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES test1.t11 (id) ON UPDATE CASCADE ON DELETE RESTRICT
+);
+CREATE TABLE test2.t21 (id INT NOT NULL AUTO_INCREMENT, PRIMARY KEY (id));
+CREATE TABLE test2.t22 (
+id INT NOT NULL AUTO_INCREMENT,
+name varchar(255) NOT NULL,
+parent_id INT DEFAULT NULL,
+PRIMARY KEY (id),
+CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES test2.t21 (id) ON UPDATE CASCADE ON DELETE RESTRICT
+);
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.referential_constraints;
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test1	fk_parent
+test2	fk_parent
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.referential_constraints where constraint_schema = 'test1';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test1	fk_parent
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.referential_constraints where table_name = 't22';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test2	fk_parent
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.referential_constraints where constraint_schema = 'test1' and table_name = 't12';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+test1	fk_parent
+select CONSTRAINT_SCHEMA, CONSTRAINT_NAME from information_schema.referential_constraints where constraint_schema = 'test1' and table_name = 't22';
+CONSTRAINT_SCHEMA	CONSTRAINT_NAME
+set global tidb_enable_check_constraint = default;
+drop database test1;
+drop database test2;
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (a bigint primary key clustered, b int, index idx(b));
+insert into t1 values (1, 1), (2, 2);
+create database infoschema__infoschema_2;
+use infoschema__infoschema_2;
+create table t2 (a int, b char(255), index idx(b, a));
+insert into t2 values (1, 'aaa');
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_schema = 'infoschema__infoschema';
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+infoschema__infoschema	t1	a
+infoschema__infoschema	t1	b
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name = 't1';
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+infoschema__infoschema	t1	a
+infoschema__infoschema	t1	b
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name = 't2' and table_schema = 'infoschema__infoschema_2';
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+infoschema__infoschema_2	t2	a
+infoschema__infoschema_2	t2	b
+drop table infoschema__infoschema.t1;
+drop table infoschema__infoschema_2.t2;
+drop database if exists indexusage;
+create database indexusage;
+use indexusage;
+create table idt1(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_3(col_1, col_2));
+create table idt2(col_1 int primary key, col_2 int, index idx_1(col_1), index idx_2(col_2), index idx_4(col_2, col_1));
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+indexusage	idt1	idx_1
+indexusage	idt1	idx_2
+indexusage	idt1	idx_3
+indexusage	idt2	idx_1
+indexusage	idt2	idx_2
+indexusage	idt2	idx_4
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+indexusage	idt1	idx_1
+indexusage	idt1	idx_2
+indexusage	idt1	idx_3
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+indexusage	idt1	idx_3
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and TABLE_NAME = 'idt1';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+indexusage	idt1	idx_1
+indexusage	idt1	idx_2
+indexusage	idt1	idx_3
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and INDEX_NAME = 'idx_2';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+indexusage	idt1	idx_2
+indexusage	idt2	idx_2
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1' and INDEX_NAME = 'idx_1';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+indexusage	idt1	idx_1
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and TABLE_NAME = 'idt2' and INDEX_NAME = 'idx_4';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+indexusage	idt2	idx_4
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage1';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt3';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_5';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and TABLE_NAME = 'idt0';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage1' and INDEX_NAME = 'idx_2';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt2' and INDEX_NAME = 'idx_3';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and TABLE_NAME = 'idt1' and INDEX_NAME = 'idx_4';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+drop database indexusage;
+drop database if exists columnsinfo;
+create database columnsinfo;
+use columnsinfo;
+create table tbl1(col_1 int primary key, col_2 int, col_4 int);
+create table tbl2(col_1 int primary key, col_2 int, col_3 int);
+create view view1 as select min(col_1), col_2, max(col_4) as max4 from tbl1 group by col_2;
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = "columnsinfo";
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+columnsinfo	tbl1	col_1
+columnsinfo	tbl1	col_2
+columnsinfo	tbl1	col_4
+columnsinfo	tbl2	col_1
+columnsinfo	tbl2	col_2
+columnsinfo	tbl2	col_3
+columnsinfo	view1	col_2
+columnsinfo	view1	max4
+columnsinfo	view1	min(col_1)
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_NAME = "view1" or TABLE_NAME = "tbl1";
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+columnsinfo	tbl1	col_1
+columnsinfo	tbl1	col_2
+columnsinfo	tbl1	col_4
+columnsinfo	view1	col_2
+columnsinfo	view1	max4
+columnsinfo	view1	min(col_1)
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where COLUMN_NAME = "col_2";
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+columnsinfo	tbl1	col_2
+columnsinfo	tbl2	col_2
+columnsinfo	view1	col_2
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = "columnsinfo" and TABLE_NAME = "tbl2";
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+columnsinfo	tbl2	col_1
+columnsinfo	tbl2	col_2
+columnsinfo	tbl2	col_3
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = "columnsinfo" and COLUMN_NAME = "col_4";
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+columnsinfo	tbl1	col_4
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_NAME = "view1" and COLUMN_NAME like "m%";
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+columnsinfo	view1	max4
+columnsinfo	view1	min(col_1)
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns where TABLE_SCHEMA = 'columnsinfo' and TABLE_NAME = 'tbl1' and COLUMN_NAME = 'col_2';
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+columnsinfo	tbl1	col_2
+use infoschema__infoschema;
+select SCHEMA_NAME from information_schema.schemata where schema_name = 'infoschema__infoschema_2';
+SCHEMA_NAME
+infoschema__infoschema_2
+select SCHEMA_NAME from information_schema.schemata where schema_name = 'infoschema__infoschema';
+SCHEMA_NAME
+infoschema__infoschema
+drop database infoschema__infoschema_2;
+create database if not exists db1;
+create table db1.table1(id int not null primary key, cat_name varchar(255) not null, cat_description text);
+create table db1.table2(id int not null, FOREIGN KEY fk(id) REFERENCES table1(id) ON UPDATE CASCADE ON DELETE RESTRICT);
+create database if not exists db2;
+create table db2.table1(id int not null primary key, cat_name varchar(255) not null, cat_description text);
+create table db2.table2(id int not null, FOREIGN KEY fk(id) REFERENCES table1(id) ON UPDATE CASCADE ON DELETE RESTRICT);
+select * from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where table_schema = 'db1' order by TABLE_NAME;
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
+def	db1	PRIMARY	def	db1	table1	id	1	1	NULL	NULL	NULL
+def	db1	fk	def	db1	table2	id	1	1	db1	table1	id
+drop database db1;
+drop database db2;
+create temporary table temp_table (a int, index idx(a));
+select count(1) from information_schema.tables where table_schema = 'infoschema__infoschema';
+count(1)
+0
+select count(1) from information_schema.tables where table_name = 'temp_table';
+count(1)
+0
+select count(1) from information_schema.statistics where table_name = 'temp_table';
+count(1)
+0
+drop table temp_table;
+create global temporary table temp_table(a int, index idx(a)) on commit delete rows;
+select count(1) from information_schema.tables where table_schema = 'infoschema__infoschema';
+count(1)
+1
+select count(1) from information_schema.tables where table_name = 'temp_table';
+count(1)
+1
+select count(1) from information_schema.statistics where table_name = 'temp_table';
+count(1)
+1
+drop table temp_table;
+create database if not exists Db1;
+create database if not exists dB2;
+create sequence db1.s1;
+create sequence db2.s2;
+select sequence_schema, sequence_name from information_schema.sequences where sequence_schema = 'db1';
+sequence_schema	sequence_name
+Db1	s1
+select sequence_schema, sequence_name from information_schema.sequences where sequence_schema = 'db1' and sequence_name = 's1';
+sequence_schema	sequence_name
+Db1	s1
+select sequence_schema, sequence_name from information_schema.sequences where sequence_schema = 'db1' and sequence_name = 's2';
+sequence_schema	sequence_name
+select sequence_schema, sequence_name from information_schema.sequences;
+sequence_schema	sequence_name
+Db1	s1
+dB2	s2
+drop database db1;
+drop database db2;

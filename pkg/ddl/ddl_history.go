@@ -22,12 +22,13 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"go.uber.org/zap"
@@ -37,11 +38,13 @@ import (
 const (
 	DefNumHistoryJobs   = 10
 	batchNumHistoryJobs = 128
+	// DefNumGetDDLHistoryJobs is the max count for getting the ddl history once.
+	DefNumGetDDLHistoryJobs = 2048
 )
 
 // AddHistoryDDLJob record the history job.
-func AddHistoryDDLJob(sess *sess.Session, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
-	err := addHistoryDDLJob2Table(sess, job, updateRawArgs)
+func AddHistoryDDLJob(ctx context.Context, sess *sess.Session, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
+	err := addHistoryDDLJob2Table(ctx, sess, job, updateRawArgs)
 	if err != nil {
 		logutil.DDLLogger().Info("failed to add DDL job to history table", zap.Error(err))
 	}
@@ -50,12 +53,12 @@ func AddHistoryDDLJob(sess *sess.Session, t *meta.Meta, job *model.Job, updateRa
 }
 
 // addHistoryDDLJob2Table adds DDL job to history table.
-func addHistoryDDLJob2Table(sess *sess.Session, job *model.Job, updateRawArgs bool) error {
+func addHistoryDDLJob2Table(ctx context.Context, sess *sess.Session, job *model.Job, updateRawArgs bool) error {
 	b, err := job.Encode(updateRawArgs)
 	if err != nil {
 		return err
 	}
-	_, err = sess.Execute(context.Background(),
+	_, err = sess.Execute(ctx,
 		fmt.Sprintf("insert ignore into mysql.tidb_ddl_history(job_id, job_meta, db_name, table_name, schema_ids, table_ids, create_time) values (%d, %s, %s, %s, %s, %s, %v)",
 			job.ID, util.WrapKey2String(b), strconv.Quote(job.SchemaName), strconv.Quote(job.TableName),
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)),
@@ -150,9 +153,23 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job, error) {
 	var iter meta.LastJobIterator
 	var err error
+
 	if startJobID == 0 {
+		// if 'start_job_id' == 0 and 'limit' == 0(default value), get the last 1024 ddl history job by defaultly.
+		if limit == 0 {
+			limit = DefNumGetDDLHistoryJobs
+
+			failpoint.Inject("history-ddl-jobs-limit", func(val failpoint.Value) {
+				injectLimit, ok := val.(int)
+				if ok {
+					logutil.DDLLogger().Info("failpoint history-ddl-jobs-limit", zap.Int("limit", injectLimit))
+					limit = injectLimit
+				}
+			})
+		}
 		iter, err = m.GetLastHistoryDDLJobsIterator()
 	} else {
+		// if 'start_job_id' > 0, it must set value to 'limit'
 		if limit == 0 {
 			return nil, errors.New("when 'start_job_id' is specified, it must work with a 'limit'")
 		}
@@ -161,5 +178,6 @@ func ScanHistoryDDLJobs(m *meta.Meta, startJobID int64, limit int) ([]*model.Job
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	return iter.GetLastJobs(limit, nil)
 }

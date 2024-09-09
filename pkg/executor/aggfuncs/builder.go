@@ -37,7 +37,7 @@ type AggFuncBuildContext = exprctx.ExprContext
 func Build(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	switch aggFuncDesc.Name {
 	case ast.AggFuncCount:
-		return buildCount(aggFuncDesc, ordinal)
+		return buildCount(ctx.GetEvalCtx(), aggFuncDesc, ordinal)
 	case ast.AggFuncSum:
 		return buildSum(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncAvg:
@@ -103,9 +103,9 @@ func BuildWindowFunctions(ctx AggFuncBuildContext, windowFuncDesc *aggregation.A
 		return buildLag(ctx, windowFuncDesc, ordinal)
 	case ast.AggFuncMax:
 		// The max/min aggFunc using in the window function will using the sliding window algo.
-		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, true)
+		return buildMaxMinInWindowFunction(ctx, windowFuncDesc, ordinal, true)
 	case ast.AggFuncMin:
-		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, false)
+		return buildMaxMinInWindowFunction(ctx, windowFuncDesc, ordinal, false)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
@@ -144,9 +144,9 @@ func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int)
 	return nil
 }
 
-func getEvalTypeForApproxPercentile(aggFuncDesc *aggregation.AggFuncDesc) types.EvalType {
-	evalType := aggFuncDesc.Args[0].GetType().EvalType()
-	argType := aggFuncDesc.Args[0].GetType().GetType()
+func getEvalTypeForApproxPercentile(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc) types.EvalType {
+	evalType := aggFuncDesc.Args[0].GetType(ctx).EvalType()
+	argType := aggFuncDesc.Args[0].GetType(ctx).GetType()
 
 	// Sometimes `mysql.EnumSetAsIntFlag` may be set to true, such as when join,
 	// which is unexpected for `buildApproxPercentile` and `mysql.TypeEnum` and `mysql.TypeSet` will return unexpected `ETInt` here,
@@ -174,7 +174,7 @@ func buildApproxPercentile(sctx AggFuncBuildContext, aggFuncDesc *aggregation.Ag
 
 	base := basePercentile{percent: int(percent), baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
 
-	evalType := getEvalTypeForApproxPercentile(aggFuncDesc)
+	evalType := getEvalTypeForApproxPercentile(sctx.GetEvalCtx(), aggFuncDesc)
 	switch aggFuncDesc.Mode {
 	case aggregation.CompleteMode, aggregation.Partial1Mode, aggregation.FinalMode:
 		switch evalType {
@@ -198,7 +198,7 @@ func buildApproxPercentile(sctx AggFuncBuildContext, aggFuncDesc *aggregation.Ag
 }
 
 // buildCount builds the AggFunc implementation for function "COUNT".
-func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func buildCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// If mode is DedupMode, we return nil for not implemented.
 	if aggFuncDesc.Mode == aggregation.DedupMode {
 		return nil // not implemented yet.
@@ -220,7 +220,7 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			// so they're in exception for now.
 			// TODO: add hashCode method for all evaluate types (decimal, Time, Duration, JSON).
 			// https://github.com/pingcap/tidb/issues/15857
-			switch aggFuncDesc.Args[0].GetType().EvalType() {
+			switch aggFuncDesc.Args[0].GetType(ctx).EvalType() {
 			case types.ETInt:
 				return &countOriginalWithDistinct4Int{baseCount{base}}
 			case types.ETReal:
@@ -238,7 +238,7 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 	switch aggFuncDesc.Mode {
 	case aggregation.CompleteMode, aggregation.Partial1Mode:
-		switch aggFuncDesc.Args[0].GetType().EvalType() {
+		switch aggFuncDesc.Args[0].GetType(ctx).EvalType() {
 		case types.ETInt:
 			return &countOriginal4Int{baseCount{base}}
 		case types.ETReal:
@@ -251,6 +251,8 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			return &countOriginal4Duration{baseCount{base}}
 		case types.ETJson:
 			return &countOriginal4JSON{baseCount{base}}
+		case types.ETVectorFloat32:
+			return &countOriginal4VectorFloat32{baseCount{base}}
 		case types.ETString:
 			return &countOriginal4String{baseCount{base}}
 		}
@@ -378,6 +380,8 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			return &firstRow4String{base}
 		case types.ETJson:
 			return &firstRow4JSON{base}
+		case types.ETVectorFloat32:
+			return &firstRow4VectorFloat32{base}
 		}
 	}
 	return nil
@@ -431,13 +435,15 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 			return &maxMin4Duration{base}
 		case types.ETJson:
 			return &maxMin4JSON{base}
+		case types.ETVectorFloat32:
+			return &maxMin4VectorFloat32{base}
 		}
 	}
 	return nil
 }
 
 // buildMaxMin builds the AggFunc implementation for function "MAX" and "MIN" using by window function.
-func buildMaxMinInWindowFunction(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
+func buildMaxMinInWindowFunction(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
 	base := buildMaxMin(aggFuncDesc, ordinal, isMax)
 	// build max/min aggFunc for window function using sliding window
 	switch baseAggFunc := base.(type) {
@@ -452,7 +458,7 @@ func buildMaxMinInWindowFunction(aggFuncDesc *aggregation.AggFuncDesc, ordinal i
 	case *maxMin4Decimal:
 		return &maxMin4DecimalSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4String:
-		return &maxMin4StringSliding{*baseAggFunc, windowInfo{}}
+		return &maxMin4StringSliding{*baseAggFunc, windowInfo{}, baseAggFunc.args[0].GetType(ctx.GetEvalCtx()).GetCollate()}
 	case *maxMin4Time:
 		return &maxMin4TimeSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Duration:
@@ -488,12 +494,25 @@ func buildGroupConcat(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncD
 		}
 		if aggFuncDesc.HasDistinct {
 			if len(aggFuncDesc.OrderByItems) > 0 {
-				return &groupConcatDistinctOrder{base}
+				desc := make([]bool, len(base.byItems))
+				ctors := make([]collate.Collator, 0, len(base.byItems))
+				for i, byItem := range base.byItems {
+					desc[i] = byItem.Desc
+					ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType(ctx.GetEvalCtx()).GetCollate()))
+				}
+				return &groupConcatDistinctOrder{base, ctors, desc}
 			}
 			return &groupConcatDistinct{base}
 		}
 		if len(aggFuncDesc.OrderByItems) > 0 {
-			return &groupConcatOrder{base}
+			desc := make([]bool, len(base.byItems))
+			ctors := make([]collate.Collator, 0, len(base.byItems))
+			for i, byItem := range base.byItems {
+				desc[i] = byItem.Desc
+				ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType(ctx.GetEvalCtx()).GetCollate()))
+			}
+
+			return &groupConcatOrder{base, ctors, desc}
 		}
 		return &groupConcat{base}
 	}

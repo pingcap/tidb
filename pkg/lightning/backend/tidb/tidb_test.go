@@ -34,8 +34,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -63,7 +64,7 @@ func createMysqlSuite(t *testing.T) *mysqlSuite {
 	}
 	cols := make([]*model.ColumnInfo, 0, len(tys))
 	for i, ty := range tys {
-		col := &model.ColumnInfo{ID: int64(i + 1), Name: model.NewCIStr(fmt.Sprintf("c%d", i)), State: model.StatePublic, Offset: i, FieldType: *types.NewFieldType(ty)}
+		col := &model.ColumnInfo{ID: int64(i + 1), Name: pmodel.NewCIStr(fmt.Sprintf("c%d", i)), State: model.StatePublic, Offset: i, FieldType: *types.NewFieldType(ty)}
 		cols = append(cols, col)
 	}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
@@ -142,7 +143,9 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 	require.NoError(t, err)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.TiDB.TableName = "`foo`.`bar`"
+	writer, err := engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"b", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
 	require.NoError(t, err)
@@ -183,7 +186,9 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	require.NoError(t, err)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.TiDB.TableName = "`foo`.`bar`"
+	writer, err := engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
@@ -212,7 +217,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	writer, err = engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writer, err = engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
@@ -264,7 +269,9 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.TiDB.TableName = "`foo`.`bar`"
+	writer, err := engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
@@ -281,10 +288,10 @@ func testStrictMode(t *testing.T) {
 	defer s.TearDownTest(t)
 	ft := *types.NewFieldType(mysql.TypeVarchar)
 	ft.SetCharset(charset.CharsetUTF8MB4)
-	col0 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("s0"), State: model.StatePublic, Offset: 0, FieldType: ft}
+	col0 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("s0"), State: model.StatePublic, Offset: 0, FieldType: ft}
 	ft = *types.NewFieldType(mysql.TypeString)
 	ft.SetCharset(charset.CharsetASCII)
-	col1 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
+	col1 := &model.ColumnInfo{ID: 2, Name: pmodel.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
 	tblInfo := &model.TableInfo{ID: 1, Columns: []*model.ColumnInfo{col0, col1}, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
 	require.NoError(t, err)
@@ -345,12 +352,12 @@ func TestFetchRemoteTableModels_3_x(t *testing.T) {
 	ft.SetFlag(mysql.AutoIncrementFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
-			Name:       model.NewCIStr("t"),
+			Name:       pmodel.NewCIStr("t"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      model.NewCIStr("id"),
+					Name:      pmodel.NewCIStr("id"),
 					Offset:    0,
 					State:     model.StatePublic,
 					FieldType: ft,
@@ -382,12 +389,12 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 	ft.SetFlag(mysql.AutoIncrementFlag | mysql.UnsignedFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
-			Name:       model.NewCIStr("t"),
+			Name:       pmodel.NewCIStr("t"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      model.NewCIStr("id"),
+					Name:      pmodel.NewCIStr("id"),
 					Offset:    0,
 					State:     model.StatePublic,
 					FieldType: ft,
@@ -419,12 +426,12 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 	ft.SetFlag(mysql.AutoIncrementFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
-			Name:       model.NewCIStr("t"),
+			Name:       pmodel.NewCIStr("t"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      model.NewCIStr("id"),
+					Name:      pmodel.NewCIStr("id"),
 					Offset:    0,
 					State:     model.StatePublic,
 					FieldType: ft,
@@ -456,13 +463,13 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 	ft.SetFlag(mysql.PriKeyFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
-			Name:           model.NewCIStr("t"),
+			Name:           pmodel.NewCIStr("t"),
 			State:          model.StatePublic,
 			PKIsHandle:     true,
 			AutoRandomBits: 1,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:                model.NewCIStr("id"),
+					Name:                pmodel.NewCIStr("id"),
 					Offset:              0,
 					State:               model.StatePublic,
 					FieldType:           ft,
@@ -501,18 +508,18 @@ func TestFetchRemoteTableModelsDropTableHalfway(t *testing.T) {
 	ft.SetFlag(mysql.AutoIncrementFlag)
 	require.Equal(t, []*model.TableInfo{
 		{
-			Name:       model.NewCIStr("tbl01"),
+			Name:       pmodel.NewCIStr("tbl01"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      model.NewCIStr("id"),
+					Name:      pmodel.NewCIStr("id"),
 					Offset:    0,
 					State:     model.StatePublic,
 					FieldType: ft,
 				},
 				{
-					Name:   model.NewCIStr("val"),
+					Name:   pmodel.NewCIStr("val"),
 					Offset: 1,
 					State:  model.StatePublic,
 				},
@@ -542,7 +549,9 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 	ctx := context.Background()
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.TiDB.TableName = "`foo`.`bar`"
+	writer, err := engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.Error(t, err)
@@ -606,7 +615,9 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 	ctx := context.Background()
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.TiDB.TableName = "`foo`.`bar`"
+	writer, err := engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
@@ -659,7 +670,9 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 	ctx := context.Background()
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.TiDB.TableName = "`foo`.`bar`"
+	writer, err := engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.Error(t, err)
@@ -699,7 +712,9 @@ func TestWriteRowsRecordOneError(t *testing.T) {
 	ctx := context.Background()
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.TiDB.TableName = "`foo`.`bar`"
+	writer, err := engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.ErrorContains(t, err, "Duplicate entry '2' for key 'PRIMARY'")
@@ -726,7 +741,9 @@ func TestDuplicateThreshold(t *testing.T) {
 	ctx := context.Background()
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.TiDB.TableName = "`foo`.`bar`"
+	writer, err := engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
@@ -739,7 +756,7 @@ func TestDuplicateThreshold(t *testing.T) {
 	s.mockDB.
 		ExpectExec("\\QINSERT IGNORE INTO `foo`.`bar`(`a`) VALUES(1),(2),(3),(4),(5)\\E").
 		WillReturnResult(sqlmock.NewResult(5, 0))
-	writer, err = engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writer, err = engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.ErrorContains(t, err, "The number of conflict errors exceeds the threshold configured by `conflict.threshold`: '5'")
@@ -898,7 +915,9 @@ func TestLogicalImportBatch(t *testing.T) {
 
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
-	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.TiDB.TableName = "`foo`.`bar`"
+	writer, err := engine.LocalWriter(ctx, writerCfg)
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)

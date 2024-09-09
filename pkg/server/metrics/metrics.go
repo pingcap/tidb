@@ -17,9 +17,9 @@ package metrics
 import (
 	"strconv"
 
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

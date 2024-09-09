@@ -24,7 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 735.504166655054
+        "Count": 791.004166655054
       },
       {
         "Start": 900,
@@ -79,7 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1193.696869573942
+        "Count": 1249.196869573942
       },
       {
         "Start": 900,
@@ -104,7 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1237.5288209899081
+        "Count": 1188.7788209899081
       },
       {
         "Start": 200,
@@ -2536,6 +2536,23 @@
                         ]
                       },
                       {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 0,
+                              "Exceed": false,
+                              "InBucket": false,
+                              "MatchLastValue": false,
+                              "Value": "KindMinNotNull <nil>"
+                            }
+                          },
+                          {
+                            "Count": 0,
+                            "Matched": false
+                          }
+                        ]
+                      },
+                      {
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
                             "lDatum": "KindMinNotNull <nil>",
@@ -2572,7 +2589,7 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 0
+                    "Result": 1
                   }
                 ]
               },
@@ -2817,6 +2834,23 @@
                             ]
                           },
                           {
+                            "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                              {
+                                "Locate value in buckets": {
+                                  "BucketIdx": 0,
+                                  "Exceed": false,
+                                  "InBucket": false,
+                                  "MatchLastValue": false,
+                                  "Value": "KindBytes \\x01"
+                                }
+                              },
+                              {
+                                "Count": 0,
+                                "Matched": false
+                              }
+                            ]
+                          },
+                          {
                             "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
                               {
                                 "lDatum": "KindBytes \\x01",
@@ -2853,7 +2887,7 @@
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 0,
+                          "RowCount": 1,
                           "Type": "Range"
                         }
                       }
@@ -2861,7 +2895,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 0
+                    "Result": 1
                   }
                 ]
               },
@@ -3413,11 +3447,11 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0,
+                "Selectivity": 0.0003246753246753247,
                 "partial cover": false
               },
               {
-                "Result": 0
+                "Result": 2.1082813290605499e-7
               }
             ]
           }
@@ -3523,6 +3557,23 @@
                           {
                             "Bucket idx": 0,
                             "Result": 0
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 0,
+                              "Exceed": false,
+                              "InBucket": false,
+                              "MatchLastValue": false,
+                              "Value": "KindMinNotNull <nil>"
+                            }
+                          },
+                          {
+                            "Count": 0,
+                            "Matched": false
                           }
                         ]
                       },
@@ -3663,6 +3714,32 @@
                           {
                             "Bucket idx": 111,
                             "Result": 893.25
+                          }
+                        ]
+                      },
+                      {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 111,
+                              "Exceed": false,
+                              "InBucket": true,
+                              "MatchLastValue": false,
+                              "Value": "KindInt64 400"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": 896,
+                                "Index": 111,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Count": 0.99,
+                            "Matched": false
                           }
                         ]
                       },
@@ -3814,6 +3891,23 @@
                         ]
                       },
                       {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 0,
+                              "Exceed": false,
+                              "InBucket": false,
+                              "MatchLastValue": false,
+                              "Value": "KindBytes \\x01"
+                            }
+                          },
+                          {
+                            "Count": 0,
+                            "Matched": false
+                          }
+                        ]
+                      },
+                      {
                         "github.com/pingcap/tidb/pkg/statistics.(*TopN).BetweenCount": {
                           "Result": 0
                         }
@@ -3846,7 +3940,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 0
+                    "Result": 1
                   }
                 ]
               },
@@ -3943,6 +4037,32 @@
                         ]
                       },
                       {
+                        "github.com/pingcap/tidb/pkg/statistics.(*Histogram).EqualRowCount": [
+                          {
+                            "Locate value in buckets": {
+                              "BucketIdx": 111,
+                              "Exceed": false,
+                              "InBucket": true,
+                              "MatchLastValue": false,
+                              "Value": "KindBytes \\x03\\x80\\x00\\x00\\x00\\x00\\x00\\x01\\x91"
+                            }
+                          },
+                          {
+                            "Related Buckets in Histogram": [
+                              {
+                                "Count": 896,
+                                "Index": 111,
+                                "Repeat": 1
+                              }
+                            ]
+                          },
+                          {
+                            "Count": 0.99,
+                            "Matched": false
+                          }
+                        ]
+                      },
+                      {
                         "github.com/pingcap/tidb/pkg/statistics.(*TopN).BetweenCount": {
                           "Result": 0
                         }
@@ -3973,11 +4093,11 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0,
+                "Selectivity": 0.0003246753246753247,
                 "partial cover": false
               },
               {
-                "Result": 0
+                "Result": 1.9066503965832828e-7
               }
             ]
           }
@@ -4057,8 +4177,8 @@
       {
         "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1",
         "Result": [
-          "Projection 16.00 root  test.t.a, test.t.b",
-          "└─IndexReader 16.00 root  index:IndexRangeScan",
+          "IndexReader 16.00 root  index:Projection",
+          "└─Projection 16.00 cop[tikv]  test.t.a, test.t.b",
           "  └─IndexRangeScan 16.00 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1 1,1 1 1], keep order:false"
         ]
       },

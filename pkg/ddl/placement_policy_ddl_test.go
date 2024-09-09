@@ -22,8 +22,10 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
@@ -31,7 +33,7 @@ import (
 
 func testPlacementPolicyInfo(t *testing.T, store kv.Storage, name string, settings *model.PlacementSettings) *model.PolicyInfo {
 	policy := &model.PolicyInfo{
-		Name:              model.NewCIStr(name),
+		Name:              pmodel.NewCIStr(name),
 		PlacementSettings: settings,
 	}
 	genIDs, err := genGlobalIDs(store, 1)
@@ -40,7 +42,7 @@ func testPlacementPolicyInfo(t *testing.T, store kv.Storage, name string, settin
 	return policy
 }
 
-func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.DDL, policyInfo *model.PolicyInfo) *model.Job {
+func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, policyInfo *model.PolicyInfo) *model.Job {
 	job := &model.Job{
 		SchemaName: policyInfo.Name.L,
 		Type:       model.ActionCreatePlacementPolicy,
@@ -60,7 +62,7 @@ func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.DDL, 
 
 func TestPlacementPolicyInUse(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	d := dom.DDL()
+	d := dom.DDLExecutor().(ddl.ExecutorForTest)
 
 	sctx := testkit.NewTestKit(t, store).Session()
 
@@ -91,21 +93,21 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	t1.PlacementPolicyRef = &model.PolicyRefInfo{ID: p1.ID, Name: p1.Name}
 	testCreateTable(t, sctx, d, db1, t1)
 	t1.State = model.StatePublic
-	db1.Tables = append(db1.Tables, t1)
+	db1.Deprecated.Tables = append(db1.Deprecated.Tables, t1)
 
 	t2, err := testTableInfo(store, "t2", 1)
 	require.NoError(t, err)
 	t2.PlacementPolicyRef = &model.PolicyRefInfo{ID: p1.ID, Name: p1.Name}
 	testCreateTable(t, sctx, d, db2, t2)
 	t2.State = model.StatePublic
-	db2.Tables = append(db2.Tables, t2)
+	db2.Deprecated.Tables = append(db2.Deprecated.Tables, t2)
 
 	t3, err := testTableInfo(store, "t3", 1)
 	require.NoError(t, err)
 	t3.PlacementPolicyRef = &model.PolicyRefInfo{ID: p2.ID, Name: p2.Name}
 	testCreateTable(t, sctx, d, db1, t3)
 	t3.State = model.StatePublic
-	db1.Tables = append(db1.Tables, t3)
+	db1.Deprecated.Tables = append(db1.Deprecated.Tables, t3)
 
 	dbP, err := testSchemaInfo(store, "db_p")
 	require.NoError(t, err)
@@ -117,9 +119,10 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	t4.Partition.Definitions[0].PlacementPolicyRef = &model.PolicyRefInfo{ID: p5.ID, Name: p5.Name}
 	testCreateTable(t, sctx, d, db1, t4)
 	t4.State = model.StatePublic
-	db1.Tables = append(db1.Tables, t4)
+	db1.Deprecated.Tables = append(db1.Deprecated.Tables, t4)
 
-	builder, err := infoschema.NewBuilder(dom, nil, infoschema.NewData()).InitWithDBInfos(
+	builder := infoschema.NewBuilder(dom, nil, infoschema.NewData(), variable.SchemaCacheSize.Load() > 0)
+	err = builder.InitWithDBInfos(
 		[]*model.DBInfo{db1, db2, dbP},
 		[]*model.PolicyInfo{p1, p2, p3, p4, p5},
 		nil,
@@ -154,12 +157,12 @@ func testTableInfoWithPartition(t *testing.T, store kv.Storage, name string, num
 	require.NoError(t, err)
 	pid := genIDs[0]
 	tblInfo.Partition = &model.PartitionInfo{
-		Type:   model.PartitionTypeRange,
+		Type:   pmodel.PartitionTypeRange,
 		Expr:   tblInfo.Columns[0].Name.L,
 		Enable: true,
 		Definitions: []model.PartitionDefinition{{
 			ID:       pid,
-			Name:     model.NewCIStr("p0"),
+			Name:     pmodel.NewCIStr("p0"),
 			LessThan: []string{"maxvalue"},
 		}},
 	}

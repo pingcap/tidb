@@ -15,21 +15,19 @@
 package ingest_test
 
 import (
-	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -89,7 +87,7 @@ func TestIngestError(t *testing.T) {
 	tk.MustExec("set global tidb_enable_dist_task = 0")
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int primary key, b int);")
 	for i := 0; i < 4; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
@@ -130,20 +128,23 @@ func TestAddIndexIngestPanic(t *testing.T) {
 
 	tk.MustExec("set global tidb_enable_dist_task = 0")
 
-	// Mock panic on coprocessor request sender.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockCopSenderPanic", "return(true)"))
-	tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
-	tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
-	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrReorgPanic)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCopSenderPanic"))
+	t.Run("Mock panic on scan record operator", func(t *testing.T) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func() {
+			panic("mock panic")
+		})
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
+		tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
+		tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrReorgPanic)
+	})
 
-	// Mock panic on local engine writer.
-	tk.MustExec("drop table t;")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic", "return"))
-	tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
-	tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
-	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrReorgPanic)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic"))
+	t.Run("Mock panic on local engine writer", func(t *testing.T) {
+		tk.MustExec("drop table if exists t;")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockLocalWriterPanic", "return")
+		tk.MustExec("create table t (a int, b int, c int, d int, primary key (a) clustered);")
+		tk.MustExec("insert into t (a, b, c, d) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
+		tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrReorgPanic)
+	})
 }
 
 func TestAddIndexIngestCancel(t *testing.T) {
@@ -154,10 +155,8 @@ func TestAddIndexIngestCancel(t *testing.T) {
 
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3);")
-	defHook := dom.DDL().GetHook()
-	customHook := newTestCallBack(t, dom)
 	cancelled := false
-	customHook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if cancelled {
 			return
 		}
@@ -174,33 +173,13 @@ func TestAddIndexIngestCancel(t *testing.T) {
 				cancelled = true
 			}
 		}
-	}
-	dom.DDL().SetHook(customHook)
+	})
 	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
 	require.True(t, cancelled)
-	dom.DDL().SetHook(defHook)
-	ok, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable(context.Background())
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	ok, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 	require.NoError(t, err)
 	require.True(t, ok)
-}
-
-type testCallback struct {
-	ddl.Callback
-	OnJobRunBeforeExported func(job *model.Job)
-}
-
-func newTestCallBack(t *testing.T, dom *domain.Domain) *testCallback {
-	defHookFactory, err := ddl.GetCustomizedHook("default_hook")
-	require.NoError(t, err)
-	return &testCallback{
-		Callback: defHookFactory(dom),
-	}
-}
-
-func (c *testCallback) OnJobRunBefore(job *model.Job) {
-	if c.OnJobRunBeforeExported != nil {
-		c.OnJobRunBeforeExported(job)
-	}
 }
 
 func TestIngestPartitionRowCount(t *testing.T) {
@@ -236,7 +215,7 @@ func TestAddIndexIngestClientError(t *testing.T) {
 }
 
 func TestAddIndexCancelOnNoneState(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
@@ -245,18 +224,16 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
 	tk.MustExec("insert into t values(1, 1, 1);")
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	first := true
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState == model.StateNone && first {
 			_, err := tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 			assert.NoError(t, err)
 			first = false
 		}
-	}
-	dom.DDL().SetHook(hook.Clone())
+	})
 	tk.MustGetErrCode("alter table t add index idx1(c1)", errno.ErrCancelledDDLJob)
-	available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable(context.Background())
+	available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 	require.NoError(t, err)
 	require.True(t, available)
 }
@@ -375,4 +352,72 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 		require.NoError(t, tk2Err)
 		tk.MustExec("admin check table t;")
 	}
+}
+
+func TestAddIndexIngestJobWriteConflict(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int);")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	injected := false
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterRunIngestReorgJob", func(job *model.Job, done bool) {
+		if done && !injected {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			// Simulate write-conflict on ddl job table.
+			updateSQL := fmt.Sprintf("update mysql.tidb_ddl_job set processing = 0 where job_id = %d", job.ID)
+			tk2.MustExec(updateSQL)
+			updateSQL = fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID)
+			tk2.MustExec(updateSQL)
+			injected = true
+		}
+	})
+	rowCnt := atomic.Int32{}
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
+		rowCnt.Add(1)
+	})
+	tk.MustExec("alter table t add index idx(b);")
+	require.True(t, injected)
+	// Write conflict error should not retry the whole job.
+	require.Equal(t, 3, int(rowCnt.Load())) // it should not be 6
+	tk.MustExec("admin check table t;")
+}
+
+func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 4;")
+	for i := 0; i < 20; i++ {
+		insertSQL := fmt.Sprintf("insert into t values (%d, %d)", i, i)
+		tk.MustExec(insertSQL)
+	}
+
+	var jobID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) {
+		jobID = job.ID
+	})
+	rowCnt := atomic.Int32{}
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
+		rowCnt.Add(1)
+		if rowCnt.Load() == 10 {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			updateSQL := fmt.Sprintf("update mysql.tidb_ddl_job set processing = 0 where job_id = %d", jobID)
+			tk2.MustExec(updateSQL)
+			updateSQL = fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", jobID)
+			tk2.MustExec(updateSQL)
+		}
+	})
+
+	tk.MustExec("alter table t add index idx(b);")
+	// It should resume to correct partition.
+	require.Equal(t, 20, int(rowCnt.Load()))
+	tk.MustExec("admin check table t;")
 }

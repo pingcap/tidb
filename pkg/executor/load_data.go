@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -211,7 +211,9 @@ func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 	readers := []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
 			addedSeekReader := NewSimpleSeekerOnReadCloser(r)
-			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{})
+			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{
+				ZStdDecodeConcurrency: 1,
+			})
 		}}}
 	return e.load(ctx, readers)
 }
@@ -289,7 +291,7 @@ func initEncodeCommitWorkers(e *LoadDataWorker) (*encodeWorker, *commitWorker, e
 	if err2 != nil {
 		return nil, nil, err2
 	}
-	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.Ctx())
+	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.Ctx().GetPlanCtx())
 	if err2 != nil {
 		return nil, nil, err2
 	}
@@ -356,7 +358,7 @@ type commitTask struct {
 	rows [][]types.Datum
 }
 
-// processStream always trys to build a parser from channel and process it. When
+// processStream always tries to build a parser from channel and process it. When
 // it returns nil, it means all data is read.
 func (w *encodeWorker) processStream(
 	ctx context.Context,
@@ -645,6 +647,11 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 	case ast.OnDuplicateKeyHandlingIgnore:
 		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, false)
 	case ast.OnDuplicateKeyHandlingError:
+		txn, err := w.Ctx().Txn(true)
+		if err != nil {
+			return err
+		}
+		dupKeyCheck := optimizeDupKeyCheckForNormalInsert(w.Ctx().GetSessionVars(), txn)
 		for i, row := range rows[0:cnt] {
 			sizeHintStep := int(w.Ctx().GetSessionVars().ShardAllocateStep)
 			if sizeHintStep > 0 && i%sizeHintStep == 0 {
@@ -653,9 +660,9 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 				if sizeHint > remain {
 					sizeHint = remain
 				}
-				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint)
+				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint, dupKeyCheck)
 			} else {
-				err = w.addRecord(ctx, row)
+				err = w.addRecord(ctx, row, dupKeyCheck)
 			}
 			if err != nil {
 				return err
@@ -668,11 +675,11 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 	}
 }
 
-func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum) error {
+func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
 	if row == nil {
 		return nil
 	}
-	return w.addRecord(ctx, row)
+	return w.addRecord(ctx, row, dupKeyCheck)
 }
 
 // GetInfilePath get infile path.

@@ -35,11 +35,13 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -278,7 +280,7 @@ func BenchmarkAggDistinct(b *testing.B) {
 	}
 }
 
-func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *core.WindowFrame, srcExec exec.Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) exec.Executor {
+func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *logicalop.WindowFrame, srcExec exec.Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) exec.Executor {
 	src := testutil.BuildMockDataPhysicalPlan(ctx, srcExec)
 	win := new(core.PhysicalWindow)
 	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
@@ -476,8 +478,8 @@ func baseBenchmarkWindowFunctionsWithFrame(b *testing.B, pipelined int) {
 		ast.AggFuncBitXor,
 	}
 	numFuncs := []int{1, 5}
-	frames := []*core.WindowFrame{
-		{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{Type: ast.CurrentRow}},
+	frames := []*logicalop.WindowFrame{
+		{Type: ast.Rows, Start: &logicalop.FrameBound{UnBounded: true}, End: &logicalop.FrameBound{Type: ast.CurrentRow}},
 	}
 	sortTypes := []bool{false, true}
 	concs := []int{1, 2, 3, 4, 5, 6}
@@ -513,7 +515,7 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 func baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFunc := ast.AggFuncMax
-	frame := &core.WindowFrame{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{UnBounded: true}}
+	frame := &logicalop.WindowFrame{Type: ast.Rows, Start: &logicalop.FrameBound{UnBounded: true}, End: &logicalop.FrameBound{UnBounded: true}}
 	cas := testutil.DefaultWindowTestCase()
 	cas.Rows = 10000
 	cas.Ndv = 10
@@ -552,10 +554,10 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 	}
 	row := 100000
 	ndv := 100
-	frame := &core.WindowFrame{
+	frame := &logicalop.WindowFrame{
 		Type:  frameType,
-		Start: &core.FrameBound{Type: ast.Preceding, Num: 10},
-		End:   &core.FrameBound{Type: ast.Following, Num: 10},
+		Start: &logicalop.FrameBound{Type: ast.Preceding, Num: 10},
+		End:   &logicalop.FrameBound{Type: ast.Following, Num: 10},
 	}
 	for _, windowFunc := range windowFuncs {
 		cas := testutil.DefaultWindowTestCase()
@@ -585,7 +587,7 @@ type hashJoinTestCase struct {
 	concurrency        int
 	ctx                sessionctx.Context
 	keyIdx             []int
-	joinType           core.JoinType
+	joinType           logicalop.JoinType
 	disk               bool
 	useOuterToBuild    bool
 	rawData            string
@@ -606,7 +608,7 @@ func (tc hashJoinTestCase) String() string {
 		tc.rows, tc.cols, tc.concurrency, tc.keyIdx, tc.disk)
 }
 
-func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, useOuterToBuild bool) *hashJoinTestCase {
+func defaultHashJoinTestCase(cols []*types.FieldType, joinType logicalop.JoinType, useOuterToBuild bool) *hashJoinTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
@@ -620,10 +622,10 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	return tc
 }
 
-func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, joinType core.JoinType) *expression.Schema {
+func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, joinType logicalop.JoinType) *expression.Schema {
 	colsNeedResolving := joinSchema.Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if joinType == core.LeftOuterSemiJoin || joinType == core.AntiLeftOuterSemiJoin {
+	if joinType == logicalop.LeftOuterSemiJoin || joinType == logicalop.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	mergedSchema := expression.MergeSchema(lSchema, rSchema)
@@ -658,7 +660,98 @@ func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, join
 	return joinSchema
 }
 
-func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Executor) *join.HashJoinExec {
+func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Executor) *join.HashJoinV2Exec {
+	cols0 := innerExec.Schema().Columns
+	cols1 := outerExec.Schema().Columns
+
+	innerTypes, outerTypes := exec.RetTypes(innerExec), exec.RetTypes(outerExec)
+	joinedTypes := make([]*types.FieldType, 0, len(innerTypes)+len(outerTypes))
+	joinedTypes = append(joinedTypes, innerTypes...)
+	joinedTypes = append(joinedTypes, outerTypes...)
+
+	joinSchema := expression.NewSchema()
+	if testCase.childrenUsedSchema != nil {
+		for i, used := range testCase.childrenUsedSchema[0] {
+			if used {
+				joinSchema.Append(cols0[i])
+			}
+		}
+		for i, used := range testCase.childrenUsedSchema[1] {
+			if used {
+				joinSchema.Append(cols1[i])
+			}
+		}
+	} else {
+		joinSchema.Append(cols0...)
+		joinSchema.Append(cols1...)
+	}
+	// todo: need systematic way to protect.
+	// physical join should resolveIndices to get right schema column index.
+	// otherwise, markChildrenUsedColsForTest will fail below.
+	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), logicalop.InnerJoin)
+
+	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
+	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
+	probeKeysColIdx := make([]int, 0, len(testCase.keyIdx))
+	probeKeysColIdx = append(probeKeysColIdx, testCase.keyIdx...)
+	probeKeyTypes := make([]*types.FieldType, 0, len(probeKeysColIdx))
+	buildKeyTypes := make([]*types.FieldType, 0, len(probeKeysColIdx))
+	for _, i := range testCase.keyIdx {
+		probeKeyTypes = append(probeKeyTypes, outerTypes[i])
+		buildKeyTypes = append(buildKeyTypes, innerTypes[i])
+	}
+	hashJoinCtx := &join.HashJoinCtxV2{
+		OtherCondition: nil,
+	}
+	hashJoinCtx.Concurrency = uint(testCase.concurrency)
+	hashJoinCtx.SetupPartitionInfo()
+	hashJoinCtx.SessCtx = testCase.ctx
+	hashJoinCtx.JoinType = testCase.joinType
+	hashJoinCtx.Concurrency = uint(testCase.concurrency)
+	hashJoinCtx.ChunkAllocPool = chunk.NewEmptyAllocator()
+	hashJoinCtx.RightAsBuildSide = false
+	hashJoinCtx.BuildKeyTypes = buildKeyTypes
+	hashJoinCtx.ProbeKeyTypes = probeKeyTypes
+	e := &join.HashJoinV2Exec{
+		BaseExecutor:          exec.NewBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
+		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV2{},
+		ProbeWorkers:          make([]*join.ProbeWorkerV2, testCase.concurrency),
+		BuildWorkers:          make([]*join.BuildWorkerV2, testCase.concurrency),
+		HashJoinCtxV2:         hashJoinCtx,
+	}
+	e.ProbeSideTupleFetcher.ProbeSideExec = outerExec
+	e.LUsed = make([]int, 0, len(innerTypes))
+	for index := range innerTypes {
+		e.LUsed = append(e.LUsed, index)
+	}
+	e.RUsed = make([]int, 0, len(outerTypes))
+	for index := range outerTypes {
+		e.RUsed = append(e.RUsed, index)
+	}
+
+	for i := 0; i < testCase.concurrency; i++ {
+		e.ProbeWorkers[i] = &join.ProbeWorkerV2{
+			HashJoinCtx: e.HashJoinCtxV2,
+			JoinProbe:   join.NewJoinProbe(e.HashJoinCtxV2, uint(i), testCase.joinType, probeKeysColIdx, joinedTypes, probeKeyTypes, false),
+		}
+		e.ProbeWorkers[i].WorkerID = uint(i)
+		e.BuildWorkers[i] = join.NewJoinBuildWorkerV2(e.HashJoinCtxV2, uint(i), innerExec, joinKeysColIdx, innerTypes)
+	}
+	memLimit := int64(-1)
+	if testCase.disk {
+		memLimit = 1
+	}
+	t := memory.NewTracker(-1, memLimit)
+	t.SetActionOnExceed(nil)
+	t2 := disk.NewTracker(-1, -1)
+	e.Ctx().GetSessionVars().MemTracker = t
+	e.Ctx().GetSessionVars().StmtCtx.MemTracker.AttachTo(t)
+	e.Ctx().GetSessionVars().DiskTracker = t2
+	e.Ctx().GetSessionVars().StmtCtx.DiskTracker.AttachTo(t2)
+	return e
+}
+
+func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Executor) *join.HashJoinV1Exec {
 	if testCase.useOuterToBuild {
 		innerExec, outerExec = outerExec, innerExec
 	}
@@ -684,47 +777,48 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 	// todo: need systematic way to protect.
 	// physical join should resolveIndices to get right schema column index.
 	// otherwise, markChildrenUsedColsForTest will fail below.
-	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), core.InnerJoin)
+	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), logicalop.InnerJoin)
 
 	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
 	probeKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	probeKeysColIdx = append(probeKeysColIdx, testCase.keyIdx...)
-	e := &join.HashJoinExec{
-		BaseExecutor: exec.NewBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
-		HashJoinCtx: &join.HashJoinCtx{
-			SessCtx:         testCase.ctx,
-			JoinType:        testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
-			IsOuterJoin:     false,
-			UseOuterToBuild: testCase.useOuterToBuild,
-			Concurrency:     uint(testCase.concurrency),
-			ProbeTypes:      exec.RetTypes(outerExec),
-			BuildTypes:      exec.RetTypes(innerExec),
-			ChunkAllocPool:  chunk.NewEmptyAllocator(),
-		},
-		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcher{
-			ProbeSideExec: outerExec,
-		},
-		ProbeWorkers: make([]*join.ProbeWorker, testCase.concurrency),
-		BuildWorker: &join.BuildWorker{
-			BuildKeyColIdx: joinKeysColIdx,
-			BuildSideExec:  innerExec,
-		},
+	hashJoinCtx := &join.HashJoinCtxV1{
+		IsOuterJoin:     false,
+		UseOuterToBuild: testCase.useOuterToBuild,
+		ProbeTypes:      exec.RetTypes(outerExec),
+		BuildTypes:      exec.RetTypes(innerExec),
+	}
+	hashJoinCtx.SessCtx = testCase.ctx
+	hashJoinCtx.JoinType = testCase.joinType
+	hashJoinCtx.Concurrency = uint(testCase.concurrency)
+	hashJoinCtx.ChunkAllocPool = chunk.NewEmptyAllocator()
+	probeFetcher := &join.ProbeSideTupleFetcherV1{}
+	probeFetcher.ProbeSideExec = outerExec
+	buildWorker := &join.BuildWorkerV1{}
+	buildWorker.BuildSideExec = innerExec
+	buildWorker.BuildKeyColIdx = joinKeysColIdx
+	e := &join.HashJoinV1Exec{
+		BaseExecutor:          exec.NewBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
+		HashJoinCtxV1:         hashJoinCtx,
+		ProbeSideTupleFetcher: probeFetcher,
+		ProbeWorkers:          make([]*join.ProbeWorkerV1, testCase.concurrency),
+		BuildWorker:           buildWorker,
 	}
 
 	childrenUsedSchema := markChildrenUsedColsForTest(testCase.ctx, e.Schema(), e.Children(0).Schema(), e.Children(1).Schema())
 	defaultValues := make([]types.Datum, e.BuildWorker.BuildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := exec.RetTypes(innerExec), exec.RetTypes(outerExec)
 	for i := uint(0); i < e.Concurrency; i++ {
-		e.ProbeWorkers[i] = &join.ProbeWorker{
-			WorkerID:    i,
-			HashJoinCtx: e.HashJoinCtx,
+		e.ProbeWorkers[i] = &join.ProbeWorkerV1{
+			HashJoinCtx: e.HashJoinCtxV1,
 			Joiner: join.NewJoiner(testCase.ctx, e.JoinType, true, defaultValues,
 				nil, lhsTypes, rhsTypes, childrenUsedSchema, false),
 			ProbeKeyColIdx: probeKeysColIdx,
 		}
+		e.ProbeWorkers[i].WorkerID = i
 	}
-	e.BuildWorker.HashJoinCtx = e.HashJoinCtx
+	e.BuildWorker.HashJoinCtx = e.HashJoinCtxV1
 	memLimit := int64(-1)
 	if testCase.disk {
 		memLimit = 1
@@ -1712,9 +1806,10 @@ func benchmarkLimitExec(b *testing.B, cas *testutil.LimitCase) {
 			}
 		}
 		proj := &ProjectionExec{
-			BaseExecutor:  exec.NewBaseExecutor(cas.Ctx, expression.NewSchema(usedCols...), 0, limit),
-			numWorkers:    1,
-			evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+			projectionExecutorContext: newProjectionExecutorContext(cas.Ctx),
+			BaseExecutorV2:            exec.NewBaseExecutorV2(cas.Ctx.GetSessionVars(), expression.NewSchema(usedCols...), 0, limit),
+			numWorkers:                1,
+			evaluatorSuit:             expression.NewEvaluatorSuite(exprs, false),
 		}
 		exe = proj
 	}
@@ -1844,7 +1939,7 @@ func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 func BenchmarkCompleteInsertErr(b *testing.B) {
 	b.ReportAllocs()
 	col := &model.ColumnInfo{
-		Name:      model.NewCIStr("a"),
+		Name:      pmodel.NewCIStr("a"),
 		FieldType: *types.NewFieldType(mysql.TypeBlob),
 	}
 	err := types.ErrWarnDataOutOfRange
@@ -1856,7 +1951,7 @@ func BenchmarkCompleteInsertErr(b *testing.B) {
 func BenchmarkCompleteLoadErr(b *testing.B) {
 	b.ReportAllocs()
 	col := &model.ColumnInfo{
-		Name: model.NewCIStr("a"),
+		Name: pmodel.NewCIStr("a"),
 	}
 	err := types.ErrDataTooLong
 	for n := 0; n < b.N; n++ {

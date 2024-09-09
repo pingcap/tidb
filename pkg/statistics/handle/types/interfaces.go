@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -121,6 +121,21 @@ type StatsAnalyze interface {
 	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
 
+	// StartAnalyzeJob updates the job status to `running` and sets the start time.
+	// There is no guarantee that the job record will actually be updated. If the job fails to start, an error will be logged.
+	// It is OK because this won't affect the analysis job's success.
+	StartAnalyzeJob(job *statistics.AnalyzeJob)
+
+	// UpdateAnalyzeJobProgress updates the current progress of the analyze job.
+	// There is no guarantee that the job record will actually be updated. If the job fails to update, an error will be logged.
+	// It is OK because this won't affect the analysis job's success.
+	UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, rowCount int64)
+
+	// FinishAnalyzeJob updates the job status to `finished`, sets the end time, and updates the job info.
+	// There is no guarantee that the job record will actually be updated. If the job fails to finish, an error will be logged.
+	// It is OK because this won't affect the analysis job's success.
+	FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType)
+
 	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 	DeleteAnalyzeJobs(updateTime time.Time) error
 
@@ -141,6 +156,9 @@ type StatsAnalyze interface {
 
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
+
+	// Close closes the analyze worker.
+	Close()
 }
 
 // StatsCache is used to manage all table statistics in memory.
@@ -152,7 +170,7 @@ type StatsCache interface {
 	Clear()
 
 	// Update reads stats meta from store and updates the stats map.
-	Update(is infoschema.InfoSchema) error
+	Update(ctx context.Context, is infoschema.InfoSchema) error
 
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
@@ -418,15 +436,23 @@ type StatsSyncLoad interface {
 	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
 }
 
+// GlobalStatsInfo represents the contextual information pertaining to global statistics.
+type GlobalStatsInfo struct {
+	HistIDs []int64
+	// When the `isIndex == 0`, HistIDs will be the column IDs.
+	// Otherwise, HistIDs will only contain the index ID.
+	IsIndex      int
+	StatsVersion int
+}
+
 // StatsGlobal is used to manage partition table global stats.
 type StatsGlobal interface {
 	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.
-	MergePartitionStats2GlobalStatsByTableID(sctx sessionctx.Context,
+	MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
+		info *GlobalStatsInfo,
 		physicalID int64,
-		isIndex bool,
-		histIDs []int64,
-	) (globalStats any, err error)
+	) (err error)
 }
 
 // DDL is used to handle ddl events.

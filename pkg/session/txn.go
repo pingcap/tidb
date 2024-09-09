@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -212,6 +212,14 @@ func (txn *LazyTxn) SetMemoryFootprintChangeHook(hook func(uint64)) {
 		return
 	}
 	txn.Transaction.SetMemoryFootprintChangeHook(hook)
+}
+
+// MemHookSet returns whether the memory footprint change hook is set.
+func (txn *LazyTxn) MemHookSet() bool {
+	if txn.Transaction == nil {
+		return false
+	}
+	return txn.Transaction.MemHookSet()
 }
 
 // Valid implements the kv.Transaction interface.

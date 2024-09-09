@@ -491,7 +491,7 @@ func (s *ddlSuite) runDDL(sql string) chan error {
 }
 
 func (s *ddlSuite) getTable(t *testing.T, name string) table.Table {
-	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(model.NewCIStr("test_ddl"), model.NewCIStr(name))
+	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(goctx.Background(), model.NewCIStr("test_ddl"), model.NewCIStr(name))
 	require.NoError(t, err)
 	return tbl
 }

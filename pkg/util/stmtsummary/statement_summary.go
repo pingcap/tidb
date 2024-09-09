@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"container/list"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -34,9 +35,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 )
 
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
@@ -48,10 +49,10 @@ type stmtSummaryByDigestKey struct {
 	prevDigest string
 	// The digest of the plan of this SQL.
 	planDigest string
-	// `hash` is the hash value of this object.
-	hash []byte
 	// `resourceGroupName` is the resource group's name of this statement is bind to.
 	resourceGroupName string
+	// `hash` is the hash value of this object.
+	hash []byte
 }
 
 // Hash implements SimpleLRUCache.Key.
@@ -59,7 +60,7 @@ type stmtSummaryByDigestKey struct {
 // `prevSQL` is included in the key To distinguish different transactions.
 func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest))
+		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest)+len(key.resourceGroupName))
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
 		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
 		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
@@ -199,6 +200,8 @@ type stmtSummaryByDigestElement struct {
 	sumPDTotal           time.Duration
 	sumBackoffTotal      time.Duration
 	sumWriteSQLRespTotal time.Duration
+	sumTidbCPU           time.Duration
+	sumTikvCPU           time.Duration
 	sumResultRows        int64
 	maxResultRows        int64
 	minResultRows        int64
@@ -225,14 +228,14 @@ type stmtSummaryByDigestElement struct {
 // StmtExecInfo records execution information of each statement.
 type StmtExecInfo struct {
 	SchemaName          string
-	OriginalSQL         string
+	OriginalSQL         fmt.Stringer
 	Charset             string
 	Collation           string
 	NormalizedSQL       string
 	Digest              string
 	PrevSQL             string
 	PrevSQLDigest       string
-	PlanGenerator       func() (string, string)
+	PlanGenerator       func() (string, string, any)
 	BinaryPlanGenerator func() string
 	PlanDigest          string
 	PlanDigestGen       func() string
@@ -260,6 +263,7 @@ type StmtExecInfo struct {
 	KeyspaceID        uint32
 	ResourceGroupName string
 	RUDetail          *util.RUDetails
+	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
 }
@@ -421,9 +425,8 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*Bi
 							PlanHint:  ssElement.planHint,
 							Charset:   ssElement.charset,
 							Collation: ssElement.collation,
-							Users:     make(map[string]struct{}),
+							Users:     maps.Clone(ssElement.authUsers),
 						}
-						maps.Copy(stmt.Users, ssElement.authUsers)
 						// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
 						// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
 						if ssElement.prepared {
@@ -602,6 +605,9 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		if isElementNew {
 			// If the element is new created, `ssElement.add(sei)` should be done inside the lock of `ssbd`.
 			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds)
+			if ssElement == nil {
+				return nil, isElementNew
+			}
 			ssbd.history.PushBack(ssElement)
 		}
 
@@ -646,7 +652,10 @@ var MaxEncodedPlanSizeInBytes = 1024 * 1024
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
-	samplePlan, planHint := sei.PlanGenerator()
+	samplePlan, planHint, e := sei.PlanGenerator()
+	if e != nil {
+		return nil
+	}
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
 	}
@@ -659,7 +668,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 	}
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
-		sampleSQL: formatSQL(sei.OriginalSQL),
+		sampleSQL: formatSQL(sei.OriginalSQL.String()),
 		charset:   sei.Charset,
 		collation: sei.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -907,6 +916,8 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
 	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
 	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
+	ssElement.sumTidbCPU += sei.CPUUsages.TidbCPUTime
+	ssElement.sumTikvCPU += sei.CPUUsages.TikvCPUTime
 
 	// request-units
 	ssElement.StmtRUSummary.Add(sei.RUDetail)

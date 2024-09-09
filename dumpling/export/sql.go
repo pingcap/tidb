@@ -21,7 +21,8 @@ import (
 	"github.com/pingcap/tidb/dumpling/log"
 	dbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -244,6 +245,119 @@ func RestoreCharset(w io.StringWriter) {
 	_, _ = w.WriteString("SET character_set_client = @PREV_CHARACTER_SET_CLIENT;\n")
 	_, _ = w.WriteString("SET character_set_results = @PREV_CHARACTER_SET_RESULTS;\n")
 	_, _ = w.WriteString("SET collation_connection = @PREV_COLLATION_CONNECTION;\n")
+}
+
+// updateSpecifiedTablesMeta updates DatabaseTables with correct table type and avg row size.
+func updateSpecifiedTablesMeta(tctx *tcontext.Context, db *sql.Conn, dbTables DatabaseTables, listType listTableType) error {
+	var (
+		schema, table, tableTypeStr string
+		tableType                   TableType
+		avgRowLength                uint64
+		err                         error
+	)
+	switch listType {
+	case listTableByInfoSchema:
+		dbNames := make([]string, 0, len(dbTables))
+		for db := range dbTables {
+			dbNames = append(dbNames, fmt.Sprintf("'%s'", db))
+		}
+		query := fmt.Sprintf("SELECT TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA IN (%s)", strings.Join(dbNames, ","))
+		if err := simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
+			var (
+				sqlAvgRowLength sql.NullInt64
+				err2            error
+			)
+			if err2 = rows.Scan(&schema, &table, &tableTypeStr, &sqlAvgRowLength); err != nil {
+				return errors.Trace(err2)
+			}
+
+			tbls, ok := dbTables[schema]
+			if !ok {
+				return nil
+			}
+			for _, tbl := range tbls {
+				if tbl.Name == table {
+					tableType, err2 = ParseTableType(tableTypeStr)
+					if err2 != nil {
+						return errors.Trace(err2)
+					}
+					if sqlAvgRowLength.Valid {
+						avgRowLength = uint64(sqlAvgRowLength.Int64)
+					} else {
+						avgRowLength = 0
+					}
+					tbl.Type = tableType
+					tbl.AvgRowLength = avgRowLength
+				}
+			}
+			return nil
+		}, query); err != nil {
+			return errors.Annotatef(err, "sql: %s", query)
+		}
+		return nil
+	case listTableByShowFullTables:
+		for schema, tbls := range dbTables {
+			query := fmt.Sprintf("SHOW FULL TABLES FROM `%s`",
+				escapeString(schema))
+			if err := simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
+				var err2 error
+				if err2 = rows.Scan(&table, &tableTypeStr); err != nil {
+					return errors.Trace(err2)
+				}
+				for _, tbl := range tbls {
+					if tbl.Name == table {
+						tableType, err2 = ParseTableType(tableTypeStr)
+						if err2 != nil {
+							return errors.Trace(err2)
+						}
+						tbl.Type = tableType
+					}
+				}
+				return nil
+			}, query); err != nil {
+				return errors.Annotatef(err, "sql: %s", query)
+			}
+		}
+		return nil
+	default:
+		const queryTemplate = "SHOW TABLE STATUS FROM `%s`"
+		for schema, tbls := range dbTables {
+			query := fmt.Sprintf(queryTemplate, escapeString(schema))
+			rows, err := db.QueryContext(tctx, query)
+			if err != nil {
+				return errors.Annotatef(err, "sql: %s", query)
+			}
+			results, err := GetSpecifiedColumnValuesAndClose(rows, "NAME", "ENGINE", "AVG_ROW_LENGTH", "COMMENT")
+			if err != nil {
+				return errors.Annotatef(err, "sql: %s", query)
+			}
+			for _, oneRow := range results {
+				table, engine, avgRowLengthStr, comment := oneRow[0], oneRow[1], oneRow[2], oneRow[3]
+				for _, tbl := range tbls {
+					if tbl.Name == table {
+						if avgRowLengthStr != "" {
+							avgRowLength, err = strconv.ParseUint(avgRowLengthStr, 10, 64)
+							if err != nil {
+								return errors.Annotatef(err, "sql: %s", query)
+							}
+						} else {
+							avgRowLength = 0
+						}
+						tbl.AvgRowLength = avgRowLength
+						tableType = TableTypeBase
+						if engine == "" && (comment == "" || comment == TableTypeViewStr) {
+							tableType = TableTypeView
+						} else if engine == "" {
+							tctx.L().Warn("invalid table without engine found", zap.String("database", schema), zap.String("table", table))
+							continue
+						}
+						tbl.Type = tableType
+					}
+				}
+			}
+		}
+		return nil
+	}
 }
 
 // ListAllDatabasesTables lists all the databases and tables from the database
@@ -1435,10 +1549,9 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 		}
 		last := len(schemas) - 1
 		if last < 0 || schemas[last].Name.O != tableSchema {
-			schemas = append(schemas, &model.DBInfo{
-				Name:   model.CIStr{O: tableSchema},
-				Tables: make([]*model.TableInfo, 0, len(tables[tableSchema])),
-			})
+			dbInfo := &model.DBInfo{Name: pmodel.CIStr{O: tableSchema}}
+			dbInfo.Deprecated.Tables = make([]*model.TableInfo, 0, len(tables[tableSchema]))
+			schemas = append(schemas, dbInfo)
 			last++
 		}
 		var partition *model.PartitionInfo
@@ -1448,14 +1561,14 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 				for partitionName, partitionID := range ptm {
 					partition.Definitions = append(partition.Definitions, model.PartitionDefinition{
 						ID:   partitionID,
-						Name: model.CIStr{O: partitionName},
+						Name: pmodel.CIStr{O: partitionName},
 					})
 				}
 			}
 		}
-		schemas[last].Tables = append(schemas[last].Tables, &model.TableInfo{
+		schemas[last].Deprecated.Tables = append(schemas[last].Deprecated.Tables, &model.TableInfo{
 			ID:        tidbTableID,
-			Name:      model.CIStr{O: tableName},
+			Name:      pmodel.CIStr{O: tableName},
 			Partition: partition,
 		})
 		return nil

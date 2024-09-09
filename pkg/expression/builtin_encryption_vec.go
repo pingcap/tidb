@@ -694,7 +694,7 @@ func (b *builtinAesEncryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 		}
 
 		// NOTE: we can't use GetBytes, because in AESEncryptWithECB padding is automatically
-		//       added to str and this will damange the data layout in chunk.Column
+		//       added to str and this will damage the data layout in chunk.Column
 		str := []byte(strBuf.GetString(i))
 		cipherText, err := encrypt.AESEncryptWithECB(str, key)
 		if err != nil {

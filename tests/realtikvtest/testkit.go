@@ -54,11 +54,15 @@ var (
 	// KeyspaceName is an option to specify the name of keyspace that the tests run on,
 	// this option is only valid while the flag WithRealTiKV is set.
 	KeyspaceName = flag.String("keyspace-name", "", "the name of keyspace that the tests run on")
+
+	// RetainOldData is used to control whether a new realtikv store should remove old tables.
+	RetainOldData = false
 )
 
 // RunTestMain run common setups for all real tikv tests.
 func RunTestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
+	*WithRealTiKV = true
 	flag.Parse()
 	session.SetSchemaLease(5 * time.Second)
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -129,16 +133,18 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		// set it to default value.
 		tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", variable.DefInnodbLockWaitTimeout))
 		tk.MustExec("use test")
-		rs := tk.MustQuery("show tables")
-		tables := []string{}
-		for _, row := range rs.Rows() {
-			tables = append(tables, fmt.Sprintf("`%v`", row[0]))
-		}
-		for _, table := range tables {
-			tk.MustExec(fmt.Sprintf("alter table %s nocache", table))
-		}
-		if len(tables) > 0 {
-			tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
+		if !RetainOldData {
+			rs := tk.MustQuery("show tables")
+			tables := []string{}
+			for _, row := range rs.Rows() {
+				tables = append(tables, fmt.Sprintf("`%v`", row[0]))
+			}
+			for _, table := range tables {
+				tk.MustExec(fmt.Sprintf("alter table %s nocache", table))
+			}
+			if len(tables) > 0 {
+				tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
+			}
 		}
 	} else {
 		store, err = mockstore.NewMockStore(opts...)

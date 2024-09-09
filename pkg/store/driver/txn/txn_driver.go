@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
@@ -50,6 +50,7 @@ type tikvTxn struct {
 	// columnMapsCache is a cache used for the mutation checker
 	columnMapsCache    any
 	isCommitterWorking atomic.Bool
+	memBuffer          *memBuffer
 }
 
 // NewTiKVTxn returns a new Transaction.
@@ -61,7 +62,10 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	totalLimit := kv.TxnTotalSizeLimit.Load()
 	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
 
-	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil, nil, atomic.Bool{}}
+	return &tikvTxn{
+		txn, make(map[int64]*model.TableInfo), nil, nil, atomic.Bool{},
+		newMemBuffer(txn.GetMemBuffer(), txn.IsPipelined()),
+	}
 }
 
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
@@ -210,7 +214,10 @@ func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
-	return newMemBuffer(txn.KVTxn.GetMemBuffer(), txn.IsPipelined())
+	if txn.memBuffer == nil {
+		txn.memBuffer = newMemBuffer(txn.KVTxn.GetMemBuffer(), txn.IsPipelined())
+	}
+	return txn.memBuffer
 }
 
 func (txn *tikvTxn) SetOption(opt int, val any) {

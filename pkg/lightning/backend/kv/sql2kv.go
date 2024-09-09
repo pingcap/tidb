@@ -30,10 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -45,7 +43,7 @@ type tableKVEncoder struct {
 }
 
 // GetSession4test is only used for test.
-func GetSession4test(encoder encode.Encoder) sessionctx.Context {
+func GetSession4test(encoder encode.Encoder) *Session {
 	return encoder.(*tableKVEncoder).SessionCtx
 }
 
@@ -84,10 +82,9 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	}
 
 	// the expression rewriter requires a non-nil TxnCtx.
-	se.Vars.TxnCtx = new(variable.TransactionContext)
-	defer func() {
-		se.Vars.TxnCtx = nil
-	}()
+	// TODO: remove it after code refactoring.
+	deferFn := se.SetTxnCtxNotNil()
+	defer deferFn()
 
 	// not using TableInfo2SchemaAndNames to avoid parsing all virtual generated columns again.
 	exprColumns := make([]*expression.Column, 0, len(cols))
@@ -246,11 +243,11 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
 		record = append(record, value)
 	}
 
-	if common.TableHasAutoRowID(kvcodec.Table.Meta()) {
+	if common.TableHasAutoRowID(kvcodec.table.Meta()) {
 		rowValue := rowID
 		j := columnPermutation[len(kvcodec.Columns)]
 		if j >= 0 && j < len(row) {
-			value, err = table.CastValue(kvcodec.SessionCtx, row[j],
+			value, err = table.CastColumnValue(kvcodec.SessionCtx.GetExprCtx(), row[j],
 				ExtraHandleColumnInfo, false, false)
 			rowValue = value.GetInt64()
 		} else {
@@ -261,7 +258,7 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
 			return nil, kvcodec.LogKVConvertFailed(row, j, ExtraHandleColumnInfo, err)
 		}
 		record = append(record, value)
-		alloc := kvcodec.Table.Allocators(kvcodec.SessionCtx.GetTableCtx()).Get(autoid.RowIDAllocType)
+		alloc := kvcodec.TableAllocators().Get(autoid.RowIDAllocType)
 		if err := alloc.Rebase(context.Background(), rowValue, false); err != nil {
 			return nil, errors.Trace(err)
 		}

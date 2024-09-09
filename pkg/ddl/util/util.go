@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -56,6 +58,7 @@ const (
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
 	// DDLAllSchemaVersionsByJob is the path on etcd that is used to store all servers current schema versions.
+	// /tidb/ddl/all_schema_by_job_versions/<job-id>/<tidb-id> ---> <schema-version>
 	DDLAllSchemaVersionsByJob = "/tidb/ddl/all_schema_by_job_versions"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
@@ -409,4 +412,16 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 func FolderNotEmpty(path string) bool {
 	entries, _ := os.ReadDir(path)
 	return len(entries) > 0
+}
+
+// GenKeyExistsErr builds a ErrKeyExists error.
+func GenKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
+	valueStr, err := tables.GenIndexValueFromIndex(key, value, tblInfo, idxInfo)
+	if err != nil {
+		logutil.DDLLogger().Warn("decode index key value / column value failed", zap.String("index", indexName),
+			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
+		return errors.Trace(kv.ErrKeyExists.FastGenByArgs(key, indexName))
+	}
+	return kv.GenKeyExistsErr(valueStr, indexName)
 }

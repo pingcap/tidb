@@ -251,9 +251,6 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, false, v.OptimizerEnableNewOnlyFullGroupByCheck)
 
-	err = v.SetSystemVar(TiDBDDLReorgWorkerCount, "4") // wrong scope global only
-	require.True(t, terror.ErrorEqual(err, errGlobalVariable))
-
 	err = v.SetSystemVar(TiDBRetryLimit, "3")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBRetryLimit)
@@ -290,13 +287,13 @@ func TestVarsutil(t *testing.T) {
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBLowResolutionTSO)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
-	require.True(t, v.LowResolutionTSO)
+	require.True(t, v.lowResolutionTSO)
 	err = v.SetSystemVar(TiDBLowResolutionTSO, "0")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBLowResolutionTSO)
 	require.NoError(t, err)
 	require.Equal(t, "OFF", val)
-	require.False(t, v.LowResolutionTSO)
+	require.False(t, v.lowResolutionTSO)
 
 	require.Equal(t, 0.9, v.CorrelationThreshold)
 	err = v.SetSystemVar(TiDBOptCorrelationThreshold, "0")

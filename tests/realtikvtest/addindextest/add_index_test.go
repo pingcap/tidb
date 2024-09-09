@@ -15,18 +15,19 @@
 package addindextest
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 func init() {
@@ -154,49 +155,45 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
 }
 
-func alwaysRemoveFirstJobID(ids []int64) ([]int64, error) {
-	return ids[1:], nil
-}
-
-func TestLitBackendCtxMgr(t *testing.T) {
-	ctx := context.Background()
+func TestAddUniqueDuplicateIndexes(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
-	sortPath := t.TempDir()
-	staleJobDir := filepath.Join(sortPath, "100")
-	staleJobDir2 := filepath.Join(sortPath, "101")
-	err := os.MkdirAll(staleJobDir, 0o700)
-	require.NoError(t, err)
-	err = os.MkdirAll(staleJobDir2, 0o700)
-	require.NoError(t, err)
 
-	mgr := ingest.NewLitBackendCtxMgr(sortPath, 1024*1024*1024, alwaysRemoveFirstJobID)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	tk.MustExec("create table t(a int DEFAULT '-13202', b varchar(221) NOT NULL DEFAULT 'duplicatevalue', " +
+		"c int NOT NULL DEFAULT '0');")
 
-	ok, err := mgr.CheckMoreTasksAvailable(ctx)
-	require.NoError(t, err)
-	require.True(t, ok)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 
-	// due to alwaysRemoveFirstJobID, the first jobID will be removed
-	require.NoDirExists(t, staleJobDir)
-	require.DirExists(t, staleJobDir2)
+	tk1.Exec("INSERT INTO t VALUES (-18585,'duplicatevalue',0);")
 
-	jobID := int64(102)
-	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	backendCtx, err := mgr.Register(ctx, jobID, false, nil, discovery, "TestLitBackendCtxMgr")
-	require.NoError(t, err)
-	require.NotNil(t, backendCtx)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, err := tk1.Exec("delete from t where c = 0;")
+			assert.NoError(t, err)
+			_, err = tk1.Exec("insert INTO t VALUES (-18585,'duplicatevalue',1);")
+			assert.NoError(t, err)
+		}
+	})
 
-	expectedDir := filepath.Join(sortPath, "102")
-	require.DirExists(t, staleJobDir2)
-	require.DirExists(t, expectedDir)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+	ingest.MockDMLExecutionStateBeforeImport = func() {
+		tk3.MustExec("replace INTO t VALUES (-18585,'duplicatevalue',4);")
+		tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
+	}
+	ddl.MockDMLExecutionStateBeforeMerge = func() {
+		tk3.MustQuery("select * from t;").Check(testkit.Rows("-18585 duplicatevalue 1", "-18585 duplicatevalue 4"))
+		tk3.MustExec("replace into t values (-18585,'duplicatevalue',0);")
+	}
 
-	bc, ok := mgr.Load(jobID)
-	require.True(t, ok)
-	require.Equal(t, backendCtx, bc)
-	_, ok = mgr.Load(101)
-	require.False(t, ok)
-
-	mgr.Unregister(jobID)
-	require.NoDirExists(t, expectedDir)
-	_, ok = mgr.Load(jobID)
-	require.False(t, ok)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport", "1*return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge", "return(true)"))
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge"))
 }

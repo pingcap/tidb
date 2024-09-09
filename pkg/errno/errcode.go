@@ -846,12 +846,15 @@ const (
 	ErrWarnConflictingHint                                   = 3126
 	ErrUnresolvedHintName                                    = 3128
 	ErrInvalidJSONText                                       = 3140
+	ErrInvalidJSONTextInParam                                = 3141
 	ErrInvalidJSONPath                                       = 3143
 	ErrInvalidJSONCharset                                    = 3144
 	ErrInvalidTypeForJSON                                    = 3146
 	ErrInvalidJSONPathMultipleSelection                      = 3149
 	ErrInvalidJSONContainsPathType                           = 3150
 	ErrJSONUsedAsKey                                         = 3152
+	ErrJSONVacuousPath                                       = 3153
+	ErrJSONBadOneOrAllArg                                    = 3154
 	ErrJSONDocumentTooDeep                                   = 3157
 	ErrJSONDocumentNULLKey                                   = 3158
 	ErrSecureTransportRequired                               = 3159
@@ -927,6 +930,7 @@ const (
 	ErrCheckConstraintDupName                                = 3822
 	ErrCheckConstraintClauseUsingFKReferActionColumn         = 3823
 	ErrDependentByFunctionalIndex                            = 3837
+	ErrInvalidJSONType                                       = 3853
 	ErrCannotConvertString                                   = 3854
 	ErrDependentByPartitionFunctional                        = 3855
 	ErrInvalidJSONValueForFuncIndex                          = 3903
@@ -1136,6 +1140,8 @@ const (
 	ErrPausedDDLJob       = 8262
 	ErrBDRRestrictedDDL   = 8263
 
+	ErrGlobalIndexNotExplicitlySet = 8264
+
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
 	ErrResourceGroupNotExists                 = 8249
@@ -1145,6 +1151,7 @@ const (
 	ErrResourceGroupQueryRunawayInterrupted   = 8253
 	ErrResourceGroupQueryRunawayQuarantine    = 8254
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
+	ErrResourceGroupInvalidForRole            = 8257
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

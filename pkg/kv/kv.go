@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
@@ -222,6 +222,8 @@ type Transaction interface {
 	Mem() uint64
 	// SetMemoryFootprintChangeHook sets the hook that will be called when the memory footprint changes.
 	SetMemoryFootprintChangeHook(func(uint64))
+	// MemHookSet returns whether the memory footprint change hook is set.
+	MemHookSet() bool
 	// Len returns the number of entries in the DB.
 	Len() int
 	// Commit commits the transaction operations to KV store.
@@ -596,7 +598,7 @@ type Request struct {
 	// TiKVClientReadTimeout is the timeout of kv read request
 	TiKVClientReadTimeout uint64
 
-	RunawayChecker *resourcegroup.RunawayChecker
+	RunawayChecker resourcegroup.RunawayChecker
 
 	// ConnID stores the session connection id.
 	ConnID uint64

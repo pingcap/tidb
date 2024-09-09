@@ -115,6 +115,11 @@ func (r Row) GetJSON(colIdx int) types.BinaryJSON {
 	return r.c.columns[colIdx].GetJSON(r.idx)
 }
 
+// GetVectorFloat32 returns the VectorFloat32 value with the colIdx.
+func (r Row) GetVectorFloat32(colIdx int) types.VectorFloat32 {
+	return r.c.columns[colIdx].GetVectorFloat32(r.idx)
+}
+
 // GetDatumRow converts chunk.Row to types.DatumRow.
 // Keep in mind that GetDatumRow has a reference to r.c, which is a chunk,
 // this function works only if the underlying chunk is valid or unchanged.
@@ -206,6 +211,10 @@ func (r Row) DatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) {
 		if !r.IsNull(colIdx) {
 			d.SetMysqlJSON(r.GetJSON(colIdx))
 		}
+	case mysql.TypeTiDBVectorFloat32:
+		if !r.IsNull(colIdx) {
+			d.SetVectorFloat32(r.GetVectorFloat32(colIdx))
+		}
 	}
 	if r.IsNull(colIdx) {
 		d.SetNull()
@@ -263,6 +272,8 @@ func (r Row) ToString(ft []*types.FieldType) string {
 				case mysql.TypeDouble:
 					buf = strconv.AppendFloat(buf, r.GetFloat64(colIdx), 'f', -1, 64)
 				}
+			case types.ETVectorFloat32:
+				buf = append(buf, r.GetVectorFloat32(colIdx).String()...)
 			}
 		}
 		if colIdx != r.Chunk().NumCols()-1 {

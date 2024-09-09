@@ -18,53 +18,56 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
 
-func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
+func getIndexMergePathDigest(ctx expression.EvalContext, paths []*util.AccessPath, startIndex int) string {
 	if len(paths) == startIndex {
 		return "[]"
 	}
-	idxMergeDisgest := "["
+	idxMergeDigest := "["
 	for i := startIndex; i < len(paths); i++ {
 		if i != startIndex {
-			idxMergeDisgest += ","
+			idxMergeDigest += ","
 		}
 		path := paths[i]
-		idxMergeDisgest += "{Idxs:["
+		idxMergeDigest += "{Idxs:["
 		for j := 0; j < len(path.PartialAlternativeIndexPaths); j++ {
 			if j > 0 {
-				idxMergeDisgest += ","
+				idxMergeDigest += ","
 			}
-			idxMergeDisgest += "{"
+			idxMergeDigest += "{"
 			// for every ONE index partial alternatives, output a set.
 			for k, one := range path.PartialAlternativeIndexPaths[j] {
 				if k != 0 {
-					idxMergeDisgest += ","
+					idxMergeDigest += ","
 				}
-				idxMergeDisgest += one.Index.Name.L
+				idxMergeDigest += one.Index.Name.L
 			}
-			idxMergeDisgest += "}"
+			idxMergeDigest += "}"
 		}
-		idxMergeDisgest += "],TbFilters:["
+		idxMergeDigest += "],TbFilters:["
 		for j := 0; j < len(path.TableFilters); j++ {
 			if j > 0 {
-				idxMergeDisgest += ","
+				idxMergeDigest += ","
 			}
-			idxMergeDisgest += path.TableFilters[j].String()
+			idxMergeDigest += path.TableFilters[j].StringWithCtx(ctx, errors.RedactLogDisable)
 		}
-		idxMergeDisgest += "]}"
+		idxMergeDigest += "]}"
 	}
-	idxMergeDisgest += "]"
-	return idxMergeDisgest
+	idxMergeDigest += "]"
+	return idxMergeDigest
 }
 
 func TestIndexMergePathGeneration(t *testing.T) {
@@ -82,11 +85,12 @@ func TestIndexMergePathGeneration(t *testing.T) {
 	for i, tc := range input {
 		stmt, err := parser.ParseOneStmt(tc, "", "")
 		require.NoErrorf(t, err, "case:%v sql:%s", i, tc)
-		err = Preprocess(context.Background(), sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = Preprocess(context.Background(), sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		if err != nil {
 			testdata.OnRecord(func() {
 				output[i] = err.Error()
@@ -108,10 +112,10 @@ func TestIndexMergePathGeneration(t *testing.T) {
 			}
 		}
 		ds.SCtx().GetSessionVars().SetEnableIndexMerge(true)
-		idxMergeStartIndex := len(ds.possibleAccessPaths)
+		idxMergeStartIndex := len(ds.PossibleAccessPaths)
 		_, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err)
-		result := getIndexMergePathDigest(ds.possibleAccessPaths, idxMergeStartIndex)
+		result := getIndexMergePathDigest(sctx.GetExprCtx().GetEvalCtx(), ds.PossibleAccessPaths, idxMergeStartIndex)
 		testdata.OnRecord(func() {
 			output[i] = result
 		})
