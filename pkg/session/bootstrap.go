@@ -699,7 +699,7 @@ const (
 		segment_id BIGINT NOT NULL,
 		id_map BLOB(524288) NOT NULL,
 		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (restored_ts, segment_id));`
+		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id));`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
