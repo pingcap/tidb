@@ -169,8 +169,11 @@ type StatsCache interface {
 	// Clear clears this cache.
 	Clear()
 
+	// Update is to trigger UpdateWorker to work
+	Update() error
+
 	// Update reads stats meta from store and updates the stats map.
-	Update(ctx context.Context, is infoschema.InfoSchema) error
+	UpdateWorker(ctx context.Context, is infoschema.InfoSchema) error
 
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)

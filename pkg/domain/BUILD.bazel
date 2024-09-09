@@ -62,8 +62,12 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle",
+<<<<<<< HEAD
         "//pkg/statistics/handle/autoanalyze",
         "//pkg/statistics/handle/initstats",
+=======
+        "//pkg/statistics/handle/cache",
+>>>>>>> 189e9fb66b (statistics: avoid frequantly syncing stats simultaneously)
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/util",
         "//pkg/store/helper",
