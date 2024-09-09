@@ -34,7 +34,6 @@ go_test(
         "//pkg/server/internal/util",
         "//pkg/session",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/binloginfo",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/store/helper",
