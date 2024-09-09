@@ -5640,7 +5640,7 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (base.Plan, 
 	return p, nil
 }
 
-func (b *PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, error) {
+func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, error) {
 	p := &RecommendIndexPlan{
 		Action:   v.Action,
 		SQL:      v.SQL,
