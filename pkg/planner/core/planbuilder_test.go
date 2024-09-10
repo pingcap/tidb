@@ -855,23 +855,25 @@ func TestImportIntoCollAssignmentChecker(t *testing.T) {
 	}
 
 	for i, c := range cases {
-		stmt, err := parser.New().ParseOneStmt("select "+c.expr, "", "")
-		require.NoError(t, err, c.expr)
-		expr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+		t.Run(fmt.Sprintf("case-%d-%s", i, c.expr), func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt("select "+c.expr, "", "")
+			require.NoError(t, err, c.expr)
+			expr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
 
-		checker := newImportIntoCollAssignmentChecker()
-		checker.idx = i
-		expr.Accept(checker)
-		if c.error != "" {
-			require.EqualError(t, checker.err, fmt.Sprintf("%s, index %d", c.error, i), c.expr)
-		} else {
-			require.NoError(t, checker.err, c.expr)
-		}
+			checker := newImportIntoCollAssignmentChecker()
+			checker.idx = i
+			expr.Accept(checker)
+			if c.error != "" {
+				require.EqualError(t, checker.err, fmt.Sprintf("%s, index %d", c.error, i), c.expr)
+			} else {
+				require.NoError(t, checker.err, c.expr)
+			}
 
-		expectedNeededVars := make(map[string]int)
-		for _, v := range c.neededVars {
-			expectedNeededVars[v] = i
-		}
-		require.Equal(t, expectedNeededVars, checker.neededVars, c.expr)
+			expectedNeededVars := make(map[string]int)
+			for _, v := range c.neededVars {
+				expectedNeededVars[v] = i
+			}
+			require.Equal(t, expectedNeededVars, checker.neededVars, c.expr)
+		})
 	}
 }

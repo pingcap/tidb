@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -78,23 +79,24 @@ func TestImportIntoValidateColAssignmentsWithEncodeCtx(t *testing.T) {
 		},
 	}
 
-	for _, c := range cases {
-		msg := strings.Join(c.exprs, ",")
-		assigns := make([]*ast.Assignment, 0, len(c.exprs))
-		for _, exprStr := range c.exprs {
-			stmt, err := parser.New().ParseOneStmt("select "+exprStr, "", "")
-			require.NoError(t, err, msg)
-			expr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
-			assigns = append(assigns, &ast.Assignment{
-				Expr: expr,
-			})
-		}
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("case-%d-%s", i, strings.Join(c.exprs, ",")), func(t *testing.T) {
+			assigns := make([]*ast.Assignment, 0, len(c.exprs))
+			for _, exprStr := range c.exprs {
+				stmt, err := parser.New().ParseOneStmt("select "+exprStr, "", "")
+				require.NoError(t, err)
+				expr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+				assigns = append(assigns, &ast.Assignment{
+					Expr: expr,
+				})
+			}
 
-		err := executor.ValidateImportIntoColAssignmentsWithEncodeCtx(&importer.Plan{}, assigns)
-		if c.error == "" {
-			require.NoError(t, err, msg)
-		} else {
-			require.EqualError(t, err, c.error, msg)
-		}
+			err := executor.ValidateImportIntoColAssignmentsWithEncodeCtx(&importer.Plan{}, assigns)
+			if c.error == "" {
+				require.NoError(t, err)
+			} else {
+				require.EqualError(t, err, c.error)
+			}
+		})
 	}
 }
