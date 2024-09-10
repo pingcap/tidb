@@ -22,7 +22,6 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/variable",
-        "//pkg/statistics/handle/logutil",
         "//pkg/table",
         "//pkg/util",
         "//pkg/util/chunk",
@@ -35,7 +34,6 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@org_golang_x_exp//maps",
         "@org_uber_go_atomic//:atomic",
-        "@org_uber_go_zap//:zap",
     ],
 )
 
