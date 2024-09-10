@@ -60,6 +60,8 @@ func checkDefaultStaticEvalCtx(t *testing.T, ctx *StaticEvalContext) {
 	require.Equal(t, variable.DefMaxAllowedPacket, ctx.GetMaxAllowedPacket())
 	require.Equal(t, variable.DefDefaultWeekFormat, ctx.GetDefaultWeekFormatMode())
 	require.Equal(t, variable.DefDivPrecisionIncrement, ctx.GetDivPrecisionIncrement())
+	require.Empty(t, ctx.AllParamValues())
+	require.Equal(t, variable.NewUserVars(), ctx.GetUserVarsReader())
 	require.Nil(t, ctx.requestVerificationFn)
 	require.Nil(t, ctx.requestDynamicVerificationFn)
 	require.True(t, ctx.RequestVerification("test", "t1", "", mysql.CreatePriv))
@@ -83,6 +85,7 @@ type evalCtxOptionsTestState struct {
 	now           time.Time
 	loc           *time.Location
 	warnHandler   *contextutil.StaticWarnHandler
+	userVars      *variable.UserVars
 	ddlOwner      bool
 	privCheckArgs []any
 	privRet       bool
@@ -95,6 +98,7 @@ func getEvalCtxOptionsForTest(t *testing.T) ([]StaticEvalCtxOption, *evalCtxOpti
 		now:         time.Now(),
 		loc:         loc,
 		warnHandler: contextutil.NewStaticWarnHandler(8),
+		userVars:    variable.NewUserVars(),
 	}
 
 	provider1 := contextopt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
@@ -122,6 +126,7 @@ func getEvalCtxOptionsForTest(t *testing.T) ([]StaticEvalCtxOption, *evalCtxOpti
 		WithMaxAllowedPacket(12345),
 		WithDefaultWeekFormatMode("3"),
 		WithDivPrecisionIncrement(5),
+		WithUserVarsReader(s.userVars),
 		WithPrivCheck(func(db, table, column string, priv mysql.PrivilegeType) bool {
 			require.Nil(t, s.privCheckArgs)
 			s.privCheckArgs = []any{db, table, column, priv}
@@ -156,6 +161,7 @@ func checkOptionsStaticEvalCtx(t *testing.T, ctx *StaticEvalContext, s *evalCtxO
 	require.Equal(t, uint64(12345), ctx.GetMaxAllowedPacket())
 	require.Equal(t, "3", ctx.GetDefaultWeekFormatMode())
 	require.Equal(t, 5, ctx.GetDivPrecisionIncrement())
+	require.Same(t, s.userVars, ctx.GetUserVarsReader())
 
 	s.privCheckArgs, s.privRet = nil, false
 	require.False(t, ctx.RequestVerification("db", "table", "column", mysql.CreatePriv))
@@ -463,6 +469,10 @@ func TestMakeEvalContextStatic(t *testing.T) {
 	paramList := variable.NewPlanCacheParamList()
 	paramList.Append(types.NewDatum(1))
 
+	userVars := variable.NewUserVars()
+	userVars.SetUserVarVal("a", types.NewStringDatum("v1"))
+	userVars.SetUserVarVal("b", types.NewIntDatum(2))
+
 	provider := contextopt.DDLOwnerInfoProvider(func() bool {
 		return true
 	})
@@ -487,6 +497,7 @@ func TestMakeEvalContextStatic(t *testing.T) {
 			return true
 		}),
 		WithParamList(paramList),
+		WithUserVarsReader(userVars),
 		WithOptionalProperty(provider),
 		WithEnableRedactLog("test"),
 	)
@@ -497,6 +508,7 @@ func TestMakeEvalContextStatic(t *testing.T) {
 		"$.staticEvalCtxState.typeCtx.**",
 		"$.staticEvalCtxState.errCtx.**",
 		"$.staticEvalCtxState.currentTime.**",
+		"$.staticEvalCtxState.userVars.lock",
 		"$.staticEvalCtxState.props",
 		"$.id",
 	}
@@ -622,6 +634,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		"$.requestVerificationFn",
 		"$.requestDynamicVerificationFn",
 		"$.paramList",
+		"$.userVars",
 		"$.props",
 	}
 

@@ -571,6 +571,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSplitRegion(x)
 	case *ast.CompactTableStmt:
 		return b.buildCompactTable(x)
+	case *ast.RecommendIndexStmt:
+		return b.buildRecommendIndex(x)
 	}
 	return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -5634,6 +5636,35 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (base.Plan, 
 		ReplicaKind:    node.ReplicaKind,
 		TableInfo:      tblInfo,
 		PartitionNames: node.PartitionNames,
+	}
+	return p, nil
+}
+
+func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, error) {
+	p := &RecommendIndexPlan{
+		Action:   v.Action,
+		SQL:      v.SQL,
+		AdviseID: v.ID,
+		Option:   v.Option,
+		Value:    v.Value,
+	}
+
+	switch v.Action {
+	case "run":
+		if v.SQL == "" {
+			return nil, errors.New("recommend index SQL is empty")
+		}
+		schema := newColumnsWithNames(7)
+		schema.Append(buildColumnWithName("", "database", mysql.TypeVarchar, 64))
+		schema.Append(buildColumnWithName("", "table", mysql.TypeVarchar, 64))
+		schema.Append(buildColumnWithName("", "index_name", mysql.TypeVarchar, 64))
+		schema.Append(buildColumnWithName("", "index_columns", mysql.TypeVarchar, 256))
+		schema.Append(buildColumnWithName("", "index_size", mysql.TypeVarchar, 256))
+		schema.Append(buildColumnWithName("", "reason", mysql.TypeVarchar, 256))
+		schema.Append(buildColumnWithName("", "top_impacted_query", mysql.TypeBlob, -1))
+		p.setSchemaAndNames(schema.col2Schema(), schema.names)
+	default:
+		return nil, fmt.Errorf("unsupported action %s", v.Action)
 	}
 	return p, nil
 }

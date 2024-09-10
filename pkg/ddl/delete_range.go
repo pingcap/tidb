@@ -296,7 +296,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 				return errors.Trace(err)
 			}
 		}
-	case model.ActionDropTable, model.ActionTruncateTable:
+	case model.ActionDropTable:
 		tableID := job.TableID
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
 		var startKey kv.Key
@@ -313,6 +313,21 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
 		}
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
+	case model.ActionTruncateTable:
+		tableID := job.TableID
+		args, err := model.GetTruncateTableArgsAfterRun(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		oldPartitionIDs := args.OldPartitionIDs
+		if len(oldPartitionIDs) > 0 {
+			if err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, oldPartitionIDs, ea, "truncate table: partition table IDs"); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		// always delete the table range, even when it's a partitioned table where
+		// it may contain global index regions.
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "truncate table: table ID"))
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 		model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:

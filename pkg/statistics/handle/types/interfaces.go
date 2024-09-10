@@ -156,6 +156,9 @@ type StatsAnalyze interface {
 
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
+
+	// Close closes the analyze worker.
+	Close()
 }
 
 // StatsCache is used to manage all table statistics in memory.

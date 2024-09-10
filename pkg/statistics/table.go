@@ -755,7 +755,11 @@ func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCn
 	if analyzeRowCount <= 0 {
 		return coll.RealtimeCount, coll.ModifyCount
 	}
-	scale := idxStats.TotalRowCount() / analyzeRowCount
+	idxTotalRowCount := idxStats.TotalRowCount()
+	if idxTotalRowCount <= 0 {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
+	scale := idxTotalRowCount / analyzeRowCount
 	return int64(float64(coll.RealtimeCount) * scale), int64(float64(coll.ModifyCount) * scale)
 }
 

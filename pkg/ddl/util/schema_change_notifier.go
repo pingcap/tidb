@@ -28,8 +28,11 @@ import (
 // to retrieve the needed information.
 type SchemaChangeEvent struct {
 	// todo: field and method will be added in the next few pr on demand
-	newTableInfo *model.TableInfo
-	oldTableInfo *model.TableInfo
+	newTableInfo    *model.TableInfo
+	oldTableInfo    *model.TableInfo
+	addedPartInfo   *model.PartitionInfo
+	deletedPartInfo *model.PartitionInfo
+	columnInfos     []*model.ColumnInfo
 
 	tp model.ActionType
 }
@@ -47,6 +50,9 @@ func (s *SchemaChangeEvent) String() string {
 	}
 	if s.oldTableInfo != nil {
 		_, _ = fmt.Fprintf(&sb, ", Old Table ID: %d, Old Table Name: %s", s.oldTableInfo.ID, s.oldTableInfo.Name)
+	}
+	for _, columnInfo := range s.columnInfos {
+		_, _ = fmt.Fprintf(&sb, ", Column ID: %d, Column Name: %s", columnInfo.ID, columnInfo.Name)
 	}
 	sb.WriteString(")")
 
@@ -100,4 +106,127 @@ func (s *SchemaChangeEvent) GetTruncateTableInfo() (
 ) {
 	intest.Assert(s.tp == model.ActionTruncateTable)
 	return s.newTableInfo, s.oldTableInfo
+}
+
+// NewDropTableEvent creates a SchemaChangeEvent whose type is ActionDropTable.
+func NewDropTableEvent(
+	droppedTableInfo *model.TableInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:           model.ActionDropTable,
+		oldTableInfo: droppedTableInfo,
+	}
+}
+
+// GetDropTableInfo returns the table info of the SchemaChangeEvent whose type is ActionDropTable.
+func (s *SchemaChangeEvent) GetDropTableInfo() (newTableInfo *model.TableInfo) {
+	intest.Assert(s.tp == model.ActionDropTable)
+	return s.oldTableInfo
+}
+
+// NewAddColumnEvent creates a SchemaChangeEvent whose type is ActionAddColumn.
+func NewAddColumnEvent(
+	tableInfo *model.TableInfo,
+	newColumnInfo []*model.ColumnInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:           model.ActionAddColumn,
+		newTableInfo: tableInfo,
+		columnInfos:  newColumnInfo,
+	}
+}
+
+// GetAddColumnInfo returns the table info of the SchemaChangeEvent whose type is ActionAddColumn.
+func (s *SchemaChangeEvent) GetAddColumnInfo() (newTableInfo *model.TableInfo, newColumnInfo []*model.ColumnInfo) {
+	intest.Assert(s.tp == model.ActionAddColumn)
+	return s.newTableInfo, s.columnInfos
+}
+
+// NewModifyColumnEvent creates a SchemaChangeEvent whose type is ActionModifyColumn.
+func NewModifyColumnEvent(
+	tableInfo *model.TableInfo,
+	modifiedColumnInfo []*model.ColumnInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:           model.ActionModifyColumn,
+		newTableInfo: tableInfo,
+		columnInfos:  modifiedColumnInfo,
+	}
+}
+
+// GetModifyColumnInfo returns the table info of and column info the SchemaChangeEvent whose type is ActionModifyColumn.
+func (s *SchemaChangeEvent) GetModifyColumnInfo() (newTableInfo *model.TableInfo, modifiedColumnInfo []*model.ColumnInfo) {
+	intest.Assert(s.tp == model.ActionModifyColumn)
+	return s.newTableInfo, s.columnInfos
+}
+
+// NewAddPartitionEvent creates a SchemaChangeEvent whose type is
+// ActionAddPartition.
+// NewAddPartitionEvent creates a new ddl event that adds partitions.
+func NewAddPartitionEvent(
+	globalTableInfo *model.TableInfo,
+	newPartInfo *model.PartitionInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:            model.ActionAddTablePartition,
+		newTableInfo:  globalTableInfo,
+		addedPartInfo: newPartInfo,
+	}
+}
+
+// GetAddPartitionInfo returns the table info and partition info of the
+// SchemaChangeEvent whose type is ActionAddPartition.
+func (s *SchemaChangeEvent) GetAddPartitionInfo() (
+	globalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+) {
+	intest.Assert(s.tp == model.ActionAddTablePartition)
+	return s.newTableInfo, s.addedPartInfo
+}
+
+// NewTruncatePartitionEvent creates a SchemaChangeEvent whose type is
+// ActionTruncateTablePartition.
+func NewTruncatePartitionEvent(
+	globalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+	deletedPartInfo *model.PartitionInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:              model.ActionTruncateTablePartition,
+		newTableInfo:    globalTableInfo,
+		addedPartInfo:   addedPartInfo,
+		deletedPartInfo: deletedPartInfo,
+	}
+}
+
+// GetTruncatePartitionInfo returns the table info, added partition info and
+// deleted partition info of the SchemaChangeEvent whose type is
+// ActionTruncateTablePartition.
+func (s *SchemaChangeEvent) GetTruncatePartitionInfo() (
+	globalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+	deletedPartInfo *model.PartitionInfo,
+) {
+	intest.Assert(s.tp == model.ActionTruncateTablePartition)
+	return s.newTableInfo, s.addedPartInfo, s.deletedPartInfo
+}
+
+// NewDropPartitionEvent creates a SchemaChangeEvent whose type is
+// ActionDropTablePartition.
+func NewDropPartitionEvent(
+	globalTableInfo *model.TableInfo,
+	deletedPartInfo *model.PartitionInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:              model.ActionDropTablePartition,
+		newTableInfo:    globalTableInfo,
+		deletedPartInfo: deletedPartInfo,
+	}
+}
+
+// GetDropPartitionInfo returns the table info and partition info of the
+// SchemaChangeEvent whose type is ActionDropTablePartition.
+func (s *SchemaChangeEvent) GetDropPartitionInfo() (globalTableInfo *model.TableInfo, droppedPartInfo *model.PartitionInfo) {
+	intest.Assert(s.tp == model.ActionDropTablePartition)
+	return s.newTableInfo, s.deletedPartInfo
 }
