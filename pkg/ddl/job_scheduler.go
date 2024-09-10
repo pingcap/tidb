@@ -731,7 +731,7 @@ func job2TableIDs(job *model.Job) string {
 		if job.Version == model.JobVersion1 {
 			return makeStringForIDs(job.Args[3].([]int64))
 		} else {
-			return makeStringForIDs(job.Args[1].(*model.RenameTablesArgs).TableIDs)
+			return makeStringForIDs(job.Args[0].(*model.RenameTablesArgs).TableIDs)
 		}
 	case model.ActionExchangeTablePartition, model.ActionRenameTable:
 		ids := job.CtxVars[1].([]int64)
