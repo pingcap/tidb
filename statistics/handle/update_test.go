@@ -1399,8 +1399,8 @@ func TestNeedAnalyzeTable(t *testing.T) {
 			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			limit:  time.Hour,
 			ratio:  0,
-			result: false,
-			reason: "",
+			result: true,
+			reason: "table unanalyzed",
 		},
 		// table was already analyzed but auto analyze is disabled
 		{
