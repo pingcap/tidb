@@ -3802,28 +3802,11 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		physicalTableID = is.Table.ID
 	}
 
-	forDataReaderBuilder := b.forDataReaderBuilder
-	dataReaderTS := b.dataReaderTS
-	stmtForUpdate := b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt
-	getStartTS := func(tryUseMaxTS bool) (uint64, error) {
-		if forDataReaderBuilder {
-			return dataReaderTS, nil
-		}
-
-		txnManager := sessiontxn.GetTxnManager(b.ctx)
-		if stmtForUpdate {
-			return txnManager.GetStmtForUpdateTS()
-		}
-		if tryUseMaxTS {
-			ctxProvider := txnManager.GetContextProvider()
-			if optimisticTxnCtxProvider := ctxProvider.(*isolation.OptimisticTxnContextProvider); optimisticTxnCtxProvider != nil {
-				if optimisticTxnCtxProvider.TryOptimizeWithMaxTS {
-					logutil.BgLogger().Info("use max uint64 as tso", zap.String("sql", b.ctx.GetSessionVars().StmtCtx.OriginalSQL))
-					return uint64(math.MaxUint64), nil
-				}
-			}
-		}
-		return txnManager.GetStmtReadTS()
+	lazyStartTS := LazyStartTS{
+		ctx:                  b.ctx,
+		forDataReaderBuilder: b.forDataReaderBuilder,
+		dataReaderTS:         b.dataReaderTS,
+		needForUpdateTS:      b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt,
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
 
@@ -3832,7 +3815,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
 		indexUsageReporter:         b.buildIndexUsageReporter(v),
 		dagPB:                      dagReq,
-		getStartTS:                 getStartTS,
+		getStartTS:                 lazyStartTS.GetStartTS,
 		txnScope:                   b.txnScope,
 		readReplicaScope:           b.readReplicaScope,
 		isStaleness:                b.isStaleness,
@@ -3858,6 +3841,34 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	}
 
 	return e, nil
+}
+
+type LazyStartTS struct {
+	ctx                  sessionctx.Context
+	forDataReaderBuilder bool
+	dataReaderTS         uint64
+	needForUpdateTS      bool
+}
+
+func (ls *LazyStartTS) GetStartTS(tryUseMaxTS bool) (uint64, error) {
+	if ls.forDataReaderBuilder {
+		return ls.dataReaderTS, nil
+	}
+
+	txnManager := sessiontxn.GetTxnManager(ls.ctx)
+	if ls.needForUpdateTS {
+		return txnManager.GetStmtForUpdateTS()
+	}
+	if tryUseMaxTS {
+		ctxProvider := txnManager.GetContextProvider()
+		if optimisticTxnCtxProvider := ctxProvider.(*isolation.OptimisticTxnContextProvider); optimisticTxnCtxProvider != nil {
+			if optimisticTxnCtxProvider.TryOptimizeWithMaxTS {
+				logutil.BgLogger().Info("use max uint64 as tso", zap.String("sql", ls.ctx.GetSessionVars().StmtCtx.OriginalSQL))
+				return uint64(math.MaxUint64), nil
+			}
+		}
+	}
+	return txnManager.GetStmtReadTS()
 }
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) exec.Executor {
