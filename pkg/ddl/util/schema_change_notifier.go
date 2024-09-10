@@ -33,7 +33,9 @@ type SchemaChangeEvent struct {
 	addedPartInfo   *model.PartitionInfo
 	droppedPartInfo *model.PartitionInfo
 	columnInfos     []*model.ColumnInfo
-	nonPartTableID  int64
+	// nonPartTableID is used to store the non-partitioned table that is converted to
+	// a partitioned table in NewAddPartitioningEvent.
+	nonPartTableID int64
 
 	tp model.ActionType
 }
