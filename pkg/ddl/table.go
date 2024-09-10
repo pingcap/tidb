@@ -791,24 +791,26 @@ func onRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64
 	}
 
 	if job.SchemaState == model.StatePublic {
-		return finishJobRenameTables(jobCtx, t, job, args.NewTableNames, args.TableIDs, args.NewSchemaIDs)
+		return finishJobRenameTables(jobCtx, t, job, args)
 	}
 
 	fkh := newForeignKeyHelper()
-	for i, oldSchemaID := range args.OldSchemaIDs {
-		job.TableID = args.TableIDs[i]
-		job.TableName = args.OldTableNames[i].L
-		tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
+	for _, info := range args.RenameTableInfos {
+		job.TableID = info.TableID
+		job.TableName = info.OldTableName.L
+		tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, info.OldSchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		ver, err := checkAndRenameTables(t, job, tblInfo, oldSchemaID, args.NewSchemaIDs[i], args.OldSchemaNames[i], args.NewTableNames[i])
+		ver, err := checkAndRenameTables(
+			t, job, tblInfo, info.OldSchemaID,
+			info.NewSchemaID, info.OldSchemaName, info.NewTableName)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		err = adjustForeignKeyChildTableInfoAfterRenameTable(
 			jobCtx.infoCache, t, job, &fkh, tblInfo,
-			*args.OldSchemaNames[i], *args.OldTableNames[i], *args.NewTableNames[i], args.NewSchemaIDs[i])
+			*info.OldSchemaName, *info.OldTableName, *info.NewTableName, info.NewSchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -873,7 +875,10 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 	return ver, nil
 }
 
-func adjustForeignKeyChildTableInfoAfterRenameTable(infoCache *infoschema.InfoCache, t *meta.Meta, job *model.Job, fkh *foreignKeyHelper, tblInfo *model.TableInfo, oldSchemaName, oldTableName, newTableName pmodel.CIStr, newSchemaID int64) error {
+func adjustForeignKeyChildTableInfoAfterRenameTable(
+	infoCache *infoschema.InfoCache, t *meta.Meta, job *model.Job,
+	fkh *foreignKeyHelper, tblInfo *model.TableInfo,
+	oldSchemaName, oldTableName, newTableName pmodel.CIStr, newSchemaID int64) error {
 	if !variable.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
 		return nil
 	}
@@ -946,15 +951,13 @@ func finishJobRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int
 	return ver, nil
 }
 
-func finishJobRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job,
-	tableNames []*pmodel.CIStr, tableIDs, newSchemaIDs []int64) (int64, error) {
-	tblSchemaIDs := make(map[int64]int64, len(tableIDs))
-	for i := range tableIDs {
-		tblSchemaIDs[tableIDs[i]] = newSchemaIDs[i]
-	}
-	tblInfos := make([]*model.TableInfo, 0, len(tableNames))
-	for i := range tableIDs {
-		tblID := tableIDs[i]
+func finishJobRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job, args *model.RenameTablesArgs) (int64, error) {
+	infos := args.RenameTableInfos
+	tblInfos := make([]*model.TableInfo, 0, len(infos))
+	tblSchemaIDs := make(map[int64]int64, len(infos))
+	for _, info := range infos {
+		tblSchemaIDs[info.TableID] = info.NewSchemaID
+		tblID := info.TableID
 		tblInfo, err := getTableInfo(t, tblID, tblSchemaIDs[tblID])
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -967,7 +970,16 @@ func finishJobRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job,
 	// schema versions to complete.
 	var err error
 	oldRawArgs := job.RawArgs
-	job.Args[0] = newSchemaIDs
+	if job.Version == model.JobVersion1 {
+		li := *job.Args[0].(*[]int64)
+		for i, info := range infos {
+			li[i] = info.NewSchemaID
+		}
+	} else {
+		for _, info := range infos {
+			info.OldSchemaID = info.NewSchemaID
+		}
+	}
 	job.RawArgs, err = json.Marshal(job.Args)
 	if err != nil {
 		return 0, errors.Trace(err)

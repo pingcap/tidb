@@ -160,13 +160,12 @@ func TestTruncateTableArgs(t *testing.T) {
 }
 
 func TestGetRenameTablesArgs(t *testing.T) {
+
 	inArgs := &RenameTablesArgs{
-		OldSchemaIDs:   []int64{1, 2},
-		OldSchemaNames: []*pmodel.CIStr{{O: "db1", L: "db1"}, {O: "db2", L: "db2"}},
-		OldTableNames:  []*pmodel.CIStr{{O: "tb1", L: "tb1"}, {O: "tb2", L: "tb2"}},
-		NewSchemaIDs:   []int64{3, 4},
-		NewTableNames:  []*pmodel.CIStr{{O: "tb3", L: "tb3"}, {O: "tb4", L: "tb4"}},
-		TableIDs:       []int64{100, 101},
+		RenameTableInfos: []*RenameTableInfo{
+			{1, &pmodel.CIStr{O: "db1", L: "db1"}, &pmodel.CIStr{O: "tb1", L: "tb1"}, 3, &pmodel.CIStr{O: "tb3", L: "tb3"}, 100},
+			{2, &pmodel.CIStr{O: "db2", L: "db2"}, &pmodel.CIStr{O: "tb2", L: "tb2"}, 3, &pmodel.CIStr{O: "tb4", L: "tb4"}, 101},
+		},
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		job := &Job{
@@ -182,11 +181,7 @@ func TestGetRenameTablesArgs(t *testing.T) {
 		require.NoError(t, err)
 		args, err := GetRenameTablesArgs(j2)
 		require.NoError(t, err)
-		require.Equal(t, inArgs.OldSchemaIDs, args.OldSchemaIDs)
-		require.Equal(t, inArgs.OldSchemaNames, args.OldSchemaNames)
-		require.Equal(t, inArgs.OldTableNames, args.OldTableNames)
-		require.Equal(t, inArgs.NewSchemaIDs, args.NewSchemaIDs)
-		require.Equal(t, inArgs.NewTableNames, args.NewTableNames)
-		require.Equal(t, inArgs.TableIDs, args.TableIDs)
+		require.Equal(t, inArgs.RenameTableInfos[0], args.RenameTableInfos[0])
+		require.Equal(t, inArgs.RenameTableInfos[1], args.RenameTableInfos[1])
 	}
 }

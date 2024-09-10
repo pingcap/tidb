@@ -196,7 +196,8 @@ type TruncateTableArgs struct {
 	OldPartIDsWithPolicy []int64 `json:"-"`
 }
 
-type renameTableInfo struct {
+// This structure will be replaced by RenameTableArgs after previous PR is merged
+type RenameTableInfo struct {
 	OldSchemaID   int64         `json:"old_schema_id,omitempty"`
 	OldSchemaName *pmodel.CIStr `json:"old_schema_name,omitempty"`
 	OldTableName  *pmodel.CIStr `json:"old_table_name,omitempty"`
@@ -207,29 +208,30 @@ type renameTableInfo struct {
 
 // RenameTablesArgs is the arguments for rename tables job.
 type RenameTablesArgs struct {
-	RenameTableInfos []*renameTableInfo `json:"rename_table_infos,omitempty"`
+	RenameTableInfos []*RenameTableInfo `json:"rename_table_infos,omitempty"`
 }
 
 func (a *RenameTablesArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
 		n := len(a.RenameTableInfos)
-		oldSchemaIDs := make([]int64, 0, n)
-		oldSchemaNames := make([]*pmodel.CIStr, 0, n)
-		oldTableNames := make([]*pmodel.CIStr, 0, n)
-		newSchemaIDs := make([]int64, 0, n)
-		newTableNames := make([]*pmodel.CIStr, 0, n)
-		tableIDs := make([]int64, 0, n)
+		oldSchemaIDs := make([]int64, n)
+		oldSchemaNames := make([]*pmodel.CIStr, n)
+		oldTableNames := make([]*pmodel.CIStr, n)
+		newSchemaIDs := make([]int64, n)
+		newTableNames := make([]*pmodel.CIStr, n)
+		tableIDs := make([]int64, n)
 
 		for i, info := range a.RenameTableInfos {
 			oldSchemaIDs[i] = info.OldSchemaID
-			oldSchemaNames[i] = info.OldTableName
+			oldSchemaNames[i] = info.OldSchemaName
 			oldTableNames[i] = info.OldTableName
 			newSchemaIDs[i] = info.NewSchemaID
 			newTableNames[i] = info.NewTableName
 			tableIDs[i] = info.TableID
 		}
 
-		job.Args = []any{oldSchemaIDs, newSchemaIDs, newTableNames, tableIDs, oldSchemaNames, oldTableNames}
+		// To make it compatible with previous create metas
+		job.Args = []any{oldSchemaIDs, newSchemaIDs, oldTableNames, tableIDs, oldSchemaNames, newTableNames}
 		return
 	}
 	job.Args = []any{a}
@@ -244,9 +246,9 @@ func GetRenameTablesArgsFromV1(
 	newTableNames []*pmodel.CIStr,
 	tableIDs []int64,
 ) *RenameTablesArgs {
-	infos := make([]*renameTableInfo, 0, len(oldSchemaIDs))
+	infos := make([]*RenameTableInfo, 0, len(oldSchemaIDs))
 	for i, oldSchemaID := range oldSchemaIDs {
-		infos = append(infos, &renameTableInfo{
+		infos = append(infos, &RenameTableInfo{
 			OldSchemaID:   oldSchemaID,
 			OldSchemaName: oldSchemaNames[i],
 			OldTableName:  oldTableNames[i],
@@ -273,8 +275,8 @@ func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
 			tableIDs       []int64
 		)
 		if err := job.DecodeArgs(
-			&oldSchemaIDs, &newSchemaIDs, &newTableNames,
-			&tableIDs, &oldSchemaNames, &oldTableNames); err != nil {
+			&oldSchemaIDs, &newSchemaIDs, &oldTableNames,
+			&tableIDs, &oldSchemaNames, &newTableNames); err != nil {
 			return nil, errors.Trace(err)
 		}
 

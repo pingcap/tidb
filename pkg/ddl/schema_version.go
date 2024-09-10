@@ -105,22 +105,22 @@ func SetSchemaDiffForRenameTables(diff *model.SchemaDiff, job *model.Job) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	affects := make([]*model.AffectedOption, len(args.NewSchemaIDs)-1)
-	for i, newSchemaID := range args.NewSchemaIDs {
+	affects := make([]*model.AffectedOption, len(args.RenameTableInfos)-1)
+	for i, info := range args.RenameTableInfos {
 		// Do not add the first table to AffectedOpts. Related issue tidb#47064.
 		if i == 0 {
 			continue
 		}
 		affects[i-1] = &model.AffectedOption{
-			SchemaID:    newSchemaID,
-			TableID:     args.TableIDs[i],
-			OldTableID:  args.TableIDs[i],
-			OldSchemaID: args.OldSchemaIDs[i],
+			SchemaID:    info.NewSchemaID,
+			TableID:     info.TableID,
+			OldTableID:  info.TableID,
+			OldSchemaID: info.OldSchemaID,
 		}
 	}
-	diff.TableID = args.TableIDs[0]
-	diff.SchemaID = args.NewSchemaIDs[0]
-	diff.OldSchemaID = args.OldSchemaIDs[0]
+	diff.TableID = args.RenameTableInfos[0].TableID
+	diff.SchemaID = args.RenameTableInfos[0].NewSchemaID
+	diff.OldSchemaID = args.RenameTableInfos[0].OldSchemaID
 	diff.AffectedOpts = affects
 	return nil
 }
