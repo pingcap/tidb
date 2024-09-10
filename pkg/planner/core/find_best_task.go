@@ -1994,9 +1994,9 @@ func convertToIndexScan(ds *DataSource, prop *property.PhysicalProperty,
 		// If it's parent requires double read task, return max cost.
 		return base.InvalidTask, nil
 	}
-	//if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
-	//	return base.InvalidTask, nil
-	//}
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
+		return base.InvalidTask, nil
+	}
 	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
 	if prop.IsSortItemEmpty() && candidate.path.ForceKeepOrder {
 		return base.InvalidTask, nil
