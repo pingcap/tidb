@@ -567,6 +567,7 @@ func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.Bi
 func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.Datum{}, m.err
 }
+<<<<<<< HEAD
 func (m *MockExpr) GetType() *types.FieldType                                     { return m.t }
 func (m *MockExpr) Clone() Expression                                             { return nil }
 func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool               { return false }
@@ -588,6 +589,46 @@ func (m *MockExpr) Coercibility() Coercibility                                  
 func (m *MockExpr) SetCoercibility(Coercibility)                                  {}
 func (m *MockExpr) Repertoire() Repertoire                                        { return UNICODE }
 func (m *MockExpr) SetRepertoire(Repertoire)                                      {}
+=======
+func (m *MockExpr) GetType(_ EvalContext) *types.FieldType { return m.t }
+
+func (m *MockExpr) Clone() Expression {
+	cloned := new(MockExpr)
+	cloned.i = m.i
+	cloned.err = m.err
+	if m.t != nil {
+		cloned.t = m.t.Clone()
+	}
+	return cloned
+}
+
+func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool          { return false }
+func (m *MockExpr) IsCorrelated() bool                                { return false }
+func (m *MockExpr) ConstLevel() ConstLevel                            { return ConstNone }
+func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
+func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
+func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
+func (m *MockExpr) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool) {
+	return m, true
+}
+func (m *MockExpr) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool {
+	return true
+}
+func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error) { return m, nil }
+func (m *MockExpr) ExplainInfo(EvalContext) string                      { return "" }
+func (m *MockExpr) ExplainNormalizedInfo() string                       { return "" }
+func (m *MockExpr) ExplainNormalizedInfo4InList() string                { return "" }
+func (m *MockExpr) HashCode() []byte                                    { return nil }
+func (m *MockExpr) CanonicalHashCode() []byte                           { return nil }
+func (m *MockExpr) Vectorized() bool                                    { return false }
+func (m *MockExpr) HasCoercibility() bool                               { return false }
+func (m *MockExpr) Coercibility() Coercibility                          { return 0 }
+func (m *MockExpr) SetCoercibility(Coercibility)                        {}
+func (m *MockExpr) Repertoire() Repertoire                              { return UNICODE }
+func (m *MockExpr) SetRepertoire(Repertoire)                            {}
+func (m *MockExpr) IsExplicitCharset() bool                             { return false }
+func (m *MockExpr) SetExplicitCharset(bool)                             {}
+>>>>>>> e0864c6cf1d (expression: let `cast` function supports explicit set charset (#55724))
 
 func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""

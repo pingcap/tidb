@@ -272,14 +272,15 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []
 type castAsStringFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp                *types.FieldType
+	isExplicitCharset bool
 }
 
 func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinCastFunc4String(ctx, c.funcName, args, c.tp, c.isExplicitCharset)
 	if err != nil {
 		return nil, err
 	}
@@ -2049,12 +2050,19 @@ func CanImplicitEvalReal(expr Expression) bool {
 
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
+<<<<<<< HEAD
 func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	ctx.SetValue(inUnionCastContext, struct{}{})
 	defer func() {
 		ctx.SetValue(inUnionCastContext, nil)
 	}()
 	return BuildCastFunction(ctx, expr, tp)
+=======
+func BuildCastFunction4Union(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, true, false)
+	terror.Log(err)
+	return
+>>>>>>> e0864c6cf1d (expression: let `cast` function supports explicit set charset (#55724))
 }
 
 // BuildCastCollationFunction builds a ScalarFunction which casts the collation.
@@ -2088,15 +2096,25 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 }
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
+<<<<<<< HEAD
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	res, err := BuildCastFunctionWithCheck(ctx, expr, tp)
+=======
+func BuildCastFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false, false)
+>>>>>>> e0864c6cf1d (expression: let `cast` function supports explicit set charset (#55724))
 	terror.Log(err)
 	return
 }
 
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
+<<<<<<< HEAD
 func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression, err error) {
 	argType := expr.GetType()
+=======
+func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType, inUnion bool, isExplicitCharset bool) (res Expression, err error) {
+	argType := expr.GetType(ctx.GetEvalCtx())
+>>>>>>> e0864c6cf1d (expression: let `cast` function supports explicit set charset (#55724))
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
 		tp.DelFlag(mysql.NotNullFlag)
@@ -2121,9 +2139,15 @@ func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *typ
 			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		}
 	case types.ETString:
+<<<<<<< HEAD
 		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		if expr.GetType().GetType() == mysql.TypeBit {
 			tp.SetFlen((expr.GetType().GetFlen() + 7) / 8)
+=======
+		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, isExplicitCharset}
+		if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeBit {
+			tp.SetFlen((expr.GetType(ctx.GetEvalCtx()).GetFlen() + 7) / 8)
+>>>>>>> e0864c6cf1d (expression: let `cast` function supports explicit set charset (#55724))
 		}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
