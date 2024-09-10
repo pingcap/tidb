@@ -27,7 +27,6 @@ import (
 // check the GetType of SchemaChange and call the corresponding getter function
 // to retrieve the needed information.
 type SchemaChangeEvent struct {
-	// todo: field and method will be added in the next few pr on demand
 	tableInfo       *model.TableInfo
 	oldTableInfo    *model.TableInfo
 	addedPartInfo   *model.PartitionInfo
