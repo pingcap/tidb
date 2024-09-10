@@ -1726,7 +1726,19 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		HookContext:                   hctx,
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
+<<<<<<< HEAD:sessionctx/variable/session.go
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
+=======
+		chunkPool:                     nil,
+		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
+		mppVersion:                    kv.MppVersionUnspecified,
+		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
+		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
+		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
+		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
+		GroupConcatMaxLen:             DefGroupConcatMaxLen,
+		EnableRedactLog:               DefTiDBRedactLog,
+>>>>>>> 2c30f865e32 (session: set EnableWindowFunction for all SessionVars (#55991)):pkg/sessionctx/variable/session.go
 		EnableWindowFunction:          DefEnableWindowFunction,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)

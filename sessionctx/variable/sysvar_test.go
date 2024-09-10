@@ -1095,6 +1095,494 @@ func TestSetJobScheduleWindow(t *testing.T) {
 
 func TestEnableWindowFunction(t *testing.T) {
 	vars := NewSessionVars(nil)
+<<<<<<< HEAD:sessionctx/variable/sysvar_test.go
+=======
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	initValue, err := mock.GetGlobalSysVar(TiDBIgnoreInlistPlanDigest)
+	require.NoError(t, err)
+	require.Equal(t, initValue, Off)
+	// Set to On(init at start)
+	err1 := mock.SetGlobalSysVar(context.Background(), TiDBIgnoreInlistPlanDigest, On)
+	require.NoError(t, err1)
+	NewVal, err2 := mock.GetGlobalSysVar(TiDBIgnoreInlistPlanDigest)
+	require.NoError(t, err2)
+	require.Equal(t, NewVal, On)
+}
+
+func TestTiDBEnableResourceControl(t *testing.T) {
+	// setup the hooks for test
+	// NOTE: the default system variable is true but the switch is false
+	// It is initialized at the first call of `rebuildSysVarCache`
+	enable := false
+	EnableGlobalResourceControlFunc = func() { enable = true }
+	DisableGlobalResourceControlFunc = func() { enable = false }
+	setGlobalResourceControlFunc := func(enable bool) {
+		if enable {
+			EnableGlobalResourceControlFunc()
+		} else {
+			DisableGlobalResourceControlFunc()
+		}
+	}
+	SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
+	// Reset the switch. It may be set by other tests.
+	EnableResourceControl.Store(false)
+
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	resourceControlEnabled := GetSysVar(TiDBEnableResourceControl)
+
+	// Default true
+	require.Equal(t, resourceControlEnabled.Value, On)
+	require.Equal(t, enable, false)
+
+	// Set to On(init at start)
+	err := mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, On)
+	require.NoError(t, err)
+	val, err1 := mock.GetGlobalSysVar(TiDBEnableResourceControl)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+	require.Equal(t, enable, true)
+
+	// Set to Off
+	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, Off)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBEnableResourceControl)
+	require.NoError(t, err1)
+	require.Equal(t, Off, val)
+	require.Equal(t, enable, false)
+
+	// Set to On again
+	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableResourceControl, On)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBEnableResourceControl)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+	require.Equal(t, enable, true)
+}
+
+func TestTiDBResourceControlStrictMode(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	resourceControlStrictMode := GetSysVar(TiDBResourceControlStrictMode)
+
+	// Default true
+	require.Equal(t, resourceControlStrictMode.Value, On)
+	require.Equal(t, EnableResourceControlStrictMode.Load(), true)
+
+	// Set to Off
+	err := mock.SetGlobalSysVar(context.Background(), TiDBResourceControlStrictMode, Off)
+	require.NoError(t, err)
+	val, err1 := mock.GetGlobalSysVar(TiDBResourceControlStrictMode)
+	require.NoError(t, err1)
+	require.Equal(t, Off, val)
+
+	// Set to On again
+	err = mock.SetGlobalSysVar(context.Background(), TiDBResourceControlStrictMode, On)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBResourceControlStrictMode)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+}
+
+func TestTiDBEnableRowLevelChecksum(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	// default to false
+	val, err := mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+
+	// enable
+	err = mock.SetGlobalSysVar(ctx, TiDBEnableRowLevelChecksum, On)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
+	require.NoError(t, err)
+	require.Equal(t, On, val)
+
+	// disable
+	err = mock.SetGlobalSysVar(ctx, TiDBEnableRowLevelChecksum, Off)
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBEnableRowLevelChecksum)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+}
+
+func TestTiDBAutoAnalyzeRatio(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	// default to 0.5
+	val, err := mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "0.5", val)
+
+	// set to 0.1
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "0.1")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "0.1", val)
+
+	// set to 1.1
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "1.1")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "1.1", val)
+
+	// set to 0
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "0")
+	require.Error(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "1.1", val)
+
+	// set to 0.0000000001
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "0.0000000001")
+	require.Error(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "1.1", val)
+
+	// set to 0.00001
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "0.00001")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "0.00001", val)
+
+	// set to 0.000009999
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "0.000009999")
+	require.Error(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "0.00001", val)
+}
+
+func TestTiDBTiFlashReplicaRead(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	tidbTiFlashReplicaRead := GetSysVar(TiFlashReplicaRead)
+	// Check default value
+	require.Equal(t, DefTiFlashReplicaRead, tidbTiFlashReplicaRead.Value)
+
+	err := mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, "all_replicas")
+	require.NoError(t, err)
+	val, err := mock.GetGlobalSysVar(TiFlashReplicaRead)
+	require.NoError(t, err)
+	require.Equal(t, "all_replicas", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, "closest_adaptive")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiFlashReplicaRead)
+	require.NoError(t, err)
+	require.Equal(t, "closest_adaptive", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, "closest_replicas")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiFlashReplicaRead)
+	require.NoError(t, err)
+	require.Equal(t, "closest_replicas", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, DefTiFlashReplicaRead)
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiFlashReplicaRead, "random")
+	require.Error(t, err)
+	val, err = mock.GetGlobalSysVar(TiFlashReplicaRead)
+	require.NoError(t, err)
+	require.Equal(t, DefTiFlashReplicaRead, val)
+}
+
+func TestSetTiDBCloudStorageURI(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	cloudStorageURI := GetSysVar(TiDBCloudStorageURI)
+	require.Len(t, CloudStorageURI.Load(), 0)
+	defer func() {
+		CloudStorageURI.Store("")
+	}()
+
+	// Default empty
+	require.Len(t, cloudStorageURI.Value, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Set to noop
+	noopURI := "noop://blackhole?access-key=hello&secret-access-key=world"
+	err := mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, noopURI)
+	require.NoError(t, err)
+	val, err1 := mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.Equal(t, noopURI, val)
+	require.Equal(t, noopURI, CloudStorageURI.Load())
+
+	// Set to s3, should fail
+	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, "s3://blackhole")
+	require.Error(t, err, "unreachable storage URI")
+
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer s.Close()
+
+	// Set to s3, should return uri without variable
+	s3URI := "s3://tiflow-test/?access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
+	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, s3URI)
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.True(t, strings.HasPrefix(val, "s3://tiflow-test/"))
+	require.Contains(t, val, "access-key=xxxxxx")
+	require.Contains(t, val, "secret-access-key=xxxxxx")
+	require.Contains(t, val, "session-token=xxxxxx")
+	require.Equal(t, s3URI, CloudStorageURI.Load())
+
+	// ks3 is like s3
+	ks3URI := "ks3://tiflow-test/?region=test&access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
+	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, ks3URI)
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.True(t, strings.HasPrefix(val, "ks3://tiflow-test/"))
+	require.Contains(t, val, "access-key=xxxxxx")
+	require.Contains(t, val, "secret-access-key=xxxxxx")
+	require.Contains(t, val, "session-token=xxxxxx")
+	require.Equal(t, ks3URI, CloudStorageURI.Load())
+
+	// Set to empty, should return no error
+	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, "")
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.Len(t, val, 0)
+	cancel()
+}
+
+func TestGlobalSystemVariableInitialValue(t *testing.T) {
+	vars := []struct {
+		name    string
+		val     string
+		initVal string
+	}{
+		{
+			TiDBTxnMode,
+			DefTiDBTxnMode,
+			"pessimistic",
+		},
+		{
+			TiDBEnableAsyncCommit,
+			BoolToOnOff(DefTiDBEnableAsyncCommit),
+			BoolToOnOff(DefTiDBEnableAsyncCommit),
+		},
+		{
+			TiDBEnable1PC,
+			BoolToOnOff(DefTiDBEnable1PC),
+			BoolToOnOff(DefTiDBEnable1PC),
+		},
+		{
+			TiDBMemOOMAction,
+			DefTiDBMemOOMAction,
+			OOMActionLog,
+		},
+		{
+			TiDBEnableAutoAnalyze,
+			BoolToOnOff(DefTiDBEnableAutoAnalyze),
+			Off,
+		},
+		{
+			TiDBRowFormatVersion,
+			strconv.Itoa(DefTiDBRowFormatV1),
+			strconv.Itoa(DefTiDBRowFormatV2),
+		},
+		{
+			TiDBTxnAssertionLevel,
+			DefTiDBTxnAssertionLevel,
+			AssertionFastStr,
+		},
+		{
+			TiDBEnableMutationChecker,
+			BoolToOnOff(DefTiDBEnableMutationChecker),
+			On,
+		},
+		{
+			TiDBPessimisticTransactionFairLocking,
+			BoolToOnOff(DefTiDBPessimisticTransactionFairLocking),
+			On,
+		},
+	}
+	for _, v := range vars {
+		initVal := GlobalSystemVariableInitialValue(v.name, v.val)
+		require.Equal(t, v.initVal, initVal)
+	}
+}
+
+func TestTiDBOptTxnAutoRetry(t *testing.T) {
+	sv := GetSysVar(TiDBDisableTxnAutoRetry)
+	vars := NewSessionVars(nil)
+
+	for _, scope := range []ScopeFlag{ScopeSession, ScopeGlobal} {
+		val, err := sv.Validate(vars, "OFF", scope)
+		require.NoError(t, err)
+		require.Equal(t, "ON", val)
+		warn := vars.StmtCtx.GetWarnings()[0].Err
+		require.Equal(t, "[variable:1287]'OFF' is deprecated and will be removed in a future release. Please use ON instead", warn.Error())
+	}
+}
+
+func TestTiDBLowResTSOUpdateInterval(t *testing.T) {
+	sv := GetSysVar(TiDBLowResolutionTSOUpdateInterval)
+	vars := NewSessionVars(nil)
+
+	// Too low, will get raised to the min value
+	val, err := sv.Validate(vars, "0", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(GetSysVar(TiDBLowResolutionTSOUpdateInterval).MinValue, 10), val)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_low_resolution_tso_update_interval value: '0'", warn.Error())
+
+	// Too high, will get lowered to the max value
+	val, err = sv.Validate(vars, "100000", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(GetSysVar(TiDBLowResolutionTSOUpdateInterval).MaxValue, 10), val)
+	warn = vars.StmtCtx.GetWarnings()[1].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_low_resolution_tso_update_interval value: '100000'", warn.Error())
+
+	// valid
+	val, err = sv.Validate(vars, "1000", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "1000", val)
+}
+
+func TestTiDBSchemaCacheSize(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	var (
+		mb       uint64 = 1 << 20
+		err      error
+		val      string
+		maxValue uint64 = math.MaxInt64
+	)
+	// Test tidb_schema_cache_size
+	schemaCacheSize := GetSysVar(TiDBSchemaCacheSize)
+	// Check default value
+	require.Equal(t, schemaCacheSize.Value, strconv.Itoa(DefTiDBSchemaCacheSize))
+
+	// MinValue is 512 MB
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(100*mb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, "512MB", val)
+
+	// MaxValue is 9223372036854775807
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(maxValue, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(maxValue, 10), val)
+
+	// test MinValue-1
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(100*mb-1, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, "512MB", val)
+
+	// test MaxValue+1
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(maxValue+1, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(maxValue, 10), val)
+
+	// Test Normal Value
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(1024*mb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(1024*mb, 10), val)
+
+	// Test Close
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(0, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// Test byteSize format
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "1234567890123")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(1234567890123))
+	require.Equal(t, "1234567890123", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "10KB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(512<<20))
+	require.Equal(t, "512MB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "12345678KB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(12345678<<10))
+	require.Equal(t, "12345678KB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "700MB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(700<<20))
+	require.Equal(t, "700MB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "20GB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(20<<30))
+	require.Equal(t, "20GB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "2TB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(2<<40))
+	require.Equal(t, "2TB", val)
+
+	// Test error
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "123aaa123")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "700MBaa")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "a700MB")
+	require.Error(t, err)
+}
+
+func TestEnableWindowFunction(t *testing.T) {
+	vars := NewSessionVars(nil)
+>>>>>>> 2c30f865e32 (session: set EnableWindowFunction for all SessionVars (#55991)):pkg/sessionctx/variable/sysvar_test.go
 	require.Equal(t, vars.EnableWindowFunction, DefEnableWindowFunction)
 	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "on"))
 	require.Equal(t, vars.EnableWindowFunction, true)
@@ -1102,4 +1590,65 @@ func TestEnableWindowFunction(t *testing.T) {
 	require.Equal(t, vars.EnableWindowFunction, false)
 	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "1"))
 	require.Equal(t, vars.EnableWindowFunction, true)
+<<<<<<< HEAD:sessionctx/variable/sysvar_test.go
+=======
+}
+
+func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
+	vars := NewSessionVars(nil)
+
+	tests := []struct {
+		name                string
+		autoAnalyze         bool
+		autoAnalyzePriority bool
+		input               string
+		expectError         bool
+	}{
+		{
+			name:                "Both enabled, valid input",
+			autoAnalyze:         true,
+			autoAnalyzePriority: true,
+			input:               "10",
+			expectError:         false,
+		},
+		{
+			name:                "Auto analyze disabled",
+			autoAnalyze:         false,
+			autoAnalyzePriority: true,
+			input:               "10",
+			expectError:         true,
+		},
+		{
+			name:                "Auto analyze priority queue disabled",
+			autoAnalyze:         true,
+			autoAnalyzePriority: false,
+			input:               "10",
+			expectError:         true,
+		},
+		{
+			name:                "Both disabled",
+			autoAnalyze:         false,
+			autoAnalyzePriority: false,
+			input:               "10",
+			expectError:         true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			RunAutoAnalyze.Store(tt.autoAnalyze)
+			EnableAutoAnalyzePriorityQueue.Store(tt.autoAnalyzePriority)
+
+			sysVar := GetSysVar(TiDBAutoAnalyzeConcurrency)
+			require.NotNil(t, sysVar)
+
+			_, err := sysVar.Validate(vars, tt.input, ScopeGlobal)
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+>>>>>>> 2c30f865e32 (session: set EnableWindowFunction for all SessionVars (#55991)):pkg/sessionctx/variable/sysvar_test.go
 }
