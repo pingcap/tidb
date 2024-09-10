@@ -59,39 +59,6 @@ func (e *DDLEvent) IsMemOrSysDB(sctx sessionctx.Context) (bool, error) {
 	return util.IsMemOrSysDB(schema.Name.L), nil
 }
 
-// NewRemovePartitioningEvent creates a new ddl event that converts a partitioned table to a single table.
-// For example, `alter table t remove partitioning`.
-func NewRemovePartitioningEvent(
-	schemaID int64,
-	oldPartitionedTableID int64,
-	newSingleTableInfo *model.TableInfo,
-	droppedPartInfo *model.PartitionInfo,
-) *DDLEvent {
-	return &DDLEvent{
-		tp:          model.ActionRemovePartitioning,
-		schemaID:    schemaID,
-		oldTableID:  oldPartitionedTableID,
-		tableInfo:   newSingleTableInfo,
-		oldPartInfo: droppedPartInfo,
-	}
-}
-
-// GetRemovePartitioningInfo gets the table info of the table that is converted to a single table.
-func (e *DDLEvent) GetRemovePartitioningInfo() (
-	oldPartitionedTableID int64,
-	newSingleTableInfo *model.TableInfo,
-	droppedPartInfo *model.PartitionInfo,
-) {
-	return e.oldTableID, e.tableInfo, e.oldPartInfo
-}
-
-// NewFlashbackClusterEvent creates a new ddl event that flashes back the cluster.
-func NewFlashbackClusterEvent() *DDLEvent {
-	return &DDLEvent{
-		tp: model.ActionFlashbackCluster,
-	}
-}
-
 // GetType returns the type of the ddl event.
 func (e *DDLEvent) GetType() model.ActionType {
 	return e.tp

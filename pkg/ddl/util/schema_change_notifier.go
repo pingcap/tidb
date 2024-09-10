@@ -341,3 +341,37 @@ func (s *SchemaChangeEvent) GetAddPartitioningInfo() (
 	intest.Assert(s.tp == model.ActionAlterTablePartitioning)
 	return s.nonPartTableID, s.tableInfo, s.addedPartInfo
 }
+
+// NewRemovePartitioningEvent creates a schema change event whose type is
+// ActionRemovePartitioning.
+func NewRemovePartitioningEvent(
+	oldPartitionedTableID int64,
+	newSingleTableInfo *model.TableInfo,
+	droppedPartInfo *model.PartitionInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:              model.ActionRemovePartitioning,
+		nonPartTableID:  oldPartitionedTableID,
+		tableInfo:       newSingleTableInfo,
+		droppedPartInfo: droppedPartInfo,
+	}
+}
+
+// GetRemovePartitioningInfo returns the table info and partition info of the SchemaChangeEvent whose type is
+// ActionRemovePartitioning.
+func (s *SchemaChangeEvent) GetRemovePartitioningInfo() (
+	oldPartitionedTableID int64,
+	newSingleTableInfo *model.TableInfo,
+	droppedPartInfo *model.PartitionInfo,
+) {
+	intest.Assert(s.tp == model.ActionRemovePartitioning)
+	return s.nonPartTableID, s.tableInfo, s.droppedPartInfo
+}
+
+// NewFlashbackClusterEvent creates a schema change event whose type is
+// ActionFlashbackCluster.
+func NewFlashbackClusterEvent() *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp: model.ActionFlashbackCluster,
+	}
+}

@@ -82,24 +82,6 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	}
 
 	switch t.GetType() {
-	case model.ActionRemovePartitioning:
-		// Change id for global stats, since the data has not changed!
-		// Note: This operation will update all tables related to statistics with the new ID.
-		oldTblID,
-			newSingleTableInfo,
-			droppedPartInfo := t.GetRemovePartitioningInfo()
-		if err := h.statsWriter.ChangeGlobalStatsID(oldTblID, newSingleTableInfo.ID); err != nil {
-			return err
-		}
-
-		// Remove partition stats.
-		for _, def := range droppedPartInfo.Definitions {
-			if err := h.statsWriter.UpdateStatsMetaVersionForGC(def.ID); err != nil {
-				return err
-			}
-		}
-	case model.ActionFlashbackCluster:
-		return h.statsWriter.UpdateStatsVersion()
 	default:
 		logutil.StatsLogger().Info("Handle schema change event", zap.Stringer("event", t.SchemaChangeEvent))
 	}
@@ -206,6 +188,24 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		// Change id for global stats, since the data has not changed!
 		// Note: This operation will update all tables related to statistics with the new ID.
 		return h.statsWriter.ChangeGlobalStatsID(oldSingleTableID, globalTableInfo.ID)
+	case model.ActionRemovePartitioning:
+		// Change id for global stats, since the data has not changed!
+		// Note: This operation will update all tables related to statistics with the new ID.
+		oldTblID,
+			newSingleTableInfo,
+			droppedPartInfo := e.GetRemovePartitioningInfo()
+		if err := h.statsWriter.ChangeGlobalStatsID(oldTblID, newSingleTableInfo.ID); err != nil {
+			return err
+		}
+
+		// Remove partition stats.
+		for _, def := range droppedPartInfo.Definitions {
+			if err := h.statsWriter.UpdateStatsMetaVersionForGC(def.ID); err != nil {
+				return err
+			}
+		}
+	case model.ActionFlashbackCluster:
+		return h.statsWriter.UpdateStatsVersion()
 	}
 	return nil
 }

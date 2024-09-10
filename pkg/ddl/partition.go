@@ -3524,12 +3524,13 @@ func newStatsDDLEventForJob(
 			),
 		}
 	case model.ActionRemovePartitioning:
-		event = statsutil.NewRemovePartitioningEvent(
-			schemaID,
-			oldTblID,
-			tblInfo,
-			droppedPartInfo,
-		)
+		event = &statsutil.DDLEvent{
+			SchemaChangeEvent: util.NewRemovePartitioningEvent(
+				oldTblID,
+				tblInfo,
+				droppedPartInfo,
+			),
+		}
 	default:
 		return nil, errors.Errorf("unknown job type: %s", jobType.String())
 	}
