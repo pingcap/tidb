@@ -42,7 +42,6 @@ import (
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tipb/go-tipb"
@@ -174,10 +173,10 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	statsHandle.TriggerSyncStats()
-	if intest.InTest {
+	if !e.BaseExecutor.Ctx().GetSessionVars().InRestrictedSQL {
 		return statsHandle.SyncStats(ctx, infoSchema)
 	}
+	statsHandle.TriggerSyncStats()
 	return nil
 }
 
