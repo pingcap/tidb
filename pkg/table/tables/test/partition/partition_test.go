@@ -2079,9 +2079,9 @@ func TestPruneModeWarningInfo(t *testing.T) {
 
 func TestPartitionByIntListExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`SET @@global.tidb_ttl_job_enable = OFF`)
 	schemaName := "PartitionByIntListExtensive"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
@@ -2194,9 +2194,9 @@ func getInt7ValuesFunc() func(string, bool, *rand.Rand) string {
 
 func TestPartitionByIntExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`SET @@global.tidb_ttl_job_enable = OFF`)
 	schemaName := "PartitionByIntExtensive"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
@@ -2422,9 +2422,9 @@ func getIntValuesUniqueFunc() func(string, bool, *rand.Rand) string {
 
 func TestPartitionByExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`SET @@global.tidb_ttl_job_enable = OFF`)
 	schemaName := "PartitionByExtensive"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
@@ -2530,9 +2530,9 @@ func TestPartitionByExtensivePart(t *testing.T) {
 
 func TestReorgPartExtensivePart(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
 	schemaName := "ReorgPartExtensive"
-	tk.MustExec(`SET @@global.tidb_ttl_job_enable = OFF`)
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
 	tk2 := testkit.NewTestKit(t, store)

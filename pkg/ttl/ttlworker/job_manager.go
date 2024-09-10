@@ -287,9 +287,6 @@ func (m *JobManager) jobLoop() error {
 }
 
 func (m *JobManager) onTimerTick(se session.Session, rt *ttlTimerRuntime, syncer *TTLTimersSyncer, now time.Time) {
-	if !variable.EnableTTLJob.Load() {
-		return
-	}
 	if !m.isLeader() {
 		rt.Pause()
 		syncer.Reset()
