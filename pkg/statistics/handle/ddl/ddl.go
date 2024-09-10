@@ -182,7 +182,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(s *ddlutil.SchemaChangeEvent) error {
 	case model.ActionFlashbackCluster:
 		return h.statsWriter.UpdateStatsVersion()
 	default:
-		errors.Trace(errors.Errorf("unhandled DDL type %v", s.GetType()))
+		return errors.Trace(errors.Errorf("unhandled DDL type %v", s.GetType()))
 	}
 	return nil
 }
