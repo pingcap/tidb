@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -68,7 +67,6 @@ func TestForCoverage(t *testing.T) {
 	tk.MustExec("admin check table t")
 
 	// Cover dirty table operations in StateTxn.
-	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&mockBinlogPump{})
 	tk.MustExec("begin")
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert t values ()")

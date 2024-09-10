@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -677,8 +676,6 @@ func TestSavepointWithBinlog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	// mock for binlog enabled.
-	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int, a int, unique index idx(id))")
 
@@ -701,7 +698,6 @@ func TestSavepointWithBinlog(t *testing.T) {
 func TestColumnNotMatchError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
 	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
