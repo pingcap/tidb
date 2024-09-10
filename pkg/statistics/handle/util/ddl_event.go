@@ -15,14 +15,8 @@
 package util
 
 import (
-	"fmt"
-
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // DDLEvent contains the information of a ddl event that is used to update stats.
@@ -46,53 +40,4 @@ type DDLEvent struct {
 	// It applies when a table structure is being changed from partitioned to non-partitioned, or vice versa.
 	oldTableID int64
 	tp         model.ActionType
-}
-
-// IsMemOrSysDB checks whether the table is in the memory or system database.
-func (e *DDLEvent) IsMemOrSysDB(sctx sessionctx.Context) (bool, error) {
-	intest.Assert(e.schemaID != 0, "schemaID should not be 0, please set it when creating the event")
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	schema, ok := is.SchemaByID(e.schemaID)
-	if !ok {
-		return false, fmt.Errorf("schema not found for table %s", e.tableInfo.Name)
-	}
-	return util.IsMemOrSysDB(schema.Name.L), nil
-}
-
-// GetType returns the type of the ddl event.
-func (e *DDLEvent) GetType() model.ActionType {
-	return e.tp
-}
-
-// String implements fmt.Stringer interface.
-func (e *DDLEvent) String() string {
-	ret := fmt.Sprintf("(Event Type: %s", e.tp)
-	if e.schemaID != 0 {
-		ret += fmt.Sprintf(", Schema ID: %d", e.schemaID)
-	}
-	if e.tableInfo != nil {
-		ret += fmt.Sprintf(", Table ID: %d, Table Name: %s", e.tableInfo.ID, e.tableInfo.Name)
-	}
-	if e.partInfo != nil {
-		ids := make([]int64, 0, len(e.partInfo.Definitions))
-		for _, def := range e.partInfo.Definitions {
-			ids = append(ids, def.ID)
-		}
-		ret += fmt.Sprintf(", Partition IDs: %v", ids)
-	}
-	if e.oldTableInfo != nil {
-		ret += fmt.Sprintf(", Old Table ID: %d, Old Table Name: %s", e.oldTableInfo.ID, e.oldTableInfo.Name)
-	}
-	if e.oldPartInfo != nil {
-		ids := make([]int64, 0, len(e.oldPartInfo.Definitions))
-		for _, def := range e.oldPartInfo.Definitions {
-			ids = append(ids, def.ID)
-		}
-		ret += fmt.Sprintf(", Old Partition IDs: %v", ids)
-	}
-	for _, columnInfo := range e.columnInfos {
-		ret += fmt.Sprintf(", Column ID: %d, Column Name: %s", columnInfo.ID, columnInfo.Name)
-	}
-
-	return ret
 }
