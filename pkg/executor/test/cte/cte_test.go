@@ -285,15 +285,16 @@ func Test53454(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, key(a));")
 	tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern=on;")
 	tk.MustQuery("desc SELECT /*+ INL_JOIN(subquery) */ t1.*, subquery.* FROM t1 JOIN ( SELECT a, COUNT(b) AS count_b FROM t2 GROUP BY a) AS subquery ON t1.a = subquery.a;").Check(testkit.Rows(
-		"Projection_13 9990.00 root  test.t1.a, test.t1.b, test.t2.a, Column#13",
-		"└─HashJoin_46 9990.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-		"  ├─HashAgg_71(Build) 7992.00 root  group by:test.t2.a, funcs:count(Column#29)->Column#13, funcs:firstrow(test.t2.a)->test.t2.a",
-		"  │ └─TableReader_72 7992.00 root  data:HashAgg_64",
-		"  │   └─HashAgg_64 7992.00 cop[tikv]  group by:test.t2.a, funcs:count(test.t2.b)->Column#29",
-		"  │     └─Selection_70 9990.00 cop[tikv]  not(isnull(test.t2.a))",
-		"  │       └─TableFullScan_69 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"  └─TableReader_60(Probe) 9990.00 root  data:Selection_59",
-		"    └─Selection_59 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-		"      └─TableFullScan_58 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+		"Projection_9 9990.00 root  test.t1.a, test.t1.b, test.t2.a, Column#7",
+		"└─IndexJoin_17 9990.00 root  inner join, inner:HashAgg_15, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"  ├─TableReader_44(Build) 9990.00 root  data:Selection_43",
+		"  │ └─Selection_43 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"  │   └─TableFullScan_42 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"  └─HashAgg_15(Probe) 79840080.00 root  group by:test.t2.a, funcs:count(Column#9)->Column#7, funcs:firstrow(test.t2.a)->test.t2.a",
+		"    └─IndexLookUp_16 79840080.00 root  ",
+		"      ├─Selection_13(Build) 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+		"      │ └─IndexRangeScan_11 10000.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+		"      └─HashAgg_14(Probe) 79840080.00 cop[tikv]  group by:test.t2.a, funcs:count(test.t2.b)->Column#9",
+		"        └─TableRowIDScan_12 9990.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 }

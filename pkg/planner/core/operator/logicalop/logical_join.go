@@ -1291,7 +1291,18 @@ func (p *LogicalJoin) SetPreferredJoinTypeAndOrder(cte []*ast.CommonTableExpress
 	}
 
 	lhsAlias := util.ExtractTableAlias(p.Children()[0], p.QueryBlockOffset())
+	for _, c := range cte {
+		if c.Name.L == lhsAlias.TblName.L {
+			// with CTE, this offset cannot be smaller than 1.
+			lhsAlias.SelectOffset = max(1, lhsAlias.SelectOffset-1)
+		}
+	}
 	rhsAlias := util.ExtractTableAlias(p.Children()[1], p.QueryBlockOffset())
+	for _, c := range cte {
+		if c.Name.L == lhsAlias.TblName.L {
+			rhsAlias.SelectOffset = max(1, rhsAlias.SelectOffset-1)
+		}
+	}
 	if hintInfo.IfPreferMergeJoin(lhsAlias) {
 		p.PreferJoinType |= utilhint.PreferMergeJoin
 		p.LeftPreferJoinType |= utilhint.PreferMergeJoin
