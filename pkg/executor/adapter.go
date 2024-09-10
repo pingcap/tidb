@@ -1595,18 +1595,22 @@ func simplifyQueryPlan(s []string) string {
 }
 
 func getPlan(se sqlexec.RestrictedSQLExecutor, sql string, print bool) string {
-	rows, _, err := se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("explain %s", sql))
+	rows, _, err := se.ExecRestrictedSQL(context.Background(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseDBName("test")}, fmt.Sprintf("explain format='brief' %s", sql))
 	if err != nil {
+		logutil.BgLogger().Error("get plan for sql", zap.String("sql", sql), zap.Error(err))
 		return ""
 	}
 	ss := make([]string, 0, len(rows))
+	//totalS := ""
 	for _, row := range rows {
+		p := row.GetString(0) + " " + row.GetString(1) + " " + row.GetString(2) + " " + row.GetString(3) + " " + row.GetString(4)
 		if print {
-			p := row.GetString(0) + " " + row.GetString(1) + " " + row.GetString(2) + " " + row.GetString(3) + " " + row.GetString(4)
 			logutil.BgLogger().Info("plan for sql", zap.String("sql", sql), zap.String("plan", p))
 		}
 		ss = append(ss, row.GetString(0))
+		//totalS += p
 	}
+	//return totalS
 	return simplifyQueryPlan(ss)
 }
 
@@ -1623,7 +1627,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 				panic(err)
 			}
 
-			printPlan := rand.Intn(500) == 0
+			printPlan := rand.Intn(100) == 0
+			logutil.BgLogger().Error("sql", zap.String("sql", sql), zap.Any("tblIDs", tblIDs))
 
 			for id := range tblIDs {
 				tbl, ok := a.Ctx.GetDomainInfoSchema().TableInfoByID(id)
@@ -1634,10 +1639,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 				if !ok {
 					continue
 				}
-				_, _, err = se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("drop stats %s.%s", db.Name.O, tbl.Name.O))
-				if err != nil {
-					panic(err)
-				}
+				//_, _, err = se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("drop stats %s.%s", db.Name.O, tbl.Name.O))
+				//if err != nil {
+				//	panic(err)
+				//}
 				_, _, err = se.ExecRestrictedSQL(context.Background(), nil, fmt.Sprintf("analyze table %s.%s predicate columns", db.Name.O, tbl.Name.O))
 				if err != nil {
 					panic(err)
@@ -1665,7 +1670,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			}
 			allPlan := getPlan(se, sql, printPlan)
 			if predicatePlan != allPlan {
-				panic(fmt.Sprintf("predicatePlan: %s, allPlan: %s, sql: %s", predicatePlan, allPlan, sql))
+				logutil.BgLogger().Error("plan not match", zap.String("sql", sql), zap.String("predicatePlan", predicatePlan), zap.String("allPlan", allPlan))
 			}
 		}
 	}

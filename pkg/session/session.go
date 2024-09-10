@@ -1946,6 +1946,19 @@ func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.
 		return nil, nil, errors.Trace(err)
 	}
 	defer clean()
+	if execOption.UseDBName != "" {
+		se.sessionVars.CurrentDB = execOption.UseDBName
+		defer func() {
+			se.sessionVars.CurrentDB = ""
+		}()
+		//rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, "USE "+execOption.UseDBName)
+		//if err != nil {
+		//	logutil.BgLogger().Error("use database failed", zap.String("database", execOption.UseDBName), zap.Error(err))
+		//}
+		//if rs != nil {
+		//	rs.Close()
+		//}
+	}
 	if execOption.TrackSysProcID > 0 {
 		err = execOption.TrackSysProc(execOption.TrackSysProcID, se)
 		if err != nil {

@@ -65,6 +65,7 @@ type ExecOption struct {
 	TrackSysProcID     uint64
 	IgnoreWarning      bool
 	UseCurSession      bool
+	UseDBName          string
 }
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
@@ -83,6 +84,12 @@ var ExecOptionAnalyzeVer1 = func(option *ExecOption) {
 // ExecOptionAnalyzeVer2 tells ExecRestrictedStmt/SQL to collect statistics with version2.
 var ExecOptionAnalyzeVer2 = func(option *ExecOption) {
 	option.AnalyzeVer = 2
+}
+
+func ExecOptionUseDBName(name string) OptionFuncAlias {
+	return func(option *ExecOption) {
+		option.UseDBName = name
+	}
 }
 
 // GetPartitionPruneModeOption returns a function which tells ExecRestrictedStmt/SQL to run with pruneMode.

@@ -3042,6 +3042,8 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 		gp:           gp,
 		errExitCh:    make(chan struct{}),
 	}
+	//dom := domain.GetDomain(b.ctx)
+	//dom.StatsHandle().DumpColStatsUsageToKV()
 	autoAnalyze := ""
 	if b.ctx.GetSessionVars().InRestrictedSQL {
 		autoAnalyze = "auto "
