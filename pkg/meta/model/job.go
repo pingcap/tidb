@@ -281,44 +281,6 @@ func GetJobVerInUse() JobVersion {
 	return JobVersion(jobVerInUse.Load())
 }
 
-// JobVersion is the version of DDL job.
-type JobVersion int64
-
-const (
-	// JobVersion1 is the first version of DDL job where job args are stored as un-typed
-	// array. Before v8.4.0, all DDL jobs are in this version.
-	JobVersion1 JobVersion = 1
-	// JobVersion2 is the second version of DDL job where job args are stored as
-	// typed structs, we start to use this version from v8.4.0.
-	// Note: this version is not enabled right now except in some test cases, will
-	// enable it after we have CI to run both versions.
-	JobVersion2 JobVersion = 2
-)
-
-// String implements fmt.Stringer interface.
-func (v JobVersion) String() string {
-	if v == JobVersion1 {
-		return "v1"
-	} else if v == JobVersion2 {
-		return "v2"
-	}
-	return fmt.Sprintf("unknown(%d)", v)
-}
-
-// JobVerInUse is the job version for new DDL jobs in the node.
-// it's for test now.
-var jobVerInUse atomic.Int64
-
-// SetJobVerInUse sets the version of DDL job used in the node.
-func SetJobVerInUse(ver JobVersion) {
-	jobVerInUse.Store(int64(ver))
-}
-
-// GetJobVerInUse returns the version of DDL job used in the node.
-func GetJobVerInUse() JobVersion {
-	return JobVersion(jobVerInUse.Load())
-}
-
 // Job is for a DDL operation.
 type Job struct {
 	ID   int64      `json:"id"`
@@ -565,16 +527,6 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	b, err = json.Marshal(job)
 
 	return b, errors.Trace(err)
-}
-
-// FillArgs fills args for new job.
-func (job *Job) FillArgs(args JobArgs) {
-	args.fillJob(job)
-}
-
-// FillFinishedArgs fills args for finished job.
-func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
-	args.fillFinishedJob(job)
 }
 
 // Decode decodes job from the json buffer, we must use DecodeArgs later to
