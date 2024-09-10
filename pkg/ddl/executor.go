@@ -301,10 +301,10 @@ func (e *executor) CreateSchemaWithInfo(
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaName:     dbInfo.Name.L,
 		Type:           model.ActionCreateSchema,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{dbInfo},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: dbInfo.Name.L,
@@ -312,6 +312,9 @@ func (e *executor) CreateSchemaWithInfo(
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+	job.FillArgs(&model.CreateSchemaArgs{
+		DBInfo: dbInfo,
+	})
 	if ref := dbInfo.PlacementPolicyRef; ref != nil {
 		job.InvolvingSchemaInfo = append(job.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
 			Policy: ref.Name.L,
@@ -348,11 +351,11 @@ func (e *executor) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *a
 	}
 	// Do the DDL job.
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       dbInfo.ID,
 		SchemaName:     dbInfo.Name.L,
 		Type:           model.ActionModifySchemaCharsetAndCollate,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{toCharset, toCollate},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: dbInfo.Name.L,
@@ -360,6 +363,10 @@ func (e *executor) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *a
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+	job.FillArgs(&model.ModifySchemaArgs{
+		ToCharset: toCharset,
+		ToCollate: toCollate,
+	})
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
@@ -383,11 +390,11 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 
 	// Do the DDL job.
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       dbInfo.ID,
 		SchemaName:     dbInfo.Name.L,
 		Type:           model.ActionModifySchemaDefaultPlacement,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{placementPolicyRef},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: dbInfo.Name.L,
@@ -395,6 +402,8 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+	job.FillArgs(&model.ModifySchemaArgs{PolicyRef: placementPolicyRef})
+
 	if placementPolicyRef != nil {
 		job.InvolvingSchemaInfo = append(job.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
 			Policy: placementPolicyRef.Name.L,
@@ -741,12 +750,12 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 		return err
 	}
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       old.ID,
 		SchemaName:     old.Name.L,
 		SchemaState:    old.State,
 		Type:           model.ActionDropSchema,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{fkCheck},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: old.Name.L,
@@ -754,6 +763,9 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+	job.FillArgs(&model.DropSchemaArgs{
+		FKCheck: fkCheck,
+	})
 
 	err = e.DoDDLJob(ctx, job)
 	if err != nil {
@@ -768,8 +780,9 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 	if !config.TableLockEnabled() {
 		return nil
 	}
+
 	// Clear table locks hold by the session.
-	tbs, err := is.SchemaTableInfos(e.ctx, stmt.Name)
+	tbs, err := is.SchemaSimpleTableInfos(e.ctx, stmt.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4186,25 +4199,28 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
 	}
 
-	var partCount int
+	var oldPartitionIDs []int64
 	if tblInfo.Partition != nil {
-		partCount = len(tblInfo.Partition.Definitions)
+		oldPartitionIDs = make([]int64, 0, len(tblInfo.Partition.Definitions))
+		for _, def := range tblInfo.Partition.Definitions {
+			oldPartitionIDs = append(oldPartitionIDs, def.ID)
+		}
 	}
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tblInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tblInfo.Name.L,
-		Type:       model.ActionTruncateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		// Args[0] is the new table ID, args[2] is the ids for table partitions, we
-		// add a placeholder here, they will be filled by job submitter.
-		// the last param is not required for execution, we need it to calculate
-		// number of new IDs to generate.
-		Args:           []any{int64(0), fkCheck, []int64{}, partCount},
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        tblInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tblInfo.Name.L,
+		Type:           model.ActionTruncateTable,
+		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+	job.FillArgs(&model.TruncateTableArgs{
+		FKCheck:         fkCheck,
+		OldPartitionIDs: oldPartitionIDs,
+	})
 	err = e.DoDDLJob(ctx, job)
 	if err != nil {
 		return errors.Trace(err)
@@ -6421,13 +6437,23 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	}
 }
 
+func getTruncateTableNewTableID(job *model.Job) int64 {
+	if job.Version == model.JobVersion1 {
+		return job.Args[0].(int64)
+	}
+	return job.Args[0].(*model.TruncateTableArgs).NewTableID
+}
+
 // HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted
 // successfully. exported for testing purpose.
 func HandleLockTablesOnSuccessSubmit(ctx sessionctx.Context, jobW *JobWrapper) {
 	if jobW.Type == model.ActionTruncateTable {
 		if ok, lockTp := ctx.CheckTableLocked(jobW.TableID); ok {
-			newTableID := jobW.Args[0].(int64)
-			ctx.AddTableLock([]model.TableLockTpInfo{{SchemaID: jobW.SchemaID, TableID: newTableID, Tp: lockTp}})
+			ctx.AddTableLock([]model.TableLockTpInfo{{
+				SchemaID: jobW.SchemaID,
+				TableID:  getTruncateTableNewTableID(jobW.Job),
+				Tp:       lockTp,
+			}})
 		}
 	}
 }
@@ -6437,7 +6463,7 @@ func HandleLockTablesOnSuccessSubmit(ctx sessionctx.Context, jobW *JobWrapper) {
 func HandleLockTablesOnFinish(ctx sessionctx.Context, jobW *JobWrapper, ddlErr error) {
 	if jobW.Type == model.ActionTruncateTable {
 		if ddlErr != nil {
-			newTableID := jobW.Args[0].(int64)
+			newTableID := getTruncateTableNewTableID(jobW.Job)
 			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
 			return
 		}

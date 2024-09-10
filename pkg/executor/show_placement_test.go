@@ -15,14 +15,21 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 func TestShowPlacement(t *testing.T) {
@@ -475,4 +482,81 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 			"POLICY p2 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\" NULL",
 		))
 	}
+}
+
+type mockPDCli struct {
+	pdhttp.Client
+	mock.Mock
+}
+
+func (cli *mockPDCli) GetRegionsReplicatedStateByKeyRange(ctx context.Context, r *pdhttp.KeyRange) (string, error) {
+	args := cli.Called(ctx, r)
+	return args.String(0), args.Error(1)
+}
+
+func TestShowPlacementHandleRegionStatus(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create placement policy p1 followers=1")
+
+	cli := &mockPDCli{}
+	recoverCli := infosync.SetPDHttpCliForTest(cli)
+	defer recoverCli()
+
+	mockGetState := func(tblName, partition string, state string) *mock.Call {
+		is := tk.Session().GetDomainInfoSchema()
+		tbl, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr(tblName))
+		require.NoError(t, err)
+		tblID := tbl.ID
+		if partition != "" {
+			tblID = tbl.GetPartitionInfo().GetPartitionIDByName(partition)
+		}
+		startKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(tblID))
+		endKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(tblID+1))
+		keyRange := pdhttp.NewKeyRange(startKey, endKey)
+		return cli.On("GetRegionsReplicatedStateByKeyRange", mock.Anything, keyRange).
+			Return(state, nil).
+			Once()
+	}
+
+	// test for normal table
+	tk.MustExec("create table t1(a int) placement policy p1")
+	for _, ret := range []string{"PENDING", "INPROGRESS", "REPLICATED"} {
+		mockGetState("t1", "", ret)
+		expected := ret
+		if ret == "REPLICATED" {
+			expected = "SCHEDULED"
+		}
+		tk.MustQuery("show placement for table t1").Check(testkit.Rows("TABLE test.t1 FOLLOWERS=1 " + expected))
+		cli.AssertExpectations(t)
+	}
+
+	// test for partition table with placement settings in table
+	tk.MustExec("create table tp1 (id int) PLACEMENT POLICY p1 PARTITION BY RANGE (id) (" +
+		"PARTITION p0 VALUES LESS THAN (100)," +
+		"PARTITION p1 VALUES LESS THAN (1000)," +
+		"PARTITION p2 VALUES LESS THAN (10000)" +
+		")")
+	// All replicated
+	mockGetState("tp1", "", "REPLICATED")
+	mockGetState("tp1", "p0", "REPLICATED")
+	mockGetState("tp1", "p1", "REPLICATED")
+	mockGetState("tp1", "p2", "REPLICATED")
+	tk.MustQuery("show placement for table tp1").Check(testkit.Rows("TABLE test.tp1 FOLLOWERS=1 SCHEDULED"))
+	cli.AssertExpectations(t)
+	// one partition pending will cause tab in pending status
+	mockGetState("tp1", "", "REPLICATED")
+	mockGetState("tp1", "p0", "REPLICATED")
+	mockGetState("tp1", "p1", "PENDING")
+	tk.MustQuery("show placement for table tp1").Check(testkit.Rows("TABLE test.tp1 FOLLOWERS=1 PENDING"))
+	cli.AssertExpectations(t)
+	// show placement for partition
+	mockGetState("tp1", "p0", "PENDING")
+	mockGetState("tp1", "p1", "INPROGRESS")
+	mockGetState("tp1", "p2", "REPLICATED")
+	tk.MustQuery("show placement for table tp1 partition p0").Check(testkit.Rows("TABLE test.tp1 PARTITION p0 FOLLOWERS=1 PENDING"))
+	tk.MustQuery("show placement for table tp1 partition p1").Check(testkit.Rows("TABLE test.tp1 PARTITION p1 FOLLOWERS=1 INPROGRESS"))
+	tk.MustQuery("show placement for table tp1 partition p2").Check(testkit.Rows("TABLE test.tp1 PARTITION p2 FOLLOWERS=1 SCHEDULED"))
+	cli.AssertExpectations(t)
 }

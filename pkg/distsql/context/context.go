@@ -24,11 +24,11 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // DistSQLContext provides all information needed by using functions in `distsql`
@@ -48,6 +48,7 @@ type DistSQLContext struct {
 	Location         *time.Location
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	SQLKiller        *sqlkiller.SQLKiller
+	CPUUsage         *ppcpuusage.SQLCPUUsages
 	ErrCtx           errctx.Context
 
 	// TiFlash related configurations
@@ -66,7 +67,7 @@ type DistSQLContext struct {
 	NotFillCache                  bool
 	TaskID                        uint64
 	Priority                      mysql.PriorityEnum
-	ResourceGroupTagger           tikvrpc.ResourceGroupTagger
+	ResourceGroupTagger           *kv.ResourceGroupTagBuilder
 	EnablePaging                  bool
 	MinPagingSize                 int
 	MaxPagingSize                 int
@@ -104,6 +105,9 @@ func (dctx *DistSQLContext) Detach() *DistSQLContext {
 	// cursor, so that it's still good to provide at least one way to stop it.
 	// In the future, we should provide a more constant behavior for killing the cursor.
 	newCtx.SQLKiller = dctx.SQLKiller
+	newCPUUsages := new(ppcpuusage.SQLCPUUsages)
+	newCPUUsages.SetCPUUsages(dctx.CPUUsage.GetCPUUsages())
+	newCtx.CPUUsage = newCPUUsages
 	newCtx.KVVars = new(tikvstore.Variables)
 	*newCtx.KVVars = *dctx.KVVars
 	newCtx.KVVars.Killed = &newCtx.SQLKiller.Signal

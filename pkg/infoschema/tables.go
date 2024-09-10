@@ -858,6 +858,8 @@ var tableProcesslistCols = []columnInfo{
 	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "SESSION_ALIAS", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "ROWS_AFFECTED", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "TIDB_CPU", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "TIKV_CPU", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag, deflt: 0},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -951,6 +953,8 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogRRU, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogWRU, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogWaitRUDuration, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogTidbCPUUsageDuration, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogTikvCPUUsageDuration, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -1367,6 +1371,8 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.AvgPdTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of PD used"},
 	{name: stmtsummary.AvgBackoffTotalTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of Backoff used"},
 	{name: stmtsummary.AvgWriteSQLRespTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of write sql resp used"},
+	{name: stmtsummary.AvgTidbCPUTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average cpu time tidb used"},
+	{name: stmtsummary.AvgTikvCPUTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average cpu time tikv used"},
 	{name: stmtsummary.MaxResultRowsStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag, comment: "Max count of sql result rows"},
 	{name: stmtsummary.MinResultRowsStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag, comment: "Min count of sql result rows"},
 	{name: stmtsummary.AvgResultRowsStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag, comment: "Average count of sql result rows"},

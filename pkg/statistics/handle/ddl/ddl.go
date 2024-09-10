@@ -58,7 +58,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 
 	// ActionFlashbackCluster will not create any new stats info
 	// and it's SchemaID alwayws equals to 0, so skip check it.
-	if t.GetType() != model.ActionFlashbackCluster {
+	if t.GetType() != model.ActionFlashbackCluster && t.SchemaChangeEvent == nil {
 		if isSysDB, err := t.IsMemOrSysDB(sctx.(sessionctx.Context)); err != nil {
 			return err
 		} else if isSysDB {
@@ -75,11 +75,39 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			return nil
 		}
 	}
-	logutil.StatsLogger().Info("Handle ddl event", zap.Stringer("event", t))
+	if t.SchemaChangeEvent == nil {
+		// when SchemaChangeEvent is set, it will be printed in the default branch of
+		// below switch.
+		logutil.StatsLogger().Info("Handle ddl event", zap.Stringer("event", t))
+	}
 
 	switch t.GetType() {
+	case model.ActionRemovePartitioning:
+		// Change id for global stats, since the data has not changed!
+		// Note: This operation will update all tables related to statistics with the new ID.
+		oldTblID,
+			newSingleTableInfo,
+			droppedPartInfo := t.GetRemovePartitioningInfo()
+		if err := h.statsWriter.ChangeGlobalStatsID(oldTblID, newSingleTableInfo.ID); err != nil {
+			return err
+		}
+
+		// Remove partition stats.
+		for _, def := range droppedPartInfo.Definitions {
+			if err := h.statsWriter.UpdateStatsMetaVersionForGC(def.ID); err != nil {
+				return err
+			}
+		}
+	case model.ActionFlashbackCluster:
+		return h.statsWriter.UpdateStatsVersion()
+	default:
+		logutil.StatsLogger().Info("Handle schema change event", zap.Stringer("event", t.SchemaChangeEvent))
+	}
+
+	e := t.SchemaChangeEvent
+	switch e.GetType() {
 	case model.ActionCreateTable:
-		newTableInfo := t.GetCreateTableInfo()
+		newTableInfo := e.GetCreateTableInfo()
 		ids, err := h.getTableIDs(newTableInfo)
 		if err != nil {
 			return err
@@ -90,7 +118,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionTruncateTable:
-		newTableInfo, droppedTableInfo := t.GetTruncateTableInfo()
+		newTableInfo, droppedTableInfo := e.GetTruncateTableInfo()
 		ids, err := h.getTableIDs(newTableInfo)
 		if err != nil {
 			return err
@@ -112,7 +140,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionDropTable:
-		droppedTableInfo := t.GetDropTableInfo()
+		droppedTableInfo := e.GetDropTableInfo()
 		ids, err := h.getTableIDs(droppedTableInfo)
 		if err != nil {
 			return err
@@ -123,7 +151,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionAddColumn:
-		newTableInfo, newColumnInfo := t.GetAddColumnInfo()
+		newTableInfo, newColumnInfo := e.GetAddColumnInfo()
 		ids, err := h.getTableIDs(newTableInfo)
 		if err != nil {
 			return err
@@ -134,8 +162,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionModifyColumn:
-		newTableInfo, modifiedColumnInfo := t.GetModifyColumnInfo()
-
+		newTableInfo, modifiedColumnInfo := e.GetModifyColumnInfo()
 		ids, err := h.getTableIDs(newTableInfo)
 		if err != nil {
 			return err
@@ -146,30 +173,30 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionAddTablePartition:
-		globalTableInfo, addedPartitionInfo := t.GetAddPartitionInfo()
+		globalTableInfo, addedPartitionInfo := e.GetAddPartitionInfo()
 		for _, def := range addedPartitionInfo.Definitions {
 			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
 				return err
 			}
 		}
 	case model.ActionTruncateTablePartition:
-		if err := h.onTruncatePartitions(t); err != nil {
+		if err := h.onTruncatePartitions(e); err != nil {
 			return err
 		}
 	case model.ActionDropTablePartition:
-		if err := h.onDropPartitions(t); err != nil {
+		if err := h.onDropPartitions(e); err != nil {
 			return err
 		}
 	case model.ActionExchangeTablePartition:
-		if err := h.onExchangeAPartition(t); err != nil {
+		if err := h.onExchangeAPartition(e); err != nil {
 			return err
 		}
 	case model.ActionReorganizePartition:
-		if err := h.onReorganizePartitions(t); err != nil {
+		if err := h.onReorganizePartitions(e); err != nil {
 			return err
 		}
 	case model.ActionAlterTablePartitioning:
-		oldSingleTableID, globalTableInfo, addedPartInfo := t.GetAddPartitioningInfo()
+		oldSingleTableID, globalTableInfo, addedPartInfo := e.GetAddPartitioningInfo()
 		// Add new partition stats.
 		for _, def := range addedPartInfo.Definitions {
 			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
@@ -179,31 +206,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		// Change id for global stats, since the data has not changed!
 		// Note: This operation will update all tables related to statistics with the new ID.
 		return h.statsWriter.ChangeGlobalStatsID(oldSingleTableID, globalTableInfo.ID)
-	case model.ActionRemovePartitioning:
-		// Change id for global stats, since the data has not changed!
-		// Note: This operation will update all tables related to statistics with the new ID.
-		oldTblID,
-			newSingleTableInfo,
-			droppedPartInfo := t.GetRemovePartitioningInfo()
-		if err := h.statsWriter.ChangeGlobalStatsID(oldTblID, newSingleTableInfo.ID); err != nil {
-			return err
-		}
-
-		// Remove partition stats.
-		for _, def := range droppedPartInfo.Definitions {
-			if err := h.statsWriter.UpdateStatsMetaVersionForGC(def.ID); err != nil {
-				return err
-			}
-		}
-	case model.ActionFlashbackCluster:
-		return h.statsWriter.UpdateStatsVersion()
 	}
-
-	//revive:disable:empty-block
-	switch t.SchemaChangeEvent.GetType() {
-	// todo: we will replace the DDLEvent with SchemaChangeEvent, gradually move above switch-case logical to here
-	}
-	//revive:enable:empty-block
 	return nil
 }
 

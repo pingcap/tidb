@@ -17,6 +17,7 @@ package executor
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"math"
@@ -56,6 +57,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -81,7 +83,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
@@ -1260,13 +1261,16 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 			return nil
 		}
 		if mutation := req.Mutations[0]; mutation != nil {
-			label := resourcegrouptag.GetResourceGroupLabelByKey(mutation.Key)
 			normalized, digest := seVars.StmtCtx.SQLDigest()
 			if len(normalized) == 0 {
 				return nil
 			}
 			_, planDigest := seVars.StmtCtx.GetPlanDigest()
-			return resourcegrouptag.EncodeResourceGroupTag(digest, planDigest, label)
+
+			return kv.NewResourceGroupTagBuilder().
+				SetPlanDigest(planDigest).
+				SetSQLDigest(digest).
+				EncodeTagWithKey(mutation.Key)
 		}
 		return nil
 	}
@@ -2718,4 +2722,51 @@ func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error
 		e.done = true
 		return nil
 	})
+}
+
+// RecommendIndexExec represents a recommend index executor.
+type RecommendIndexExec struct {
+	exec.BaseExecutor
+
+	Action   string
+	SQL      string
+	AdviseID int64
+	Option   string
+	Value    ast.ValueExpr
+	done     bool
+}
+
+// Next implements the Executor Next interface.
+func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+	if e.Action != "run" {
+		return fmt.Errorf("unsupported action: %s", e.Action)
+	}
+
+	results, err := indexadvisor.AdviseIndexes(ctx, e.Ctx(), &indexadvisor.Option{
+		MaxNumIndexes: 3,
+		MaxIndexWidth: 3,
+		SpecifiedSQLs: []string{e.SQL},
+	})
+
+	for _, r := range results {
+		req.AppendString(0, r.Database)
+		req.AppendString(1, r.Table)
+		req.AppendString(2, r.IndexName)
+		req.AppendString(3, strings.Join(r.IndexColumns, ","))
+		req.AppendString(4, fmt.Sprintf("%v", r.IndexSize))
+		req.AppendString(5, r.Reason)
+
+		jData, err := json.Marshal(r.TopImpactedQueries)
+		if err != nil {
+			return err
+		}
+		req.AppendString(6, string(jData))
+	}
+	return err
 }

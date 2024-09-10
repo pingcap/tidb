@@ -235,7 +235,8 @@ type PlanBuilder struct {
 	//   If it's a aggregation, we pop the map and push a nil map since no handle information left.
 	//   If it's a union, we pop all children's and push a nil map.
 	//   If it's a join, we pop its children's out then merge them and push the new map to stack.
-	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
+	//   If we meet a subquery or CTE, it's clearly that it's an independent problem so we just pop one map out when we
+	//   finish building the subquery or CTE.
 	handleHelper *handleColHelper
 
 	hintProcessor *hint.QBHintHandler
@@ -570,6 +571,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSplitRegion(x)
 	case *ast.CompactTableStmt:
 		return b.buildCompactTable(x)
+	case *ast.RecommendIndexStmt:
+		return b.buildRecommendIndex(x)
 	}
 	return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -5633,6 +5636,35 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (base.Plan, 
 		ReplicaKind:    node.ReplicaKind,
 		TableInfo:      tblInfo,
 		PartitionNames: node.PartitionNames,
+	}
+	return p, nil
+}
+
+func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, error) {
+	p := &RecommendIndexPlan{
+		Action:   v.Action,
+		SQL:      v.SQL,
+		AdviseID: v.ID,
+		Option:   v.Option,
+		Value:    v.Value,
+	}
+
+	switch v.Action {
+	case "run":
+		if v.SQL == "" {
+			return nil, errors.New("recommend index SQL is empty")
+		}
+		schema := newColumnsWithNames(7)
+		schema.Append(buildColumnWithName("", "database", mysql.TypeVarchar, 64))
+		schema.Append(buildColumnWithName("", "table", mysql.TypeVarchar, 64))
+		schema.Append(buildColumnWithName("", "index_name", mysql.TypeVarchar, 64))
+		schema.Append(buildColumnWithName("", "index_columns", mysql.TypeVarchar, 256))
+		schema.Append(buildColumnWithName("", "index_size", mysql.TypeVarchar, 256))
+		schema.Append(buildColumnWithName("", "reason", mysql.TypeVarchar, 256))
+		schema.Append(buildColumnWithName("", "top_impacted_query", mysql.TypeBlob, -1))
+		p.setSchemaAndNames(schema.col2Schema(), schema.names)
+	default:
+		return nil, fmt.Errorf("unsupported action %s", v.Action)
 	}
 	return p, nil
 }
