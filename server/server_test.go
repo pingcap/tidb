@@ -2717,6 +2717,8 @@ func (cli *testServerClient) runTestIssue53634(t *testing.T, ts *tidbTestSuite, 
 	}, "MDL", func(dbt *testkit.DBTestKit) {
 		ctx := context.Background()
 
+		variable.EnableMDL.Store(true)
+		t.Logf("set enable mdl:%v", variable.EnableMDL.Load())
 		conn, err := dbt.GetDB().Conn(ctx)
 		require.NoError(t, err)
 		MustExec(ctx, t, conn, "set global tidb_enable_metadata_lock=1")

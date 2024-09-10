@@ -3331,5 +3331,10 @@ func TestIssue53634(t *testing.T) {
 	cfg.Status.StatusPort = 10088
 	ts := createTidbTestSuiteWithCfg(t, cfg)
 
+	se, err := session.CreateSession4Test(ts.store)
+	require.NoError(t, err)
+	_, err = se.Execute(context.Background(), "set global tidb_enable_metadata_lock=1")
+	require.NoError(t, err)
+
 	ts.runTestIssue53634(t, ts, ts.domain)
 }
