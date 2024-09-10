@@ -173,11 +173,7 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	if !e.BaseExecutor.Ctx().GetSessionVars().InRestrictedSQL {
-		return statsHandle.SyncStats(ctx, infoSchema)
-	}
-	statsHandle.TriggerSyncStats()
-	return nil
+	return statsHandle.SyncStats(ctx, infoSchema)
 }
 
 func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {
