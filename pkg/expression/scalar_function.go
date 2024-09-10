@@ -845,6 +845,14 @@ func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
 	sf.Function.SetRepertoire(r)
 }
 
+func (sf *ScalarFunction) IsExplicitCharset() bool {
+	return sf.Function.IsExplicitCharset()
+}
+
+func (sf *ScalarFunction) SetExplicitCharset(explicit bool) {
+	sf.Function.SetExplicitCharset(explicit)
+}
+
 const emptyScalarFunctionSize = int64(unsafe.Sizeof(ScalarFunction{}))
 
 // MemoryUsage return the memory usage of ScalarFunction

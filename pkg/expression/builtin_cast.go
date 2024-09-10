@@ -296,7 +296,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinCastStringFunc(ctx, c.funcName, args, c.tp, c.isExplicitCharSet)
+	bf, err := newBaseBuiltinCastFunc4String(ctx, c.funcName, args, c.tp, c.isExplicitCharSet)
 	if err != nil {
 		return nil, err
 	}
@@ -899,12 +899,12 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row)
 }
 
 type builtinCastIntAsStringSig struct {
-	baseBuiltinCastStringFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCastIntAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastIntAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
+	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1216,12 +1216,12 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 }
 
 type builtinCastRealAsStringSig struct {
-	baseBuiltinCastStringFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCastRealAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastRealAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
+	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1371,12 +1371,12 @@ func (b *builtinCastDecimalAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (re
 }
 
 type builtinCastDecimalAsStringSig struct {
-	baseBuiltinCastStringFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCastDecimalAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastDecimalAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
+	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1481,12 +1481,12 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(ctx EvalContext, row chun
 }
 
 type builtinCastStringAsStringSig struct {
-	baseBuiltinCastStringFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCastStringAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastStringAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
+	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1798,12 +1798,12 @@ func (b *builtinCastTimeAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 }
 
 type builtinCastTimeAsStringSig struct {
-	baseBuiltinCastStringFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCastTimeAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastTimeAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
+	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -1937,12 +1937,12 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(ctx EvalContext, row chunk
 }
 
 type builtinCastDurationAsStringSig struct {
-	baseBuiltinCastStringFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCastDurationAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastDurationAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
+	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2079,12 +2079,12 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 }
 
 type builtinCastJSONAsStringSig struct {
-	baseBuiltinCastStringFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCastJSONAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastJSONAsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
+	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
@@ -2101,12 +2101,12 @@ func (b *builtinCastJSONAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 }
 
 type builtinCastVectorFloat32AsStringSig struct {
-	baseBuiltinCastStringFunc
+	baseBuiltinFunc
 }
 
 func (b *builtinCastVectorFloat32AsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastVectorFloat32AsStringSig{}
-	newSig.cloneFrom(&b.baseBuiltinCastStringFunc)
+	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 

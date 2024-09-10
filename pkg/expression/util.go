@@ -456,26 +456,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				var e Expression
 				var err error
 				if v.FuncName.L == ast.Cast {
-					switch f := v.Function.(type) {
-					case *builtinCastIntAsStringSig:
-						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
-					case *builtinCastRealAsStringSig:
-						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
-					case *builtinCastDecimalAsStringSig:
-						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
-					case *builtinCastStringAsStringSig:
-						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
-					case *builtinCastTimeAsStringSig:
-						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
-					case *builtinCastDurationAsStringSig:
-						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
-					case *builtinCastJSONAsStringSig:
-						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
-					case *builtinCastVectorFloat32AsStringSig:
-						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, f.isExplicitCharSet)
-					default:
-						e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, false)
-					}
+					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
 					terror.Log(err)
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction

@@ -464,15 +464,7 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 	}
 }
 
-// // baseBuiltinCastStringFunc will be used in every struct created by `castAsStringFunctionClass`.
-type baseBuiltinCastStringFunc struct {
-	baseBuiltinFunc
-
-	// isExplicitCharSet indicates whether cast function set the charset info explicit.
-	isExplicitCharSet bool
-}
-
-func newBaseBuiltinCastStringFunc(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType, isExplicitCharSet bool) (baseBuiltinCastStringFunc, error) {
+func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType, isExplicitCharSet bool) (baseBuiltinFunc, error) {
 	var bf baseBuiltinFunc
 	var err error
 	if isExplicitCharSet {
@@ -486,6 +478,7 @@ func newBaseBuiltinCastStringFunc(ctx BuildContext, funcName string, args []Expr
 		bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
 		bf.setCollator(collate.GetCollator(tp.GetCollate()))
 		bf.SetCoercibility(CoercibilityExplicit)
+		bf.SetExplicitCharset(true)
 		if tp.GetCharset() == charset.CharsetASCII {
 			bf.SetRepertoire(ASCII)
 		} else {
@@ -494,25 +487,10 @@ func newBaseBuiltinCastStringFunc(ctx BuildContext, funcName string, args []Expr
 	} else {
 		bf, err = newBaseBuiltinFunc(ctx, funcName, args, tp)
 		if err != nil {
-			return baseBuiltinCastStringFunc{}, err
+			return baseBuiltinFunc{}, err
 		}
 	}
-	return baseBuiltinCastStringFunc{
-		baseBuiltinFunc:   bf,
-		isExplicitCharSet: isExplicitCharSet,
-	}, nil
-}
-
-func newBaseBuiltinCastStringFuncFromBaseBuiltinFunc(builtinFunc baseBuiltinFunc, isExplicitCharSet bool) baseBuiltinCastStringFunc {
-	return baseBuiltinCastStringFunc{
-		baseBuiltinFunc:   builtinFunc,
-		isExplicitCharSet: isExplicitCharSet,
-	}
-}
-
-func (b *baseBuiltinCastStringFunc) cloneFrom(from *baseBuiltinCastStringFunc) {
-	b.baseBuiltinFunc.cloneFrom(&from.baseBuiltinFunc)
-	b.isExplicitCharSet = from.isExplicitCharSet
+	return bf, nil
 }
 
 // vecBuiltinFunc contains all vectorized methods for a builtin function.
