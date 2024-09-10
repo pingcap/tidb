@@ -1284,7 +1284,7 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 	return p.ExtractOnCondition(conditions, p.Children()[0].Schema(), p.Children()[1].Schema(), deriveLeft, deriveRight)
 }
 
-func extractTableAlias(cte []*ast.CommonTableExpression, p base.Plan, parentOffset int) *hint.HintedTable {
+func extractTableAlias(cte []*ast.CommonTableExpression, p base.Plan, parentOffset int) *utilhint.HintedTable {
 	alias := util.ExtractTableAlias(p, parentOffset)
 	if alias != nil {
 		for _, c := range cte {
