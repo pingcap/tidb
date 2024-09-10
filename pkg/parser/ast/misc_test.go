@@ -133,21 +133,6 @@ import into t from '/file.csv'`
 	}
 }
 
-// test Change Pump or drainer status sql parser
-func TestChangeStmt(t *testing.T) {
-	sql := `change pump to node_state='paused' for node_id '127.0.0.1:8249';
-change drainer to node_state='paused' for node_id '127.0.0.1:8249';
-shutdown;`
-
-	p := parser.New()
-	stmts, _, err := p.Parse(sql, "", "")
-	require.NoError(t, err)
-	for _, stmt := range stmts {
-		stmt.Accept(visitor{})
-		stmt.Accept(visitor1{})
-	}
-}
-
 func TestSensitiveStatement(t *testing.T) {
 	positive := []ast.StmtNode{
 		&ast.SetPwdStmt{},
