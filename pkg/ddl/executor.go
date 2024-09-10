@@ -4344,14 +4344,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 
-	job.FillArgs(&model.RenameTablesArgs{
-		OldSchemaIDs:   oldSchemaIDs,
-		NewSchemaIDs:   newSchemaIDs,
-		NewTableNames:  newTableNames,
-		TableIDs:       tableIDs,
-		OldSchemaNames: oldSchemaNames,
-		OldTableNames:  oldTableNames,
-	})
+	job.FillArgs(model.GetRenameTablesArgsFromV1(
+		oldSchemaIDs, oldSchemaNames, oldTableNames,
+		newSchemaIDs, newTableNames, tableIDs))
 
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)

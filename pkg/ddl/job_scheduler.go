@@ -714,7 +714,13 @@ func job2SchemaIDs(job *model.Job) string {
 			ids = append(job.Args[0].([]int64), job.Args[1].([]int64)...)
 		} else {
 			arg := job.Args[0].(*model.RenameTablesArgs)
-			ids = append(arg.OldSchemaIDs, arg.NewSchemaIDs...)
+			ids = make([]int64, 0, len(arg.RenameTableInfos)*2)
+			for _, info := range arg.RenameTableInfos {
+				ids = append(ids, info.OldSchemaID)
+			}
+			for _, info := range arg.RenameTableInfos {
+				ids = append(ids, info.NewSchemaID)
+			}
 		}
 		return makeStringForIDs(ids)
 	case model.ActionExchangeTablePartition, model.ActionRenameTable:
