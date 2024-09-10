@@ -48,6 +48,7 @@ func TestMiscVisitorCover(t *testing.T) {
 		&ast.AdminStmt{},
 		&ast.AlterUserStmt{},
 		&ast.BeginStmt{},
+		&ast.BinlogStmt{},
 		&ast.CommitStmt{},
 		&ast.CompactTableStmt{Table: &ast.TableName{}},
 		&ast.CreateUserStmt{},

@@ -962,6 +962,7 @@ import (
 	AlterSequenceStmt          "Alter sequence statement"
 	AnalyzeTableStmt           "Analyze table statement"
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
+	BinlogStmt                 "Binlog base64 statement"
 	BRIEStmt                   "BACKUP or RESTORE statement"
 	CalibrateResourceStmt      "CALIBRATE RESOURCE statement"
 	CommitStmt                 "COMMIT statement"
@@ -3400,6 +3401,12 @@ BeginTransactionStmt:
 			ReadOnly: true,
 			AsOf:     $5.(*ast.AsOfClause),
 		}
+	}
+
+BinlogStmt:
+	"BINLOG" stringLit
+	{
+		$$ = &ast.BinlogStmt{Str: $2}
 	}
 
 ColumnDef:
@@ -11495,6 +11502,12 @@ ShowStmt:
 			Tp: ast.ShowMasterStatus,
 		}
 	}
+|	"SHOW" "BINARY" "LOG" "STATUS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowBinlogStatus,
+		}
+	}
 |	"SHOW" Replica "STATUS"
 	// From MySQL 8.0.22, use SHOW REPLICA STATUS in place of SHOW SLAVE STATUS,
 	// which is deprecated from that release. In releases before MySQL 8.0.22,
@@ -12106,6 +12119,7 @@ Statement:
 |	AlterResourceGroupStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
+|	BinlogStmt
 |	BRIEStmt
 |	CommitStmt
 |	DeallocateStmt
