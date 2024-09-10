@@ -91,11 +91,11 @@ func (htc *hashTableContext) reset() {
 	htc.memoryTracker.Detach()
 }
 
-func (htc *hashTableContext) getAllMemoryUsageInHashTableTest() int64 {
+func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
 	partNum := len(htc.hashTable.tables)
 	totalMemoryUsage := int64(0)
 	for i := 0; i < partNum; i++ {
-		mem := htc.hashTable.getPartitionMemoryUsageTest(i)
+		mem := htc.hashTable.getPartitionMemoryUsage(i)
 		totalMemoryUsage += mem
 	}
 	return totalMemoryUsage
@@ -317,7 +317,7 @@ func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
 	hCtx.hashTableContext.clearAllSegmentsInRowTable()
 	hCtx.hashTableContext.memoryTracker.Consume(-memoryUsage)
 
-	memoryUsage = hCtx.hashTableContext.getAllMemoryUsageInHashTableTest()
+	memoryUsage = hCtx.hashTableContext.getAllMemoryUsageInHashTable()
 	hCtx.hashTableContext.clearHashTable()
 	hCtx.hashTableContext.memoryTracker.Consume(-memoryUsage)
 }

@@ -136,13 +136,6 @@ func (ht *hashTableV2) getPartitionMemoryUsage(partID int) int64 {
 	return 0
 }
 
-func (ht *hashTableV2) getPartitionMemoryUsageTest(partID int) int64 {
-	if ht.tables[partID] != nil {
-		return ht.tables[partID].getTotalMemoryUsage()
-	}
-	return 0
-}
-
 func (ht *hashTableV2) clearPartitionSegments(partID int) {
 	if ht.tables[partID] != nil {
 		ht.tables[partID].rowData.clearSegments()
