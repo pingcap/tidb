@@ -244,3 +244,76 @@ UNIQUE KEY idx_5 (col_1)
 	tk.MustExec(`INSERT INTO tl75eff7ba VALUES(1),(0);`)
 	tk.MustQuery(`SELECT tl75eff7ba.col_1 AS r0 FROM tl75eff7ba WHERE ISNULL(tl75eff7ba.col_1) OR tl75eff7ba.col_1 IN (0, 0, 1, 1) GROUP BY tl75eff7ba.col_1 HAVING ISNULL(tl75eff7ba.col_1) OR tl75eff7ba.col_1 IN (0, 1, 1, 0) LIMIT 58651509;`).Check(testkit.Rows("0", "1"))
 }
+
+func TestIssue55967(t *testing.T) {
+	// test for issue 55967
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+CREATE TABLE tbl_payment_history (
+	id varchar(30) NOT NULL,
+	batch_num varchar(30) DEFAULT NULL COMMENT 'PHBNTN',
+	batch_seq_num int(7) DEFAULT NULL COMMENT 'PHBLON',
+	product_id varchar(50) DEFAULT NULL COMMENT 'PHRKID',
+	acct_num varchar(19) DEFAULT NULL COMMENT 'PHKNTN',
+	amt_posted_interest decimal(15,2) DEFAULT NULL COMMENT 'PHBELP',
+	issuer_curr_amt decimal(15,2) DEFAULT NULL COMMENT 'PHBELI',
+	val_date date DEFAULT NULL COMMENT 'PHVLDT',
+	entry_dt date DEFAULT NULL COMMENT 'PHBDAT',
+	rect_mark varchar(1) DEFAULT NULL COMMENT 'PHKORR',
+	usr_id varchar(100) DEFAULT NULL COMMENT 'PHUSER',
+	txn_code_grp varchar(30) DEFAULT NULL COMMENT 'PHTCGR',
+	grp_acct_num varchar(19) DEFAULT NULL COMMENT 'PHGACC',
+	period varchar(6) DEFAULT NULL COMMENT 'PHPERI',
+	reversed_yn varchar(1) DEFAULT NULL COMMENT 'PHRVST',
+	reversed_amt decimal(15,2) DEFAULT NULL COMMENT 'PHRVAM',
+	dt_time timestamp NULL DEFAULT NULL COMMENT 'PHDTTM',
+	pay_to_acct_interest_free decimal(15,2) DEFAULT NULL COMMENT 'PHITFP',
+	status_code varchar(50) DEFAULT NULL,
+	created_by varchar(100) DEFAULT NULL,
+	created_dt timestamp NULL DEFAULT NULL,
+	created_domain varchar(10) DEFAULT NULL,
+	updated_by varchar(100) DEFAULT NULL,
+	updated_dt timestamp NULL DEFAULT NULL,
+	updated_domain varchar(10) DEFAULT NULL,
+	db_version bigint(20) DEFAULT NULL,
+	acct_category varchar(10) DEFAULT NULL,
+	ipp_ind varchar(1) DEFAULT NULL,
+	sub_seq_num int(11) DEFAULT NULL,
+	pay_to_period varchar(10) DEFAULT NULL,
+	PRIMARY KEY (ID) /*T![clustered_index] NONCLUSTERED */,
+	KEY idx_payment_history_004_1 (entry_dt, acct_category, ID, txn_code_grp)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	tk.MustQuery(`explain SELECT
+  MIN(g.id) AS start_key,
+  MAX(g.id) AS end_key,
+  COUNT(g.id) AS page_size
+FROM
+  (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        ORDER BY
+          id
+      ) AS row_num
+    FROM
+      tbl_payment_history a
+    WHERE
+      a.entry_dt = '2024-09-08 00:00:00'
+  ) g
+GROUP BY
+  FLOOR((g.row_num - 1) / 500)
+ORDER BY
+  start_key;`).Check(testkit.Rows(
+		"Sort_10 10.00 root  Column#34",
+		"└─HashAgg_13 10.00 root  group by:Column#42, funcs:min(Column#39)->Column#34, funcs:max(Column#40)->Column#35, funcs:count(Column#41)->Column#36",
+		"  └─Projection_21 10.00 root  test.tbl_payment_history.id->Column#39, test.tbl_payment_history.id->Column#40, test.tbl_payment_history.id->Column#41, floor(div(cast(minus(Column#33, 1), decimal(20,0) BINARY), 500))->Column#42",
+		"    └─Window_14 10.00 root  row_number()->Column#33 over(order by test.tbl_payment_history.id rows between current row and current row)",
+		"      └─Projection_19 10.00 root  test.tbl_payment_history.id, test.tbl_payment_history.entry_dt",
+		"        └─IndexLookUp_18 10.00 root  ",
+		"          ├─IndexFullScan_15(Build) 10000.00 cop[tikv] table:a, index:PRIMARY(ID) keep order:true, stats:pseudo",
+		"          └─Selection_17(Probe) 10.00 cop[tikv]  eq(test.tbl_payment_history.entry_dt, 2024-09-08 00:00:00.000000)",
+		"            └─TableRowIDScan_16 10000.00 cop[tikv] table:a keep order:false, stats:pseudo"))
+}

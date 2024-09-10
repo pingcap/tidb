@@ -773,7 +773,7 @@ func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *m
 	for _, c := range index.Columns {
 		col := IndexCol2Col(colInfos, cols, c)
 		if col == nil {
-			return retCols, lengths
+			continue
 		}
 		retCols = append(retCols, col)
 		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {

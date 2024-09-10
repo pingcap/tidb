@@ -979,6 +979,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		if err != nil {
 			return nil, err
 		}
+		if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("here")
+		}
 		// Compute interaction rules that should be optimized again
 		interactionRule, ok := optInteractionRuleList[rule]
 		if planChanged && ok && isLogicalRuleDisabled(interactionRule) {
