@@ -2069,8 +2069,8 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 	// Test TableReader cache for single SQL.
 	type testCase struct {
 		sql           string
-		expectHitNum  int
-		expectMissNum int
+		expectHitNum  int32
+		expectMissNum int32
 	}
 
 	testCases := []testCase{
