@@ -2377,6 +2377,224 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 	require.NoError(t, err)
 }
 
+<<<<<<< HEAD
+=======
+func TestExchangePartitionMultiTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+
+	dbName := "ExchangeMultiTable"
+	tk1.MustExec(`create schema ` + dbName)
+	tk1.MustExec(`use ` + dbName)
+	tk1.MustExec(`CREATE TABLE t1 (a int)`)
+	tk1.MustExec(`CREATE TABLE t2 (a int)`)
+	tk1.MustExec(`CREATE TABLE tp (a int) partition by hash(a) partitions 3`)
+	tk1.MustExec(`insert into t1 values (0)`)
+	tk1.MustExec(`insert into t2 values (3)`)
+	tk1.MustExec(`insert into tp values (6)`)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`use ` + dbName)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec(`use ` + dbName)
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec(`use ` + dbName)
+	waitFor := func(col int, tableName, s string) {
+		for {
+			tk4 := testkit.NewTestKit(t, store)
+			tk4.MustExec(`use test`)
+			sql := `admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`
+			res := tk4.MustQuery(sql).Rows()
+			if len(res) == 1 && res[0][col] == s {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	alterChan1 := make(chan error)
+	alterChan2 := make(chan error)
+	tk3.MustExec(`BEGIN`)
+	tk3.MustExec(`insert into tp values (1)`)
+	go func() {
+		alterChan1 <- tk1.ExecToErr(`alter table tp exchange partition p0 with table t1`)
+	}()
+	waitFor(11, "t1", "running")
+	go func() {
+		alterChan2 <- tk2.ExecToErr(`alter table tp exchange partition p0 with table t2`)
+	}()
+	waitFor(11, "t2", "queueing")
+	tk3.MustExec(`rollback`)
+	require.NoError(t, <-alterChan1)
+	err := <-alterChan2
+	tk3.MustQuery(`select * from t1`).Check(testkit.Rows("6"))
+	tk3.MustQuery(`select * from t2`).Check(testkit.Rows("0"))
+	tk3.MustQuery(`select * from tp`).Check(testkit.Rows("3"))
+	require.NoError(t, err)
+}
+
+func TestExchangePartitionValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	dbName := "ExchangeValidation"
+	tk.MustExec(`create schema ` + dbName)
+	tk.MustExec(`use ` + dbName)
+	tk.MustExec(`CREATE TABLE t1 (
+		d date NOT NULL ,
+		name varchar(10)  NOT NULL,
+		UNIQUE KEY (d,name))`)
+
+	tk.MustExec(`CREATE TABLE t1p (
+		d date NOT NULL ,
+		name varchar(10)  NOT NULL,
+		UNIQUE KEY (d,name)
+	)
+	PARTITION BY RANGE COLUMNS(d)
+	(PARTITION p202307 VALUES LESS THAN ('2023-08-01'),
+	 PARTITION p202308 VALUES LESS THAN ('2023-09-01'),
+	 PARTITION p202309 VALUES LESS THAN ('2023-10-01'),
+	 PARTITION p202310 VALUES LESS THAN ('2023-11-01'),
+	 PARTITION p202311 VALUES LESS THAN ('2023-12-01'),
+	 PARTITION p202312 VALUES LESS THAN ('2024-01-01'),
+	 PARTITION pfuture VALUES LESS THAN (MAXVALUE))`)
+
+	tk.MustExec(`insert into t1 values ("2023-08-06","0000")`)
+	tk.MustContainErrMsg(`alter table t1p exchange partition p202307 with table t1 with validation`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`insert into t1 values ("2023-08-06","0001")`)
+}
+
+func TestExchangePartitionPlacementPolicy(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`create schema ExchangePartWithPolicy`)
+	tk.MustExec(`use ExchangePartWithPolicy`)
+	tk.MustExec(`CREATE PLACEMENT POLICY rule1 FOLLOWERS=1`)
+	tk.MustExec(`CREATE PLACEMENT POLICY rule2 FOLLOWERS=2`)
+	tk.MustExec(`CREATE TABLE t1 (
+		d date NOT NULL ,
+		name varchar(10)  NOT NULL,
+		UNIQUE KEY (d,name)
+	) PLACEMENT POLICY="rule1"`)
+
+	tk.MustExec(`CREATE TABLE t1p (
+		d date NOT NULL ,
+		name varchar(10)  NOT NULL,
+		UNIQUE KEY (d,name)
+	) PLACEMENT POLICY="rule2"
+	PARTITION BY RANGE COLUMNS(d)
+	(PARTITION p202307 VALUES LESS THAN ('2023-08-01'),
+	 PARTITION p202308 VALUES LESS THAN ('2023-09-01'),
+	 PARTITION p202309 VALUES LESS THAN ('2023-10-01'),
+	 PARTITION p202310 VALUES LESS THAN ('2023-11-01'),
+	 PARTITION p202311 VALUES LESS THAN ('2023-12-01'),
+	 PARTITION p202312 VALUES LESS THAN ('2024-01-01'),
+	 PARTITION pfuture VALUES LESS THAN (MAXVALUE))`)
+
+	tk.MustContainErrMsg(`alter table t1p exchange partition p202307 with table t1`,
+		"[ddl:1736]Tables have different definitions")
+	tk.MustExec(`insert into t1 values ("2023-08-06","0000")`)
+}
+
+func TestExchangePartitionHook(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	// why use tkCancel, not tk.
+	tkCancel := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 VALUES LESS THAN (9),
+        PARTITION p3 VALUES LESS THAN (MAXVALUE)
+		);`)
+	tk.MustExec(`create table nt(a int);`)
+
+	tk.MustExec(`insert into pt values (0), (4), (7)`)
+	tk.MustExec("insert into nt values (1)")
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	dom.DDL().SetHook(hook)
+
+	hookFunc := func(job *model.Job) {
+		if job.Type == model.ActionExchangeTablePartition && job.SchemaState != model.StateNone {
+			tkCancel.MustExec("use test")
+			tkCancel.MustGetErrCode("insert into nt values (5)", errno.ErrRowDoesNotMatchGivenPartitionSet)
+		}
+	}
+	hook.OnJobUpdatedExported.Store(&hookFunc)
+
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
+}
+
+func TestExchangePartitionAutoID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int primary key auto_increment) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 values less than (9),
+        PARTITION p3 values less than (50000000)
+		);`)
+	tk.MustExec(`create table nt(a int primary key auto_increment);`)
+	tk.MustExec(`insert into pt values (0), (4)`)
+	tk.MustExec("insert into nt values (1)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
+	}()
+
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustExec("insert into nt values (NULL)")
+	tk.MustQuery("select count(*) from nt where a >= 4000000").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from pt where a >= 4000000").Check(testkit.Rows("1"))
+}
+
+func TestTiDBEnableExchangePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int primary key auto_increment) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 values less than (9)
+		);`)
+	// default
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
+	tk.MustExec(`create table nt(a int primary key auto_increment);`)
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+
+	// set tidb_enable_exchange_partition = 0
+	tk.MustExec("set @@tidb_enable_exchange_partition=0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+
+	// set tidb_enable_exchange_partition = 1
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_enable_exchange_partition").Check(testkit.Rows("1"))
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+}
+
+>>>>>>> c7c7000165a (ddl: Exchange partition rollback (#45877))
 func TestExchangePartitionExpressIndex(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
