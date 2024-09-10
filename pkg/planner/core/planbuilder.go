@@ -298,9 +298,10 @@ type PlanBuilder struct {
 	resolveCtx *resolve.Context
 }
 
-func (p *PlanBuilder) GetCTE() []*ast.CommonTableExpression {
-	cteInfo := make([]*ast.CommonTableExpression, 0, len(p.outerCTEs))
-	for _, cte := range p.outerCTEs {
+// GetCTE is to get CTE info from AST
+func (b *PlanBuilder) GetCTE() []*ast.CommonTableExpression {
+	cteInfo := make([]*ast.CommonTableExpression, 0, len(b.outerCTEs))
+	for _, cte := range b.outerCTEs {
 		cteInfo = append(cteInfo, cte.def)
 	}
 	return cteInfo
