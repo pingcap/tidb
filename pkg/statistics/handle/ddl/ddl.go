@@ -21,9 +21,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/zap"
 )
 
 type ddlHandlerImpl struct {
@@ -183,7 +186,8 @@ func (h *ddlHandlerImpl) HandleDDLEvent(s *ddlutil.SchemaChangeEvent) error {
 	case model.ActionFlashbackCluster:
 		return h.statsWriter.UpdateStatsVersion()
 	default:
-		return errors.Trace(errors.Errorf("unhandled DDL type %v", s.GetType()))
+		intest.Assert(false)
+		logutil.StatsLogger().Error("Unhandled schema change event", zap.Stringer("type", s.GetType()))
 	}
 	return nil
 }
