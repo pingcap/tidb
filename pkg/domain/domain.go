@@ -442,16 +442,23 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 	if err != nil {
 		return nil, err
 	}
-	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
-	doneCh := make(chan error, len(splittedSchemas))
-	for _, schemas := range splittedSchemas {
-		go do.fetchSchemasWithTables(schemas, m, doneCh)
+	if len(allSchemas) == 0 {
+		return nil, nil
 	}
-	for range splittedSchemas {
-		err = <-doneCh
-		if err != nil {
-			return nil, err
-		}
+
+	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
+	concurrency := min(len(splittedSchemas), 128)
+
+	eg, ectx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
+	eg.SetLimit(concurrency)
+	for _, schemas := range splittedSchemas {
+		ss := schemas
+		eg.Go(func() error {
+			return do.fetchSchemasWithTables(ectx, ss, m)
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, err
 	}
 	return allSchemas, nil
 }
@@ -481,23 +488,29 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 	return splitted
 }
 
-func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, done chan error) {
+func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m *meta.Meta) error {
+	failpoint.Inject("failed-fetch-schemas-with-tables", func() {
+		failpoint.Return(errors.New("failpoint: failed to fetch schemas with tables"))
+	})
+
 	for _, di := range schemas {
+		// if the ctx has been canceled, stop fetching schemas.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		var tables []*model.TableInfo
 		var err error
 		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
 			name2ID, specialTableInfos, err := meta.GetAllNameToIDAndTheMustLoadedTableInfo(m, di.ID)
 			if err != nil {
-				done <- err
-				return
+				return err
 			}
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
 		} else {
 			tables, err = m.ListTables(di.ID)
 			if err != nil {
-				done <- err
-				return
+				return err
 			}
 		}
 		// If TreatOldVersionUTF8AsUTF8MB4 was enable, need to convert the old version schema UTF8 charset to UTF8MB4.
@@ -524,7 +537,7 @@ func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, don
 		}
 		di.Deprecated.Tables = diTables
 	}
-	done <- nil
+	return nil
 }
 
 // shouldUseV2 decides whether to use infoschema v2.

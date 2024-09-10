@@ -37,13 +37,14 @@ go_test(
     name = "indexadvisor_test",
     timeout = "short",
     srcs = [
+        "indexadvisor_sql_test.go",
         "indexadvisor_test.go",
         "indexadvisor_tpch_test.go",
         "optimizer_test.go",
         "utils_test.go",
     ],
     flaky = True,
-    shard_count = 32,
+    shard_count = 33,
     deps = [
         ":indexadvisor",
         "//pkg/parser/mysql",

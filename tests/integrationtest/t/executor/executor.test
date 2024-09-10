@@ -2709,6 +2709,9 @@ connection default;
 --error 8020
 LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
 
+connection conn1;
+unlock tables;
+
 disconnect conn1;
 unlock tables;
 drop user 'testuser'@'localhost';

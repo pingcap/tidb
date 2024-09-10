@@ -2939,12 +2939,13 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
-	exchangePartitionEvent := statsutil.NewExchangePartitionEvent(
-		job.SchemaID,
-		pt,
-		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
-		originalNt,
-	)
+	exchangePartitionEvent := &statsutil.DDLEvent{
+		SchemaChangeEvent: util.NewExchangePartitionEvent(
+			pt,
+			&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
+			originalNt,
+		),
+	}
 	asyncNotifyEvent(jobCtx, exchangePartitionEvent, job)
 	return ver, nil
 }
@@ -3507,19 +3508,21 @@ func newStatsDDLEventForJob(
 	var event *statsutil.DDLEvent
 	switch jobType {
 	case model.ActionReorganizePartition:
-		event = statsutil.NewReorganizePartitionEvent(
-			schemaID,
-			tblInfo,
-			addedPartInfo,
-			droppedPartInfo,
-		)
+		event = &statsutil.DDLEvent{
+			SchemaChangeEvent: util.NewReorganizePartitionEvent(
+				tblInfo,
+				addedPartInfo,
+				droppedPartInfo,
+			),
+		}
 	case model.ActionAlterTablePartitioning:
-		event = statsutil.NewAddPartitioningEvent(
-			schemaID,
-			oldTblID,
-			tblInfo,
-			addedPartInfo,
-		)
+		event = &statsutil.DDLEvent{
+			SchemaChangeEvent: util.NewAddPartitioningEvent(
+				oldTblID,
+				tblInfo,
+				addedPartInfo,
+			),
+		}
 	case model.ActionRemovePartitioning:
 		event = statsutil.NewRemovePartitioningEvent(
 			schemaID,
@@ -3602,7 +3605,7 @@ type reorgPartitionWorker struct {
 }
 
 func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*reorgPartitionWorker, error) {
-	bCtx, err := newBackfillCtx(i, reorgInfo, reorgInfo.SchemaName, t, jc, "reorg_partition_rate", false)
+	bCtx, err := newBackfillCtx(i, reorgInfo, reorgInfo.SchemaName, t, jc, "reorg_partition_rate", false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -4490,13 +4493,14 @@ func isPartExprUnsigned(ectx expression.EvalContext, tbInfo *model.TableInfo) bo
 }
 
 // truncateTableByReassignPartitionIDs reassigns new partition ids.
-func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo, pids []int64) (err error) {
+// it also returns the new partition IDs for cases described below.
+func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo, pids []int64) ([]int64, error) {
 	if len(pids) < len(tblInfo.Partition.Definitions) {
 		// To make it compatible with older versions when pids was not given
 		// and if there has been any add/reorganize partition increasing the number of partitions
 		morePids, err := t.GenGlobalIDs(len(tblInfo.Partition.Definitions) - len(pids))
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		pids = append(pids, morePids...)
 	}
@@ -4507,7 +4511,7 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo,
 		newDefs = append(newDefs, newDef)
 	}
 	tblInfo.Partition.Definitions = newDefs
-	return nil
+	return pids, nil
 }
 
 type partitionExprProcessor func(expression.BuildContext, *model.TableInfo, ast.ExprNode) error

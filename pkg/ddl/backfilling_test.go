@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -27,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
@@ -176,6 +179,7 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 				tm, err := ctx.CurrentTime()
 				require.Equal(t, ctx.Location().String(), tm.Location().String())
 				require.InDelta(t, tm1.Unix(), tm.Unix(), 2)
+				require.NoError(t, err)
 			},
 		},
 		{
@@ -224,13 +228,25 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 	)
 }
 
+// newMockReorgSessCtx creates a mock session context for reorg test.
+// In old implementations, DDL is using `mock.Context` to construct the contexts used in DDL reorg.
+// After refactoring, we just need it to do test the new implementation is compatible with the old one.
+func newMockReorgSessCtx(store kv.Storage) sessionctx.Context {
+	c := mock.NewContext()
+	c.Store = store
+	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
+	tz := *time.UTC
+	c.ResetSessionAndStmtTimeZone(&tz)
+	return c
+}
+
 // TestReorgExprContext is used in refactor stage to make sure the newReorgExprCtx() is
-// compatible with newReorgSessCtx(nil).GetExprCtx() to make it safe to replace `mock.Context` usage.
+// compatible with newMockReorgSessCtx(nil).GetExprCtx() to make it safe to replace `mock.Context` usage.
 // After refactor, the TestReorgExprContext can be removed.
 func TestReorgExprContext(t *testing.T) {
 	// test default expr context
 	store := &mockStorage{client: &mock.Client{}}
-	sctx := newReorgSessCtx(store)
+	sctx := newMockReorgSessCtx(store)
 	defaultCtx := newReorgExprCtx()
 	// should use an empty static warn handler by default
 	evalCtx := defaultCtx.GetStaticEvalCtx()
@@ -255,7 +271,7 @@ func TestReorgExprContext(t *testing.T) {
 			ResourceGroupName: "rg2",
 		},
 	} {
-		sctx = newReorgSessCtx(store)
+		sctx = newMockReorgSessCtx(store)
 		require.NoError(t, initSessCtx(sctx, &reorg))
 		ctx, err := newReorgExprCtxWithReorgMeta(&reorg, sctx.GetSessionVars().StmtCtx.WarnHandler)
 		require.NoError(t, err)
@@ -276,6 +292,68 @@ func TestReorgExprContext(t *testing.T) {
 		require.NotEqual(t, defaultTypeCtx.Flags(), tc.Flags())
 		require.NotEqual(t, defaultErrCtx.LevelMap(), ec.LevelMap())
 	}
+}
+
+func TestReorgTableMutateContext(t *testing.T) {
+	originalRowFmt := variable.GetDDLReorgRowFormat()
+	defer variable.SetDDLReorgRowFormat(originalRowFmt)
+
+	exprCtx := contextstatic.NewStaticExprContext()
+
+	assertTblCtxMatchSessionCtx := func(ctx table.MutateContext, sctx sessionctx.Context) {
+		sctxTblCtx := sctx.GetTableCtx()
+		require.Equal(t, uint64(0), ctx.ConnectionID())
+		require.Equal(t, sctxTblCtx.ConnectionID(), ctx.ConnectionID())
+
+		require.False(t, ctx.InRestrictedSQL())
+		require.Equal(t, sctxTblCtx.InRestrictedSQL(), ctx.InRestrictedSQL())
+
+		require.Equal(t, variable.AssertionLevelOff, ctx.TxnAssertionLevel())
+		require.Equal(t, sctxTblCtx.TxnAssertionLevel(), ctx.TxnAssertionLevel())
+
+		require.Equal(t, variable.GetDDLReorgRowFormat() != variable.DefTiDBRowFormatV1, ctx.GetRowEncodingConfig().IsRowLevelChecksumEnabled)
+		require.Equal(t, variable.GetDDLReorgRowFormat() != variable.DefTiDBRowFormatV1, ctx.GetRowEncodingConfig().RowEncoder.Enable)
+		require.Equal(t, sctxTblCtx.GetRowEncodingConfig(), ctx.GetRowEncodingConfig())
+
+		require.NotNil(t, ctx.GetMutateBuffers())
+		require.Equal(t, sctxTblCtx.GetMutateBuffers(), ctx.GetMutateBuffers())
+
+		require.Equal(t, variable.DefTiDBShardAllocateStep, ctx.GetRowIDShardGenerator().GetShardStep())
+		sctx.GetSessionVars().TxnCtx.StartTS = 123 // make sure GetRowIDShardGenerator() pass assert
+		require.Equal(t, sctxTblCtx.GetRowIDShardGenerator().GetShardStep(), ctx.GetRowIDShardGenerator().GetShardStep())
+		require.GreaterOrEqual(t, ctx.GetRowIDShardGenerator().GetCurrentShard(1), int64(0))
+
+		alloc1, ok := sctxTblCtx.GetReservedRowIDAlloc()
+		require.True(t, ok)
+		alloc2, ok := ctx.GetReservedRowIDAlloc()
+		require.True(t, ok)
+		require.Equal(t, alloc1, alloc2)
+		require.True(t, alloc2.Exhausted())
+
+		binlog, ok := ctx.GetBinlogSupport()
+		require.False(t, ok)
+		require.Nil(t, binlog)
+		statistics, ok := ctx.GetStatisticsSupport()
+		require.False(t, ok)
+		require.Nil(t, statistics)
+		cached, ok := ctx.GetCachedTableSupport()
+		require.False(t, ok)
+		require.Nil(t, cached)
+		temp, ok := ctx.GetTemporaryTableSupport()
+		require.False(t, ok)
+		require.Nil(t, temp)
+		dml, ok := ctx.GetExchangePartitionDMLSupport()
+		require.False(t, ok)
+		require.Nil(t, dml)
+	}
+
+	// test when the row format is v1
+	variable.SetDDLReorgRowFormat(variable.DefTiDBRowFormatV1)
+	sctx := newMockReorgSessCtx(&mockStorage{client: &mock.Client{}})
+	require.NoError(t, initSessCtx(sctx, &model.DDLReorgMeta{}))
+	ctx := newReorgTableMutateContext(exprCtx)
+	require.Same(t, exprCtx, ctx.GetExprCtx())
+	assertTblCtxMatchSessionCtx(ctx, sctx)
 }
 
 type mockStorage struct {
@@ -313,13 +391,13 @@ func assertDistSQLCtxEqual(t *testing.T, expected *distsqlctx.DistSQLContext, ac
 }
 
 // TestReorgExprContext is used in refactor stage to make sure the newDefaultReorgDistSQLCtx() is
-// compatible with newReorgSessCtx(nil).GetDistSQLCtx() to make it safe to replace `mock.Context` usage.
+// compatible with newMockReorgSessCtx(nil).GetDistSQLCtx() to make it safe to replace `mock.Context` usage.
 // After refactor, the TestReorgExprContext can be removed.
 func TestReorgDistSQLCtx(t *testing.T) {
 	store := &mockStorage{client: &mock.Client{}}
 
 	// test default dist sql context
-	expected := newReorgSessCtx(store).GetDistSQLCtx()
+	expected := newMockReorgSessCtx(store).GetDistSQLCtx()
 	defaultCtx := newDefaultReorgDistSQLCtx(store.client, expected.WarnHandler)
 	assertDistSQLCtxEqual(t, expected, defaultCtx)
 
@@ -339,7 +417,7 @@ func TestReorgDistSQLCtx(t *testing.T) {
 			ResourceGroupName: "rg2",
 		},
 	} {
-		sctx := newReorgSessCtx(store)
+		sctx := newMockReorgSessCtx(store)
 		require.NoError(t, initSessCtx(sctx, &reorg))
 		expected = sctx.GetDistSQLCtx()
 		ctx, err := newReorgDistSQLCtxWithReorgMeta(store.client, &reorg, expected.WarnHandler)

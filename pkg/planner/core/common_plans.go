@@ -239,6 +239,17 @@ type SetConfig struct {
 	Value    expression.Expression
 }
 
+// RecommendIndexPlan represents a plan for recommend index stmt.
+type RecommendIndexPlan struct {
+	baseSchemaProducer
+
+	Action   string
+	SQL      string
+	AdviseID int64
+	Option   string
+	Value    ast.ValueExpr
+}
+
 // SQLBindOpType repreents the SQL bind type
 type SQLBindOpType int
 

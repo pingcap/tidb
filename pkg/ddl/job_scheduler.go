@@ -402,6 +402,7 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		intest.Assert(job.Version > 0, "job version should be greater than 0")
 
 		involving := job.GetInvolvingSchemaInfo()
 		if targetPool.available() == 0 {
@@ -723,7 +724,8 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		if schema {
 			return strconv.FormatInt(job.SchemaID, 10)
 		}
-		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(job.Args[0].(int64), 10)
+		newTableID := getTruncateTableNewTableID(job)
+		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
 	}
 	if schema {
 		return strconv.FormatInt(job.SchemaID, 10)

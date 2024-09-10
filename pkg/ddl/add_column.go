@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
@@ -132,11 +133,9 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		addColumnEvent := statsutil.NewAddColumnEvent(
-			job.SchemaID,
-			tblInfo,
-			[]*model.ColumnInfo{columnInfo},
-		)
+		addColumnEvent := &statsutil.DDLEvent{
+			SchemaChangeEvent: util.NewAddColumnEvent(tblInfo, []*model.ColumnInfo{columnInfo}),
+		}
 		asyncNotifyEvent(jobCtx, addColumnEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)

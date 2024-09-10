@@ -610,12 +610,12 @@ func checkDatabaseHasForeignKeyReferredInOwner(jobCtx *jobContext, job *model.Jo
 	if !variable.EnableForeignKey.Load() {
 		return nil
 	}
-	var fkCheck bool
-	err := job.DecodeArgs(&fkCheck)
+	args, err := model.GetDropSchemaArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return errors.Trace(err)
 	}
+	fkCheck := args.FKCheck
 	if !fkCheck {
 		return nil
 	}
