@@ -893,6 +893,16 @@ func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
 	sf.Function.SetRepertoire(r)
 }
 
+// IsExplicitCharset return the charset is explicit set or not.
+func (sf *ScalarFunction) IsExplicitCharset() bool {
+	return sf.Function.IsExplicitCharset()
+}
+
+// SetExplicitCharset set the charset is explicit or not.
+func (sf *ScalarFunction) SetExplicitCharset(explicit bool) {
+	sf.Function.SetExplicitCharset(explicit)
+}
+
 const emptyScalarFunctionSize = int64(unsafe.Sizeof(ScalarFunction{}))
 
 // MemoryUsage return the memory usage of ScalarFunction
