@@ -93,10 +93,6 @@ func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTes
 		OldTableNames:  oldTableNames,
 	})
 
-	if job.Version == model.JobVersion1 {
-		job.CtxVars = []any{append(oldSchemaIDs, newSchemaIDs...), oldTableIDs}
-	}
-
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 

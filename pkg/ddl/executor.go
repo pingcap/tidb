@@ -4337,10 +4337,6 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 		OldTableNames:  oldTableNames,
 	})
 
-	if job.Version == model.JobVersion1 {
-		job.CtxVars = []any{append(oldSchemaIDs, newSchemaIDs...), tableIDs}
-	}
-
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }

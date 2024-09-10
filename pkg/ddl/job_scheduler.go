@@ -710,7 +710,7 @@ func job2SchemaIDs(job *model.Job) string {
 	case model.ActionRenameTables:
 		var ids []int64
 		if job.Version == model.JobVersion1 {
-			ids = job.CtxVars[0].([]int64)
+			ids = append(job.Args[0].([]int64), job.Args[1].([]int64)...)
 		} else {
 			arg := job.Args[0].(*model.RenameTablesArgs)
 			ids = append(arg.OldSchemaIDs, arg.NewSchemaIDs...)
@@ -727,13 +727,11 @@ func job2SchemaIDs(job *model.Job) string {
 func job2TableIDs(job *model.Job) string {
 	switch job.Type {
 	case model.ActionRenameTables:
-		var ids []int64
 		if job.Version == model.JobVersion1 {
-			ids = job.CtxVars[1].([]int64)
+			return makeStringForIDs(job.Args[3].([]int64))
 		} else {
-			ids = job.Args[1].(*model.RenameTablesArgs).TableIDs
+			return makeStringForIDs(job.Args[1].(*model.RenameTablesArgs).TableIDs)
 		}
-		return makeStringForIDs(ids)
 	case model.ActionExchangeTablePartition, model.ActionRenameTable:
 		ids := job.CtxVars[1].([]int64)
 		return makeStringForIDs(ids)
