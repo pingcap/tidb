@@ -2222,7 +2222,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
+		_ = updateDroppingPartitionInfo(tblInfo, partNames)
 		err = dropLabelRules(w.ctx, job.SchemaName, tblInfo.Name.L, partNames)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -2355,7 +2355,6 @@ func handleTiFlashForTruncatePartition(job *model.Job, t *meta.Meta, tblInfo *mo
 }
 
 func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldIDs []int64) (bool, error) {
-
 	tbl, err := getTable(jobCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -2473,32 +2472,31 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 
 			job.SchemaState = model.StateWriteOnly
 			return updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
-		} else {
-			// Here we can optimize and do a single state change DDL
+		}
+		// Here we can optimize and do a single state change DDL
 
-			// For the truncatePartitionEvent
-			oldPartitions = make([]model.PartitionDefinition, 0, len(oldIDs))
-			newPartitions = make([]model.PartitionDefinition, 0, len(oldIDs))
-			for k, oldID := range oldIDs {
-				for i := 0; i < len(pi.Definitions); i++ {
-					def := &pi.Definitions[i]
-					if def.ID == oldID {
-						oldPartitions = append(oldPartitions, def.Clone())
-						def.ID = newIDs[k]
-						// Shallow copy only use the def.ID in event handle.
-						newPartitions = append(newPartitions, *def)
-						break
-					}
+		// For the truncatePartitionEvent
+		oldPartitions = make([]model.PartitionDefinition, 0, len(oldIDs))
+		newPartitions = make([]model.PartitionDefinition, 0, len(oldIDs))
+		for k, oldID := range oldIDs {
+			for i := 0; i < len(pi.Definitions); i++ {
+				def := &pi.Definitions[i]
+				if def.ID == oldID {
+					oldPartitions = append(oldPartitions, def.Clone())
+					def.ID = newIDs[k]
+					// Shallow copy only use the def.ID in event handle.
+					newPartitions = append(newPartitions, *def)
+					break
 				}
 			}
-			if len(newPartitions) == 0 {
-				job.State = model.JobStateCancelled
-				return ver, table.ErrUnknownPartition.GenWithStackByArgs(fmt.Sprintf("pid:%v", oldIDs), tblInfo.Name.O)
-			}
-
-			preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newPartitions)
-			// continue after job.SchemaState switch!
 		}
+		if len(newPartitions) == 0 {
+			job.State = model.JobStateCancelled
+			return ver, table.ErrUnknownPartition.GenWithStackByArgs(fmt.Sprintf("pid:%v", oldIDs), tblInfo.Name.O)
+		}
+
+		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newPartitions)
+		// continue after job.SchemaState switch!
 	case model.StateWriteOnly:
 		oldDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
 		newDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))

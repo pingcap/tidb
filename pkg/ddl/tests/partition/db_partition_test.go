@@ -1339,6 +1339,7 @@ func TestDropMultiPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestGlobalIndexInsertInDropPartition(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1374,6 +1375,7 @@ func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 }
 
 func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1502,6 +1504,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1673,6 +1676,7 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 }
 
 func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1737,6 +1741,7 @@ partition p2 values less than (10))`)
 }
 
 func TestAlterTableExchangePartition(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2103,6 +2108,7 @@ func TestExchangePartitionHook(t *testing.T) {
 }
 
 func TestExchangePartitionAutoID(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
