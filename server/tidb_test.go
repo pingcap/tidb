@@ -83,6 +83,30 @@ type tidbTestSuite struct {
 }
 
 func createTidbTestSuite(t *testing.T) *tidbTestSuite {
+<<<<<<< HEAD
+=======
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = 0
+	cfg.Performance.TCPKeepAlive = true
+	return createTidbTestSuiteWithCfg(t, cfg)
+}
+
+// parseDuration parses lease argument string.
+func parseDuration(lease string) (time.Duration, error) {
+	dur, err := time.ParseDuration(lease)
+	if err != nil {
+		dur, err = time.ParseDuration(lease + "s")
+	}
+	if err != nil || dur < 0 {
+		return 0, errors.Errorf("invalid lease duration: %v", lease)
+	}
+	return dur, nil
+}
+
+func createTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *tidbTestSuite {
+>>>>>>> 996098ec4ae (*: fix a bug that update statement uses point get and update plan with different tblInfo (#54183) (#54259))
 	ts := &tidbTestSuite{testServerClient: newTestServerClient()}
 
 	// setup tidbTestSuite
@@ -90,6 +114,9 @@ func createTidbTestSuite(t *testing.T) *tidbTestSuite {
 	ts.store, err = mockstore.NewMockStore()
 	session.DisableStats4Test()
 	require.NoError(t, err)
+	ddlLeaseDuration, err := parseDuration(cfg.Lease)
+	require.NoError(t, err)
+	session.SetSchemaLease(ddlLeaseDuration)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
@@ -3188,7 +3215,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 
 func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	cfg := newTestConfig()
-	cfg.Port = 4000
+	cfg.Port = 4005
 	cfg.Status.ReportStatus = false
 	// Setup proxy protocol config
 	cfg.ProxyProtocol.Networks = "*"
@@ -3229,3 +3256,95 @@ func TestLoadData(t *testing.T) {
 	ts.runTestLoadDataReplace(t)
 	ts.runTestLoadDataReplaceNonclusteredPK(t)
 }
+<<<<<<< HEAD
+=======
+
+func TestAuthSocket(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/MockOSUserForAuthSocket", "return(true)"))
+	defer func() {
+		mockOSUserForAuthSocketTest.Store(nil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/MockOSUserForAuthSocket"))
+	}()
+
+	cfg := newTestConfig()
+	cfg.Socket = filepath.Join(t.TempDir(), "authsock.sock")
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	ts := createTidbTestSuiteWithCfg(t, cfg)
+	ts.waitUntilServerCanConnect()
+
+	ts.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("CREATE USER 'u1'@'%' IDENTIFIED WITH auth_socket;")
+		dbt.MustExec("CREATE USER 'u2'@'%' IDENTIFIED WITH auth_socket AS 'sockuser'")
+		dbt.MustExec("CREATE USER 'sockuser'@'%' IDENTIFIED WITH auth_socket;")
+	})
+
+	// network login should be denied
+	for _, uname := range []string{"u1", "u2", "u3"} {
+		mockOSUserForAuthSocketTest.Store(&uname)
+		db, err := sql.Open("mysql", ts.getDSN(func(config *mysql.Config) {
+			config.User = uname
+		}))
+		require.NoError(t, err)
+		_, err = db.Conn(context.TODO())
+		require.EqualError(t,
+			err,
+			fmt.Sprintf("Error 1045: Access denied for user '%s'@'127.0.0.1' (using password: NO)", uname),
+		)
+		require.NoError(t, db.Close())
+	}
+
+	socketAuthConf := func(user string) func(*mysql.Config) {
+		return func(config *mysql.Config) {
+			config.User = user
+			config.Net = "unix"
+			config.Addr = cfg.Socket
+			config.DBName = ""
+		}
+	}
+
+	mockOSUser := "sockuser"
+	mockOSUserForAuthSocketTest.Store(&mockOSUser)
+
+	// mysql username that is different with the OS user should be rejected.
+	db, err := sql.Open("mysql", ts.getDSN(socketAuthConf("u1")))
+	require.NoError(t, err)
+	_, err = db.Conn(context.TODO())
+	require.EqualError(t, err, "Error 1045: Access denied for user 'u1'@'localhost' (using password: YES)")
+	require.NoError(t, db.Close())
+
+	// mysql username that is the same with the OS user should be accepted.
+	ts.runTests(t, socketAuthConf("sockuser"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.checkRows(t, rows, "sockuser@%")
+	})
+
+	// When a user is created with `IDENTIFIED WITH auth_socket AS ...`.
+	// It should be accepted when username or as string is the same with OS user.
+	ts.runTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.checkRows(t, rows, "u2@%")
+	})
+
+	mockOSUser = "u2"
+	mockOSUserForAuthSocketTest.Store(&mockOSUser)
+	ts.runTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.checkRows(t, rows, "u2@%")
+	})
+}
+
+func TestIssue53634(t *testing.T) {
+	if !variable.DefTiDBEnableConcurrentDDL {
+		t.Skip("skip this mdl test when DefTiDBEnableConcurrentDDL is false")
+	}
+
+	cfg := newTestConfig()
+	cfg.Lease = "20s"
+	cfg.Port = 4123
+	cfg.Status.StatusPort = 10088
+	ts := createTidbTestSuiteWithCfg(t, cfg)
+
+	ts.runTestIssue53634(t, ts, ts.domain)
+}
+>>>>>>> 996098ec4ae (*: fix a bug that update statement uses point get and update plan with different tblInfo (#54183) (#54259))
