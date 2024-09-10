@@ -1301,6 +1301,7 @@ func NewSessionVars() *SessionVars {
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
+		EnableWindowFunction:        DefEnableWindowFunction,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
