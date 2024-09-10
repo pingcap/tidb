@@ -196,6 +196,7 @@ type TruncateTableArgs struct {
 	OldPartIDsWithPolicy []int64 `json:"-"`
 }
 
+// RenameTablesArgs is the arguments for rename tables job.
 type RenameTablesArgs struct {
 	OldSchemaIDs   []int64         `json:"old_schema_ids,omitempty"`
 	OldSchemaNames []*pmodel.CIStr `json:"old_schema_names,omitempty"`
