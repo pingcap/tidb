@@ -156,9 +156,10 @@ type CheckpointRunner[K KeyType, V ValueType] struct {
 
 	valueMarshaler func(*RangeGroup[K, V]) ([]byte, error)
 
-	storage storage.ExternalStorage
-	cipher  *backuppb.CipherInfo
-	timer   GlobalTimer
+	checkpointStorage checkpointStorage
+	lockStorage       storage.ExternalStorage
+	cipher            *backuppb.CipherInfo
+	timer             GlobalTimer
 
 	appendCh       chan *CheckpointMessage[K, V]
 	checksumCh     chan *ChecksumItem
@@ -175,7 +176,8 @@ type CheckpointRunner[K KeyType, V ValueType] struct {
 
 func newCheckpointRunner[K KeyType, V ValueType](
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	checkpointStorage checkpointStorage,
+	lockStorage storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	timer GlobalTimer,
 	f flushPosition,
@@ -189,9 +191,10 @@ func newCheckpointRunner[K KeyType, V ValueType](
 
 		valueMarshaler: vm,
 
-		storage: storage,
-		cipher:  cipher,
-		timer:   timer,
+		checkpointStorage: checkpointStorage,
+		lockStorage:       lockStorage,
+		cipher:            cipher,
+		timer:             timer,
 
 		appendCh:       make(chan *CheckpointMessage[K, V]),
 		checksumCh:     make(chan *ChecksumItem),
@@ -274,7 +277,7 @@ func (r *CheckpointRunner[K, V]) WaitForFinish(ctx context.Context, flush bool) 
 	r.wg.Wait()
 	// remove the checkpoint lock
 	if r.lockId > 0 {
-		err := r.storage.DeleteFile(ctx, r.CheckpointLockPath)
+		err := r.lockStorage.DeleteFile(ctx, r.CheckpointLockPath)
 		if err != nil {
 			log.Warn("failed to remove the checkpoint lock", zap.Error(err))
 		}
@@ -502,7 +505,7 @@ func (r *CheckpointRunner[K, V]) doChecksumFlush(ctx context.Context, checksumIt
 	}
 
 	fname := fmt.Sprintf("%s/t%d_and__.cpt", r.CheckpointChecksumDir, checksumItems.Items[0].TableID)
-	if err = r.storage.WriteFile(ctx, fname, data); err != nil {
+	if err = r.checkpointStorage.flushCheckpointChecksum(ctx, fname, data); err != nil {
 		return errors.Annotatef(err, "failed to write file %s for checkpoint checksum", fname)
 	}
 
@@ -565,7 +568,7 @@ func (r *CheckpointRunner[K, V]) doFlush(ctx context.Context, meta map[K]*RangeG
 		checksum := sha256.Sum256(fname)
 		checksumEncoded := base64.URLEncoding.EncodeToString(checksum[:])
 		path := fmt.Sprintf("%s/%s_%d.cpt", r.CheckpointDataDir, checksumEncoded, rand.Uint64())
-		if err := r.storage.WriteFile(ctx, path, data); err != nil {
+		if err := r.checkpointStorage.flushCheckpointData(ctx, path, data); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -616,13 +619,13 @@ func (r *CheckpointRunner[K, V]) flushLock(ctx context.Context, p int64) error {
 		return errors.Trace(err)
 	}
 
-	err = r.storage.WriteFile(ctx, r.CheckpointLockPath, data)
+	err = r.lockStorage.WriteFile(ctx, r.CheckpointLockPath, data)
 	return errors.Trace(err)
 }
 
 // check whether this lock belongs to this BR
 func (r *CheckpointRunner[K, V]) checkLockFile(ctx context.Context, now int64) error {
-	data, err := r.storage.ReadFile(ctx, r.CheckpointLockPath)
+	data, err := r.lockStorage.ReadFile(ctx, r.CheckpointLockPath)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -644,7 +647,7 @@ func (r *CheckpointRunner[K, V]) checkLockFile(ctx context.Context, now int64) e
 		return errors.Errorf("The existing lock will expire in %d seconds. "+
 			"There may be another BR(%d) running. If not, you can wait for the lock to expire, "+
 			"or delete the file `%s%s` manually.",
-			(lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(r.storage.URI(), "/"), r.CheckpointLockPath)
+			(lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(r.lockStorage.URI(), "/"), r.CheckpointLockPath)
 	}
 
 	return nil
@@ -677,7 +680,7 @@ func (r *CheckpointRunner[K, V]) initialLock(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	r.lockId = oracle.ComposeTS(p, l)
-	exist, err := r.storage.FileExists(ctx, r.CheckpointLockPath)
+	exist, err := r.lockStorage.FileExists(ctx, r.CheckpointLockPath)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -694,6 +697,48 @@ func (r *CheckpointRunner[K, V]) initialLock(ctx context.Context) error {
 	time.Sleep(3 * time.Second)
 	err = r.checkLockFile(ctx, p)
 	return errors.Trace(err)
+}
+
+func parseCheckpointData[K KeyType, V ValueType](
+	content []byte,
+	pastDureTime *time.Duration,
+	cipher *backuppb.CipherInfo,
+	fn func(groupKey K, value V),
+) error {
+	checkpointData := &CheckpointData{}
+	if err := json.Unmarshal(content, checkpointData); err != nil {
+		log.Error("failed to unmarshal the checkpoint data info, skip it", zap.Error(err))
+		return nil
+	}
+
+	if checkpointData.DureTime > *pastDureTime {
+		*pastDureTime = checkpointData.DureTime
+	}
+	for _, meta := range checkpointData.RangeGroupMetas {
+		decryptContent, err := metautil.Decrypt(meta.RangeGroupsEncriptedData, cipher, meta.CipherIv)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		checksum := sha256.Sum256(decryptContent)
+		if !bytes.Equal(meta.Checksum, checksum[:]) {
+			log.Error("checkpoint checksum info's checksum mismatch, skip it",
+				zap.ByteString("expect", meta.Checksum),
+				zap.ByteString("got", checksum[:]),
+			)
+			continue
+		}
+
+		group := &RangeGroup[K, V]{}
+		if err = json.Unmarshal(decryptContent, group); err != nil {
+			return errors.Trace(err)
+		}
+
+		for _, g := range group.Group {
+			fn(group.GroupKey, g)
+		}
+	}
+	return nil
 }
 
 // walk the whole checkpoint range files and retrieve the metadata of backed up/restored ranges
@@ -713,39 +758,8 @@ func walkCheckpointFile[K KeyType, V ValueType](
 			if err != nil {
 				return errors.Trace(err)
 			}
-
-			checkpointData := &CheckpointData{}
-			if err = json.Unmarshal(content, checkpointData); err != nil {
-				log.Error("failed to unmarshal the checkpoint data info, skip it", zap.Error(err))
-				return nil
-			}
-
-			if checkpointData.DureTime > pastDureTime {
-				pastDureTime = checkpointData.DureTime
-			}
-			for _, meta := range checkpointData.RangeGroupMetas {
-				decryptContent, err := metautil.Decrypt(meta.RangeGroupsEncriptedData, cipher, meta.CipherIv)
-				if err != nil {
-					return errors.Trace(err)
-				}
-
-				checksum := sha256.Sum256(decryptContent)
-				if !bytes.Equal(meta.Checksum, checksum[:]) {
-					log.Error("checkpoint checksum info's checksum mismatch, skip it",
-						zap.ByteString("expect", meta.Checksum),
-						zap.ByteString("got", checksum[:]),
-					)
-					continue
-				}
-
-				group := &RangeGroup[K, V]{}
-				if err = json.Unmarshal(decryptContent, group); err != nil {
-					return errors.Trace(err)
-				}
-
-				for _, g := range group.Group {
-					fn(group.GroupKey, g)
-				}
+			if err := parseCheckpointData(content, &pastDureTime, cipher, fn); err != nil {
+				return errors.Trace(err)
 			}
 		}
 		return nil
@@ -765,6 +779,44 @@ func loadCheckpointMeta[T any](ctx context.Context, s storage.ExternalStorage, p
 	return errors.Trace(err)
 }
 
+func parseCheckpointChecksum(
+	data []byte,
+	checkpointChecksum map[int64]*ChecksumItem,
+	pastDureTime *time.Duration,
+) error {
+	info := &ChecksumInfo{}
+	err := json.Unmarshal(data, info)
+	if err != nil {
+		log.Error("failed to unmarshal the checkpoint checksum info, skip it", zap.Error(err))
+		return nil
+	}
+
+	checksum := sha256.Sum256(info.Content)
+	if !bytes.Equal(info.Checksum, checksum[:]) {
+		log.Error("checkpoint checksum info's checksum mismatch, skip it",
+			zap.ByteString("expect", info.Checksum),
+			zap.ByteString("got", checksum[:]),
+		)
+		return nil
+	}
+
+	if info.DureTime > *pastDureTime {
+		*pastDureTime = info.DureTime
+	}
+
+	items := &ChecksumItems{}
+	err = json.Unmarshal(info.Content, items)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, c := range items.Items {
+		checkpointChecksum[c.TableID] = c
+	}
+
+	return nil
+}
+
 // walk the whole checkpoint checksum files and retrieve checksum information of tables calculated
 func loadCheckpointChecksum(
 	ctx context.Context,
@@ -778,34 +830,8 @@ func loadCheckpointChecksum(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		info := &ChecksumInfo{}
-		err = json.Unmarshal(data, info)
-		if err != nil {
-			log.Error("failed to unmarshal the checkpoint checksum info, skip it", zap.Error(err))
-			return nil
-		}
-
-		checksum := sha256.Sum256(info.Content)
-		if !bytes.Equal(info.Checksum, checksum[:]) {
-			log.Error("checkpoint checksum info's checksum mismatch, skip it",
-				zap.ByteString("expect", info.Checksum),
-				zap.ByteString("got", checksum[:]),
-			)
-			return nil
-		}
-
-		if info.DureTime > pastDureTime {
-			pastDureTime = info.DureTime
-		}
-
-		items := &ChecksumItems{}
-		err = json.Unmarshal(info.Content, items)
-		if err != nil {
+		if err = parseCheckpointChecksum(data, checkpointChecksum, &pastDureTime); err != nil {
 			return errors.Trace(err)
-		}
-
-		for _, c := range items.Items {
-			checkpointChecksum[c.TableID] = c
 		}
 		return nil
 	})

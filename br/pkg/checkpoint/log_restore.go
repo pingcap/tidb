@@ -21,11 +21,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -99,28 +100,32 @@ func valueMarshalerForLogRestore(group *RangeGroup[LogRestoreKeyType, LogRestore
 	})
 }
 
+func newTableCheckpointStorage(se glue.Session, checkpointDBName string) *tableCheckpointStorage {
+	return &tableCheckpointStorage{
+		se:               se,
+		checkpointDBName: checkpointDBName,
+	}
+}
+
 // only for test
 func StartCheckpointLogRestoreRunnerForTest(
 	ctx context.Context,
-	storage storage.ExternalStorage,
-	cipher *backuppb.CipherInfo,
+	se glue.Session,
 	tick time.Duration,
-	taskName string,
 ) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
-		ctx, storage, cipher, nil, flushPositionForRestore(taskName), valueMarshalerForLogRestore)
+		ctx, newTableCheckpointStorage(se, logRestoreCheckpointDatabaseName), nil, nil, nil, flushPosition{}, valueMarshalerForLogRestore)
 
 	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
 }
 
-func StartCheckpointRunnerForLogRestore(ctx context.Context,
-	storage storage.ExternalStorage,
-	cipher *backuppb.CipherInfo,
-	taskName string,
+func StartCheckpointRunnerForLogRestore(
+	ctx context.Context,
+	se glue.Session,
 ) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
-		ctx, storage, cipher, nil, flushPositionForRestore(taskName), valueMarshalerForLogRestore)
+		ctx, newTableCheckpointStorage(se, logRestoreCheckpointDatabaseName), nil, nil, nil, flushPosition{}, valueMarshalerForLogRestore)
 
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
@@ -147,17 +152,14 @@ func AppendRangeForLogRestore(
 	})
 }
 
-const (
-	CheckpointTaskInfoForLogRestorePathFormat = CheckpointDir + "/restore-%d/taskInfo.meta"
-	CheckpointIngestIndexRepairSQLPathFormat  = CheckpointDir + "/restore-%s/ingest-repair.meta"
-)
-
-func getCheckpointTaskInfoPathByID(clusterID uint64) string {
-	return fmt.Sprintf(CheckpointTaskInfoForLogRestorePathFormat, clusterID)
-}
-
-func getCheckpointIngestIndexRepairPathByTaskName(taskName string) string {
-	return fmt.Sprintf(CheckpointIngestIndexRepairSQLPathFormat, taskName)
+// load the whole checkpoint range data and retrieve the metadata of restored ranges
+// and return the total time cost in the past executions
+func LoadCheckpointDataForLogRestore[K KeyType, V ValueType](
+	ctx context.Context,
+	execCtx sqlexec.RestrictedSQLExecutor,
+	fn func(K, V),
+) (time.Duration, error) {
+	return selectCheckpointData(ctx, execCtx, logRestoreCheckpointDatabaseName, fn)
 }
 
 // A progress type for snapshot + log restore.
@@ -196,6 +198,8 @@ const (
 type CheckpointTaskInfoForLogRestore struct {
 	// the progress for this task
 	Progress RestoreProgress `json:"progress"`
+	// the upstream cluster id
+	UpstreamClusterID uint64 `json:"upstream-cluster-id"`
 	// a task marker to distinguish the different tasks
 	StartTS   uint64 `json:"start-ts"`
 	RestoreTS uint64 `json:"restore-ts"`
@@ -207,21 +211,19 @@ type CheckpointTaskInfoForLogRestore struct {
 
 func LoadCheckpointTaskInfoForLogRestore(
 	ctx context.Context,
-	s storage.ExternalStorage,
-	clusterID uint64,
+	execCtx sqlexec.RestrictedSQLExecutor,
 ) (*CheckpointTaskInfoForLogRestore, error) {
 	m := &CheckpointTaskInfoForLogRestore{}
-	err := loadCheckpointMeta(ctx, s, getCheckpointTaskInfoPathByID(clusterID), m)
+	err := selectCheckpointMeta(ctx, execCtx, logRestoreCheckpointDatabaseName, checkpointMetaTypeTaskInfo, m)
 	return m, err
 }
 
 func SaveCheckpointTaskInfoForLogRestore(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	se glue.Session,
 	meta *CheckpointTaskInfoForLogRestore,
-	clusterID uint64,
 ) error {
-	return saveCheckpointMetadata(ctx, s, meta, getCheckpointTaskInfoPathByID(clusterID))
+	return insertCheckpointMeta(ctx, se, logRestoreCheckpointDatabaseName, checkpointMetaTypeTaskInfo, meta)
 }
 
 func ExistsCheckpointTaskInfo(

@@ -1324,7 +1324,7 @@ func restoreStream(
 		}
 		oldRatio = oldRatioFromCheckpoint
 
-		checkpointRunner, err = client.StartCheckpointRunnerForLogRestore(ctx, taskName)
+		checkpointRunner, err = client.StartCheckpointRunnerForLogRestore(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1421,7 +1421,7 @@ func restoreStream(
 				checkpointTotalKVCount += kvCount
 				checkpointTotalSize += size
 			}
-			logFilesIter, err = client.WrapLogFilesIterWithCheckpoint(ctx, logFilesIter, downstreamIdset, taskName, updateStatsWithCheckpoint, p.Inc)
+			logFilesIter, err = client.WrapLogFilesIterWithCheckpoint(ctx, logFilesIter, downstreamIdset, updateStatsWithCheckpoint, p.Inc)
 			if err != nil {
 				return errors.Trace(err)
 			}

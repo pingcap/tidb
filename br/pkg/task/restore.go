@@ -890,10 +890,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		checkpointTaskName = cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
 		// if the checkpoint metadata exists in the external storage, the restore is not
 		// for the first time.
-		existsCheckpointMetadata, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, checkpointTaskName)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		existsCheckpointMetadata := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, mgr.GetDomain())
 		checkpointFirstRun = !existsCheckpointMetadata
 	}
 
@@ -921,6 +918,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err = snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
+	err = client.AllocTableIDs(ctx, tables)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	// reload or register the checkpoint
@@ -1010,12 +1013,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		} else {
 			client.SetPolicyMap(policies)
 		}
-	}
-
-	// preallocate the table id, because any ddl job or database creation also allocates the global ID
-	err = client.AllocTableIDs(ctx, tables)
-	if err != nil {
-		return errors.Trace(err)
 	}
 
 	// execute DDL first

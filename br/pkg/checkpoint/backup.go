@@ -58,7 +58,7 @@ func StartCheckpointBackupRunnerForTest(
 	timer GlobalTimer,
 ) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
 	runner := newCheckpointRunner[BackupKeyType, BackupValueType](
-		ctx, storage, cipher, timer, flushPositionForBackup(), valueMarshalerForBackup)
+		ctx, &externalCheckpointStorage{storage}, storage, cipher, timer, flushPositionForBackup(), valueMarshalerForBackup)
 
 	err := runner.initialLock(ctx)
 	if err != nil {
@@ -75,7 +75,7 @@ func StartCheckpointRunnerForBackup(
 	timer GlobalTimer,
 ) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
 	runner := newCheckpointRunner[BackupKeyType, BackupValueType](
-		ctx, storage, cipher, timer, flushPositionForBackup(), valueMarshalerForBackup)
+		ctx, &externalCheckpointStorage{storage}, storage, cipher, timer, flushPositionForBackup(), valueMarshalerForBackup)
 
 	err := runner.initialLock(ctx)
 	if err != nil {

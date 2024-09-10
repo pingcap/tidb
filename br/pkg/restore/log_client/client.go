@@ -200,8 +200,8 @@ func (rc *LogClient) CleanUpKVFiles(
 	return rc.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
 }
 
-func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context, taskName string) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
-	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.storage, rc.cipher, taskName)
+func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
+	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.se)
 	return runner, errors.Trace(err)
 }
 
@@ -1206,18 +1206,19 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[
 	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
 }
 
-func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}, taskName string) (*LogFilesSkipMap, error) {
+func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}) (*LogFilesSkipMap, error) {
 	skipMap := NewLogFilesSkipMap()
-	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
-		for tableID, foffs := range off.Foffs {
-			// filter out the checkpoint data of dropped table
-			if _, exists := downstreamIdset[tableID]; exists {
-				for _, foff := range foffs {
-					skipMap.Insert(groupKey, off.Goff, foff)
+	t, err := checkpoint.LoadCheckpointDataForSnapshotRestore(
+		ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor(), func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
+			for tableID, foffs := range off.Foffs {
+				// filter out the checkpoint data of dropped table
+				if _, exists := downstreamIdset[tableID]; exists {
+					for _, foff := range foffs {
+						skipMap.Insert(groupKey, off.Goff, foff)
+					}
 				}
 			}
-		}
-	})
+		})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1229,11 +1230,10 @@ func (rc *LogClient) WrapLogFilesIterWithCheckpoint(
 	ctx context.Context,
 	logIter LogIter,
 	downstreamIdset map[int64]struct{},
-	taskName string,
 	updateStats func(kvCount, size uint64),
 	onProgress func(),
 ) (LogIter, error) {
-	skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset, taskName)
+	skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
