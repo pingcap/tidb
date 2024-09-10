@@ -185,7 +185,7 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		// We just ignore it.
 		return nil
 	case *ast.DropStatsStmt:
-		err = e.executeDropStats(x)
+		err = e.executeDropStats(ctx, x)
 	case *ast.SetRoleStmt:
 		err = e.executeSetRole(x)
 	case *ast.RevokeRoleStmt:
@@ -2749,7 +2749,7 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
+func (e *SimpleExec) executeDropStats(ctx context.Context, s *ast.DropStatsStmt) (err error) {
 	h := domain.GetDomain(e.Ctx()).StatsHandle()
 	var statsIDs []int64
 	// TODO: GLOBAL option will be deprecated. Also remove this condition when the syntax is removed
@@ -2778,7 +2778,7 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
 		return err
 	}
-	return h.SyncStats()
+	return h.SyncStats(ctx, e.Ctx().GetInfoSchema().(infoschema.InfoSchema))
 }
 
 func (e *SimpleExec) autoNewTxn() bool {
