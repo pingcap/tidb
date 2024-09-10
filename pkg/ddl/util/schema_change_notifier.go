@@ -33,7 +33,7 @@ type SchemaChangeEvent struct {
 	droppedPartInfo *model.PartitionInfo
 	columnInfos     []*model.ColumnInfo
 	// oldTableID4Partition is used to store the table ID when a table transitions from being partitioned to non-partitioned,
-	// OR vice versa.
+	// or vice versa.
 	oldTableID4Partition int64
 
 	tp model.ActionType
