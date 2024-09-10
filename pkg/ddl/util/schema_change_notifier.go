@@ -58,12 +58,18 @@ func (s *SchemaChangeEvent) String() string {
 	}
 	if s.addedPartInfo != nil {
 		for _, partDef := range s.addedPartInfo.Definitions {
-			_, _ = fmt.Fprintf(&sb, ", Partition Name: %s, Partition ID: %d", partDef.Name, partDef.ID)
+			if partDef.Name.L != "" {
+				_, _ = fmt.Fprintf(&sb, ", Partition Name: %s", partDef.Name)
+			}
+			_, _ = fmt.Fprintf(&sb, ", Partition ID: %d", partDef.ID)
 		}
 	}
 	if s.droppedPartInfo != nil {
 		for _, partDef := range s.droppedPartInfo.Definitions {
-			_, _ = fmt.Fprintf(&sb, ", Dropped Partition Name: %s, Dropped Partition ID: %d", partDef.Name, partDef.ID)
+			if partDef.Name.L != "" {
+				_, _ = fmt.Fprintf(&sb, ", Dropped Partition Name: %s", partDef.Name)
+			}
+			_, _ = fmt.Fprintf(&sb, ", Dropped Partition ID: %d", partDef.ID)
 		}
 	}
 	for _, columnInfo := range s.columnInfos {
