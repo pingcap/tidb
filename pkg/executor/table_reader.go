@@ -362,9 +362,12 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
-		err := e.getStartTSIfNeeded()
-		if err != nil {
-			return nil, err
+		if e.startTS == 0 && e.getStartTS != nil {
+			var err error
+			e.startTS, err = e.getStartTS(false)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if !e.batchCop {
 			// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
@@ -396,9 +399,12 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 
 	// use sortedSelectResults here when pushDown limit for partition table.
 	if e.kvRangeBuilder != nil && e.byItems != nil {
-		err := e.getStartTSIfNeeded()
-		if err != nil {
-			return nil, err
+		if e.startTS == 0 && e.getStartTS != nil {
+			var err error
+			e.startTS, err = e.getStartTS(false)
+			if err != nil {
+				return nil, err
+			}
 		}
 		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
 		if err != nil {
@@ -432,13 +438,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		return nil, err
 	}
 	return result, nil
-}
-
-func (e *TableReaderExecutor) getStartTSIfNeeded() (err error) {
-	if e.startTS == 0 && e.getStartTS != nil {
-		e.startTS, err = e.getStartTS(false)
-	}
-	return err
 }
 
 func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges []*ranger.Range) ([]*kv.Request, error) {

@@ -207,6 +207,7 @@ type IndexReaderExecutor struct {
 	// kvRanges are only used for union scan.
 	kvRanges         []kv.KeyRange
 	dagPB            *tipb.DAGRequest
+	startTS          uint64
 	getStartTS       func(bool) (uint64, error)
 	txnScope         string
 	readReplicaScope string
@@ -329,8 +330,9 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 	var builder distsql.RequestBuilder
 	builder.SetKeyRanges(r).
-		SetGetStartTs(e.getStartTS).
 		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
+		SetGetStartTs(e.getStartTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
@@ -386,9 +388,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			return err
 		}
 	} else {
-		startTS, err := e.getStartTS(false)
-		if err != nil {
-			return err
+		if e.startTS == 0 && e.getStartTS != nil {
+			e.startTS, err = e.getStartTS(false)
+			if err != nil {
+				return err
+			}
 		}
 		kvReqs := make([]*kv.Request, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
@@ -396,7 +400,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			if err != nil {
 				return err
 			}
-			kvReq.StartTs = startTS
 			kvReqs = append(kvReqs, kvReq)
 		}
 		var results []distsql.SelectResult
