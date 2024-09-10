@@ -15,11 +15,20 @@
 package expression
 
 import (
+<<<<<<< HEAD:expression/chunk_executor.go
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+=======
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+>>>>>>> 8d181ede017 (executor, codec: hash join build wrong hash key for ENUM/SET value (#49031)):pkg/expression/chunk_executor.go
 )
 
 // Vectorizable checks whether a list of expressions can employ vectorized execution.
@@ -179,7 +188,11 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
-					buf.AppendEnum(types.Enum{Value: 0, Name: result.GetString(i)})
+					enum, err := types.ParseEnumName(ft.GetElems(), result.GetString(i), ft.GetCollate())
+					if err != nil {
+						return errors.Errorf("Wrong enum value parsed during evaluation")
+					}
+					buf.AppendEnum(enum)
 				}
 			}
 			output.SetCol(colIdx, buf)
@@ -191,7 +204,11 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
-					buf.AppendSet(types.Set{Value: 0, Name: result.GetString(i)})
+					set, err := types.ParseSetName(ft.GetElems(), result.GetString(i), ft.GetCollate())
+					if err != nil {
+						return errors.Errorf("Wrong set value parsed during evaluation")
+					}
+					buf.AppendSet(set)
 				}
 			}
 			output.SetCol(colIdx, buf)
