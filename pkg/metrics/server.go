@@ -27,6 +27,7 @@ var (
 
 // Metrics
 var (
+<<<<<<< HEAD
 	PacketIOCounter        *prometheus.CounterVec
 	QueryDurationHistogram *prometheus.HistogramVec
 	QueryTotalCounter      *prometheus.CounterVec
@@ -36,6 +37,18 @@ var (
 	PreparedStmtGauge      prometheus.Gauge
 	ExecuteErrorCounter    *prometheus.CounterVec
 	CriticalErrorCounter   prometheus.Counter
+=======
+	PacketIOCounter            *prometheus.CounterVec
+	QueryDurationHistogram     *prometheus.HistogramVec
+	QueryRPCHistogram          *prometheus.HistogramVec
+	QueryProcessedKeyHistogram *prometheus.HistogramVec
+	QueryTotalCounter          *prometheus.CounterVec
+	ConnGauge                  *prometheus.GaugeVec
+	DisconnectionCounter       *prometheus.CounterVec
+	PreparedStmtGauge          prometheus.Gauge
+	ExecuteErrorCounter        *prometheus.CounterVec
+	CriticalErrorCounter       prometheus.Counter
+>>>>>>> 2a86d34c720 (*: fix affected rows metrics to make it compatiable with multi-queries (#55877))
 
 	ServerStart = "server-start"
 	ServerStop  = "server-stop"
@@ -99,14 +112,6 @@ func InitServerMetrics() {
 			Name:      "query_total",
 			Help:      "Counter of queries.",
 		}, []string{LblType, LblResult, LblResourceGroup})
-
-	AffectedRowsCounter = NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "affected_rows",
-			Help:      "Counters of server affected rows.",
-		}, []string{LblSQLType})
 
 	ConnGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
