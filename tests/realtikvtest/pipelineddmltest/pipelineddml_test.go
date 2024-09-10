@@ -161,6 +161,8 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.MustExec("insert into t values(2, 2)")
 	tk.MustExec("commit")
 
+	tk.MustExec("insert into t values(4, 4)")
+
 	// in a running txn
 	tk.MustExec("set session tidb_dml_type = standard")
 	tk.MustExec("begin")
