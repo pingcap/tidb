@@ -341,6 +341,82 @@ func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
 	return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
 }
 
+<<<<<<< HEAD:executor/infoschema_reader.go
+=======
+func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) error {
+	sysVars := variable.GetSysVars()
+	rows := make([][]types.Datum, 0, len(sysVars))
+	for _, sv := range sysVars {
+		if infoschema.SysVarHiddenForSem(ctx, sv.Name) {
+			continue
+		}
+		currentVal, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
+		if err != nil {
+			currentVal = ""
+		}
+		isNoop := "NO"
+		if sv.IsNoop {
+			isNoop = "YES"
+		}
+		defVal := sv.Value
+		if sv.HasGlobalScope() {
+			defVal = variable.GlobalSystemVariableInitialValue(sv.Name, defVal)
+		}
+		row := types.MakeDatums(
+			sv.Name,           // VARIABLE_NAME
+			sv.Scope.String(), // VARIABLE_SCOPE
+			defVal,            // DEFAULT_VALUE
+			currentVal,        // CURRENT_VALUE
+			sv.MinValue,       // MIN_VALUE
+			sv.MaxValue,       // MAX_VALUE
+			nil,               // POSSIBLE_VALUES
+			isNoop,            // IS_NOOP
+		)
+		// min and max value is only supported for numeric types
+		if !(sv.Type == variable.TypeUnsigned || sv.Type == variable.TypeInt || sv.Type == variable.TypeFloat) {
+			row[4].SetNull()
+			row[5].SetNull()
+		}
+		if sv.Type == variable.TypeEnum {
+			possibleValues := strings.Join(sv.PossibleValues, ",")
+			row[6].SetString(possibleValues, mysql.DefaultCollationName)
+		}
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx sessionctx.Context) error {
+	exec, _ := sctx.(sqlexec.RestrictedSQLExecutor)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT user, host, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')) FROM mysql.user`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 3 {
+			continue
+		}
+		user := chunkRow.GetString(0)
+		host := chunkRow.GetString(1)
+		// Compatible with results in MySQL
+		var attribute any
+		if attribute = chunkRow.GetString(2); attribute == "" {
+			attribute = nil
+		}
+		row := types.MakeDatums(user, host, attribute)
+		rows = append(rows, row)
+	}
+
+	e.rows = rows
+	return nil
+}
+
+>>>>>>> 205b5bbd210 (variable: fix information_schema.VARIABLES_INFO DEFAULT_VALUE not right problem (#49524)):pkg/executor/infoschema_reader.go
 func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas))
