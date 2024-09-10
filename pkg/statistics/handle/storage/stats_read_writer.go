@@ -20,11 +20,13 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/predicatecolumn"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -98,7 +101,7 @@ func (s *statsReadWriter) InsertColStats2KV(physicalID int64, colInfos []*model.
 					}
 				} else {
 					// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-					if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, %?)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
+					if _, err := util.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, GREATEST(%?, 0))", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
 						return err
 					}
 					value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
@@ -561,7 +564,12 @@ func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.Table
 		if err != nil {
 			return err
 		}
-		jsonTbl, err = GenJSONTableFromStats(sctx, dbName, tableInfo, tbl)
+		// Note: Because we don't show this information in the session directly, so we can always use UTC here.
+		colStatsUsage, err := predicatecolumn.LoadColumnStatsUsageForTable(sctx, time.UTC, physicalID)
+		if err != nil {
+			return err
+		}
+		jsonTbl, err = GenJSONTableFromStats(sctx, dbName, tableInfo, tbl, colStatsUsage)
 		return err
 	})
 	if err != nil {
@@ -631,7 +639,7 @@ func (s *statsReadWriter) LoadStatsFromJSONConcurrently(
 // LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
 func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema,
 	jsonTbl *util.JSONTable, concurrencyForPartition int) error {
-	table, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
+	table, err := is.TableByName(context.Background(), pmodel.NewCIStr(jsonTbl.DatabaseName), pmodel.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -677,7 +685,7 @@ func (s *statsReadWriter) LoadStatsFromJSON(ctx context.Context, is infoschema.I
 	if err := s.LoadStatsFromJSONNoUpdate(ctx, is, jsonTbl, concurrencyForPartition); err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(s.statsHandler.Update(is))
+	return errors.Trace(s.statsHandler.Update(ctx, is))
 }
 
 func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *util.JSONTable) error {
@@ -686,27 +694,78 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 		return errors.Trace(err)
 	}
 
-	for _, col := range tbl.Columns {
+	var outerErr error
+	tbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats)
-		if err != nil {
-			return errors.Trace(err)
+		if err := s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats); err != nil {
+			outerErr = err
+			return true
 		}
+		return false
+	})
+	if outerErr != nil {
+		return outerErr
 	}
-	for _, idx := range tbl.Indices {
+	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats)
-		if err != nil {
-			return errors.Trace(err)
+		if err := s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats); err != nil {
+			outerErr = err
+			return true
 		}
+		return false
+	})
+	if outerErr != nil {
+		return outerErr
 	}
 	err = s.SaveExtendedStatsToStorage(tbl.PhysicalID, tbl.ExtendedStats, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = s.SaveColumnStatsUsageToStorage(tbl.PhysicalID, jsonTbl.PredicateColumns)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return s.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats)
+}
+
+// SaveColumnStatsUsageToStorage saves column statistics usage information for a table into mysql.column_stats_usage.
+func (s *statsReadWriter) SaveColumnStatsUsageToStorage(physicalID int64, predicateColumns []*util.JSONPredicateColumn) error {
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		colStatsUsage := make(map[model.TableItemID]statstypes.ColStatsTimeInfo, len(predicateColumns))
+		for _, col := range predicateColumns {
+			if col == nil {
+				continue
+			}
+			itemID := model.TableItemID{TableID: physicalID, ID: col.ID}
+			lastUsedAt, err := parseTimeOrNil(col.LastUsedAt)
+			if err != nil {
+				return err
+			}
+			lastAnalyzedAt, err := parseTimeOrNil(col.LastAnalyzedAt)
+			if err != nil {
+				return err
+			}
+			colStatsUsage[itemID] = statstypes.ColStatsTimeInfo{
+				LastUsedAt:     lastUsedAt,
+				LastAnalyzedAt: lastAnalyzedAt,
+			}
+		}
+		return predicatecolumn.SaveColumnStatsUsageForTable(sctx, colStatsUsage)
+	}, util.FlagWrapTxn)
+}
+
+func parseTimeOrNil(timeStr *string) (*types.Time, error) {
+	if timeStr == nil {
+		return nil, nil
+	}
+	// DefaultStmtNoWarningContext use UTC timezone.
+	parsedTime, err := types.ParseTime(types.DefaultStmtNoWarningContext, *timeStr, mysql.TypeTimestamp, types.MaxFsp)
+	if err != nil {
+		return nil, err
+	}
+	return &parsedTime, nil
 }

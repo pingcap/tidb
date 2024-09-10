@@ -19,18 +19,20 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 )
 
 // ToString stringifies a Group Tree.
-func ToString(g *memo.Group) []string {
+func ToString(ctx expression.EvalContext, g *memo.Group) []string {
 	idMap := make(map[*memo.Group]int)
 	idMap[g] = 0
-	return toString(g, idMap, map[*memo.Group]struct{}{}, []string{})
+	return toString(ctx, g, idMap, map[*memo.Group]struct{}{}, []string{})
 }
 
 // toString recursively stringifies a Group Tree using a preorder traversal method.
-func toString(g *memo.Group, idMap map[*memo.Group]int, visited map[*memo.Group]struct{}, strs []string) []string {
+func toString(ctx expression.EvalContext, g *memo.Group, idMap map[*memo.Group]int, visited map[*memo.Group]struct{}, strs []string) []string {
 	if _, exists := visited[g]; exists {
 		return strs
 	}
@@ -45,12 +47,12 @@ func toString(g *memo.Group, idMap map[*memo.Group]int, visited map[*memo.Group]
 		}
 	}
 	// Visit self first.
-	strs = append(strs, groupToString(g, idMap)...)
+	strs = append(strs, groupToString(ctx, g, idMap)...)
 	// Visit children then.
 	for item := g.Equivalents.Front(); item != nil; item = item.Next() {
 		expr := item.Value.(*memo.GroupExpr)
 		for _, childGroup := range expr.Children {
-			strs = toString(childGroup, idMap, visited, strs)
+			strs = toString(ctx, childGroup, idMap, visited, strs)
 		}
 	}
 	return strs
@@ -62,11 +64,11 @@ func toString(g *memo.Group, idMap map[*memo.Group]int, visited map[*memo.Group]
 //
 //	Selection_4 input:[Group#2], eq(Column#13, Column#2), gt(Column#1, 10)
 //	Projection_15 input:Group#3 Column#1, Column#2
-func groupToString(g *memo.Group, idMap map[*memo.Group]int) []string {
+func groupToString(ctx expression.EvalContext, g *memo.Group, idMap map[*memo.Group]int) []string {
 	schema := g.Prop.Schema
 	colStrs := make([]string, 0, len(schema.Columns))
 	for _, col := range schema.Columns {
-		colStrs = append(colStrs, col.String())
+		colStrs = append(colStrs, col.StringWithCtx(ctx, errors.RedactLogDisable))
 	}
 
 	groupLine := bytes.NewBufferString("")
@@ -77,7 +79,7 @@ func groupToString(g *memo.Group, idMap map[*memo.Group]int) []string {
 		for _, key := range schema.Keys {
 			ukColStrs := make([]string, 0, len(key))
 			for _, col := range key {
-				ukColStrs = append(ukColStrs, col.String())
+				ukColStrs = append(ukColStrs, col.StringWithCtx(ctx, errors.RedactLogDisable))
 			}
 			ukStrs = append(ukStrs, strings.Join(ukColStrs, ","))
 		}

@@ -47,7 +47,7 @@ create table t1  (c_int int, c_str varchar(40), primary key (c_int) ) partition 
 create table t2  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue );
 insert into t1 values (1, 'Alice');
 insert into t2 values (1, 'Bob');
-analyze table t1, t2;
+analyze table t1, t2 all columns;
 select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
 explain format = 'brief' select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
 show warnings;
@@ -61,7 +61,7 @@ create table t1  (c_int int, c_str varchar(40), primary key (c_int) ) partition 
 create table t2  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue );
 insert into t1 values (1, 'Alice');
 insert into t2 values (1, 'Bob');
-analyze table t1, t2;
+analyze table t1, t2 all columns;
 select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
 explain format = 'brief' select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
 show warnings;

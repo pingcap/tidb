@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -84,7 +84,9 @@ func openParser(
 	tblInfo *model.TableInfo,
 ) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
+		ZStdDecodeConcurrency: 1,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -724,7 +726,7 @@ func (cr *chunkProcessor) deliverLoop(
 					rc.status.FinishedFileSize.Add(delta)
 				}
 			} else {
-				deliverLogger.Warn("offset go back", zap.Int64("curr", highOffset),
+				deliverLogger.Error("offset go back", zap.Int64("curr", highOffset),
 					zap.Int64("start", lowOffset))
 			}
 		}

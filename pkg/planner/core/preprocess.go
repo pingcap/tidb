@@ -26,15 +26,17 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -50,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -121,12 +124,15 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 
 // Preprocess resolves table names of the node, and checks some statements' validation.
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
-func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
+func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, preprocessOpt ...PreprocessOpt) error {
+	defer tracing.StartRegion(ctx, "planner.Preprocess").End()
 	v := preprocessor{
+		ctx:                ctx,
 		sctx:               sctx,
 		tableAliasInJoin:   make([]map[string]any, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
+		resolveCtx:         node.GetResolveContext(),
 	}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
@@ -135,7 +141,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, pre
 	if v.PreprocessorReturn == nil {
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
-	node.Accept(&v)
+	node.Node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
 	return errors.Trace(v.err)
@@ -148,7 +154,9 @@ const (
 	inPrepare preprocessorFlag = 1 << iota
 	// inTxnRetry is set when visiting in transaction retry.
 	inTxnRetry
-	// inCreateOrDropTable is set when visiting create/drop table statement.
+	// inCreateOrDropTable is set when visiting create/drop table/view/sequence,
+	// rename table, alter table add foreign key, and BR restore.
+	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
 	parentIsJoin
@@ -215,6 +223,7 @@ func (pw *preprocessWith) UpdateCTEConsumerCount(tableName string) {
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
+	ctx    context.Context
 	sctx   sessionctx.Context
 	flag   preprocessorFlag
 	stmtTp byte
@@ -230,6 +239,8 @@ type preprocessor struct {
 	// values that may be returned
 	*PreprocessorReturn
 	err error
+
+	resolveCtx *resolve.Context
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -243,6 +254,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
+		p.checkSelectNoopFuncs(node)
 	case *ast.SetOprStmt:
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
@@ -308,7 +320,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.CreateBindingStmt:
 		p.stmtTp = TypeCreate
 		if node.OriginNode != nil {
-			// if node.PlanDigest is not empty, this binding will be created from history, the node.OriginNode and node.HintedNode should be nil
+			// if node.PlanDigests is not empty, this binding will be created from history, the node.OriginNode and node.HintedNode should be nil
 			EraseLastSemicolon(node.OriginNode)
 			EraseLastSemicolon(node.HintedNode)
 			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
@@ -484,7 +496,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	if currentDB == "" {
 		return nil, errors.Trace(plannererrors.ErrNoDB)
 	}
-	sName := model.NewCIStr(currentDB)
+	sName := pmodel.NewCIStr(currentDB)
 	is := p.ensureInfoSchema()
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
@@ -492,7 +504,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
-	tbl, err := is.TableByName(sName, tn.Name)
+	tbl, err := is.TableByName(p.ctx, sName, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attachplannererrors.ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -534,7 +546,8 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	tblNames := ExtractTableList(originNode, false)
+	nodeW := resolve.NewNodeWWithCtx(originNode, p.resolveCtx)
+	tblNames := ExtractTableList(nodeW, false)
 	for _, tn := range tblNames {
 		tbl, err := p.tableByName(tn)
 		if err != nil {
@@ -552,8 +565,11 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 		}
 		tableInfo := tbl.Meta()
 		dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), tableInfo)
-		tn.TableInfo = tableInfo
-		tn.DBInfo = dbInfo
+		p.resolveCtx.AddTableName(&resolve.TableNameW{
+			TableName: tn,
+			DBInfo:    dbInfo,
+			TableInfo: tableInfo,
+		})
 	}
 
 	originSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()), false)
@@ -707,30 +723,6 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 	return hasAutoIncrement, nil
 }
 
-func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) bool {
-	for _, c := range constraints {
-		// ignore constraint check
-		if c.Tp == ast.ConstraintCheck {
-			continue
-		}
-		if c.Keys[0].Expr != nil {
-			continue
-		}
-		// If the constraint as follows: primary key(c1, c2)
-		// we only support c1 column can be auto_increment.
-		if colDef.Name.Name.L != c.Keys[0].Column.Name.L {
-			continue
-		}
-		switch c.Tp {
-		case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintIndex,
-			ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
-			return true
-		}
-	}
-
-	return false
-}
-
 func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	autoIncrementCols := make(map[*ast.ColumnDef]bool)
 
@@ -860,12 +852,12 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	if stmt.ReferTable != nil {
-		schema := model.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+		schema := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 		if stmt.ReferTable.Schema.String() != "" {
 			schema = stmt.ReferTable.Schema
 		}
 		// get the infoschema from the context.
-		tableInfo, err := p.ensureInfoSchema().TableByName(schema, stmt.ReferTable.Name)
+		tableInfo, err := p.ensureInfoSchema().TableByName(p.ctx, schema, stmt.ReferTable.Name)
 		if err != nil {
 			p.err = err
 			return
@@ -950,6 +942,8 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 	if stmt.Select != nil {
 		// FIXME: a temp error noticing 'not implemented' (issue 4754)
+		// Note: if we implement it later, please clear it's MDL related tables for
+		// it like what CREATE VIEW does.
 		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
 		return
 	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
@@ -1034,7 +1028,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 }
 
 func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
-	currentDB := model.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+	currentDB := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 	for _, t := range stmt.Tables {
 		if util.IsInCorrectIdentifierName(t.Name.String()) {
 			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
@@ -1046,7 +1040,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 			schema = currentDB
 		}
 
-		tbl, err := p.ensureInfoSchema().TableByName(schema, t.Name)
+		tbl, err := p.ensureInfoSchema().TableByName(p.ctx, schema, t.Name)
 		if infoschema.ErrTableNotExists.Equal(err) {
 			// Non-exist table will be checked in ddl executor
 			continue
@@ -1099,7 +1093,7 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]any) 
 		if tabName.L == "" {
 			if tableNode, ok := ts.Source.(*ast.TableName); ok {
 				if tableNode.Schema.L != "" {
-					tabName = model.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
+					tabName = pmodel.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
 				} else {
 					tabName = tableNode.Name
 				}
@@ -1149,6 +1143,45 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
+}
+
+func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
+	noopFuncsMode := p.sctx.GetSessionVars().NoopFuncsMode
+	if noopFuncsMode == variable.OnInt {
+		// Set `ForShareLockEnabledByNoop` properly before returning.
+		// When `tidb_enable_shared_lock_promotion` is enabled, the `for share` statements would be
+		// executed as `for update` statements despite setting of noop functions.
+		if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
+			stmt.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
+			!p.sctx.GetSessionVars().SharedLockPromotion {
+			p.sctx.GetSessionVars().StmtCtx.ForShareLockEnabledByNoop = true
+		}
+		return
+	}
+	if stmt.SelectStmtOpts != nil && stmt.SelectStmtOpts.CalcFoundRows {
+		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+		if noopFuncsMode == variable.OffInt {
+			p.err = err
+			return
+		}
+		// NoopFuncsMode is Warn, append an error
+		p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
+
+	// When `tidb_enable_shared_lock_promotion` is enabled, the `for share` statements would be
+	// executed as `for update` statements.
+	if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
+		stmt.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
+		!p.sctx.GetSessionVars().SharedLockPromotion {
+		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
+		if noopFuncsMode == variable.OffInt {
+			p.err = err
+			return
+		}
+		// NoopFuncsMode is Warn, append an error
+		p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		p.sctx.GetSessionVars().StmtCtx.ForShareLockEnabledByNoop = true
+	}
 }
 
 func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
@@ -1423,21 +1456,22 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			}
 		}
 	case mysql.TypeNewDecimal:
-		if tp.GetDecimal() > mysql.MaxDecimalScale {
-			return types.ErrTooBigScale.GenWithStackByArgs(tp.GetDecimal(), colDef.Name.Name.O, mysql.MaxDecimalScale)
+		tpFlen := tp.GetFlen()
+		tpDecimal := tp.GetDecimal()
+		if tpDecimal > mysql.MaxDecimalScale {
+			return types.ErrTooBigScale.GenWithStackByArgs(tpDecimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
 		}
-
-		if tp.GetFlen() > mysql.MaxDecimalWidth {
-			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.GetFlen(), colDef.Name.Name.O, mysql.MaxDecimalWidth)
+		if tpFlen > mysql.MaxDecimalWidth {
+			return types.ErrTooBigPrecision.GenWithStackByArgs(tpFlen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
-
-		if tp.GetFlen() < tp.GetDecimal() {
+		if tpFlen < tpDecimal {
 			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 		}
 		// If decimal and flen all equals 0, just set flen to default value.
-		if tp.GetDecimal() == 0 && tp.GetFlen() == 0 {
+		if tpFlen == 0 && (tpDecimal == 0 || tpDecimal == types.UnspecifiedLength) {
 			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNewDecimal)
 			tp.SetFlen(defaultFlen)
+			tp.SetDecimal(0)
 		}
 	case mysql.TypeBit:
 		if tp.GetFlen() <= 0 {
@@ -1445,6 +1479,12 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		}
 		if tp.GetFlen() > mysql.MaxBitDisplayWidth {
 			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxBitDisplayWidth)
+		}
+	case mysql.TypeTiDBVectorFloat32:
+		if tp.GetFlen() != types.UnspecifiedLength {
+			if err := types.CheckVectorDimValid(tp.GetFlen()); err != nil {
+				return err
+			}
 		}
 	default:
 		// TODO: Add more types.
@@ -1540,7 +1580,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 
-		tn.Schema = model.NewCIStr(currentDB)
+		tn.Schema = pmodel.NewCIStr(currentDB)
 	}
 
 	if p.flag&inCreateOrDropTable > 0 {
@@ -1578,7 +1618,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	if !p.skipLockMDL() {
-		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx.GetPlanCtx(), model.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), pmodel.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
 			return
@@ -1594,8 +1634,11 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 	}
-	tn.TableInfo = tableInfo
-	tn.DBInfo = dbInfo
+	p.resolveCtx.AddTableName(&resolve.TableNameW{
+		TableName: tn,
+		DBInfo:    dbInfo,
+		TableInfo: tableInfo,
+	})
 }
 
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
@@ -1636,7 +1679,7 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 			node.DBName = p.sctx.GetSessionVars().CurrentDB
 		}
 	} else if node.Table != nil && node.Table.Schema.L == "" {
-		node.Table.Schema = model.NewCIStr(node.DBName)
+		node.Table.Schema = pmodel.NewCIStr(node.DBName)
 	}
 	if node.User != nil && node.User.CurrentUser {
 		// Fill the Username and Hostname with the current user.
@@ -1681,7 +1724,7 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 		if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint.Refer != nil {
 			table := spec.Constraint.Refer.Table
 			if table.Schema.L == "" && node.Table.Schema.L != "" {
-				table.Schema = model.NewCIStr(node.Table.Schema.L)
+				table.Schema = pmodel.NewCIStr(node.Table.Schema.L)
 			}
 			if spec.Constraint.Tp == ast.ConstraintForeignKey {
 				// when foreign_key_checks is off, should ignore err when refer table is not exists.
@@ -1796,7 +1839,7 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
-func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
+func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName pmodel.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
 		return tbl, nil
 	}
@@ -1844,7 +1887,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CI
 		dom := domain.GetDomain(sctx)
 		domainSchema := dom.InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
-		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
+		tbl, err = domainSchema.TableByName(ctx, dbName, tableInfo.Name)
 		if err != nil {
 			if !skipLock {
 				sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
@@ -1855,20 +1898,20 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CI
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)
 		}
 		// Check the table change, if adding new public index or modify a column, we need to handle them.
-		if !sctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if tbl.Meta().Revision != tableInfo.Revision && !sctx.GetSessionVars().IsPessimisticReadConsistency() {
 			var copyTableInfo *model.TableInfo
+
+			infoIndices := make(map[string]int64, len(tableInfo.Indices))
+			for _, idx := range tableInfo.Indices {
+				infoIndices[idx.Name.L] = idx.ID
+			}
+
 			for i, idx := range tbl.Meta().Indices {
 				if idx.State != model.StatePublic {
 					continue
 				}
-				found := false
-				for _, idxx := range tableInfo.Indices {
-					if idx.Name.L == idxx.Name.L && idx.ID == idxx.ID {
-						found = true
-						break
-					}
-				}
-				if !found {
+				id, found := infoIndices[idx.Name.L]
+				if !found || id != idx.ID {
 					if copyTableInfo == nil {
 						copyTableInfo = tbl.Meta().Clone()
 					}
@@ -1882,19 +1925,19 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CI
 				}
 			}
 			// Check the column change.
+			infoColumns := make(map[string]int64, len(tableInfo.Columns))
+			for _, col := range tableInfo.Columns {
+				infoColumns[col.Name.L] = col.ID
+			}
 			for _, col := range tbl.Meta().Columns {
 				if col.State != model.StatePublic {
 					continue
 				}
-				found := false
-				for _, coll := range tableInfo.Columns {
-					if col.Name.L == coll.Name.L && col.ID != coll.ID {
-						logutil.BgLogger().Info("public column changed", zap.String("column", col.Name.L), zap.String("old_col", coll.Name.L), zap.Int64("new id", col.ID), zap.Int64("old id", coll.ID))
-						found = true
-						break
-					}
-				}
-				if found {
+				colid, found := infoColumns[col.Name.L]
+				if found && colid != col.ID {
+					logutil.BgLogger().Info("public column changed",
+						zap.String("column", col.Name.L), zap.String("old_col", col.Name.L),
+						zap.Int64("new id", col.ID), zap.Int64("old id", col.ID))
 					if !skipLock {
 						sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
 					}

@@ -76,9 +76,12 @@ func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 // GCStats will garbage collect the useless stats' info.
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
-func GCStats(sctx sessionctx.Context,
+func GCStats(
+	sctx sessionctx.Context,
 	statsHandle types.StatsHandle,
-	is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
+	is infoschema.InfoSchema,
+	ddlLease time.Duration,
+) (err error) {
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
 	lease := max(statsHandle.Lease(), ddlLease)
@@ -109,7 +112,7 @@ func GCStats(sctx sessionctx.Context,
 		if err := gcTableStats(sctx, statsHandle, is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
-		_, existed := is.TableByID(row.GetInt64(0))
+		_, existed := is.TableByID(context.Background(), row.GetInt64(0))
 		if !existed {
 			if err := gcHistoryStatsFromKV(sctx, row.GetInt64(0)); err != nil {
 				return errors.Trace(err)

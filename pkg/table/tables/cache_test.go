@@ -334,15 +334,16 @@ func TestRenewLease(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(t, store)
+
 	se := tk.Session()
 	tk.MustExec("create table cache_renew_t (id int)")
 	tk.MustExec("alter table cache_renew_t cache")
-	tbl, err := se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("cache_renew_t"))
+	tbl, err := se.GetInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("cache_renew_t"))
 	require.NoError(t, err)
 	var i int
 	tk.MustExec("select * from cache_renew_t")
 
-	tk1 := testkit.NewTestKit(t, store)
 	remote := tables.NewStateRemote(tk1.Session())
 	var leaseBefore uint64
 	for i = 0; i < 20; i++ {
@@ -520,16 +521,10 @@ func TestRenewLeaseABAFailPoint(t *testing.T) {
 	tk2.MustExec("use test")
 
 	// Load the cache data by this query.
-	var cacheUsed bool
-	for i := 0; i < 10; i++ {
+	require.Eventually(t, func() bool {
 		tk.MustQuery("select * from t_lease").Check(testkit.Rows("1 1"))
-		if lastReadFromCache(tk) {
-			cacheUsed = true
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	require.True(t, cacheUsed)
+		return lastReadFromCache(tk)
+	}, 3*time.Second, 100*time.Millisecond)
 
 	// Renew lease by this query, mock the operation is delayed.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/table/tables/mockRenewLeaseABA1", `return`))
@@ -541,7 +536,7 @@ func TestRenewLeaseABAFailPoint(t *testing.T) {
 
 	// Mock reading from another TiDB instance: write lock -> read lock
 	is := tk2.Session().GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_lease"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_lease"))
 	require.NoError(t, err)
 	lease := oracle.GoTimeToTS(time.Now().Add(20 * time.Second)) // A big enough future time
 	tk2.MustExec("update mysql.table_cache_meta set lock_type = 'READ', lease = ? where tid = ?", lease, tbl.Meta().ID)

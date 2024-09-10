@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -156,7 +157,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 	if !isView {
 		return false, nil
 	}
-	viewTbl, err := tne.is.TableByName(schema, table)
+	viewTbl, err := tne.is.TableByName(context.Background(), schema, table)
 	if err != nil {
 		return false, err
 	}
@@ -439,16 +440,17 @@ func dumpMeta(zw *zip.Writer) error {
 	return nil
 }
 
-func dumpTiFlashReplica(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
+func dumpTiFlashReplica(sctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
 	bf, err := zw.Create(PlanReplayerTiFlashReplicasFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
-	is := GetDomain(ctx).InfoSchema()
+	is := GetDomain(sctx).InfoSchema()
+	ctx := infoschema.WithRefillOption(context.Background(), false)
 	for pair := range pairs {
 		dbName := model.NewCIStr(pair.DBName)
 		tableName := model.NewCIStr(pair.TableName)
-		t, err := is.TableByName(dbName, tableName)
+		t, err := is.TableByName(ctx, dbName, tableName)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to find table info", zap.Error(err),
 				zap.String("dbName", dbName.L), zap.String("tableName", tableName.L))
@@ -495,11 +497,12 @@ func dumpSchemaMeta(zw *zip.Writer, tables map[tableNamePair]struct{}) error {
 func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain) error {
 	statsHandle := do.StatsHandle()
 	is := do.InfoSchema()
+	ctx := infoschema.WithRefillOption(context.Background(), false)
 	for pair := range pairs {
 		if pair.IsView {
 			continue
 		}
-		tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+		tbl, err := is.TableByName(ctx, model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 		if err != nil {
 			return err
 		}
@@ -512,13 +515,15 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 			return errors.AddStack(err)
 		}
 		fmt.Fprintf(statsMemFw, "[INDEX]\n")
-		for _, indice := range tblStats.Indices {
-			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", indice.Info.Name.String(), indice.StatusToString()))
-		}
+		tblStats.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", idx.Info.Name.String(), idx.StatusToString()))
+			return false
+		})
 		fmt.Fprintf(statsMemFw, "[COLUMN]\n")
-		for _, col := range tblStats.Columns {
-			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", col.Info.Name.String(), col.StatusToString()))
-		}
+		tblStats.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", c.Info.Name.String(), c.StatusToString()))
+			return false
+		})
 	}
 	return nil
 }
@@ -777,7 +782,7 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*util.JSONTable, []string, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
-	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 	if err != nil {
 		return nil, nil, err
 	}

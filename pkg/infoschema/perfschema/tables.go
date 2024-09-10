@@ -24,12 +24,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -129,7 +130,7 @@ func IsPredefinedTable(tableName string) bool {
 	return ok
 }
 
-func tableFromMeta(allocs autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
+func tableFromMeta(allocs autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
 	if f, ok := pluginTable[meta.Name.L]; ok {
 		ret, err := f(allocs, meta)
 		return ret, err

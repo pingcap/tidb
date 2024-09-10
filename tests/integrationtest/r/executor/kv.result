@@ -3,7 +3,7 @@ create table t (c1 varchar(20), c2 varchar(20));
 insert into t values("1","1"),("2","2"),("3","3"),("4","4");
 insert into t select * from t;
 insert into t select * from t;
-analyze table t with 2 topn;
+analyze table t all columns with 2 topn;
 set @a = (select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "executor__kv");
 select modify_count, count from mysql.stats_meta where table_id = @a;
 modify_count	count

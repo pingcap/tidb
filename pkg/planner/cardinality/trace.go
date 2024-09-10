@@ -19,10 +19,11 @@ import (
 	"encoding/json"
 	"errors"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -95,7 +96,7 @@ func exprToString(ctx expression.EvalContext, e expression.Expression) (string, 
 		buffer.WriteString(")")
 		return buffer.String(), nil
 	case *expression.Column:
-		return expr.String(), nil
+		return expr.StringWithCtx(ctx, perrors.RedactLogDisable), nil
 	case *expression.CorrelatedColumn:
 		return "", errors.New("tracing for correlated columns not supported now")
 	case *expression.Constant:

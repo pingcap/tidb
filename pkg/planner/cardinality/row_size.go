@@ -60,14 +60,14 @@ func GetTableAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols
 // GetAvgRowSize computes average row size for given columns.
 func GetAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols []*expression.Column, isEncodedKey bool, isForScan bool) (size float64) {
 	sessionVars := ctx.GetSessionVars()
-	if coll.Pseudo || len(coll.Columns) == 0 || coll.RealtimeCount == 0 {
+	if coll.Pseudo || coll.ColNum() == 0 || coll.RealtimeCount == 0 {
 		size = pseudoColSize * float64(len(cols))
 	} else {
 		for _, col := range cols {
-			colHist, ok := coll.Columns[col.UniqueID]
+			colHist := coll.GetCol(col.UniqueID)
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
-			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
+			if colHist == nil || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
 				size += pseudoColSize
 				continue
 			}
@@ -90,17 +90,17 @@ func GetAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols []*e
 
 // GetAvgRowSizeDataInDiskByRows computes average row size for given columns.
 func GetAvgRowSizeDataInDiskByRows(coll *statistics.HistColl, cols []*expression.Column) (size float64) {
-	if coll.Pseudo || len(coll.Columns) == 0 || coll.RealtimeCount == 0 {
+	if coll.Pseudo || coll.ColNum() == 0 || coll.RealtimeCount == 0 {
 		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(col.GetType()))
+			size += float64(chunk.EstimateTypeWidth(col.GetStaticType()))
 		}
 	} else {
 		for _, col := range cols {
-			colHist, ok := coll.Columns[col.UniqueID]
+			colHist := coll.GetCol(col.UniqueID)
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
-			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
-				size += float64(chunk.EstimateTypeWidth(col.GetType()))
+			if colHist == nil || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
+				size += float64(chunk.EstimateTypeWidth(col.GetStaticType()))
 				continue
 			}
 			size += AvgColSizeDataInDiskByRows(colHist, coll.RealtimeCount)

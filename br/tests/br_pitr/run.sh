@@ -44,11 +44,26 @@ run_br --pd $PD_ADDR log start --task-name integration_test -s "local://$TEST_DI
 echo "run snapshot backup"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full"
 
+# create incremental data
+run_sql "create database br_pitr";
+run_sql "create table br_pitr.t(id int)";
+run_sql "insert into br_pitr.t values(1)";
+
+# run incremental snapshot backup
+echo "run incremental backup"
+last_backup_ts=$(run_br validate decode --field="end-version" -s "local://$TEST_DIR/$PREFIX/full" | grep -oE "^[0-9]+")
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/inc" --lastbackupts $last_backup_ts
+
 # load the incremental data
 echo "load the incremental data"
 run_sql_file $CUR/incremental_data/delete_range.sql
 run_sql_file $CUR/incremental_data/ingest_repair.sql
 # ...
+
+# run incremental snapshot backup, but this incremental backup will fail to restore. due to limitation of ddl.
+echo "run incremental backup with special ddl jobs, modify column e.g."
+last_backup_ts=$(run_br validate decode --field="end-version" -s "local://$TEST_DIR/$PREFIX/inc" | grep -oE "^[0-9]+")
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/inc_fail" --lastbackupts $last_backup_ts
 
 # check something after load the incremental data
 incremental_delete_range_count=$(run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range;" | tail -n 1 | awk '{print $2}')
@@ -92,23 +107,62 @@ done
 # dump some info from upstream cluster
 # ...
 
+check_result() {
+    echo "check br log"
+    check_contains "restore log success summary"
+    ## check feature history ddl delete range
+    check_not_contains "rewrite delete range"
+    echo "" > $res_file
+    echo "check sql result"
+    run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
+    expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_count))
+    check_contains "DELETE_RANGE_CNT: $expect_delete_range"
+    ## check feature compatibility between PITR and accelerate indexing
+    bash $CUR/check/check_ingest_repair.sh
+}
+
 # start a new cluster
 echo "restart a services"
 restart_services
+
+# non-compliant operation
+echo "non compliant operation"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts || restore_fail=1
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success' 
+    exit 1
+fi
 
 # PITR restore
 echo "run pitr"
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1
 
-# check something in downstream cluster
-echo "check br log"
-check_contains "restore log success summary"
-## check feature history ddl delete range
-check_not_contains "rewrite delete range"
-echo "" > $res_file
-echo "check sql result"
-run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
-expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_count))
-check_contains "DELETE_RANGE_CNT: $expect_delete_range"
-## check feature compatibility between PITR and accelerate indexing
-bash $CUR/check/check_ingest_repair.sh
+check_result
+
+# start a new cluster for incremental + log
+echo "restart a services"
+restart_services
+
+echo "run snapshot restore#2"
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" 
+
+echo "run incremental restore + log restore"
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/inc" > $res_file 2>&1
+
+check_result
+
+# start a new cluster for incremental + log
+echo "restart a services"
+restart_services
+
+echo "run snapshot restore#3"
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" 
+
+echo "run incremental restore but failed"
+restore_fail=0
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/inc_fail" || restore_fail=1
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success' 
+    exit 1
+fi

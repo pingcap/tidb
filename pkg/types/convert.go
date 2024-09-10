@@ -36,8 +36,8 @@ func truncateStr(str string, flen int) string {
 	return str
 }
 
-// IntergerUnsignedUpperBound indicates the max uint64 values of different mysql types.
-func IntergerUnsignedUpperBound(intType byte) uint64 {
+// IntegerUnsignedUpperBound indicates the max uint64 values of different mysql types.
+func IntegerUnsignedUpperBound(intType byte) uint64 {
 	switch intType {
 	case mysql.TypeTiny:
 		return math.MaxUint8
@@ -62,8 +62,8 @@ func IntergerUnsignedUpperBound(intType byte) uint64 {
 	}
 }
 
-// IntergerSignedUpperBound indicates the max int64 values of different mysql types.
-func IntergerSignedUpperBound(intType byte) int64 {
+// IntegerSignedUpperBound indicates the max int64 values of different mysql types.
+func IntegerSignedUpperBound(intType byte) int64 {
 	switch intType {
 	case mysql.TypeTiny:
 		return math.MaxInt8
@@ -84,8 +84,8 @@ func IntergerSignedUpperBound(intType byte) int64 {
 	}
 }
 
-// IntergerSignedLowerBound indicates the min int64 values of different mysql types.
-func IntergerSignedLowerBound(intType byte) int64 {
+// IntegerSignedLowerBound indicates the min int64 values of different mysql types.
+func IntegerSignedLowerBound(intType byte) int64 {
 	switch intType {
 	case mysql.TypeTiny:
 		return math.MinInt8
@@ -595,33 +595,33 @@ func ConvertJSONToInt(ctx Context, j BinaryJSON, unsigned bool, tp byte) (int64,
 	case JSONTypeCodeInt64:
 		i := j.GetInt64()
 		if unsigned {
-			uBound := IntergerUnsignedUpperBound(tp)
+			uBound := IntegerUnsignedUpperBound(tp)
 			u, err := ConvertIntToUint(ctx.Flags(), i, uBound, tp)
 			return int64(u), err
 		}
 
-		lBound := IntergerSignedLowerBound(tp)
-		uBound := IntergerSignedUpperBound(tp)
+		lBound := IntegerSignedLowerBound(tp)
+		uBound := IntegerSignedUpperBound(tp)
 		return ConvertIntToInt(i, lBound, uBound, tp)
 	case JSONTypeCodeUint64:
 		u := j.GetUint64()
 		if unsigned {
-			uBound := IntergerUnsignedUpperBound(tp)
+			uBound := IntegerUnsignedUpperBound(tp)
 			u, err := ConvertUintToUint(u, uBound, tp)
 			return int64(u), err
 		}
 
-		uBound := IntergerSignedUpperBound(tp)
+		uBound := IntegerSignedUpperBound(tp)
 		return ConvertUintToInt(u, uBound, tp)
 	case JSONTypeCodeFloat64:
 		f := j.GetFloat64()
 		if !unsigned {
-			lBound := IntergerSignedLowerBound(tp)
-			uBound := IntergerSignedUpperBound(tp)
+			lBound := IntegerSignedLowerBound(tp)
+			uBound := IntegerSignedUpperBound(tp)
 			u, e := ConvertFloatToInt(f, lBound, uBound, tp)
 			return u, e
 		}
-		bound := IntergerUnsignedUpperBound(tp)
+		bound := IntegerUnsignedUpperBound(tp)
 		u, err := ConvertFloatToUint(ctx.Flags(), f, bound, tp)
 		return int64(u), err
 	case JSONTypeCodeString:

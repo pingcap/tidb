@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
 )
@@ -39,11 +40,10 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	// sometimes we have pooled the connections.
 	// sending heartbeats in idle times is useful.
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
-	client.SetConcurrency(uint(cfg.Concurrency))
-	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
+	client.SetConcurrencyPerStore(uint(cfg.Concurrency))
 	err = client.Init(g, mgr.GetStorage())
 	defer client.Close()
 	if err != nil {
@@ -88,16 +88,17 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 		!cfg.LogProgress)
 
 	// RawKV restore does not need to rewrite keys.
-	err = restore.SplitRanges(ctx, client, ranges, updateCh, false)
+	err = client.SplitPoints(ctx, getEndKeys(ranges), updateCh, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	restoreSchedulers, _, err := restorePreWork(ctx, client, mgr, true)
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.SwitchModeInterval, mgr.GetTLSConfig())
+	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, false, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer restorePostWork(ctx, client, restoreSchedulers)
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, false)
 
 	err = client.WaitForFilesRestored(ctx, files, updateCh)
 	if err != nil {

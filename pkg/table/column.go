@@ -28,10 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -732,6 +732,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetMysqlEnum(types.Enum{}, col.GetCollate())
 	case mysql.TypeJSON:
 		d.SetMysqlJSON(types.CreateBinaryJSON(nil))
+	case mysql.TypeTiDBVectorFloat32:
+		d.SetVectorFloat32(types.ZeroVectorFloat32)
 	}
 	return d
 }

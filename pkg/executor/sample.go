@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -169,7 +169,7 @@ func (s *tableRegionSampler) writeChunkFromRanges(ranges []kv.KeyRange, req *chu
 	}
 	rowDecoder := decoder.NewRowDecoder(s.table, cols, decColMap)
 	err = s.scanFirstKVForEachRange(ranges, func(handle kv.Handle, value []byte) error {
-		_, err := rowDecoder.DecodeAndEvalRowWithMap(s.ctx, handle, value, decLoc, s.rowMap)
+		_, err := rowDecoder.DecodeAndEvalRowWithMap(s.ctx.GetExprCtx(), handle, value, decLoc, s.rowMap)
 		if err != nil {
 			return err
 		}

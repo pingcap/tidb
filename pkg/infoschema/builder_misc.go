@@ -18,9 +18,8 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 func applyCreatePolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
@@ -102,46 +101,6 @@ func (b *Builder) addTemporaryTable(tblID int64) {
 	b.infoSchema.temporaryTableIDs[tblID] = struct{}{}
 }
 
-func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
-	b.infoSchema.ruleBundleMap = make(map[int64]*placement.Bundle)
-	for id, v := range oldIS.ruleBundleMap {
-		b.infoSchema.ruleBundleMap[id] = v
-	}
-}
-
-func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
-	is := b.infoSchema
-	for _, v := range oldIS.AllPlacementPolicies() {
-		is.policyMap[v.Name.L] = v
-	}
-}
-
-func (b *Builder) copyResourceGroupMap(oldIS *infoSchema) {
-	is := b.infoSchema
-	for _, v := range oldIS.AllResourceGroups() {
-		is.resourceGroupMap[v.Name.L] = v
-	}
-}
-
-func (b *Builder) copyTemporaryTableIDsMap(oldIS *infoSchema) {
-	is := b.infoSchema
-	if len(oldIS.temporaryTableIDs) == 0 {
-		is.temporaryTableIDs = nil
-		return
-	}
-
-	is.temporaryTableIDs = make(map[int64]struct{})
-	for tblID := range oldIS.temporaryTableIDs {
-		is.temporaryTableIDs[tblID] = struct{}{}
-	}
-}
-
-func (b *Builder) copyReferredForeignKeyMap(oldIS *infoSchema) {
-	for k, v := range oldIS.referredForeignKeyMap {
-		b.infoSchema.referredForeignKeyMap[k] = v
-	}
-}
-
 func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo) {
 	info := b.infoSchema
 	// build the policies.
@@ -155,8 +114,17 @@ func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo
 	}
 
 	// Maintain foreign key reference information.
+	if b.enableV2 {
+		rs := b.ListTablesWithSpecialAttribute(ForeignKeysAttribute)
+		for _, db := range rs {
+			for _, tbl := range db.TableInfos {
+				info.addReferredForeignKeys(db.DBName, tbl)
+			}
+		}
+		return
+	}
 	for _, di := range dbInfos {
-		for _, t := range di.Tables {
+		for _, t := range di.Deprecated.Tables {
 			b.infoSchema.addReferredForeignKeys(di.Name, t)
 		}
 	}

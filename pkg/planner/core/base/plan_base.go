@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -35,6 +36,9 @@ type PlanContext = context.PlanContext
 
 // BuildPBContext is the context for building `*tipb.Executor`.
 type BuildPBContext = context.BuildPBContext
+
+// Note: appending the new adding method to the last, for the convenience of easy
+// locating in other implementor from other package.
 
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
@@ -76,6 +80,11 @@ type Plan interface {
 	QueryBlockOffset() int
 
 	BuildPlanTrace() *tracing.PlanTrace
+
+	// CloneForPlanCache clones this Plan for Plan Cache.
+	// Compared with Clone, CloneForPlanCache doesn't deep clone every fields, fields with tag
+	// `plan-cache-shallow-clone:"true"` are allowed to be shallow cloned.
+	CloneForPlanCache(newCtx PlanContext) (cloned Plan, ok bool)
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -126,7 +135,7 @@ type PhysicalPlan interface {
 	ExplainNormalizedInfo() string
 
 	// Clone clones this physical plan.
-	Clone() (PhysicalPlan, error)
+	Clone(newCtx PlanContext) (PhysicalPlan, error)
 
 	// AppendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
 	// be tracked during findBestTask or enumeratePhysicalPlans4Task
@@ -184,6 +193,7 @@ func (c *PlanCounterTp) IsForce() bool {
 // We can do a lot of logical optimizations to it, like predicate push-down and column pruning.
 type LogicalPlan interface {
 	Plan
+	base.HashEquals
 
 	// HashCode encodes a LogicalPlan to fast compare whether a LogicalPlan equals to another.
 	// We use a strict encode method here which ensures there is no conflict.
@@ -260,7 +270,7 @@ type LogicalPlan interface {
 	// MaxOneRow means whether this operator only returns max one row.
 	MaxOneRow() bool
 
-	// Get all the children.
+	// Children Get all the children.
 	Children() []LogicalPlan
 
 	// SetChildren sets the children for the plan.
@@ -277,4 +287,10 @@ type LogicalPlan interface {
 
 	// ExtractFD derive the FDSet from the tree bottom up.
 	ExtractFD() *fd.FDSet
+
+	// GetBaseLogicalPlan return the baseLogicalPlan inside each logical plan.
+	GetBaseLogicalPlan() LogicalPlan
+
+	// ConvertOuterToInnerJoin converts outer joins if the matching rows are filtered.
+	ConvertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
 }

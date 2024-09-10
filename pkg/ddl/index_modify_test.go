@@ -30,7 +30,7 @@ import (
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -689,7 +689,7 @@ func TestAddGlobalIndex(t *testing.T) {
 		" (partition p0 values less than (10), " +
 		"  partition p1 values less than (maxvalue));")
 	tk.MustExec("insert test_t1 values (1, 1)")
-	tk.MustExec("alter table test_t1 add unique index p_a (a);")
+	tk.MustExec("alter table test_t1 add unique index p_a (a) global")
 	tk.MustExec("insert test_t1 values (2, 11)")
 	tbl := external.GetTableByName(t, tk, "test", "test_t1")
 	tblInfo := tbl.Meta()
@@ -719,7 +719,7 @@ func TestAddGlobalIndex(t *testing.T) {
 		" (partition p0 values less than (10), " +
 		"  partition p1 values less than (maxvalue));")
 	tk.MustExec("insert test_t2 values (1, 1)")
-	tk.MustExec("alter table test_t2 add primary key (a) nonclustered;")
+	tk.MustExec("alter table test_t2 add primary key (a) nonclustered global")
 	tk.MustExec("insert test_t2 values (2, 11)")
 	tbl = external.GetTableByName(t, tk, "test", "test_t2")
 	tblInfo = tbl.Meta()
@@ -744,6 +744,24 @@ func TestAddGlobalIndex(t *testing.T) {
 	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
 
 	require.NoError(t, txn.Commit(context.Background()))
+
+	// `sanity_check.go` will check the del_range numbers are correct or not.
+	// normal index
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
+	tk.MustExec("alter table t add unique index idx(a) global")
+
+	// meets duplicate
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
+	tk.MustExec("insert into t values (1, 2), (1, 3)")
+	// Duplicate
+	tk.MustContainErrMsg("alter table t add unique index idx(a) global", "[kv:1062]Duplicate entry '1' for key 't.idx'")
+
+	// with multi schema change
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int) partition by hash(b) partitions 64")
+	tk.MustExec("alter table t add unique index idx(a) global, add index idx1(b)")
 }
 
 // checkGlobalIndexRow reads one record from global index and check. Only support int handle.
@@ -1029,7 +1047,7 @@ func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
 	tk.MustExec("create table t (a bigint primary key clustered, b int);")
 	// The subtask execution order is not guaranteed in distributed reorg. We need to disable it first.
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
 	for i := 1; i <= 12; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}

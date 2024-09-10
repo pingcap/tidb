@@ -87,9 +87,14 @@ const EmptyHistogramSize = int64(unsafe.Sizeof(Histogram{}))
 
 // Bucket store the bucket count and repeat.
 type Bucket struct {
-	Count  int64
+	// Count is the number of items till this bucket.
+	Count int64
+	// Repeat is the number of times the upper-bound value of the bucket appears in the data.
+	// For example, in the range [x, y], Repeat indicates how many times y appears.
+	// It is used to estimate the row count of values equal to the upper bound of the bucket, similar to TopN.
 	Repeat int64
-	NDV    int64
+	// NDV is the number of distinct values in the bucket.
+	NDV int64
 }
 
 // EmptyBucketSize is the size of empty bucket, 3*8=24 now.
@@ -417,37 +422,6 @@ func (hg *Histogram) StandardizeForV2AnalyzeIndex() {
 	hg.Bounds = c
 }
 
-// AddIdxVals adds the given values to the histogram.
-func (hg *Histogram) AddIdxVals(idxValCntPairs []TopNMeta) {
-	totalAddCnt := int64(0)
-	slices.SortFunc(idxValCntPairs, func(i, j TopNMeta) int {
-		return bytes.Compare(i.Encoded, j.Encoded)
-	})
-	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
-		for pairIdx < len(idxValCntPairs) {
-			// If the current val smaller than current bucket's lower bound, skip it.
-			cmpResult := bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2), idxValCntPairs[pairIdx].Encoded)
-			if cmpResult > 0 {
-				continue
-			}
-			// If the current val bigger than current bucket's upper bound, break.
-			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2+1), idxValCntPairs[pairIdx].Encoded)
-			if cmpResult < 0 {
-				break
-			}
-			totalAddCnt += int64(idxValCntPairs[pairIdx].Count)
-			hg.Buckets[bktIdx].NDV++
-			if cmpResult == 0 {
-				hg.Buckets[bktIdx].Repeat = int64(idxValCntPairs[pairIdx].Count)
-				pairIdx++
-				break
-			}
-			pairIdx++
-		}
-		hg.Buckets[bktIdx].Count += totalAddCnt
-	}
-}
-
 // ToString gets the string representation for the histogram.
 func (hg *Histogram) ToString(idxCols int) string {
 	strs := make([]string, 0, hg.Len()+1)
@@ -593,14 +567,17 @@ func (hg *Histogram) LessRowCount(sctx context.PlanContext, value types.Datum) f
 func (hg *Histogram) BetweenRowCount(sctx context.PlanContext, a, b types.Datum) float64 {
 	lessCountA := hg.LessRowCount(sctx, a)
 	lessCountB := hg.LessRowCount(sctx, b)
-	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
-	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than
-	// lessCountB or notNullCount-lessCountA.
-	if lessCountA >= lessCountB && hg.NDV > 0 {
+	rangeEst := lessCountB - lessCountA
+	lowEqual, _ := hg.EqualRowCount(sctx, a, false)
+	ndvAvg := hg.NotNullCount() / float64(hg.NDV)
+	// If values fall in the same bucket, we may underestimate the fractional result. So estimate the low value (a) as an equals, and
+	// estimate the high value as the default (because the input high value may be "larger" than the true high value). The range should
+	// not be less than both the low+high - or the lesser of the estimate for the individual range of a or b is used as a bound.
+	if rangeEst < math.Max(lowEqual, ndvAvg) && hg.NDV > 0 {
 		result := math.Min(lessCountB, hg.NotNullCount()-lessCountA)
-		return math.Min(result, hg.NotNullCount()/float64(hg.NDV))
+		return math.Min(result, lowEqual+ndvAvg)
 	}
-	return lessCountB - lessCountA
+	return rangeEst
 }
 
 // TotalRowCount returns the total count of this histogram.

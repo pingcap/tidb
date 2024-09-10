@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -94,7 +94,7 @@ func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.
 		Logger:         log.L(),
 	})
 	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
@@ -114,12 +114,11 @@ func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.
 		types.NewStringDatum("3.csv"),
 		types.NewIntDatum(103),
 	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
+	_, err = encoder.AddRecord(data1)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data2)
+	_, err = encoder.AddRecord(data2)
 	require.NoError(t, err)
-	_, err = encoder.Table.AddRecord(tctx, data3)
+	_, err = encoder.AddRecord(data3)
 	require.NoError(t, err)
 	return tbl, encoder.SessionCtx.TakeKvPairs()
 }

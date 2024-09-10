@@ -17,7 +17,7 @@ package cardinality
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -34,7 +34,7 @@ func TestPseudoTable(t *testing.T) {
 	}
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := statistics.PseudoTable(ti, false, false)
-	require.Len(t, tbl.Columns, 0)
+	require.Equal(t, tbl.ColNum(), 0)
 	require.Greater(t, tbl.RealtimeCount, int64(0))
 	sctx := mock.NewContext()
 	count := columnLessRowCount(sctx, tbl, types.NewIntDatum(100), colInfo.ID)
@@ -52,5 +52,5 @@ func TestPseudoTable(t *testing.T) {
 	})
 	tbl = statistics.PseudoTable(ti, false, false)
 	// We added a hidden column. The pseudo table still only have zero column.
-	require.Equal(t, len(tbl.Columns), 0)
+	require.Equal(t, tbl.ColNum(), 0)
 }

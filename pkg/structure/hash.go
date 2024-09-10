@@ -143,7 +143,7 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 // HKeys gets all the fields in a hash.
 func (t *TxStructure) HKeys(key []byte) ([][]byte, error) {
 	var keys [][]byte
-	err := t.iterateHash(key, func(field []byte, _ []byte) error {
+	err := t.IterateHash(key, func(field []byte, _ []byte) error {
 		keys = append(keys, append([]byte{}, field...))
 		return nil
 	})
@@ -154,7 +154,7 @@ func (t *TxStructure) HKeys(key []byte) ([][]byte, error) {
 // HGetAll gets all the fields and values in a hash.
 func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 	var res []HashPair
-	err := t.iterateHash(key, func(field []byte, value []byte) error {
+	err := t.IterateHash(key, func(field []byte, value []byte) error {
 		pair := HashPair{
 			Field: append([]byte{}, field...),
 			Value: append([]byte{}, value...),
@@ -168,7 +168,7 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 
 // HGetIter iterates all the fields and values in hash.
 func (t *TxStructure) HGetIter(key []byte, fn func(pair HashPair) error) error {
-	return t.iterateHash(key, func(field []byte, value []byte) error {
+	return t.IterateHash(key, func(field []byte, value []byte) error {
 		pair := HashPair{
 			Field: append([]byte{}, field...),
 			Value: append([]byte{}, value...),
@@ -181,7 +181,7 @@ func (t *TxStructure) HGetIter(key []byte, fn func(pair HashPair) error) error {
 // HGetLen gets the length of hash.
 func (t *TxStructure) HGetLen(key []byte) (uint64, error) {
 	hashLen := 0
-	err := t.iterateHash(key, func(_ []byte, _ []byte) error {
+	err := t.IterateHash(key, func(_ []byte, _ []byte) error {
 		hashLen++
 		return nil
 	})
@@ -208,7 +208,7 @@ func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 
 // HClear removes the hash value of the key.
 func (t *TxStructure) HClear(key []byte) error {
-	err := t.iterateHash(key, func(field []byte, _ []byte) error {
+	err := t.IterateHash(key, func(field []byte, _ []byte) error {
 		k := t.encodeHashDataKey(key, field)
 		return errors.Trace(t.readWriter.Delete(k))
 	})
@@ -220,7 +220,8 @@ func (t *TxStructure) HClear(key []byte) error {
 	return nil
 }
 
-func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) error {
+// IterateHash iterates all the fields and values in hash.
+func (t *TxStructure) IterateHash(key []byte, fn func(k []byte, v []byte) error) error {
 	dataPrefix := t.hashDataKeyPrefix(key)
 	it, err := t.reader.Iter(dataPrefix, dataPrefix.PrefixNext())
 	if err != nil {

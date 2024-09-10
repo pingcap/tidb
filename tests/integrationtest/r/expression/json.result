@@ -180,19 +180,19 @@ select json_valid('"2019-8-19"');
 json_valid('"2019-8-19"')
 1
 select json_merge(1, 2);
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_merge; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_merge; a JSON string or JSON type is required.
 select json_merge_preserve(1, 2);
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_merge_preserve; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_merge_preserve; a JSON string or JSON type is required.
 select json_merge_patch(1, 2);
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_merge_patch; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_merge_patch; a JSON string or JSON type is required.
 select JSON_CONTAINS_PATH(1, 'one', '$.a');
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_contains_path; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_contains_path; a JSON string or JSON type is required.
 select json_search(1, 'one', '$.a');
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_search; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_search; a JSON string or JSON type is required.
 select json_keys(1, '$.a');
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_keys; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_keys; a JSON string or JSON type is required.
 select JSON_extract(1, '$.a');
-Error 3146 (HY000): Invalid data type for JSON data in argument 0 to function json_extract; a JSON string or JSON type is required.
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_extract; a JSON string or JSON type is required.
 DROP TABLE IF EXISTS table_json;
 CREATE TABLE table_json(a json, b VARCHAR(255));
 INSERT INTO table_json values('{"\\"hello\\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}', '{"\\"hello\\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}');
@@ -385,7 +385,7 @@ select json_contains('{"a": 1}', '1', "$.c"), json_contains('{"a": [1, 2]}', '1'
 json_contains('{"a": 1}', '1', "$.c")	json_contains('{"a": [1, 2]}', '1', "$.a[2]")	json_contains('{"a": [1, {"a": 1}]}', '1', "$.a[1].b")
 NULL	NULL	NULL
 select json_contains('1','1','$.*');
-Error 3149 (42000): In this situation, path expressions may not contain the * and ** tokens or range selection.
+Error 3149 (42000): In this situation, path expressions may not contain the * and ** tokens or an array range.
 select
 json_contains_path(NULL, 'one', "$.c"),
 json_contains_path(NULL, 'all', "$.c"),
@@ -557,7 +557,7 @@ select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
 from c1
 where c < 101)
 select a from c1 where c > 100;
-Error 3157 (HY000): The JSON document exceeds the maximum depth.
+Error 3157 (22032): The JSON document exceeds the maximum depth.
 insert into t with recursive c1 as (select cast(1 as signed) c, json_array(1) as a
 union
 select c + 1, json_array_insert(a, concat('$', repeat('[0]', c)), json_array(1))
@@ -565,13 +565,13 @@ from c1
 where c < 100)
 select a from c1 where c > 99;
 select json_array(a, 1) from t;
-Error 3157 (HY000): The JSON document exceeds the maximum depth.
+Error 3157 (22032): The JSON document exceeds the maximum depth.
 select json_object(1, a) from t;
-Error 3157 (HY000): The JSON document exceeds the maximum depth.
+Error 3157 (22032): The JSON document exceeds the maximum depth.
 select json_set(a, concat('$', repeat('[0]', 100)), json_array(json_array(3))) from t;
-Error 3157 (HY000): The JSON document exceeds the maximum depth.
+Error 3157 (22032): The JSON document exceeds the maximum depth.
 select json_array_append(a, concat('$', repeat('[0]', 100)), 1) from t;
-Error 3157 (HY000): The JSON document exceeds the maximum depth.
+Error 3157 (22032): The JSON document exceeds the maximum depth.
 select json_storage_free(NULL);
 json_storage_free(NULL)
 NULL
@@ -649,3 +649,119 @@ select 1 from t where cast(BINARY vc as json) = '1';
 1
 select 1 from t where cast(BINARY c as json) = '1';
 1
+drop table if exists t;
+create table t (j json);
+insert into t values (cast(cast("2024-10-24 11:11:11.12346" as datetime(6)) as json));
+select cast(j as datetime(6)) from t;
+cast(j as datetime(6))
+2024-10-24 11:11:11.123460
+select cast(j as datetime(3)) from t;
+cast(j as datetime(3))
+2024-10-24 11:11:11.123
+select cast(j as datetime) from t;
+cast(j as datetime)
+2024-10-24 11:11:11
+SELECT JSON_SCHEMA_VALID(NULL, NULL);
+JSON_SCHEMA_VALID(NULL, NULL)
+NULL
+SELECT JSON_SCHEMA_VALID('{}', NULL);
+JSON_SCHEMA_VALID('{}', NULL)
+NULL
+SELECT JSON_SCHEMA_VALID(NULL, '{}');
+JSON_SCHEMA_VALID(NULL, '{}')
+NULL
+SELECT JSON_SCHEMA_VALID(NULL, '');
+JSON_SCHEMA_VALID(NULL, '')
+NULL
+SELECT JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"b": 6}');
+JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"b": 6}')
+1
+SELECT JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"c": 6}');
+JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"c": 6}')
+0
+SELECT JSON_SCHEMA_VALID('{"type": "object"}', '{}');
+JSON_SCHEMA_VALID('{"type": "object"}', '{}')
+1
+SELECT JSON_SCHEMA_VALID('{"type": "object"}', '"foo"');
+JSON_SCHEMA_VALID('{"type": "object"}', '"foo"')
+0
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{}');
+JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{}')
+1
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": "foo"}');
+JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": "foo"}')
+0
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": 5}');
+JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": 5}')
+1
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 5}');
+JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 5}')
+1
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 6}');
+JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 6}')
+1
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "abc"}');
+JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "abc"}')
+1
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "cba"}');
+JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "cba"}')
+0
+SELECT JSON_QUOTE("<html>");
+JSON_QUOTE("<html>")
+"<html>"
+SELECT JSON_QUOTE("&");
+JSON_QUOTE("&")
+"&"
+SELECT JSON_QUOTE(CONVERT(0x10 USING utf8mb4));
+JSON_QUOTE(CONVERT(0x10 USING utf8mb4))
+"\u0010"
+SELECT JSON_QUOTE("O'Neil");
+JSON_QUOTE("O'Neil")
+"O'Neil"
+SELECT JSON_CONTAINS(123, '');
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_contains; a JSON string or JSON type is required.
+SELECT JSON_CONTAINS('{}', 123);
+Error 3146 (22032): Invalid data type for JSON data in argument 2 to function json_contains; a JSON string or JSON type is required.
+SELECT JSON_OVERLAPS(123, '');
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_overlaps; a JSON string or JSON type is required.
+SELECT JSON_OVERLAPS('{}', 123);
+Error 3146 (22032): Invalid data type for JSON data in argument 2 to function json_overlaps; a JSON string or JSON type is required.
+SELECT 'abc' MEMBER OF(123);
+Error 3146 (22032): Invalid data type for JSON data in argument 2 to function member of; a JSON string or JSON type is required.
+SELECT JSON_SEARCH('{}',3,4);
+Error 3154 (42000): The oneOrAll argument to json_search may take these values: 'one' or 'all'.
+SELECT JSON_ARRAY_APPEND('[]','abc','def');
+Error 3143 (42000): Invalid JSON path expression. The error is around character position 1.
+SELECT JSON_ARRAY_INSERT('{}','abc','def');
+Error 3143 (42000): Invalid JSON path expression. The error is around character position 1.
+SELECT JSON_REMOVE('{}','$');
+Error 3153 (42000): The path expression '$' is not allowed in this context.
+SELECT JSON_REMOVE('{}','$.*');
+Error 3149 (42000): In this situation, path expressions may not contain the * and ** tokens or an array range.
+SELECT JSON_SET('{}','$.*','');
+Error 3149 (42000): In this situation, path expressions may not contain the * and ** tokens or an array range.
+SELECT JSON_CONTAINS_PATH('{}', 'on', '$.a');
+Error 3154 (42000): The oneOrAll argument to json_contains_path may take these values: 'one' or 'all'.
+SELECT JSON_SEARCH('{}', 'on', '$.a');
+Error 3154 (42000): The oneOrAll argument to json_search may take these values: 'one' or 'all'.
+SELECT JSON_OBJECT(NULL,'abc');
+Error 3158 (22032): JSON documents may not contain NULL member names.
+SELECT JSON_SCHEMA_VALID(1, '{}');
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_schema_valid; a JSON string or JSON type is required.
+SELECT JSON_SCHEMA_VALID('{}', 1);
+Error 3146 (22032): Invalid data type for JSON data in argument 2 to function json_schema_valid; a JSON string or JSON type is required.
+SELECT JSON_SCHEMA_VALID('','{}');
+Error 3141 (22032): Invalid JSON text in argument 1 to function json_schema_valid: "The document is empty." at position 0.
+SELECT JSON_SCHEMA_VALID('{}','');
+Error 3141 (22032): Invalid JSON text in argument 2 to function json_schema_valid: "The document is empty." at position 0.
+SELECT JSON_SCHEMA_VALID('', NULL);
+Error 3141 (22032): Invalid JSON text in argument 1 to function json_schema_valid: "The document is empty." at position 0.
+SELECT JSON_SCHEMA_VALID('1','{}');
+Error 3853 (22032): Invalid JSON type in argument 1 to function json_schema_valid; an object is required.
+SELECT JSON_SCHEMA_VALID(CONCAT('{"foo": ',repeat('[', 1000),repeat(']', 1000),'}'), json_object());
+Error 3157 (22032): The JSON document exceeds the maximum depth.
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"exclusiveMinimum": true}}}', '{}');
+Error 3853 (22032): Invalid JSON type in argument 1 to function json_schema_valid; an error unmarshaling properties from json: error unmarshaling exclusiveMinimum from json: json: cannot unmarshal bool into Go value of type jsonschema.ExclusiveMinimum is required.
+select json_type(cast(cast('2024' as year) as json));
+json_type(cast(cast('2024' as year) as json))
+UNSIGNED INTEGER

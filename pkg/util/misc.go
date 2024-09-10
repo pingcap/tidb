@@ -40,9 +40,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -179,11 +180,11 @@ func SyntaxWarn(err error) error {
 
 var (
 	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = model.NewCIStr("INFORMATION_SCHEMA")
+	InformationSchemaName = pmodel.NewCIStr("INFORMATION_SCHEMA")
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
+	PerformanceSchemaName = pmodel.NewCIStr("PERFORMANCE_SCHEMA")
 	// MetricSchemaName is the `METRICS_SCHEMA` database name.
-	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
+	MetricSchemaName = pmodel.NewCIStr("METRICS_SCHEMA")
 	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
 	ClusterTableInstanceColumnName = "INSTANCE"
 )
@@ -394,10 +395,10 @@ func TLSCipher2String(n uint16) string {
 }
 
 // ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
-func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool) []*tipb.ColumnInfo {
+func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool, isTiFlashStore bool) []*tipb.ColumnInfo {
 	cols := make([]*tipb.ColumnInfo, 0, len(columns))
 	for _, c := range columns {
-		col := ColumnToProto(c, forIndex)
+		col := ColumnToProto(c, forIndex, isTiFlashStore)
 		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
 		// is abandoned.
 		if (pkIsHandle && mysql.HasPriKeyFlag(c.GetFlag())) || c.ID == model.ExtraHandleID {
@@ -411,7 +412,7 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool)
 }
 
 // ColumnToProto converts model.ColumnInfo to tipb.ColumnInfo.
-func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
+func ColumnToProto(c *model.ColumnInfo, forIndex bool, isTiFlashStore bool) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
 		ColumnId:  c.ID,
 		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.GetCollate()])),
@@ -419,6 +420,9 @@ func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
 		Decimal:   int32(c.GetDecimal()),
 		Flag:      int32(c.GetFlag()),
 		Elems:     c.GetElems(),
+	}
+	if isTiFlashStore && c.IsVirtualGenerated() {
+		pc.Flag |= int32(mysql.GeneratedColumnFlag)
 	}
 	if forIndex {
 		// Use array type for read the multi-valued index.
@@ -445,7 +449,7 @@ func init() {
 }
 
 // GetSequenceByName could be used in expression package without import cycle problem.
-var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence model.CIStr) (SequenceTable, error)
+var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence pmodel.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.

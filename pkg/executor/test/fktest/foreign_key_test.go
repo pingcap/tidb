@@ -26,13 +26,15 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -1219,8 +1221,8 @@ func TestForeignKeyGenerateCascadeAST(t *testing.T) {
 		{types.NewDatum(2), types.NewDatum("b")},
 	}
 	cols := []*model.ColumnInfo{
-		{ID: 1, Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
-		{ID: 2, Name: model.NewCIStr("name"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+		{ID: 1, Name: pmodel.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 2, Name: pmodel.NewCIStr("name"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 	}
 	restoreFn := func(stmt ast.StmtNode) string {
 		var sb strings.Builder
@@ -1236,29 +1238,29 @@ func TestForeignKeyGenerateCascadeAST(t *testing.T) {
 		require.Equal(t, restoreFn(expectedStmt), restoreFn(stmt))
 	}
 	var stmt ast.StmtNode
-	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
+	stmt = executor.GenCascadeDeleteAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr(""), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
+	stmt = executor.GenCascadeDeleteAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr("idx"), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 use index(idx) where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeSetNullAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
+	stmt = executor.GenCascadeSetNullAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr(""), cols, fkValues)
 	checkStmtFn(stmt, "update test.t2 set a = null, name = null where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeSetNullAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
+	stmt = executor.GenCascadeSetNullAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr("idx"), cols, fkValues)
 	checkStmtFn(stmt, "update test.t2 use index(idx) set a = null, name = null where (a,name) in ((1,'a'), (2,'b'))")
 	newValue1 := []types.Datum{types.NewDatum(10), types.NewDatum("aa")}
 	couple := &executor.UpdatedValuesCouple{
 		NewValues:     newValue1,
 		OldValuesList: fkValues,
 	}
-	stmt = executor.GenCascadeUpdateAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, couple)
+	stmt = executor.GenCascadeUpdateAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr(""), cols, couple)
 	checkStmtFn(stmt, "update test.t2 set a = 10, name = 'aa' where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeUpdateAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, couple)
+	stmt = executor.GenCascadeUpdateAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr("idx"), cols, couple)
 	checkStmtFn(stmt, "update test.t2 use index(idx) set a = 10, name = 'aa' where (a,name) in ((1,'a'), (2,'b'))")
 	// Test for 1 fk column.
 	fkValues = [][]types.Datum{{types.NewDatum(1)}, {types.NewDatum(2)}}
-	cols = []*model.ColumnInfo{{ID: 1, Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)}}
-	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
+	cols = []*model.ColumnInfo{{ID: 1, Name: pmodel.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)}}
+	stmt = executor.GenCascadeDeleteAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr(""), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 where a in (1,2)")
-	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
+	stmt = executor.GenCascadeDeleteAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr("idx"), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 use index(idx) where a in (1,2)")
 }
 
@@ -2473,4 +2475,22 @@ func TestForeignKeyAndLockView(t *testing.T) {
 	tk.MustQuery("select CURRENT_SQL_DIGEST from information_schema.tidb_trx where state='LockWaiting' and db='test'").Check(testkit.Rows(digest.String()))
 	tk.MustGetErrMsg("update t1 set id=2", "[executor:1213]Deadlock found when trying to get lock; try restarting transaction")
 	wg.Wait()
+}
+
+func TestFKBuild(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("renametable")`)
+
+	tk.MustExec("rename table t1 to t3;")
+	tk.MustExec("insert into test.t3 values (1)")
+	tk.MustExec("insert into test.t2 values (1)")
+	tk.MustExec("delete from test.t3")
+	tk.MustQuery("select * from test.t2").Check(testkit.Rows())
 }

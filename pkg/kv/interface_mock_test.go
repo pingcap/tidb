@@ -19,7 +19,7 @@ import (
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -171,6 +171,8 @@ func (t *mockTxn) UpdateMemBufferFlags(_ []byte, _ ...FlagsOp) {
 func (t *mockTxn) SetMemoryFootprintChangeHook(func(uint64)) {
 
 }
+
+func (t *mockTxn) MemHookSet() bool { return false }
 
 func (t *mockTxn) Mem() uint64 {
 	return 0

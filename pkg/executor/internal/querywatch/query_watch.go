@@ -22,13 +22,14 @@ import (
 	"github.com/pingcap/errors"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
@@ -37,13 +38,14 @@ import (
 // setWatchOption is used to set the QuarantineRecord with specific QueryWatchOption ast node.
 func setWatchOption(ctx context.Context,
 	sctx, newSctx sessionctx.Context,
-	record *resourcegroup.QuarantineRecord,
+	record *runaway.QuarantineRecord,
 	op *ast.QueryWatchOption,
 ) error {
 	switch op.Tp {
 	case ast.QueryWatchResourceGroup:
-		if op.ExprValue != nil {
-			expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), op.ExprValue, nil, nil, false)
+		resourceGroupOption := op.ResourceGroupOption
+		if resourceGroupOption.GroupNameExpr != nil {
+			expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), resourceGroupOption.GroupNameExpr, nil, nil, false)
 			if err != nil {
 				return err
 			}
@@ -56,12 +58,14 @@ func setWatchOption(ctx context.Context,
 			}
 			record.ResourceGroupName = name
 		} else {
-			record.ResourceGroupName = op.StrValue.L
+			record.ResourceGroupName = resourceGroupOption.GroupNameStr.L
 		}
 	case ast.QueryWatchAction:
-		record.Action = rmpb.RunawayAction(op.IntValue)
+		record.Action = rmpb.RunawayAction(op.ActionOption.Type)
+		record.SwitchGroupName = op.ActionOption.SwitchGroupName.String()
 	case ast.QueryWatchType:
-		expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), op.ExprValue, nil, nil, false)
+		textOption := op.TextOption
+		expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), textOption.PatternExpr, nil, nil, false)
 		if err != nil {
 			return err
 		}
@@ -72,8 +76,9 @@ func setWatchOption(ctx context.Context,
 		if isNull {
 			return errors.Errorf("invalid watch text expression")
 		}
-		record.Watch = rmpb.RunawayWatchType(op.IntValue)
-		if op.BoolValue {
+		watchType := textOption.Type
+		record.Watch = rmpb.RunawayWatchType(watchType)
+		if textOption.TypeSpecified {
 			p := parser.New()
 			stmts, _, err := p.ParseSQL(strval)
 			if err != nil {
@@ -83,7 +88,7 @@ func setWatchOption(ctx context.Context,
 				return errors.Errorf("only support one SQL")
 			}
 			sql := stmts[0].Text()
-			switch model.RunawayWatchType(op.IntValue) {
+			switch watchType {
 			case model.WatchNone:
 				return errors.Errorf("watch type must be specified")
 			case model.WatchExact:
@@ -113,11 +118,12 @@ func setWatchOption(ctx context.Context,
 }
 
 // fromQueryWatchOptionList is used to create a QuarantineRecord with some QueryWatchOption ast nodes.
-func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Context, optionList []*ast.QueryWatchOption) (*resourcegroup.QuarantineRecord, error) {
-	record := &resourcegroup.QuarantineRecord{
-		Source:    resourcegroup.ManualSource,
+func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Context,
+	optionList []*ast.QueryWatchOption) (*runaway.QuarantineRecord, error) {
+	record := &runaway.QuarantineRecord{
+		Source:    runaway.ManualSource,
 		StartTime: time.Now(),
-		EndTime:   resourcegroup.NullTime,
+		EndTime:   runaway.NullTime,
 	}
 	for _, op := range optionList {
 		if err := setWatchOption(ctx, sctx, newSctx, record, op); err != nil {
@@ -129,8 +135,8 @@ func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Cont
 
 // validateWatchRecord follows several designs:
 //  1. If no resource group is set, the default resource group is used
-//  2. If no action is specified, the action of the resource group is used. If no, an error message is displayed.
-func validateWatchRecord(record *resourcegroup.QuarantineRecord, client *rmclient.ResourceGroupsController) error {
+//  2. If no action is specified, the action of the resource group is used. If no, an error message displayed.
+func validateWatchRecord(record *runaway.QuarantineRecord, client *rmclient.ResourceGroupsController) error {
 	if len(record.ResourceGroupName) == 0 {
 		record.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	}
@@ -146,7 +152,9 @@ func validateWatchRecord(record *resourcegroup.QuarantineRecord, client *rmclien
 			return errors.Errorf("must set runaway config for resource group `%s`", record.ResourceGroupName)
 		}
 		record.Action = rg.RunawaySettings.Action
+		record.SwitchGroupName = rg.RunawaySettings.SwitchGroupName
 	}
+	// TODO: validate the switch group.
 	if record.Watch == rmpb.RunawayWatchType_NoneWatch {
 		return errors.Errorf("must specify watch type")
 	}
@@ -179,7 +187,7 @@ func (e *AddExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err := validateWatchRecord(record, do.ResourceGroupsController()); err != nil {
 		return err
 	}
-	id, err := do.AddRunawayWatch(record)
+	id, err := do.RunawayManager().AddRunawayWatch(record)
 	if err != nil {
 		return err
 	}
@@ -190,6 +198,6 @@ func (e *AddExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 // ExecDropQueryWatch is use to exec DropQueryWatchStmt.
 func ExecDropQueryWatch(sctx sessionctx.Context, id int64) error {
 	do := domain.GetDomain(sctx)
-	err := do.RemoveRunawayWatch(id)
+	err := do.RunawayManager().RemoveRunawayWatch(id)
 	return err
 }

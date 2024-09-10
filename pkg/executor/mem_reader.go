@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	transaction "github.com/pingcap/tidb/pkg/store/driver/txn"
@@ -982,8 +982,10 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 
 		// filter key/value by partitition id
 		if iter.index.Global {
-			seg := tablecodec.SplitIndexValue(value)
-			_, pid, _ := codec.DecodeInt(seg.PartitionID)
+			_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
+			if err != nil {
+				return nil, err
+			}
 			if _, exists := iter.partitionIDMap[pid]; !exists {
 				continue
 			}

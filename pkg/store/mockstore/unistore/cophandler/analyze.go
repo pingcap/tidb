@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -270,7 +270,7 @@ type analyzeColumnsExec struct {
 	decoder *rowcodec.ChunkDecoder
 	req     *chunk.Chunk
 	evalCtx *evalContext
-	fields  []*ast.ResultField
+	fields  []*resolve.ResultField
 }
 
 func buildBaseAnalyzeColumnsExec(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*analyzeColumnsExec, *statistics.SampleBuilder, int64, error) {
@@ -297,9 +297,9 @@ func buildBaseAnalyzeColumnsExec(dbReader *dbreader.DBReader, rans []kv.KeyRange
 		decoder: decoder,
 		evalCtx: evalCtx,
 	}
-	e.fields = make([]*ast.ResultField, len(columns))
+	e.fields = make([]*resolve.ResultField, len(columns))
 	for i := range e.fields {
-		rf := new(ast.ResultField)
+		rf := new(resolve.ResultField)
 		rf.Column = new(model.ColumnInfo)
 		ft := types.FieldType{}
 		ft.SetType(mysql.TypeBlob)
@@ -404,9 +404,9 @@ func handleAnalyzeFullSamplingReq(
 		decoder: decoder,
 		evalCtx: evalCtx,
 	}
-	e.fields = make([]*ast.ResultField, len(columns))
+	e.fields = make([]*resolve.ResultField, len(columns))
 	for i := range e.fields {
-		rf := new(ast.ResultField)
+		rf := new(resolve.ResultField)
 		rf.Column = new(model.ColumnInfo)
 		ft := types.FieldType{}
 		ft.SetType(mysql.TypeBlob)
@@ -460,7 +460,7 @@ func handleAnalyzeFullSamplingReq(
 }
 
 // Fields implements the sqlexec.RecordSet Fields interface.
-func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
+func (e *analyzeColumnsExec) Fields() []*resolve.ResultField {
 	return e.fields
 }
 

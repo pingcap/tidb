@@ -329,7 +329,13 @@ func (r *builder) buildFromBinOp(
 			value.SetString(value.GetString(), col.RetType.GetCollate())
 		}
 		// If nulleq with null value, values.ToInt64 will return err
-		if col.GetType().GetType() == mysql.TypeYear && !value.IsNull() {
+		if col.GetType(r.sctx.ExprCtx.GetEvalCtx()).GetType() == mysql.TypeYear && !value.IsNull() {
+			// Convert the out-of-range uint number to int and then let the following logic can handle it correctly.
+			// Since the max value of year is 2155, `col op MaxUint` should have the same result with `col op MaxInt`.
+			if value.Kind() == types.KindUint64 && value.GetUint64() > math.MaxInt64 {
+				value.SetInt64(math.MaxInt64)
+			}
+
 			// If the original value is adjusted, we need to change the condition.
 			// For example, col < 2156. Since the max year is 2155, 2156 is changed to 2155.
 			// col < 2155 is wrong. It should be col <= 2155.
@@ -651,30 +657,30 @@ func (r *builder) buildFromIn(
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]*point, 0, len(list)*2)
 	hasNull := false
-	ft := expr.GetArgs()[0].GetType()
+	ft := expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx())
 	colCollate := ft.GetCollate()
 	tc := r.sctx.TypeCtx
 	evalCtx := r.sctx.ExprCtx.GetEvalCtx()
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
-			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
+			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not constant", e.StringWithCtx(evalCtx, errors.RedactLogDisable))
 			return getFullRange(), hasNull
 		}
 		dt, err := v.Eval(evalCtx, chunk.Row{})
 		if err != nil {
-			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
+			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e.StringWithCtx(evalCtx, errors.RedactLogDisable))
 			return getFullRange(), hasNull
 		}
 		if dt.IsNull() {
 			hasNull = true
 			continue
 		}
-		if expr.GetArgs()[0].GetType().GetType() == mysql.TypeEnum {
+		if expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetType() == mysql.TypeEnum {
 			switch dt.Kind() {
 			case types.KindString, types.KindBytes, types.KindBinaryLiteral:
 				// Can't use ConvertTo directly, since we shouldn't convert numerical string to Enum in select stmt.
-				targetType := expr.GetArgs()[0].GetType()
+				targetType := expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx())
 				enum, parseErr := types.ParseEnumName(targetType.GetElems(), dt.GetString(), targetType.GetCollate())
 				if parseErr == nil {
 					dt.SetMysqlEnum(enum, targetType.GetCollate())
@@ -682,7 +688,7 @@ func (r *builder) buildFromIn(
 					err = parseErr
 				}
 			default:
-				dt, err = dt.ConvertTo(tc, expr.GetArgs()[0].GetType())
+				dt, err = dt.ConvertTo(tc, expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()))
 			}
 
 			if err != nil {
@@ -690,15 +696,15 @@ func (r *builder) buildFromIn(
 				continue
 			}
 		}
-		if expr.GetArgs()[0].GetType().GetType() == mysql.TypeYear {
-			dt, err = dt.ConvertToMysqlYear(tc, expr.GetArgs()[0].GetType())
+		if expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetType() == mysql.TypeYear {
+			dt, err = dt.ConvertToMysqlYear(tc, expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()))
 			if err != nil {
 				// in (..., an impossible value (not valid year), ...), the range is empty, so skip it.
 				continue
 			}
 		}
-		if expr.GetArgs()[0].GetType().EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
-			dt.SetString(dt.GetString(), expr.GetArgs()[0].GetType().GetCollate()) // refine the string like what we did in builder.buildFromBinOp
+		if expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
+			dt.SetString(dt.GetString(), expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetCollate()) // refine the string like what we did in builder.buildFromBinOp
 		}
 		var startValue, endValue types.Datum
 		dt.Copy(&startValue)
@@ -746,11 +752,11 @@ func (r *builder) newBuildFromPatternLike(
 	convertToSortKey bool,
 ) []*point {
 	_, collation := expr.CharsetAndCollation()
-	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().GetCollate(), collation) {
+	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetCollate(), collation) {
 		return getFullRange()
 	}
 	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(r.sctx.ExprCtx.GetEvalCtx(), chunk.Row{})
-	tpOfPattern := expr.GetArgs()[0].GetType()
+	tpOfPattern := expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx())
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
@@ -945,7 +951,7 @@ func (r *builder) buildFromNot(
 		// Append the interval (last element, max value].
 		retRangePoints = append(retRangePoints, &point{value: previousValue, start: true, excl: true})
 		retRangePoints = append(retRangePoints, &point{value: types.MaxValueDatum()})
-		cutPrefixForPoints(retRangePoints, prefixLen, expr.GetArgs()[0].GetType())
+		cutPrefixForPoints(retRangePoints, prefixLen, expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()))
 		if convertToSortKey {
 			var err error
 			retRangePoints, err = pointsConvertToSortKey(r.sctx, retRangePoints, newTp)

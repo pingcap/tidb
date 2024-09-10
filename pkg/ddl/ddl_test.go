@@ -22,35 +22,28 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 // DDLForTest exports for testing.
 type DDLForTest interface {
-	// SetInterceptor sets the interceptor.
-	SetInterceptor(h Interceptor)
 	NewReorgCtx(jobID int64, rowCount int64) *reorgCtx
 	GetReorgCtx(jobID int64) *reorgCtx
 	RemoveReorgCtx(id int64)
-}
-
-// SetInterceptor implements DDL.SetInterceptor interface.
-func (d *ddl) SetInterceptor(i Interceptor) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.mu.interceptor = i
 }
 
 // IsReorgCanceled exports for testing.
@@ -71,6 +64,17 @@ func (d *ddl) GetReorgCtx(jobID int64) *reorgCtx {
 // RemoveReorgCtx exports for testing.
 func (d *ddl) RemoveReorgCtx(id int64) {
 	d.removeReorgCtx(id)
+}
+
+func NewJobSubmitterForTest() *JobSubmitter {
+	syncMap := generic.NewSyncMap[int64, chan struct{}](8)
+	return &JobSubmitter{
+		ddlJobDoneChMap: &syncMap,
+	}
+}
+
+func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
+	return s.ddlJobDoneChMap
 }
 
 func createMockStore(t *testing.T) kv.Storage {
@@ -163,7 +167,7 @@ func TestFieldCase(t *testing.T) {
 	colObjects := make([]*model.ColumnInfo, len(fields))
 	for i, name := range fields {
 		colObjects[i] = &model.ColumnInfo{
-			Name: model.NewCIStr(name),
+			Name: pmodel.NewCIStr(name),
 		}
 	}
 	err := checkDuplicateColumn(colObjects)
@@ -303,4 +307,147 @@ func TestCheckDuplicateConstraint(t *testing.T) {
 	require.NoError(t, err)
 	err = checkDuplicateConstraint(constrNames, "u1", ast.ConstraintUniq)
 	require.EqualError(t, err, "[ddl:1061]Duplicate key name 'u1'")
+}
+
+func TestGetTableDataKeyRanges(t *testing.T) {
+	// case 1, empty flashbackIDs
+	keyRanges := getTableDataKeyRanges([]int64{})
+	require.Len(t, keyRanges, 1)
+	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+
+	// case 2, insert a execluded table ID
+	keyRanges = getTableDataKeyRanges([]int64{3})
+	require.Len(t, keyRanges, 2)
+	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
+	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
+	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+
+	// case 3, insert some execluded table ID
+	keyRanges = getTableDataKeyRanges([]int64{3, 5, 9})
+	require.Len(t, keyRanges, 4)
+	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
+	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
+	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(5))
+	require.Equal(t, keyRanges[2].StartKey, tablecodec.EncodeTablePrefix(6))
+	require.Equal(t, keyRanges[2].EndKey, tablecodec.EncodeTablePrefix(9))
+	require.Equal(t, keyRanges[3].StartKey, tablecodec.EncodeTablePrefix(10))
+	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+}
+
+func TestAppendContinuousKeyRanges(t *testing.T) {
+	cases := []struct {
+		input  []keyRangeMayExclude
+		expect []kv.KeyRange
+	}{
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: true,
+				},
+			},
+			[]kv.KeyRange{},
+		},
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: false,
+				},
+			},
+			[]kv.KeyRange{{StartKey: []byte{1}, EndKey: []byte{2}}},
+		},
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: false,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{3}, EndKey: []byte{4}},
+					exclude: false,
+				},
+			},
+			[]kv.KeyRange{{StartKey: []byte{1}, EndKey: []byte{4}}},
+		},
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: false,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{3}, EndKey: []byte{4}},
+					exclude: true,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{5}, EndKey: []byte{6}},
+					exclude: false,
+				},
+			},
+			[]kv.KeyRange{
+				{StartKey: []byte{1}, EndKey: []byte{2}},
+				{StartKey: []byte{5}, EndKey: []byte{6}},
+			},
+		},
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: true,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{3}, EndKey: []byte{4}},
+					exclude: true,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{5}, EndKey: []byte{6}},
+					exclude: false,
+				},
+			},
+			[]kv.KeyRange{{StartKey: []byte{5}, EndKey: []byte{6}}},
+		},
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: false,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{3}, EndKey: []byte{4}},
+					exclude: true,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{5}, EndKey: []byte{6}},
+					exclude: true,
+				},
+			},
+			[]kv.KeyRange{{StartKey: []byte{1}, EndKey: []byte{2}}},
+		},
+		{
+			[]keyRangeMayExclude{
+				{
+					r:       kv.KeyRange{StartKey: []byte{1}, EndKey: []byte{2}},
+					exclude: true,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{3}, EndKey: []byte{4}},
+					exclude: false,
+				},
+				{
+					r:       kv.KeyRange{StartKey: []byte{5}, EndKey: []byte{6}},
+					exclude: true,
+				},
+			},
+			[]kv.KeyRange{{StartKey: []byte{3}, EndKey: []byte{4}}},
+		},
+	}
+
+	for i, ca := range cases {
+		ranges := appendContinuousKeyRanges([]kv.KeyRange{}, ca.input)
+		require.Equal(t, ca.expect, ranges, "case %d", i)
+	}
 }
