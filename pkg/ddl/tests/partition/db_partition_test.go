@@ -2772,6 +2772,7 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 }
 
 func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_partition2")
@@ -2815,6 +2816,7 @@ func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
 }
 
 func TestReorgPartitionTiFlash(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "ReorgPartTiFlash"
@@ -2932,6 +2934,7 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 }
 
 func TestIssue40135Ver2(t *testing.T) {
+	testkit.SkipIfFailpointDisabled(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

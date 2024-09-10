@@ -183,13 +183,12 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn
 		domNonOwner.Reload()
 		verCurr++
 		i++
-		if releaseHook {
-			// Continue to next state
-			hookChan <- struct{}{}
-		} else {
+		if !releaseHook {
 			// Alter done!
 			break
 		}
+		// Continue to next state
+		hookChan <- struct{}{}
 	}
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
 	postFn(tkO)
@@ -257,7 +256,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			// track it down some how...
 			// WASHERE ^^^^
 			// But does not happen every time :(
-			// So first try to make it more reproducable...
+			// So first try to make it more reproducible...
 			// Probably due to some internal or lease timeout reloading the domain. Could be checked
 			// with schema version?
 			// TODO: Also set column c to something useful
@@ -442,7 +441,7 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 				// track it down some how...
 				// WASHERE ^^^^
 				// But does not happen every time :(
-				// So first try to make it more reproducable...
+				// So first try to make it more reproducible...
 				// Probably due to some internal or lease timeout reloading the domain. Could be checked
 				// with schema version?
 				// TODO: Also set column c to something useful
