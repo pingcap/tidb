@@ -209,7 +209,6 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	// the start_ts could conflict with another pipelined-txn's start_ts.
 	// in which case the locks of same ts cannot be ignored.
 	// We rely on the assumption: start_ts is not from PD => this is a stale read.
-
 	if !req.IsStaleness {
 		it.resolvedLocks.Put(req.StartTs)
 	}

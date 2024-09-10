@@ -15,8 +15,6 @@
 package core
 
 import (
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -26,9 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"go.uber.org/zap"
 )
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
@@ -36,9 +32,6 @@ func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	if !sc.UseCache() {
 		return false // plan-cache is disabled for this query
-	}
-	if strings.Contains(sc.OriginalSQL, " from t ") {
-		logutil.BgLogger().Info("------------ RebuildPlan4CachedPlan ", zap.String("sql", sc.OriginalSQL))
 	}
 
 	sc.InPreparedPlanBuilding = true

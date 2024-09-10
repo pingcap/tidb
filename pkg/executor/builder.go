@@ -19,8 +19,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 	"math"
 	"slices"
 	"strconv"
@@ -3856,7 +3854,6 @@ func (ls *LazyStartTS) GetStartTS(tryUseMaxTS bool) (uint64, error) {
 	if ls.forDataReaderBuilder {
 		return ls.dataReaderTS, nil
 	}
-
 	txnManager := sessiontxn.GetTxnManager(ls.ctx)
 	if ls.needForUpdateTS {
 		return txnManager.GetStmtForUpdateTS()
@@ -3864,7 +3861,6 @@ func (ls *LazyStartTS) GetStartTS(tryUseMaxTS bool) (uint64, error) {
 	if tryUseMaxTS {
 		ctxProvider := txnManager.GetContextProvider()
 		if optimisticTxnCtxProvider, ok := ctxProvider.(*isolation.OptimisticTxnContextProvider); ok && optimisticTxnCtxProvider != nil && optimisticTxnCtxProvider.TryOptimizeWithMaxTS {
-			logutil.BgLogger().Info("use max uint64 as tso", zap.String("sql", ls.ctx.GetSessionVars().StmtCtx.OriginalSQL))
 			return uint64(math.MaxUint64), nil
 		}
 	}
