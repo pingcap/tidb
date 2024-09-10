@@ -68,7 +68,7 @@ func (a *RenameTablesArgs) fillJob(job *Job) {
 		job.Args = []any{a.OldSchemaIDs, a.NewSchemaIDs, a.NewTableNames, a.TableIDs, a.OldSchemaNames, a.OldTableNames}
 		return
 	}
-	job.Args = []any{a}
+	job.ArgsV2 = a
 }
 
 // GetRenameTablesArgs gets the rename tables args.
