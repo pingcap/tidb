@@ -1355,17 +1355,29 @@ func TestIssue30211(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1(a int, index(a));")
 	tk.MustExec("create table t2(a int, index(a));")
-	fpName2 := "github.com/pingcap/tidb/pkg/executor/join/TestIssue49692"
-	require.NoError(t, failpoint.Enable(fpName2, `return`))
-	defer func() {
-		require.NoError(t, failpoint.Disable(fpName2))
-	}()
 
 	func() {
 		fpName := "github.com/pingcap/tidb/pkg/executor/TestIssue30211"
 		require.NoError(t, failpoint.Enable(fpName, `panic("TestIssue30211 IndexJoinPanic")`))
 		defer func() {
 			require.NoError(t, failpoint.Disable(fpName))
+		}()
+		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
+
+		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")
+	}()
+
+	func() {
+		fpName := "github.com/pingcap/tidb/pkg/executor/TestIssue30211"
+		require.NoError(t, failpoint.Enable(fpName, `panic("TestIssue30211 IndexJoinPanic")`))
+		fpName2 := "github.com/pingcap/tidb/pkg/executor/TestIssue49692"
+		require.NoError(t, failpoint.Enable(fpName2, `return`))
+
+		defer func() {
+			require.NoError(t, failpoint.Disable(fpName))
+			require.NoError(t, failpoint.Disable(fpName2))
 		}()
 		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
 		require.EqualError(t, err, "failpoint panic: TestIssue30211 IndexJoinPanic")

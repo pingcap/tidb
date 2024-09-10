@@ -207,12 +207,19 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 			e.panicErr.Unlock()
 		}
 
+		failpoint.Inject("TestIssue49692", func() {
+			failpoint.Goto("TestIssue49692End")
+		})
+
 		if !e.keepOuterOrder {
 			e.resultCh <- &indexHashJoinResult{err: err}
 		} else {
 			task := &indexHashJoinTask{err: err}
 			e.taskCh <- task
 		}
+
+		failpoint.Label("TestIssue49692End")
+
 		if e.cancelFunc != nil {
 			e.cancelFunc()
 		}
