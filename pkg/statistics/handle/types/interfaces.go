@@ -461,7 +461,7 @@ type DDL interface {
 	// HandleDDLEvent handles ddl events.
 	HandleDDLEvent(changeEvent *ddlutil.SchemaChangeEvent) error
 	// DDLEventCh returns ddl events channel in handle.
-	DDLEventCh() chan *statsutil.DDLEvent
+	DDLEventCh() chan *ddlutil.SchemaChangeEvent
 }
 
 // StatsHandle is used to manage TiDB Statistics.

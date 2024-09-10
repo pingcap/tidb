@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -531,9 +530,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
 		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
-		modifyColumnEvent := &statsutil.DDLEvent{
-			SchemaChangeEvent: ddlutil.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}),
-		}
+		modifyColumnEvent := ddlutil.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
 		asyncNotifyEvent(jobCtx, modifyColumnEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
