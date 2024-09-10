@@ -1285,7 +1285,7 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 }
 
 // SetPreferredJoinTypeAndOrder sets the preferred join type and order for the LogicalJoin.
-func (p *LogicalJoin) SetPreferredJoinTypeAndOrder(hintInfo *utilhint.PlanHints) {
+func (p *LogicalJoin) SetPreferredJoinTypeAndOrder(cte []*ast.CommonTableExpression, hintInfo *utilhint.PlanHints) {
 	if hintInfo == nil {
 		return
 	}

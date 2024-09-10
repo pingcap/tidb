@@ -298,6 +298,14 @@ type PlanBuilder struct {
 	resolveCtx *resolve.Context
 }
 
+func (p *PlanBuilder) GetCTE() []*ast.CommonTableExpression {
+	cteInfo := make([]*ast.CommonTableExpression, 0, len(p.outerCTEs))
+	for _, cte := range p.outerCTEs {
+		cteInfo = append(cteInfo, cte.def)
+	}
+	return cteInfo
+}
+
 type handleColHelper struct {
 	id2HandleMapStack []map[int64][]util.HandleCols
 	stackTail         int

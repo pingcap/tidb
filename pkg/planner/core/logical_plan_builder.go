@@ -648,7 +648,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	}
 
 	// Set preferred join algorithm if some join hints is specified by user.
-	joinPlan.SetPreferredJoinTypeAndOrder(b.TableHints())
+	joinPlan.SetPreferredJoinTypeAndOrder(b.GetCTE(), b.TableHints())
 
 	// "NATURAL JOIN" doesn't have "ON" or "USING" conditions.
 	//
@@ -5082,7 +5082,7 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPl
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.OutputNames()[i] = types.EmptyName
 	}
-	ap.LogicalJoin.SetPreferredJoinTypeAndOrder(b.TableHints())
+	ap.LogicalJoin.SetPreferredJoinTypeAndOrder(b.GetCTE(), b.TableHints())
 	return ap
 }
 
@@ -5162,7 +5162,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 		}
 	}
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
-	joinPlan.SetPreferredJoinTypeAndOrder(b.TableHints())
+	joinPlan.SetPreferredJoinTypeAndOrder(b.GetCTE(), b.TableHints())
 	if forceRewrite {
 		joinPlan.PreferJoinType |= h.PreferRewriteSemiJoin
 		b.optFlag |= rule.FlagSemiJoinRewrite
