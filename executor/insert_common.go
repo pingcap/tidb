@@ -659,6 +659,28 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			}
 		}
 	}
+<<<<<<< HEAD
+=======
+	tbl := e.Table.Meta()
+	// Handle exchange partition
+	if tbl.ExchangePartitionInfo != nil && tbl.ExchangePartitionInfo.ExchangePartitionFlag {
+		is := e.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
+		if !tableFound {
+			return nil, errors.Errorf("exchange partition process table by id failed")
+		}
+		p, ok := pt.(table.PartitionedTable)
+		if !ok {
+			return nil, errors.Errorf("exchange partition process assert table partition failed")
+		}
+		err := p.CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionInfo.ExchangePartitionDefID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	sc := e.ctx.GetSessionVars().StmtCtx
+	warnCnt := int(sc.WarningCount())
+>>>>>>> 875e34d28a1 (executor: fix uint type overflow on generated column not compatible with mysql (#40157))
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(chunk.MutRowFromDatums(row).ToRow())
@@ -666,8 +688,15 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.ctx, val, gCol.ToInfo(), false, false)
-		if err != nil {
+		if err = e.handleErr(gCol, &val, rowIdx, err); err != nil {
 			return nil, err
+		}
+		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
+			for k := range newWarnings {
+				newWarnings[k].Err = completeInsertErr(gCol.ColumnInfo, &val, rowIdx, newWarnings[k].Err)
+			}
+			sc.AppendWarnings(newWarnings)
+			warnCnt += len(newWarnings)
 		}
 		// Handle the bad null error.
 		if err = gCol.HandleBadNull(&row[colIdx], e.ctx.GetSessionVars().StmtCtx); err != nil {
