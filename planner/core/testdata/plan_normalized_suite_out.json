@@ -95,7 +95,7 @@
           " │ └─Selection       cop  gt(test.t1.c, ?)",
           " │   └─TableFullScan cop  table:t1, range:[?,?], keep order:false",
           " └─TableReader       root ",
-          "   └─TableRangeScan  cop  table:t2, range: decided by [test.t1.a], keep order:false"
+          "   └─TableRangeScan  cop  table:t2, keep order:false"
         ]
       },
       {
@@ -128,7 +128,7 @@
           " │ └─Selection       cop  gt(test.t1.c, ?)",
           " │   └─TableFullScan cop  table:t1, range:[?,?], keep order:false",
           " └─TableReader       root ",
-          "   └─TableRangeScan  cop  table:t2, range: decided by [test.t1.a], keep order:false"
+          "   └─TableRangeScan  cop  table:t2, keep order:false"
         ]
       },
       {
