@@ -51,7 +51,7 @@ func SetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error 
 // SetSchemaDiffForTruncateTable set SchemaDiff for ActionTruncateTable.
 func SetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job) error {
 	// Truncate table has two table ID, should be handled differently.
-	args, err := model.GetTruncateTableArgsBeforeRun(job)
+	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
