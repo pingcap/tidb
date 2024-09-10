@@ -17,9 +17,9 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"testing"
 
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
