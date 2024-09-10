@@ -133,6 +133,7 @@ go_library(
         "//pkg/store/driver/txn",
         "//pkg/store/helper",
         "//pkg/table",
+        "//pkg/table/context",
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/tidb-binlog/pump_client",

@@ -736,7 +736,8 @@ func job2TableIDs(job *model.Job) string {
 		ids := job.CtxVars[1].([]int64)
 		return makeStringForIDs(ids)
 	case model.ActionTruncateTable:
-		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(job.Args[0].(int64), 10)
+		newTableID := getTruncateTableNewTableID(job)
+		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
 	default:
 		return strconv.FormatInt(job.TableID, 10)
 	}

@@ -21,6 +21,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
@@ -69,8 +71,6 @@ import (
 )
 
 const (
-	// currentVersion is for all new DDL jobs.
-	currentVersion = 1
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey             = "/tidb/ddl/fg/owner"
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
@@ -713,7 +713,21 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
-	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
+	// if we are running in test, random choose a job version to run with.
+	// TODO add a separate CI flow to run with different job version, so we can cover
+	// more cases in a single run.
+	if intest.InTest || config.GetGlobalConfig().Store == "unistore" {
+		jobVer := model.JobVersion1
+		// 50% percent to use JobVersion2 in test.
+		rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+		if rnd.Intn(2) == 0 {
+			jobVer = model.JobVersion2
+		}
+		model.SetJobVerInUse(jobVer)
+	}
+	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid),
+		zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()),
+		zap.Stringer("jobVersion", model.GetJobVerInUse()))
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool

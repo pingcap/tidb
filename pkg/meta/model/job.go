@@ -70,8 +70,8 @@ const (
 	ActionCreateSequence                ActionType = 34
 	ActionAlterSequence                 ActionType = 35
 	ActionDropSequence                  ActionType = 36
-	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
-	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
+	_DEPRECATEDActionAddColumns         ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
+	_DEPRECATEDActionDropColumns        ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionModifyTableAutoIDCache        ActionType = 39
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
@@ -85,7 +85,7 @@ const (
 	_DEPRECATEDActionAlterTableAlterPartition ActionType = 46
 
 	ActionRenameTables                  ActionType = 47
-	ActionDropIndexes                   ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
+	_DEPRECATEDActionDropIndexes        ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionAlterTableAttributes          ActionType = 49
 	ActionAlterTablePartitionAttributes ActionType = 50
 	ActionCreatePlacementPolicy         ActionType = 51
@@ -281,6 +281,44 @@ func GetJobVerInUse() JobVersion {
 	return JobVersion(jobVerInUse.Load())
 }
 
+// JobVersion is the version of DDL job.
+type JobVersion int64
+
+const (
+	// JobVersion1 is the first version of DDL job where job args are stored as un-typed
+	// array. Before v8.4.0, all DDL jobs are in this version.
+	JobVersion1 JobVersion = 1
+	// JobVersion2 is the second version of DDL job where job args are stored as
+	// typed structs, we start to use this version from v8.4.0.
+	// Note: this version is not enabled right now except in some test cases, will
+	// enable it after we have CI to run both versions.
+	JobVersion2 JobVersion = 2
+)
+
+// String implements fmt.Stringer interface.
+func (v JobVersion) String() string {
+	if v == JobVersion1 {
+		return "v1"
+	} else if v == JobVersion2 {
+		return "v2"
+	}
+	return fmt.Sprintf("unknown(%d)", v)
+}
+
+// JobVerInUse is the job version for new DDL jobs in the node.
+// it's for test now.
+var jobVerInUse atomic.Int64
+
+// SetJobVerInUse sets the version of DDL job used in the node.
+func SetJobVerInUse(ver JobVersion) {
+	jobVerInUse.Store(int64(ver))
+}
+
+// GetJobVerInUse returns the version of DDL job used in the node.
+func GetJobVerInUse() JobVersion {
+	return JobVersion(jobVerInUse.Load())
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID   int64      `json:"id"`
@@ -302,6 +340,7 @@ type Job struct {
 	RowCount int64      `json:"row_count"`
 	Mu       sync.Mutex `json:"-"`
 
+	// below fields are used in JobVersion1
 	// CtxVars are variables attached to the job. It is for internal usage.
 	// E.g. passing arguments between functions by one single *Job pointer.
 	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
@@ -313,9 +352,15 @@ type Job struct {
 	// - RenameTable: [old-db-id, new-table-name, old-db-name]
 	// - ExchangeTablePartition: [partition-id, pt-db-id, pt-id, partition-name, with-validation]
 	Args []any `json:"-"`
-	// we use json raw message to delay parsing special args.
-	// the args are cleared out unless Job.FillFinishedArgs is called.
+	// RawArgs : We must use json raw message to delay parsing special args.
 	RawArgs json.RawMessage `json:"raw_args"`
+
+	// below fields are used in JobVersion2
+	// ArgsV2 is a pointer to a typed XXXArgs struct specific to the job type.
+	// see structs inside job_args.go.
+	ArgsV2 JobArgs `json:"-"`
+	// RawArgsV2 stores the raw json of ArgsV2.
+	RawArgsV2 json.RawMessage `json:"raw_args_v2"`
 
 	SchemaState SchemaState `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
@@ -478,6 +523,11 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 	return w, wc
 }
 
+// FillArgs fills job args.
+func (job *Job) FillArgs(args JobArgs) {
+	args.fillJob(job)
+}
+
 // Encode encodes job with json format.
 // updateRawArgs is used to determine whether to update the raw args.
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
@@ -501,15 +551,11 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 				}
 			}
 		} else {
-			var arg any
-			if len(job.Args) > 0 {
-				arg = job.Args[0]
-			}
-			job.RawArgs, err = json.Marshal(arg)
+			job.RawArgsV2, err = json.Marshal(job.ArgsV2)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// TODO remember update sub-jobs' RawArgs when we do it.
+			// TODO remember update sub-jobs' RawArgsV2 when we do it.
 		}
 	}
 
