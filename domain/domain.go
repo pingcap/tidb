@@ -852,6 +852,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	if err != nil {
 		return err
 	}
+	startReloadTime := time.Now()
 	// step 2: domain reload the infoSchema.
 	err = do.Reload()
 	if err != nil {
@@ -866,7 +867,21 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
+<<<<<<< HEAD
 		do.wg.Add(1)
+=======
+		sub := time.Since(startReloadTime)
+		// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
+		// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
+		if sub > (ddlLease / 2) {
+			logutil.BgLogger().Warn("loading schema takes a long time, we do a new reload", zap.Duration("take time", sub))
+			err = do.Reload()
+			if err != nil {
+				return err
+			}
+		}
+
+>>>>>>> 492e0df543c (domain: fix a bug when reloading take a long time in domain.Init (#45170))
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
