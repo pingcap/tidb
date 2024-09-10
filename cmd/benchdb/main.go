@@ -245,6 +245,7 @@ func (ut *benchDB) insertRows(spec string) {
 	})
 }
 
+
 // #nosec G404
 func (ut *benchDB) updateRandomRows(spec string) {
 	start, end, totalCount := ut.mustParseSpec(spec)
