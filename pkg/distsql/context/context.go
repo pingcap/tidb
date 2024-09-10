@@ -85,8 +85,6 @@ type DistSQLContext struct {
 	SessionAlias                string
 
 	ExecDetails *execdetails.SyncExecDetails
-
-	GetStartTS func(bool) (uint64, error)
 }
 
 // AppendWarning appends the warning to the warning handler.

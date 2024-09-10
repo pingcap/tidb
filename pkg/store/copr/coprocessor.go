@@ -177,17 +177,20 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 			reqType = "hit"
 		}
 	}
-	if option.GetStartTS != nil && req.StartTs == 0 {
-		startTS, err := option.GetStartTS(len(tasks) <= 1)
-		if err != nil {
-			return nil, copErrorResponse{err}
-		}
-		req.StartTs = startTS
-	}
-
 	tidbmetrics.DistSQLCoprClosestReadCounter.WithLabelValues(reqType).Inc()
 	if err != nil {
 		return nil, copErrorResponse{err}
+	}
+	if req.StartTs == 0 {
+		if req.GetStartTs != nil {
+			startTS, err := req.GetStartTs(len(tasks) <= 1)
+			if err != nil {
+				return nil, copErrorResponse{err}
+			}
+			req.StartTs = startTS
+		} else {
+			return nil, copErrorResponse{errors.New("unexpected req, since req.StartTs is 0")}
+		}
 	}
 	it := &copIterator{
 		store:            c.store,

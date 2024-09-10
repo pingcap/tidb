@@ -253,6 +253,11 @@ func (builder *RequestBuilder) SetStartTS(startTS uint64) *RequestBuilder {
 	return builder
 }
 
+func (builder *RequestBuilder) SetGetStartTs(fn func(bool) (uint64, error)) *RequestBuilder {
+	builder.Request.GetStartTs = fn
+	return builder
+}
+
 // SetDesc sets "Desc" for "kv.Request".
 func (builder *RequestBuilder) SetDesc(desc bool) *RequestBuilder {
 	builder.Request.Desc = desc

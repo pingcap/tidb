@@ -324,7 +324,6 @@ type ClientSendOption struct {
 	EnableCollectExecutionInfo bool
 	TiFlashReplicaRead         tiflash.ReplicaRead
 	AppendWarning              func(warn error)
-	GetStartTS                 func(bool) (uint64, error)
 }
 
 // ReqTypes.
@@ -527,7 +526,9 @@ type Request struct {
 	// Tp is the request type.
 	Tp      int64
 	StartTs uint64
-	Data    []byte
+	// GetStartTs use to lazy get start ts.
+	GetStartTs func(bool) (uint64, error)
+	Data       []byte
 
 	// KeyRanges makes sure that the request is sent first by partition then by region.
 	// When the table is small, it's possible that multiple partitions are in the same region.
