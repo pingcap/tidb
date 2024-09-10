@@ -316,7 +316,11 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 
 	for _, jobW := range jobWs {
 		job := jobW.Job
-		job.Version = currentVersion
+		if job.Version == 0 {
+			// if not set, fix it to version 1
+			// TODO replace this with assert after we add code v2 for all jobs.
+			job.Version = model.JobVersion1
+		}
 		job.StartTS = startTS
 		job.BDRRole = bdrRole
 
