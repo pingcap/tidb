@@ -44,6 +44,8 @@ go_test(
     embed = [":util"],
     flaky = True,
     deps = [
+        "//pkg/meta/model",
+        "//pkg/parser/model",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
