@@ -3325,6 +3325,9 @@ func TestAuthSocket(t *testing.T) {
 }
 
 func TestIssue53634(t *testing.T) {
+	if !variable.DefTiDBEnableConcurrentDDL {
+		t.Logf("mdl defConcurrent:%v", variable.DefTiDBEnableConcurrentDDL)
+	}
 	cfg := newTestConfig()
 	cfg.Lease = "20s"
 	cfg.Port = 4123

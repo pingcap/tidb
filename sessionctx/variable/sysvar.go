@@ -1128,6 +1128,7 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableConcurrentDDL.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableMDL, Value: BoolToOnOff(DefTiDBEnableMDL), Type: TypeBool, SetGlobal: func(_ context.Context, vars *SessionVars, val string) error {
+		logutil.BgLogger().Info(fmt.Sprintf("xxx---------------- mdl previous:%v, set:%v", EnableMDL.Load(), val))
 		if EnableMDL.Load() != TiDBOptOn(val) {
 			err := SwitchMDL(TiDBOptOn(val))
 			if err != nil {

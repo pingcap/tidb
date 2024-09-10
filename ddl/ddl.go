@@ -1248,8 +1248,10 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
 
+	logutil.BgLogger().Info(fmt.Sprintf("xxx---------------- 000 mdl:%v, concurrent:%v", enable, variable.DefTiDBEnableConcurrentDDL))
 	// Disable MDL for test.
 	if enable && !variable.DefTiDBEnableConcurrentDDL {
+		logutil.BgLogger().Info("xxx---------------- 111 mdl")
 		sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
 			mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 0)
 		sess, err := d.sessPool.get()
