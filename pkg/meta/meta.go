@@ -1652,6 +1652,9 @@ func ExtractSchemaAndTableNameFromJob(data []byte) (schemaName, tableName string
 
 // IsJobMatch examines whether given job's table/schema name matches.
 func IsJobMatch(job []byte, schemaNames, tableNames set.StringSet) (match bool, err error) {
+	if schemaNames.Count() == 0 && tableNames.Count() == 0 {
+		return true, nil
+	}
 	schemaName, tableName, err := ExtractSchemaAndTableNameFromJob(job)
 	if err != nil {
 		return
