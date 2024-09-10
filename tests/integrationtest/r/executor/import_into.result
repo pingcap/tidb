@@ -173,13 +173,13 @@ Error 8157 (HY000): The FORMAT 'xx' is not supported
 drop table if exists temp;
 create temporary table temp (id int);
 import into temp from '/file.csv';
-Error 1105 (HY000): IMPORT INTO does not support temporary table or cached table
+Error 1105 (HY000): IMPORT INTO does not support temporary table
 drop table if exists gtemp;
 create global temporary table gtemp (id int) on commit delete rows;
 import into gtemp from '/file.csv';
-Error 1105 (HY000): IMPORT INTO does not support temporary table or cached table
+Error 1105 (HY000): IMPORT INTO does not support temporary table
 drop table if exists cachetbl;
 create table cachetbl (id int);
 alter table cachetbl cache;
 import into cachetbl from '/file.csv';
-Error 1105 (HY000): IMPORT INTO does not support temporary table or cached table
+Error 1105 (HY000): IMPORT INTO does not support cached table
