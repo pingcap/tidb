@@ -1449,23 +1449,21 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	}
 }
 
-func IsIndexReaderByAutoCommit(vars *variable.SessionVars, p base.Plan) bool {
+func IsTableOrIndexReaderByAutoCommit(vars *variable.SessionVars, p base.Plan) bool {
 	if !IsAutoCommitTxn(vars) {
 		return false
 	}
-	return isIndexReader(p)
-}
-
-func isIndexReader(p base.Plan) bool {
-	switch x := p.(type) {
-	case *PhysicalIndexReader:
-		return true
-	case *PhysicalProjection:
-		return isIndexReader(x.Children()[0])
-	case *PhysicalStreamAgg:
-		return isIndexReader(x.Children()[0])
-	default:
-		return false
+	for {
+		switch x := p.(type) {
+		case *PhysicalIndexReader, *PhysicalTableReader:
+			return true
+		case *PhysicalProjection:
+			p = x.Children()[0]
+		case *PhysicalStreamAgg:
+			p = x.Children()[0]
+		default:
+			return false
+		}
 	}
 }
 

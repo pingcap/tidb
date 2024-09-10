@@ -3462,9 +3462,11 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
 	}
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		return nil, err
+	lazyStartTS := LazyStartTS{
+		ctx:                  b.ctx,
+		forDataReaderBuilder: b.forDataReaderBuilder,
+		dataReaderTS:         b.dataReaderTS,
+		needForUpdateTS:      b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt,
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
 
@@ -3473,7 +3475,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		tableReaderExecutorContext: newTableReaderExecutorContext(b.ctx),
 		indexUsageReporter:         b.buildIndexUsageReporter(v),
 		dagPB:                      dagReq,
-		startTS:                    startTS,
+		getStartTS:                 lazyStartTS.GetStartTS,
 		txnScope:                   b.txnScope,
 		readReplicaScope:           b.readReplicaScope,
 		isStaleness:                b.isStaleness,
@@ -3861,11 +3863,9 @@ func (ls *LazyStartTS) GetStartTS(tryUseMaxTS bool) (uint64, error) {
 	}
 	if tryUseMaxTS {
 		ctxProvider := txnManager.GetContextProvider()
-		if optimisticTxnCtxProvider := ctxProvider.(*isolation.OptimisticTxnContextProvider); optimisticTxnCtxProvider != nil {
-			if optimisticTxnCtxProvider.TryOptimizeWithMaxTS {
-				logutil.BgLogger().Info("use max uint64 as tso", zap.String("sql", ls.ctx.GetSessionVars().StmtCtx.OriginalSQL))
-				return uint64(math.MaxUint64), nil
-			}
+		if optimisticTxnCtxProvider, ok := ctxProvider.(*isolation.OptimisticTxnContextProvider); ok && optimisticTxnCtxProvider != nil && optimisticTxnCtxProvider.TryOptimizeWithMaxTS {
+			logutil.BgLogger().Info("use max uint64 as tso", zap.String("sql", ls.ctx.GetSessionVars().StmtCtx.OriginalSQL))
+			return uint64(math.MaxUint64), nil
 		}
 	}
 	return txnManager.GetStmtReadTS()

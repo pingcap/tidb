@@ -133,8 +133,8 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err err
 
 	ok = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx.GetSessionVars(), realPlan)
 
+	sessVars := p.sctx.GetSessionVars()
 	if ok {
-		sessVars := p.sctx.GetSessionVars()
 		logutil.BgLogger().Debug("init txnStartTS with MaxUint64",
 			zap.Uint64("conn", sessVars.ConnectionID),
 			zap.String("text", sessVars.StmtCtx.OriginalSQL),
@@ -153,8 +153,8 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err err
 		if sessVars.StmtCtx.Priority == mysql.NoPriority {
 			sessVars.StmtCtx.Priority = kv.PriorityHigh
 		}
-	} else {
-		ok = plannercore.IsIndexReaderByAutoCommit(p.sctx.GetSessionVars(), realPlan)
+	} else if !sessVars.GuaranteeLinearizability {
+		ok = plannercore.IsTableOrIndexReaderByAutoCommit(p.sctx.GetSessionVars(), realPlan)
 		if ok {
 			p.TryOptimizeWithMaxTS = true
 			logutil.BgLogger().Info("TryOptimizeWithMaxTS is true", zap.String("sql", p.sctx.GetSessionVars().StmtCtx.OriginalSQL))

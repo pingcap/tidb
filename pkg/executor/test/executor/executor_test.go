@@ -18,6 +18,7 @@ import (
 	"archive/zip"
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -76,6 +77,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
 
 func checkFileName(s string) bool {
@@ -3080,4 +3083,69 @@ func TestQueryWithKill(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+func TestQueryWithMaxUint64TSO(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int key, b int, c int, index idx(b));")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+
+	reqStartTS := uint64(0)
+	ctx := interceptor.WithRPCInterceptor(context.Background(), interceptor.NewRPCInterceptor("get-rpc-star-ts", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+		return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+			reqStartTS = req.GetStartTS()
+			return next(target, req)
+		}
+	}))
+
+	testCases := []struct {
+		sql  string
+		rows []string
+	}{
+		{
+			"select c from t where id > 1 and id <=3 ",
+			[]string{"2", "3"},
+		},
+		{
+			"select sum(c) from t where id > 1 and id <=3 ",
+			[]string{"5"},
+		},
+		{
+			"select id from t where b = 1 ",
+			[]string{"1"},
+		},
+		{
+			"select id from t where b > 1 and b <= 3 ",
+			[]string{"2", "3"},
+		},
+		{
+			"select sum(b) from t where b > 1 and b <= 3 ",
+			[]string{"5"},
+		},
+	}
+
+	for _, c := range testCases {
+		testFn := func(sql string, rows []string, useMaxUint64TSO bool) {
+			tk.MustQueryWithContext(ctx, sql).Check(testkit.Rows(rows...))
+			require.Equal(t, reqStartTS == uint64(math.MaxUint64), useMaxUint64TSO, fmt.Sprintf("sql: %v, start_ts: %v", sql, reqStartTS))
+		}
+		tk.MustExec("set @@tidb_guarantee_linearizability=1")
+		testFn(c.sql, c.rows, false)
+
+		tk.MustExec("set @@tidb_guarantee_linearizability=0")
+		testFn(c.sql, c.rows, true)
+
+		tk.MustExec("set autocommit = 0")
+		testFn(c.sql, c.rows, false)
+		tk.MustExec("set autocommit = 1")
+		testFn(c.sql, c.rows, true)
+
+		tk.MustExec("begin")
+		testFn(c.sql, c.rows, false)
+		tk.MustExec("commit")
+		testFn(c.sql, c.rows, true)
+	}
 }
