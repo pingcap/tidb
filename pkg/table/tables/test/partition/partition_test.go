@@ -2529,9 +2529,9 @@ func TestPartitionByExtensivePart(t *testing.T) {
 }
 
 func TestReorgPartExtensivePart(t *testing.T) {
-	store := testkit.CreateMockStore(t)
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	dom.TTLJobManager().Stop()
+	tk := testkit.NewTestKit(t, store)
 	schemaName := "ReorgPartExtensive"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
