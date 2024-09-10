@@ -1,0 +1,13 @@
+drop table if exists t01;
+CREATE TABLE `t01` (
+`6524d87a` timestamp DEFAULT '2024-10-02 01:54:55',
+`744e4d52` int(11) NOT NULL DEFAULT '2023959529',
+`087de3b2` varchar(122) DEFAULT '36h0hvfpylz0f0iv9h0ownfcg3rehi4',
+`26cbbf2a` enum('l7i9','3sdz3','83','4','92p','4g','8y5rn','7gp','7','1','e') NOT NULL DEFAULT '4',
+PRIMARY KEY (`744e4d52`,`26cbbf2a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci COMMENT='7ad99128'
+PARTITION BY HASH (`744e4d52`) PARTITIONS 9;
+insert ignore into t01 values ("2023-01-01 20:01:02", 123, 'abcd', '');
+select `t01`.`26cbbf2a` as r0 from `t01` where `t01`.`6524d87a` in ( '2010-05-25') or not( `t01`.`26cbbf2a` > '1' ) ;
+r0
+
