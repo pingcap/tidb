@@ -1219,9 +1219,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 		}
 	}
-	if !ctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
+
 	// consider hypo-indexes
 	hypoIndexes := ctx.GetSessionVars().HypoIndexes // session level hypo-indexes
 	if ctx.GetSessionVars().StmtCtx.InExplainStmt && hypoIndexes != nil {

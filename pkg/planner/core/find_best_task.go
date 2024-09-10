@@ -751,9 +751,6 @@ func compareCandidates(sctx base.PlanContext, prop *property.PhysicalProperty, l
 }
 
 func isMatchProp(ds *DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
-	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	var isMatchProp bool
 	if path.IsIntHandlePath {
 		pkCol := ds.getPKIsHandleCol()
@@ -1052,9 +1049,6 @@ func isMatchPropForIndexMerge(ds *DataSource, path *util.AccessPath, prop *prope
 }
 
 func getTableCandidate(ds *DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
-	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("fuck")
-	}
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = isMatchProp(ds, path, prop)
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
@@ -1333,9 +1327,6 @@ func findBestTask4DS(ds *DataSource, prop *property.PhysicalProperty, planCounte
 	}
 
 	t = base.InvalidTask
-	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("fuck")
-	}
 	candidates := skylinePruning(ds, prop)
 	pruningInfo := getPruningInfo(ds, candidates, prop)
 	defer func() {
@@ -1349,9 +1340,6 @@ func findBestTask4DS(ds *DataSource, prop *property.PhysicalProperty, planCounte
 		}
 	}()
 
-	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("bug here")
-	}
 	cntPlan = 0
 	for _, candidate := range candidates {
 		path := candidate.path

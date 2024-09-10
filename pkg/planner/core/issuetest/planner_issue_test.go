@@ -312,5 +312,5 @@ ORDER BY
 		"  └─Projection_18 10.00 root  test.tbl_payment_history.id->Column#38, test.tbl_payment_history.id->Column#39, test.tbl_payment_history.id->Column#40, floor(div(cast(minus(Column#33, 1), decimal(20,0) BINARY), 500))->Column#41",
 		"    └─Window_14 10.00 root  row_number()->Column#33 over(order by test.tbl_payment_history.id rows between current row and current row)",
 		"      └─IndexReader_16 10.00 root  index:IndexRangeScan_15",
-		"        └─IndexRangeScan_15 10.00 cop[tikv] table:a, index:idx_payment_history_004_1(entry_dt, acct_category, id, txn_code_grp) range:[2024-09-08,2024-09-08], keep order:true, stats:pseudo"
+		"        └─IndexRangeScan_15 10.00 cop[tikv] table:a, index:idx_payment_history_004_1(entry_dt, acct_category, id, txn_code_grp) range:[2024-09-08,2024-09-08], keep order:true, stats:pseudo"))
 }
