@@ -127,7 +127,7 @@ func Selectivity(
 		id := col.UniqueID
 		colStats := coll.GetCol(id)
 		if colStats != nil {
-			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
+			maskCovered, ranges, _, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -196,7 +196,7 @@ func Selectivity(
 			if len(idxCols) > len(idxStats.Info.Columns) {
 				lengths = append(lengths, types.UnspecifiedLength)
 			}
-			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs,
+			maskCovered, ranges, partCover, minAccessCondsForDNFCond, err := getMaskAndRanges(ctx, remainedExprs,
 				ranger.IndexRangeType, lengths, id2Paths[idxStats.ID], idxCols...)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
@@ -207,13 +207,14 @@ func Selectivity(
 			}
 			selectivity := cnt / float64(coll.RealtimeCount)
 			nodes = append(nodes, &StatsNode{
-				Tp:          IndexType,
-				ID:          id,
-				mask:        maskCovered,
-				Ranges:      ranges,
-				numCols:     len(idxStats.Info.Columns),
-				Selectivity: selectivity,
-				partCover:   partCover,
+				Tp:                       IndexType,
+				ID:                       id,
+				mask:                     maskCovered,
+				Ranges:                   ranges,
+				numCols:                  len(idxStats.Info.Columns),
+				Selectivity:              selectivity,
+				partCover:                partCover,
+				minAccessCondsForDNFCond: minAccessCondsForDNFCond,
 			})
 		}
 	}
@@ -545,7 +546,8 @@ type StatsNode struct {
 	numCols int
 	// partCover indicates whether the bit in the mask is for a full cover or partial cover. It is only true
 	// when the condition is a DNF expression on index, and the expression is not totally extracted as access condition.
-	partCover bool
+	partCover                bool
+	minAccessCondsForDNFCond int
 }
 
 // The type of the StatsNode.
@@ -604,7 +606,8 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
-		bestID, bestCount, bestTp, bestNumCols, bestMask, bestSel := -1, 0, ColType, 0, int64(0), float64(0)
+		bestID, bestCount, bestTp, bestNumCols, bestMask, bestSel, bestPartCover, bestMinAccessCondsForDNFCond :=
+			-1, 0, ColType, 0, int64(0), float64(0), true, -1
 		for i, set := range nodes {
 			if marked[i] {
 				continue
@@ -631,9 +634,12 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 			//      to impose this rule after rule 2 and 3.
 			if (bestTp == ColType && set.Tp != ColType) ||
 				bestCount < bits ||
-				(bestCount == bits && bestNumCols > set.numCols) ||
-				(bestCount == bits && bestNumCols == set.numCols && bestSel > set.Selectivity) {
-				bestID, bestCount, bestTp, bestNumCols, bestMask, bestSel = i, bits, set.Tp, set.numCols, curMask, set.Selectivity
+				(bestCount == bits && bestPartCover && !set.partCover) ||
+				(bestCount == bits && bestPartCover == set.partCover && bestMinAccessCondsForDNFCond < set.minAccessCondsForDNFCond) ||
+				(bestCount == bits && bestPartCover == set.partCover && bestMinAccessCondsForDNFCond == set.minAccessCondsForDNFCond && bestNumCols > set.numCols) ||
+				(bestCount == bits && bestPartCover == set.partCover && bestMinAccessCondsForDNFCond == set.minAccessCondsForDNFCond && bestNumCols == set.numCols && bestSel > set.Selectivity) {
+				bestID, bestCount, bestTp, bestNumCols, bestMask, bestSel, bestPartCover, bestMinAccessCondsForDNFCond = i, bits, set.Tp,
+					set.numCols, curMask, set.Selectivity, set.partCover, set.minAccessCondsForDNFCond
 			}
 		}
 		if bestCount == 0 {
@@ -695,7 +701,7 @@ func findPrefixOfIndexByCol(ctx context.PlanContext, cols []*expression.Column, 
 
 func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, rangeType ranger.RangeType,
 	lengths []int, cachedPath *planutil.AccessPath, cols ...*expression.Column) (
-	mask int64, ranges []*ranger.Range, partCover bool, err error) {
+	mask int64, ranges []*ranger.Range, partCover bool, minAccessCondsForDNFCond int, err error) {
 	isDNF := false
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
@@ -705,25 +711,32 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 			types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
-			ranges, accessConds, remainedConds, isDNF = cachedPath.Ranges,
-				cachedPath.AccessConds, cachedPath.TableFilters, cachedPath.IsDNFCond
+			ranges = cachedPath.Ranges
+			accessConds = cachedPath.AccessConds
+			remainedConds = cachedPath.TableFilters
+			isDNF = cachedPath.IsDNFCond
+			minAccessCondsForDNFCond = cachedPath.MinAccessCondsForDNFCond
 			break
 		}
 		var res *ranger.DetachRangeResult
 		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx.GetRangerCtx(), exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
 		if err != nil {
-			return 0, nil, false, err
+			return 0, nil, false, -1, err
 		}
-		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
+		ranges = res.Ranges
+		accessConds = res.AccessConds
+		remainedConds = res.RemainedConds
+		isDNF = res.IsDNFCond
+		minAccessCondsForDNFCond = res.MinAccessCondsForDNFCond
 	default:
 		panic("should never be here")
 	}
 	if err != nil {
-		return 0, nil, false, err
+		return 0, nil, false, -1, err
 	}
 	if isDNF && len(accessConds) > 0 {
 		mask |= 1
-		return mask, ranges, len(remainedConds) > 0, nil
+		return mask, ranges, len(remainedConds) > 0, minAccessCondsForDNFCond, nil
 	}
 	for i := range exprs {
 		for j := range accessConds {
@@ -733,7 +746,7 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 			}
 		}
 	}
-	return mask, ranges, false, nil
+	return mask, ranges, false, -1, nil
 }
 
 func getMaskAndSelectivityForMVIndex(

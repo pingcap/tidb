@@ -73,7 +73,8 @@ type AccessPath struct {
 
 	StoreType kv.StoreType
 
-	IsDNFCond bool
+	IsDNFCond                bool
+	MinAccessCondsForDNFCond int
 
 	// IsIntHandlePath indicates whether this path is table path.
 	IsIntHandlePath    bool
