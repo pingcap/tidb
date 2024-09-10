@@ -253,10 +253,7 @@ func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) er
 func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chunk) error {
 	for {
 		if e.isDryUpTasks(ctx) {
-			if e.panicErr.Load() {
-				return e.panicErr.error
-			}
-			return nil
+			return e.getPanicErr()
 		}
 		if e.curTask.err != nil {
 			return e.curTask.err
@@ -298,6 +295,13 @@ func (e *IndexNestedLoopHashJoin) isDryUpTasks(ctx context.Context) bool {
 	return false
 }
 
+func (e *IndexNestedLoopHashJoin) getPanicErr() error {
+	if e.panicErr.Load() {
+		return e.panicErr.error
+	}
+	return nil
+}
+
 func (e *IndexNestedLoopHashJoin) getResultFromChannel(ctx context.Context, resultCh <-chan *indexHashJoinResult) (*indexHashJoinResult, error) {
 	var (
 		result *indexHashJoinResult
@@ -318,10 +322,7 @@ func (e *IndexNestedLoopHashJoin) getResultFromChannel(ctx context.Context, resu
 			}
 		})
 
-		err := error(nil)
-		if e.panicErr.Load() {
-			err = e.panicErr.error
-		}
+		err := e.getPanicErr()
 
 		if err == nil {
 			err = ctx.Err()
