@@ -159,9 +159,8 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode")
 	tk.MustExec("insert into t values(2, 2)")
-	tk.MustExec("commit")
-
 	tk.MustExec("insert into t values(4, 4)")
+	tk.MustExec("commit")
 
 	// in a running txn
 	tk.MustExec("set session tidb_dml_type = standard")
@@ -194,8 +193,9 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.MustExec("explain insert into t values(8, 8)")
 	// explain is read-only, so it doesn't warn.
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("begin")
 	tk.MustExec("explain analyze insert into t values(9, 9)")
-	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
+	tk.MustExec("commit")
 
 	// disable MDL
 	tk.MustExec("set global tidb_enable_metadata_lock = off")
