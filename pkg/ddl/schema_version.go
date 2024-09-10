@@ -22,8 +22,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
@@ -50,17 +51,24 @@ func SetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error 
 // SetSchemaDiffForTruncateTable set SchemaDiff for ActionTruncateTable.
 func SetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job) error {
 	// Truncate table has two table ID, should be handled differently.
-	err := job.DecodeArgs(&diff.TableID)
+	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	diff.TableID = args.NewTableID
 	diff.OldTableID = job.TableID
 
 	// affects are used to update placement rule cache
-	if len(job.CtxVars) > 0 {
-		oldIDs := job.CtxVars[0].([]int64)
-		newIDs := job.CtxVars[1].([]int64)
-		diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+	if job.Version == model.JobVersion1 {
+		if len(job.CtxVars) > 0 {
+			oldIDs := job.CtxVars[0].([]int64)
+			newIDs := job.CtxVars[1].([]int64)
+			diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+		}
+	} else {
+		if len(args.OldPartIDsWithPolicy) > 0 {
+			diff.AffectedOpts = buildPlacementAffects(args.OldPartIDsWithPolicy, args.NewPartIDsWithPolicy)
+		}
 	}
 	return nil
 }
@@ -96,7 +104,7 @@ func SetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job) error {
 func SetSchemaDiffForRenameTables(diff *model.SchemaDiff, job *model.Job) error {
 	var (
 		oldSchemaIDs, newSchemaIDs, tableIDs []int64
-		tableNames, oldSchemaNames           []*model.CIStr
+		tableNames, oldSchemaNames           []*pmodel.CIStr
 	)
 	err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames)
 	if err != nil {

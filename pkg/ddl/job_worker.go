@@ -35,9 +35,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
@@ -46,10 +46,8 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	kvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -641,17 +639,13 @@ func (w *worker) checkBeforeCommit() error {
 	return nil
 }
 
-func (w *ReorgContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
+func (w *ReorgContext) getResourceGroupTaggerForTopSQL() *kv.ResourceGroupTagBuilder {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
 		return nil
 	}
 
 	digest := w.cacheDigest
-	tagger := func(req *tikvrpc.Request) {
-		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
-			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
-	}
-	return tagger
+	return kv.NewResourceGroupTagBuilder().SetSQLDigest(digest)
 }
 
 func (w *ReorgContext) ddlJobSourceType() string {
@@ -884,7 +878,7 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onShardRowID(jobCtx, t, job)
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(jobCtx, t, job)
-	case model.ActionModifyTableAutoIdCache:
+	case model.ActionModifyTableAutoIDCache:
 		ver, err = onModifyTableAutoIDCache(jobCtx, t, job)
 	case model.ActionAddTablePartition:
 		ver, err = w.onAddTablePartition(jobCtx, t, job)

@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "tests_test",
+    timeout = "short",
+    srcs = ["resource_group_test.go"],
+    flaky = True,
+    race = "on",
+    shard_count = 6,
+    deps = [
+        "//pkg/ddl/resourcegroup",
+        "//pkg/domain",
+        "//pkg/domain/infosync",
+        "//pkg/errno",
+        "//pkg/meta/model",
+        "//pkg/parser/auth",
+        "//pkg/parser/model",
+        "//pkg/server",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_stretchr_testify//require",
+    ],
+)

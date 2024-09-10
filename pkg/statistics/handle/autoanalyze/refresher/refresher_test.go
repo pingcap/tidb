@@ -21,7 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
@@ -144,12 +145,12 @@ func TestIgnoreTinyTable(t *testing.T) {
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Make sure table stats are not pseudo.
-	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
 	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
 	require.False(t, tblStats1.Pseudo)
-	tbl2, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -200,23 +201,25 @@ func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	require.Equal(t, 2, r.Jobs.Len())
 	// Analyze t1 first.
 	require.True(t, r.AnalyzeHighestPriorityTables())
+	r.WaitAutoAnalyzeFinishedForTest()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// The table is analyzed.
-	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
 	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
 	require.Equal(t, int64(0), tblStats1.ModifyCount)
 	require.Equal(t, int64(12), tblStats1.RealtimeCount)
 	// t2 is not analyzed.
-	tbl2, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
 	require.Equal(t, int64(6), tblStats2.ModifyCount)
 	// Do one more round.
 	require.True(t, r.AnalyzeHighestPriorityTables())
+	r.WaitAutoAnalyzeFinishedForTest()
 	// t2 is analyzed.
 	pid2 = tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 = handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -262,17 +265,18 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	require.Equal(t, 3, r.Jobs.Len())
 	// Analyze tables concurrently.
 	require.True(t, r.AnalyzeHighestPriorityTables())
+	r.WaitAutoAnalyzeFinishedForTest()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Check if t1 and t2 are analyzed (they should be, as they have more new data).
-	tbl1, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
 	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
 	require.Equal(t, int64(0), tblStats1.ModifyCount)
 	require.Equal(t, int64(12), tblStats1.RealtimeCount)
 
-	tbl2, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -280,7 +284,7 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	require.Equal(t, int64(8), tblStats2.RealtimeCount)
 
 	// t3 should not be analyzed yet, as it has the least new data.
-	tbl3, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
+	tbl3, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
 	require.NoError(t, err)
 	pid3 := tbl3.Meta().GetPartitionInfo().Definitions[1].ID
 	tblStats3 := handle.GetPartitionStats(tbl3.Meta(), pid3)
@@ -288,6 +292,7 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 
 	// Do one more round to analyze t3.
 	require.True(t, r.AnalyzeHighestPriorityTables())
+	r.WaitAutoAnalyzeFinishedForTest()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 
@@ -314,9 +319,10 @@ func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	r.RebuildTableAnalysisJobQueue()
 	// No jobs in the queue.
 	r.AnalyzeHighestPriorityTables()
+	r.WaitAutoAnalyzeFinishedForTest()
 	// The table is not analyzed.
 	is := dom.InfoSchema()
-	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
 	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
@@ -333,7 +339,7 @@ func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 		},
 	}
 	r.Jobs.Push(job1)
-	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 	job2 := &priorityqueue.NonPartitionedTableAnalysisJob{
 		TableID:     tbl2.Meta().ID,
@@ -350,6 +356,7 @@ func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	insertFailedJobForPartitionWithStartTime(tk, "test", "t1", "p0", startTime)
 
 	r.AnalyzeHighestPriorityTables()
+	r.WaitAutoAnalyzeFinishedForTest()
 	// t2 is analyzed.
 	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
@@ -553,7 +560,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 				Indices: []*model.IndexInfo{
 					{
 						ID:    1,
-						Name:  model.NewCIStr("index1"),
+						Name:  pmodel.NewCIStr("index1"),
 						State: model.StatePublic,
 					},
 				},
@@ -567,7 +574,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 				Indices: []*model.IndexInfo{
 					{
 						ID:    1,
-						Name:  model.NewCIStr("index1"),
+						Name:  pmodel.NewCIStr("index1"),
 						State: model.StatePublic,
 					},
 				},
@@ -623,7 +630,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				Indices: []*model.IndexInfo{
 					{
 						ID:    1,
-						Name:  model.NewCIStr("index1"),
+						Name:  pmodel.NewCIStr("index1"),
 						State: model.StatePublic,
 					},
 				},
@@ -661,11 +668,11 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			defs: []model.PartitionDefinition{
 				{
 					ID:   1,
-					Name: model.NewCIStr("p0"),
+					Name: pmodel.NewCIStr("p0"),
 				},
 				{
 					ID:   2,
-					Name: model.NewCIStr("p1"),
+					Name: pmodel.NewCIStr("p1"),
 				},
 			},
 			autoAnalyzeRatio:           0.5,
@@ -681,7 +688,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				Indices: []*model.IndexInfo{
 					{
 						ID:    1,
-						Name:  model.NewCIStr("index1"),
+						Name:  pmodel.NewCIStr("index1"),
 						State: model.StatePublic,
 					},
 				},
@@ -743,11 +750,11 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			defs: []model.PartitionDefinition{
 				{
 					ID:   1,
-					Name: model.NewCIStr("p0"),
+					Name: pmodel.NewCIStr("p0"),
 				},
 				{
 					ID:   2,
-					Name: model.NewCIStr("p1"),
+					Name: pmodel.NewCIStr("p1"),
 				},
 			},
 			autoAnalyzeRatio:           0.5,
@@ -763,7 +770,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				Indices: []*model.IndexInfo{
 					{
 						ID:    1,
-						Name:  model.NewCIStr("index1"),
+						Name:  pmodel.NewCIStr("index1"),
 						State: model.StatePublic,
 					},
 				},
@@ -825,11 +832,11 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			defs: []model.PartitionDefinition{
 				{
 					ID:   1,
-					Name: model.NewCIStr("p0"),
+					Name: pmodel.NewCIStr("p0"),
 				},
 				{
 					ID:   2,
-					Name: model.NewCIStr("p1"),
+					Name: pmodel.NewCIStr("p1"),
 				},
 			},
 			autoAnalyzeRatio:           0.5,
@@ -869,12 +876,12 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 		Indices: []*model.IndexInfo{
 			{
 				ID:    1,
-				Name:  model.NewCIStr("index1"),
+				Name:  pmodel.NewCIStr("index1"),
 				State: model.StatePublic,
 			},
 			{
 				ID:    2,
-				Name:  model.NewCIStr("index2"),
+				Name:  pmodel.NewCIStr("index2"),
 				State: model.StatePublic,
 			},
 		},

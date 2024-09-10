@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -55,7 +56,52 @@ func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProj
 	return &p
 }
 
-// *************************** start implementation of Plan interface ***************************
+// *************************** start implementation of HashEquals interface ****************************
+
+// Hash64 implements the base.Hash64.<0th> interface.
+func (p *LogicalProjection) Hash64(h base2.Hasher) {
+	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
+	// like schema and names are lost.
+	p.LogicalSchemaProducer.Hash64(h)
+	// todo: if we change the logicalProjection's Expr definition as:Exprs []memo.ScalarOperator[any],
+	// we should use like below:
+	// for _, one := range p.Exprs {
+	//		one.Hash64(one)
+	// }
+	// otherwise, we would use the belowing code.
+	//for _, one := range p.Exprs {
+	//	one.Hash64(h)
+	//}
+	h.HashBool(p.CalculateNoDelay)
+	h.HashBool(p.Proj4Expand)
+}
+
+// Equals implements the base.HashEquals.<1st> interface.
+func (p *LogicalProjection) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	proj, ok := other.(*LogicalProjection)
+	if !ok {
+		return false
+	}
+	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
+	// like schema and names are lost.
+	if !p.LogicalSchemaProducer.Equals(&proj.LogicalSchemaProducer) {
+		return false
+	}
+	//for i, one := range p.Exprs {
+	//	if !one.(memo.ScalarOperator[any]).Equals(other.Exprs[i]) {
+	//		return false
+	//	}
+	//}
+	if p.CalculateNoDelay != proj.CalculateNoDelay {
+		return false
+	}
+	return p.Proj4Expand == proj.Proj4Expand
+}
+
+// *************************** start implementation of Plan interface **********************************
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalProjection) ExplainInfo() string {
@@ -71,7 +117,7 @@ func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Co
 	}
 }
 
-// *************************** end implementation of Plan interface ***************************
+// *************************** end implementation of Plan interface ************************************
 
 // *************************** start implementation of logicalPlan interface ***************************
 

@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -156,6 +156,9 @@ type StatsAnalyze interface {
 
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
+
+	// Close closes the analyze worker.
+	Close()
 }
 
 // StatsCache is used to manage all table statistics in memory.

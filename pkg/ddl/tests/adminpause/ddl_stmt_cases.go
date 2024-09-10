@@ -17,7 +17,7 @@ package adminpause
 import (
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 

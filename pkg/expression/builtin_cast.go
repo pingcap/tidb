@@ -1163,13 +1163,13 @@ func (b *builtinCastRealAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res i
 		return res, isNull, err
 	}
 	if !mysql.HasUnsignedFlag(b.tp.GetFlag()) {
-		res, err = types.ConvertFloatToInt(val, types.IntergerSignedLowerBound(mysql.TypeLonglong), types.IntergerSignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+		res, err = types.ConvertFloatToInt(val, types.IntegerSignedLowerBound(mysql.TypeLonglong), types.IntegerSignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 	} else if b.inUnion && val < 0 {
 		res = 0
 	} else {
 		var uintVal uint64
 		tc := typeCtx(ctx)
-		uintVal, err = types.ConvertFloatToUint(tc.Flags(), val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+		uintVal, err = types.ConvertFloatToUint(tc.Flags(), val, types.IntegerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		res = int64(uintVal)
 	}
 	if types.ErrOverflow.Equal(err) {
