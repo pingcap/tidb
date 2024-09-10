@@ -205,9 +205,8 @@ func TestPartitionByWithPlacement(t *testing.T) {
 		if currTest.errStr != "" {
 			tk1.MustContainErrMsg(currTest.alterSQL, currTest.errStr)
 			continue
-		} else {
-			tk1.MustExec(currTest.alterSQL)
 		}
+		tk1.MustExec(currTest.alterSQL)
 
 		tk3.MustExec(`insert into t (b) values ("after")`)
 
