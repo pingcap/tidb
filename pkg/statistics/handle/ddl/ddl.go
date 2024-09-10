@@ -159,9 +159,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(s *ddlutil.SchemaChangeEvent) error {
 	case model.ActionRemovePartitioning:
 		// Change id for global stats, since the data has not changed!
 		// Note: This operation will update all tables related to statistics with the new ID.
-		oldTblID,
-			newSingleTableInfo,
-			droppedPartInfo := s.GetRemovePartitioningInfo()
+		oldTblID, newSingleTableInfo, droppedPartInfo := s.GetRemovePartitioningInfo()
 		if err := h.statsWriter.ChangeGlobalStatsID(oldTblID, newSingleTableInfo.ID); err != nil {
 			return err
 		}
