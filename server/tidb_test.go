@@ -3325,16 +3325,15 @@ func TestAuthSocket(t *testing.T) {
 }
 
 func TestIssue53634(t *testing.T) {
+	if !variable.DefTiDBEnableConcurrentDDL {
+		t.Skip("skip this mdl test when DefTiDBEnableConcurrentDDL is false")
+	}
+
 	cfg := newTestConfig()
 	cfg.Lease = "20s"
 	cfg.Port = 4123
 	cfg.Status.StatusPort = 10088
 	ts := createTidbTestSuiteWithCfg(t, cfg)
-
-	se, err := session.CreateSession4Test(ts.store)
-	require.NoError(t, err)
-	_, err = se.Execute(context.Background(), "set global tidb_enable_metadata_lock=1")
-	require.NoError(t, err)
 
 	ts.runTestIssue53634(t, ts, ts.domain)
 }
