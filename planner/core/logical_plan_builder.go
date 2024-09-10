@@ -1607,6 +1607,12 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 				if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
 					breakIteration = true
 				}
+				if x.Limit != nil || x.OrderBy != nil {
+					// when SetOprSelectList's limit and order-by is not nil, it means itself is converted from
+					// an independent ast.SetOprStmt in parser, its data should be evaluated first, and ordered
+					// by given items and conduct a limit on it, then it can only be integrated with other brothers.
+					breakIteration = true
+				}
 			}
 			if breakIteration {
 				break
@@ -1703,7 +1709,11 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (L
 		leftPlan, err = b.buildSelect(ctx, x)
 	case *ast.SetOprSelectList:
 		afterSetOperator = x.AfterSetOperator
+<<<<<<< HEAD:planner/core/logical_plan_builder.go
 		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+=======
+		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x, With: x.With, Limit: x.Limit, OrderBy: x.OrderBy})
+>>>>>>> 423834132da (parser, planner: fix embedded setOprStmt will be seen as SetOprSelectList item and lost its orderBy and Limit (#49421)):pkg/planner/core/logical_plan_builder.go
 	}
 	if err != nil {
 		return nil, nil, err
@@ -1727,7 +1737,11 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (L
 				// TODO: support intersect all
 				return nil, nil, errors.Errorf("TiDB do not support intersect all")
 			}
+<<<<<<< HEAD:planner/core/logical_plan_builder.go
 			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+=======
+			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x, With: x.With, Limit: x.Limit, OrderBy: x.OrderBy})
+>>>>>>> 423834132da (parser, planner: fix embedded setOprStmt will be seen as SetOprSelectList item and lost its orderBy and Limit (#49421)):pkg/planner/core/logical_plan_builder.go
 		}
 		if err != nil {
 			return nil, nil, err
