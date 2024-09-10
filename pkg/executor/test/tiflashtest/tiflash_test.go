@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2099,19 +2100,20 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 		{"select * from t2 where b = 2 union select * from t2 where b = 1", 0, 2}, // different partition
 	}
 
-	hitNum, missNum := 0, 0
+	var hitNum, missNum atomic.Int32
 	hitFunc := func() {
-		hitNum++
+		hitNum.Add(1)
 	}
 	missFunc := func() {
-		missNum++
+		missNum.Add(1)
 	}
 	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheHit", hitFunc)
 	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheMiss", missFunc)
 	for _, tc := range testCases {
-		hitNum, missNum = 0, 0
+		hitNum.Store(0)
+		missNum.Store(0)
 		tk.MustQuery(tc.sql)
-		require.Equal(t, tc.expectHitNum, hitNum)
-		require.Equal(t, tc.expectMissNum, missNum)
+		require.Equal(t, tc.expectHitNum, hitNum.Load())
+		require.Equal(t, tc.expectMissNum, missNum.Load())
 	}
 }
