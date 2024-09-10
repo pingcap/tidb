@@ -464,10 +464,10 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 	}
 }
 
-func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType, isExplicitCharSet bool) (baseBuiltinFunc, error) {
+func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType, isExplicitCharset bool) (baseBuiltinFunc, error) {
 	var bf baseBuiltinFunc
 	var err error
-	if isExplicitCharSet {
+	if isExplicitCharset {
 		bf = baseBuiltinFunc{
 			bufAllocator:           newLocalColumnPool(),
 			childrenVectorizedOnce: new(sync.Once),
