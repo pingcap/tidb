@@ -6188,6 +6188,7 @@ func (e *executor) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, con
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tblInfo.ID,
 		SchemaName:     schema.Name.L,
@@ -6198,6 +6199,10 @@ func (e *executor) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, con
 		Args:           []any{constrName},
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
+	job.FillArgs(&model.CheckConstraintArgs{
+		ConstraintName: constrName,
+	})
 
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
@@ -6221,6 +6226,7 @@ func (e *executor) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, co
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tblInfo.ID,
 		SchemaName:     schema.Name.L,
@@ -6228,9 +6234,13 @@ func (e *executor) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, co
 		Type:           model.ActionAlterCheckConstraint,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		Args:           []any{constrName, enforced},
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
+	job.FillArgs(&model.CheckConstraintArgs{
+		ConstraintName: constrName,
+		Enforced:       enforced,
+	})
 
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)

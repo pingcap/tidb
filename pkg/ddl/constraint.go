@@ -199,18 +199,17 @@ func checkDropCheckConstraint(t *meta.Meta, job *model.Job) (*model.TableInfo, *
 		return nil, nil, errors.Trace(err)
 	}
 
-	var constrName pmodel.CIStr
-	err = job.DecodeArgs(&constrName)
+	args, err := model.GetCheckConstraintArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, errors.Trace(err)
 	}
 
 	// double check with constraint existence.
-	constraintInfo := tblInfo.FindConstraintInfoByName(constrName.L)
+	constraintInfo := tblInfo.FindConstraintInfoByName(args.ConstraintName.L)
 	if constraintInfo == nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, dbterror.ErrConstraintNotFound.GenWithStackByArgs(constrName)
+		return nil, nil, dbterror.ErrConstraintNotFound.GenWithStackByArgs(args.ConstraintName)
 	}
 	return tblInfo, constraintInfo, nil
 }
@@ -281,22 +280,18 @@ func checkAlterCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *mo
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	var (
-		enforced   bool
-		constrName pmodel.CIStr
-	)
-	err = job.DecodeArgs(&constrName, &enforced)
+	args, err := model.GetCheckConstraintArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 	// do the double check with constraint existence.
-	constraintInfo := tblInfo.FindConstraintInfoByName(constrName.L)
+	constraintInfo := tblInfo.FindConstraintInfoByName(args.ConstraintName.L)
 	if constraintInfo == nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, false, dbterror.ErrConstraintNotFound.GenWithStackByArgs(constrName)
+		return nil, nil, nil, false, dbterror.ErrConstraintNotFound.GenWithStackByArgs(args.ConstraintName)
 	}
-	return dbInfo, tblInfo, constraintInfo, enforced, nil
+	return dbInfo, tblInfo, constraintInfo, args.Enforced, nil
 }
 
 func allocateConstraintID(tblInfo *model.TableInfo) int64 {

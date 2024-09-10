@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -256,4 +257,38 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 	}
 
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
+}
+
+// CheckConstraintArgs is the arguments for both AlterCheckConstraint and DropCheckConstraint job.
+type CheckConstraintArgs struct {
+	ConstraintName pmodel.CIStr `json:"constraint_name,omitempty"`
+	Enforced       bool         `json:"enforced,omitempty"`
+}
+
+func (a *CheckConstraintArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.ConstraintName, a.Enforced}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetCheckConstraintArgs gets the AlterCheckConstraint args.
+func GetCheckConstraintArgs(job *Job) (*CheckConstraintArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			constraintName pmodel.CIStr
+			enforced       bool
+		)
+		err := job.DecodeArgs(&constraintName, &enforced)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &CheckConstraintArgs{
+			ConstraintName: constraintName,
+			Enforced:       enforced,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*CheckConstraintArgs](job)
 }
