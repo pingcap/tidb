@@ -108,7 +108,7 @@ func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 	logutil.BgLogger().Info("connect to leader", zap.String("category", "autoid client"), zap.String("addr", addr))
-	grpcConn, err := grpc.Dial(addr, opt)
+	grpcConn, err := grpc.NewClient(addr, opt)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
@@ -225,6 +225,10 @@ func (d *ClientDiscover) ResetConn(reason error) {
 			}
 		}()
 	}
+}
+
+func (*singlePointAlloc) Transfer(_, _ int64) error {
+	return nil
 }
 
 // AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering

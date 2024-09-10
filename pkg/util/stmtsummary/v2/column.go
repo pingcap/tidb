@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -110,6 +110,8 @@ const (
 	AvgPdTimeStr                      = "AVG_PD_TIME"
 	AvgBackoffTotalTimeStr            = "AVG_BACKOFF_TOTAL_TIME"
 	AvgWriteSQLRespTimeStr            = "AVG_WRITE_SQL_RESP_TIME"
+	AvgTidbCPUTimeStr                 = "AVG_TIDB_CPU_TIME"
+	AvgTikvCPUTimeStr                 = "AVG_TIKV_CPU_TIME"
 	MaxResultRowsStr                  = "MAX_RESULT_ROWS"
 	MinResultRowsStr                  = "MIN_RESULT_ROWS"
 	AvgResultRowsStr                  = "AVG_RESULT_ROWS"
@@ -120,7 +122,7 @@ const (
 	PlanInCacheStr                    = "PLAN_IN_CACHE"
 	PlanCacheHitsStr                  = "PLAN_CACHE_HITS"
 	PlanCacheUnqualifiedStr           = "PLAN_CACHE_UNQUALIFIED"
-	LastPlanCacheUnqualifiedStr       = "LAST_PLAN_CACHE_UNQUALIFIED_REASON"
+	PlanCacheUnqualifiedLastReasonStr = "PLAN_CACHE_UNQUALIFIED_LAST_REASON"
 	PlanInBindingStr                  = "PLAN_IN_BINDING"
 	QuerySampleTextStr                = "QUERY_SAMPLE_TEXT"
 	PrevSampleTextStr                 = "PREV_SAMPLE_TEXT"
@@ -394,6 +396,12 @@ var columnFactoryMap = map[string]columnFactory{
 	AvgWriteSQLRespTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumWriteSQLRespTotal), record.CommitCount)
 	},
+	AvgTidbCPUTimeStr: func(_ columnInfo, record *StmtRecord) any {
+		return avgInt(int64(record.SumTidbCPU), record.ExecCount)
+	},
+	AvgTikvCPUTimeStr: func(_ columnInfo, record *StmtRecord) any {
+		return avgInt(int64(record.SumTikvCPU), record.ExecCount)
+	},
 	MaxResultRowsStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxResultRows
 	},
@@ -487,8 +495,8 @@ var columnFactoryMap = map[string]columnFactory{
 	PlanCacheUnqualifiedStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.PlanCacheUnqualifiedCount
 	},
-	LastPlanCacheUnqualifiedStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.LastPlanCacheUnqualified
+	PlanCacheUnqualifiedLastReasonStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.PlanCacheUnqualifiedLastReason
 	},
 }
 

@@ -3,14 +3,13 @@ create table t(a int, b int);
 explain update t t1, (select distinct b from t) t2 set t1.b = t2.b;
 id	estRows	task	access object	operator info
 Update_7	N/A	root		N/A
-└─Projection_9	80000000.00	root		planner__core__cbo.t.a, planner__core__cbo.t.b, planner__core__cbo.t._tidb_rowid, planner__core__cbo.t.b
-  └─HashJoin_10	80000000.00	root		CARTESIAN inner join
-    ├─HashAgg_18(Build)	8000.00	root		group by:planner__core__cbo.t.b, funcs:firstrow(planner__core__cbo.t.b)->planner__core__cbo.t.b
-    │ └─TableReader_19	8000.00	root		data:HashAgg_14
-    │   └─HashAgg_14	8000.00	cop[tikv]		group by:planner__core__cbo.t.b, 
-    │     └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-    └─TableReader_13(Probe)	10000.00	root		data:TableFullScan_12
-      └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─HashJoin_10	80000000.00	root		CARTESIAN inner join
+  ├─HashAgg_18(Build)	8000.00	root		group by:planner__core__cbo.t.b, funcs:firstrow(planner__core__cbo.t.b)->planner__core__cbo.t.b
+  │ └─TableReader_19	8000.00	root		data:HashAgg_14
+  │   └─HashAgg_14	8000.00	cop[tikv]		group by:planner__core__cbo.t.b, 
+  │     └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─TableReader_13(Probe)	10000.00	root		data:TableFullScan_12
+    └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists tb1, tb2;
 create table tb1(a int, b int, primary key(a));
 create table tb2 (a int, b int, c int, d datetime, primary key(c),key idx_u(a));
@@ -66,7 +65,7 @@ create table t1(a int, b int, c int, key idx(a, b));
 create table t2(a int, b int);
 insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
 insert into t2 values (2, 22), (3, 33), (5, 55), (233, 2), (333, 3), (3434, 5);
-analyze table t1, t2;
+analyze table t1, t2 all columns;
 explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Projection_9	1.00	1	root	NULL	time:<num>, loops:<num>, RU:<num>, Concurrency:OFF	planner__core__cbo.t1.a, planner__core__cbo.t1.b, Column#8	<num>	N/A

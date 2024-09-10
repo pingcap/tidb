@@ -31,7 +31,11 @@ import (
 type PlanColumnIDAllocator interface {
 	// AllocPlanColumnID allocates column id for plan.
 	AllocPlanColumnID() int64
+	// GetLastPlanColumnID returns the last column id.
+	GetLastPlanColumnID() int64
 }
+
+var _ PlanColumnIDAllocator = &SimplePlanColumnIDAllocator{}
 
 // SimplePlanColumnIDAllocator implements PlanColumnIDAllocator
 type SimplePlanColumnIDAllocator struct {
@@ -50,9 +54,15 @@ func (a *SimplePlanColumnIDAllocator) AllocPlanColumnID() int64 {
 	return a.id.Add(1)
 }
 
+// GetLastPlanColumnID returns the last column id.
+func (a *SimplePlanColumnIDAllocator) GetLastPlanColumnID() int64 {
+	return a.id.Load()
+}
+
 // EvalContext is used to evaluate an expression
 type EvalContext interface {
 	contextutil.WarnHandler
+	ParamValues
 	// CtxID indicates the id of the context.
 	CtxID() uint64
 	// SQLMode returns the sql mode
@@ -70,10 +80,14 @@ type EvalContext interface {
 	CurrentTime() (time.Time, error)
 	// GetMaxAllowedPacket returns the value of the 'max_allowed_packet' system variable.
 	GetMaxAllowedPacket() uint64
+	// GetTiDBRedactLog returns the value of the 'tidb_redact_log' system variable.
+	GetTiDBRedactLog() string
 	// GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 	GetDefaultWeekFormatMode() string
 	// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
 	GetDivPrecisionIncrement() int
+	// GetUserVarsReader returns the `UserVarsReader` to read user vars.
+	GetUserVarsReader() variable.UserVarsReader
 	// RequestVerification verifies user privilege
 	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
 	// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
@@ -112,6 +126,9 @@ type BuildContext interface {
 	// in most cases except for the method `isNullRejected` in planner.
 	// See the comments for `isNullRejected` in planner for more details.
 	IsInNullRejectCheck() bool
+	// IsConstantPropagateCheck returns the flag to indicate whether the expression is in constant propagate check.
+	// It should be true only when we are doing constant propagation in rule_predicate_push_down.
+	IsConstantPropagateCheck() bool
 	// ConnectionID indicates the connection ID of the current session.
 	// If the context is not in a session, it should return 0.
 	ConnectionID() uint64
@@ -143,13 +160,107 @@ func (ctx *NullRejectCheckExprContext) IsInNullRejectCheck() bool {
 	return true
 }
 
+// ConstantPropagateCheckContext is a wrapper to return true for `IsConstantPropagateCheck`.
+type ConstantPropagateCheckContext struct {
+	ExprContext
+}
+
+// WithConstantPropagateCheck returns a new `ConstantPropagateCheckContext` with the given `ExprContext`.
+func WithConstantPropagateCheck(ctx ExprContext) *ConstantPropagateCheckContext {
+	return &ConstantPropagateCheckContext{ExprContext: ctx}
+}
+
+// IsConstantPropagateCheck always returns true for `ConstantPropagateCheckContext`
+func (ctx *ConstantPropagateCheckContext) IsConstantPropagateCheck() bool {
+	return true
+}
+
+type innerOverrideEvalContext struct {
+	EvalContext
+	typeCtx types.Context
+	errCtx  errctx.Context
+}
+
+// TypeCtx implements EvalContext.TypeCtx
+func (ctx *innerOverrideEvalContext) TypeCtx() types.Context {
+	return ctx.typeCtx
+}
+
+// ErrCtx implements EvalContext.GetEvalCtx
+func (ctx *innerOverrideEvalContext) ErrCtx() errctx.Context {
+	return ctx.errCtx
+}
+
+type innerOverrideBuildContext struct {
+	BuildContext
+	evalCtx EvalContext
+}
+
+// GetEvalCtx implements BuildContext.GetEvalCtx
+func (ctx *innerOverrideBuildContext) GetEvalCtx() EvalContext {
+	return ctx.evalCtx
+}
+
+// CtxWithHandleTruncateErrLevel returns a new BuildContext with the specified level for handling truncate error.
+func CtxWithHandleTruncateErrLevel(ctx BuildContext, level errctx.Level) BuildContext {
+	truncateAsWarnings, ignoreTruncate := false, false
+	switch level {
+	case errctx.LevelWarn:
+		truncateAsWarnings = true
+	case errctx.LevelIgnore:
+		ignoreTruncate = true
+	default:
+	}
+
+	evalCtx := ctx.GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+
+	flags := tc.Flags().
+		WithTruncateAsWarning(truncateAsWarnings).
+		WithIgnoreTruncateErr(ignoreTruncate)
+
+	if tc.Flags() == flags && ec.LevelForGroup(errctx.ErrGroupTruncate) == level {
+		// We do not need to create a new context if the flags and level are the same.
+		return ctx
+	}
+
+	return &innerOverrideBuildContext{
+		BuildContext: ctx,
+		evalCtx: &innerOverrideEvalContext{
+			EvalContext: evalCtx,
+			typeCtx:     tc.WithFlags(flags),
+			errCtx:      ec.WithErrGroupLevel(errctx.ErrGroupTruncate, level),
+		},
+	}
+}
+
 // AssertLocationWithSessionVars asserts the location in the context and session variables are the same.
 // It is only used for testing.
 func AssertLocationWithSessionVars(ctxLoc *time.Location, vars *variable.SessionVars) {
-	varsLoc := vars.Location()
-	stmtLoc := vars.StmtCtx.TimeZone()
-	intest.Assert(ctxLoc == varsLoc && ctxLoc == stmtLoc,
+	ctxLocStr := ctxLoc.String()
+	varsLocStr := vars.Location().String()
+	stmtLocStr := vars.StmtCtx.TimeZone().String()
+	intest.Assert(ctxLocStr == varsLocStr && ctxLocStr == stmtLocStr,
 		"location mismatch, ctxLoc: %s, varsLoc: %s, stmtLoc: %s",
-		ctxLoc.String(), varsLoc.String(), stmtLoc.String(),
+		ctxLocStr, varsLocStr, stmtLocStr,
 	)
+}
+
+// StaticConvertibleExprContext provides more methods to implement the clone of a `ExprContext`
+type StaticConvertibleExprContext interface {
+	ExprContext
+
+	GetStaticConvertibleEvalContext() StaticConvertibleEvalContext
+	GetPlanCacheTracker() *contextutil.PlanCacheTracker
+	GetLastPlanColumnID() int64
+}
+
+// StaticConvertibleEvalContext provides more methods to implement the clone of a `EvalContext`
+type StaticConvertibleEvalContext interface {
+	EvalContext
+
+	AllParamValues() []types.Datum
+	GetWarnHandler() contextutil.WarnHandler
+	GetRequestVerificationFn() func(db, table, column string, priv mysql.PrivilegeType) bool
+	GetDynamicPrivCheckFn() func(privName string, grantable bool) bool
 }

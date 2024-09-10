@@ -17,7 +17,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
@@ -231,6 +231,15 @@ func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
 		// checkpoint mode only support after v6.5.0
 		checkpointSupportError = errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use checkpoint, please update tikv's version to at least v6.5.0",
 			s.Address, tikvVersion)
+	}
+
+	// 8.2 br(store based backup) does not support tikv <= 8.1
+	// due to the performance issue https://github.com/tikv/tikv/issues/17168
+	// TODO: we can remove this check if the performance issue is fixed and cherry-pick
+	if (BRVersion.Major > 8 || (BRVersion.Major == 8 && BRVersion.Minor >= 2)) &&
+		(tikvVersion.Major < 8 || (tikvVersion.Major == 8 && tikvVersion.Minor < 2)) {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch, please use the same version of BR",
+			s.Address, tikvVersion, build.ReleaseVersion)
 	}
 
 	// don't warn if we are the master build, which always have the version v4.0.0-beta.2-*

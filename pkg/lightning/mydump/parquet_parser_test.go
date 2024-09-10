@@ -32,7 +32,7 @@ import (
 
 func TestParquetParser(t *testing.T) {
 	type Test struct {
-		S string `parquet:"name=sS, type=UTF8, encoding=PLAIN_DICTIONARY"`
+		S string `parquet:"name=sS, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 		A int32  `parquet:"name=a_A, type=INT32"`
 	}
 
@@ -95,16 +95,16 @@ func TestParquetParser(t *testing.T) {
 
 func TestParquetVariousTypes(t *testing.T) {
 	type Test struct {
-		Date            int32 `parquet:"name=date, type=DATE"`
-		TimeMillis      int32 `parquet:"name=timemillis, type=TIME_MILLIS"`
-		TimeMicros      int64 `parquet:"name=timemicros, type=TIME_MICROS"`
-		TimestampMillis int64 `parquet:"name=timestampmillis, type=TIMESTAMP_MILLIS"`
-		TimestampMicros int64 `parquet:"name=timestampmicros, type=TIMESTAMP_MICROS"`
+		Date            int32 `parquet:"name=date, type=INT32, convertedtype=DATE"`
+		TimeMillis      int32 `parquet:"name=timemillis, type=INT32, isadjustedtoutc=true, convertedtype=TIME_MILLIS"`
+		TimeMicros      int64 `parquet:"name=timemicros, type=INT64, isadjustedtoutc=true, convertedtype=TIME_MICROS"`
+		TimestampMillis int64 `parquet:"name=timestampmillis, type=INT64, isadjustedtoutc=true, convertedtype=TIMESTAMP_MILLIS"`
+		TimestampMicros int64 `parquet:"name=timestampmicros, type=INT64, isadjustedtoutc=true, convertedtype=TIMESTAMP_MICROS"`
 
-		Decimal1 int32 `parquet:"name=decimal1, type=DECIMAL, scale=2, precision=9, basetype=INT32"`
-		Decimal2 int32 `parquet:"name=decimal2, type=DECIMAL, scale=4, precision=4, basetype=INT32"`
-		Decimal3 int64 `parquet:"name=decimal3, type=DECIMAL, scale=2, precision=18, basetype=INT64"`
-		Decimal6 int32 `parquet:"name=decimal6, type=DECIMAL, scale=4, precision=4, basetype=INT32"`
+		Decimal1 int32 `parquet:"name=decimal1, type=INT32, convertedtype=DECIMAL, scale=2, precision=9"`
+		Decimal2 int32 `parquet:"name=decimal2, type=INT32, convertedtype=DECIMAL, scale=4, precision=4"`
+		Decimal3 int64 `parquet:"name=decimal3, type=INT64, convertedtype=DECIMAL, scale=2, precision=18"`
+		Decimal6 int32 `parquet:"name=decimal6, type=INT32, convertedtype=DECIMAL, scale=4, precision=4"`
 	}
 
 	dir := t.TempDir()
@@ -155,8 +155,8 @@ func TestParquetVariousTypes(t *testing.T) {
 	}
 
 	type TestDecimal struct {
-		Decimal1   int32  `parquet:"name=decimal1, type=DECIMAL, scale=3, precision=5, basetype=INT32"`
-		DecimalRef *int32 `parquet:"name=decimal2, type=DECIMAL, scale=3, precision=5, basetype=INT32"`
+		Decimal1   int32  `parquet:"name=decimal1, type=INT32, convertedtype=DECIMAL, scale=3, precision=5"`
+		DecimalRef *int32 `parquet:"name=decimal2, type=INT32, convertedtype=DECIMAL, scale=3, precision=5"`
 	}
 
 	cases := [][]any{

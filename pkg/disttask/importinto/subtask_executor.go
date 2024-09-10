@@ -16,7 +16,6 @@ package importinto
 
 import (
 	"context"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -32,9 +31,6 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
-
-// TestSyncChan is used to test.
-var TestSyncChan = make(chan struct{})
 
 // MiniTaskExecutor is the interface for a minimal task executor.
 // exported for testing.
@@ -58,16 +54,11 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
 	logger := logutil.BgLogger().With(zap.Stringer("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
 	logger.Info("execute chunk")
-	failpoint.Inject("waitBeforeSortChunk", func() {
-		time.Sleep(3 * time.Second)
-	})
+	failpoint.Inject("beforeSortChunk", func() {})
 	failpoint.Inject("errorWhenSortChunk", func() {
 		failpoint.Return(errors.New("occur an error when sort chunk"))
 	})
-	failpoint.Inject("syncBeforeSortChunk", func() {
-		TestSyncChan <- struct{}{}
-		<-TestSyncChan
-	})
+	failpoint.InjectCall("syncBeforeSortChunk")
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	sharedVars := e.mTtask.SharedVars
 	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetKeySpace())
@@ -107,10 +98,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 
 // postProcess does the post-processing for the task.
 func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
-	failpoint.Inject("syncBeforePostProcess", func() {
-		TestSyncChan <- struct{}{}
-		<-TestSyncChan
-	})
+	failpoint.InjectCall("syncBeforePostProcess", taskMeta.JobID)
 
 	callLog := log.BeginTask(logger, "post process")
 	defer func() {

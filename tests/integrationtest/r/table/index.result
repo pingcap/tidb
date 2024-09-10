@@ -78,3 +78,7 @@ t	CREATE TABLE `t` (
   KEY `idx_c` (`c`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
+drop table if exists t;
+create table t (a int, b int, k varchar(255), primary key (a, b), key k (k));
+insert into t values (1, 1, 'abc                                                                                                                                ');
+drop table t;

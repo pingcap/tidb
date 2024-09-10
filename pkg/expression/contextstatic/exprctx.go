@@ -15,12 +15,13 @@
 package contextstatic
 
 import (
-	"sync/atomic"
+	"strings"
 
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
@@ -39,8 +40,7 @@ type staticExprCtxState struct {
 	sysDateIsNow               bool
 	noopFuncsMode              int
 	rng                        *mathutil.MysqlRng
-	canUseCache                *atomic.Bool
-	skipCacheHandleFunc        func(useCache *atomic.Bool, skipReason string)
+	planCacheTracker           *contextutil.PlanCacheTracker
 	columnIDAllocator          exprctx.PlanColumnIDAllocator
 	connectionID               uint64
 	windowingUseHighPrecision  bool
@@ -103,17 +103,11 @@ func WithRng(rng *mathutil.MysqlRng) StaticExprCtxOption {
 	}
 }
 
-// WithUseCache sets the return value of `IsUseCache` for `StaticExprContext`.
-func WithUseCache(useCache bool) StaticExprCtxOption {
+// WithPlanCacheTracker sets the plan cache tracker for `StaticExprContext`.
+func WithPlanCacheTracker(tracker *contextutil.PlanCacheTracker) StaticExprCtxOption {
+	intest.AssertNotNil(tracker)
 	return func(s *staticExprCtxState) {
-		s.canUseCache.Store(useCache)
-	}
-}
-
-// WithSkipCacheHandleFunc sets inner skip plan cache function for StaticExprContext
-func WithSkipCacheHandleFunc(fn func(useCache *atomic.Bool, skipReason string)) StaticExprCtxOption {
-	return func(s *staticExprCtxState) {
-		s.skipCacheHandleFunc = fn
+		s.planCacheTracker = tracker
 	}
 }
 
@@ -162,7 +156,7 @@ func NewStaticExprContext(opts ...StaticExprCtxOption) *StaticExprContext {
 		staticExprCtxState: staticExprCtxState{
 			charset:                    cs.Name,
 			collation:                  cs.DefaultCollation,
-			defaultCollationForUTF8MB4: variable.DefaultCollationForUTF8MB4,
+			defaultCollationForUTF8MB4: mysql.DefaultCollationName,
 			blockEncryptionMode:        variable.DefBlockEncryptionMode,
 			sysDateIsNow:               variable.DefSysdateIsNow,
 			noopFuncsMode:              variable.TiDBOptOnOffWarn(variable.DefTiDBEnableNoopFuncs),
@@ -170,10 +164,6 @@ func NewStaticExprContext(opts ...StaticExprCtxOption) *StaticExprContext {
 			groupConcatMaxLen:          variable.DefGroupConcatMaxLen,
 		},
 	}
-
-	ctx.canUseCache = &atomic.Bool{}
-	ctx.canUseCache.Store(true)
-
 	for _, opt := range opts {
 		opt(&ctx.staticExprCtxState)
 	}
@@ -190,6 +180,12 @@ func NewStaticExprContext(opts ...StaticExprCtxOption) *StaticExprContext {
 		ctx.columnIDAllocator = exprctx.NewSimplePlanColumnIDAllocator(0)
 	}
 
+	if ctx.planCacheTracker == nil {
+		cacheTracker := contextutil.NewPlanCacheTracker(ctx.evalCtx)
+		ctx.planCacheTracker = &cacheTracker
+		ctx.planCacheTracker.EnablePlanCache()
+	}
+
 	return ctx
 }
 
@@ -198,9 +194,6 @@ func (ctx *StaticExprContext) Apply(opts ...StaticExprCtxOption) *StaticExprCont
 	newCtx := &StaticExprContext{
 		staticExprCtxState: ctx.staticExprCtxState,
 	}
-
-	newCtx.canUseCache = &atomic.Bool{}
-	newCtx.canUseCache.Store(ctx.canUseCache.Load())
 
 	for _, opt := range opts {
 		opt(&newCtx.staticExprCtxState)
@@ -211,6 +204,11 @@ func (ctx *StaticExprContext) Apply(opts ...StaticExprCtxOption) *StaticExprCont
 
 // GetEvalCtx implements the `ExprContext.GetEvalCtx`.
 func (ctx *StaticExprContext) GetEvalCtx() exprctx.EvalContext {
+	return ctx.evalCtx
+}
+
+// GetStaticEvalCtx returns the inner `StaticEvalContext`.
+func (ctx *StaticExprContext) GetStaticEvalCtx() *StaticEvalContext {
 	return ctx.evalCtx
 }
 
@@ -246,16 +244,12 @@ func (ctx *StaticExprContext) Rng() *mathutil.MysqlRng {
 
 // IsUseCache implements the `ExprContext.IsUseCache`.
 func (ctx *StaticExprContext) IsUseCache() bool {
-	return ctx.canUseCache.Load()
+	return ctx.planCacheTracker.UseCache()
 }
 
 // SetSkipPlanCache implements the `ExprContext.SetSkipPlanCache`.
 func (ctx *StaticExprContext) SetSkipPlanCache(reason string) {
-	if fn := ctx.skipCacheHandleFunc; fn != nil {
-		fn(ctx.canUseCache, reason)
-		return
-	}
-	ctx.canUseCache.Store(false)
+	ctx.planCacheTracker.SetSkipPlanCache(reason)
 }
 
 // AllocPlanColumnID implements the `ExprContext.AllocPlanColumnID`.
@@ -265,6 +259,11 @@ func (ctx *StaticExprContext) AllocPlanColumnID() int64 {
 
 // IsInNullRejectCheck implements the `ExprContext.IsInNullRejectCheck` and should always return false.
 func (ctx *StaticExprContext) IsInNullRejectCheck() bool {
+	return false
+}
+
+// IsConstantPropagateCheck implements the `ExprContext.IsConstantPropagateCheck` and should always return false.
+func (ctx *StaticExprContext) IsConstantPropagateCheck() bool {
 	return false
 }
 
@@ -281,4 +280,82 @@ func (ctx *StaticExprContext) GetWindowingUseHighPrecision() bool {
 // GetGroupConcatMaxLen implements the `ExprContext.GetGroupConcatMaxLen`.
 func (ctx *StaticExprContext) GetGroupConcatMaxLen() uint64 {
 	return ctx.groupConcatMaxLen
+}
+
+var _ exprctx.StaticConvertibleExprContext = &StaticExprContext{}
+
+// GetLastPlanColumnID implements context.StaticConvertibleExprContext.
+func (ctx *StaticExprContext) GetLastPlanColumnID() int64 {
+	return ctx.columnIDAllocator.GetLastPlanColumnID()
+}
+
+// GetPlanCacheTracker implements context.StaticConvertibleExprContext.
+func (ctx *StaticExprContext) GetPlanCacheTracker() *contextutil.PlanCacheTracker {
+	return ctx.planCacheTracker
+}
+
+// GetStaticConvertibleEvalContext implements context.StaticConvertibleExprContext.
+func (ctx *StaticExprContext) GetStaticConvertibleEvalContext() exprctx.StaticConvertibleEvalContext {
+	return ctx.evalCtx
+}
+
+// MakeExprContextStatic converts the `exprctx.StaticConvertibleExprContext` to `StaticExprContext`.
+func MakeExprContextStatic(ctx exprctx.StaticConvertibleExprContext) *StaticExprContext {
+	staticEvalContext := MakeEvalContextStatic(ctx.GetStaticConvertibleEvalContext())
+
+	return NewStaticExprContext(
+		WithEvalCtx(staticEvalContext),
+		WithCharset(ctx.GetCharsetInfo()),
+		WithDefaultCollationForUTF8MB4(ctx.GetDefaultCollationForUTF8MB4()),
+		WithBlockEncryptionMode(ctx.GetBlockEncryptionMode()),
+		WithSysDateIsNow(ctx.GetSysdateIsNow()),
+		WithNoopFuncsMode(ctx.GetNoopFuncsMode()),
+		WithRng(ctx.Rng()),
+		WithPlanCacheTracker(ctx.GetPlanCacheTracker()),
+		WithColumnIDAllocator(
+			exprctx.NewSimplePlanColumnIDAllocator(ctx.GetLastPlanColumnID())),
+		WithConnectionID(ctx.ConnectionID()),
+		WithWindowingUseHighPrecision(ctx.GetWindowingUseHighPrecision()),
+		WithGroupConcatMaxLen(ctx.GetGroupConcatMaxLen()),
+	)
+}
+
+// LoadSystemVars loads system variables and returns a new `StaticEvalContext` with system variables loaded.
+func (ctx *StaticExprContext) LoadSystemVars(sysVars map[string]string) (*StaticExprContext, error) {
+	sessionVars, err := newSessionVarsWithSystemVariables(sysVars)
+	if err != nil {
+		return nil, err
+	}
+	return ctx.loadSessionVarsInternal(sessionVars, sysVars), nil
+}
+
+func (ctx *StaticExprContext) loadSessionVarsInternal(
+	sessionVars *variable.SessionVars, sysVars map[string]string,
+) *StaticExprContext {
+	opts := make([]StaticExprCtxOption, 0, 8)
+	opts = append(opts, WithEvalCtx(ctx.evalCtx.loadSessionVarsInternal(sessionVars, sysVars)))
+	for name := range sysVars {
+		name = strings.ToLower(name)
+		switch name {
+		case variable.CharacterSetConnection, variable.CollationConnection:
+			opts = append(opts, WithCharset(sessionVars.GetCharsetInfo()))
+		case variable.DefaultCollationForUTF8MB4:
+			opts = append(opts, WithDefaultCollationForUTF8MB4(sessionVars.DefaultCollationForUTF8MB4))
+		case variable.BlockEncryptionMode:
+			blockMode, ok := sessionVars.GetSystemVar(variable.BlockEncryptionMode)
+			intest.Assert(ok)
+			if ok {
+				opts = append(opts, WithBlockEncryptionMode(blockMode))
+			}
+		case variable.TiDBSysdateIsNow:
+			opts = append(opts, WithSysDateIsNow(sessionVars.SysdateIsNow))
+		case variable.TiDBEnableNoopFuncs:
+			opts = append(opts, WithNoopFuncsMode(sessionVars.NoopFuncsMode))
+		case variable.WindowingUseHighPrecision:
+			opts = append(opts, WithWindowingUseHighPrecision(sessionVars.WindowingUseHighPrecision))
+		case variable.GroupConcatMaxLen:
+			opts = append(opts, WithGroupConcatMaxLen(sessionVars.GroupConcatMaxLen))
+		}
+	}
+	return ctx.Apply(opts...)
 }

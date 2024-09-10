@@ -119,7 +119,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (
 // newCachedTable creates a new CachedTable Instance
 func newCachedTable(tbl *TableCommon) (table.Table, error) {
 	ret := &cachedTable{
-		TableCommon: *tbl,
+		TableCommon: tbl.Copy(),
 		tokenLimit:  make(chan StateRemote, 1),
 	}
 	return ret, nil
@@ -239,38 +239,34 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 const cachedTableSizeLimit = 64 * (1 << 20)
 
 // AddRecord implements the AddRecord method for the table.Table interface.
-func (c *cachedTable) AddRecord(sctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+func (c *cachedTable) AddRecord(sctx table.MutateContext, txn kv.Transaction, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return nil, table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
 	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
-	return c.TableCommon.AddRecord(sctx, r, opts...)
+	return c.TableCommon.AddRecord(sctx, txn, r, opts...)
 }
 
 func txnCtxAddCachedTable(sctx table.MutateContext, tid int64, handle *cachedTable) {
-	txnCtx := sctx.GetSessionVars().TxnCtx
-	if txnCtx.CachedTables == nil {
-		txnCtx.CachedTables = make(map[int64]any)
-	}
-	if _, ok := txnCtx.CachedTables[tid]; !ok {
-		txnCtx.CachedTables[tid] = handle
+	if s, ok := sctx.GetCachedTableSupport(); ok {
+		s.AddCachedTableHandleToTxn(tid, handle)
 	}
 }
 
 // UpdateRecord implements table.Table
-func (c *cachedTable) UpdateRecord(ctx context.Context, sctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (c *cachedTable) UpdateRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
 	// Prevent furthur writing when the table is already too large.
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
-	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
-	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
+	txnCtxAddCachedTable(ctx, c.Meta().ID, c)
+	return c.TableCommon.UpdateRecord(ctx, txn, h, oldData, newData, touched, opts...)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (c *cachedTable) RemoveRecord(sctx table.MutateContext, h kv.Handle, r []types.Datum) error {
+func (c *cachedTable) RemoveRecord(sctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
 	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
-	return c.TableCommon.RemoveRecord(sctx, h, r)
+	return c.TableCommon.RemoveRecord(sctx, txn, h, r)
 }
 
 // TestMockRenewLeaseABA2 is used by test function TestRenewLeaseABAFailPoint.

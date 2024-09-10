@@ -19,10 +19,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
@@ -49,17 +51,24 @@ func SetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error 
 // SetSchemaDiffForTruncateTable set SchemaDiff for ActionTruncateTable.
 func SetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job) error {
 	// Truncate table has two table ID, should be handled differently.
-	err := job.DecodeArgs(&diff.TableID)
+	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	diff.TableID = args.NewTableID
 	diff.OldTableID = job.TableID
 
 	// affects are used to update placement rule cache
-	if len(job.CtxVars) > 0 {
-		oldIDs := job.CtxVars[0].([]int64)
-		newIDs := job.CtxVars[1].([]int64)
-		diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+	if job.Version == model.JobVersion1 {
+		if len(job.CtxVars) > 0 {
+			oldIDs := job.CtxVars[0].([]int64)
+			newIDs := job.CtxVars[1].([]int64)
+			diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+		}
+	} else {
+		if len(args.OldPartIDsWithPolicy) > 0 {
+			diff.AffectedOpts = buildPlacementAffects(args.OldPartIDsWithPolicy, args.NewPartIDsWithPolicy)
+		}
 	}
 	return nil
 }
@@ -95,7 +104,7 @@ func SetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job) error {
 func SetSchemaDiffForRenameTables(diff *model.SchemaDiff, job *model.Job) error {
 	var (
 		oldSchemaIDs, newSchemaIDs, tableIDs []int64
-		tableNames, oldSchemaNames           []*model.CIStr
+		tableNames, oldSchemaNames           []*pmodel.CIStr
 	)
 	err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames)
 	if err != nil {
@@ -275,6 +284,7 @@ func SetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error
 			OldTableID:  recoverTabsInfo[i].TableInfo.ID,
 		}
 	}
+	diff.ReadTableFromMeta = true
 	return nil
 }
 
@@ -311,8 +321,8 @@ func SetSchemaDiffForMultiInfos(diff *model.SchemaDiff, multiInfos ...schemaIDAn
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
-func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
-	schemaVersion, err := d.setSchemaVersion(job, d.store)
+func updateSchemaVersion(jobCtx *jobContext, t *meta.Meta, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
+	schemaVersion, err := jobCtx.setSchemaVersion(job)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -359,7 +369,7 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 	return schemaVersion, errors.Trace(err)
 }
 
-func checkAllVersions(d *ddlCtx, job *model.Job, latestSchemaVersion int64, timeStart time.Time) error {
+func waitVersionSynced(jobCtx *jobContext, job *model.Job, latestSchemaVersion int64) (err error) {
 	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
@@ -368,38 +378,41 @@ func checkAllVersions(d *ddlCtx, job *model.Job, latestSchemaVersion int64, time
 			mockDDLErrOnce = -1
 		}
 	})
-
-	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err := d.schemaSyncer.OwnerCheckAllVersions(d.ctx, job.ID, latestSchemaVersion)
+	timeStart := time.Now()
+	defer func() {
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+	}()
+	// WaitVersionSynced returns only when all TiDB schemas are synced(exclude the isolated TiDB).
+	err = jobCtx.schemaVerSyncer.WaitVersionSynced(jobCtx.ctx, job.ID, latestSchemaVersion)
 	if err != nil {
-		logutil.Logger(d.ctx).Info("wait latest schema version encounter error", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion),
+		logutil.DDLLogger().Info("wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion),
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
 		return err
 	}
-	logutil.Logger(d.ctx).Info("wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)", zap.String("category", "ddl"),
+	logutil.DDLLogger().Info("wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)",
 		zap.Int64("ver", latestSchemaVersion),
 		zap.Duration("take time", time.Since(timeStart)),
 		zap.String("job", job.String()))
 	return nil
 }
 
-// waitSchemaSynced handles the following situation:
-// If the job enters a new state, and the worker crashs when it's in the process of waiting for 2 * lease time,
-// Then the worker restarts quickly, we may run the job immediately again,
-// but in this case we don't wait enough 2 * lease time to let other servers update the schema.
-// So here we get the latest schema version to make sure all servers' schema version update to the latest schema version
-// in a cluster, or to wait for 2 * lease time.
-func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
+// waitVersionSyncedWithoutMDL handles the following situation:
+// If the job enters a new state, and the worker crash when it's in the process of
+// version sync, then the worker restarts quickly, we may run the job immediately again,
+// but schema version might not sync.
+// So here we get the latest schema version to make sure all servers' schema version
+// update to the latest schema version in a cluster.
+func waitVersionSyncedWithoutMDL(jobCtx *jobContext, job *model.Job) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
 
-	ver, _ := d.store.CurrentVersion(kv.GlobalTxnScope)
-	snapshot := d.store.GetSnapshot(ver)
+	ver, _ := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
+	snapshot := jobCtx.store.GetSnapshot(ver)
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
-		logutil.Logger(d.ctx).Warn("get global version failed", zap.String("category", "ddl"), zap.Int64("jobID", job.ID), zap.Error(err))
+		logutil.DDLLogger().Warn("get global version failed", zap.Int64("jobID", job.ID), zap.Error(err))
 		return err
 	}
 
@@ -412,5 +425,5 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 		}
 	})
 
-	return waitSchemaChanged(d, waitTime, latestSchemaVersion, job)
+	return updateGlobalVersionAndWaitSynced(jobCtx, latestSchemaVersion, job)
 }

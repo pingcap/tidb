@@ -15,11 +15,13 @@
 package core
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -90,9 +92,10 @@ func (generator *RuntimeFilterGenerator) generateRuntimeFilterInterval(hashJoinP
 	if !generator.matchRFJoinType(hashJoinPlan) {
 		return
 	}
+	ectx := hashJoinPlan.SCtx().GetExprCtx().GetEvalCtx()
 	// check eq predicate pattern
 	for _, eqPredicate := range hashJoinPlan.EqualConditions {
-		if generator.matchEQPredicate(eqPredicate, hashJoinPlan.RightIsBuildSide()) {
+		if generator.matchEQPredicate(ectx, eqPredicate, hashJoinPlan.RightIsBuildSide()) {
 			// construct runtime filter
 			newRFList, targetColumnUniqueID := NewRuntimeFilter(generator.rfIDGenerator, eqPredicate, hashJoinPlan)
 			// update generator rf list
@@ -160,8 +163,8 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) bool {
 	if hashJoinPlan.RightIsBuildSide() {
 		// case1: build side is on the right
-		if hashJoinPlan.JoinType == LeftOuterJoin || hashJoinPlan.JoinType == AntiSemiJoin ||
-			hashJoinPlan.JoinType == LeftOuterSemiJoin || hashJoinPlan.JoinType == AntiLeftOuterSemiJoin {
+		if hashJoinPlan.JoinType == logicalop.LeftOuterJoin || hashJoinPlan.JoinType == logicalop.AntiSemiJoin ||
+			hashJoinPlan.JoinType == logicalop.LeftOuterSemiJoin || hashJoinPlan.JoinType == logicalop.AntiLeftOuterSemiJoin {
 			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the right",
 				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
@@ -169,7 +172,7 @@ func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) b
 		}
 	} else {
 		// case2: build side is on the left
-		if hashJoinPlan.JoinType == RightOuterJoin {
+		if hashJoinPlan.JoinType == logicalop.RightOuterJoin {
 			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the left",
 				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
@@ -179,12 +182,12 @@ func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) b
 	return true
 }
 
-func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFunction,
+func (*RuntimeFilterGenerator) matchEQPredicate(ctx expression.EvalContext, eqPredicate *expression.ScalarFunction,
 	rightIsBuildSide bool) bool {
 	// exclude null safe equal predicate
 	if eqPredicate.FuncName.L == ast.NullEQ {
 		logutil.BgLogger().Debug("The runtime filter doesn't support null safe eq predicate",
-			zap.String("EQPredicate", eqPredicate.String()))
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)))
 		return false
 	}
 	var targetColumn, srcColumn *expression.Column
@@ -201,21 +204,21 @@ func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFu
 	// todo: cast expr in target column
 	if targetColumn.IsHidden || targetColumn.OrigName == "" {
 		logutil.BgLogger().Debug("Target column does not match RF pattern",
-			zap.String("EQPredicate", eqPredicate.String()),
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)),
 			zap.String("TargetColumn", targetColumn.String()),
 			zap.Bool("IsHidden", targetColumn.IsHidden),
 			zap.String("OrigName", targetColumn.OrigName))
 		return false
 	}
 	// match data type
-	srcColumnType := srcColumn.GetType().GetType()
+	srcColumnType := srcColumn.GetStaticType().GetType()
 	if srcColumnType == mysql.TypeJSON || srcColumnType == mysql.TypeBlob ||
 		srcColumnType == mysql.TypeLongBlob || srcColumnType == mysql.TypeMediumBlob ||
-		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetType().Hybrid() || srcColumn.GetType().IsArray() {
+		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetStaticType().Hybrid() || srcColumn.GetStaticType().IsArray() {
 		logutil.BgLogger().Debug("Src column type does not match RF pattern",
-			zap.String("EQPredicate", eqPredicate.String()),
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)),
 			zap.String("SrcColumn", srcColumn.String()),
-			zap.String("SrcColumnType", srcColumn.GetType().String()))
+			zap.String("SrcColumnType", srcColumn.GetStaticType().String()))
 		return false
 	}
 	return true

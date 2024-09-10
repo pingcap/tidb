@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -193,6 +193,9 @@ type Allocator interface {
 	// RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
 	RebaseSeq(newBase int64) (int64, bool, error)
 
+	// Transfer transfor the ownership of this allocator to another table
+	Transfer(databaseID, tableID int64) error
+
 	// Base return the current base of Allocator.
 	Base() int64
 	// End is only used for test.
@@ -313,6 +316,22 @@ func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 		return int64(uint64(autoID) + 1), err
 	}
 	return autoID + 1, err
+}
+
+// Transfer implements autoid.Allocator Transfer interface.
+func (alloc *allocator) Transfer(databaseID, tableID int64) error {
+	if alloc.dbID == databaseID && alloc.tbID == tableID {
+		return nil
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(_ context.Context, txn kv.Transaction) error {
+		return alloc.getIDAccessor(txn).CopyTo(databaseID, tableID)
+	})
+	if err == nil {
+		alloc.dbID = databaseID
+		alloc.tbID = tableID
+	}
+	return err
 }
 
 func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64, allocIDs bool) error {
@@ -651,10 +670,9 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 // TODO: Handle allocators when changing Table ID during ALTER TABLE t PARTITION BY ...
 
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
-func NewAllocatorsFromTblInfo(r Requirement, schemaID int64, tblInfo *model.TableInfo) Allocators {
+func NewAllocatorsFromTblInfo(r Requirement, dbID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
-	dbID := tblInfo.GetAutoIDSchemaID(schemaID)
-	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
+	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIDCache)
 	tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
 
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
@@ -933,11 +951,13 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
-	logutil.Logger(context.TODO()).Debug("alloc N signed ID",
-		zap.Uint64("from ID", uint64(alloc.base)),
-		zap.Uint64("to ID", uint64(alloc.base+n1)),
-		zap.Int64("table ID", alloc.tbID),
-		zap.Int64("database ID", alloc.dbID))
+	if logutil.BgLogger().Core().Enabled(zap.DebugLevel) {
+		logutil.BgLogger().Debug("alloc N signed ID",
+			zap.Uint64("from ID", uint64(alloc.base)),
+			zap.Uint64("to ID", uint64(alloc.base+n1)),
+			zap.Int64("table ID", alloc.tbID),
+			zap.Int64("database ID", alloc.dbID))
+	}
 	mini = alloc.base
 	alloc.base += n1
 	return mini, alloc.base, nil

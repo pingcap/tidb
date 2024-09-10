@@ -38,9 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -312,8 +313,12 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	default:
 	}
 
-	if tidbCfg.Store != "tikv" {
-		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
+	store := tidbCfg.Store
+	failpoint.Inject("modifyStore", func(v failpoint.Value) {
+		store = v.(string)
+	})
+	if store != "tikv" {
+		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, store)
 		return nil
 	}
 
@@ -330,6 +335,28 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			cfg.Checksum = opt.UintValue != 0
 		case ast.BRIEOptionSendCreds:
 			cfg.SendCreds = opt.UintValue != 0
+		case ast.BRIEOptionChecksumConcurrency:
+			cfg.ChecksumConcurrency = uint(opt.UintValue)
+		case ast.BRIEOptionEncryptionKeyFile:
+			cfg.CipherInfo.CipherKey, err = task.GetCipherKeyContent("", opt.StrValue)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+		case ast.BRIEOptionEncryptionMethod:
+			switch opt.StrValue {
+			case "aes128-ctr":
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_AES128_CTR
+			case "aes192-ctr":
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_AES192_CTR
+			case "aes256-ctr":
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_AES256_CTR
+			case "plaintext":
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_PLAINTEXT
+			default:
+				b.err = errors.Errorf("unsupported encryption method: %s", opt.StrValue)
+				return nil
+			}
 		}
 	}
 
@@ -383,6 +410,22 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 					return nil
 				}
 				e.backupCfg.BackupTS = tso
+			case ast.BRIEOptionCompression:
+				switch opt.StrValue {
+				case "zstd":
+					e.backupCfg.CompressionConfig.CompressionType = backuppb.CompressionType_ZSTD
+				case "snappy":
+					e.backupCfg.CompressionConfig.CompressionType = backuppb.CompressionType_SNAPPY
+				case "lz4":
+					e.backupCfg.CompressionConfig.CompressionType = backuppb.CompressionType_LZ4
+				default:
+					b.err = errors.Errorf("unsupported compression type: %s", opt.StrValue)
+					return nil
+				}
+			case ast.BRIEOptionCompressionLevel:
+				e.backupCfg.CompressionConfig.CompressionLevel = int32(opt.UintValue)
+			case ast.BRIEOptionIgnoreStats:
+				e.backupCfg.IgnoreStats = opt.UintValue != 0
 			}
 		}
 
@@ -391,8 +434,15 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		rcfg.Config = cfg
 		e.restoreCfg = &rcfg
 		for _, opt := range s.Options {
-			if opt.Tp == ast.BRIEOptionOnline {
+			switch opt.Tp {
+			case ast.BRIEOptionOnline:
 				e.restoreCfg.Online = opt.UintValue != 0
+			case ast.BRIEOptionWaitTiflashReady:
+				e.restoreCfg.WaitTiflashReady = opt.UintValue != 0
+			case ast.BRIEOptionWithSysTable:
+				e.restoreCfg.WithSysTable = opt.UintValue != 0
+			case ast.BRIEOptionLoadStats:
+				e.restoreCfg.LoadStats = opt.UintValue != 0
 			}
 		}
 
@@ -704,6 +754,10 @@ func (gs *tidbGlue) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Sess
 	return fn(glueSession)
 }
 
+func (*tidbGlue) GetClient() glue.GlueClient {
+	return glue.ClientSql
+}
+
 type tidbGlueSession struct {
 	// the session context of the brie task's subtask, such as `CREATE TABLE`.
 	se sessionctx.Context
@@ -732,13 +786,13 @@ func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInf
 }
 
 // CreateTable implements glue.Session
-func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName pmodel.CIStr, table *model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return BRIECreateTable(gs.se, dbName, table, "", cs...)
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
 func (gs *tidbGlueSession) CreateTables(_ context.Context,
-	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return BRIECreateTables(gs.se, tables, "", cs...)
 }
 
@@ -747,7 +801,7 @@ func (gs *tidbGlueSession) CreatePlacementPolicy(_ context.Context, policy *mode
 	originQueryString := gs.se.Value(sessionctx.QueryString)
 	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
 	gs.se.SetValue(sessionctx.QueryString, ConstructResultOfShowCreatePlacementPolicy(policy))
-	d := domain.GetDomain(gs.se).DDL()
+	d := domain.GetDomain(gs.se).DDLExecutor()
 	// the default behaviour is ignoring duplicated policy during restore.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }

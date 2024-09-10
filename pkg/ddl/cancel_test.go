@@ -17,28 +17,29 @@ package ddl_test
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	atomicutil "go.uber.org/atomic"
 )
 
 type testCancelJob struct {
-	sql         string
-	ok          bool
-	cancelState any // model.SchemaState | []model.SchemaState
-	onJobBefore bool
-	onJobUpdate bool
-	prepareSQL  []string
+	sql             string
+	expectCancelled bool
+	cancelState     any // model.SchemaState | []model.SchemaState
+	onJobBefore     bool
+	onJobUpdate     bool
+	prepareSQL      []string
 }
 
 var allTestCase = []testCancelJob{
@@ -204,7 +205,15 @@ func cancelSuccess(rs *testkit.Result) bool {
 }
 
 func TestCancel(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
+	var enterCnt, exitCnt atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) { enterCnt.Add(1) })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.Job) { exitCnt.Add(1) })
+	waitDDLWorkerExited := func() {
+		require.Eventually(t, func() bool {
+			return enterCnt.Load() == exitCnt.Load()
+		}, 10*time.Second, 10*time.Millisecond)
+	}
+	store := testkit.CreateMockStoreWithSchemaLease(t, 100*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 
@@ -233,8 +242,8 @@ func TestCancel(t *testing.T) {
 
 	// Change some configurations.
 	ddl.ReorgWaitTimeout = 10 * time.Millisecond
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 8")
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 8")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow", "return"))
@@ -242,80 +251,82 @@ func TestCancel(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow"))
 	}()
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	i := atomicutil.NewInt64(0)
-	cancel := atomicutil.NewBool(false)
+	canceled := atomicutil.NewBool(false)
 	cancelResult := atomicutil.NewBool(false)
 	cancelWhenReorgNotStart := atomicutil.NewBool(false)
 
 	hookFunc := func(job *model.Job) {
-		if testutil.TestMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel.Load() {
+		if testutil.TestMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !canceled.Load() {
 			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}
 			rs := tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 			cancelResult.Store(cancelSuccess(rs))
-			cancel.Store(true)
+			canceled.Store(true)
 		}
 	}
-	dom.DDL().SetHook(hook.Clone())
 
-	restHook := func(h *callback.TestDDLCallback) {
-		h.OnJobRunBeforeExported = nil
-		h.OnJobUpdatedExported.Store(nil)
-		dom.DDL().SetHook(h.Clone())
+	resetHook := func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	}
-	registHook := func(h *callback.TestDDLCallback, onJobRunBefore bool) {
+	registerHook := func(onJobRunBefore bool) {
 		if onJobRunBefore {
-			h.OnJobRunBeforeExported = hookFunc
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", hookFunc)
 		} else {
-			h.OnJobUpdatedExported.Store(&hookFunc)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hookFunc)
 		}
-		dom.DDL().SetHook(h.Clone())
 	}
 
+	waitDDLWorkerExited()
 	for j, tc := range allTestCase {
+		t.Logf("running test case %d: %s", j, tc.sql)
 		i.Store(int64(j))
 		msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)
 		if tc.onJobBefore {
-			restHook(hook)
+			resetHook()
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
-			cancel.Store(false)
+			waitDDLWorkerExited()
+			canceled.Store(false)
 			cancelWhenReorgNotStart.Store(true)
-			registHook(hook, true)
-			if tc.ok {
+			registerHook(true)
+			if tc.expectCancelled {
 				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			} else {
 				tk.MustExec(tc.sql)
 			}
-			if cancel.Load() {
-				require.Equal(t, tc.ok, cancelResult.Load(), msg)
+			waitDDLWorkerExited()
+			if canceled.Load() {
+				require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
 			}
 		}
 		if tc.onJobUpdate {
-			restHook(hook)
+			resetHook()
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
-			cancel.Store(false)
+			waitDDLWorkerExited()
+			canceled.Store(false)
 			cancelWhenReorgNotStart.Store(false)
-			registHook(hook, false)
-			if tc.ok {
+			registerHook(false)
+			if tc.expectCancelled {
 				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
 			} else {
 				tk.MustExec(tc.sql)
 			}
-			if cancel.Load() {
-				require.Equal(t, tc.ok, cancelResult.Load(), msg)
+			waitDDLWorkerExited()
+			if canceled.Load() {
+				require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
 			}
 		}
 	}
 }
 
 func TestCancelForAddUniqueIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 
@@ -326,14 +337,12 @@ func TestCancelForAddUniqueIndex(t *testing.T) {
 	tk.MustExec("insert into t values(2, 2, 2)")
 	tk.MustExec("insert into t values(1, 1, 1)")
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	var testCancelState model.SchemaState
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.SchemaState == testCancelState && job.State == model.JobStateRollingback {
 			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
-	}
-	dom.DDL().SetHook(hook.Clone())
+	})
 
 	testCancelState = model.StateWriteOnly
 	tk.MustGetErrCode("alter table t add unique index idx1(c1)", errno.ErrDupEntry)

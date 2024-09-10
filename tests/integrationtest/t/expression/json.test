@@ -393,3 +393,94 @@ select 1 from t where cast(vc as json) = '1';
 select 1 from t where cast(c as json) = '1';
 select 1 from t where cast(BINARY vc as json) = '1';
 select 1 from t where cast(BINARY c as json) = '1';
+
+# TestCastJSONToTimeWithCorrectFsp
+drop table if exists t;
+create table t (j json);
+insert into t values (cast(cast("2024-10-24 11:11:11.12346" as datetime(6)) as json));
+select cast(j as datetime(6)) from t;
+select cast(j as datetime(3)) from t;
+select cast(j as datetime) from t;
+
+# TestJSONSchemaValid
+SELECT JSON_SCHEMA_VALID(NULL, NULL);
+SELECT JSON_SCHEMA_VALID('{}', NULL);
+SELECT JSON_SCHEMA_VALID(NULL, '{}');
+SELECT JSON_SCHEMA_VALID(NULL, '');
+SELECT JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"b": 6}');
+SELECT JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"c": 6}');
+SELECT JSON_SCHEMA_VALID('{"type": "object"}', '{}');
+SELECT JSON_SCHEMA_VALID('{"type": "object"}', '"foo"');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": "foo"}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": 5}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 5}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 6}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "abc"}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "cba"}');
+
+# TestJSONQuote
+SELECT JSON_QUOTE("<html>");
+SELECT JSON_QUOTE("&");
+SELECT JSON_QUOTE(CONVERT(0x10 USING utf8mb4));
+SELECT JSON_QUOTE("O'Neil");
+
+# Test argment errors
+# https://github.com/pingcap/tidb/issues/53799
+-- error 3146
+SELECT JSON_CONTAINS(123, '');
+-- error 3146
+SELECT JSON_CONTAINS('{}', 123);
+-- error 3146
+SELECT JSON_OVERLAPS(123, '');
+-- error 3146
+SELECT JSON_OVERLAPS('{}', 123);
+-- error 3146
+SELECT 'abc' MEMBER OF(123);
+-- error 3154
+SELECT JSON_SEARCH('{}',3,4);
+-- error 3143
+SELECT JSON_ARRAY_APPEND('[]','abc','def');
+-- error 3143
+SELECT JSON_ARRAY_INSERT('{}','abc','def');
+-- error 3153
+SELECT JSON_REMOVE('{}','$');
+-- error 3149
+SELECT JSON_REMOVE('{}','$.*');
+-- error 3149
+SELECT JSON_SET('{}','$.*','');
+-- error 3154
+SELECT JSON_CONTAINS_PATH('{}', 'on', '$.a');
+-- error 3154
+SELECT JSON_SEARCH('{}', 'on', '$.a');
+-- error 3158
+SELECT JSON_OBJECT(NULL,'abc');
+-- error 3146
+SELECT JSON_SCHEMA_VALID(1, '{}');
+-- error 3146
+SELECT JSON_SCHEMA_VALID('{}', 1);
+-- error 3141
+SELECT JSON_SCHEMA_VALID('','{}');
+-- error 3141
+SELECT JSON_SCHEMA_VALID('{}','');
+-- error 3141
+SELECT JSON_SCHEMA_VALID('', NULL);
+-- error 3853
+SELECT JSON_SCHEMA_VALID('1','{}');
+-- error 3157
+SELECT JSON_SCHEMA_VALID(CONCAT('{"foo": ',repeat('[', 1000),repeat(']', 1000),'}'), json_object());
+
+# errorIsRetryable() requires the right errors. Otherwise it might retry DDL statements that should not be retried,
+# e.g. adding a constraint with this function.
+#
+# Note that TiDB expects a number for exclusiveMinimum where MySQL expects a bool. This is due to MySQL using an older draft of the standard.
+#
+# - https://github.com/pingcap/tidb/issues/54273
+# - https://github.com/pingcap/tidb/issues/54207
+# - https://bugs.mysql.com/bug.php?id=106454
+-- error 3853
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"exclusiveMinimum": true}}}', '{}');
+
+# TestIssue54494
+# https://github.com/pingcap/tidb/issues/54494
+select json_type(cast(cast('2024' as year) as json));

@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -71,7 +72,7 @@ func ExecMultiSQLInGoroutine(s kv.Storage, dbName string, multiSQL []string, don
 // ExtractAllTableHandles extracts all handles of a given table.
 func ExtractAllTableHandles(se sessiontypes.Session, dbName, tbName string) ([]int64, error) {
 	dom := domain.GetDomain(se)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tbName))
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +92,7 @@ func ExtractAllTableHandles(se sessiontypes.Session, dbName, tbName string) ([]i
 
 // FindIdxInfo is to get IndexInfo by index name.
 func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tbName))
 	if err != nil {
 		logutil.DDLLogger().Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
 		return nil
@@ -107,14 +108,14 @@ func TestMatchCancelState(t *testing.T, job *model.Job, cancelState any, sql str
 	switch v := cancelState.(type) {
 	case model.SchemaState:
 		if job.Type == model.ActionMultiSchemaChange {
-			msg := fmt.Sprintf("unexpected multi-schema change(sql: %s, cancel state: %s)", sql, v)
+			msg := fmt.Sprintf("unexpected multi-schema change(sql: %s, cancel state: %s, job: %s)", sql, v, job.String())
 			require.Failf(t, msg, "use []model.SchemaState as cancel states instead")
 			return false
 		}
 		return job.SchemaState == v
 	case SubStates: // For multi-schema change sub-jobs.
 		if job.MultiSchemaInfo == nil {
-			msg := fmt.Sprintf("not multi-schema change(sql: %s, cancel state: %v)", sql, v)
+			msg := fmt.Sprintf("not multi-schema change(sql: %s, cancel state: %v, job: %s)", sql, v, job.String())
 			require.Failf(t, msg, "use model.SchemaState as the cancel state instead")
 			return false
 		}

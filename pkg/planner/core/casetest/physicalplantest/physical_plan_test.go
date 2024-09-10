@@ -25,11 +25,12 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -73,7 +74,8 @@ func TestRefine(t *testing.T) {
 		require.NoError(t, err, comment)
 		sc := tk.Session().GetSessionVars().StmtCtx
 		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(false))
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -106,7 +108,8 @@ func TestAggEliminator(t *testing.T) {
 		require.NoError(t, err, comment)
 		sc := tk.Session().GetSessionVars().StmtCtx
 		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(false))
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -135,7 +138,8 @@ func TestRuleColumnPruningLogicalApply(t *testing.T) {
 		comment := fmt.Sprintf("input: %s", tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -164,7 +168,8 @@ func TestSemiJoinToInner(t *testing.T) {
 	for i, tt := range input {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -191,7 +196,8 @@ func TestUnmatchedTableInHint(t *testing.T) {
 		tk.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err)
-		_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 		testdata.OnRecord(func() {
@@ -251,7 +257,7 @@ func TestMPPHints(t *testing.T) {
 	tk.MustExec("create definer='root'@'localhost' view v as select a, sum(b) from t group by a, c;")
 	tk.MustExec("create definer='root'@'localhost' view v1 as select t1.a from t t1, t t2 where t1.a=t2.a;")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	var input []string
@@ -298,7 +304,7 @@ func TestMPPHintsScope(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	var input []string
@@ -351,7 +357,7 @@ func TestMPPBCJModel(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	var input []string
@@ -396,17 +402,17 @@ func TestMPPPreferBCJ(t *testing.T) {
 	{
 		tk.MustExec("alter table t1 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t1")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 	{
 		tk.MustExec("alter table t2 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t2")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	{
 		var input []string
@@ -455,7 +461,7 @@ func TestMPPBCJModelOneTiFlash(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	{
 		cnt, err := store.GetMPPClient().GetMPPStoreCount()
@@ -514,17 +520,17 @@ func TestMPPRightSemiJoin(t *testing.T) {
 	{
 		tk.MustExec("alter table t1 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t1")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 	{
 		tk.MustExec("alter table t2 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t2")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	{
 		var input []string
@@ -570,17 +576,17 @@ func TestMPPRightOuterJoin(t *testing.T) {
 	{
 		tk.MustExec("alter table t1 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t1")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 	{
 		tk.MustExec("alter table t2 set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "test", "t2")
-		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	{
 		var input []string
@@ -633,7 +639,8 @@ func TestHintScope(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(context.Background(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = test
@@ -671,7 +678,8 @@ func TestJoinHints(t *testing.T) {
 		require.NoError(t, err, comment)
 
 		tk.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 
@@ -733,7 +741,8 @@ func TestAggregationHints(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test.SQL, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 
@@ -784,7 +793,8 @@ func TestSemiJoinRewriteHints(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
 
-		_, _, err = planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		_, _, err = planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 
@@ -839,7 +849,8 @@ func TestAggToCopHint(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		planString := core.ToString(p)
 		testdata.OnRecord(func() {
@@ -932,7 +943,8 @@ func TestIndexHint(t *testing.T) {
 		stmt, err := p.ParseOneStmt(test, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = test
@@ -986,7 +998,8 @@ func TestIndexMergeHint(t *testing.T) {
 		sctx := tk.Session()
 		err = executor.ResetContextOfStmt(sctx, stmt)
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = test
@@ -1036,7 +1049,8 @@ func TestQueryBlockHint(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1082,7 +1096,8 @@ func TestInlineProjection(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1114,8 +1129,9 @@ func TestIndexJoinHint(t *testing.T) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Plan string
+		SQL   string
+		Plan  string
+		Warns []string
 	}
 
 	is := domain.GetDomain(tk.Session()).InfoSchema()
@@ -1124,16 +1140,29 @@ func TestIndexJoinHint(t *testing.T) {
 
 	planSuiteData := GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
+	filterWarnings := func(originalWarnings []contextutil.SQLWarn) []contextutil.SQLWarn {
+		warnings := make([]contextutil.SQLWarn, 0, 4)
+		for _, warning := range originalWarnings {
+			// filter out warning about skyline pruning
+			if !strings.Contains(warning.Err.Error(), "remain after pruning paths for") {
+				warnings = append(warnings, warning)
+			}
+		}
+		return warnings
+	}
 	for i, tt := range input {
 		comment := fmt.Sprintf("case:%v sql: %s", i, tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = core.ToString(p)
+			output[i].Warns = testdata.ConvertSQLWarnToStrings(filterWarnings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		})
+		tk.Session().GetSessionVars().StmtCtx.TruncateWarnings(0)
 		require.Equal(t, output[i].Plan, core.ToString(p), comment)
 	}
 }
@@ -1165,7 +1194,8 @@ func TestHintFromDiffDatabase(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql: %s", i, tt)
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
-		p, _, err := planner.Optimize(ctx, tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
 		require.NoError(t, err, comment)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -1238,19 +1268,9 @@ func TestHJBuildAndProbeHint4TiFlash(t *testing.T) {
 	tk.MustExec("insert into t3 values(1,1),(2,1)")
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		table := tbl.Meta()
-		tableName := table.Name.L
-		if tableName == "t1" || tableName == "t2" || tableName == "t3" {
-			table.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t2")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t3")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	for i, ts := range input {
@@ -1281,18 +1301,7 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	tk.MustExec("create table employee(empid int, deptid int, salary decimal(10,2))")
 	tk.MustExec("set tidb_enforce_mpp=0")
 
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "employee" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "employee")
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
@@ -1331,19 +1340,8 @@ func TestCountStarForTiFlash(t *testing.T) {
 
 	// tiflash
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		tableName := tblInfo.Name.L
-		if tableName == "t" || tableName == "t_pick_row_id" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t_pick_row_id")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	for i, ts := range input {
@@ -1427,19 +1425,8 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 	})
 
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		tableName := tblInfo.Name.L
-		if tableName == "tbl_15" || tableName == "tbl_16" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "tbl_15")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "tbl_16")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
@@ -1480,4 +1467,70 @@ func TestPointgetIndexChoosen(t *testing.T) {
 		})
 		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+// Test issue #46962 plan
+func TestAlwaysTruePredicateWithSubquery(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t ( a int NOT NULL ,  b int NOT NULL ) `)
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+		})
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+// TestExplainExpand
+func TestExplainExpand(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table t(a int, b int, c int, d int, e int)")
+	tk.MustExec("create table s(a int, b int, c int, d int, e int)")
+	tk.MustExec("CREATE TABLE `sales` (`year` int(11) DEFAULT NULL, `country` varchar(20) DEFAULT NULL,  `product` varchar(32) DEFAULT NULL,  `profit` int(11) DEFAULT NULL, `whatever` int)")
+
+	// error test
+	err := tk.ExecToErr("explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(year);")
+	require.Equal(t, err.Error(), "[planner:3602]Argument #0 of GROUPING function is not in GROUP BY")
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+		})
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
+	// PhysicalApply is expected not to implement PhysicalJoin.
+	require.NotImplements(t, (*core.PhysicalJoin)(nil), new(core.PhysicalApply))
 }

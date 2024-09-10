@@ -15,13 +15,15 @@
 package coretestsdk
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/stretchr/testify/require"
@@ -31,16 +33,11 @@ import (
 // SetTiFlashReplica is to set TiFlash replica
 func SetTiFlashReplica(t *testing.T, dom *domain.Domain, dbName, tableName string) {
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr(dbName))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == tableName {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
+	require.NoError(t, err)
+	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 }
 

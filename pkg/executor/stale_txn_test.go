@@ -15,13 +15,17 @@
 package executor_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -30,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
 
 func TestExactStalenessTransaction(t *testing.T) {
@@ -893,7 +899,7 @@ func TestSetTransactionInfoSchema(t *testing.T) {
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 
-	for _, cacheSize := range []int{1024, 0} {
+	for _, cacheSize := range []int{units.GiB, 0} {
 		tk.MustExec("set @@global.tidb_schema_cache_size = ?", cacheSize)
 		testSetTransactionInfoSchema(t, tk)
 	}
@@ -1380,4 +1386,46 @@ func TestStaleTSO(t *testing.T) {
 		// Make sure the now() expr is evaluated from the stale ts provider.
 		tk.MustQuery("select * from t as of timestamp " + expr + " order by id asc").Check(testkit.Rows("1"))
 	}
+}
+
+func TestStaleReadNoBackoff(t *testing.T) {
+	cfg := config.GetGlobalConfig()
+	cfg.Labels = map[string]string{"zone": "us-east-1a"}
+	config.StoreGlobalConfig(cfg)
+	require.Equal(t, "us-east-1a", config.GetGlobalConfig().GetTiKVConfig().TxnScope)
+
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int primary key)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set session tidb_read_staleness = -1;")
+	tk.MustExec("set session tidb_replica_read='closest-replicas'")
+
+	// sleep 1s so stale read can see schema.
+	time.Sleep(time.Second)
+
+	failStaleReadCtx := interceptor.WithRPCInterceptor(context.Background(), interceptor.NewRPCInterceptor("fail-stale-read", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+		return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+			if getRequest, ok := req.Req.(*kvrpcpb.GetRequest); ok {
+				if ctx := getRequest.GetContext(); ctx != nil && ctx.StaleRead && !ctx.IsRetryRequest {
+					return &tikvrpc.Response{Resp: &kvrpcpb.GetResponse{RegionError: &errorpb.Error{
+						DataIsNotReady: &errorpb.DataIsNotReady{},
+					}}}, nil
+				}
+			}
+			return next(target, req)
+		}
+	}))
+
+	res := tk.MustQueryWithContext(failStaleReadCtx, "explain analyze select * from t where id = 1")
+	resBuff := bytes.NewBufferString("")
+	for _, row := range res.Rows() {
+		_, _ = fmt.Fprintf(resBuff, "%s\t", row)
+	}
+	explain := resBuff.String()
+	require.Regexp(t, ".*rpc_errors:{data_is_not_ready:1.*", explain)
+	require.NotRegexp(t, ".*dataNotReady_backoff.*", explain)
 }

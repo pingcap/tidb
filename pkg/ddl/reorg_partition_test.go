@@ -23,15 +23,16 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -140,19 +141,6 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 	return all
 }
 
-type TestReorgDDLCallback struct {
-	*callback.TestDDLCallback
-	syncChan chan bool
-}
-
-func (tc *TestReorgDDLCallback) OnChanged(err error) error {
-	err = tc.TestDDLCallback.OnChanged(err)
-	<-tc.syncChan
-	// We want to wait here
-	<-tc.syncChan
-	return err
-}
-
 func TestReorgPartitionConcurrent(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -165,19 +153,19 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		` partition p1 values less than (20),` +
 		` partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values (1,"1",1), (10,"10",10),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
 	syncOnChanged := make(chan bool)
 	defer close(syncOnChanged)
-	hook := &TestReorgDDLCallback{TestDDLCallback: &callback.TestDDLCallback{Do: dom}, syncChan: syncOnChanged}
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorganizePartition", func() {
+		<-syncOnChanged
+		// We want to wait here
+		<-syncOnChanged
+	})
 
 	wait := make(chan bool)
 	defer close(wait)
 
 	currState := model.StateNone
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition &&
 			(job.SchemaState == model.StateDeleteOnly ||
 				job.SchemaState == model.StateWriteOnly ||
@@ -188,7 +176,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 			<-wait
 			<-wait
 		}
-	}
+	})
 	alterErr := make(chan error, 1)
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
 
@@ -203,9 +191,9 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	tk.MustExec(`admin check table t`)
 	writeOnlyInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	require.Equal(t, int64(1), writeOnlyInfoSchema.SchemaMetaVersion()-deleteOnlyInfoSchema.SchemaMetaVersion())
-	deleteOnlyTbl, err := deleteOnlyInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	deleteOnlyTbl, err := deleteOnlyInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
-	writeOnlyTbl, err := writeOnlyInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	writeOnlyTbl, err := writeOnlyInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	writeOnlyParts := writeOnlyTbl.Meta().Partition
 	writeOnlyTbl.Meta().Partition = deleteOnlyTbl.Meta().Partition
@@ -246,13 +234,13 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	deleteReorgInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	require.Equal(t, int64(1), deleteReorgInfoSchema.SchemaMetaVersion()-writeReorgInfoSchema.SchemaMetaVersion())
 	tk.MustExec(`insert into t values (16, "16", 16)`)
-	oldTbl, err := writeReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	oldTbl, err := writeReorgInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	partDef := oldTbl.Meta().Partition.Definitions[1]
 	require.Equal(t, "p1", partDef.Name.O)
 	rows := getNumRowsFromPartitionDefs(t, tk, oldTbl, oldTbl.Meta().Partition.Definitions[1:2])
 	require.Equal(t, 5, rows)
-	currTbl, err := deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	currTbl, err := deleteReorgInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	currPart := currTbl.Meta().Partition
 	currTbl.Meta().Partition = oldTbl.Meta().Partition
@@ -290,7 +278,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	tk.MustExec(`admin check table t`)
 	newInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-deleteReorgInfoSchema.SchemaMetaVersion())
-	oldTbl, err = deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	oldTbl, err = deleteReorgInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	partDef = oldTbl.Meta().Partition.Definitions[1]
 	require.Equal(t, "p1a", partDef.Name.O)
@@ -308,7 +296,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
 		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	newTbl, err := deleteReorgInfoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	newTbl, err := deleteReorgInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	newPart := newTbl.Meta().Partition
 	newTbl.Meta().Partition = oldTbl.Meta().Partition
@@ -344,24 +332,19 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 		` partition p1 values less than (20),` +
 		` partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := &callback.TestDDLCallback{Do: dom}
-	dom.DDL().SetHook(hook)
 
 	wait := make(chan bool)
 	defer close(wait)
 
 	// Test insert of duplicate key during copy phase
 	injected := false
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
 			injected = true
 			<-wait
 			<-wait
 		}
-	}
+	})
 	alterErr := make(chan error, 1)
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
 	wait <- true
@@ -392,7 +375,7 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 
 	// Test reorg of duplicate key
 	prevState := model.StateNone
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition &&
 			job.SchemaState == model.StateWriteReorganization &&
 			job.SnapshotVer == 0 &&
@@ -408,11 +391,11 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 			<-wait
 			<-wait
 		}
-	}
+	})
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1a,p1b into (partition p1a values less than (14), partition p1b values less than (17), partition p1c values less than (20))", alterErr)
 	wait <- true
 	infoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	tbl, err := infoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	tbl, err := infoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, 0, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
 	tk.MustExec(`delete from t where a = 14`)
@@ -420,7 +403,7 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 	tk.MustExec(`admin check table t`)
 	wait <- true
 	wait <- true
-	tbl, err = infoSchema.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	tbl, err = infoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, 5, getNumRowsFromPartitionDefs(t, tk, tbl, tbl.Meta().Partition.AddingDefinitions))
 	tk.MustExec(`delete from t where a = 15`)
@@ -486,23 +469,17 @@ func TestReorgPartitionFailInject(t *testing.T) {
 		` partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
 
-	dom := domain.GetDomain(tk.Session())
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	hook := &callback.TestDDLCallback{Do: dom}
-	dom.DDL().SetHook(hook)
-
 	wait := make(chan bool)
 	defer close(wait)
 
 	injected := false
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
 			injected = true
 			<-wait
 			<-wait
 		}
-	}
+	})
 	alterErr := make(chan error, 1)
 	go backgroundExec(store, schemaName, "alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))", alterErr)
 	wait <- true
@@ -553,7 +530,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	noNewTablesAfter(t, tk, ctx, tbl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/reorgPartitionAfterDataCopy", `return(true)`))
@@ -577,7 +554,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 		" PARTITION `p1` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 
-	tbl, err = is.TableByName(model.NewCIStr(schemaName), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	noNewTablesAfter(t, tk, ctx, tbl)
 }

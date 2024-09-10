@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -837,7 +837,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 		errorMsg = append(errorMsg, fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	nameSet, err := cdcutil.GetCDCChangefeedNameSet(ctx, ci.etcdCli)
+	nameSet, err := cdcutil.GetRunningChangefeeds(ctx, ci.etcdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1296,7 +1296,7 @@ func checkFieldCompatibility(
 	values []types.Datum,
 	logger log.Logger,
 ) bool {
-	se := kv.NewSessionCtx(&encode.SessionOptions{
+	se := kv.NewSession(&encode.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
 	}, logger)
 	for i, col := range tbl.Columns {
@@ -1307,7 +1307,7 @@ func checkFieldCompatibility(
 		if i >= len(values) {
 			break
 		}
-		_, err := table.CastValue(se, values[i], col, true, false)
+		_, err := table.CastColumnValue(se.GetExprCtx(), values[i], col, true, false)
 		if err != nil {
 			logger.Error("field value is not consistent with column type", zap.String("value", values[i].GetString()),
 				zap.Any("column_info", col), zap.Error(err))

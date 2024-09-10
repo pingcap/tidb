@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
 )
 
@@ -71,11 +71,19 @@ type EngineFileSize struct {
 
 // LocalWriterConfig defines the configuration to open a LocalWriter
 type LocalWriterConfig struct {
-	// is the chunk KV written to this LocalWriter sent in order
-	// only needed for local backend, can omit for tidb backend
-	IsKVSorted bool
-	// only needed for tidb backend, can omit for local backend
-	TableName string
+	// Local backend specified configuration
+	Local struct {
+		// is the chunk KV written to this LocalWriter sent in order
+		IsKVSorted bool
+		// MemCacheSize specifies the estimated memory cache limit used by this local
+		// writer. It has higher priority than BackendConfig.LocalWriterMemCacheSize if
+		// set.
+		MemCacheSize int64
+	}
+	// TiDB backend specified configuration
+	TiDB struct {
+		TableName string
+	}
 }
 
 // EngineConfig defines configuration used for open engine
@@ -89,6 +97,9 @@ type EngineConfig struct {
 	// KeepSortDir indicates whether to keep the temporary sort directory
 	// when opening the engine, instead of removing it.
 	KeepSortDir bool
+	// TS is the preset timestamp of data in the engine. When it's 0, the used TS
+	// will be set lazily.
+	TS uint64
 }
 
 // LocalEngineConfig is the configuration used for local backend in OpenEngine.
@@ -106,13 +117,13 @@ type LocalEngineConfig struct {
 
 // ExternalEngineConfig is the configuration used for local backend external engine.
 type ExternalEngineConfig struct {
-	StorageURI      string
-	DataFiles       []string
-	StatFiles       []string
-	StartKey        []byte
-	EndKey          []byte
-	SplitKeys       [][]byte
-	RegionSplitSize int64
+	StorageURI string
+	DataFiles  []string
+	StatFiles  []string
+	StartKey   []byte
+	EndKey     []byte
+	JobKeys    [][]byte
+	SplitKeys  [][]byte
 	// TotalFileSize can be an estimated value.
 	TotalFileSize int64
 	// TotalKVCount can be an estimated value.
@@ -236,8 +247,12 @@ func MakeEngineManager(ab Backend) EngineManager {
 }
 
 // OpenEngine opens an engine with the given table name and engine ID.
-func (be EngineManager) OpenEngine(ctx context.Context, config *EngineConfig,
-	tableName string, engineID int32) (*OpenedEngine, error) {
+func (be EngineManager) OpenEngine(
+	ctx context.Context,
+	config *EngineConfig,
+	tableName string,
+	engineID int32,
+) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, int64(engineID))
 	logger := makeLogger(log.FromContext(ctx), tag, engineUUID)
 
@@ -298,6 +313,13 @@ func (engine *OpenedEngine) Flush(ctx context.Context) error {
 // LocalWriter returns a writer that writes to the local backend.
 func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterConfig) (EngineWriter, error) {
 	return engine.backend.LocalWriter(ctx, cfg, engine.uuid)
+}
+
+// SetTS sets the TS of the engine. In most cases if the caller wants to specify
+// TS it should use the TS field in EngineConfig. This method is only used after
+// a ResetEngine.
+func (engine *OpenedEngine) SetTS(ts uint64) {
+	engine.config.TS = ts
 }
 
 // UnsafeCloseEngine closes the engine without first opening it.

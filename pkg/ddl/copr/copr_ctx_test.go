@@ -19,7 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -33,7 +35,7 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 		mockColInfos = append(mockColInfos, &model.ColumnInfo{
 			ID:        int64(i),
 			Offset:    i,
-			Name:      model.NewCIStr(fmt.Sprintf("c%d", i)),
+			Name:      pmodel.NewCIStr(fmt.Sprintf("c%d", i)),
 			FieldType: *types.NewFieldType(1),
 			State:     model.StatePublic,
 		})
@@ -67,18 +69,18 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 		var idxCols []*model.IndexColumn
 		for _, cn := range tt.cols {
 			idxCols = append(idxCols, &model.IndexColumn{
-				Name:   model.NewCIStr(cn),
+				Name:   pmodel.NewCIStr(cn),
 				Offset: findColByName(cn).Offset,
 			})
 		}
 		mockIdxInfo := &model.IndexInfo{
 			ID:      int64(i),
-			Name:    model.NewCIStr(fmt.Sprintf("i%d", i)),
+			Name:    pmodel.NewCIStr(fmt.Sprintf("i%d", i)),
 			Columns: idxCols,
 			State:   model.StatePublic,
 		}
 		mockTableInfo := &model.TableInfo{
-			Name:           model.NewCIStr("t"),
+			Name:           pmodel.NewCIStr("t"),
 			Columns:        mockColInfos,
 			Indices:        []*model.IndexInfo{mockIdxInfo},
 			PKIsHandle:     tt.pkType == pkTypePKHandle,
@@ -91,11 +93,11 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 			mockTableInfo.Indices = append(mockTableInfo.Indices, &model.IndexInfo{
 				Columns: []*model.IndexColumn{
 					{
-						Name:   model.NewCIStr("c2"),
+						Name:   pmodel.NewCIStr("c2"),
 						Offset: 2,
 					},
 					{
-						Name:   model.NewCIStr("c4"),
+						Name:   pmodel.NewCIStr("c4"),
 						Offset: 4,
 					},
 				},
@@ -104,7 +106,13 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 			})
 		}
 
-		copCtx, err := NewCopContextSingleIndex(mockTableInfo, mockIdxInfo, mock.NewContext(), "")
+		sctx := mock.NewContext()
+		copCtx, err := NewCopContextSingleIndex(
+			sctx.GetExprCtx(),
+			sctx.GetDistSQLCtx(),
+			sctx.GetSessionVars().StmtCtx.PushDownFlags(),
+			mockTableInfo, mockIdxInfo, "",
+		)
 		require.NoError(t, err)
 		base := copCtx.GetBase()
 		require.Equal(t, "t", base.TableInfo.Name.L)
@@ -194,7 +202,8 @@ func TestCollectVirtualColumnOffsetsAndTypes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotOffsets, gotFt := collectVirtualColumnOffsetsAndTypes(tt.cols)
+			ctx := contextstatic.NewStaticEvalContext()
+			gotOffsets, gotFt := collectVirtualColumnOffsetsAndTypes(ctx, tt.cols)
 			require.Equal(t, gotOffsets, tt.offsets)
 			require.Equal(t, len(gotFt), len(tt.fieldTp))
 			for i, ft := range gotFt {

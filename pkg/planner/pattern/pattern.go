@@ -17,6 +17,7 @@ package pattern
 import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
 
 // Operand is the node of a pattern tree, it represents a logical expression operator.
@@ -76,45 +77,45 @@ const (
 // GetOperand maps logical plan operator to Operand.
 func GetOperand(p base.LogicalPlan) Operand {
 	switch p.(type) {
-	case *plannercore.LogicalApply:
+	case *logicalop.LogicalApply:
 		return OperandApply
-	case *plannercore.LogicalJoin:
+	case *logicalop.LogicalJoin:
 		return OperandJoin
-	case *plannercore.LogicalAggregation:
+	case *logicalop.LogicalAggregation:
 		return OperandAggregation
-	case *plannercore.LogicalProjection:
+	case *logicalop.LogicalProjection:
 		return OperandProjection
-	case *plannercore.LogicalSelection:
+	case *logicalop.LogicalSelection:
 		return OperandSelection
-	case *plannercore.LogicalMaxOneRow:
+	case *logicalop.LogicalMaxOneRow:
 		return OperandMaxOneRow
-	case *plannercore.LogicalTableDual:
+	case *logicalop.LogicalTableDual:
 		return OperandTableDual
 	case *plannercore.DataSource:
 		return OperandDataSource
-	case *plannercore.LogicalUnionScan:
+	case *logicalop.LogicalUnionScan:
 		return OperandUnionScan
-	case *plannercore.LogicalUnionAll:
+	case *logicalop.LogicalUnionAll:
 		return OperandUnionAll
-	case *plannercore.LogicalSort:
+	case *logicalop.LogicalSort:
 		return OperandSort
-	case *plannercore.LogicalTopN:
+	case *logicalop.LogicalTopN:
 		return OperandTopN
-	case *plannercore.LogicalLock:
+	case *logicalop.LogicalLock:
 		return OperandLock
-	case *plannercore.LogicalLimit:
+	case *logicalop.LogicalLimit:
 		return OperandLimit
 	case *plannercore.TiKVSingleGather:
 		return OperandTiKVSingleGather
 	case *plannercore.LogicalTableScan:
 		return OperandTableScan
-	case *plannercore.LogicalMemTable:
+	case *logicalop.LogicalMemTable:
 		return OperandMemTableScan
 	case *plannercore.LogicalIndexScan:
 		return OperandIndexScan
-	case *plannercore.LogicalShow:
+	case *logicalop.LogicalShow:
 		return OperandShow
-	case *plannercore.LogicalWindow:
+	case *logicalop.LogicalWindow:
 		return OperandWindow
 	default:
 		return OperandUnsupported

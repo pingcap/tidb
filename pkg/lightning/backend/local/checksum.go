@@ -37,6 +37,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	pderrs "github.com/tikv/pd/client/errs"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -350,7 +351,7 @@ func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoin
 	)
 	physicalTS, logicalTS, err = e.manager.pdClient.GetTS(ctx)
 	for err != nil {
-		if !pd.IsLeaderChange(errors.Cause(err)) {
+		if !pderrs.IsLeaderChange(errors.Cause(err)) {
 			return nil, errors.Annotate(err, "fetch tso from pd failed")
 		}
 		retryTime++

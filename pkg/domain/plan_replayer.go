@@ -501,7 +501,7 @@ func (h *planReplayerTaskDumpHandle) GetWorker() *planReplayerTaskDumpWorker {
 	return h.workers[0]
 }
 
-// Close make finished flag ture
+// Close make finished flag true
 func (h *planReplayerTaskDumpHandle) Close() {
 	close(h.taskCH)
 }

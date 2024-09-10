@@ -15,10 +15,11 @@
 package statistics
 
 import (
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -132,10 +133,6 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 	return columnMemUsage
 }
 
-// HistogramNeededItems stores the columns/indices whose Histograms need to be loaded from physical kv layer.
-// Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
-var HistogramNeededItems = newNeededStatsMap()
-
 // ColumnStatsIsInvalid checks if this column is invalid.
 // If this column has histogram but not loaded yet,
 // then we mark it as need histogram.
@@ -161,12 +158,12 @@ func ColumnStatsIsInvalid(colStats *Column, sctx context.PlanContext, histColl *
 		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
 			stmtctx != nil &&
 			!histColl.CanNotTriggerLoad {
-			HistogramNeededItems.Insert(model.TableItemID{
+			asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
 				TableID:          histColl.PhysicalID,
 				ID:               cid,
 				IsIndex:          false,
 				IsSyncLoadFailed: sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0,
-			})
+			}, true)
 		}
 	}
 	if histColl.Pseudo {

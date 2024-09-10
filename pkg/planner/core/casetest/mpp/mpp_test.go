@@ -15,12 +15,15 @@
 package mpp
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -34,35 +37,27 @@ func TestMPPJoin(t *testing.T) {
 	tk.MustExec("drop table if exists d1_t")
 	tk.MustExec("create table d1_t(d1_k int, value int)")
 	tk.MustExec("insert into d1_t values(1,2),(2,3)")
-	tk.MustExec("analyze table d1_t")
+	tk.MustExec("analyze table d1_t all columns")
 	tk.MustExec("drop table if exists d2_t")
 	tk.MustExec("create table d2_t(d2_k decimal(10,2), value int)")
 	tk.MustExec("insert into d2_t values(10.11,2),(10.12,3)")
-	tk.MustExec("analyze table d2_t")
+	tk.MustExec("analyze table d2_t all columns")
 	tk.MustExec("drop table if exists d3_t")
 	tk.MustExec("create table d3_t(d3_k date, value int)")
 	tk.MustExec("insert into d3_t values(date'2010-01-01',2),(date'2010-01-02',3)")
-	tk.MustExec("analyze table d3_t")
+	tk.MustExec("analyze table d3_t all columns")
 	tk.MustExec("drop table if exists fact_t")
 	tk.MustExec("create table fact_t(d1_k int, d2_k decimal(10,2), d3_k date, col1 int, col2 int, col3 int)")
 	tk.MustExec("insert into fact_t values(1,10.11,date'2010-01-01',1,2,3),(1,10.11,date'2010-01-02',1,2,3),(1,10.12,date'2010-01-01',1,2,3),(1,10.12,date'2010-01-02',1,2,3)")
 	tk.MustExec("insert into fact_t values(2,10.11,date'2010-01-01',1,2,3),(2,10.11,date'2010-01-02',1,2,3),(2,10.12,date'2010-01-01',1,2,3),(2,10.12,date'2010-01-02',1,2,3)")
-	tk.MustExec("analyze table fact_t")
+	tk.MustExec("analyze table fact_t all columns")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "fact_t" || tblInfo.Name.L == "d1_t" || tblInfo.Name.L == "d2_t" || tblInfo.Name.L == "d3_t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "fact_t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "d1_t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "d2_t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "d3_t")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
@@ -95,16 +90,11 @@ func TestMPPLeftSemiJoin(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	var input []string
@@ -142,25 +132,16 @@ func TestMPPOuterJoinBuildSideForBroadcastJoin(t *testing.T) {
 	tk.MustExec("drop table if exists a")
 	tk.MustExec("create table a(id int, value int)")
 	tk.MustExec("insert into a values(1,2),(2,3)")
-	tk.MustExec("analyze table a")
+	tk.MustExec("analyze table a all columns")
 	tk.MustExec("drop table if exists b")
 	tk.MustExec("create table b(id int, value int)")
 	tk.MustExec("insert into b values(1,2),(2,3),(3,4)")
-	tk.MustExec("analyze table b")
+	tk.MustExec("analyze table b all columns")
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "a" || tblInfo.Name.L == "b" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "a")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "b")
+
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 10000")
@@ -188,27 +169,17 @@ func TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists a")
-	tk.MustExec("create table a(id int, value int)")
+	tk.MustExec("create table a(id int, value int, index idx(id, value))")
 	tk.MustExec("insert into a values(1,2),(2,3)")
 	tk.MustExec("analyze table a")
 	tk.MustExec("drop table if exists b")
-	tk.MustExec("create table b(id int, value int)")
+	tk.MustExec("create table b(id int, value int, index idx(id, value))")
 	tk.MustExec("insert into b values(1,2),(2,3),(3,4)")
 	tk.MustExec("analyze table b")
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "a" || tblInfo.Name.L == "b" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "a")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "b")
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 1")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
@@ -238,25 +209,16 @@ func TestMPPOuterJoinBuildSideForShuffleJoin(t *testing.T) {
 	tk.MustExec("drop table if exists a")
 	tk.MustExec("create table a(id int, value int)")
 	tk.MustExec("insert into a values(1,2),(2,3)")
-	tk.MustExec("analyze table a")
+	tk.MustExec("analyze table a all columns")
 	tk.MustExec("drop table if exists b")
 	tk.MustExec("create table b(id int, value int)")
 	tk.MustExec("insert into b values(1,2),(2,3),(3,4)")
-	tk.MustExec("analyze table b")
+	tk.MustExec("analyze table b all columns")
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "a" || tblInfo.Name.L == "b" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "a")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "b")
+
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
@@ -287,39 +249,31 @@ func TestMPPShuffledJoin(t *testing.T) {
 	tk.MustExec("create table d1_t(d1_k int, value int)")
 	tk.MustExec("insert into d1_t values(1,2),(2,3)")
 	tk.MustExec("insert into d1_t values(1,2),(2,3)")
-	tk.MustExec("analyze table d1_t")
+	tk.MustExec("analyze table d1_t all columns")
 	tk.MustExec("drop table if exists d2_t")
 	tk.MustExec("create table d2_t(d2_k decimal(10,2), value int)")
 	tk.MustExec("insert into d2_t values(10.11,2),(10.12,3)")
 	tk.MustExec("insert into d2_t values(10.11,2),(10.12,3)")
-	tk.MustExec("analyze table d2_t")
+	tk.MustExec("analyze table d2_t all columns")
 	tk.MustExec("drop table if exists d3_t")
 	tk.MustExec("create table d3_t(d3_k date, value int)")
 	tk.MustExec("insert into d3_t values(date'2010-01-01',2),(date'2010-01-02',3)")
 	tk.MustExec("insert into d3_t values(date'2010-01-01',2),(date'2010-01-02',3)")
-	tk.MustExec("analyze table d3_t")
+	tk.MustExec("analyze table d3_t all columns")
 	tk.MustExec("drop table if exists fact_t")
 	tk.MustExec("create table fact_t(d1_k int, d2_k decimal(10,2), d3_k date, col1 int, col2 int, col3 int)")
 	tk.MustExec("insert into fact_t values(1,10.11,date'2010-01-01',1,2,3),(1,10.11,date'2010-01-02',1,2,3),(1,10.12,date'2010-01-01',1,2,3),(1,10.12,date'2010-01-02',1,2,3)")
 	tk.MustExec("insert into fact_t values(2,10.11,date'2010-01-01',1,2,3),(2,10.11,date'2010-01-02',1,2,3),(2,10.12,date'2010-01-01',1,2,3),(2,10.12,date'2010-01-02',1,2,3)")
 	tk.MustExec("insert into fact_t values(2,10.11,date'2010-01-01',1,2,3),(2,10.11,date'2010-01-02',1,2,3),(2,10.12,date'2010-01-01',1,2,3),(2,10.12,date'2010-01-02',1,2,3)")
 	tk.MustExec("insert into fact_t values(2,10.11,date'2010-01-01',1,2,3),(2,10.11,date'2010-01-02',1,2,3),(2,10.12,date'2010-01-01',1,2,3),(2,10.12,date'2010-01-02',1,2,3)")
-	tk.MustExec("analyze table fact_t")
+	tk.MustExec("analyze table fact_t all columns")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "fact_t" || tblInfo.Name.L == "d1_t" || tblInfo.Name.L == "d2_t" || tblInfo.Name.L == "d3_t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "fact_t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "d1_t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "d2_t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "d3_t")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
@@ -354,23 +308,14 @@ func TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError(t *testing.T) {
 	tk.MustExec("insert into t1 values(1,1,1),(2,2,2)")
 	tk.MustExec("insert into t2 values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8)")
 	tk.MustExec("insert into t3 values(1,1,1)")
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
-	tk.MustExec("analyze table t3")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
+	tk.MustExec("analyze table t3 all columns")
 
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t1" || tblInfo.Name.L == "t2" || tblInfo.Name.L == "t3" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t2")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t3")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
@@ -400,28 +345,18 @@ func TestMPPWithHashExchangeUnderNewCollation(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists table_1")
-	tk.MustExec("create table table_1(id int not null, value char(10)) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;")
+	tk.MustExec("create table table_1(id int not null, value char(10), index idx(id, value)) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;")
 	tk.MustExec("insert into table_1 values(1,'1'),(2,'2')")
 	tk.MustExec("drop table if exists table_2")
-	tk.MustExec("create table table_2(id int not null, value char(10)) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;")
+	tk.MustExec("create table table_2(id int not null, value char(10), index idx(id, value)) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;")
 	tk.MustExec("insert into table_2 values(1,'1'),(2,'2')")
 	tk.MustExec("analyze table table_1")
 	tk.MustExec("analyze table table_2")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "table_1" || tblInfo.Name.L == "table_2" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "table_1")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "table_2")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
@@ -450,24 +385,13 @@ func TestMPPWithBroadcastExchangeUnderNewCollation(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists table_1")
-	tk.MustExec("create table table_1(id int not null, value char(10))")
+	tk.MustExec("create table table_1(id int not null, value char(10), index idx(id, value))")
 	tk.MustExec("insert into table_1 values(1,'1'),(2,'2')")
 	tk.MustExec("analyze table table_1")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "table_1" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "table_1")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
@@ -493,24 +417,13 @@ func TestMPPAvgRewrite(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists table_1")
-	tk.MustExec("create table table_1(id int not null, value decimal(10,2))")
+	tk.MustExec("create table table_1(id int not null, value decimal(10,2), index idx(id, value))")
 	tk.MustExec("insert into table_1 values(1,1),(2,2)")
 	tk.MustExec("analyze table table_1")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "table_1" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "table_1")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
@@ -543,18 +456,8 @@ func TestMppUnionAll(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" || tblInfo.Name.L == "t1" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
 
 	var input []string
 	var output []struct {
@@ -587,18 +490,8 @@ func TestMppJoinDecimal(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" || tblInfo.Name.L == "tt" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "tt")
 
 	tk.MustExec("set @@tidb_allow_mpp=1;")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 1")
@@ -634,18 +527,8 @@ func TestMppJoinExchangeColumnPrune(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" || tblInfo.Name.L == "tt" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "tt")
 
 	tk.MustExec("set @@tidb_allow_mpp=1;")
 	tk.MustExec("set @@tidb_enforce_mpp=1;")
@@ -694,18 +577,8 @@ func TestMppFineGrainedJoinAndAgg(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" || tblInfo.Name.L == "tt" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "tt")
 
 	tk.MustExec("set @@tidb_allow_mpp=1;")
 	tk.MustExec("set @@tidb_enforce_mpp=1;")
@@ -741,16 +614,11 @@ func TestMppAggTopNWithJoin(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	tk.MustExec(" set @@tidb_allow_mpp=1;")
@@ -784,16 +652,11 @@ func TestRejectSortForMPP(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
@@ -827,16 +690,11 @@ func TestPushDownSelectionForMPP(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
@@ -871,16 +729,11 @@ func TestPushDownProjectionForMPP(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
@@ -914,16 +767,11 @@ func TestPushDownAggForMPP(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	tk.MustExec(" set @@tidb_allow_mpp=1; set @@tidb_broadcast_join_threshold_count = 1; set @@tidb_broadcast_join_threshold_size=1;")
@@ -956,16 +804,11 @@ func TestMppVersion(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	var input []string
@@ -1012,18 +855,9 @@ func TestIssue52828(t *testing.T) {
 	tk.MustExec("analyze table dd")
 
 	// Create virtual tiflash replica info.
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "b" || tblInfo.Name.L == "c" || tblInfo.Name.L == "dd" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "b")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "c")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "dd")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")

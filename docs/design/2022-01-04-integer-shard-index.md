@@ -115,7 +115,7 @@ The entry point to add the `tidb_shard` expression is the function as bellow. We
 
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	predicates = expression.PropagateConstant(ds.ctx, predicates)
-	predicates = DeleteTrueExprs(ds, predicates)
+	predicates = constraint.DeleteTrueExprs(ds, predicates)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = ds.AddPrefix4ShardIndexes(ds.ctx, predicates)

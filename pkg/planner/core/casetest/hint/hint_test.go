@@ -15,10 +15,12 @@
 package hint
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -42,16 +44,9 @@ func TestReadFromStorageHint(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-			Count:     1,
-			Available: true,
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "tt")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "ttt")
 
 	var input []string
 	var output []struct {
@@ -93,16 +88,11 @@ func TestAllViewHintType(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	tk.MustExec("create definer='root'@'localhost' view v as select t.a, t.b from t join t1 on t.a = t1.a;")
@@ -163,19 +153,9 @@ func TestJoinHintCompatibility(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		name := tblInfo.Name.L
-		if name == "t4" || name == "t5" || name == "t6" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t4")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t5")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t6")
 
 	tk.MustExec("create definer='root'@'localhost' view v as select /*+ leading(t1), inl_join(t1) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
 	tk.MustExec("create definer='root'@'localhost' view v1 as select /*+ leading(t2), merge_join(t) */ t.a from t join t1 join t2 where t.a = t1.a and t1.b = t2.b;")
@@ -213,16 +193,7 @@ func TestReadFromStorageHintAndIsolationRead(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-			Count:     1,
-			Available: true,
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
 
 	var input []string
 	var output []struct {
@@ -255,16 +226,7 @@ func TestIsolationReadTiFlashUseIndexHint(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-			Count:     1,
-			Available: true,
-		}
-	}
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	var input []string
@@ -309,16 +271,11 @@ func TestOptimizeHintOnPartitionTable(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
@@ -371,4 +328,16 @@ func TestHints(t *testing.T) {
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
 	}
+}
+
+func TestQBHintHandlerDuplicateObjects(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t_employees  (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, fname VARCHAR(25) NOT NULL, lname VARCHAR(25) NOT NULL, store_id INT NOT NULL, department_id INT NOT NULL);")
+	tk.MustExec("ALTER TABLE t_employees ADD INDEX idx(department_id);")
+
+	// Explain statement
+	tk.MustQuery("EXPLAIN WITH t AS (SELECT /*+ inl_join(e) */ em.* FROM t_employees em JOIN t_employees e WHERE em.store_id = e.department_id) SELECT * FROM t;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }

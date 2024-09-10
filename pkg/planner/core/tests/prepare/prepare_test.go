@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -397,13 +398,14 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 		require.NoError(t, err)
 		is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
 		builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
-		p, err := builder.Build(ctx, stmt)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err)
 		execPlan, ok := p.(*core.Execute)
 		require.True(t, ok)
 		err = executor.ResetContextOfStmt(tk.Session(), stmt)
 		require.NoError(t, err)
-		plan, _, err := core.GetPlanFromSessionPlanCache(ctx, tk.Session(), false, is, execPlan.PrepStmt, execPlan.Params)
+		plan, _, err := core.GetPlanFromPlanCache(ctx, tk.Session(), false, is, execPlan.PrepStmt, execPlan.Params)
 		require.NoError(t, err)
 		planStr[i] = core.ToString(plan)
 		require.Regexpf(t, expectedPattern, planStr[i], "for %dth %s", i, sql1)
@@ -756,10 +758,12 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
 	tk.MustExec("begin")
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
+	cnt := pb.GetCounter().GetValue()
+	require.Equal(t, float64(0), cnt) // can't reuse the plan created outside the txn
+	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
 	err := counter.Write(pb)
 	require.NoError(t, err)
-	cnt := pb.GetCounter().GetValue()
-	require.Equal(t, float64(1), cnt)
+	require.Equal(t, float64(0), cnt)
 	tk.MustExec("insert into t1 values(1)")
 	// Cached plan is invalid now, it is not chosen and removed.
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows(
@@ -789,6 +793,8 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	tk.MustExec("prepare stmt2 from 'select * from t1 left join t2 on true where t1.a > ?'")
 	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows())
 	tk.MustExec("begin")
+	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows())
+	require.Equal(t, float64(3), cnt) // can't reuse the plan created outside the txn
 	tk.MustQuery("execute stmt2 using @p0").Check(testkit.Rows())
 	err = counter.Write(pb)
 	require.NoError(t, err)

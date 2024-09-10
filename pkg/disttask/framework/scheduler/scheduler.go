@@ -90,9 +90,6 @@ type BaseScheduler struct {
 	rand *rand.Rand
 }
 
-// MockOwnerChange mock owner change in tests.
-var MockOwnerChange func()
-
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
 	logger := log.L().With(zap.Int64("task-id", task.ID), zap.Stringer("task-type", task.Type), zap.Bool("allocated-slots", param.allocatedSlots))
@@ -264,10 +261,7 @@ func (s *BaseScheduler) scheduleTask() {
 				s.logger.Info("schedule task meet err, reschedule it", zap.Error(err))
 			}
 
-			failpoint.Inject("mockOwnerChange", func() {
-				MockOwnerChange()
-				time.Sleep(time.Second)
-			})
+			failpoint.InjectCall("mockOwnerChange")
 		}
 	}
 }
@@ -304,18 +298,11 @@ func (s *BaseScheduler) onPausing() error {
 	return nil
 }
 
-// MockDMLExecutionOnPausedState is used to mock DML execution when tasks pauses.
-var MockDMLExecutionOnPausedState func(task *proto.Task)
-
 // handle task in paused state.
 func (s *BaseScheduler) onPaused() error {
 	task := s.GetTask()
 	s.logger.Info("on paused state", zap.Stringer("state", task.State), zap.String("step", proto.Step2Str(task.Type, task.Step)))
-	failpoint.Inject("mockDMLExecutionOnPausedState", func(val failpoint.Value) {
-		if val.(bool) {
-			MockDMLExecutionOnPausedState(task)
-		}
-	})
+	failpoint.InjectCall("mockDMLExecutionOnPausedState")
 	return nil
 }
 

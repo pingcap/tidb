@@ -1,6 +1,3 @@
-lease = 360
-tso-save-interval = "360s"
-
 [replication]
 enable-placement-rules = true
 

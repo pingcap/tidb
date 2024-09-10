@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build ignore
+
 package main
 
 import (
@@ -24,7 +26,6 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -86,7 +87,7 @@ ut run --short`
 	return true
 }
 
-const modulePath = "github.com/pingcap/tidb"
+var modulePath = filepath.Join("github.com", "pingcap", "tidb")
 
 type task struct {
 	pkg  string
@@ -170,8 +171,7 @@ func cmdBuild(args ...string) bool {
 
 	// build all packages
 	if len(args) == 0 {
-		err := buildTestBinaryMulti(pkgs)
-		if err != nil {
+		if err := buildTestBinaryMulti(pkgs); err != nil {
 			log.Println("build package error", pkgs, err)
 			return false
 		}
@@ -201,28 +201,14 @@ func cmdRun(args ...string) bool {
 	start := time.Now()
 	// run all tests
 	if len(args) == 0 {
-		err := buildTestBinaryMulti(pkgs)
-		if err != nil {
+		if err := buildTestBinaryMulti(pkgs); err != nil {
 			log.Println("build package error", pkgs, err)
 			return false
 		}
 
-		for _, pkg := range pkgs {
-			exist, err := testBinaryExist(pkg)
-			if err != nil {
-				log.Println("check test binary existence error", err)
-				return false
-			}
-			if !exist {
-				fmt.Println("no test case in ", pkg)
-				continue
-			}
-
-			tasks, err = listTestCases(pkg, tasks)
-			if err != nil {
-				log.Println("list test cases error", err)
-				return false
-			}
+		if tasks, err = runExistingTestCases(pkgs); err != nil {
+			log.Println("run existing test cases error", err)
+			return false
 		}
 	}
 
@@ -355,6 +341,32 @@ func cmdRun(args ...string) bool {
 		}
 	}
 	return true
+}
+
+func runExistingTestCases(pkgs []string) (tasks []task, err error) {
+	wg := &sync.WaitGroup{}
+	tasksChannel := make(chan []task, len(pkgs))
+	for _, pkg := range pkgs {
+		exist, err := testBinaryExist(pkg)
+		if err != nil {
+			log.Println("check test binary existence error", err)
+			return nil, err
+		}
+		if !exist {
+			fmt.Println("no test case in ", pkg)
+			continue
+		}
+
+		wg.Add(1)
+		go listTestCasesConcurrent(wg, pkg, tasksChannel)
+	}
+
+	wg.Wait()
+	close(tasksChannel)
+	for t := range tasksChannel {
+		tasks = append(tasks, t...)
+	}
+	return tasks, nil
 }
 
 func parseCaseListFromFile(fileName string) (map[string]struct{}, error) {
@@ -533,7 +545,7 @@ func collectCoverProfileFile() {
 }
 
 func collectOneCoverProfileFile(result map[string]*cover.Profile, file os.DirEntry) {
-	f, err := os.Open(path.Join(coverFileTempDir, file.Name()))
+	f, err := os.Open(filepath.Join(coverFileTempDir, file.Name()))
 	if err != nil {
 		fmt.Println("open temp cover file error:", err)
 		os.Exit(-1)
@@ -651,6 +663,20 @@ func listTestCases(pkg string, tasks []task) ([]task, error) {
 	return tasks, nil
 }
 
+func listTestCasesConcurrent(wg *sync.WaitGroup, pkg string, tasksChannel chan<- []task) {
+	defer wg.Done()
+	newCases, err := listNewTestCases(pkg)
+	if err != nil {
+		log.Println("list test case error", pkg, err)
+		return
+	}
+	tasks := make([]task, 0, len(newCases))
+	for _, c := range newCases {
+		tasks = append(tasks, task{pkg, c})
+	}
+	tasksChannel <- tasks
+}
+
 func filterTestCases(tasks []task, arg1 string) ([]task, error) {
 	if strings.HasPrefix(arg1, "r:") {
 		r, err := regexp.Compile(arg1[2:])
@@ -675,7 +701,8 @@ func filterTestCases(tasks []task, arg1 string) ([]task, error) {
 }
 
 func listPackages() ([]string, error) {
-	cmd := exec.Command("go", "list", "./...")
+	listPath := strings.Join([]string{".", "..."}, string(filepath.Separator))
+	cmd := exec.Command("go", "list", listPath)
 	ss, err := cmdToLines(cmd)
 	if err != nil {
 		return nil, withTrace(err)
@@ -722,7 +749,7 @@ type testResult struct {
 func (n *numa) runTestCase(pkg string, fn string) testResult {
 	res := testResult{
 		JUnitTestCase: JUnitTestCase{
-			Classname: path.Join(modulePath, pkg),
+			Classname: filepath.Join(modulePath, pkg),
 			Name:      fn,
 		},
 	}
@@ -732,7 +759,7 @@ func (n *numa) runTestCase(pkg string, fn string) testResult {
 	var start time.Time
 	for i := 0; i < 3; i++ {
 		cmd := n.testCommand(pkg, fn)
-		cmd.Dir = path.Join(workDir, pkg)
+		cmd.Dir = filepath.Join(workDir, pkg)
 		// Combine the test case output, so the run result for failed cases can be displayed.
 		cmd.Stdout = &buf
 		cmd.Stderr = &buf
@@ -819,10 +846,11 @@ func failureCases(input []JUnitTestCase) int {
 
 func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 	args := make([]string, 0, 10)
-	exe := "./" + testFileName(pkg)
+	exe := strings.Join([]string{".", testFileName(pkg)}, string(filepath.Separator))
+
 	if coverprofile != "" {
-		fileName := strings.ReplaceAll(pkg, "/", "_") + "." + fn
-		tmpFile := path.Join(coverFileTempDir, fileName)
+		fileName := strings.ReplaceAll(pkg, string(filepath.Separator), "_") + "." + fn
+		tmpFile := filepath.Join(coverFileTempDir, fileName)
 		args = append(args, "-test.coverprofile", tmpFile)
 	}
 	args = append(args, "-test.cpu", "1")
@@ -840,7 +868,8 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 }
 
 func skipDIR(pkg string) bool {
-	skipDir := []string{"br", "lightning", "pkg/lightning", "cmd", "dumpling", "tests", "tools/check", "build"}
+	skipDir := []string{"br", "lightning", filepath.Join("pkg", "lightning"),
+		"cmd", "dumpling", "tests", filepath.Join("tools", "check"), "build"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
 			return true
@@ -861,7 +890,7 @@ func buildTestBinary(pkg string) error {
 	if short {
 		cmd.Args = append(cmd.Args, "--test.short")
 	}
-	cmd.Dir = path.Join(workDir, pkg)
+	cmd.Dir = filepath.Join(workDir, pkg)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -873,9 +902,9 @@ func buildTestBinary(pkg string) error {
 func generateBuildCache() error {
 	// cd cmd/tidb-server && go test -tags intest -exec true -vet off -toolexec=go-compile-without-link
 	cmd := exec.Command("go", "test", "-tags=intest", "-exec=true", "-vet=off")
-	goCompileWithoutLink := fmt.Sprintf("-toolexec=%s/tools/check/go-compile-without-link.sh", workDir)
+	goCompileWithoutLink := fmt.Sprintf("-toolexec=%s", filepath.Join(workDir, "tools", "check", "go-compile-without-link.sh"))
 	cmd.Args = append(cmd.Args, goCompileWithoutLink)
-	cmd.Dir = path.Join(workDir, "cmd/tidb-server")
+	cmd.Dir = filepath.Join(workDir, "cmd", "tidb-server")
 	if err := cmd.Run(); err != nil {
 		return withTrace(err)
 	}
@@ -891,10 +920,10 @@ func buildTestBinaryMulti(pkgs []string) error {
 	}
 
 	// go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
-	xprogPath := path.Join(workDir, "tools/bin/xprog")
+	xprogPath := filepath.Join(workDir, "tools", "bin", "xprog")
 	packages := make([]string, 0, len(pkgs))
 	for _, pkg := range pkgs {
-		packages = append(packages, path.Join(modulePath, pkg))
+		packages = append(packages, filepath.Join(modulePath, pkg))
 	}
 
 	var cmd *exec.Cmd
@@ -930,20 +959,20 @@ func testBinaryExist(pkg string) (bool, error) {
 }
 
 func testFileName(pkg string) string {
-	_, file := path.Split(pkg)
+	_, file := filepath.Split(pkg)
 	return file + ".test.bin"
 }
 
 func testFileFullPath(pkg string) string {
-	return path.Join(workDir, pkg, testFileName(pkg))
+	return filepath.Join(workDir, pkg, testFileName(pkg))
 }
 
 func listNewTestCases(pkg string) ([]string, error) {
-	exe := "./" + testFileName(pkg)
+	exe := strings.Join([]string{".", testFileName(pkg)}, string(filepath.Separator))
 
 	// session.test -test.list Test
 	cmd := exec.Command(exe, "-test.list", "Test")
-	cmd.Dir = path.Join(workDir, pkg)
+	cmd.Dir = filepath.Join(workDir, pkg)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	err := cmd.Run()

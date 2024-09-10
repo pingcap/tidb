@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
@@ -56,7 +56,7 @@ type PrepareExec struct {
 
 	ID         uint32
 	ParamCount int
-	Fields     []*ast.ResultField
+	Fields     []*resolve.ResultField
 	Stmt       any
 
 	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
@@ -208,9 +208,7 @@ func (e *DeallocateExec) Next(context.Context, *chunk.Chunk) error {
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if e.Ctx().GetSessionVars().EnablePreparedPlanCache {
-		bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(e.Ctx(), preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
-		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, preparedObj.SchemaVersion,
-			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
+		cacheKey, _, _, _, err := plannercore.NewPlanCacheKey(e.Ctx(), preparedObj)
 		if err != nil {
 			return err
 		}

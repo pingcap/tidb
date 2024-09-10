@@ -30,8 +30,9 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -302,12 +303,12 @@ const (
 )
 
 // ScrapeHotInfo gets the needed hot region information by the url given.
-func (h *Helper) ScrapeHotInfo(ctx context.Context, rw string, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
+func (h *Helper) ScrapeHotInfo(ctx context.Context, rw string, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
 	regionMetrics, err := h.FetchHotRegion(ctx, rw)
 	if err != nil {
 		return nil, err
 	}
-	return h.FetchRegionTableIndex(regionMetrics, allSchemas)
+	return h.FetchRegionTableIndex(regionMetrics, is, filter)
 }
 
 // FetchHotRegion fetches the hot region information from PD's http api.
@@ -379,7 +380,7 @@ type HotTableIndex struct {
 }
 
 // FetchRegionTableIndex constructs a map that maps a table to its hot region information by the given raw hot RegionMetric metrics.
-func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
+func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
 		regionMetric := regionMetric
@@ -394,7 +395,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 		if err != nil {
 			return nil, err
 		}
-		f := h.FindTableIndexOfRegion(allSchemas, hotRange)
+		f := h.FindTableIndexOfRegion(is, hotRange)
 		if f != nil {
 			t.DbName = f.DBName
 			t.TableName = f.TableName
@@ -409,10 +410,11 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 }
 
 // FindTableIndexOfRegion finds what table is involved in this hot region. And constructs the new frame item for future use.
-func (*Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *RegionFrameRange) *FrameItem {
-	for _, db := range allSchemas {
-		for _, tbl := range db.Tables {
-			if f := findRangeInTable(hotRange, db, tbl); f != nil {
+func (*Helper) FindTableIndexOfRegion(is infoschema.SchemaAndTable, hotRange *RegionFrameRange) *FrameItem {
+	for _, dbInfo := range is.AllSchemas() {
+		tblInfos, _ := is.SchemaTableInfos(context.Background(), dbInfo.Name)
+		for _, tbl := range tblInfos {
+			if f := findRangeInTable(hotRange, dbInfo, tbl); f != nil {
 				return f
 			}
 		}
@@ -640,7 +642,7 @@ func isBehindKeyRange(x withKeyRange, _, endKey string) bool {
 	return endKey != "" && x.GetStartKey() >= endKey
 }
 
-// TableInfoWithKeyRange stores table or index informations with its key range.
+// TableInfoWithKeyRange stores table or index information with its key range.
 type TableInfoWithKeyRange struct {
 	*TableInfo
 	StartKey string
@@ -677,8 +679,8 @@ func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
-func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, schemas []*model.DBInfo) map[int64][]TableInfo {
-	tables := h.GetTablesInfoWithKeyRange(schemas)
+func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) map[int64][]TableInfo {
+	tables := h.GetTablesInfoWithKeyRange(is, filter)
 
 	regions := make([]*pd.RegionInfo, 0, len(regionsInfo.Regions))
 	for i := 0; i < len(regionsInfo.Regions); i++ {
@@ -717,10 +719,15 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 }
 
 // GetTablesInfoWithKeyRange returns a slice containing tableInfos with key ranges of all tables in schemas.
-func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWithKeyRange {
+func (*Helper) GetTablesInfoWithKeyRange(is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) []TableInfoWithKeyRange {
 	tables := []TableInfoWithKeyRange{}
-	for _, db := range schemas {
-		for _, table := range db.Tables {
+	dbInfos := is.AllSchemas()
+	if filter != nil {
+		dbInfos = filter(dbInfos)
+	}
+	for _, db := range dbInfos {
+		tableInfos, _ := is.SchemaTableInfos(context.Background(), db.Name)
+		for _, table := range tableInfos {
 			if table.Partition != nil {
 				for i := range table.Partition.Definitions {
 					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil))

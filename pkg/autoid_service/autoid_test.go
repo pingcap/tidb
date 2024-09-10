@@ -69,7 +69,7 @@ func TestConcurrent(t *testing.T) {
 	dbInfo, ok := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
 
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
 
@@ -146,7 +146,7 @@ func TestAPI(t *testing.T) {
 	dbInfo, ok := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
 
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
 

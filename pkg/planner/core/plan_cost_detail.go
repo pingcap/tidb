@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -195,7 +196,7 @@ func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *optimizetrace.Physi
 		DiskFactor:      diskFactor,
 		RowSize:         rowSize,
 		ProbeDiskCost: &HashJoinProbeDiskCostDetail{
-			SelectionFactor: SelectionFactor,
+			SelectionFactor: cost.SelectionFactor,
 			NumPairs:        numPairs,
 			HasConditions:   len(p.LeftConditions)+len(p.RightConditions) > 0,
 			Cost:            probeDiskCost,
@@ -217,7 +218,7 @@ func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *optimizetrace.Physi
 		ProbeCost: &HashJoinProbeCostDetail{
 			NumPairs:        numPairs,
 			HasConditions:   len(p.LeftConditions)+len(p.RightConditions) > 0,
-			SelectionFactor: SelectionFactor,
+			SelectionFactor: cost.SelectionFactor,
 			ProbeRowCount:   probeCnt,
 			Cost:            probeCPUCost,
 		},

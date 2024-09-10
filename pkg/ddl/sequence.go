@@ -21,13 +21,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
-func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateSequence(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	if err := job.DecodeArgs(tbInfo); err != nil {
@@ -37,7 +37,7 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 	}
 
 	tbInfo.State = model.StateNone
-	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
+	err := checkTableNotExists(jobCtx.infoCache, schemaID, tbInfo.Name.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -45,41 +45,40 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	err = createSequenceWithCheck(t, job, tbInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
+	ver, err = updateSchemaVersion(jobCtx, t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+	return ver, nil
+}
+
+func createSequenceWithCheck(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) error {
 	switch tbInfo.State {
-	case model.StateNone:
+	case model.StateNone, model.StatePublic:
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
-		err = createSequenceWithCheck(t, job, schemaID, tbInfo)
+		err := checkTableInfoValid(tbInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			job.State = model.JobStateCancelled
+			return errors.Trace(err)
 		}
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		return ver, nil
+		var sequenceBase int64
+		if tbInfo.Sequence.Increment >= 0 {
+			sequenceBase = tbInfo.Sequence.Start - 1
+		} else {
+			sequenceBase = tbInfo.Sequence.Start + 1
+		}
+		return t.CreateSequenceAndSetSeqValue(job.SchemaID, tbInfo, sequenceBase)
 	default:
-		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
+		return dbterror.ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
 	}
-}
-
-func createSequenceWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
-	err := checkTableInfoValid(tbInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return errors.Trace(err)
-	}
-	var sequenceBase int64
-	if tbInfo.Sequence.Increment >= 0 {
-		sequenceBase = tbInfo.Sequence.Start - 1
-	} else {
-		sequenceBase = tbInfo.Sequence.Start + 1
-	}
-	return t.CreateSequenceAndSetSeqValue(schemaID, job.SchemaName, tbInfo, sequenceBase)
 }
 
 func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model.SequenceInfo) {
@@ -232,7 +231,7 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 	return false, 0, nil
 }
 
-func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterSequence(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var (
 		sequenceOpts []*ast.SequenceOption
@@ -280,7 +279,7 @@ func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	// Store the sequence info into kv.
 	// Set shouldUpdateVer always to be true even altering doesn't take effect, since some tools like drainer won't take
 	// care of SchemaVersion=0.
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

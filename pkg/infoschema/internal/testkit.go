@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -97,6 +98,8 @@ select * from t_slim;
 # Resource_group: rg1
 # Request_unit_read: 96.66703066666668
 # Request_unit_write: 3182.424414062492
+# Tidb_cpu_usage: 0.01
+# Tikv_cpu_usage: 0.021
 INSERT INTO ...;
 `)
 	require.NoError(t, f.Close())
@@ -150,12 +153,13 @@ func GenGlobalID(store kv.Storage) (int64, error) {
 func MockDBInfo(t testing.TB, store kv.Storage, DBName string) *model.DBInfo {
 	id, err := GenGlobalID(store)
 	require.NoError(t, err)
-	return &model.DBInfo{
-		ID:     id,
-		Name:   model.NewCIStr(DBName),
-		Tables: []*model.TableInfo{},
-		State:  model.StatePublic,
+	dbInfo := &model.DBInfo{
+		ID:    id,
+		Name:  pmodel.NewCIStr(DBName),
+		State: model.StatePublic,
 	}
+	dbInfo.Deprecated.Tables = []*model.TableInfo{}
+	return dbInfo
 }
 
 // MockTableInfo mock TableInfo for testing.
@@ -164,7 +168,7 @@ func MockTableInfo(t testing.TB, store kv.Storage, tblName string) *model.TableI
 	require.NoError(t, err)
 	colInfo := &model.ColumnInfo{
 		ID:        colID,
-		Name:      model.NewCIStr("a"),
+		Name:      pmodel.NewCIStr("a"),
 		Offset:    0,
 		FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		State:     model.StatePublic,
@@ -175,7 +179,7 @@ func MockTableInfo(t testing.TB, store kv.Storage, tblName string) *model.TableI
 
 	return &model.TableInfo{
 		ID:      tblID,
-		Name:    model.NewCIStr(tblName),
+		Name:    pmodel.NewCIStr(tblName),
 		Columns: []*model.ColumnInfo{colInfo},
 		State:   model.StatePublic,
 	}
@@ -194,7 +198,7 @@ func MockResourceGroupInfo(t *testing.T, store kv.Storage, groupName string) *mo
 	require.NoError(t, err)
 	return &model.ResourceGroupInfo{
 		ID:   id,
-		Name: model.NewCIStr(groupName),
+		Name: pmodel.NewCIStr(groupName),
 	}
 }
 
@@ -204,7 +208,7 @@ func MockPolicyInfo(t *testing.T, store kv.Storage, policyName string) *model.Po
 	require.NoError(t, err)
 	return &model.PolicyInfo{
 		ID:   id,
-		Name: model.NewCIStr(policyName),
+		Name: pmodel.NewCIStr(policyName),
 	}
 }
 
@@ -214,7 +218,7 @@ func MockPolicyRefInfo(t *testing.T, store kv.Storage, policyName string) *model
 	require.NoError(t, err)
 	return &model.PolicyRefInfo{
 		ID:   id,
-		Name: model.NewCIStr(policyName),
+		Name: pmodel.NewCIStr(policyName),
 	}
 }
 
@@ -222,7 +226,7 @@ func MockPolicyRefInfo(t *testing.T, store kv.Storage, policyName string) *model
 func AddTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, dbInfo.Name.O, tblInfo)
+		err := meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -244,7 +248,7 @@ func UpdateTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *
 func DropTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblID int64, tblName string) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).DropTableOrView(dbInfo.ID, dbInfo.Name.O, tblID, tblName)
+		err := meta.NewMeta(txn).DropTableOrView(dbInfo.ID, tblID)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -267,7 +271,7 @@ func DropDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).DropDatabase(dbInfo.ID, dbInfo.Name.O)
+		err := meta.NewMeta(txn).DropDatabase(dbInfo.ID)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
