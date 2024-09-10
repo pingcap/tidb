@@ -187,7 +187,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(s *ddlutil.SchemaChangeEvent) error {
 		return h.statsWriter.UpdateStatsVersion()
 	default:
 		intest.Assert(false)
-		logutil.StatsLogger().Error("Unhandled schema change event", zap.Stringer("type", s.GetType()))
+		logutil.StatsLogger().Error("Unhandled schema change event", zap.Stringer("type", s))
 	}
 	return nil
 }
