@@ -28,7 +28,8 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -282,10 +283,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job.Type))
 	switch job.Type {
 	case model.ActionDropSchema:
-		var tableIDs []int64
-		if err := job.DecodeArgs(&tableIDs); err != nil {
+		args, err := model.GetFinishedDropSchemaArgs(job)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		tableIDs := args.AllDroppedTableIDs
 		for i := 0; i < len(tableIDs); i += batchInsertDeleteRangeSize {
 			batchEnd := len(tableIDs)
 			if batchEnd > i+batchInsertDeleteRangeSize {
@@ -295,7 +297,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 				return errors.Trace(err)
 			}
 		}
-	case model.ActionDropTable, model.ActionTruncateTable:
+	case model.ActionDropTable:
 		tableID := job.TableID
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
 		var startKey kv.Key
@@ -312,6 +314,21 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
 		}
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
+	case model.ActionTruncateTable:
+		tableID := job.TableID
+		args, err := model.GetFinishedTruncateTableArgs(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		oldPartitionIDs := args.OldPartitionIDs
+		if len(oldPartitionIDs) > 0 {
+			if err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, oldPartitionIDs, ea, "truncate table: partition table IDs"); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		// always delete the table range, even when it's a partitioned table where
+		// it may contain global index regions.
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "truncate table: table ID"))
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 		model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
@@ -383,7 +400,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			}
 		}
 	case model.ActionDropColumn:
-		var colName model.CIStr
+		var colName pmodel.CIStr
 		var ifExists bool
 		var indexIDs []int64
 		var partitionIDs []int64

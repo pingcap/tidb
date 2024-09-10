@@ -31,8 +31,9 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/structure"
@@ -99,10 +100,10 @@ var (
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate:     math.MaxInt32,
 			BurstLimit: -1,
-			Priority:   model.MediumPriorityValue,
+			Priority:   pmodel.MediumPriorityValue,
 		},
 		ID:    defaultGroupID,
-		Name:  model.NewCIStr(resourcegroup.DefaultResourceGroupName),
+		Name:  pmodel.NewCIStr(resourcegroup.DefaultResourceGroupName),
 		State: model.StatePublic,
 	}
 )
@@ -765,7 +766,7 @@ func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	}
 	db := model.DBInfo{
 		ID:      id,
-		Name:    model.NewCIStr(mysql.SystemDB),
+		Name:    pmodel.NewCIStr(mysql.SystemDB),
 		Charset: mysql.UTF8MB4Charset,
 		Collate: mysql.UTF8MB4DefaultCollation,
 		State:   model.StatePublic,
@@ -1228,7 +1229,7 @@ func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
 
 	return &model.TableNameInfo{
 		ID:   id,
-		Name: model.NewCIStr(name),
+		Name: pmodel.NewCIStr(name),
 	}, nil
 }
 
@@ -1457,8 +1458,8 @@ var (
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
 )
 
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
-	b, err := job.Encode(updateRawArgs)
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
+	b, err := job.Encode(true)
 	if err == nil {
 		err = m.txn.RPush(key, b)
 	}
@@ -1472,7 +1473,7 @@ func (m *Meta) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) erro
 		listKey = jobListKeys[0]
 	}
 
-	return m.enQueueDDLJob(listKey, job, true)
+	return m.enQueueDDLJob(listKey, job)
 }
 
 // JobListKeyType is a key type of the DDL job queue.

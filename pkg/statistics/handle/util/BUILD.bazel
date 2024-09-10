@@ -16,13 +16,12 @@ go_library(
         "//pkg/ddl/util",
         "//pkg/infoschema",
         "//pkg/kv",
-        "//pkg/parser/ast",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/terror",
+        "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/variable",
-        "//pkg/statistics/handle/logutil",
         "//pkg/table",
         "//pkg/util",
         "//pkg/util/chunk",
@@ -35,7 +34,6 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@org_golang_x_exp//maps",
         "@org_uber_go_atomic//:atomic",
-        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -46,6 +44,7 @@ go_test(
     embed = [":util"],
     flaky = True,
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "@com_github_stretchr_testify//require",
     ],

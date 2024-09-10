@@ -35,9 +35,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
@@ -884,7 +884,7 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onShardRowID(jobCtx, t, job)
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(jobCtx, t, job)
-	case model.ActionModifyTableAutoIdCache:
+	case model.ActionModifyTableAutoIDCache:
 		ver, err = onModifyTableAutoIDCache(jobCtx, t, job)
 	case model.ActionAddTablePartition:
 		ver, err = w.onAddTablePartition(jobCtx, t, job)

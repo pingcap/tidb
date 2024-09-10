@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -114,12 +114,13 @@ func TestSchemaResume(t *testing.T) {
 	dbInfo, err := testSchemaInfo(store, "test_restart")
 	require.NoError(t, err)
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{dbInfo},
 	}
+	job.FillArgs(&model.CreateSchemaArgs{DBInfo: dbInfo})
 	testRunInterruptedJob(t, store, dom, job)
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 

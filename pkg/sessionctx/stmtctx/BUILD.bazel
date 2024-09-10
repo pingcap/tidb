@@ -8,8 +8,8 @@ go_library(
     deps = [
         "//pkg/distsql/context",
         "//pkg/errctx",
+        "//pkg/meta/model",
         "//pkg/parser",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/resourcegroup",

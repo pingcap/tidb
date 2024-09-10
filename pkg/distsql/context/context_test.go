@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
@@ -34,6 +35,7 @@ import (
 
 func TestContextDetach(t *testing.T) {
 	sqlkiller := &sqlkiller.SQLKiller{Signal: 1}
+	sqlCPUUsages := &ppcpuusage.SQLCPUUsages{}
 	kvVars := &tikvstore.Variables{
 		BackoffLockFast: 1,
 		BackOffWeight:   2,
@@ -54,6 +56,7 @@ func TestContextDetach(t *testing.T) {
 		Location:         time.Local,
 		RuntimeStatsColl: &execdetails.RuntimeStatsColl{},
 		SQLKiller:        sqlkiller,
+		CPUUsage:         sqlCPUUsages,
 		ErrCtx:           errctx.NewContextWithLevels(errctx.LevelMap{errctx.LevelWarn}, warnHandler),
 
 		// TiFlash related configurations

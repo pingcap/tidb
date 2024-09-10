@@ -23,10 +23,11 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -385,7 +386,7 @@ func TestBuildExpression(t *testing.T) {
 	tbl := &model.TableInfo{
 		Columns: []*model.ColumnInfo{
 			{
-				Name:          model.NewCIStr("id"),
+				Name:          pmodel.NewCIStr("id"),
 				Offset:        0,
 				State:         model.StatePublic,
 				FieldType:     *types.NewFieldType(mysql.TypeString),
@@ -393,13 +394,13 @@ func TestBuildExpression(t *testing.T) {
 				DefaultValue:  "uuid()",
 			},
 			{
-				Name:      model.NewCIStr("a"),
+				Name:      pmodel.NewCIStr("a"),
 				Offset:    1,
 				State:     model.StatePublic,
 				FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			},
 			{
-				Name:         model.NewCIStr("b"),
+				Name:         pmodel.NewCIStr("b"),
 				Offset:       2,
 				State:        model.StatePublic,
 				FieldType:    *types.NewFieldType(mysql.TypeLonglong),
@@ -410,7 +411,7 @@ func TestBuildExpression(t *testing.T) {
 
 	ctx := contextstatic.NewStaticExprContext()
 	evalCtx := ctx.GetStaticEvalCtx()
-	cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr(""), tbl.Name, tbl.Cols(), tbl)
+	cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, pmodel.NewCIStr(""), tbl.Name, tbl.Cols(), tbl)
 	require.NoError(t, err)
 	schema := expression.NewSchema(cols...)
 
@@ -503,9 +504,7 @@ func TestBuildExpression(t *testing.T) {
 	require.Equal(t, types.KindInt64, v.Kind())
 	require.Equal(t, int64(7), v.GetInt64())
 
-	// user variable needs required option
-	_, err = buildExpr(t, ctx, "@a")
-	require.EqualError(t, err, "rewriting user variable requires 'OptPropSessionVars' in evalCtx")
+	// user variable write needs required option
 	_, err = buildExpr(t, ctx, "@a := 1")
 	require.EqualError(t, err, "rewriting user variable requires 'OptPropSessionVars' in evalCtx")
 
@@ -513,9 +512,7 @@ func TestBuildExpression(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
 	vars.TimeZone = evalCtx.Location()
 	vars.StmtCtx.SetTimeZone(vars.Location())
-	evalCtx = evalCtx.Apply(contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(vars),
-	))
+	evalCtx = evalCtx.Apply(contextstatic.WithUserVarsReader(vars.GetSessionVars().UserVars))
 	ctx = ctx.Apply(contextstatic.WithEvalCtx(evalCtx))
 	vars.SetUserVarVal("a", types.NewStringDatum("abc"))
 	getVarExpr, err := buildExpr(t, ctx, "@a")
@@ -526,6 +523,8 @@ func TestBuildExpression(t *testing.T) {
 	require.Equal(t, "abc", v.GetString())
 
 	// writing user var
+	evalCtx = evalCtx.Apply(contextstatic.WithOptionalProperty(contextopt.NewSessionVarsProvider(vars)))
+	ctx = ctx.Apply(contextstatic.WithEvalCtx(evalCtx))
 	expr, err = buildExpr(t, ctx, "@a := 'def'")
 	require.NoError(t, err)
 	v, err = expr.Eval(evalCtx, chunk.Row{})

@@ -12,6 +12,7 @@ go_test(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/errno",
+        "//pkg/meta/model",
         "//pkg/parser/auth",
         "//pkg/parser/model",
         "//pkg/server",

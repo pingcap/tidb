@@ -39,8 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -191,6 +191,17 @@ func getGlobalInfoSyncer() (*InfoSyncer, error) {
 
 func setGlobalInfoSyncer(is *InfoSyncer) {
 	globalInfoSyncer.Store(is)
+}
+
+// SetPDHttpCliForTest sets the pdhttp.Client for testing.
+// Please do not use it in the production environment.
+func SetPDHttpCliForTest(cli pdhttp.Client) func() {
+	syncer := globalInfoSyncer.Load()
+	originalCli := syncer.pdHTTPCli
+	syncer.pdHTTPCli = cli
+	return func() {
+		syncer.pdHTTPCli = originalCli
+	}
 }
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
