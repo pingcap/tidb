@@ -302,7 +302,6 @@ type Job struct {
 	RowCount int64      `json:"row_count"`
 	Mu       sync.Mutex `json:"-"`
 
-	// below fields are used in JobVersion1
 	// CtxVars are variables attached to the job. It is for internal usage.
 	// E.g. passing arguments between functions by one single *Job pointer.
 	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
@@ -313,16 +312,12 @@ type Job struct {
 	// - TruncateTable: [new-table-id, foreignKeyCheck, ...
 	// - RenameTable: [old-db-id, new-table-name, old-db-name]
 	// - ExchangeTablePartition: [partition-id, pt-db-id, pt-id, partition-name, with-validation]
+	// when Version is JobVersion2, Args contains a single element of type JobArgs.
+	// TODO make it private after we finish the migration to JobVersion2.
 	Args []any `json:"-"`
-	// RawArgs : We must use json raw message to delay parsing special args.
+	// we use json raw message to delay parsing special args.
+	// the args are cleared out unless Job.FillFinishedArgs is called.
 	RawArgs json.RawMessage `json:"raw_args"`
-
-	// below fields are used in JobVersion2
-	// ArgsV2 is a pointer to a typed XXXArgs struct specific to the job type.
-	// see structs inside job_args.go.
-	ArgsV2 JobArgs `json:"-"`
-	// RawArgsV2 stores the raw json of ArgsV2.
-	RawArgsV2 json.RawMessage `json:"raw_args_v2"`
 
 	SchemaState SchemaState `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
@@ -485,9 +480,14 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 	return w, wc
 }
 
-// FillArgs fills job args.
+// FillArgs fills args for new job.
 func (job *Job) FillArgs(args JobArgs) {
 	args.fillJob(job)
+}
+
+// FillFinishedArgs fills args for finished job.
+func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
+	args.fillFinishedJob(job)
 }
 
 // Encode encodes job with json format.
@@ -513,11 +513,15 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 				}
 			}
 		} else {
-			job.RawArgsV2, err = json.Marshal(job.ArgsV2)
+			var arg any
+			if len(job.Args) > 0 {
+				arg = job.Args[0]
+			}
+			job.RawArgs, err = json.Marshal(arg)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// TODO remember update sub-jobs' RawArgsV2 when we do it.
+			// TODO remember update sub-jobs' RawArgs when we do it.
 		}
 	}
 

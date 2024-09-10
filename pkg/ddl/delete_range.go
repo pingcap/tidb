@@ -283,10 +283,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job.Type))
 	switch job.Type {
 	case model.ActionDropSchema:
-		var tableIDs []int64
-		if err := job.DecodeArgs(&tableIDs); err != nil {
+		args, err := model.GetFinishedDropSchemaArgs(job)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		tableIDs := args.AllDroppedTableIDs
 		for i := 0; i < len(tableIDs); i += batchInsertDeleteRangeSize {
 			batchEnd := len(tableIDs)
 			if batchEnd > i+batchInsertDeleteRangeSize {
@@ -315,7 +316,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
 	case model.ActionTruncateTable:
 		tableID := job.TableID
-		args, err := model.GetTruncateTableArgsAfterRun(job)
+		args, err := model.GetFinishedTruncateTableArgs(job)
 		if err != nil {
 			return errors.Trace(err)
 		}
