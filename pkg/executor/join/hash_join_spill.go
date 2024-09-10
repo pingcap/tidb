@@ -34,7 +34,7 @@ type hashJoinSpillAction struct {
 	spillHelper *hashJoinSpillHelper
 }
 
-func newHashJoinSpillDiskAction(spillHelper *hashJoinSpillHelper) *hashJoinSpillAction {
+func newHashJoinSpillAction(spillHelper *hashJoinSpillHelper) *hashJoinSpillAction {
 	return &hashJoinSpillAction{
 		spillHelper: spillHelper,
 	}

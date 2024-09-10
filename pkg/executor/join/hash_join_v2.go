@@ -695,7 +695,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 
 	if variable.EnableTmpStorageOnOOM.Load() && e.partitionNumber > 1 {
 		e.initMaxSpillRound()
-		e.spillAction = newHashJoinSpillDiskAction(e.spillHelper)
+		e.spillAction = newHashJoinSpillAction(e.spillHelper)
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 	}
 
@@ -1332,7 +1332,7 @@ func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh c
 	}
 
 	for i := 0; i < chunkNum; i++ {
-		err := checkSpillAndExecute(fetcherAndWorkerSyncer, e.spillHelper)
+		err := checkAndSpillRowTableIfNeeded(fetcherAndWorkerSyncer, e.spillHelper)
 		if err != nil {
 			errCh <- err
 			return

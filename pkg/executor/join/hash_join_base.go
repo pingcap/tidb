@@ -242,7 +242,7 @@ func syncerDone(syncer *sync.WaitGroup) {
 	}
 }
 
-func checkSpillAndExecute(fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper) error {
+func checkAndSpillRowTableIfNeeded(fetcherAndWorkerSyncer *sync.WaitGroup, spillHelper *hashJoinSpillHelper) error {
 	if fetcherAndWorkerSyncer == nil {
 		return nil
 	}
@@ -312,7 +312,7 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 	})
 
 	for {
-		err := checkSpillAndExecute(fetcherAndWorkerSyncer, spillHelper)
+		err := checkAndSpillRowTableIfNeeded(fetcherAndWorkerSyncer, spillHelper)
 		err = triggerIntest(2)
 		if err != nil {
 			hasError = true
