@@ -43,7 +43,7 @@ const (
 	maxWatchListCap           = 10000
 	maxWatchRecordChannelSize = 1024
 
-	runawayRecordFlushInterval   = 10 * time.Second
+	runawayRecordFlushInterval   = 30 * time.Second
 	runawayRecordGCInterval      = time.Hour * 24
 	runawayRecordExpiredDuration = time.Hour * 24 * 7
 

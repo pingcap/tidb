@@ -104,7 +104,6 @@ func genRunawayQueriesStmt(recordMap map[recordKey]*Record) (string, []any) {
 		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?, %?, %?)")
 		params = append(params, r.ResourceGroupName, r.StartTime, r.Match, r.Action, r.SampleText, r.SQLDigest, r.PlanDigest, r.Source, r.Repeats)
 	}
-	builder.WriteString(" ON DUPLICATE KEY UPDATE repeats = repeats + 1 + VALUES(repeats)")
 	return builder.String(), params
 }
 

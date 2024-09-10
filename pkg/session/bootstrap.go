@@ -630,8 +630,7 @@ const (
 		plan_digest varchar(64) NOT NULL,
 		tidb_server varchar(512),
 		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when select runaway query",
-		INDEX time_index(start_time) COMMENT "accelerate the speed when querying with active watch",
-		UNIQUE KEY runaway_task(resource_group_name, sql_digest, plan_digest, match_type)
+		INDEX time_index(start_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
@@ -1119,7 +1118,7 @@ const (
 	// version212 changed a lots of runaway related table.
 	// 1. switchGroup: add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
 	// 2. modify column `plan_digest` type, modify column `time` to `start_time,
-	// modify column `original_sql` to `sample_sql` and unique union key to `mysql.tidb_runaway_queries`.
+	// modify column `original_sql` to `sample_sql` to `mysql.tidb_runaway_queries`.
 	version212 = 212
 )
 
@@ -3114,8 +3113,6 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `original_sql` `sample_sql` TEXT NOT NULL", infoschema.ErrColumnExists)
 	// modify column type of `plan_digest`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
-	// add union key(resource_group_name, sql_digest, plan_digest, match_type)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD UNIQUE KEY runaway_task(resource_group_name, sql_digest, plan_digest, match_type);", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
