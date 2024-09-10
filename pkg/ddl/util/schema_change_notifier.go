@@ -33,9 +33,9 @@ type SchemaChangeEvent struct {
 	addedPartInfo   *model.PartitionInfo
 	droppedPartInfo *model.PartitionInfo
 	columnInfos     []*model.ColumnInfo
-	// nonPartTableID is used to store the non-partitioned table that is converted to
-	// a partitioned table in NewAddPartitioningEvent.
-	nonPartTableID int64
+	// oldPartTableID is used to store the table ID when a table transitions from being partitioned to non-partitioned,
+	// OR vice versa.
+	oldPartTableID int64
 
 	tp model.ActionType
 }
@@ -54,8 +54,8 @@ func (s *SchemaChangeEvent) String() string {
 	if s.oldTableInfo != nil {
 		_, _ = fmt.Fprintf(&sb, ", Old Table ID: %d, Old Table Name: %s", s.oldTableInfo.ID, s.oldTableInfo.Name)
 	}
-	if s.nonPartTableID != 0 {
-		_, _ = fmt.Fprintf(&sb, ", Old Table ID for Partition: %d", s.nonPartTableID)
+	if s.oldPartTableID != 0 {
+		_, _ = fmt.Fprintf(&sb, ", Old Table ID for Partition: %d", s.oldPartTableID)
 	}
 	if s.addedPartInfo != nil {
 		for _, partDef := range s.addedPartInfo.Definitions {
@@ -324,7 +324,7 @@ func NewAddPartitioningEvent(
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		tp:             model.ActionAlterTablePartitioning,
-		nonPartTableID: nonPartTableID,
+		oldPartTableID: nonPartTableID,
 		tableInfo:      newGlobalTableInfo,
 		addedPartInfo:  addedPartInfo,
 	}
@@ -339,7 +339,7 @@ func (s *SchemaChangeEvent) GetAddPartitioningInfo() (
 	addedPartInfo *model.PartitionInfo,
 ) {
 	intest.Assert(s.tp == model.ActionAlterTablePartitioning)
-	return s.nonPartTableID, s.tableInfo, s.addedPartInfo
+	return s.oldPartTableID, s.tableInfo, s.addedPartInfo
 }
 
 // NewRemovePartitioningEvent creates a schema change event whose type is
@@ -351,7 +351,7 @@ func NewRemovePartitioningEvent(
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		tp:              model.ActionRemovePartitioning,
-		nonPartTableID:  oldPartitionedTableID,
+		oldPartTableID:  oldPartitionedTableID,
 		tableInfo:       newSingleTableInfo,
 		droppedPartInfo: droppedPartInfo,
 	}
@@ -365,7 +365,7 @@ func (s *SchemaChangeEvent) GetRemovePartitioningInfo() (
 	droppedPartInfo *model.PartitionInfo,
 ) {
 	intest.Assert(s.tp == model.ActionRemovePartitioning)
-	return s.nonPartTableID, s.tableInfo, s.droppedPartInfo
+	return s.oldPartTableID, s.tableInfo, s.droppedPartInfo
 }
 
 // NewFlashbackClusterEvent creates a schema change event whose type is
