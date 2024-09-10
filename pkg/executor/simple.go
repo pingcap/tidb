@@ -2778,8 +2778,7 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
 		return err
 	}
-	h.TriggerSyncStats()
-	return nil
+	return h.SyncStats()
 }
 
 func (e *SimpleExec) autoNewTxn() bool {
