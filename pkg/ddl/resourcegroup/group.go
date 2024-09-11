@@ -59,7 +59,8 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 
 	if options.Background != nil {
 		group.BackgroundSettings = &rmpb.BackgroundSettings{
-			JobTypes: options.Background.JobTypes,
+			JobTypes:         options.Background.JobTypes,
+			UtilizationLimit: options.Background.ResourceUtilLimit,
 		}
 	}
 

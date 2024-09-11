@@ -802,6 +802,7 @@ import (
 	trueCardCost          "TRUE_CARD_COST"
 	unlimited             "UNLIMITED"
 	untilTS               "UNTIL_TS"
+	utilizationLimit      "UTILIZATION_LIMIT"
 	variance              "VARIANCE"
 	varPop                "VAR_POP"
 	varSamp               "VAR_SAMP"
@@ -1950,6 +1951,11 @@ DirectResourceGroupBackgroundOption:
 	{
 		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundOptionTaskNames, StrValue: $3}
 	}
+|	"UTILIZATION_LIMIT" EqOpt LengthNum
+	{
+		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundUtilizationLimit, UintValue: $3.(uint64)}
+	}
+
 
 PlacementOptionList:
 	DirectPlacementOption

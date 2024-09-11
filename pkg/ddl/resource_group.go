@@ -301,6 +301,11 @@ func SetDirectResourceGroupBackgroundOption(resourceGroupSettings *model.Resourc
 			return err
 		}
 		resourceGroupSettings.Background.JobTypes = jobTypes
+	case ast.BackgroundUtilizationLimit:
+		if opt.UintValue == 0 || opt.UintValue > 100 {
+			return errors.Trace(errors.New("invalid background resource utilization limit, the valid range is (0, 100]"))
+		}
+		resourceGroupSettings.Background.ResourceUtilLimit = opt.UintValue
 	default:
 		return errors.Trace(errors.New("unknown background option type"))
 	}

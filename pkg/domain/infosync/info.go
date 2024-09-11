@@ -612,6 +612,7 @@ func ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) error {
 	if err != nil {
 		return err
 	}
+	logutil.BgLogger().Info("ModifyResourceGroup", zap.Stringer("group", group))
 	_, err = is.resourceManagerClient.ModifyResourceGroup(ctx, group)
 	return err
 }
