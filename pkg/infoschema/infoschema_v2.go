@@ -214,7 +214,7 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 			isd.pid2tid.Set(partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
 		}
 	}
-	if hasSpecialAttributes(ti) {
+	if infoschemacontext.HasSpecialAttributes(ti) {
 		isd.tableInfoResident.Set(tableInfoItem{
 			dbName:        item.dbName,
 			tableID:       item.tableID,
@@ -1379,7 +1379,7 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 
 	// do full update bundles
 	is.ruleBundleMap = make(map[int64]*placement.Bundle)
-	tmp := is.ListTablesWithSpecialAttribute(PlacementPolicyAttribute)
+	tmp := is.ListTablesWithSpecialAttribute(infoschemacontext.PlacementPolicyAttribute)
 	for _, v := range tmp {
 		for _, tbl := range v.TableInfos {
 			b.updateTableBundles(is, tbl.ID)
@@ -1392,7 +1392,7 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 		return
 	}
 
-	dbs := is.ListTablesWithSpecialAttribute(AllSpecialAttribute)
+	dbs := is.ListTablesWithSpecialAttribute(infoschemacontext.AllSpecialAttribute)
 	for _, db := range dbs {
 		for _, tbl := range db.TableInfos {
 			tblInfo := tbl
@@ -1412,69 +1412,6 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 		}
 	}
 }
-
-// TTLAttribute is the TTL attribute filter used by ListTablesWithSpecialAttribute.
-var TTLAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
-	return t.State == model.StatePublic && t.TTLInfo != nil
-}
-
-// TiFlashAttribute is the TiFlashReplica attribute filter used by ListTablesWithSpecialAttribute.
-var TiFlashAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
-	return t.TiFlashReplica != nil
-}
-
-// PlacementPolicyAttribute is the Placement Policy attribute filter used by ListTablesWithSpecialAttribute.
-var PlacementPolicyAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
-	if t.PlacementPolicyRef != nil {
-		return true
-	}
-	if parInfo := t.GetPartitionInfo(); parInfo != nil {
-		for _, def := range parInfo.Definitions {
-			if def.PlacementPolicyRef != nil {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// AllPlacementPolicyAttribute is the Placement Policy attribute filter used by ListTablesWithSpecialAttribute.
-// Different from PlacementPolicyAttribute, Partition.Enable flag will be ignored.
-var AllPlacementPolicyAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
-	if t.PlacementPolicyRef != nil {
-		return true
-	}
-	if t.Partition != nil {
-		for _, def := range t.Partition.Definitions {
-			if def.PlacementPolicyRef != nil {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// TableLockAttribute is the Table Lock attribute filter used by ListTablesWithSpecialAttribute.
-var TableLockAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
-	return t.Lock != nil
-}
-
-// ForeignKeysAttribute is the ForeignKeys attribute filter used by ListTablesWithSpecialAttribute.
-var ForeignKeysAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
-	return len(t.ForeignKeys) > 0
-}
-
-// PartitionAttribute is the Partition attribute filter used by ListTablesWithSpecialAttribute.
-var PartitionAttribute infoschemacontext.SpecialAttributeFilter = func(t *model.TableInfo) bool {
-	return t.GetPartitionInfo() != nil
-}
-
-func hasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || ForeignKeysAttribute(t)
-}
-
-// AllSpecialAttribute marks a model.TableInfo with any special attributes.
-var AllSpecialAttribute infoschemacontext.SpecialAttributeFilter = hasSpecialAttributes
 
 func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter infoschemacontext.SpecialAttributeFilter) []infoschemacontext.TableInfoResult {
 	ret := make([]infoschemacontext.TableInfoResult, 0, 10)

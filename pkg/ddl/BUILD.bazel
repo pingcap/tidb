@@ -98,6 +98,7 @@ go_library(
         "//pkg/expression/context",
         "//pkg/expression/contextstatic",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/lightning/backend",
         "//pkg/lightning/backend/external",

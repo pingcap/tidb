@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -3389,7 +3390,7 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 
 	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	dbs := is.ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	dbs := is.ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	for _, db := range dbs {
 		for _, t := range db.TableInfos {
 			pi := t.GetPartitionInfo()

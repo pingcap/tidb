@@ -525,11 +525,11 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		DDLState: model.StatePublic,
 	}
 	// add partition
-	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, PartitionAttribute, true)
+	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, infoschemacontext.PartitionAttribute, true)
 	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
 	// drop partition
 	tblInfo.Partition.Definitions = tblInfo.Partition.Definitions[:1]
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, PartitionAttribute, true)
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, infoschemacontext.PartitionAttribute, true)
 	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
 
 	// test placement policy correctness in schema change
@@ -537,10 +537,10 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		ID:   1,
 		Name: pmodel.NewCIStr("p3"),
 	}
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAlterTablePlacement, 5, PlacementPolicyAttribute, true)
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAlterTablePlacement, 5, infoschemacontext.PlacementPolicyAttribute, true)
 	require.Equal(t, tblInfo.PlacementPolicyRef, tblInfo1.PlacementPolicyRef)
 	tblInfo.PlacementPolicyRef = nil
-	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAlterTablePlacement, 6, PlacementPolicyAttribute, false)
+	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAlterTablePlacement, 6, infoschemacontext.PlacementPolicyAttribute, false)
 
 	// test tiflash replica correctness in schema change
 	tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
@@ -548,10 +548,10 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		Available:      true,
 		LocationLabels: []string{"zone"},
 	}
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionSetTiFlashReplica, 7, TiFlashAttribute, true)
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionSetTiFlashReplica, 7, infoschemacontext.TiFlashAttribute, true)
 	require.Equal(t, tblInfo.TiFlashReplica, tblInfo1.TiFlashReplica)
 	tblInfo.TiFlashReplica = nil
-	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionSetTiFlashReplica, 8, TiFlashAttribute, false)
+	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionSetTiFlashReplica, 8, infoschemacontext.TiFlashAttribute, false)
 
 	// test table lock correctness in schema change
 	tblInfo.Lock = &model.TableLockInfo{
@@ -559,10 +559,10 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		State: model.TableLockStatePublic,
 		TS:    1,
 	}
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionLockTable, 9, TableLockAttribute, true)
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionLockTable, 9, infoschemacontext.TableLockAttribute, true)
 	require.Equal(t, tblInfo.Lock, tblInfo1.Lock)
 	tblInfo.Lock = nil
-	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionUnlockTable, 10, TableLockAttribute, false)
+	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionUnlockTable, 10, infoschemacontext.TableLockAttribute, false)
 
 	// test foreign key correctness in schema change
 	tblInfo.ForeignKeys = []*model.FKInfo{{
@@ -574,10 +574,10 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		Cols:      []pmodel.CIStr{pmodel.NewCIStr("t_a")},
 		State:     model.StateWriteOnly,
 	}}
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddForeignKey, 11, ForeignKeysAttribute, true)
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddForeignKey, 11, infoschemacontext.ForeignKeysAttribute, true)
 	require.Equal(t, tblInfo.ForeignKeys, tblInfo1.ForeignKeys)
 	tblInfo.ForeignKeys = nil
-	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropForeignKey, 12, ForeignKeysAttribute, false)
+	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropForeignKey, 12, infoschemacontext.ForeignKeysAttribute, false)
 }
 
 func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
@@ -636,7 +636,7 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 		Enable:   true,
 		DDLState: model.StatePublic,
 	}
-	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, PartitionAttribute, true)
+	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, infoschemacontext.PartitionAttribute, true)
 	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
 	require.Equal(t, v2.Data.pid2tid.Len(), 2)
 	tblInfoItem, ok := v2.Data.pid2tid.Get(partitionItem{partitionID: 2, schemaVersion: 3})
@@ -645,7 +645,7 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 
 	// verify partition related fields drop partition
 	tblInfo.Partition.Definitions = tblInfo.Partition.Definitions[:1]
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, PartitionAttribute, true)
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, infoschemacontext.PartitionAttribute, true)
 	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
 	require.Equal(t, v2.Data.pid2tid.Len(), 4)
 	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 1, schemaVersion: 4})
