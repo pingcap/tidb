@@ -261,21 +261,22 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 
 // DropColumnArgs is the arguments of dropping column job.
 type DropColumnArgs struct {
-	ColName  model.CIStr
-	IfExists bool
+	ColName  model.CIStr `json:"column_name,omitempty"`
+	IfExists bool        `json:"if_exists,omitempty"`
 	// indexIDs is used to make sure we don't truncate args when decoding the rawArgs.
-	IndexIDs     []int64
-	PartitionIDs []int64
+	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
 func (a *DropColumnArgs) fillJob(job *Job) {
-	if job.Version == JobVersion1 {
+	if job.Version <= JobVersion1 {
 		job.Args = []any{a.ColName, a.IfExists, a.IndexIDs, a.PartitionIDs}
 	} else {
 		job.Args = []any{a}
 	}
 }
 
+// GetDropColumnArgs gets the args for drop column ddl.
 func GetDropColumnArgs(job *Job) (*DropColumnArgs, error) {
 	var (
 		colName      model.CIStr
