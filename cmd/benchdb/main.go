@@ -33,7 +33,6 @@ import (
 	"go.uber.org/zap"
 )
 
-//var
 var (
 	addr      = flag.String("addr", "127.0.0.1:2379", "pd address")
 	tableName = flag.String("table", "benchdb", "name of the table")
