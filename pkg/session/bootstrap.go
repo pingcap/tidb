@@ -622,7 +622,7 @@ const (
 	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_queries (
 		resource_group_name varchar(32) not null,
 		start_time TIMESTAMP NOT NULL,
-		repeats int default 0,
+		repeats int default 1,
 		match_type varchar(12) NOT NULL,
 		action varchar(12) NOT NULL,
 		sample_sql TEXT NOT NULL,
@@ -3104,7 +3104,7 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	// add column `sql_digest`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `sql_digest` varchar(64) DEFAULT '' AFTER `original_sql`;", infoschema.ErrColumnExists)
 	// add column `repeats`.
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `repeats` int DEFAULT 0 AFTER `time`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `repeats` int DEFAULT 1 AFTER `time`;", infoschema.ErrColumnExists)
 	// modify column `time` to `start_time` and index(time).
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `time` `start_time` TIMESTAMP NOT NULL", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries DROP INDEX `time_index`", dbterror.ErrCantDropFieldOrKey)

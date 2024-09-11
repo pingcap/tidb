@@ -192,7 +192,7 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 			failpoint.Inject("FastRunawayGC", func() {
 				flushRunawayRecords()
 			})
-			if len(recordMap) >= flushThreshold || recordMap[key].Repeats >= flushThreshold {
+			if len(recordMap) >= flushThreshold || (recordMap[key] != nil && recordMap[key].Repeats >= flushThreshold) {
 				flushRunawayRecords()
 			} else if fired {
 				fired = false
@@ -351,6 +351,8 @@ func (rm *Manager) markRunaway(checker *Checker, action, matchType string, now *
 		SQLDigest:         checker.sqlDigest,
 		PlanDigest:        checker.planDigest,
 		Source:            source,
+		// default value for Repeats
+		Repeats: 1,
 	}:
 	default:
 		// TODO: add warning for discard flush records

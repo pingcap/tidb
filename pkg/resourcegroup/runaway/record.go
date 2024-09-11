@@ -63,6 +63,7 @@ type Record struct {
 	// Repeats is used to avoid inserting the same record multiple times.
 	// It records the number of times after flushing the record(10s) to the table or len(map) exceeds the threshold(1024).
 	// We only consider `resource_group_name`, `sql_digest`, `plan_digest` and `match_type` when comparing records.
+	// default value is 1.
 	Repeats int
 }
 
