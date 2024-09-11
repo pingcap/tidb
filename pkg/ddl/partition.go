@@ -2324,29 +2324,32 @@ func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) 
 	tblInfo.TiFlashReplica.AvailablePartitionIDs = ids
 }
 
-func handleTiFlashForTruncatePartition(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo, oldIDs, newIDs []int64) error {
-	if tblInfo.TiFlashReplica == nil {
-		return nil
-	}
-	oldPartitions := make([]model.PartitionDefinition, 0, len(oldIDs))
-	newPartitions := make([]model.PartitionDefinition, 0, len(oldIDs))
+func replaceTruncatePartitions(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo, oldIDs, newIDs []int64) ([]model.PartitionDefinition, []model.PartitionDefinition, error) {
+	oldDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
+	newDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
 	pi := tblInfo.Partition
-	for _, id := range newIDs {
-		for i := 0; i < len(pi.Definitions); i++ {
-			def := &pi.Definitions[i]
+	for i, id := range oldIDs {
+		for defIdx := range pi.Definitions {
+			// use a reference to actually set the new ID!
+			def := &pi.Definitions[defIdx]
 			if id == def.ID {
-				newPartitions = append(newPartitions, def.Clone())
+				oldDefinitions = append(oldDefinitions, def.Clone())
+				def.ID = newIDs[i]
+				// Shallow copy, since we do not need to replace them.
+				newDefinitions = append(newDefinitions, *def)
 				break
 			}
 		}
 	}
 
-	if err := clearTruncatePartitionTiflashStatus(tblInfo, newPartitions, oldIDs); err != nil {
-		return err
+	if err := clearTruncatePartitionTiflashStatus(tblInfo, newDefinitions, oldIDs); err != nil {
+		return nil, nil, err
 	}
 
-	// TODO: Add tests for bundles and label rules!
-	return updateTruncatePartitionLabelRules(job, t, oldPartitions, newPartitions, tblInfo, oldIDs)
+	if err := updateTruncatePartitionLabelRules(job, t, oldDefinitions, newDefinitions, tblInfo, oldIDs); err != nil {
+		return nil, nil, err
+	}
+	return oldDefinitions, newDefinitions, nil
 }
 
 func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldIDs []int64) (bool, error) {
@@ -2464,12 +2467,12 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		}
 	})
 
-	var oldPartitions []model.PartitionDefinition
-	var newPartitions []model.PartitionDefinition
+	var oldDefinitions []model.PartitionDefinition
+	var newDefinitions []model.PartitionDefinition
 
 	switch job.SchemaState {
 	case model.StatePublic:
-		if hasGlobalIndex(tblInfo) || tblInfo.TiFlashReplica != nil {
+		if hasGlobalIndex(tblInfo) {
 			// This work as a flag to ignore Global Index entries from the new partitions!
 			pi.NewPartitionIDs = newIDs[:]
 			pi.DDLState = model.StateWriteOnly
@@ -2480,22 +2483,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		}
 		// Here we can optimize and do a single state change DDL
 
-		// For the truncatePartitionEvent
-		oldPartitions = make([]model.PartitionDefinition, 0, len(oldIDs))
-		newPartitions = make([]model.PartitionDefinition, 0, len(oldIDs))
-		for k, oldID := range oldIDs {
-			for i := 0; i < len(pi.Definitions); i++ {
-				def := &pi.Definitions[i]
-				if def.ID == oldID {
-					oldPartitions = append(oldPartitions, def.Clone())
-					def.ID = newIDs[k]
-					// Shallow copy only use the def.ID in event handle.
-					newPartitions = append(newPartitions, *def)
-					break
-				}
-			}
+		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(job, t, tblInfo, oldIDs, newIDs)
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
-		if len(newPartitions) == 0 {
+		if len(newDefinitions) == 0 {
 			job.State = model.JobStateCancelled
 			return ver, table.ErrUnknownPartition.GenWithStackByArgs(fmt.Sprintf("pid:%v", oldIDs), tblInfo.Name.O)
 		}
@@ -2507,23 +2499,20 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 				failpoint.Return(ver, err)
 			}
 		})
-		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newPartitions)
+		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
 		// continue after job.SchemaState switch!
 	case model.StateWriteOnly:
-		oldDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
-		newDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
-		for i, oldID := range oldIDs {
-			for j := 0; j < len(pi.Definitions); j++ {
-				def := &pi.Definitions[j]
-				if def.ID == oldID {
-					oldDefinitions = append(oldDefinitions, def.Clone())
-					def.ID = newIDs[i]
-					newDefinitions = append(newDefinitions, def.Clone())
-					break
-				}
-			}
+		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(job, t, tblInfo, oldIDs, newIDs)
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
+		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("Injected error by truncatePartFail1")
+				failpoint.Return(ver, err)
+			}
+		})
 		// This work as a flag to ignore Global Index entries from the old partitions!
 		pi.DroppingDefinitions = oldDefinitions
 		// And we don't need to filter for new partitions any longer
@@ -2537,16 +2526,6 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		// So to keep the Global Index consistent, we will still keep it up-to-date with
 		// the old partitions, as well as the new partitions.
 
-		err = handleTiFlashForTruncatePartition(job, t, tblInfo, oldIDs, newIDs)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
-			if val.(bool) {
-				err = errors.New("Injected error by truncatePartFail1")
-				failpoint.Return(ver, err)
-			}
-		})
 		job.SchemaState = model.StateDeleteReorganization
 		pi.DDLState = model.StateDeleteReorganization
 		return updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
@@ -2555,35 +2534,24 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		// the global indexes (although allowed to be overwritten).
 		// So time to clear them.
 
-		removeTiFlashAvailablePartitionIDs(tblInfo, oldIDs)
-
-		if hasGlobalIndex(tblInfo) {
-			var done bool
-			done, err = w.cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx, t, job, tblInfo, oldIDs)
-			if err != nil || !done {
-				return ver, errors.Trace(err)
-			}
-			failpoint.Inject("truncatePartFail2", func(val failpoint.Value) {
-				if val.(bool) {
-					err = errors.New("Injected error by truncatePartFail2")
-					failpoint.Return(ver, err)
-				}
-			})
+		var done bool
+		done, err = w.cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx, t, job, tblInfo, oldIDs)
+		if err != nil || !done {
+			return ver, errors.Trace(err)
 		}
-		// For the truncatePartitionEvent
-		oldPartitions = make([]model.PartitionDefinition, 0, len(oldIDs))
-		newPartitions = make([]model.PartitionDefinition, 0, len(oldIDs))
-		for k, newID := range newIDs {
-			for i := 0; i < len(pi.Definitions); i++ {
-				def := pi.Definitions[i]
-				if def.ID == newID {
-					newPartitions = append(newPartitions, def.Clone())
-					oldDef := def.Clone()
-					oldDef.ID = oldIDs[k]
-					oldPartitions = append(oldPartitions, oldDef)
-					break
-				}
+		failpoint.Inject("truncatePartFail2", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("Injected error by truncatePartFail2")
+				failpoint.Return(ver, err)
 			}
+		})
+		// For the truncatePartitionEvent
+		oldDefinitions = tblInfo.Partition.DroppingDefinitions
+		newDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
+		for i, def := range oldDefinitions {
+			newDef := def.Clone()
+			newDef.ID = newIDs[i]
+			newDefinitions = append(newDefinitions, newDef)
 		}
 
 		tblInfo.Partition.DroppingDefinitions = nil
@@ -2612,8 +2580,8 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 
 	truncatePartitionEvent := util.NewTruncatePartitionEvent(
 		tblInfo,
-		&model.PartitionInfo{Definitions: newPartitions},
-		&model.PartitionInfo{Definitions: oldPartitions},
+		&model.PartitionInfo{Definitions: newDefinitions},
+		&model.PartitionInfo{Definitions: oldDefinitions},
 	)
 	asyncNotifyEvent(jobCtx, truncatePartitionEvent, job)
 	// A background job will be created to delete old partition data.

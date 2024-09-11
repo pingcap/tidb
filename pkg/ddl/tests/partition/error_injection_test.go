@@ -74,12 +74,9 @@ func TestTruncatePartitionListFailuresWithGlobalIndex(t *testing.T) {
 		`delete from t where b = 3`,
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
-	failTests := truncateTests.Tests[1]
-	truncateTests.Tests = truncateTests.Tests[:1]
-	testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Cancel2")
+	testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Cancel2", "Fail1", "Fail2", "Fail3")
 	afterResult = testkit.Rows("1 1 1", "2 2 2", "8 8 8")
-	truncateTests.Tests[0] = failTests
-	testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+	testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Cancel1", "Cancel2")
 }
 
 func TestTruncatePartitionListFailures(t *testing.T) {
@@ -105,12 +102,9 @@ func TestTruncatePartitionListFailures(t *testing.T) {
 		`delete from t where b = 3`,
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
-	failTests := truncateTests.Tests[1]
-	truncateTests.Tests = truncateTests.Tests[:1]
-	testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+	testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail1", "Fail2", "Fail3")
 	afterResult = testkit.Rows("1 1 1", "2 2 2", "8 8 8")
-	truncateTests.Tests[0] = failTests
-	testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+	testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Cancel1", "Cancel2")
 }
 
 func testReorganizePartitionFailures(t *testing.T, tests FailureTest, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterResult [][]any, skipTests ...string) {
