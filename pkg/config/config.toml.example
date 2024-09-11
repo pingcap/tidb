@@ -372,7 +372,7 @@ grpc-keepalive-time = 10
 
 # After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
 # and if no activity is seen even after that the connection is closed.
-grpc-keepalive-timeout = 0.2
+grpc-keepalive-timeout = 3
 
 # The compression type for gRPC channel: none or gzip.
 grpc-compression-type = "none"
