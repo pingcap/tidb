@@ -105,10 +105,8 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 	}
 	if ver < 212 {
 		// for version < version212, revert column changes related to function `upgradeToVer212`.
-		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `start_time` `time` TIMESTAMP NOT NULL")
-		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `sample_sql` `original_sql` TEXT NOT NULL")
-		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries DROP INDEX `time_index`")
-		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries ADD INDEX time_index(time) COMMENT 'accelerate the speed when querying with active watch'")
+		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `start_time` TO `time`")
+		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `sample_sql` TO `original_sql`")
 	}
 }
 

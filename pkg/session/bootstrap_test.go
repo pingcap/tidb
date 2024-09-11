@@ -272,10 +272,8 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 	}
 	if ver < version212 {
 		// for version < version212, revert column changes related to function `upgradeToVer212`.
-		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `start_time` `time` TIMESTAMP NOT NULL")
-		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `sample_sql` `original_sql` TEXT NOT NULL")
-		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries DROP INDEX `time_index`")
-		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries ADD INDEX time_index(time) COMMENT 'accelerate the speed when querying with active watch'")
+		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `start_time` TO `time`")
+		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `sample_sql` TO `original_sql`")
 	}
 }
 
@@ -2417,6 +2415,40 @@ func TestTiDBHistoryTableConsistent(t *testing.T) {
 	require.Equal(t, 1, req.NumRows())
 	row = req.GetRow(0)
 	require.Equal(t, int64(1), row.GetInt64(0))
+
+	dom.Close()
+}
+
+func TestTiDBUpgradeToVer212(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// bootstrap as version198, version 199~208 is reserved for v8.1.x bugfix patch.
+	ver198 := version198
+	seV198 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver198))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV198, ver198)
+	// simulate a real ver198 where mysql.tidb_runaway_queries` doesn't have `start_time`/`sample_sql` columns yet.
+	MustExec(t, seV198, "select original_sql, time from mysql.tidb_runaway_queries")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	// upgrade to ver212
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	// the columns are changed automatically
+	MustExec(t, seCurVer, "select sample_sql, start_time, plan_digest from mysql.tidb_runaway_queries")
 
 	dom.Close()
 }
