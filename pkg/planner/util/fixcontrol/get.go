@@ -59,6 +59,9 @@ const (
 	// Fix52869 controls whether to disable the limitation that index merge path won't be generated automatically when
 	// there exist other single-index access paths that do range scan.
 	Fix52869 uint64 = 52869
+	// Fix54323 controls when calculating selectivity for an OR list, whether to try to more accurately match the index
+	// stats to the OR list so that we can choose a better index stats to estimate.
+	Fix54323 uint64 = 54323
 	// Fix54337 controls whether to apply or not range intersection for index access.
 	Fix54337 uint64 = 54337
 )

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/context"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -219,7 +220,7 @@ func Selectivity(
 			})
 		}
 	}
-	usedSets := GetUsableSetsByGreedy(nodes)
+	usedSets := GetUsableSetsByGreedy(ctx, nodes)
 	// Initialize the mask with the full set.
 	mask := (int64(1) << uint(len(remainedExprs))) - 1
 	// curExpr records covered expressions by now. It's for cardinality estimation tracing.
@@ -597,7 +598,7 @@ func getConstantColumnID(e []expression.Expression) int64 {
 }
 
 // GetUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
-func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
+func GetUsableSetsByGreedy(ctx context.PlanContext, nodes []*StatsNode) (newBlocks []*StatsNode) {
 	slices.SortFunc(nodes, func(i, j *StatsNode) int {
 		if r := compareType(i.Tp, j.Tp); r != 0 {
 			return r
@@ -606,6 +607,7 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 	})
 	marked := make([]bool, len(nodes))
 	mask := int64(math.MaxInt64)
+	fixControlMap := ctx.GetSessionVars().OptimizerFixControl
 	for {
 		// Choose the index that covers most.
 		bestMask := int64(0)
@@ -640,7 +642,7 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 				idx:        i,
 				coverCount: bits,
 			}
-			if current.isBetterThan(best) {
+			if current.isBetterThan(best, fixControlMap) {
 				best = current
 				bestMask = curMask
 			}
@@ -664,7 +666,7 @@ type statsNodeForGreedyChoice struct {
 	coverCount int
 }
 
-func (s *statsNodeForGreedyChoice) isBetterThan(other *statsNodeForGreedyChoice) bool {
+func (s *statsNodeForGreedyChoice) isBetterThan(other *statsNodeForGreedyChoice, fixControlMap map[uint64]string) bool {
 	// none of them should be nil
 	if s == nil || other == nil {
 		return false
@@ -681,20 +683,22 @@ func (s *statsNodeForGreedyChoice) isBetterThan(other *statsNodeForGreedyChoice)
 	if s.coverCount != other.coverCount {
 		return false
 	}
-	// 3. It's only for DNF. Full cover is better than partial cover
-	if !s.partCover && other.partCover {
-		return true
-	}
-	if s.partCover != other.partCover {
-		return false
-	}
-	// 4. It's only for DNF. The minimum number of access conditions among all DNF items, the more, the better.
-	// s.coverCount is not enough for DNF, so we use this field to make the judgment more accurate.
-	if s.minAccessCondsForDNFCond > other.minAccessCondsForDNFCond {
-		return true
-	}
-	if s.minAccessCondsForDNFCond != other.minAccessCondsForDNFCond {
-		return false
+	if fixcontrol.GetBoolWithDefault(fixControlMap, fixcontrol.Fix54323, true) {
+		// 3. It's only for DNF. Full cover is better than partial cover
+		if !s.partCover && other.partCover {
+			return true
+		}
+		if s.partCover != other.partCover {
+			return false
+		}
+		// 4. It's only for DNF. The minimum number of access conditions among all DNF items, the more, the better.
+		// s.coverCount is not enough for DNF, so we use this field to make the judgment more accurate.
+		if s.minAccessCondsForDNFCond > other.minAccessCondsForDNFCond {
+			return true
+		}
+		if s.minAccessCondsForDNFCond != other.minAccessCondsForDNFCond {
+			return false
+		}
 	}
 	// 5. The number of columns that it contains, the less, the better.
 	if s.numCols < other.numCols {

@@ -1050,7 +1050,9 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 			res.AccessConds = accesses
 			res.ColumnValues = columnValues
 			res.IsDNFCond = true
-			res.MinAccessCondsForDNFCond = minAccessConds
+			if minAccessConds != -1 {
+				res.MinAccessCondsForDNFCond = minAccessConds
+			}
 			// If this DNF have something cannot be to calculate range, then all this DNF should be pushed as filter condition.
 			if hasResidual {
 				res.RemainedConds = d.allConds
