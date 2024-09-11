@@ -94,6 +94,7 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 		compareExec:    us.compareExec,
 		physTblIDIdx:   us.physTblIDIdx,
 		partitionIDMap: us.partitionIDMap,
+		resultRows:     make([]types.Datum, 0, len(outputOffset)),
 	}
 }
 
@@ -212,9 +213,6 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		physTblIDColumnIdx = m.outputOffset[m.physTblIDIdx]
 	}
 
-	if m.resultRows == nil {
-		m.resultRows = make([]types.Datum, 0, len(m.outputOffset))
-	}
 	ds := m.resultRows[:0]
 	for i, offset := range m.outputOffset {
 		// The `value` slice doesn't contain the value of `physTblID`, it fills by `tablecodec.DecodeKeyHead` function.
@@ -720,6 +718,7 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 		outputOffset:   outputOffset,
 		cacheTable:     us.cacheTable,
 		partitionIDMap: us.partitionIDMap,
+		resultRows:     make([]types.Datum, 0, len(outputOffset)),
 	}
 
 	return &memIndexLookUpReader{
@@ -865,6 +864,7 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 				retFieldTypes:  exec.RetTypes(us),
 				outputOffset:   outputOffset,
 				partitionIDMap: indexMergeReader.partitionIDMap,
+				resultRows:     make([]types.Datum, 0, len(outputOffset)),
 			})
 		}
 	}
