@@ -1287,8 +1287,8 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 func extractTableAlias(cteList []*ast.CommonTableExpression, p base.Plan, parentOffset int) *utilhint.HintedTable {
 	alias := util.ExtractTableAlias(p, parentOffset)
 	if alias != nil {
-		for _, c := range cteList {
-			if c.Name.L == alias.TblName.L {
+		for _, cte := range cteList {
+			if cte.Name.L == alias.TblName.L {
 				// with CTE, this offset cannot be smaller than 1.
 				alias.SelectOffset = max(1, alias.SelectOffset-1)
 			}
