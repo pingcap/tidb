@@ -1298,7 +1298,7 @@ func extractTableAlias(cteList []*ast.CommonTableExpression, p base.Plan, parent
 }
 
 // SetPreferredJoinTypeAndOrder sets the preferred join type and order for the LogicalJoin.
-func (p *LogicalJoin) SetPreferredJoinTypeAndOrder(cte []*ast.CommonTableExpression, hintInfo *utilhint.PlanHints) {
+func (p *LogicalJoin) SetPreferredJoinTypeAndOrder(cteList []*ast.CommonTableExpression, hintInfo *utilhint.PlanHints) {
 	if hintInfo == nil {
 		return
 	}
