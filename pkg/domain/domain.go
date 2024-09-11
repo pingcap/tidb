@@ -2370,7 +2370,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	return nil
 }
 
-// EnableStatsOwner enable this node to execute ddl.
+// EnableStatsOwner enables this node to execute stats owner jobs.
 // Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
 // we should make sure that before invoking EnableStatsOwner(), stats owner is DISABLE.
 func (do *Domain) EnableStatsOwner() error {
