@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -649,6 +650,8 @@ func (m *MockExpr) Coercibility() Coercibility                          { return
 func (m *MockExpr) SetCoercibility(Coercibility)                        {}
 func (m *MockExpr) Repertoire() Repertoire                              { return UNICODE }
 func (m *MockExpr) SetRepertoire(Repertoire)                            {}
+func (m *MockExpr) IsExplicitCharset() bool                             { return false }
+func (m *MockExpr) SetExplicitCharset(bool)                             {}
 
 func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""
@@ -661,3 +664,5 @@ func (m *MockExpr) MemoryUsage() (sum int64) {
 func (m *MockExpr) Traverse(action TraverseAction) Expression {
 	return action.Transform(m)
 }
+func (m *MockExpr) Hash64(_ base.Hasher) {}
+func (m *MockExpr) Equals(_ any) bool    { return false }

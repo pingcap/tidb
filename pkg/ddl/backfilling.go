@@ -33,12 +33,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -155,7 +155,6 @@ type backfillTaskContext struct {
 type backfillCtx struct {
 	id int
 	*ddlCtx
-	sessCtx       sessionctx.Context
 	warnings      contextutil.WarnHandlerExt
 	loc           *time.Location
 	exprCtx       exprctx.BuildContext
@@ -168,26 +167,40 @@ type backfillCtx struct {
 }
 
 func newBackfillCtx(id int, rInfo *reorgInfo,
-	schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isDistributed bool) (*backfillCtx, error) {
-	// TODO: remove newReorgSessCtx
-	sessCtx := newReorgSessCtx(rInfo.jobCtx.store)
-	if err := initSessCtx(sessCtx, rInfo.ReorgMeta); err != nil {
+	schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isDistributed bool, isUpdateColumn bool) (*backfillCtx, error) {
+	warnHandler := contextutil.NewStaticWarnHandler(0)
+	exprCtx, err := newReorgExprCtxWithReorgMeta(rInfo.ReorgMeta, warnHandler)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	if isUpdateColumn {
+		// The below case should be compatible with mysql behavior:
+		// > create table t (a int);
+		// > insert into t values (0);
+		// > alter table t modify column a date;
+		// The alter DDL should return an error in strict mode and success in non-strict mode.
+		// See: https://github.com/pingcap/tidb/pull/25728 for more details.
+		hasStrictMode := rInfo.ReorgMeta.SQLMode.HasStrictMode()
+		tc := exprCtx.GetStaticEvalCtx().TypeCtx()
+		evalCtx := exprCtx.GetStaticEvalCtx().Apply(contextstatic.WithTypeFlags(
+			tc.Flags().WithIgnoreZeroDateErr(!hasStrictMode),
+		))
+		exprCtx = exprCtx.Apply(contextstatic.WithEvalCtx(evalCtx))
+	}
+
+	tblCtx := newReorgTableMutateContext(exprCtx)
 	if isDistributed {
 		id = int(backfillContextID.Add(1))
 	}
 
-	exprCtx := sessCtx.GetExprCtx()
 	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 	return &backfillCtx{
 		id:         id,
 		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
-		sessCtx:    sessCtx,
-		warnings:   sessCtx.GetSessionVars().StmtCtx.WarnHandler,
+		warnings:   warnHandler,
 		exprCtx:    exprCtx,
-		tblCtx:     sessCtx.GetTableCtx(),
+		tblCtx:     tblCtx,
 		loc:        exprCtx.GetEvalCtx().Location(),
 		schemaName: schemaName,
 		table:      tbl,

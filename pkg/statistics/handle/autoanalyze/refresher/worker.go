@@ -56,6 +56,9 @@ func NewWorker(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.T
 func (w *worker) UpdateConcurrency(newConcurrency int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if newConcurrency == w.maxConcurrency {
+		return
+	}
 	statslogutil.StatsLogger().Info(
 		"Update concurrency",
 		zap.Int("newConcurrency", newConcurrency),

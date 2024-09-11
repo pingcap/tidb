@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -156,6 +157,9 @@ type StatsAnalyze interface {
 
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
+
+	// Close closes the analyze worker.
+	Close()
 }
 
 // StatsCache is used to manage all table statistics in memory.
@@ -455,9 +459,9 @@ type StatsGlobal interface {
 // DDL is used to handle ddl events.
 type DDL interface {
 	// HandleDDLEvent handles ddl events.
-	HandleDDLEvent(event *statsutil.DDLEvent) error
+	HandleDDLEvent(changeEvent *ddlutil.SchemaChangeEvent) error
 	// DDLEventCh returns ddl events channel in handle.
-	DDLEventCh() chan *statsutil.DDLEvent
+	DDLEventCh() chan *ddlutil.SchemaChangeEvent
 }
 
 // StatsHandle is used to manage TiDB Statistics.

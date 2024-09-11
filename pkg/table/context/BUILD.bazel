@@ -20,6 +20,7 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util/chunk",
+        "//pkg/util/intest",
         "//pkg/util/rowcodec",
         "//pkg/util/tableutil",
         "@com_github_pingcap_tipb//go-binlog",
