@@ -25,14 +25,14 @@ import (
 // coupling between Group and GroupExpression is the key to the success of the memory compact
 // of representing a forest.
 type GroupExpression struct {
-	// Group is the Group that this GroupExpression belongs to.
-	Group *Group
+	// group is the Group that this GroupExpression belongs to.
+	group *Group
 
-	// Children stores the Groups that this GroupExpression based on.
-	Children []*Group
+	// inputs stores the Groups that this GroupExpression based on.
+	inputs []*Group
 
-	// LogicalExpr is internal logical expression stands for this groupExpr.
-	LogicalPlan base.LogicalPlan
+	// logicalPlan is internal logical expression stands for this groupExpr.
+	logicalPlan base.LogicalPlan
 
 	// hash64 is the unique fingerprint of the GroupExpression.
 	hash64 uint64
@@ -46,9 +46,9 @@ func (e *GroupExpression) Sum64() uint64 {
 // Hash64 implements the Hash64 interface.
 func (e *GroupExpression) Hash64(h base2.Hasher) {
 	// logical plan hash.
-	e.LogicalPlan.Hash64(h)
+	e.logicalPlan.Hash64(h)
 	// children group hash.
-	for _, child := range e.Children {
+	for _, child := range e.inputs {
 		child.Hash64(h)
 	}
 }
@@ -67,20 +67,20 @@ func (e *GroupExpression) Equals(other any) bool {
 	default:
 		return false
 	}
-	if len(e.Children) != len(e2.Children) {
+	if len(e.inputs) != len(e2.inputs) {
 		return false
 	}
-	if pattern.GetOperand(e.LogicalPlan) != pattern.GetOperand(e2.LogicalPlan) {
+	if pattern.GetOperand(e.logicalPlan) != pattern.GetOperand(e2.logicalPlan) {
 		return false
 	}
 	// current logical operator meta cmp, logical plan don't care logicalPlan's children.
 	// when we convert logicalPlan to GroupExpression, we will set children to nil.
-	if !e.LogicalPlan.Equals(e2.LogicalPlan) {
+	if !e.logicalPlan.Equals(e2.logicalPlan) {
 		return false
 	}
 	// if one of the children is different, then the two GroupExpressions are different.
-	for i, one := range e.Children {
-		if !one.Equals(e2.Children[i]) {
+	for i, one := range e.inputs {
+		if !one.Equals(e2.inputs[i]) {
 			return false
 		}
 	}
@@ -88,11 +88,11 @@ func (e *GroupExpression) Equals(other any) bool {
 }
 
 // NewGroupExpression creates a new GroupExpression with the given logical plan and children.
-func NewGroupExpression(lp base.LogicalPlan, children []*Group) *GroupExpression {
+func NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupExpression {
 	return &GroupExpression{
-		Group:       nil,
-		Children:    children,
-		LogicalPlan: lp,
+		group:       nil,
+		inputs:      inputs,
+		logicalPlan: lp,
 		hash64:      0,
 	}
 }

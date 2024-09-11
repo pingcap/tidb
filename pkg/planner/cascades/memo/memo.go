@@ -27,7 +27,7 @@ import (
 // Memo is the main structure of the memo package.
 type Memo struct {
 	// ctx is the context of the memo.
-	SCtx sessionctx.Context
+	sCtx sessionctx.Context
 
 	// groupIDGen is the incremental group id for internal usage.
 	groupIDGen GroupIDGenerator
@@ -51,7 +51,7 @@ type Memo struct {
 // NewMemo creates a new memo.
 func NewMemo(ctx sessionctx.Context) *Memo {
 	return &Memo{
-		SCtx:          ctx,
+		sCtx:          ctx,
 		groupIDGen:    GroupIDGenerator{id: 0},
 		groups:        list.New(),
 		groupID2Group: make(map[GroupID]*list.Element),
@@ -66,7 +66,7 @@ func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, boo
 	for _, child := range lp.Children() {
 		// todo: child.getGroupExpression.GetGroup directly
 		groupExpr, ok := m.CopyIn(nil, child)
-		group := groupExpr.Group
+		group := groupExpr.group
 		intest.Assert(ok)
 		intest.Assert(group != nil)
 		intest.Assert(group != target)
@@ -80,9 +80,7 @@ func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, boo
 	m.hasherPool.Put(hasher)
 
 	ok := m.insertGroupExpression(groupExpr, target)
-	if ok {
-		// todo: new group need to derive the logical property.
-	}
+	// todo: new group need to derive the logical property.
 	return groupExpr, ok
 }
 
@@ -92,11 +90,10 @@ func (m *Memo) insertGroupExpression(groupExpr *GroupExpression, target *Group) 
 	// we need to use groupExpr hash to find whether there is same groupExpr existed before.
 	// if existed and the existed groupExpr.Group is not same with target, we should merge them up.
 	// todo: merge group
-
 	if target == nil {
 		target = m.NewGroup()
 		m.groups.PushBack(target)
-		m.groupID2Group[target.GroupID] = m.groups.Back()
+		m.groupID2Group[target.groupID] = m.groups.Back()
 	}
 	target.Insert(groupExpr)
 	return true
@@ -104,6 +101,6 @@ func (m *Memo) insertGroupExpression(groupExpr *GroupExpression, target *Group) 
 
 func (m *Memo) NewGroup() *Group {
 	group := NewGroup(nil)
-	group.GroupID = m.groupIDGen.NextGroupID()
+	group.groupID = m.groupIDGen.NextGroupID()
 	return group
 }

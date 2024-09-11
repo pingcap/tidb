@@ -29,30 +29,30 @@ var _ base.HashEquals = &Group{}
 // for one logical operator in current context.
 type Group struct {
 	// groupID indicates the uniqueness of this group, also for encoding.
-	GroupID GroupID
+	groupID GroupID
 
-	// LogicalExpressions indicates the logical equiv classes for this group.
-	LogicalExpressions *list.List
+	// logicalExpressions indicates the logical equiv classes for this group.
+	logicalExpressions *list.List
 
-	// Operand2FirstExpr is used to locate to the first same type logical expression
+	// operand2FirstExpr is used to locate to the first same type logical expression
 	// in list above instead of traverse them all.
-	Operand2FirstExpr map[pattern.Operand]*list.Element
+	operand2FirstExpr map[pattern.Operand]*list.Element
 
-	// Hash2GroupExpr is used to de-duplication in the list.
-	Hash2GroupExpr map[uint64]*list.Element
+	// hash2GroupExpr is used to de-duplication in the list.
+	hash2GroupExpr map[uint64]*list.Element
 
-	// LogicalProp indicates the logical property.
-	LogicalProp *property.LogicalProperty
+	// logicalProp indicates the logical property.
+	logicalProp *property.LogicalProperty
 
-	// Explored indicates whether this group has been explored.
-	Explored bool
+	// explored indicates whether this group has been explored.
+	explored bool
 }
 
 // ******************************************* start of HashEqual methods *******************************************
 
 // Hash64 implements the HashEquals.<0th> interface.
 func (g *Group) Hash64(h base.Hasher) {
-	h.HashUint64(uint64(g.GroupID))
+	h.HashUint64(uint64(g.groupID))
 }
 
 // Equals implements the HashEquals.<1st> interface.
@@ -62,9 +62,9 @@ func (g *Group) Equals(other any) bool {
 	}
 	switch x := other.(type) {
 	case *Group:
-		return g.GroupID == x.GroupID
+		return g.groupID == x.groupID
 	case Group:
-		return g.GroupID == x.GroupID
+		return g.groupID == x.groupID
 	default:
 		return false
 	}
@@ -74,7 +74,7 @@ func (g *Group) Equals(other any) bool {
 
 // Exists checks whether a Group expression existed in a Group.
 func (g *Group) Exists(hash64u uint64) bool {
-	_, ok := g.Hash2GroupExpr[hash64u]
+	_, ok := g.hash2GroupExpr[hash64u]
 	return ok
 }
 
@@ -91,16 +91,16 @@ func (g *Group) Insert(e *GroupExpression) bool {
 	}
 	operand := pattern.GetOperand(e.LogicalPlan)
 	var newEquiv *list.Element
-	mark, ok := g.Operand2FirstExpr[operand]
+	mark, ok := g.operand2FirstExpr[operand]
 	if ok {
 		// cluster same operands together.
-		newEquiv = g.LogicalExpressions.InsertAfter(e, mark)
+		newEquiv = g.logicalExpressions.InsertAfter(e, mark)
 	} else {
 		// otherwise, put it at the end.
-		newEquiv = g.LogicalExpressions.PushBack(e)
-		g.Operand2FirstExpr[operand] = newEquiv
+		newEquiv = g.logicalExpressions.PushBack(e)
+		g.operand2FirstExpr[operand] = newEquiv
 	}
-	g.Hash2GroupExpr[hash64] = newEquiv
+	g.hash2GroupExpr[hash64] = newEquiv
 	e.Group = g
 	return true
 }
@@ -108,10 +108,10 @@ func (g *Group) Insert(e *GroupExpression) bool {
 // NewGroup creates a new Group with given logical prop.
 func NewGroup(prop *property.LogicalProperty) *Group {
 	g := &Group{
-		LogicalExpressions: list.New(),
-		Hash2GroupExpr:     make(map[uint64]*list.Element),
-		Operand2FirstExpr:  make(map[pattern.Operand]*list.Element),
-		LogicalProp:        prop,
+		logicalExpressions: list.New(),
+		hash2GroupExpr:     make(map[uint64]*list.Element),
+		operand2FirstExpr:  make(map[pattern.Operand]*list.Element),
+		logicalProp:        prop,
 	}
 	return g
 }

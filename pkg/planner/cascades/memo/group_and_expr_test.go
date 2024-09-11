@@ -27,8 +27,8 @@ import (
 func TestGroupHashEquals(t *testing.T) {
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()
-	a := Group{GroupID: 1}
-	b := Group{GroupID: 1}
+	a := Group{groupID: 1}
+	b := Group{groupID: 1}
 	a.Hash64(hasher1)
 	b.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
@@ -36,7 +36,7 @@ func TestGroupHashEquals(t *testing.T) {
 	require.True(t, a.Equals(&b))
 
 	// change the id.
-	b.GroupID = 2
+	b.groupID = 2
 	hasher2.Reset()
 	b.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
@@ -47,20 +47,20 @@ func TestGroupHashEquals(t *testing.T) {
 func TestGroupExpressionHashEquals(t *testing.T) {
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()
-	child1 := &Group{GroupID: 1}
-	child2 := &Group{GroupID: 2}
+	child1 := &Group{groupID: 1}
+	child2 := &Group{groupID: 2}
 	ctx1 := mock.NewContext()
 	ctx2 := mock.NewContext()
 	a := GroupExpression{
-		Group:       &Group{GroupID: 3},
-		Children:    []*Group{child1, child2},
-		LogicalPlan: &logicalop.BaseLogicalPlan{Plan: baseimpl.NewBasePlan(ctx1, "test", 1)},
+		group:       &Group{groupID: 3},
+		inputs:      []*Group{child1, child2},
+		logicalPlan: &logicalop.BaseLogicalPlan{Plan: baseimpl.NewBasePlan(ctx1, "test", 1)},
 	}
 	b := GroupExpression{
 		// root group should change the hash.
-		Group:       &Group{GroupID: 4},
-		Children:    []*Group{child1, child2},
-		LogicalPlan: &logicalop.BaseLogicalPlan{Plan: baseimpl.NewBasePlan(ctx2, "test", 1)},
+		group:       &Group{groupID: 4},
+		inputs:      []*Group{child1, child2},
+		logicalPlan: &logicalop.BaseLogicalPlan{Plan: baseimpl.NewBasePlan(ctx2, "test", 1)},
 	}
 	a.Hash64(hasher1)
 	b.Hash64(hasher2)
@@ -69,7 +69,7 @@ func TestGroupExpressionHashEquals(t *testing.T) {
 	require.True(t, a.Equals(&b))
 
 	// change the children order, like join commutative.
-	b.Children = []*Group{child2, child1}
+	b.inputs = []*Group{child2, child1}
 	hasher2.Reset()
 	b.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
