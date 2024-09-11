@@ -781,7 +781,7 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 		var res *ranger.DetachRangeResult
 		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx.GetRangerCtx(), exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
 		if err != nil {
-			return 0, nil, false, -1, err
+			return 0, nil, false, 0, err
 		}
 		ranges = res.Ranges
 		accessConds = res.AccessConds
@@ -792,7 +792,7 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 		panic("should never be here")
 	}
 	if err != nil {
-		return 0, nil, false, -1, err
+		return 0, nil, false, 0, err
 	}
 	if isDNF && len(accessConds) > 0 {
 		mask |= 1
@@ -806,7 +806,7 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 			}
 		}
 	}
-	return mask, ranges, false, -1, nil
+	return mask, ranges, false, 0, nil
 }
 
 func getMaskAndSelectivityForMVIndex(
