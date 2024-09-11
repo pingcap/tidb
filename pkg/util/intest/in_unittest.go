@@ -12,12 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build intest && !integrationtest
+//go:build intest
 
 package intest
 
 // InTest checks if the code is running in test.
 const InTest = true
-
-// InIntegrationTest checks if the code is running in integration test.
-const InIntegrationTest = false

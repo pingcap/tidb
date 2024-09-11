@@ -52,7 +52,7 @@ type ScalarFunction struct {
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalInt(ctx, input, result)
@@ -61,7 +61,7 @@ func (sf *ScalarFunction) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 // VecEvalReal evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalReal(ctx, input, result)
@@ -70,7 +70,7 @@ func (sf *ScalarFunction) VecEvalReal(ctx EvalContext, input *chunk.Chunk, resul
 // VecEvalString evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalString(ctx, input, result)
@@ -79,7 +79,7 @@ func (sf *ScalarFunction) VecEvalString(ctx EvalContext, input *chunk.Chunk, res
 // VecEvalDecimal evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalDecimal(ctx, input, result)
@@ -88,7 +88,7 @@ func (sf *ScalarFunction) VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, re
 // VecEvalTime evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalTime(ctx, input, result)
@@ -97,7 +97,7 @@ func (sf *ScalarFunction) VecEvalTime(ctx EvalContext, input *chunk.Chunk, resul
 // VecEvalDuration evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalDuration(ctx, input, result)
@@ -106,7 +106,7 @@ func (sf *ScalarFunction) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, r
 // VecEvalJSON evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalJSON(ctx, input, result)
@@ -489,7 +489,7 @@ func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, e
 // EvalInt implements Expression interface.
 func (sf *ScalarFunction) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalInt(ctx, row)
@@ -498,7 +498,7 @@ func (sf *ScalarFunction) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 // EvalReal implements Expression interface.
 func (sf *ScalarFunction) EvalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalReal(ctx, row)
@@ -507,7 +507,7 @@ func (sf *ScalarFunction) EvalReal(ctx EvalContext, row chunk.Row) (float64, boo
 // EvalDecimal implements Expression interface.
 func (sf *ScalarFunction) EvalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalDecimal(ctx, row)
@@ -516,7 +516,7 @@ func (sf *ScalarFunction) EvalDecimal(ctx EvalContext, row chunk.Row) (*types.My
 // EvalString implements Expression interface.
 func (sf *ScalarFunction) EvalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalString(ctx, row)
@@ -525,7 +525,7 @@ func (sf *ScalarFunction) EvalString(ctx EvalContext, row chunk.Row) (string, bo
 // EvalTime implements Expression interface.
 func (sf *ScalarFunction) EvalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalTime(ctx, row)
@@ -534,7 +534,7 @@ func (sf *ScalarFunction) EvalTime(ctx EvalContext, row chunk.Row) (types.Time, 
 // EvalDuration implements Expression interface.
 func (sf *ScalarFunction) EvalDuration(ctx EvalContext, row chunk.Row) (types.Duration, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalDuration(ctx, row)
@@ -543,7 +543,7 @@ func (sf *ScalarFunction) EvalDuration(ctx EvalContext, row chunk.Row) (types.Du
 // EvalJSON implements Expression interface.
 func (sf *ScalarFunction) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalJSON(ctx, row)

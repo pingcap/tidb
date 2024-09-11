@@ -54,7 +54,7 @@ func (SessionVarsPropReader) GetSessionVars(ctx context.EvalContext) (*variable.
 		return nil, err
 	}
 
-	if intest.InTest {
+	if intest.EnableAssert {
 		context.AssertLocationWithSessionVars(ctx.Location(), p.vars.GetSessionVars())
 	}
 

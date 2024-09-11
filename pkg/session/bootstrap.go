@@ -1129,7 +1129,7 @@ var runBootstrapSQLFile = false
 
 // DisableRunBootstrapSQLFileInTest only used for test
 func DisableRunBootstrapSQLFileInTest() {
-	if intest.InTest && !intest.InIntegrationTest {
+	if intest.InTest {
 		runBootstrapSQLFile = false
 	}
 }
@@ -3255,14 +3255,14 @@ func doBootstrapSQLFile(s sessiontypes.Session) error {
 	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
 	b, err := os.ReadFile(sqlFile) //nolint:gosec
 	if err != nil {
-		if intest.InTest && !intest.InIntegrationTest {
+		if intest.InTest && !intest.EnableAssert {
 			return err
 		}
 		logutil.BgLogger().Fatal("unable to read InitializeSQLFile", zap.Error(err))
 	}
 	stmts, err := s.Parse(ctx, string(b))
 	if err != nil {
-		if intest.InTest && !intest.InIntegrationTest {
+		if intest.InTest && !intest.EnableAssert {
 			return err
 		}
 		logutil.BgLogger().Fatal("unable to parse InitializeSQLFile", zap.Error(err))

@@ -190,7 +190,7 @@ func (ctx *SessionEvalContext) SQLMode() mysql.SQLMode {
 // TypeCtx returns the types.Context
 func (ctx *SessionEvalContext) TypeCtx() (tc types.Context) {
 	tc = ctx.sctx.GetSessionVars().StmtCtx.TypeCtx()
-	if intest.InTest {
+	if intest.EnableAssert {
 		exprctx.AssertLocationWithSessionVars(tc.Location(), ctx.sctx.GetSessionVars())
 	}
 	return

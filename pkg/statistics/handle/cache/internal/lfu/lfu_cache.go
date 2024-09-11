@@ -46,7 +46,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	if err != nil {
 		return nil, err
 	}
-	if intest.InTest && !intest.InIntegrationTest && totalMemCost == 0 {
+	if intest.InTest && totalMemCost == 0 {
 		// In test, we set the cost to 5MB to avoid using too many memory in the LFU's CM sketch.
 		cost = 5000000
 	}
@@ -62,8 +62,8 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 			OnEvict:            result.onEvict,
 			OnExit:             result.onExit,
 			OnReject:           result.onReject,
-			IgnoreInternalCost: intest.InTest && !intest.InIntegrationTest,
-			Metrics:            intest.InTest && !intest.InIntegrationTest,
+			IgnoreInternalCost: intest.InTest,
+			Metrics:            intest.InTest,
 		},
 	)
 	if err != nil {

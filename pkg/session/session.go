@@ -3577,7 +3577,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 			Handle: dom.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(ses[9], pm)
-		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest && !intest.InIntegrationTest {
+		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest && !intest.EnableAssert {
 			failToLoadOrParseSQLFile = true
 		}
 	}
@@ -3643,7 +3643,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
-	if intest.InTest && !intest.InIntegrationTest && failToLoadOrParseSQLFile {
+	if intest.InTest && failToLoadOrParseSQLFile {
 		dom.Close()
 		return nil, errors.New("Fail to load or parse sql file")
 	}
@@ -3685,7 +3685,7 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
 	s.ClearValue(sessionctx.Initing)
 
 	dom.Close()
-	if intest.InTest && !intest.InIntegrationTest {
+	if intest.InTest {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
 	domap.Delete(store)

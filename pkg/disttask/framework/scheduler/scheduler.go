@@ -554,7 +554,7 @@ func GetLiveExecIDs(ctx context.Context) ([]string, error) {
 func generateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
 	var serverInfos map[string]*infosync.ServerInfo
 	_, etcd := ctx.Value("etcd").(bool)
-	if intest.InTest && !intest.InIntegrationTest && !etcd {
+	if intest.InTest && !etcd {
 		serverInfos = infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
 	} else {
 		serverInfos, err = infosync.GetAllServerInfo(ctx)
