@@ -296,7 +296,7 @@ func (s *GCSStorage) URI() string {
 // Create implements ExternalStorage interface.
 func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (ExternalFileWriter, error) {
 	// NewGCSWriter requires real testing environment on Google Cloud.
-	mockGCS := intest.InTest && !intest.InIntegrationTest && strings.Contains(s.gcs.GetEndpoint(), "127.0.0.1")
+	mockGCS := intest.InTest && strings.Contains(s.gcs.GetEndpoint(), "127.0.0.1")
 	if wo == nil || wo.Concurrency <= 1 || mockGCS {
 		object := s.objectName(name)
 		wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
@@ -355,7 +355,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		if gcs.CredentialsBlob == "" {
 			creds, err := google.FindDefaultCredentials(ctx, storage.ScopeReadWrite)
 			if err != nil {
-				if intest.InTest && !intest.InIntegrationTest && !mustReportCredErr {
+				if intest.InTest && !mustReportCredErr {
 					clientOps = append(clientOps, option.WithoutAuthentication())
 					goto skipHandleCred
 				}
@@ -388,7 +388,7 @@ skipHandleCred:
 		newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
 			append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
 		if err != nil {
-			if intest.InTest && !intest.InIntegrationTest && !mustReportCredErr {
+			if intest.InTest && !mustReportCredErr {
 				goto skipHandleTransport
 			}
 			return nil, errors.Trace(err)

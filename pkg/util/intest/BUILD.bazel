@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "assert.go",  #keep
         "common.go",
-        "in_integrationtest.go",  #keep
         "in_unittest.go",  #keep
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/intest",
