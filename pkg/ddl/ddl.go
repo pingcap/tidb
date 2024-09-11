@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -313,7 +312,7 @@ type ddlCtx struct {
 	schemaVerSyncer   schemaver.Syncer
 	serverStateSyncer serverstate.Syncer
 
-	ddlEventCh   chan<- *statsutil.DDLEvent
+	ddlEventCh   chan<- *util.SchemaChangeEvent
 	lease        time.Duration        // lease is schema lease, default 45s, see config.Lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoCache    *infoschema.InfoCache
@@ -555,7 +554,7 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *statsutil.DDLEvent, job *model.Job) {
+func asyncNotifyEvent(jobCtx *jobContext, e *util.SchemaChangeEvent, job *model.Job) {
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.
