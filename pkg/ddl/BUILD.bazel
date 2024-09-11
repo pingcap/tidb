@@ -129,7 +129,6 @@ go_library(
         "//pkg/sessiontxn",
         "//pkg/statistics",
         "//pkg/statistics/handle",
-        "//pkg/statistics/handle/util",
         "//pkg/store/driver/txn",
         "//pkg/store/helper",
         "//pkg/table",
