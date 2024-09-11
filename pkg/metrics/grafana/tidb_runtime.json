@@ -1731,7 +1731,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "GC STW Latency",
+          "title": "GC STW Latency(>= go1.22.0)",
           "tooltip": {
             "msResolution": false,
             "shared": true,
