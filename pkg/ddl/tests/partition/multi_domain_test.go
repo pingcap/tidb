@@ -194,8 +194,6 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn
 	postFn(tkO)
 }
 
-// TODO: Test that TRUNCATE PARTITION without global index is a single state change!
-
 // TestMultiSchemaTruncatePartitionWithGlobalIndex to show behavior when
 // truncating a partition with a global index
 func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
