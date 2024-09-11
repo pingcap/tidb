@@ -263,7 +263,7 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 type RenameTableArgs struct {
 	// for Args
 	OldSchemaID   int64        `json:"old_schema_id,omitempty"`
-	OldSchemaName pmodel.CIStr `json:"schema_name,omitempty"`
+	OldSchemaName pmodel.CIStr `json:"old_schema_name,omitempty"`
 	NewTableName  pmodel.CIStr `json:"new_table_name,omitempty"`
 }
 
