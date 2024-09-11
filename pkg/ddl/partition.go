@@ -2485,6 +2485,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 
 		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(job, t, tblInfo, oldIDs, newIDs)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		if len(newDefinitions) == 0 {
