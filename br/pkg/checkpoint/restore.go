@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
@@ -48,7 +48,7 @@ func StartCheckpointRestoreRunnerForTest(
 	tick time.Duration,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		ctx, newTableCheckpointStorage(se, snapshotRestoreCheckpointDatabaseName), nil, nil, nil, flushPosition{}, valueMarshalerForRestore)
+		ctx, newTableCheckpointStorage(se, SnapshotRestoreCheckpointDatabaseName), nil, nil, nil, flushPosition{}, valueMarshalerForRestore)
 
 	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
@@ -59,7 +59,7 @@ func StartCheckpointRunnerForRestore(
 	se glue.Session,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		ctx, newTableCheckpointStorage(se, snapshotRestoreCheckpointDatabaseName), nil, nil, nil, flushPosition{}, valueMarshalerForRestore)
+		ctx, newTableCheckpointStorage(se, SnapshotRestoreCheckpointDatabaseName), nil, nil, nil, flushPosition{}, valueMarshalerForRestore)
 
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
@@ -87,54 +87,50 @@ func LoadCheckpointDataForSnapshotRestore[K KeyType, V ValueType](
 	execCtx sqlexec.RestrictedSQLExecutor,
 	fn func(K, V),
 ) (time.Duration, error) {
-	return selectCheckpointData(ctx, execCtx, snapshotRestoreCheckpointDatabaseName, fn)
+	return selectCheckpointData(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName, fn)
 }
 
 func LoadCheckpointChecksumForRestore(
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
 ) (map[int64]*ChecksumItem, time.Duration, error) {
-	return selectCheckpointChecksum(ctx, execCtx, logRestoreCheckpointDatabaseName)
+	return selectCheckpointChecksum(ctx, execCtx, LogRestoreCheckpointDatabaseName)
 }
 
-type CheckpointMetadataForRestore struct {
-	UpstreamClusterID uint64 `json:"upstream-cluster-id"`
-	RestoredTS        uint64 `json:"restored-ts"`
-	// only for log restore
-	StartTS uint64 `json:"start-ts,omitempty"`
-	GcRatio string `json:"gc-ratio,omitempty"`
-	// only for snapshot restore
-	SchedulersConfig *pdutil.ClusterConfig `json:"schedulers-config,omitempty"`
+type CheckpointMetadataForSnapshotRestore struct {
+	UpstreamClusterID uint64                `json:"upstream-cluster-id"`
+	RestoredTS        uint64                `json:"restored-ts"`
+	SchedulersConfig  *pdutil.ClusterConfig `json:"schedulers-config"`
 }
 
 func LoadCheckpointMetadataForSnapshotRestore(
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
-) (*CheckpointMetadataForRestore, error) {
-	m := &CheckpointMetadataForRestore{}
-	err := selectCheckpointMeta(ctx, execCtx, snapshotRestoreCheckpointDatabaseName, checkpointMetaTableName, m)
+) (*CheckpointMetadataForSnapshotRestore, error) {
+	m := &CheckpointMetadataForSnapshotRestore{}
+	err := selectCheckpointMeta(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName, checkpointMetaTableName, m)
 	return m, err
 }
 
 func SaveCheckpointMetadataForSnapshotRestore(
 	ctx context.Context,
 	se glue.Session,
-	meta *CheckpointMetadataForRestore,
+	meta *CheckpointMetadataForSnapshotRestore,
 ) error {
-	err := initCheckpointTable(ctx, se, snapshotRestoreCheckpointDatabaseName, []string{checkpointDataTableName, checkpointChecksumTableName})
+	err := initCheckpointTable(ctx, se, SnapshotRestoreCheckpointDatabaseName, []string{checkpointDataTableName, checkpointChecksumTableName})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return insertCheckpointMeta(ctx, se, snapshotRestoreCheckpointDatabaseName, checkpointMetaTableName, meta)
+	return insertCheckpointMeta(ctx, se, SnapshotRestoreCheckpointDatabaseName, checkpointMetaTableName, meta)
 }
 
 func ExistsSnapshotRestoreCheckpoint(
 	ctx context.Context,
 	dom *domain.Domain,
 ) bool {
-	return dom.InfoSchema().TableExists(model.NewCIStr(snapshotRestoreCheckpointDatabaseName), model.NewCIStr(checkpointMetaTableName))
+	return dom.InfoSchema().TableExists(pmodel.NewCIStr(SnapshotRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointMetaTableName))
 }
 
 func RemoveCheckpointDataForSnapshotRestore(ctx context.Context, dom *domain.Domain, se glue.Session) error {
-	return dropCheckpointTables(ctx, dom, se, snapshotRestoreCheckpointDatabaseName, []string{checkpointDataTableName, checkpointChecksumTableName, checkpointMetaTableName})
+	return dropCheckpointTables(ctx, dom, se, SnapshotRestoreCheckpointDatabaseName, []string{checkpointDataTableName, checkpointChecksumTableName, checkpointMetaTableName})
 }

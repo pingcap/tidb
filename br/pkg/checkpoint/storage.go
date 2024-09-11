@@ -63,7 +63,7 @@ const (
 	checkpointChecksumTableName string = "cpt_checksum"
 	// file level table
 	checkpointMetaTableName     string = "cpt_metadata"
-	checkpointTaskInfoTableName string = "cpt_taskinfo"
+	checkpointProgressTableName string = "cpt_progress"
 	checkpointIngestTableName   string = "cpt_ingest"
 
 	createCheckpointTable string = `
