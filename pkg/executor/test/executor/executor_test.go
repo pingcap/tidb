@@ -33,6 +33,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -3126,12 +3127,11 @@ func TestQueryWithMaxUint64TSO(t *testing.T) {
 			[]string{"5"},
 		},
 	}
-
+	testFn := func(sql string, rows []string, useMaxUint64TSO bool) {
+		tk.MustQueryWithContext(ctx, sql).Check(testkit.Rows(rows...))
+		require.Equal(t, reqStartTS == uint64(math.MaxUint64), useMaxUint64TSO, fmt.Sprintf("sql: %v, start_ts: %v", sql, reqStartTS))
+	}
 	for _, c := range testCases {
-		testFn := func(sql string, rows []string, useMaxUint64TSO bool) {
-			tk.MustQueryWithContext(ctx, sql).Check(testkit.Rows(rows...))
-			require.Equal(t, reqStartTS == uint64(math.MaxUint64), useMaxUint64TSO, fmt.Sprintf("sql: %v, start_ts: %v", sql, reqStartTS))
-		}
 		tk.MustExec("set @@tidb_guarantee_linearizability=1")
 		testFn(c.sql, c.rows, false)
 
@@ -3148,4 +3148,33 @@ func TestQueryWithMaxUint64TSO(t *testing.T) {
 		tk.MustExec("commit")
 		testFn(c.sql, c.rows, true)
 	}
+
+	// Test table/index reader with multi-cop tasks can't use max uint64 as tso.
+	tk.MustExec("set @@tidb_guarantee_linearizability=0")
+	testFn("select sum(c) from t where id > 1 and id < 5", []string{"9"}, true)
+	tk.MustQuery("split table t by (3)")
+	// After split table, following query will have 2 cop tasks, so it can't use max uint64 as tso.
+	testFn("select sum(c) from t where id > 1 and id < 5", []string{"9"}, false)
+	// Test for index reader
+	testFn("select sum(b) from t where b > 1 and b < 5", []string{"9"}, true)
+	tk.MustQuery("split table t index idx by (3)")
+	testFn("select sum(b) from t where b > 1 and b < 5", []string{"9"}, false)
+
+	// Test for cop task retry.
+	startTsList := []uint64{}
+	ctx = interceptor.WithRPCInterceptor(context.Background(), interceptor.NewRPCInterceptor("get-rpc-star-ts", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+		return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+			startTsList = append(startTsList, req.GetStartTS())
+			if len(startTsList) == 1 {
+				resp, err := tikvrpc.GenRegionErrorResp(req, &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}})
+				return resp, err
+			}
+			return next(target, req)
+		}
+	}))
+
+	tk.MustQueryWithContext(ctx, "select sum(c) from t where id >= 1 and id < 3").Check(testkit.Rows("3"))
+	require.Equal(t, 2, len(startTsList))
+	require.Equal(t, startTsList[0], uint64(math.MaxUint64))    // first req use max uint64 as tso.
+	require.NotEqual(t, startTsList[1], uint64(math.MaxUint64)) // when retry, use normal tso.
 }

@@ -338,6 +338,14 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
 	}
+	if req.StartTs == uint64(math.MaxUint64) && req.LazyStartTs != nil {
+		// When build retry cop task which use max uint64 as startTs, we need to use a normal tso.
+		var err error
+		req.StartTs, err = req.LazyStartTs(false)
+		if err != nil {
+			return nil, err
+		}
+	}
 	rangesLen := ranges.Len()
 	// something went wrong, disable hints to avoid out of range index.
 	if len(hints) != rangesLen {
