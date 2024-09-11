@@ -2447,12 +2447,22 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	}
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
+
+	failpoint.Inject("truncatePartCancel1", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			err = errors.New("Injected error by truncatePartCancel1")
+			failpoint.Return(ver, err)
+		}
+	})
 
 	var oldPartitions []model.PartitionDefinition
 	var newPartitions []model.PartitionDefinition
@@ -2490,6 +2500,13 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 			return ver, table.ErrUnknownPartition.GenWithStackByArgs(fmt.Sprintf("pid:%v", oldIDs), tblInfo.Name.O)
 		}
 
+		failpoint.Inject("truncatePartCancel2", func(val failpoint.Value) {
+			if val.(bool) {
+				job.State = model.JobStateCancelled
+				err = errors.New("Injected error by truncatePartCancel2")
+				failpoint.Return(ver, err)
+			}
+		})
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newPartitions)
 		// continue after job.SchemaState switch!
 	case model.StateWriteOnly:
@@ -2524,6 +2541,12 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("Injected error by truncatePartFail1")
+				failpoint.Return(ver, err)
+			}
+		})
 		job.SchemaState = model.StateDeleteReorganization
 		pi.DDLState = model.StateDeleteReorganization
 		return updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
@@ -2540,6 +2563,12 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 			if err != nil || !done {
 				return ver, errors.Trace(err)
 			}
+			failpoint.Inject("truncatePartFail2", func(val failpoint.Value) {
+				if val.(bool) {
+					err = errors.New("Injected error by truncatePartFail2")
+					failpoint.Return(ver, err)
+				}
+			})
 		}
 		// For the truncatePartitionEvent
 		oldPartitions = make([]model.PartitionDefinition, 0, len(oldIDs))
@@ -2556,7 +2585,6 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 				}
 			}
 		}
-		// TODO: Test injecting failure
 
 		tblInfo.Partition.DroppingDefinitions = nil
 		tblInfo.Partition.NewPartitionIDs = nil
@@ -2567,6 +2595,12 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
 
+	failpoint.Inject("truncatePartFail3", func(val failpoint.Value) {
+		if val.(bool) {
+			err = errors.New("Injected error by truncatePartFail3")
+			failpoint.Return(ver, err)
+		}
+	})
 	// used by ApplyDiff in updateSchemaVersion
 	job.CtxVars = []any{oldIDs, newIDs}
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
