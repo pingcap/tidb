@@ -372,8 +372,8 @@ func (r *Checker) exceedsThresholds(now time.Time, ru *util.RUDetails, processed
 	if !r.deadline.IsZero() && until <= 0 {
 		return exceedCause{
 			cause:          exceedCauseTime,
-			actualValue:    now,
-			thresholdValue: r.deadline,
+			actualValue:    now.Format(time.RFC3339),
+			thresholdValue: r.deadline.Format(time.RFC3339),
 		}.String()
 	}
 
