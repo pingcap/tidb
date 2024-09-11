@@ -1824,7 +1824,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					err = e.CreateCheckConstraint(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint)
 				}
 			case ast.ConstraintVector:
-				err = createVectorIndex()
+				err = e.createVectorIndex(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			default:
 				// Nothing to do now.
 			}
@@ -4492,11 +4492,11 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	tblInfo := t.Meta()
 	// Check before the job is put to the queue.
 	// This check is redundant, but useful. If DDL check fail before the job is put
-	// to job queue, the fail path logic is super fast.
+	// to job queue, the fail path logic is particularly fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(ctx, tblInfo.Columns, indexPartSpecifications)
+	indexColumns, _, err := buildIndexColumns(ctx, tblInfo.Columns, indexPartSpecifications, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4556,8 +4556,152 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	return errors.Trace(err)
 }
 
-func createVectorIndex() error {
-	return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("not currently supported")
+func checkIndexNameAndColumns(ctx sessionctx.Context, t table.Table, indexName pmodel.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification, isVector, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, error) {
+	// Deal with anonymous index.
+	if len(indexName.L) == 0 {
+		colName := pmodel.NewCIStr("expression_index")
+		if indexPartSpecifications[0].Column != nil {
+			colName = indexPartSpecifications[0].Column.Name
+		}
+		indexName = GetName4AnonymousIndex(t, colName, pmodel.NewCIStr(""))
+	}
+
+	var err error
+	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
+		if indexInfo.State != model.StatePublic {
+			// NOTE: explicit error message. See issue #18363.
+			err = dbterror.ErrDupKeyName.GenWithStack("index already exist %s; "+
+				"a background job is trying to add the same index, "+
+				"please check by `ADMIN SHOW DDL JOBS`", indexName)
+		} else {
+			err = dbterror.ErrDupKeyName.GenWithStackByArgs(indexName)
+		}
+		if ifNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return pmodel.CIStr{}, nil, nil
+		}
+		return pmodel.CIStr{}, nil, err
+	}
+
+	if err = checkTooLongIndex(indexName); err != nil {
+		return pmodel.CIStr{}, nil, errors.Trace(err)
+	}
+
+	// Build hidden columns if necessary.
+	var hiddenCols []*model.ColumnInfo
+	if !isVector {
+		hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
+		if err != nil {
+			return pmodel.CIStr{}, nil, err
+		}
+	}
+	if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols)); err != nil {
+		return pmodel.CIStr{}, nil, errors.Trace(err)
+	}
+
+	return indexName, hiddenCols, nil
+}
+
+func checkTableTypeForVectorIndex(tblInfo *model.TableInfo) error {
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Vector Index"))
+	}
+	if tblInfo.TempTableType != model.TempTableNone {
+		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("vector index")
+	}
+	if tblInfo.GetPartitionInfo() != nil {
+		return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported partition table")
+	}
+	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
+		return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported empty TiFlash replica, the replica is nil")
+	}
+
+	return nil
+}
+
+func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tblInfo := t.Meta()
+	if err := checkTableTypeForVectorIndex(tblInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	indexName, _, err = checkIndexNameAndColumns(ctx, t, indexName, indexPartSpecifications, true, ifNotExists)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, funcExpr, err := buildVectorInfoWithCheck(indexPartSpecifications, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Check before the job is put to the queue.
+	// This check is redundant, but useful. If DDL check fail before the job is put
+	// to job queue, the fail path logic is particularly fast.
+	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
+	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
+	// For same reason, decide whether index is global here.
+	_, _, err = buildIndexColumns(ctx, tblInfo.Columns, indexPartSpecifications, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// May be truncate comment here, when index comment too long and sql_mode it's strict.
+	sessionVars := ctx.GetSessionVars()
+	if _, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, indexName.String(), &indexOption.Comment, dbterror.ErrTooLongTableComment); err != nil {
+		return errors.Trace(err)
+	}
+
+	job, err := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job.Type = model.ActionAddVectorIndex
+	indexPartSpecifications[0].Expr = nil
+	job.Args = []any{indexName, indexPartSpecifications[0], indexOption, funcExpr}
+	// TODO: support CDCWriteSource
+
+	err = e.DoDDLJob(ctx, job)
+	// key exists, but if_not_exists flags is true, so we ignore this error.
+	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	return errors.Trace(err)
+}
+
+func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) (*model.Job, error) {
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		TableName:  t.Meta().Name.L,
+		BinlogInfo: &model.HistoryInfo{},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		},
+		Priority: ctx.GetSessionVars().DDLReorgPriority,
+		Charset:  charset,
+		Collate:  collate,
+		SQLMode:  ctx.GetSessionVars().SQLMode,
+	}
+	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	job.ReorgMeta = reorgMeta
+	return job, nil
 }
 
 func (e *executor) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
@@ -4595,7 +4739,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
 	}
 	if keyType == ast.IndexKeyTypeVector {
-		return createVectorIndex()
+		return e.createVectorIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
@@ -4606,56 +4750,22 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
-	// Deal with anonymous index.
-	if len(indexName.L) == 0 {
-		colName := pmodel.NewCIStr("expression_index")
-		if indexPartSpecifications[0].Column != nil {
-			colName = indexPartSpecifications[0].Column.Name
-		}
-		indexName = GetName4AnonymousIndex(t, colName, pmodel.NewCIStr(""))
-	}
-
-	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
-		if indexInfo.State != model.StatePublic {
-			// NOTE: explicit error message. See issue #18363.
-			err = dbterror.ErrDupKeyName.GenWithStack("Duplicate key name '%s'; "+
-				"a background job is trying to add the same index, "+
-				"please check by `ADMIN SHOW DDL JOBS`", indexName)
-		} else {
-			err = dbterror.ErrDupKeyName.GenWithStackByArgs(indexName)
-		}
-		if ifNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
-		}
-		return err
-	}
-
-	if err = checkTooLongIndex(indexName); err != nil {
+	indexName, hiddenCols, err := checkIndexNameAndColumns(ctx, t, indexName, indexPartSpecifications, false, ifNotExists)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
 	tblInfo := t.Meta()
-
-	// Build hidden columns if necessary.
-	hiddenCols, err := buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
-	if err != nil {
-		return err
-	}
-	if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols)); err != nil {
-		return errors.Trace(err)
-	}
-
 	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))
 	copy(finalColumns, tblInfo.Columns)
 	finalColumns = append(finalColumns, hiddenCols...)
 	// Check before the job is put to the queue.
 	// This check is redundant, but useful. If DDL check fail before the job is put
-	// to job queue, the fail path logic is super fast.
+	// to job queue, the fail path logic is particularly fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(ctx, finalColumns, indexPartSpecifications)
+	indexColumns, _, err := buildIndexColumns(ctx, finalColumns, indexPartSpecifications, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4700,7 +4810,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	if indexOption != nil && indexOption.Tp == pmodel.IndexTypeHypo { // for hypo-index
-		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique,
+		indexInfo, err := BuildIndexInfo(ctx, tblInfo, indexName, false, unique, false,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err
@@ -4708,30 +4818,16 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
-	chs, coll := ctx.GetSessionVars().GetCharsetInfo()
 	// global is set to  'false' is just there to be backwards compatible,
 	// to avoid unmarshal issues, it is now part of indexOption.
 	global := false
-	job := &model.Job{
-		SchemaID:       schema.ID,
-		TableID:        t.Meta().ID,
-		SchemaName:     schema.Name.L,
-		TableName:      t.Meta().Name.L,
-		Type:           model.ActionAddIndex,
-		BinlogInfo:     &model.HistoryInfo{},
-		ReorgMeta:      nil,
-		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
-		Priority:       ctx.GetSessionVars().DDLReorgPriority,
-		Charset:        chs,
-		Collate:        coll,
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        ctx.GetSessionVars().SQLMode,
-	}
-	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
+	job, err := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
-	job.ReorgMeta = reorgMeta
+	job.Type = model.ActionAddIndex
+	job.Args = []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global}
+	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
 
 	err = e.DoDDLJob(ctx, job)
 	// key exists, but if_not_exists flags is true, so we ignore this error.

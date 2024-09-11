@@ -1117,6 +1117,19 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }
 
+// SyncTiFlashTableSchema syncs TiFlash table schema.
+func SyncTiFlashTableSchema(ctx context.Context, tableID int64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tikvStats, err := is.tiflashReplicaManager.GetStoresStat(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.tiflashReplicaManager.SyncTiFlashTableSchema(tableID, tikvStats)
+}
+
 // CalculateTiFlashProgress calculates TiFlash replica progress
 func CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pdhttp.StoreInfo) (float64, error) {
 	is, err := getGlobalInfoSyncer()

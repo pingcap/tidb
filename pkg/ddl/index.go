@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -99,7 +100,7 @@ func suppressErrorTooLongKeyForSchemaTracker(sctx sessionctx.Context) bool {
 	return false
 }
 
-func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, bool, error) {
+func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
@@ -113,7 +114,11 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 			return nil, false, dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ip.Column.Name)
 		}
 
-		if err := checkIndexColumn(ctx, col, ip.Length); err != nil {
+		if isVector && col.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
+			return nil, false, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("only support vector type, but this is type: %s", col.FieldType.String()))
+		}
+
+		if err := checkIndexColumn(ctx, col, ip.Length, isVector); err != nil {
 			return nil, false, err
 		}
 		if col.FieldType.IsArray() {
@@ -210,7 +215,7 @@ func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (co
 	return
 }
 
-func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumnLen int) error {
+func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumnLen int, isVectorIndex bool) error {
 	if col.GetFlen() == 0 && (types.IsTypeChar(col.FieldType.GetType()) || types.IsTypeVarchar(col.FieldType.GetType())) {
 		if col.Hidden {
 			return errors.Trace(dbterror.ErrWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
@@ -231,7 +236,9 @@ func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumn
 		if col.Hidden {
 			return errors.Errorf("Cannot create an expression index on a function that returns a VECTOR value")
 		}
-		return errors.Trace(dbterror.ErrWrongKeyColumn.GenWithStackByArgs(col.Name))
+		if !isVectorIndex {
+			return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported adding a general index on a vector column")
+		}
 	}
 
 	// Length must be specified and non-zero for BLOB and TEXT column indexes.
@@ -325,10 +332,9 @@ func calcBytesLengthForDecimal(m int) int {
 // BuildIndexInfo builds a new IndexInfo according to the index information.
 func BuildIndexInfo(
 	ctx sessionctx.Context,
-	allTableColumns []*model.ColumnInfo,
+	tblInfo *model.TableInfo,
 	indexName pmodel.CIStr,
-	isPrimary bool,
-	isUnique bool,
+	isPrimary, isUnique, isVector bool,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	state model.SchemaState,
@@ -337,19 +343,27 @@ func BuildIndexInfo(
 		return nil, errors.Trace(err)
 	}
 
-	idxColumns, mvIndex, err := buildIndexColumns(ctx, allTableColumns, indexPartSpecifications)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	// Create index info.
 	idxInfo := &model.IndexInfo{
 		Name:    indexName,
-		Columns: idxColumns,
 		State:   state,
 		Primary: isPrimary,
 		Unique:  isUnique,
-		MVIndex: mvIndex,
+	}
+
+	if isVector {
+		vectorInfo, _, err := buildVectorInfoWithCheck(indexPartSpecifications, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.VectorInfo = vectorInfo
+	}
+
+	var err error
+	allTableColumns := tblInfo.Columns
+	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, isVector)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if indexOption != nil {
@@ -360,6 +374,8 @@ func BuildIndexInfo(
 		if indexOption.Tp == pmodel.IndexTypeInvalid {
 			// Use btree as default index type.
 			idxInfo.Tp = pmodel.IndexTypeBtree
+		} else if !isVector && indexOption.Tp == pmodel.IndexTypeHNSW {
+			return nil, dbterror.ErrUnsupportedIndexType.FastGenByArgs("Only support vector index with HNSW type, but it's non-vector index")
 		} else {
 			idxInfo.Tp = indexOption.Tp
 		}
@@ -370,6 +386,61 @@ func BuildIndexInfo(
 	}
 
 	return idxInfo, nil
+}
+
+func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification,
+	tblInfo *model.TableInfo) (*model.VectorIndexInfo, string, error) {
+	if len(indexPartSpecifications) != 1 {
+		return nil, "", dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported no function")
+	}
+
+	idxPart := indexPartSpecifications[0]
+	f, ok := idxPart.Expr.(*ast.FuncCallExpr)
+	if !ok {
+		return nil, "", dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("unsupported function: %v", idxPart.Expr))
+	}
+	distanceMetric, ok := variable.DistanceMetric4VectorIndex[f.FnName.L]
+	if !ok {
+		return nil, "", dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported function")
+	}
+	colExpr, ok := f.Args[0].(*ast.ColumnNameExpr)
+	if !ok {
+		return nil, "", dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("unsupported function args: %v", f.Args[0]))
+	}
+	colInfo := findColumnByName(colExpr.Name.Name.L, tblInfo)
+	if colInfo == nil {
+		return nil, "", infoschema.ErrColumnNotExists.GenWithStackByArgs(colExpr.Name.Name.String())
+	}
+
+	// check duplicated function on the same column
+	for _, idx := range tblInfo.Indices {
+		if idx.VectorInfo == nil {
+			continue
+		}
+		if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
+			continue
+		}
+		if idx.VectorInfo.DistanceMetric == distanceMetric {
+			return nil, "", dbterror.ErrDupKeyName.FastGenByArgs(fmt.Sprintf("vector index: %s, column name: %s, duplicate function name: %s", idx.Name, colInfo.Name, f.FnName))
+		}
+	}
+	if colInfo.FieldType.GetFlen() <= 0 {
+		return nil, "", errors.Errorf("add vector index can only be defined on fixed-dimension vector columns")
+	}
+
+	exprStr, err := restoreFuncCall(f)
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+
+	// It's used for build buildIndexColumns.
+	idxPart.Column = &ast.ColumnName{Name: colInfo.Name}
+	idxPart.Length = types.UnspecifiedLength
+
+	return &model.VectorIndexInfo{
+		Dimension:      uint64(colInfo.FieldType.GetFlen()),
+		DistanceMetric: distanceMetric,
+	}, exprStr, nil
 }
 
 // AddIndexColumnFlag aligns the column flags of columns in TableInfo to IndexInfo.
@@ -599,6 +670,253 @@ func decodeAddIndexArgs(job *model.Job) (
 	return
 }
 
+func checkAndBuildIndexInfo(job *model.Job, tblInfo *model.TableInfo, indexName pmodel.CIStr, isPK, unique, isVector bool,
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, hiddenCols []*model.ColumnInfo) (*model.IndexInfo, error) {
+	var err error
+	indexInfo := tblInfo.FindIndexByName(indexName.L)
+	if indexInfo != nil {
+		if indexInfo.State == model.StatePublic {
+			err = dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+			if isPK {
+				err = infoschema.ErrMultiplePriKey
+			}
+			return nil, err
+		}
+		return indexInfo, nil
+	}
+
+	for _, hiddenCol := range hiddenCols {
+		columnInfo := model.FindColumnInfo(tblInfo.Columns, hiddenCol.Name.L)
+		if columnInfo != nil && columnInfo.State == model.StatePublic {
+			// We already have a column with the same column name.
+			// TODO: refine the error message
+			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(hiddenCol.Name)
+		}
+	}
+
+	if len(hiddenCols) > 0 {
+		for _, hiddenCol := range hiddenCols {
+			InitAndAddColumnToTable(tblInfo, hiddenCol)
+		}
+	}
+	if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
+		return nil, errors.Trace(err)
+	}
+	indexInfo, err = BuildIndexInfo(
+		nil,
+		tblInfo,
+		indexName,
+		isPK,
+		unique,
+		isVector,
+		indexPartSpecifications,
+		indexOption,
+		model.StateNone,
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if isPK {
+		if _, err = CheckPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
+			return nil, err
+		}
+	}
+	indexInfo.ID = AllocateIndexID(tblInfo)
+	tblInfo.Indices = append(tblInfo.Indices, indexInfo)
+	if err = checkTooManyIndexes(tblInfo.Indices); err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Here we need do this check before set state to `DeleteOnly`,
+	// because if hidden columns has been set to `DeleteOnly`,
+	// the `DeleteOnly` columns are missing when we do this check.
+	if err := checkInvisibleIndexOnPK(tblInfo); err != nil {
+		return nil, err
+	}
+	logutil.DDLLogger().Info("[ddl] run add index job", zap.String("job", job.String()), zap.Reflect("indexInfo", indexInfo))
+	return indexInfo, nil
+}
+
+func (w *worker) onCreateVectorIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	// Handle the rolling back job.
+	if job.IsRollingback() {
+		ver, err = onDropIndex(jobCtx, t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+
+	// Handle normal job.
+	schemaID := job.SchemaID
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if err := checkTableTypeForVectorIndex(tblInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	var (
+		indexName              pmodel.CIStr
+		indexOption            *ast.IndexOption
+		indexPartSpecification *ast.IndexPartSpecification
+		funcExpr               string
+	)
+	err = job.DecodeArgs(&indexName, &indexPartSpecification, &indexOption, &funcExpr)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	indexPartSpecification.Expr, err = generatedexpr.ParseExpression(funcExpr)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	defer func() {
+		indexPartSpecification.Expr = nil
+	}()
+
+	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, indexName, false, false, true, []*ast.IndexPartSpecification{indexPartSpecification}, indexOption, nil)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	originalState := indexInfo.State
+	switch indexInfo.State {
+	case model.StateNone:
+		// none -> delete only
+		job.ReorgMeta.ReorgTp = model.ReorgTypeCheckTiFlash
+		indexInfo.State = model.StateDeleteOnly
+		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		job.SchemaState = model.StateDeleteOnly
+	case model.StateDeleteOnly:
+		// delete only -> write only
+		indexInfo.State = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		job.SchemaState = model.StateWriteOnly
+	case model.StateWriteOnly:
+		// write only -> reorganization
+		indexInfo.State = model.StateWriteReorganization
+		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		// Initialize SnapshotVer to 0 for later reorganization check.
+		job.SnapshotVer = 0
+		job.SchemaState = model.StateWriteReorganization
+	case model.StateWriteReorganization:
+		// reorganization -> public
+		tbl, err := getTable(jobCtx.getAutoIDRequirement(), schemaID, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		var done bool
+		done, ver, err = doReorgWorkForCreateIndexOnTiFlash(w, jobCtx, t, job, tbl, []*model.IndexInfo{indexInfo})
+		if err != nil || !done {
+			return ver, err
+		}
+
+		indexInfo.State = model.StatePublic
+		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.Args = []any{indexInfo.ID, false /*if exists*/, getPartitionIDs(tblInfo)}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		logutil.DDLLogger().Info("[ddl] run add vector index job done",
+			zap.Int64("ver", ver),
+			zap.String("charset", job.Charset),
+			zap.String("collation", job.Collate))
+	default:
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
+	}
+
+	return ver, errors.Trace(err)
+}
+
+func doReorgWorkForCreateIndexOnTiFlash(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job, tbl table.Table, allIndexInfos []*model.IndexInfo,
+) (done bool, ver int64, err error) {
+	done, ver, err = runReorgJobAndHandleErr(w, jobCtx, t, job, tbl, allIndexInfos, false)
+	if err != nil {
+		if !errorIsRetryable(err, job) {
+			logutil.DDLLogger().Warn("[ddl] run reorg job failed, convert job to rollback",
+				zap.String("job", job.String()), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(jobCtx, t, job, tbl.Meta(), allIndexInfos, err)
+		}
+		return false, ver, errors.Trace(err)
+	}
+
+	return done, 0, nil
+}
+
+func (w *worker) checkVectorIndexProcess(tbl table.Table, reorgInfo *reorgInfo) error {
+	cnt := 0
+	for {
+		if err := w.ddlCtx.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
+			return errors.Trace(err)
+		}
+		isDone, addedIndexCnt, err := w.checkVectorIndexProcessOnce(reorgInfo.jobCtx, tbl, reorgInfo.currElement.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		w.getReorgCtx(reorgInfo.Job.ID).setRowCount(addedIndexCnt)
+		if cnt%10 == 0 {
+			logutil.DDLLogger().Info("[ddl] index backfill state running, check vector index process",
+				zap.Stringer("job", reorgInfo.Job), zap.Stringer("currElement", reorgInfo.currElement),
+				zap.Bool("isDone", isDone), zap.Int64("addedIndexCnt", addedIndexCnt), zap.Int("tried count", cnt))
+		}
+
+		if isDone {
+			break
+		}
+
+		cnt++
+		time.Sleep(GetWaitTimeWhenErrorOccurred())
+	}
+	return nil
+}
+
+// checkVectorIndexProcessOnce checks the backfill process of a vector index from TiFlash once.
+func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table, indexID int64) (bool, int64, error) {
+	failpoint.Inject("MockCheckVectorIndexProcess", func(val failpoint.Value) {
+		if valInt, ok := val.(int); ok {
+			if valInt == -1 {
+				failpoint.Return(false, 0, nil)
+			} else {
+				failpoint.Return(true, int64(valInt), nil)
+			}
+		}
+	})
+
+	// TODO: We need to add error_msg and error_count for to show error information.
+	sql := fmt.Sprintf("select rows_stable_not_indexed, rows_stable_indexed from information_schema.tiflash_indexes where table_id = %d and index_id = %d;",
+		tbl.Meta().ID, indexID)
+	rows, err := w.sess.Execute(jobCtx.ctx, sql, "add_vector_index_check_result")
+	if err != nil || len(rows) == 0 {
+		return false, 0, errors.Trace(err)
+	}
+
+	// handle info from multiple TiFlash nodes
+	notAddedIndexCnt, addedIndexCnt := int64(0), int64(0)
+	for _, row := range rows {
+		notAddedIndexCnt += row.GetInt64(0)
+		addedIndexCnt += row.GetInt64(1)
+	}
+	if notAddedIndexCnt != 0 {
+		return false, 0, nil
+	}
+
+	return true, rows[0].GetInt64(1), nil
+}
+
 func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
@@ -640,70 +958,10 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job,
 
 	allIndexInfos := make([]*model.IndexInfo, 0, len(indexNames))
 	for i, indexName := range indexNames {
-		indexInfo := tblInfo.FindIndexByName(indexName.L)
-		if indexInfo != nil && indexInfo.State == model.StatePublic {
+		indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, indexName, isPK, uniques[i], false, indexPartSpecifications[i], indexOption[i], hiddenCols[i])
+		if err != nil {
 			job.State = model.JobStateCancelled
-			err = dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
-			if isPK {
-				err = infoschema.ErrMultiplePriKey
-			}
-			return ver, err
-		}
-		if indexInfo == nil {
-			for _, hiddenCol := range hiddenCols[i] {
-				columnInfo := model.FindColumnInfo(tblInfo.Columns, hiddenCol.Name.L)
-				if columnInfo != nil && columnInfo.State == model.StatePublic {
-					// We already have a column with the same column name.
-					job.State = model.JobStateCancelled
-					// TODO: refine the error message
-					return ver, infoschema.ErrColumnExists.GenWithStackByArgs(hiddenCol.Name)
-				}
-			}
-		}
-		if indexInfo == nil {
-			if len(hiddenCols) > 0 {
-				for _, hiddenCol := range hiddenCols[i] {
-					InitAndAddColumnToTable(tblInfo, hiddenCol)
-				}
-			}
-			if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			indexInfo, err = BuildIndexInfo(
-				nil,
-				tblInfo.Columns,
-				indexName,
-				isPK,
-				uniques[i],
-				indexPartSpecifications[i],
-				indexOption[i],
-				model.StateNone,
-			)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			if isPK {
-				if _, err = CheckPKOnGeneratedColumn(tblInfo, indexPartSpecifications[i]); err != nil {
-					job.State = model.JobStateCancelled
-					return ver, err
-				}
-			}
-			indexInfo.ID = AllocateIndexID(tblInfo)
-			tblInfo.Indices = append(tblInfo.Indices, indexInfo)
-			if err = checkTooManyIndexes(tblInfo.Indices); err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			// Here we need do this check before set state to `DeleteOnly`,
-			// because if hidden columns has been set to `DeleteOnly`,
-			// the `DeleteOnly` columns are missing when we do this check.
-			if err := checkInvisibleIndexOnPK(tblInfo); err != nil {
-				job.State = model.JobStateCancelled
-				return ver, err
-			}
-			logutil.DDLLogger().Info("run add index job", zap.Stringer("job", job), zap.Reflect("indexInfo", indexInfo))
+			return ver, errors.Trace(err)
 		}
 		allIndexInfos = append(allIndexInfos, indexInfo)
 	}
@@ -1066,6 +1324,9 @@ func runReorgJobAndHandleErr(
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, allIndexInfos[0].Name)
 			}, false)
+		if job.Type == model.ActionAddVectorIndex {
+			return w.checkVectorIndexProcess(tbl, reorgInfo)
+		}
 		return w.addTableIndex(tbl, reorgInfo)
 	})
 	if err != nil {
@@ -1176,12 +1437,13 @@ func onDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			isVector := allIndexInfos[0].VectorInfo != nil
 			// Global index key has t{tableID}_ prefix.
 			// Assign partitionIDs empty to guarantee correct prefix in insertJobIntoDeleteRangeTable.
 			if allIndexInfos[0].Global {
-				job.Args = append(job.Args, idxIDs[0], []int64{})
+				job.Args = append(job.Args, idxIDs[0], []int64{}, isVector)
 			} else {
-				job.Args = append(job.Args, idxIDs[0], getPartitionIDs(tblInfo))
+				job.Args = append(job.Args, idxIDs[0], getPartitionIDs(tblInfo), isVector)
 			}
 		}
 	default:

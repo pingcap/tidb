@@ -1514,11 +1514,12 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 }
 
 var tableTiFlashIndexesCols = []columnInfo{
-	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 21},
-	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 21},
+	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "COLUMN_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "COLUMN_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "INDEX_KIND", tp: mysql.TypeVarchar, size: 64},
 	{name: "ROWS_STABLE_INDEXED", tp: mysql.TypeLonglong, size: 64},
 	{name: "ROWS_STABLE_NOT_INDEXED", tp: mysql.TypeLonglong, size: 64},
