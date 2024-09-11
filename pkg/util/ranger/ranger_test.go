@@ -2437,6 +2437,18 @@ func TestMinAccessCondsForDNFCond(t *testing.T) {
 		},
 		{
 			indexPos:                 0,
+			exprStr:                  "a = 1 or a = 2 or a = 3",
+			accessConds:              "[or(eq(test.t.a, 1), or(eq(test.t.a, 2), eq(test.t.a, 3)))]",
+			minAccessCondsForDNFCond: 1,
+		},
+		{
+			indexPos:                 0,
+			exprStr:                  "a = 1 or b = 2 or c = 3",
+			accessConds:              "[]",
+			minAccessCondsForDNFCond: 0,
+		},
+		{
+			indexPos:                 0,
 			exprStr:                  "(a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
 			accessConds:              "[or(eq(test.t.a, 1), or(eq(test.t.a, 3), eq(test.t.a, 5)))]",
 			minAccessCondsForDNFCond: 1,
@@ -2464,6 +2476,12 @@ func TestMinAccessCondsForDNFCond(t *testing.T) {
 			exprStr:                  "(a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
 			accessConds:              "[or(and(eq(test.t.a, 1), eq(test.t.b, 2)), or(and(eq(test.t.a, 3), eq(test.t.b, 4)), and(eq(test.t.a, 5), eq(test.t.b, 6))))]",
 			minAccessCondsForDNFCond: 2,
+		},
+		{
+			indexPos:                 3,
+			exprStr:                  "(a=1) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+			accessConds:              "[or(eq(test.t.a, 1), or(and(eq(test.t.a, 3), eq(test.t.b, 4)), and(eq(test.t.a, 5), and(eq(test.t.b, 6), eq(test.t.c, 7)))))]",
+			minAccessCondsForDNFCond: 1,
 		},
 	}
 
