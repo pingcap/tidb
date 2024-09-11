@@ -110,6 +110,8 @@ const (
 	AvgPdTimeStr                      = "AVG_PD_TIME"
 	AvgBackoffTotalTimeStr            = "AVG_BACKOFF_TOTAL_TIME"
 	AvgWriteSQLRespTimeStr            = "AVG_WRITE_SQL_RESP_TIME"
+	AvgTidbCPUTimeStr                 = "AVG_TIDB_CPU_TIME"
+	AvgTikvCPUTimeStr                 = "AVG_TIKV_CPU_TIME"
 	MaxResultRowsStr                  = "MAX_RESULT_ROWS"
 	MinResultRowsStr                  = "MIN_RESULT_ROWS"
 	AvgResultRowsStr                  = "AVG_RESULT_ROWS"
@@ -393,6 +395,12 @@ var columnFactoryMap = map[string]columnFactory{
 	},
 	AvgWriteSQLRespTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumWriteSQLRespTotal), record.CommitCount)
+	},
+	AvgTidbCPUTimeStr: func(_ columnInfo, record *StmtRecord) any {
+		return avgInt(int64(record.SumTidbCPU), record.ExecCount)
+	},
+	AvgTikvCPUTimeStr: func(_ columnInfo, record *StmtRecord) any {
+		return avgInt(int64(record.SumTikvCPU), record.ExecCount)
 	},
 	MaxResultRowsStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxResultRows

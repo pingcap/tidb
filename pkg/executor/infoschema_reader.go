@@ -750,7 +750,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				if !ex.HasTableSchema(t.DBName.L) {
 					return true
 				}
-				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, t.DBName.L, t.TableName.L, "", mysql.SelectPriv) {
+				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, t.DBName.L, t.TableName.L, "", mysql.AllPrivMask) {
 					return true
 				}
 
@@ -1617,7 +1617,7 @@ func (e *DDLJobsReaderExec) Next(_ context.Context, req *chunk.Chunk) error {
 	var err error
 
 	// Append history DDL jobs.
-	if count < req.Capacity() {
+	if count < req.Capacity() && e.historyJobIter != nil {
 		e.cacheJobs, err = e.historyJobIter.GetLastJobs(req.Capacity()-count, e.cacheJobs)
 		if err != nil {
 			return err

@@ -85,7 +85,7 @@ func (htc *hashTableContext) lookup(partitionIndex int, hashValue uint64) tagged
 	return htc.hashTable.tables[partitionIndex].lookup(hashValue, htc.tagHelper)
 }
 
-func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *TableMeta, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
+func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *joinTableMeta, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
 	if htc.rowTables[workerID][partitionID] == nil {
 		htc.rowTables[workerID][partitionID] = newRowTable(tableMeta)
 	}
@@ -115,7 +115,7 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	htc.memoryTracker.Consume(seg.totalUsedBytes())
 }
 
-func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber uint) int {
+func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *joinTableMeta, partitionNumber uint) int {
 	rowTables := make([]*rowTable, partitionNumber)
 	for i := 0; i < int(partitionNumber); i++ {
 		rowTables[i] = newRowTable(tableMeta)
@@ -157,7 +157,7 @@ type HashJoinCtxV2 struct {
 	ProbeFilter                    expression.CNFExprs
 	OtherCondition                 expression.CNFExprs
 	hashTableContext               *hashTableContext
-	hashTableMeta                  *TableMeta
+	hashTableMeta                  *joinTableMeta
 	needScanRowTableAfterProbeDone bool
 
 	LUsed, RUsed                                 []int

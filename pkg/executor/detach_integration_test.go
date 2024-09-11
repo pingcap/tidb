@@ -265,11 +265,44 @@ func TestDetachSelection(t *testing.T) {
 			expectedSelect++
 		}
 	}
+	require.NoError(t, drs.Close())
+	require.Equal(t, 200, expectedSelect)
 
 	// Selection with optional property is not allowed
 	tk.MustExec("set @a = 1")
-	tk.MustHavePlan("select a from t where a + @a > 100 and a < 200", "Selection")
-	rs, err = tk.Exec("select a from t where a + @a > ? and a < ?", 100, 200)
+	tk.MustExec("set @b = 10")
+	tk.MustHavePlan("select a, b from t where a + @a + getvar('b') > 100 and a < 200", "Selection")
+	rs, err = tk.Exec("select a, b from t where a + @a + getvar('b') > ? and a < ?", 100, 200)
+	require.NoError(t, err)
+	drs, ok, err = rs.(sqlexec.DetachableRecordSet).TryDetach()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// set user variable to another value to test the expression should not change after detaching
+	tk.MustExec("set @a=100")
+	tk.MustExec("set @b=1000")
+	tk.MustExec("select 1")
+	chk = drs.NewChunk(nil)
+	expectedSelect = 90
+	for {
+		err = drs.Next(context.Background(), chk)
+		require.NoError(t, err)
+
+		if chk.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < chk.NumRows(); i++ {
+			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(0))
+			require.Equal(t, int64(expectedSelect), chk.GetRow(i).GetInt64(1))
+			expectedSelect++
+		}
+	}
+	require.NoError(t, drs.Close())
+	require.Equal(t, 200, expectedSelect)
+
+	// Selection with optional property is not allowed
+	tk.MustHavePlan("select a from t where a + found_rows() > 100 and a < 200", "Selection")
+	rs, err = tk.Exec("select a from t where a + found_rows() > ? and a < ?", 100, 200)
 	require.NoError(t, err)
 	drs, ok, _ = rs.(sqlexec.DetachableRecordSet).TryDetach()
 	require.False(t, ok)
@@ -309,16 +342,46 @@ func TestDetachProjection(t *testing.T) {
 			expectedSelect++
 		}
 	}
+	require.NoError(t, drs.Close())
+	require.Equal(t, 200, expectedSelect)
 
 	// Projection with optional property is not allowed
-	tk.MustExec("set @a = 1")
-	tk.MustHavePlan("select a + @a from t where a > 100 and a < 200", "Projection")
-	rs, err = tk.Exec("select a + @a from t where a > ? and a < ?", 100, 200)
+	tk.MustHavePlan("select setvar('x', a) from t where a > 100 and a < 200", "Projection")
+	rs, err = tk.Exec("select setvar('x', a) from t where a > ? and a < ?", 100, 200)
 	require.NoError(t, err)
 	drs, ok, _ = rs.(sqlexec.DetachableRecordSet).TryDetach()
 	require.False(t, ok)
 	require.Nil(t, drs)
 	require.NoError(t, rs.Close())
+
+	// Projection with user variable is allowed
+	tk.MustExec("set @a = 1")
+	tk.MustExec("set @b = 10")
+	tk.MustHavePlan("select a + b + @a + getvar('b') from t where a > 100 and a < 200", "Projection")
+	rs, err = tk.Exec("select a + b + @a + getvar('b') from t where a > ? and a < ?", 100, 200)
+	require.NoError(t, err)
+	drs, ok, err = rs.(sqlexec.DetachableRecordSet).TryDetach()
+	require.NoError(t, err)
+	require.True(t, ok)
+	// set user variable to another value to test the expression should not change after detaching
+	tk.MustExec("set @a=100")
+	tk.MustExec("set @b=1000")
+	chk = drs.NewChunk(nil)
+	expectedSelect = 101
+	for {
+		err = drs.Next(context.Background(), chk)
+		require.NoError(t, err)
+
+		if chk.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < chk.NumRows(); i++ {
+			require.Equal(t, float64(2*expectedSelect+11), chk.GetRow(i).GetFloat64(0))
+			expectedSelect++
+		}
+	}
+	require.NoError(t, drs.Close())
+	require.Equal(t, 200, expectedSelect)
 
 	// Projection with Selection is also allowed
 	tk.MustHavePlan("select a + b from t where c > 100 and c < 200", "Projection")
@@ -343,4 +406,6 @@ func TestDetachProjection(t *testing.T) {
 			expectedSelect++
 		}
 	}
+	require.NoError(t, drs.Close())
+	require.Equal(t, 200, expectedSelect)
 }

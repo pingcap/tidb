@@ -266,6 +266,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		Location:                             sc.TimeZone(),
 		RuntimeStatsColl:                     sc.RuntimeStatsColl,
 		SQLKiller:                            &vars.SQLKiller,
+		CPUUsage:                             &vars.SQLCPUUsages,
 		ErrCtx:                               sc.ErrCtx(),
 		TiFlashReplicaRead:                   vars.TiFlashReplicaRead,
 		TiFlashMaxThreads:                    vars.TiFlashMaxThreads,
@@ -274,6 +275,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		TiFlashMaxBytesBeforeExternalSort:    vars.TiFlashMaxBytesBeforeExternalSort,
 		TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 		TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
+		ResourceGroupName:                    sc.ResourceGroupName,
 		ExecDetails:                          &sc.SyncExecDetails,
 	}
 }
@@ -643,8 +645,8 @@ func NewContext() *Context {
 	vars.MemTracker.SetBytesLimit(-1)
 	vars.DiskTracker.SetBytesLimit(-1)
 	vars.StmtCtx.MemTracker, vars.StmtCtx.DiskTracker = memory.NewTracker(-1, -1), disk.NewTracker(-1, -1)
-	vars.MemTracker.AttachTo(vars.MemTracker)
-	vars.DiskTracker.AttachTo(vars.DiskTracker)
+	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
+	vars.StmtCtx.DiskTracker.AttachTo(vars.DiskTracker)
 	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	vars.EnablePaging = variable.DefTiDBEnablePaging
 	vars.MinPagingSize = variable.DefMinPagingSize

@@ -28,7 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -89,6 +92,10 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err
 	}
 	astArgs := importer.ASTArgsFromImportPlan(e.plan)
+	if err = ValidateImportIntoColAssignmentsWithEncodeCtx(importPlan, astArgs.ColumnAssignments); err != nil {
+		return err
+	}
+
 	controller, err := importer.NewLoadDataController(importPlan, e.tbl, astArgs)
 	if err != nil {
 		return err
@@ -132,6 +139,46 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		}
 	}
 	return e.fillJobInfo(ctx, jobID, req)
+}
+
+// ValidateImportIntoColAssignmentsWithEncodeCtx validates the column assignment expressions should be compatible with the
+// encoding context (which maybe different with the context in the current session).
+// For example, the function `tidb_is_ddl_owner()` requires the optional eval properties which are not
+// provided by the encoding context, so we should avoid using it in the column assignment expressions.
+func ValidateImportIntoColAssignmentsWithEncodeCtx(plan *importer.Plan, assigns []*ast.Assignment) error {
+	encodeCtx := litkv.NewSession(&encode.SessionOptions{
+		SQLMode: plan.SQLMode,
+		SysVars: plan.ImportantSysVars,
+	}, log.L())
+
+	providedProps := encodeCtx.GetExprCtx().GetEvalCtx().GetOptionalPropSet()
+	for i, assign := range assigns {
+		expr, err := expression.BuildSimpleExpr(encodeCtx.GetExprCtx(), assign.Expr)
+		if err != nil {
+			return err
+		}
+
+		if err = checkExprWithProvidedProps(i, expr, providedProps); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func checkExprWithProvidedProps(idx int, expr expression.Expression, props expression.OptionalEvalPropKeySet) error {
+	if e, ok := expr.(*expression.ScalarFunction); ok {
+		if e.Function.RequiredOptionalEvalProps()|props != props {
+			return errors.Errorf("FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", e.FuncName.O, idx)
+		}
+
+		for _, arg := range e.GetArgs() {
+			if err := checkExprWithProvidedProps(idx, arg, props); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chunk.Chunk) error {
