@@ -39,7 +39,6 @@ import (
 )
 
 type memReader interface {
-	getMemRows(ctx context.Context) ([][]types.Datum, error)
 	getMemRowsHandle() ([]kv.Handle, error)
 }
 
@@ -784,66 +783,6 @@ func (m *memIndexLookUpReader) getMemRowsIter(ctx context.Context) (memRowsIter,
 	}
 
 	return memTblReader.getMemRowsIter(ctx)
-}
-
-func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
-	r, ctx := tracing.StartRegionEx(ctx, "memIndexLookUpReader.getMemRows")
-	defer r.End()
-
-	kvRanges := [][]kv.KeyRange{m.idxReader.kvRanges}
-	tbls := []table.Table{m.table}
-	if m.partitionMode {
-		kvRanges = m.partitionKVRanges
-		tbls = tbls[:0]
-		for _, p := range m.partitionTables {
-			tbls = append(tbls, p)
-		}
-	}
-
-	tblKVRanges := make([]kv.KeyRange, 0, 16)
-	numHandles := 0
-	for i, tbl := range tbls {
-		m.idxReader.kvRanges = kvRanges[i]
-		handles, err := m.idxReader.getMemRowsHandle()
-		if err != nil {
-			return nil, err
-		}
-		if len(handles) == 0 {
-			continue
-		}
-		numHandles += len(handles)
-		ranges, _ := distsql.TableHandlesToKVRanges(getPhysicalTableID(tbl), handles)
-		tblKVRanges = append(tblKVRanges, ranges...)
-	}
-	if numHandles == 0 {
-		return nil, nil
-	}
-
-	if m.desc {
-		slices.Reverse(tblKVRanges)
-	}
-
-	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.ctx, m.table, m.columns)
-	memTblReader := &memTableReader{
-		ctx:           m.ctx,
-		table:         m.table.Meta(),
-		columns:       m.columns,
-		kvRanges:      tblKVRanges,
-		conditions:    m.conditions,
-		addedRows:     make([][]types.Datum, 0, numHandles),
-		retFieldTypes: m.retFieldTypes,
-		colIDs:        colIDs,
-		pkColIDs:      pkColIDs,
-		buffer: allocBuf{
-			handleBytes: make([]byte, 0, 16),
-			rd:          rd,
-		},
-		cacheTable:  m.cacheTable,
-		keepOrder:   m.keepOrder,
-		compareExec: m.compareExec,
-	}
-
-	return memTblReader.getMemRows(ctx)
 }
 
 func (*memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
