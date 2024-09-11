@@ -1768,6 +1768,288 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "cacheTimeout": null,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "This panel shows the proportion of CPU time spent on various activities, including user code execution, garbage collection, and memory scavenging. It helps in understanding how CPU resources are utilized by the Go runtime in TiDB processes.",
+          "editable": true,
+          "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 50
+          },
+          "hiddenSeries": false,
+          "id": 49,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "max": false,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "scopedVars": {
+            "instance": {
+              "selected": false,
+              "text": "127.0.0.1:10080",
+              "value": "127.0.0.1:10080"
+            }
+          },
+          "seriesOverrides": [
+            {
+              "$$hashKey": "object:532",
+              "alias": "gc_mark_assist",
+              "bars": true,
+              "lines": false,
+              "stack": true
+            },
+            {
+              "$$hashKey": "object:834",
+              "alias": "gc_mark_dedicated",
+              "bars": true,
+              "lines": false,
+              "stack": true
+            },
+            {
+              "$$hashKey": "object:851",
+              "alias": "gc_mark_idle",
+              "bars": true,
+              "lines": false,
+              "stack": true
+            },
+            {
+              "$$hashKey": "object:868",
+              "alias": "gc_pause",
+              "bars": true,
+              "lines": false,
+              "stack": true
+            },
+            {
+              "$$hashKey": "object:1147",
+              "alias": "user_total",
+              "bars": true,
+              "lines": false,
+              "stack": true
+            },
+            {
+              "$$hashKey": "object:1164",
+              "alias": "scavenge_total",
+              "bars": true,
+              "lines": false,
+              "stack": true
+            },
+            {
+              "$$hashKey": "object:1181",
+              "alias": "idle_total",
+              "bars": true,
+              "lines": false,
+              "stack": true
+            },
+            {
+              "$$hashKey": "object:1366",
+              "alias": "gc_total",
+              "bars": true,
+              "lines": false,
+              "stack": true
+            }
+          ],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "rate(go_cpu_classes_user_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])/rate(go_cpu_classes_total_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])",
+              "format": "time_series",
+              "hide": false,
+              "instant": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "user_total",
+              "refId": "A",
+              "step": 40
+            },
+            {
+              "exemplar": true,
+              "expr": "rate(go_cpu_classes_gc_total_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])/rate(go_cpu_classes_total_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])",
+              "format": "time_series",
+              "hide": false,
+              "instant": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "gc_total",
+              "refId": "B",
+              "step": 40
+            },
+            {
+              "exemplar": true,
+              "expr": "rate(go_cpu_classes_idle_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])/rate(go_cpu_classes_total_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])",
+              "format": "time_series",
+              "hide": false,
+              "instant": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "idle_total",
+              "refId": "C",
+              "step": 40
+            },
+            {
+              "exemplar": true,
+              "expr": "rate(go_cpu_classes_scavenge_total_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])/rate(go_cpu_classes_total_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])",
+              "format": "time_series",
+              "hide": false,
+              "instant": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "scavenge_total",
+              "refId": "D",
+              "step": 40
+            },
+            {
+              "exemplar": true,
+              "expr": "rate(go_cpu_classes_gc_mark_dedicated_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])/rate(go_cpu_classes_total_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])",
+              "format": "time_series",
+              "hide": true,
+              "instant": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "gc_mark_dedicated",
+              "refId": "E",
+              "step": 40
+            },
+            {
+              "exemplar": true,
+              "expr": "rate(go_cpu_classes_gc_mark_assist_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])/rate(go_cpu_classes_total_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])",
+              "format": "time_series",
+              "hide": true,
+              "instant": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "gc_mark_assist",
+              "refId": "F",
+              "step": 40
+            },
+            {
+              "exemplar": true,
+              "expr": "rate(go_cpu_classes_gc_mark_idle_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])/rate(go_cpu_classes_total_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])",
+              "format": "time_series",
+              "hide": true,
+              "instant": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "gc_mark_idle",
+              "refId": "G",
+              "step": 40
+            },
+            {
+              "exemplar": true,
+              "expr": "rate(go_cpu_classes_gc_pause_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])/rate(go_cpu_classes_total_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])",
+              "format": "time_series",
+              "hide": true,
+              "instant": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "gc_pause",
+              "refId": "H",
+              "step": 40
+            },
+            {
+              "exemplar": true,
+              "expr": "rate(go_cpu_classes_scavenge_assist_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])/rate(go_cpu_classes_total_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])",
+              "format": "time_series",
+              "hide": true,
+              "instant": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "scavenge_assist",
+              "refId": "I",
+              "step": 40
+            },
+            {
+              "exemplar": true,
+              "expr": "rate(go_cpu_classes_scavenge_background_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])/rate(go_cpu_classes_total_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[$__rate_interval])",
+              "format": "time_series",
+              "hide": true,
+              "instant": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "scavenge_background",
+              "refId": "J",
+              "step": 40
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "estimated portion of CPU time",
+          "tooltip": {
+            "msResolution": false,
+            "shared": true,
+            "sort": 1,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:1028",
+              "format": "percentunit",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "$$hashKey": "object:1029",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
         }
       ],
       "repeat": "instance",
