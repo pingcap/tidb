@@ -5327,7 +5327,10 @@ func buildSingleTableColPosInfoForDelete(
 		if found == -1 {
 			return TblColPosInfo{}, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(name.ColName.O, tblInfo.Name.O)
 		}
-		offsetMap[found] = i
+		// For multi-delete case, the offset is recorded for the mixed row. We need to restore it to single table status.
+		//	e.g. The multi-delete case is [t1.a, t1.b, t2.a, t2.b] and There's a index [t2.b].
+		//	     The idxCols is [3]. And we should fix it to [1].
+		offsetMap[found] = i - offset
 	}
 	indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
 	for _, idx := range deletableIdxs {

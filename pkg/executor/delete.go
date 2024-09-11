@@ -167,22 +167,6 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 	return nil
 }
 
-// fixHandlePosInfoForMultiDelete fixes the position info by the current execution logic.
-// We will cut the mixed row into single table row, so the handle position info should be fixed.
-//
-//	e.g. The multi-delete case is [t1.a, t1.b, t2.a, t2.b] and There's a index [t2.b].
-//	     The idxCols is [3]. And we should fix it to [1].
-func (e *DeleteExec) fixHandlePosInfoForMultiDelete() {
-	for i := range e.tblColPosInfos {
-		info := e.tblColPosInfos[i]
-		for _, idxCols := range info.IndexesForDelete {
-			for i := range idxCols {
-				idxCols[i] -= info.Start
-			}
-		}
-	}
-}
-
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the corresponding rows in joinedRow.
 	var totalMemDelta int64
@@ -314,10 +298,6 @@ func (e *DeleteExec) Close() error {
 func (e *DeleteExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
-
-	if e.IsMultiTable {
-		e.fixHandlePosInfoForMultiDelete()
-	}
 
 	return exec.Open(ctx, e.Children(0))
 }
