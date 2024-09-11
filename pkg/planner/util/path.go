@@ -118,6 +118,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		PartialIndexPaths:            nil,
 		StoreType:                    path.StoreType,
 		IsDNFCond:                    path.IsDNFCond,
+		MinAccessCondsForDNFCond:     path.MinAccessCondsForDNFCond,
 		IsIntHandlePath:              path.IsIntHandlePath,
 		IsCommonHandlePath:           path.IsCommonHandlePath,
 		Forced:                       path.Forced,

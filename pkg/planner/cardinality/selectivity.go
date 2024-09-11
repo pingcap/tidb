@@ -706,9 +706,9 @@ func (s *statsNodeForGreedyChoice) isBetterThan(other *statsNodeForGreedyChoice)
 	}
 	// 6. The selectivity of the covered conditions, the less, the better.
 	// The rationale behind is that lower selectivity tends to reflect more functional dependencies
-	// between columns. It's hard to decide the priority of this rule against rule 2 and 3, in order
+	// between columns. It's hard to decide the priority of this rule against rules above, in order
 	// to avoid massive plan changes between tidb-server versions, I adopt this conservative strategy
-	// to impose this rule after rule 2 and 3.
+	// to impose this rule after rules above.
 	if s.Selectivity < other.Selectivity {
 		return true
 	}
