@@ -402,6 +402,7 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		intest.Assert(job.Version > 0, "job version should be greater than 0")
 
 		involving := job.GetInvolvingSchemaInfo()
 		if targetPool.available() == 0 {

@@ -32,7 +32,6 @@ var (
 	QueryRPCHistogram          *prometheus.HistogramVec
 	QueryProcessedKeyHistogram *prometheus.HistogramVec
 	QueryTotalCounter          *prometheus.CounterVec
-	AffectedRowsCounter        *prometheus.CounterVec
 	ConnGauge                  *prometheus.GaugeVec
 	DisconnectionCounter       *prometheus.CounterVec
 	PreparedStmtGauge          prometheus.Gauge
@@ -119,14 +118,6 @@ func InitServerMetrics() {
 			Name:      "query_total",
 			Help:      "Counter of queries.",
 		}, []string{LblType, LblResult, LblResourceGroup})
-
-	AffectedRowsCounter = NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "affected_rows",
-			Help:      "Counters of server affected rows.",
-		}, []string{LblSQLType})
 
 	ConnGauge = NewGaugeVec(
 		prometheus.GaugeOpts{

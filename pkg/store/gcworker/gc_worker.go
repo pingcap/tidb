@@ -1574,6 +1574,7 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 			return
 		}
 		historyJob = &model.Job{
+			Version: model.JobVersion1,
 			ID:      dr.JobID,
 			Type:    model.ActionDropTable,
 			TableID: int64(v.(int)),
@@ -1601,17 +1602,23 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
 	case model.ActionTruncateTable:
 		var args *model.TruncateTableArgs
-		args, err = model.GetTruncateTableArgsAfterRun(historyJob)
+		args, err = model.GetFinishedTruncateTableArgs(historyJob)
 		if err != nil {
 			return
 		}
 		physicalTableIDs = append(args.OldPartitionIDs, historyJob.TableID)
-	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition,
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 		model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}
+	case model.ActionDropSchema:
+		args, err2 := model.GetFinishedDropSchemaArgs(historyJob)
+		if err2 != nil {
+			return err2
+		}
+		physicalTableIDs = args.AllDroppedTableIDs
 	}
 
 	// Skip table ids that's already successfully handled.
@@ -1655,6 +1662,7 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 			return
 		}
 		historyJob = &model.Job{
+			Version: model.JobVersion1,
 			ID:      dr.JobID,
 			Type:    model.ActionDropTable,
 			RawArgs: args,

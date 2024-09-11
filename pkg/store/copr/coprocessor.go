@@ -1223,7 +1223,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		req.IsRetryRequest = true
 	}
 	if worker.req.ResourceGroupTagger != nil {
-		worker.req.ResourceGroupTagger(req)
+		worker.req.ResourceGroupTagger.Build(req)
 	}
 	timeout := config.GetGlobalConfig().TiKVClient.CoprReqTimeout
 	if task.tikvClientReadTimeout > 0 {

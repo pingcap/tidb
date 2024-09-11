@@ -156,11 +156,12 @@ func TestCombinedIDAllocation(t *testing.T) {
 
 	genCreateDBJob := func() *model.Job {
 		info := &model.DBInfo{}
-		return &model.Job{
-			Version: model.JobVersion1,
+		j := &model.Job{
+			Version: model.GetJobVerInUse(),
 			Type:    model.ActionCreateSchema,
-			Args:    []any{info},
 		}
+		j.FillArgs(&model.CreateSchemaArgs{DBInfo: info})
+		return j
 	}
 
 	genRGroupJob := func() *model.Job {
@@ -413,10 +414,10 @@ func TestCombinedIDAllocation(t *testing.T) {
 				}
 			case model.ActionCreateSchema:
 				require.Greater(t, j.SchemaID, initialGlobalID)
-				info := &model.DBInfo{}
-				require.NoError(t, j.DecodeArgs(info))
-				uniqueIDs[info.ID] = struct{}{}
-				require.Equal(t, j.SchemaID, info.ID)
+				args, err := model.GetCreateSchemaArgs(j)
+				require.NoError(t, err)
+				uniqueIDs[args.DBInfo.ID] = struct{}{}
+				require.Equal(t, j.SchemaID, args.DBInfo.ID)
 			case model.ActionCreateResourceGroup:
 				info := &model.ResourceGroupInfo{}
 				require.NoError(t, j.DecodeArgs(info))
@@ -449,7 +450,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 				checkPartitionInfo(info)
 				checkID(info.NewTableID)
 			case model.ActionTruncateTable:
-				args, err := model.GetTruncateTableArgsBeforeRun(j)
+				args, err := model.GetTruncateTableArgs(j)
 				require.NoError(t, err)
 				checkID(args.NewTableID)
 				for _, id := range args.NewPartitionIDs {

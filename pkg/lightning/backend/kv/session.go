@@ -284,6 +284,34 @@ func (*transaction) MayFlush() error {
 	return nil
 }
 
+// sessExprContext implements the ExprContext interface
+// It embedded an `ExprContext` and a `sessEvalContext` to provide no optional properties.
+type sessExprContext struct {
+	exprctx.ExprContext
+	evalCtx *sessEvalContext
+}
+
+// GetEvalCtx implements the ExprContext.GetEvalCtx interface
+func (ctx *sessExprContext) GetEvalCtx() exprctx.EvalContext {
+	return ctx.evalCtx
+}
+
+// sessEvalContext implements the EvalContext interface
+// It embedded an `EvalContext` and provide no optional properties.
+type sessEvalContext struct {
+	exprctx.EvalContext
+}
+
+// GetOptionalPropSet returns the optional properties provided by this context.
+func (*sessEvalContext) GetOptionalPropSet() exprctx.OptionalEvalPropKeySet {
+	return 0
+}
+
+// GetOptionalPropProvider gets the optional property provider by key
+func (*sessEvalContext) GetOptionalPropProvider(exprctx.OptionalEvalPropKey) (exprctx.OptionalEvalPropProvider, bool) {
+	return nil, false
+}
+
 // session is a trimmed down Session type which only wraps our own trimmed-down
 // transaction type and provides the session variables to the TiDB library
 // optimized for Lightning.
@@ -294,7 +322,7 @@ type session struct {
 	planctx.EmptyPlanContextExtended
 	txn     transaction
 	Vars    *variable.SessionVars
-	exprCtx *exprctximpl.SessionExprContext
+	exprCtx *sessExprContext
 	tblctx  *tbctximpl.TableContextImpl
 	// currently, we only set `CommonAddRecordCtx`
 	values map[fmt.Stringer]any
@@ -350,7 +378,15 @@ func newSession(options *encode.SessionOptions, logger log.Logger) *session {
 	}
 	vars.TxnCtx = nil
 	s.Vars = vars
-	s.exprCtx = exprctximpl.NewSessionExprContext(s)
+	exprCtx := exprctximpl.NewSessionExprContext(s)
+	// The exprCtx should be an expression context providing no optional properties in `EvalContext`.
+	// That is to make sure it only allows expressions that require basic context.
+	s.exprCtx = &sessExprContext{
+		ExprContext: exprCtx,
+		evalCtx: &sessEvalContext{
+			EvalContext: exprCtx.GetEvalCtx(),
+		},
+	}
 	s.tblctx = tbctximpl.NewTableContextImpl(s)
 	s.txn.kvPairs = &Pairs{}
 

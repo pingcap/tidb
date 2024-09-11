@@ -18,19 +18,21 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // getOrDecodeArgsV2 get the argsV2 from job, if the argsV2 is nil, decode rawArgsV2
 // and fill argsV2.
 func getOrDecodeArgsV2[T JobArgs](job *Job) (T, error) {
-	if job.ArgsV2 != nil {
-		return job.ArgsV2.(T), nil
+	intest.Assert(job.Version == JobVersion2, "job version is not v2")
+	if len(job.Args) > 0 {
+		return job.Args[0].(T), nil
 	}
 	var v T
-	if err := json.Unmarshal(job.RawArgsV2, &v); err != nil {
+	if err := json.Unmarshal(job.RawArgs, &v); err != nil {
 		return v, errors.Trace(err)
 	}
-	job.ArgsV2 = v
+	job.Args = []any{v}
 	return v, nil
 }
 
@@ -39,6 +41,146 @@ type JobArgs interface {
 	// fillJob fills the job args for submitting job. we make it private to avoid
 	// calling it directly, use Job.FillArgs to fill the job args.
 	fillJob(job *Job)
+}
+
+// FinishedJobArgs is the interface for finished job arguments.
+// in most cases, job args are cleared out after the job is finished, but some jobs
+// will write some args back to the job for other components.
+type FinishedJobArgs interface {
+	// fillFinishedJob fills the job args for finished job. we make it private to avoid
+	// calling it directly, use Job.FillFinishedArgs to fill the job args.
+	fillFinishedJob(job *Job)
+}
+
+// CreateSchemaArgs is the arguments for create schema job.
+type CreateSchemaArgs struct {
+	DBInfo *DBInfo `json:"db_info,omitempty"`
+}
+
+func (a *CreateSchemaArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.DBInfo}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetCreateSchemaArgs gets the args for create schema job.
+func GetCreateSchemaArgs(job *Job) (*CreateSchemaArgs, error) {
+	if job.Version == JobVersion1 {
+		dbInfo := &DBInfo{}
+		err := job.DecodeArgs(dbInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &CreateSchemaArgs{DBInfo: dbInfo}, nil
+	}
+
+	argsV2, err := getOrDecodeArgsV2[*CreateSchemaArgs](job)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return argsV2, nil
+}
+
+// DropSchemaArgs is the arguments for drop schema job.
+type DropSchemaArgs struct {
+	// this is the args for job submission, it's invalid if the job is finished.
+	FKCheck bool `json:"fk_check,omitempty"`
+	// this is the args for finished job. this list include all partition IDs too.
+	AllDroppedTableIDs []int64 `json:"all_dropped_table_ids,omitempty"`
+}
+
+func (a *DropSchemaArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.FKCheck}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *DropSchemaArgs) fillFinishedJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.AllDroppedTableIDs}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetDropSchemaArgs gets the args for drop schema job.
+func GetDropSchemaArgs(job *Job) (*DropSchemaArgs, error) {
+	return getDropSchemaArgs(job, false)
+}
+
+// GetFinishedDropSchemaArgs gets the args for drop schema job after the job is finished.
+func GetFinishedDropSchemaArgs(job *Job) (*DropSchemaArgs, error) {
+	return getDropSchemaArgs(job, true)
+}
+
+func getDropSchemaArgs(job *Job, argsOfFinished bool) (*DropSchemaArgs, error) {
+	if job.Version == JobVersion1 {
+		if argsOfFinished {
+			var physicalTableIDs []int64
+			if err := job.DecodeArgs(&physicalTableIDs); err != nil {
+				return nil, err
+			}
+			return &DropSchemaArgs{AllDroppedTableIDs: physicalTableIDs}, nil
+		}
+		var fkCheck bool
+		if err := job.DecodeArgs(&fkCheck); err != nil {
+			return nil, err
+		}
+		return &DropSchemaArgs{FKCheck: fkCheck}, nil
+	}
+	return getOrDecodeArgsV2[*DropSchemaArgs](job)
+}
+
+// ModifySchemaArgs is the arguments for modify schema job.
+type ModifySchemaArgs struct {
+	// below 2 are used for modify schema charset and collate.
+	ToCharset string `json:"to_charset,omitempty"`
+	ToCollate string `json:"to_collate,omitempty"`
+	// used for modify schema placement policy.
+	// might be nil, means set it to default.
+	PolicyRef *PolicyRefInfo `json:"policy_ref,omitempty"`
+}
+
+func (a *ModifySchemaArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionModifySchemaCharsetAndCollate {
+			job.Args = []any{a.ToCharset, a.ToCollate}
+		} else if job.Type == ActionModifySchemaDefaultPlacement {
+			job.Args = []any{a.PolicyRef}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetModifySchemaArgs gets the modify schema args.
+func GetModifySchemaArgs(job *Job) (*ModifySchemaArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			toCharset string
+			toCollate string
+			policyRef *PolicyRefInfo
+		)
+		if job.Type == ActionModifySchemaCharsetAndCollate {
+			if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else if job.Type == ActionModifySchemaDefaultPlacement {
+			if err := job.DecodeArgs(&policyRef); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		return &ModifySchemaArgs{
+			ToCharset: toCharset,
+			ToCollate: toCollate,
+			PolicyRef: policyRef,
+		}, nil
+	}
+	return getOrDecodeArgsV2[*ModifySchemaArgs](job)
 }
 
 // TruncateTableArgs is the arguments for truncate table job.
@@ -62,13 +204,41 @@ func (a *TruncateTableArgs) fillJob(job *Job) {
 		job.Args = []any{a.NewTableID, a.FKCheck, a.NewPartitionIDs, len(a.OldPartitionIDs)}
 		return
 	}
-	job.ArgsV2 = a
+	job.Args = []any{a}
 }
 
-// GetTruncateTableArgsBeforeRun gets the truncate table args that we set before
-// running the job. the args might be changed after the job run on JobVersion1.
-func GetTruncateTableArgsBeforeRun(job *Job) (*TruncateTableArgs, error) {
+func (a *TruncateTableArgs) fillFinishedJob(job *Job) {
 	if job.Version == JobVersion1 {
+		// the first param is the start key of the old table, it's not used anywhere
+		// now, so we fill an empty byte slice here.
+		// we can call tablecodec.EncodeTablePrefix(tableID) to get it.
+		job.Args = []any{[]byte{}, a.OldPartitionIDs}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetTruncateTableArgs gets the truncate table args.
+func GetTruncateTableArgs(job *Job) (*TruncateTableArgs, error) {
+	return getTruncateTableArgs(job, false)
+}
+
+// GetFinishedTruncateTableArgs gets the truncate table args after the job is finished.
+func GetFinishedTruncateTableArgs(job *Job) (*TruncateTableArgs, error) {
+	return getTruncateTableArgs(job, true)
+}
+
+func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, error) {
+	if job.Version == JobVersion1 {
+		if argsOfFinished {
+			var startKey []byte
+			var oldPartitionIDs []int64
+			if err := job.DecodeArgs(&startKey, &oldPartitionIDs); err != nil {
+				return nil, errors.Trace(err)
+			}
+			return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
+		}
+
 		var (
 			newTableID      int64
 			fkCheck         bool
@@ -85,27 +255,5 @@ func GetTruncateTableArgsBeforeRun(job *Job) (*TruncateTableArgs, error) {
 		}, nil
 	}
 
-	argsV2, err := getOrDecodeArgsV2[*TruncateTableArgs](job)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return argsV2, nil
-}
-
-// GetTruncateTableArgsAfterRun gets the truncate table args after running the job.
-func GetTruncateTableArgsAfterRun(job *Job) (*TruncateTableArgs, error) {
-	if job.Version == JobVersion1 {
-		var startKey []byte
-		var oldPartitionIDs []int64
-		if err := job.DecodeArgs(&startKey, &oldPartitionIDs); err != nil {
-			return nil, errors.Trace(err)
-		}
-		return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
-	}
-
-	argsV2, err := getOrDecodeArgsV2[*TruncateTableArgs](job)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return argsV2, nil
+	return getOrDecodeArgsV2[*TruncateTableArgs](job)
 }

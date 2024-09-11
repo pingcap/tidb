@@ -1258,17 +1258,6 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		sqlType = stmtType
 	}
 
-	switch sqlType {
-	case "Insert":
-		server_metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
-	case "Replace":
-		server_metrics.AffectedRowsCounterReplace.Add(float64(affectedRows))
-	case "Delete":
-		server_metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
-	case "Update":
-		server_metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
-	}
-
 	for _, dbName := range session.GetDBNames(vars) {
 		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
 		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().RequestCount))
