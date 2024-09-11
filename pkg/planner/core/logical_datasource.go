@@ -22,13 +22,16 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -56,9 +59,9 @@ type DataSource struct {
 	table         table.Table
 	TableInfo     *model.TableInfo
 	Columns       []*model.ColumnInfo
-	DBName        model.CIStr
+	DBName        pmodel.CIStr
 
-	TableAsName *model.CIStr
+	TableAsName *pmodel.CIStr
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.
@@ -76,7 +79,7 @@ type DataSource struct {
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
 	PhysicalTableID int64
-	PartitionNames  []model.CIStr
+	PartitionNames  []pmodel.CIStr
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
@@ -95,7 +98,7 @@ type DataSource struct {
 	// PreferStoreType means the DataSource is enforced to which storage.
 	PreferStoreType int
 	// PreferPartitions store the map, the key represents store type, the value represents the partition name list.
-	PreferPartitions map[int][]model.CIStr
+	PreferPartitions map[int][]pmodel.CIStr
 	SampleInfo       *tablesampler.TableSampleInfo
 	IS               infoschema.InfoSchema
 	// IsForUpdateRead should be true in either of the following situations
@@ -150,12 +153,12 @@ func (ds *DataSource) ExplainInfo() string {
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	predicates = expression.PropagateConstant(ds.SCtx().GetExprCtx(), predicates)
-	predicates = DeleteTrueExprs(ds, predicates)
+	predicates = constraint.DeleteTrueExprs(ds, predicates)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = ds.AddPrefix4ShardIndexes(ds.SCtx(), predicates)
 	ds.AllConds = predicates
-	ds.PushedDownConds, predicates = expression.PushDownExprs(GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
+	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds
 }
@@ -216,7 +219,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 	// Limit to MPP tasks, because TiKV can't benefit from this now(projection can't be pushed down to TiKV now).
 	// If the parent operator need no columns from the DataSource, we return the smallest column. Don't add the empty proj.
 	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && len(parentUsedCols) > 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.TableInfo.TiFlashReplica != nil {
-		proj := LogicalProjection{
+		proj := logicalop.LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		proj.SetStats(ds.StatsInfo())
@@ -257,7 +260,7 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 		} else if index.State != model.StatePublic {
 			continue
 		}
-		if uniqueKey, newKey := checkIndexCanBeKey(index, ds.Columns, selfSchema); newKey != nil {
+		if uniqueKey, newKey := ruleutil.CheckIndexCanBeKey(index, ds.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
 		} else if uniqueKey != nil {
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
@@ -332,7 +335,7 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		return nil, err
 	}
 
-	if err := ds.generateIndexMergePath(); err != nil {
+	if err := generateIndexMergePath(ds); err != nil {
 		return nil, err
 	}
 
@@ -475,13 +478,13 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		// handle the datasource conditions (maybe pushed down from upper layer OP)
 		if len(ds.AllConds) != 0 {
 			// extract the not null attributes from selection conditions.
-			notnullColsUniqueIDs := ExtractNotNullFromConds(ds.AllConds, ds)
+			notnullColsUniqueIDs := util.ExtractNotNullFromConds(ds.AllConds, ds)
 
 			// extract the constant cols from selection conditions.
-			constUniqueIDs := ExtractConstantCols(ds.AllConds, ds.SCtx(), fds)
+			constUniqueIDs := util.ExtractConstantCols(ds.AllConds, ds.SCtx(), fds)
 
 			// extract equivalence cols.
-			equivUniqueIDs := ExtractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
+			equivUniqueIDs := util.ExtractEquivalenceCols(ds.AllConds, ds.SCtx(), fds)
 
 			// apply conditions to FD.
 			fds.MakeNotNull(notnullColsUniqueIDs)
@@ -576,8 +579,8 @@ func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
 		if !path.IsIntHandlePath {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
-			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
-			if ds.isSingleScan(path.FullIdxCols, path.FullIdxColLens) {
+			// If index columns can cover all the needed columns, we can use a IndexGather + IndexScan.
+			if isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens) {
 				gathers = append(gathers, ds.buildIndexGather(path))
 			}
 			// TODO: If index columns can not cover the schema, use IndexLookUpGather.
@@ -801,7 +804,7 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		}
 	}
 	var indexFilters []expression.Expression
-	indexFilters, path.TableFilters = ds.splitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
+	indexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
 	path.IndexFilters = append(path.IndexFilters, indexFilters...)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.

@@ -641,6 +641,7 @@ const (
 		watch_text TEXT NOT NULL,
 		source varchar(512) NOT NULL,
 		action bigint(10),
+		switch_group_name VARCHAR(32) DEFAULT '',
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -656,6 +657,7 @@ const (
 		watch_text TEXT NOT NULL,
 		source varchar(512) NOT NULL,
 		action bigint(10),
+		switch_group_name VARCHAR(32) DEFAULT '',
 		done_time TIMESTAMP(6) NOT NULL
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
@@ -1110,11 +1112,14 @@ const (
 
 	// version211 add column `summary` to `mysql.tidb_background_subtask_history`.
 	version211 = 211
+
+	// version212 add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
+	version212 = 212
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version211
+var currentBootstrapVersion int64 = version212
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1281,6 +1286,7 @@ var (
 		upgradeToVer209,
 		upgradeToVer210,
 		upgradeToVer211,
+		upgradeToVer212,
 	}
 )
 
@@ -1422,6 +1428,8 @@ func upgrade(s sessiontypes.Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
+	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
+	// but during upgrade we disable it.
 	if isNull {
 		upgradeToVer99Before(s)
 	}
@@ -3078,6 +3086,14 @@ func upgradeToVer211(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer212(s sessiontypes.Session, ver int64) {
+	if ver >= version212 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD COLUMN `switch_group_name` VARCHAR(32) DEFAULT '' AFTER `action`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD COLUMN `switch_group_name` VARCHAR(32) DEFAULT '' AFTER `action`;", infoschema.ErrColumnExists)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3380,7 +3396,7 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue
 			}
-			tbl, ok := is.TableByID(t.ID)
+			tbl, ok := is.TableByID(s.currentCtx, t.ID)
 			intest.Assert(ok, "table not found in infoschema")
 			pe := tbl.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {

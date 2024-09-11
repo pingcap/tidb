@@ -23,9 +23,11 @@ import (
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -165,7 +167,9 @@ func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 
 // TP overrides the TP in order to match different range.
 func (p *PhysicalTableScan) TP() string {
-	if p.isChildOfIndexLookUp {
+	if infoschema.IsClusterTableByName(p.DBName.O, p.Table.Name.O) {
+		return plancodec.TypeMemTableScan
+	} else if p.isChildOfIndexLookUp {
 		return plancodec.TypeTableRowIDScan
 	} else if p.isFullScan() {
 		return plancodec.TypeTableFullScan
@@ -185,6 +189,10 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
+	if infoschema.IsClusterTableByName(p.DBName.O, p.Table.Name.O) {
+		return ""
+	}
+
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	var buffer strings.Builder
@@ -433,7 +441,7 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	buffer = explainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems)
+	buffer = util.ExplainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems)
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
@@ -446,7 +454,7 @@ func (p *PhysicalLimit) ExplainInfo() string {
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = explainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
+		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
 		fmt.Fprintf(buffer, ", ")
 	}
 	if redact == perrors.RedactLogDisable {
@@ -737,26 +745,12 @@ func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
 }
 
-// explainPartitionBy: produce text for p.PartitionBy. Common for window functions and TopN.
-func explainPartitionBy(ctx expression.EvalContext, buffer *bytes.Buffer, partitionBy []property.SortItem, normalized bool) *bytes.Buffer {
-	if len(partitionBy) > 0 {
-		buffer.WriteString("partition by ")
-		for i, item := range partitionBy {
-			fmt.Fprintf(buffer, "%s", item.Col.ColumnExplainInfo(ctx, normalized))
-			if i+1 < len(partitionBy) {
-				buffer.WriteString(", ")
-			}
-		}
-	}
-	return buffer
-}
-
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = explainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
+		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
 		buffer.WriteString(" ")
 	}
 	if len(p.ByItems) > 0 {
@@ -765,7 +759,7 @@ func (p *PhysicalTopN) ExplainInfo() string {
 		if len(p.GetPartitionBy()) > 0 {
 			buffer.WriteString("order by ")
 		}
-		buffer = explainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems)
+		buffer = util.ExplainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems)
 	}
 	switch p.SCtx().GetSessionVars().EnableRedactLog {
 	case perrors.RedactLogDisable:
@@ -783,7 +777,7 @@ func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = explainPartitionBy(ectx, buffer, p.GetPartitionBy(), true)
+		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), true)
 		buffer.WriteString(" ")
 	}
 	if len(p.ByItems) > 0 {
@@ -797,7 +791,7 @@ func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	return buffer.String()
 }
 
-func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
+func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *logicalop.FrameBound) {
 	if bound.Type == ast.CurrentRow {
 		buffer.WriteString("current row")
 		return
@@ -839,7 +833,7 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	formatWindowFuncDescs(ectx, buffer, p.WindowFuncDescs, p.schema)
 	buffer.WriteString(" over(")
 	isFirst := true
-	buffer = explainPartitionBy(ectx, buffer, p.PartitionBy, false)
+	buffer = util.ExplainPartitionBy(ectx, buffer, p.PartitionBy, false)
 	if len(p.PartitionBy) > 0 {
 		isFirst = false
 	}
@@ -945,21 +939,6 @@ func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
 		res = fmt.Sprintf("stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return res
-}
-
-func explainByItems(ctx expression.EvalContext, buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
-	for i, item := range byItems {
-		if item.Desc {
-			fmt.Fprintf(buffer, "%s:desc", item.Expr.ExplainInfo(ctx))
-		} else {
-			fmt.Fprintf(buffer, "%s", item.Expr.ExplainInfo(ctx))
-		}
-
-		if i+1 < len(byItems) {
-			buffer.WriteString(", ")
-		}
-	}
-	return buffer
 }
 
 func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {

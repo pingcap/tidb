@@ -12,5 +12,6 @@ go_library(
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/planner/util/optimizetrace",
+        "//pkg/util/execdetails",
     ],
 )

@@ -27,11 +27,13 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -91,24 +93,24 @@ func TestGetPathByIndexName(t *testing.T) {
 
 	accessPath := []*util.AccessPath{
 		{IsIntHandlePath: true},
-		{Index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
+		{Index: &model.IndexInfo{Name: pmodel.NewCIStr("idx")}},
 		genTiFlashPath(tblInfo),
 	}
 
-	path := getPathByIndexName(accessPath, model.NewCIStr("idx"), tblInfo)
+	path := getPathByIndexName(accessPath, pmodel.NewCIStr("idx"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
 	// "id" is a prefix of "idx"
-	path = getPathByIndexName(accessPath, model.NewCIStr("id"), tblInfo)
+	path = getPathByIndexName(accessPath, pmodel.NewCIStr("id"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
-	path = getPathByIndexName(accessPath, model.NewCIStr("primary"), tblInfo)
+	path = getPathByIndexName(accessPath, pmodel.NewCIStr("primary"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[0], path)
 
-	path = getPathByIndexName(accessPath, model.NewCIStr("not exists"), tblInfo)
+	path = getPathByIndexName(accessPath, pmodel.NewCIStr("not exists"), tblInfo)
 	require.Nil(t, path)
 
 	tblInfo = &model.TableInfo{
@@ -116,7 +118,7 @@ func TestGetPathByIndexName(t *testing.T) {
 		PKIsHandle: false,
 	}
 
-	path = getPathByIndexName(accessPath, model.NewCIStr("primary"), tblInfo)
+	path = getPathByIndexName(accessPath, pmodel.NewCIStr("primary"), tblInfo)
 	require.Nil(t, path)
 }
 
@@ -367,10 +369,12 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(streamAgg))
 
 	// hash agg
-	hashAgg := &PhysicalHashAgg{basePhysicalAgg{
-		AggFuncs:     aggDescs,
-		GroupByItems: []expression.Expression{col, cst},
-	}}
+	hashAgg := &PhysicalHashAgg{
+		basePhysicalAgg: basePhysicalAgg{
+			AggFuncs:     aggDescs,
+			GroupByItems: []expression.Expression{col, cst},
+		},
+	}
 	hashAgg = hashAgg.initForHash(ctx, stats, 0)
 	hashAgg.SetSchema(schema)
 	require.NoError(t, checkPhysicalPlanClone(hashAgg))
@@ -679,32 +683,35 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 
 	// Create a new TableName instance.
 	tableName := &ast.TableName{
-		Schema: model.NewCIStr("test"),
-		Name:   model.NewCIStr("my_table"),
+		Schema: pmodel.NewCIStr("test"),
+		Name:   pmodel.NewCIStr("my_table"),
 	}
 	columns := []*model.ColumnInfo{
 		{
 			ID:        1,
-			Name:      model.NewCIStr("id"),
+			Name:      pmodel.NewCIStr("id"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 		{
 			ID:        2,
-			Name:      model.NewCIStr("name"),
+			Name:      pmodel.NewCIStr("name"),
 			FieldType: *types.NewFieldType(mysql.TypeString),
 		},
 		{
 			ID:        3,
-			Name:      model.NewCIStr("age"),
+			Name:      pmodel.NewCIStr("age"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 	}
-	tableName.TableInfo = &model.TableInfo{
-		Columns: columns,
+	tblNameW := &resolve.TableNameW{
+		TableName: tableName,
+		TableInfo: &model.TableInfo{
+			Columns: columns,
+		},
 	}
 
 	// Test case 1: AllColumns.
-	cols, _, err := pb.getFullAnalyzeColumnsInfo(tableName, model.AllColumns, nil, nil, nil, false, false)
+	cols, _, err := pb.getFullAnalyzeColumnsInfo(tblNameW, pmodel.AllColumns, nil, nil, nil, false, false)
 	require.NoError(t, err)
 	require.Equal(t, columns, cols)
 
@@ -716,7 +723,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	// Test case 3: ColumnList.
 	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
 	mustAnalyzedCols.data[3] = struct{}{}
-	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tblNameW, pmodel.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
 	require.NoError(t, err)
 	require.Equal(t, specifiedCols, cols)
 }
@@ -730,12 +737,12 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 
 	tables := []*ast.TableName{
 		{
-			Schema: model.NewCIStr("test"),
-			Name:   model.NewCIStr("t1"),
+			Schema: pmodel.NewCIStr("test"),
+			Name:   pmodel.NewCIStr("t1"),
 		},
 		{
-			Schema: model.NewCIStr("test"),
-			Name:   model.NewCIStr("t2"),
+			Schema: pmodel.NewCIStr("test"),
+			Name:   pmodel.NewCIStr("t2"),
 		},
 	}
 
@@ -745,4 +752,128 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	require.Equal(t, "t1", pb.visitInfo[0].table)
 	require.Equal(t, mysql.InsertPriv, pb.visitInfo[0].privilege)
 	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
+}
+
+func TestImportIntoCollAssignmentChecker(t *testing.T) {
+	cases := []struct {
+		expr       string
+		error      string
+		neededVars []string
+	}{
+		{
+			expr:       "@a+1",
+			neededVars: []string{"a"},
+		},
+		{
+			expr:       "@b+@c+@1",
+			neededVars: []string{"b", "c", "1"},
+		},
+		{
+			expr: "instr(substr(concat_ws('','b','~~'), 6)) + sysdate()",
+		},
+		{
+			expr: "now() + interval 1 day",
+		},
+		{
+			expr: "sysdate() + interval 1 month",
+		},
+		{
+			expr: "cast('123' as unsigned)",
+		},
+		{
+			expr:       "getvar('c')",
+			neededVars: []string{"c"},
+		},
+		{
+			expr:  "a",
+			error: "COLUMN reference is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "a+2",
+			error: "COLUMN reference is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "(select 1)",
+			error: "subquery is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "exists(select 1)",
+			error: "subquery is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "1 in (select 1)",
+			error: "subquery is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "1 + (select 1)",
+			error: "subquery is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "@@sql_mode",
+			error: "system variable is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "@@global.sql_mode",
+			error: "system variable is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "@a:=1",
+			error: "setting a variable in IMPORT INTO column assignment is not supported",
+		},
+		{
+			expr:  "default(t.a)",
+			error: "FUNCTION default is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "ROW_NUMBER() OVER(PARTITION BY 1)",
+			error: "window FUNCTION ROW_NUMBER is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "COUNT(1)",
+			error: "aggregate FUNCTION COUNT is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "grouping(1)",
+			error: "FUNCTION grouping is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "getvar(concat('a', 'b'))",
+			error: "the argument of getvar should be a constant string in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "getvar(now())",
+			error: "the argument of getvar should be a constant string in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "noexist()",
+			error: "FUNCTION noexist is not supported in IMPORT INTO column assignment",
+		},
+		{
+			expr:  "values(a)",
+			error: "COLUMN reference is not supported in IMPORT INTO column assignment",
+		},
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("case-%d-%s", i, c.expr), func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt("select "+c.expr, "", "")
+			require.NoError(t, err, c.expr)
+			expr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+
+			checker := newImportIntoCollAssignmentChecker()
+			checker.idx = i
+			expr.Accept(checker)
+			if c.error != "" {
+				require.EqualError(t, checker.err, fmt.Sprintf("%s, index %d", c.error, i), c.expr)
+			} else {
+				require.NoError(t, checker.err, c.expr)
+			}
+
+			expectedNeededVars := make(map[string]int)
+			for _, v := range c.neededVars {
+				expectedNeededVars[v] = i
+			}
+			require.Equal(t, expectedNeededVars, checker.neededVars, c.expr)
+		})
+	}
 }

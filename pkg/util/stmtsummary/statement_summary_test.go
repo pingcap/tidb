@@ -22,14 +22,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -693,6 +695,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 		Succeed:           true,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.1, 2.5, 2*time.Millisecond),
+		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(100)},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
@@ -798,12 +801,14 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 		AvgQueuedRcTimeStr,
 		MaxQueuedRcTimeStr,
 		ResourceGroupName,
+		AvgTidbCPUTimeStr,
+		AvgTikvCPUTimeStr,
 	}
 	cols := make([]*model.ColumnInfo, len(columnNames))
 	for i := range columnNames {
 		cols[i] = &model.ColumnInfo{
 			ID:     int64(i),
-			Name:   model.NewCIStr(columnNames[i]),
+			Name:   pmodel.NewCIStr(columnNames[i]),
 			Offset: i,
 		}
 	}
@@ -857,7 +862,7 @@ func TestToDatum(t *testing.T) {
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
-		stmtExecInfo1.ResourceGroupName}
+		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime)}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	match(t, datums[0], expectedDatum...)
 	datums = reader.GetStmtSummaryHistoryRows()
@@ -907,7 +912,7 @@ func TestToDatum(t *testing.T) {
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, "", "", "", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
-		stmtExecInfo1.ResourceGroupName}
+		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime)}
 	expectedDatum[4] = stmtExecInfo2.Digest
 	match(t, datums[0], expectedDatum...)
 	match(t, datums[1], expectedEvictedDatum...)

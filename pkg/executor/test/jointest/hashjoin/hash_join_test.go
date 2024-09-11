@@ -680,3 +680,21 @@ func TestIssue54755(t *testing.T) {
 	// left join
 	tk.MustQuery("select max(SQ1_alias2.col_int_nokey) as SQ1_field1 from ( t1 as SQ1_alias2 left join t2 as SQ1_alias1 on ( SQ1_alias2.col_varchar_key = SQ1_alias1.col_varchar_nokey ))").Check(testkit.Rows("150"))
 }
+
+func TestIssue55016(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a varchar(10), b char(10))")
+	tk.MustExec("insert into t values('aa','a')")
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
+	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
+	}()
+	hashJoinV2Enable := []bool{true, false}
+	for _, enableHashJoinV2 := range hashJoinV2Enable {
+		join.SetEnableHashJoinV2(enableHashJoinV2)
+		tk.MustQuery("select count(*) from t t1 join t t2 on t1.a = t2.b and t2.a = t1.b").Check(testkit.Rows("0"))
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -162,8 +163,8 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) bool {
 	if hashJoinPlan.RightIsBuildSide() {
 		// case1: build side is on the right
-		if hashJoinPlan.JoinType == LeftOuterJoin || hashJoinPlan.JoinType == AntiSemiJoin ||
-			hashJoinPlan.JoinType == LeftOuterSemiJoin || hashJoinPlan.JoinType == AntiLeftOuterSemiJoin {
+		if hashJoinPlan.JoinType == logicalop.LeftOuterJoin || hashJoinPlan.JoinType == logicalop.AntiSemiJoin ||
+			hashJoinPlan.JoinType == logicalop.LeftOuterSemiJoin || hashJoinPlan.JoinType == logicalop.AntiLeftOuterSemiJoin {
 			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the right",
 				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
@@ -171,7 +172,7 @@ func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) b
 		}
 	} else {
 		// case2: build side is on the left
-		if hashJoinPlan.JoinType == RightOuterJoin {
+		if hashJoinPlan.JoinType == logicalop.RightOuterJoin {
 			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the left",
 				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))

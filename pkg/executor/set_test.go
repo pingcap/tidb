@@ -619,7 +619,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
 	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
 
-	tk.MustQuery("select @@tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_opt_prefer_range_scan = 1")
 	tk.MustQuery("select @@global.tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_opt_prefer_range_scan = 0")
@@ -765,6 +765,23 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("60"))
 	tk.MustExec("set global tidb_max_auto_analyze_time = -1")
 	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("0"))
+
+	// test for instance plan cache variables
+	tk.MustQuery("select @@global.tidb_enable_instance_plan_cache").Check(testkit.Rows("0")) // default 0
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_target_mem_size").Check(testkit.Rows("104857600"))
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_mem_size").Check(testkit.Rows("125829120"))
+	tk.MustExecToErr("set global tidb_instance_plan_cache_target_mem_size = 125829121") // target <= max
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_mem_size = 104857599")
+	tk.MustExec("set global tidb_instance_plan_cache_target_mem_size = 114857600")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_target_mem_size").Check(testkit.Rows("114857600"))
+	tk.MustExec("set global tidb_instance_plan_cache_max_mem_size = 135829120")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_mem_size").Check(testkit.Rows("135829120"))
+	tk.MustExec("set global tidb_instance_plan_cache_max_mem_size = 1GiB")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_mem_size").Check(testkit.Rows("1073741824"))
+	tk.MustExec("set global tidb_instance_plan_cache_target_mem_size = 999MiB")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_target_mem_size").Check(testkit.Rows("1047527424"))
+	tk.MustExec("set global tidb_instance_plan_cache_target_mem_size = 998MiB")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_target_mem_size").Check(testkit.Rows("1046478848"))
 
 	// test variables for cost model ver2
 	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBCostModelVer)))

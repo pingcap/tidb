@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -46,7 +46,7 @@ func restartWorkers(t *testing.T, store kv.Storage, d *domain.Domain) {
 	newDDL, newDDLExecutor := ddl.NewDDL(context.Background(),
 		ddl.WithStore(d.Store()),
 		ddl.WithInfoCache(d.InfoCache()),
-		ddl.WithLease(d.DDL().GetLease()),
+		ddl.WithLease(d.GetSchemaLease()),
 		ddl.WithSchemaLoader(d),
 	)
 	d.SetDDL(newDDL, newDDLExecutor)
@@ -92,7 +92,7 @@ func testRunInterruptedJob(t *testing.T, store kv.Storage, d *domain.Domain, job
 	done := make(chan error, 1)
 	go runInterruptedJob(t, store, d.DDLExecutor(), job, done)
 
-	ticker := time.NewTicker(d.DDL().GetLease())
+	ticker := time.NewTicker(d.GetSchemaLease())
 	defer ticker.Stop()
 	for {
 		select {
@@ -114,12 +114,13 @@ func TestSchemaResume(t *testing.T) {
 	dbInfo, err := testSchemaInfo(store, "test_restart")
 	require.NoError(t, err)
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{dbInfo},
 	}
+	job.FillArgs(&model.CreateSchemaArgs{DBInfo: dbInfo})
 	testRunInterruptedJob(t, store, dom, job)
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 
@@ -140,7 +141,7 @@ func TestStat(t *testing.T) {
 	done := make(chan error, 1)
 	go runInterruptedJob(t, store, dom.DDLExecutor(), job, done)
 
-	ticker := time.NewTicker(dom.DDL().GetLease() * 1)
+	ticker := time.NewTicker(dom.GetSchemaLease() * 1)
 	defer ticker.Stop()
 	ver := getDDLSchemaVer(t, dom.DDL())
 LOOP:

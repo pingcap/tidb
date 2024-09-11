@@ -4,7 +4,7 @@ CREATE TABLE `customers` (
 `name` char(10) DEFAULT NULL,
 `custinfo` json DEFAULT NULL,
 KEY idx(`id`),
-UNIQUE KEY `zips` ((cast(json_extract(`custinfo`, _utf8'$.zipcode') as unsigned array)))
+UNIQUE KEY `zips` ((cast(json_extract(`custinfo`, _utf8'$.zipcode') as unsigned array))) GLOBAL
 ) PARTITION BY HASH (`id`) PARTITIONS 5;
 INSERT INTO customers VALUES (1, 'pingcap', '{"zipcode": [1,2]}');
 INSERT INTO customers VALUES (2, 'pingcap', '{"zipcode": [2,3]}');

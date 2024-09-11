@@ -22,15 +22,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
@@ -1335,5 +1338,49 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 		require.NoError(t, r.Err)
 		next += 1
 		require.Equal(t, []byte(fmt.Sprintf("a%d", next)), r.Item.StartKey)
+	}
+}
+
+type fakeStorage struct {
+	storage.ExternalStorage
+}
+
+func (fs fakeStorage) FileExists(ctx context.Context, name string) (bool, error) {
+	return false, errors.Errorf("name: %s", name)
+}
+
+type fakeStorageOK struct {
+	storage.ExternalStorage
+}
+
+func (fs fakeStorageOK) FileExists(ctx context.Context, name string) (bool, error) {
+	return false, nil
+}
+
+func TestInitSchemasReplaceForDDL(t *testing.T) {
+	ctx := context.Background()
+
+	{
+		client := logclient.TEST_NewLogClient(123, 1, 2, fakeStorage{}, domain.NewMockDomain())
+		cfg := &logclient.InitSchemaConfig{IsNewTask: false}
+		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to check filename:pitr_id_maps/pitr_id_map.cluster_id:123.restored_ts:2")
+	}
+
+	{
+		client := logclient.TEST_NewLogClient(123, 1, 2, fakeStorage{}, domain.NewMockDomain())
+		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
+		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to check filename:pitr_id_maps/pitr_id_map.cluster_id:123.restored_ts:1")
+	}
+
+	{
+		client := logclient.TEST_NewLogClient(123, 1, 2, fakeStorageOK{}, domain.NewMockDomain())
+		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
+		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "miss upstream table information at `start-ts`(1) but the full backup path is not specified")
 	}
 }

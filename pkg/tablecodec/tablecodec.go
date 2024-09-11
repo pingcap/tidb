@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/structure"
@@ -77,6 +77,17 @@ const (
 
 // TableSplitKeyLen is the length of key 't{table_id}' which is used for table split.
 const TableSplitKeyLen = 1 + idLen
+
+func init() {
+	// help kv package to refer the tablecodec package to resolve the kv.Key functions.
+	kv.DecodeTableIDFunc = func(key kv.Key) int64 {
+		//preCheck, avoid the noise error log.
+		if hasTablePrefix(key) && len(key) >= TableSplitKeyLen {
+			return DecodeTableID(key)
+		}
+		return 0
+	}
+}
 
 // TablePrefix returns table's prefix 't'.
 func TablePrefix() []byte {

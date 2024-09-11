@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -397,7 +398,8 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 		require.NoError(t, err)
 		is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
 		builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
-		p, err := builder.Build(ctx, stmt)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err)
 		execPlan, ok := p.(*core.Execute)
 		require.True(t, ok)

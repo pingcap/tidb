@@ -18,6 +18,7 @@ import (
 	"archive/zip"
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -42,13 +43,15 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -299,11 +302,11 @@ func TestCheckIndex(t *testing.T) {
 	require.NoError(t, err)
 
 	is := dom.InfoSchema()
-	db := model.NewCIStr("test_admin")
+	db := pmodel.NewCIStr("test_admin")
 	dbInfo, ok := is.SchemaByName(db)
 	require.True(t, ok)
 
-	tblName := model.NewCIStr("t")
+	tblName := pmodel.NewCIStr("t")
 	tbl, err := is.TableByName(context.Background(), db, tblName)
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
@@ -324,11 +327,11 @@ func TestCheckIndex(t *testing.T) {
 	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
 	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
-	_, err = tb.AddRecord(ctx.GetTableCtx(), recordVal1)
-	require.NoError(t, err)
-	_, err = tb.AddRecord(ctx.GetTableCtx(), recordVal2)
-	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	_, err = tb.AddRecord(ctx.GetTableCtx(), txn, recordVal1)
+	require.NoError(t, err)
+	_, err = tb.AddRecord(ctx.GetTableCtx(), txn, recordVal2)
 	require.NoError(t, err)
 	require.NoError(t, txn.Commit(context.Background()))
 
@@ -419,7 +422,7 @@ func TestTimestampDefaultValueTimeZone(t *testing.T) {
 	// Test the column's version is greater than ColumnInfoVersion1.
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	require.NotNil(t, is)
-	tb, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tb.Cols()[1].Version = model.ColumnInfoVersion1 + 1
 	tk.MustExec("insert into t set a=3")
@@ -680,7 +683,7 @@ func TestIssue19148(t *testing.T) {
 	tk.MustExec("create table t(a decimal(16, 2));")
 	tk.MustExec("select * from t where a > any_value(a);")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Zero(t, tblInfo.Meta().Columns[0].GetFlag())
 }
@@ -784,7 +787,8 @@ func TestUnreasonablyClose(t *testing.T) {
 
 		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
 
-		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		require.NotNil(t, p)
 
 		// This for loop level traverses the plan tree to get which operators are covered.
@@ -873,7 +877,8 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 		require.NoError(t, err, comment)
 
 		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
-		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		e := executorBuilder.Build(p)
 		chk := exec.NewFirstChunk(e)
 		require.NoError(t, exec.Open(context.Background(), e), comment)
@@ -1942,6 +1947,17 @@ func TestLowResolutionTSORead(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestLowResolutionTSOReadScope(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	require.False(t, tk1.Session().GetSessionVars().UseLowResolutionTSO())
+
+	tk1.MustExec("set global tidb_low_resolution_tso = 'on'")
+	tk2 := testkit.NewTestKit(t, store)
+	require.True(t, tk2.Session().GetSessionVars().UseLowResolutionTSO())
+}
+
 func TestAdapterStatement(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1978,9 +1994,10 @@ func TestIsPointGet(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		nodeW := resolve.NewNodeW(stmtNode)
+		err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
 		ret := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx.GetSessionVars(), p)
 		require.Equal(t, result, ret)
@@ -2018,9 +2035,10 @@ func TestClusteredIndexIsPointGet(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		nodeW := resolve.NewNodeW(stmtNode)
+		err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
 		ret := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx.GetSessionVars(), p)
 		require.Equal(t, result, ret)
@@ -2554,7 +2572,7 @@ func TestAdmin(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	require.NotNil(t, is)
-	tb, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("admin_test"))
+	tb, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("admin_test"))
 	require.NoError(t, err)
 	require.Len(t, tb.Indices(), 1)
 	_, err = tb.Indices()[0].Create(mock.NewContext().GetTableCtx(), txn, types.MakeDatums(int64(10)), kv.IntHandle(1), nil)
@@ -2985,4 +3003,81 @@ func TestIssue48756(t *testing.T) {
 		"Warning 1292 Incorrect time value: '120120519090607'",
 		"Warning 1105 ",
 	))
+}
+
+func TestIssue50308(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a timestamp);")
+	tk.MustExec("insert ignore into t values(cast('2099-01-01' as date));")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning 1292 Incorrect timestamp value: '2099-01-01' for column 'a' at row 1"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("0000-00-00 00:00:00"))
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values('2000-01-01');")
+	tk.MustGetErrMsg("update t set a=cast('2099-01-01' as date)", "[types:1292]Incorrect timestamp value: '2099-01-01'")
+	tk.MustExec("update ignore t set a=cast('2099-01-01' as date);")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning 1292 Incorrect timestamp value: '2099-01-01'"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("0000-00-00 00:00:00"))
+}
+
+func TestQueryWithKill(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tkq;")
+	tk.MustExec("create table tkq (a int key, b int, index idx_b(b));")
+	tk.MustExec("insert into tkq values (1,1);")
+	var wg sync.WaitGroup
+	ch := make(chan context.CancelFunc, 1024)
+	testDuration := time.Second * 10
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test;")
+			start := time.Now()
+			for {
+				ctx, cancel := context.WithCancel(context.Background())
+				ch <- cancel
+				rs, err := tk.ExecWithContext(ctx, "select a from tkq where b = 1;")
+				if err == nil {
+					require.NotNil(t, rs)
+					rows, err := session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+					if err == nil {
+						require.Equal(t, 1, len(rows))
+						require.Equal(t, 1, len(rows[0]))
+						require.Equal(t, "1", fmt.Sprintf("%v", rows[0][0]))
+					}
+				}
+				if err != nil {
+					require.Equal(t, context.Canceled, err)
+				}
+				if rs != nil {
+					rs.Close()
+				}
+				if time.Since(start) > testDuration {
+					return
+				}
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case cancel := <-ch:
+				// mock for random kill query
+				if len(ch) < 5 {
+					time.Sleep(time.Duration(rand.Intn(1000)) * time.Nanosecond)
+				}
+				cancel()
+			case <-time.After(time.Second):
+				return
+			}
+		}
+	}()
+	wg.Wait()
 }
