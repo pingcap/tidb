@@ -292,3 +292,32 @@ func GetCheckConstraintArgs(job *Job) (*CheckConstraintArgs, error) {
 
 	return getOrDecodeArgsV2[*CheckConstraintArgs](job)
 }
+
+// AddCheckConstraintArgs is just a wrapper for ConstraintInfo.
+// This is just used to maintain the consistency of all the arguments
+type AddCheckConstraintArgs struct {
+	Constraint *ConstraintInfo `json:"constraint_info,omitempty"`
+}
+
+func (a *AddCheckConstraintArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.Constraint}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAddCheckConstraintArgs gets the AddCheckConstraint args.
+func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
+	if job.Version == JobVersion1 {
+		var constraintInfo ConstraintInfo
+		err := job.DecodeArgs(&constraintInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AddCheckConstraintArgs{
+			Constraint: &constraintInfo,
+		}, nil
+	}
+	return getOrDecodeArgsV2[*AddCheckConstraintArgs](job)
+}

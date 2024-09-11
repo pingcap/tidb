@@ -6154,6 +6154,7 @@ func (e *executor) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, c
 		return err
 	}
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tblInfo.ID,
 		SchemaName:     schema.Name.L,
@@ -6161,10 +6162,13 @@ func (e *executor) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, c
 		Type:           model.ActionAddCheckConstraint,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		Args:           []any{constraintInfo},
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
+	job.FillArgs(&model.AddCheckConstraintArgs{
+		Constraint: constraintInfo,
+	})
 
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)

@@ -131,12 +131,14 @@ func checkAddCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *mode
 	if err != nil {
 		return nil, nil, nil, nil, errors.Trace(err)
 	}
-	constraintInfo1 := &model.ConstraintInfo{}
-	err = job.DecodeArgs(constraintInfo1)
+
+	args, err := model.GetAddCheckConstraintArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, errors.Trace(err)
 	}
+	constraintInfo1 := args.Constraint
+
 	// do the double-check with constraint existence.
 	constraintInfo2 := tblInfo.FindConstraintInfoByName(constraintInfo1.Name.L)
 	if constraintInfo2 != nil {
