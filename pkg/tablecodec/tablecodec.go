@@ -966,6 +966,7 @@ func getIndexVersion(value []byte) int {
 	return 0
 }
 
+// DecodeIndexKVEx looks like DecodeIndexKV, the difference is that it tries to reduce allocations.
 func DecodeIndexKVEx(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo, buf []byte, preAlloc [][]byte) ([][]byte, error) {
 	if len(value) <= MaxOldEncodeValueLen {
 		return decodeIndexKvOldCollation(key, value, hdStatus, buf, preAlloc)
