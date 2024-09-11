@@ -904,6 +904,8 @@ spilled-file-encryption-method = "aes128-ctr"
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
 
+	conf = NewConfig()
+	require.Equal(t, time.Second*3, conf.TiKVClient.GetGrpcKeepAliveTimeout())
 	err = f.Truncate(0)
 	require.NoError(t, err)
 	_, err = f.Seek(0, 0)
