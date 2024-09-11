@@ -99,6 +99,7 @@ func (m *Memo) insertGroupExpression(groupExpr *GroupExpression, target *Group) 
 	return true
 }
 
+// NewGroup creates a new group.
 func (m *Memo) NewGroup() *Group {
 	group := NewGroup(nil)
 	group.groupID = m.groupIDGen.NextGroupID()
