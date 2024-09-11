@@ -160,7 +160,6 @@ func TestTruncateTableArgs(t *testing.T) {
 }
 
 func TestGetRenameTablesArgs(t *testing.T) {
-
 	inArgs := &RenameTablesArgs{
 		RenameTableInfos: []*RenameTableInfo{
 			{1, &pmodel.CIStr{O: "db1", L: "db1"}, &pmodel.CIStr{O: "tb1", L: "tb1"}, 3, &pmodel.CIStr{O: "tb3", L: "tb3"}, 100},

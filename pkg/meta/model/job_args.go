@@ -196,7 +196,7 @@ type TruncateTableArgs struct {
 	OldPartIDsWithPolicy []int64 `json:"-"`
 }
 
-// This structure will be replaced by RenameTableArgs after previous PR is merged
+// RenameTableInfo will be replaced by RenameTableArgs after previous PR is merged
 type RenameTableInfo struct {
 	OldSchemaID   int64         `json:"old_schema_id,omitempty"`
 	OldSchemaName *pmodel.CIStr `json:"old_schema_name,omitempty"`
