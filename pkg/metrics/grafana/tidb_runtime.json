@@ -2080,7 +2080,7 @@
             "alignAsTable": false,
             "avg": false,
             "current": true,
-            "max": false,
+            "max": true,
             "min": false,
             "rightSide": false,
             "show": true,
