@@ -277,24 +277,24 @@ WHERE
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 }
 
-func Test53454(t *testing.T) {
+func TestCTEHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int, b int, key(a));")
 	tk.MustExec("create table t2 (a int, b int, key(a));")
 	tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern=on;")
-	tk.MustQuery("desc SELECT /*+ INL_JOIN(subquery) */ t1.*, subquery.* FROM t1 JOIN ( SELECT a, COUNT(b) AS count_b FROM t2 GROUP BY a) AS subquery ON t1.a = subquery.a;").Check(testkit.Rows(
-		"Projection_9 9990.00 root  test.t1.a, test.t1.b, test.t2.a, Column#7",
-		"└─IndexJoin_17 9990.00 root  inner join, inner:HashAgg_15, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-		"  ├─TableReader_44(Build) 9990.00 root  data:Selection_43",
-		"  │ └─Selection_43 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-		"  │   └─TableFullScan_42 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"  └─HashAgg_15(Probe) 79840080.00 root  group by:test.t2.a, funcs:count(Column#9)->Column#7, funcs:firstrow(test.t2.a)->test.t2.a",
-		"    └─IndexLookUp_16 79840080.00 root  ",
-		"      ├─Selection_13(Build) 9990.00 cop[tikv]  not(isnull(test.t2.a))",
-		"      │ └─IndexRangeScan_11 10000.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-		"      └─HashAgg_14(Probe) 79840080.00 cop[tikv]  group by:test.t2.a, funcs:count(test.t2.b)->Column#9",
-		"        └─TableRowIDScan_12 9990.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+	tk.MustQuery("desc with cte as (select a, count(b) from t2 group by a) select /*+ INL_JOIN(cte) */  * from t1, cte where t1.a=cte.a;").Check(testkit.Rows(
+		"Projection_13 9990.00 root  test.t1.a, test.t1.b, test.t2.a, Column#13",
+		"└─IndexJoin_21 9990.00 root  inner join, inner:HashAgg_19, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"  ├─TableReader_48(Build) 9990.00 root  data:Selection_47",
+		"  │ └─Selection_47 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"  │   └─TableFullScan_46 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"  └─HashAgg_19(Probe) 79840080.00 root  group by:test.t2.a, funcs:count(Column#15)->Column#13, funcs:firstrow(test.t2.a)->test.t2.a",
+		"    └─IndexLookUp_20 79840080.00 root  ",
+		"      ├─Selection_17(Build) 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+		"      │ └─IndexRangeScan_15 10000.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+		"      └─HashAgg_18(Probe) 79840080.00 cop[tikv]  group by:test.t2.a, funcs:count(test.t2.b)->Column#15",
+		"        └─TableRowIDScan_16 9990.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 }
