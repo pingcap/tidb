@@ -18,7 +18,6 @@ go_library(
         "//pkg/util/tiflash",
         "//pkg/util/topsql/stmtstats",
         "@com_github_tikv_client_go_v2//kv",
-        "@com_github_tikv_client_go_v2//tikvrpc",
     ],
 )
 

@@ -82,74 +82,6 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	}
 
 	switch t.GetType() {
-	case model.ActionDropTable:
-		droppedTableInfo := t.GetDropTableInfo()
-		ids, err := h.getTableIDs(droppedTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.UpdateStatsMetaVersionForGC(id); err != nil {
-				return err
-			}
-		}
-	case model.ActionAddColumn:
-		newTableInfo, newColumnInfo := t.GetAddColumnInfo()
-		ids, err := h.getTableIDs(newTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.InsertColStats2KV(id, newColumnInfo); err != nil {
-				return err
-			}
-		}
-	case model.ActionModifyColumn:
-		newTableInfo, modifiedColumnInfo := t.GetModifyColumnInfo()
-
-		ids, err := h.getTableIDs(newTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			if err := h.statsWriter.InsertColStats2KV(id, modifiedColumnInfo); err != nil {
-				return err
-			}
-		}
-	case model.ActionAddTablePartition:
-		globalTableInfo, addedPartitionInfo := t.GetAddPartitionInfo()
-		for _, def := range addedPartitionInfo.Definitions {
-			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
-				return err
-			}
-		}
-	case model.ActionTruncateTablePartition:
-		if err := h.onTruncatePartitions(t); err != nil {
-			return err
-		}
-	case model.ActionDropTablePartition:
-		if err := h.onDropPartitions(t); err != nil {
-			return err
-		}
-	case model.ActionExchangeTablePartition:
-		if err := h.onExchangeAPartition(t); err != nil {
-			return err
-		}
-	case model.ActionReorganizePartition:
-		if err := h.onReorganizePartitions(t); err != nil {
-			return err
-		}
-	case model.ActionAlterTablePartitioning:
-		oldSingleTableID, globalTableInfo, addedPartInfo := t.GetAddPartitioningInfo()
-		// Add new partition stats.
-		for _, def := range addedPartInfo.Definitions {
-			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
-				return err
-			}
-		}
-		// Change id for global stats, since the data has not changed!
-		// Note: This operation will update all tables related to statistics with the new ID.
-		return h.statsWriter.ChangeGlobalStatsID(oldSingleTableID, globalTableInfo.ID)
 	case model.ActionRemovePartitioning:
 		// Change id for global stats, since the data has not changed!
 		// Note: This operation will update all tables related to statistics with the new ID.
@@ -207,6 +139,73 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 				return err
 			}
 		}
+	case model.ActionDropTable:
+		droppedTableInfo := e.GetDropTableInfo()
+		ids, err := h.getTableIDs(droppedTableInfo)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := h.statsWriter.UpdateStatsMetaVersionForGC(id); err != nil {
+				return err
+			}
+		}
+	case model.ActionAddColumn:
+		newTableInfo, newColumnInfo := e.GetAddColumnInfo()
+		ids, err := h.getTableIDs(newTableInfo)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := h.statsWriter.InsertColStats2KV(id, newColumnInfo); err != nil {
+				return err
+			}
+		}
+	case model.ActionModifyColumn:
+		newTableInfo, modifiedColumnInfo := e.GetModifyColumnInfo()
+		ids, err := h.getTableIDs(newTableInfo)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := h.statsWriter.InsertColStats2KV(id, modifiedColumnInfo); err != nil {
+				return err
+			}
+		}
+	case model.ActionAddTablePartition:
+		globalTableInfo, addedPartitionInfo := e.GetAddPartitionInfo()
+		for _, def := range addedPartitionInfo.Definitions {
+			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
+				return err
+			}
+		}
+	case model.ActionTruncateTablePartition:
+		if err := h.onTruncatePartitions(e); err != nil {
+			return err
+		}
+	case model.ActionDropTablePartition:
+		if err := h.onDropPartitions(e); err != nil {
+			return err
+		}
+	case model.ActionExchangeTablePartition:
+		if err := h.onExchangeAPartition(e); err != nil {
+			return err
+		}
+	case model.ActionReorganizePartition:
+		if err := h.onReorganizePartitions(e); err != nil {
+			return err
+		}
+	case model.ActionAlterTablePartitioning:
+		oldSingleTableID, globalTableInfo, addedPartInfo := e.GetAddPartitioningInfo()
+		// Add new partition stats.
+		for _, def := range addedPartInfo.Definitions {
+			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
+				return err
+			}
+		}
+		// Change id for global stats, since the data has not changed!
+		// Note: This operation will update all tables related to statistics with the new ID.
+		return h.statsWriter.ChangeGlobalStatsID(oldSingleTableID, globalTableInfo.ID)
 	}
 	return nil
 }

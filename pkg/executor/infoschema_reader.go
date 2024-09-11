@@ -1617,7 +1617,7 @@ func (e *DDLJobsReaderExec) Next(_ context.Context, req *chunk.Chunk) error {
 	var err error
 
 	// Append history DDL jobs.
-	if count < req.Capacity() {
+	if count < req.Capacity() && e.historyJobIter != nil {
 		e.cacheJobs, err = e.historyJobIter.GetLastJobs(req.Capacity()-count, e.cacheJobs)
 		if err != nil {
 			return err

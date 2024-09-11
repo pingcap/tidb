@@ -320,6 +320,7 @@ import (
 	algorithm             "ALGORITHM"
 	always                "ALWAYS"
 	any                   "ANY"
+	apply                 "APPLY"
 	ascii                 "ASCII"
 	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
@@ -561,6 +562,7 @@ import (
 	quick                 "QUICK"
 	rateLimit             "RATE_LIMIT"
 	rebuild               "REBUILD"
+	recommend             "RECOMMEND"
 	recover               "RECOVER"
 	redundant             "REDUNDANT"
 	reload                "RELOAD"
@@ -1057,6 +1059,7 @@ import (
 	UseStmt                    "USE statement"
 	ShutdownStmt               "SHUTDOWN statement"
 	RestartStmt                "RESTART statement"
+	RecommendIndexStmt         "RECOMMEND INDEX statement"
 	CreateViewSelectOpt        "Select/Union/Except/Intersect statement in CREATE VIEW ... AS SELECT"
 	BindableStmt               "Statement that can be created binding on"
 	UpdateStmtNoWith           "Update statement without CTE clause"
@@ -6697,6 +6700,7 @@ UnReservedKeyword:
 	"ACTION"
 |	"ADVISE"
 |	"ASCII"
+|	"APPLY"
 |	"ATTRIBUTE"
 |	"ATTRIBUTES"
 |	"BINDING_CACHE"
@@ -6779,6 +6783,7 @@ UnReservedKeyword:
 |	"PROXY"
 |	"QUICK"
 |	"REBUILD"
+|	"RECOMMEND"
 |	"REDUNDANT"
 |	"REORGANIZE"
 |	"RESOURCE"
@@ -12259,6 +12264,7 @@ Statement:
 |	LockTablesStmt
 |	ShutdownStmt
 |	RestartStmt
+|	RecommendIndexStmt
 |	HelpStmt
 |	NonTransactionalDMLStmt
 |	OptimizeTableStmt
@@ -14166,6 +14172,61 @@ SetBindingStmt:
 		x := &ast.SetBindingStmt{
 			BindingStatusType: $3.(ast.BindingStatusType),
 			SQLDigest:         $7,
+		}
+
+		$$ = x
+	}
+
+RecommendIndexStmt:
+	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "run",
+			SQL:    $5,
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "RUN"
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "run",
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "SHOW"
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "show",
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "APPLY" NUM
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "apply",
+			ID:     $4.(int64),
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "IGNORE" NUM
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "ignore",
+			ID:     $4.(int64),
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "SET" Identifier "=" Literal
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "set",
+			Option: $4,
+			Value:  ast.NewValueExpr($6, parser.charset, parser.collation),
 		}
 
 		$$ = x

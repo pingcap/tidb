@@ -1137,13 +1137,20 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 		}
 	}
 
-	if ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
-		// If a candidate path is TiFlash-path or forced-path, we just keep them. For other candidate paths, if there exists
+	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() && (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1)
+	// If we've forced an index merge - we want to keep these plans
+	preferMerge := len(ds.IndexMergeHints) > 0 || fixcontrol.GetBoolWithDefault(
+		ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
+		fixcontrol.Fix52869,
+		false,
+	)
+	if preferRange && len(candidates) > 1 {
+		// If a candidate path is TiFlash-path or forced-path or MV index, we just keep them. For other candidate paths, if there exists
 		// any range scan path, we remove full scan paths and keep range scan paths.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath bool
 		for _, c := range candidates {
-			if c.path.Forced || c.path.StoreType == kv.TiFlash {
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && c.path.Index.MVIndex) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
@@ -1154,8 +1161,13 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 				}
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
-				preferredPaths = append(preferredPaths, c)
-				hasRangeScanPath = true
+				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
+				equalPlan := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0
+				indexFilters := len(c.path.TableFilters) < len(c.path.IndexFilters)
+				if preferMerge || (((equalPlan || indexFilters) && prop.IsSortItemEmpty()) || c.isMatchProp) {
+					preferredPaths = append(preferredPaths, c)
+					hasRangeScanPath = true
+				}
 			}
 		}
 		if hasRangeScanPath {

@@ -288,14 +288,15 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expres
 type castAsStringFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp                *types.FieldType
+	isExplicitCharset bool
 }
 
 func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinCastFunc4String(ctx, c.funcName, args, c.tp, c.isExplicitCharset)
 	if err != nil {
 		return nil, err
 	}
@@ -2265,7 +2266,7 @@ func CanImplicitEvalReal(expr Expression) bool {
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
 func BuildCastFunction4Union(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, true)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, true, false)
 	terror.Log(err)
 	return
 }
@@ -2302,13 +2303,13 @@ func BuildCastCollationFunction(ctx BuildContext, expr Expression, ec *ExprColla
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false, false)
 	terror.Log(err)
 	return
 }
 
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
-func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType, inUnion bool) (res Expression, err error) {
+func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType, inUnion bool, isExplicitCharset bool) (res Expression, err error) {
 	argType := expr.GetType(ctx.GetEvalCtx())
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
@@ -2336,7 +2337,7 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	case types.ETVectorFloat32:
 		fc = &castAsVectorFloat32FunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETString:
-		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, isExplicitCharset}
 		if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeBit {
 			tp.SetFlen((expr.GetType(ctx.GetEvalCtx()).GetFlen() + 7) / 8)
 		}
