@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -670,29 +669,6 @@ func TestSavepointWithCacheTable(t *testing.T) {
 		tk.MustQuery("select * from t order by id").Check(testkit.Rows())
 		tk.MustQuery("select * from t0 order by id").Check(testkit.Rows("1 1"))
 	}
-}
-
-func TestSavepointWithBinlog(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, a int, unique index idx(id))")
-
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("insert into t values (1,1)")
-	err := tk.ExecToErr("savepoint s1")
-	require.Error(t, err)
-	require.Equal(t, executor.ErrSavepointNotSupportedWithBinlog.Error(), err.Error())
-	err = tk.ExecToErr("rollback to s1")
-	require.Error(t, err)
-	require.Equal(t, "[executor:1305]SAVEPOINT s1 does not exist", err.Error())
-	err = tk.ExecToErr("release savepoint s1")
-	require.Error(t, err)
-	require.Equal(t, "[executor:1305]SAVEPOINT s1 does not exist", err.Error())
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
-	tk.MustExec("commit")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
 
 func TestColumnNotMatchError(t *testing.T) {
