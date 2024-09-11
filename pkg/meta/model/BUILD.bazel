@@ -25,6 +25,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",
+        "//pkg/util/intest",
         "@com_github_pingcap_errors//:errors",
     ],
 )
@@ -43,7 +44,7 @@ go_test(
     ],
     embed = [":model"],
     flaky = True,
-    shard_count = 25,
+    shard_count = 28,
     deps = [
         "//pkg/parser/charset",
         "//pkg/parser/model",

@@ -426,8 +426,7 @@ func getTableInfo(t *meta.Meta, tableID, schemaID int64) (*model.TableInfo, erro
 // A background job will be created to delete old data.
 func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
-	tableID := job.TableID
-	args, err := model.GetTruncateTableArgsBeforeRun(job)
+	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -578,15 +577,10 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		SchemaChangeEvent: util.NewTruncateTableEvent(tblInfo, oldTblInfo),
 	}
 	asyncNotifyEvent(jobCtx, truncateTableEvent, job)
-	if job.Version == model.JobVersion1 {
-		startKey := tablecodec.EncodeTablePrefix(tableID)
-		job.Args = []any{startKey, oldPartitionIDs}
-	} else {
-		// see truncateTableByReassignPartitionIDs for why they might change.
-		args.OldPartitionIDs = oldPartitionIDs
-		args.NewPartitionIDs = newPartitionIDs
-		job.ArgsV2 = args
-	}
+	// see truncateTableByReassignPartitionIDs for why they might change.
+	args.OldPartitionIDs = oldPartitionIDs
+	args.NewPartitionIDs = newPartitionIDs
+	job.FillFinishedArgs(args)
 	return ver, nil
 }
 
