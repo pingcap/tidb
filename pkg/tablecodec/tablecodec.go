@@ -969,7 +969,7 @@ func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, column
 func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 	var err error
 	b := key[prefixLen+idLen:]
-	for i:=0; i<colsLen; i++ {
+	for i := 0; i < colsLen; i++ {
 		_, b, err = codec.CutOne(b)
 		if err != nil {
 			return nil, errors.Trace(err)
