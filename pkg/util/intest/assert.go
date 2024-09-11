@@ -21,6 +21,7 @@ import (
 	"reflect"
 )
 
+// EnableAssert checks if the assert function should work.
 const EnableAssert = true
 
 // Assert asserts a condition is true
