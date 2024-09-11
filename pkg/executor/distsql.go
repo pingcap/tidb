@@ -332,7 +332,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 	builder.SetKeyRanges(r).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
-		SetGetStartTs(e.getStartTS).
+		SetLazyStartTs(e.getStartTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).

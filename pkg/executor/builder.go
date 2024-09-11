@@ -2056,6 +2056,30 @@ func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
 	return txnManager.GetStmtReadTS()
 }
 
+type LazyStartTS struct {
+	ctx                  sessionctx.Context
+	forDataReaderBuilder bool
+	dataReaderTS         uint64
+	needForUpdateTS      bool
+}
+
+func (ls *LazyStartTS) GetStartTS(tryUseMaxTS bool) (uint64, error) {
+	if ls.forDataReaderBuilder {
+		return ls.dataReaderTS, nil
+	}
+	txnManager := sessiontxn.GetTxnManager(ls.ctx)
+	if ls.needForUpdateTS {
+		return txnManager.GetStmtForUpdateTS()
+	}
+	if tryUseMaxTS {
+		ctxProvider := txnManager.GetContextProvider()
+		if optimisticTxnCtxProvider, ok := ctxProvider.(*isolation.OptimisticTxnContextProvider); ok && optimisticTxnCtxProvider != nil && optimisticTxnCtxProvider.TryOptimizeWithMaxTS {
+			return uint64(math.MaxUint64), nil
+		}
+	}
+	return txnManager.GetStmtReadTS()
+}
+
 // getSnapshot get the appropriate snapshot from txnManager and set
 // the relevant snapshot options before return.
 func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
@@ -3843,30 +3867,6 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	}
 
 	return e, nil
-}
-
-type LazyStartTS struct {
-	ctx                  sessionctx.Context
-	forDataReaderBuilder bool
-	dataReaderTS         uint64
-	needForUpdateTS      bool
-}
-
-func (ls *LazyStartTS) GetStartTS(tryUseMaxTS bool) (uint64, error) {
-	if ls.forDataReaderBuilder {
-		return ls.dataReaderTS, nil
-	}
-	txnManager := sessiontxn.GetTxnManager(ls.ctx)
-	if ls.needForUpdateTS {
-		return txnManager.GetStmtForUpdateTS()
-	}
-	if tryUseMaxTS {
-		ctxProvider := txnManager.GetContextProvider()
-		if optimisticTxnCtxProvider, ok := ctxProvider.(*isolation.OptimisticTxnContextProvider); ok && optimisticTxnCtxProvider != nil && optimisticTxnCtxProvider.TryOptimizeWithMaxTS {
-			return uint64(math.MaxUint64), nil
-		}
-	}
-	return txnManager.GetStmtReadTS()
 }
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) exec.Executor {

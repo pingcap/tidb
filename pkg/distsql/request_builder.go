@@ -252,8 +252,8 @@ func (builder *RequestBuilder) SetStartTS(startTS uint64) *RequestBuilder {
 	return builder
 }
 
-func (builder *RequestBuilder) SetGetStartTs(fn func(bool) (uint64, error)) *RequestBuilder {
-	builder.Request.GetStartTs = fn
+func (builder *RequestBuilder) SetLazyStartTs(fn func(bool) (uint64, error)) *RequestBuilder {
+	builder.Request.LazyStartTs = fn
 	return builder
 }
 
