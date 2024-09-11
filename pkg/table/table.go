@@ -214,18 +214,22 @@ type UpdateRecordOption interface {
 	applyUpdateRecordOpt(*UpdateRecordOpt)
 }
 
+// RemoveRecordOpt contains the options will be used when removing a record.
 type RemoveRecordOpt struct {
 	indexesLayoutOffset map[int64]IndexRowLayoutOption
 }
 
+// HasIndexesLayout returns whether the RemoveRecordOpt has indexes layout.
 func (opt *RemoveRecordOpt) HasIndexesLayout() bool {
 	return opt.indexesLayoutOffset != nil
 }
 
+// GetIndexLayout returns the IndexRowLayoutOption for the specified index.
 func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
 	return opt.indexesLayoutOffset[indexID]
 }
 
+// NewRemoveRecordOpt creates a new RemoveRecordOpt with options.
 func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
 	opt := &RemoveRecordOpt{}
 	for _, o := range opts {
@@ -234,10 +238,16 @@ func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
 	return opt
 }
 
+// RemoveRecordOption is defined for the RemoveRecord() method of the Table interface.
 type RemoveRecordOption interface {
 	applyRemoveRecordOpt(*RemoveRecordOpt)
 }
 
+// IndexRowLayoutOption is the option for index row layout.
+// It is used to specify the order of the index columns in the row.
+type IndexRowLayoutOption []int
+
+// IndexesLayout is used to specify the layout of the indexes.
 type IndexesLayout map[int64]IndexRowLayoutOption
 
 func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {

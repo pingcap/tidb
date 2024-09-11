@@ -38,12 +38,6 @@ type TableContextImpl struct {
 	// and saves allocation
 	// The buffers are supposed to be used inside AddRecord/UpdateRecord/RemoveRecord.
 	mutateBuffers *context.MutateBuffers
-
-	hasExtraPosInfo bool
-	// extraIndexKeyInfo records how we locate indexes from the given row data.
-	// The original IndexInfo only records the column offsets in the full row.
-	// We'll need the extraIndexKeyPosInfo when the given row is pruned and only needed columns are left.
-	extraIndexKeyPosInfo map[int64][]int
 }
 
 // NewTableContextImpl creates a new TableContextImpl.
@@ -214,9 +208,4 @@ func (ctx *TableContextImpl) AddTemporaryTableToTxn(tblInfo *model.TableInfo) (c
 
 func (ctx *TableContextImpl) vars() *variable.SessionVars {
 	return ctx.Context.GetSessionVars()
-}
-
-// HasExtraInfo returns whether the context has extra index key pos info.
-func (ctx *TableContextImpl) HasExtraInfo() bool {
-	return ctx.hasExtraPosInfo
 }

@@ -278,7 +278,7 @@ func addUnchangedKeysForLockByRow(
 			if !meta.Unique || !meta.IsPublic() || (meta.Primary && clustered) {
 				continue
 			}
-			ukVals, err := idx.FetchValues(sctx.GetTableCtx(), row, nil)
+			ukVals, err := idx.FetchValues(row, nil)
 			if err != nil {
 				return count, err
 			}

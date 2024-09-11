@@ -23,14 +23,12 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 )
@@ -230,7 +228,6 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 			{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeDatetime)},
 		},
 	}
-	sctx := mock.NewContext()
 	tc := types.DefaultStmtNoWarningContext
 	rd := rowcodec.Encoder{Enable: true}
 
@@ -288,10 +285,10 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 					maps := getOrBuildColumnMaps(getter, setter, table)
 
 					// test checkIndexKeys
-					insertionKey, insertionValue, err := buildIndexKeyValue(sctx, index, rowToInsert, tc.Location(), tableInfo,
+					insertionKey, insertionValue, err := buildIndexKeyValue(index, rowToInsert, tc.Location(), tableInfo,
 						indexInfo, table, handle)
 					require.Nil(t, err)
-					deletionKey, _, err := buildIndexKeyValue(sctx, index, rowToRemove, tc.Location(), tableInfo, indexInfo, table,
+					deletionKey, _, err := buildIndexKeyValue(index, rowToRemove, tc.Location(), tableInfo, indexInfo, table,
 						handle)
 					require.Nil(t, err)
 					indexMutations := []mutation{
@@ -321,9 +318,9 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 	}
 }
 
-func buildIndexKeyValue(sctx sessionctx.Context, index table.Index, rowToInsert []types.Datum, loc *time.Location,
+func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, loc *time.Location,
 	tableInfo model.TableInfo, indexInfo *model.IndexInfo, table *TableCommon, handle kv.Handle) ([]byte, []byte, error) {
-	indexedValues, err := index.FetchValues(sctx.GetTableCtx(), rowToInsert, nil)
+	indexedValues, err := index.FetchValues(rowToInsert, nil)
 	if err != nil {
 		return nil, nil, err
 	}
