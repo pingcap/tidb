@@ -888,7 +888,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	var checkpointFirstRun bool = true
 	if cfg.UseCheckpoint {
 		checkpointTaskName = cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
-		// if the checkpoint metadata exists in the external storage, the restore is not
+		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.
 		existsCheckpointMetadata := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, mgr.GetDomain())
 		checkpointFirstRun = !existsCheckpointMetadata

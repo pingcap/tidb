@@ -301,7 +301,6 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 func (rc *SnapClient) InitCheckpoint(
 	ctx context.Context,
 	s storage.ExternalStorage,
-	taskName string,
 	config *pdutil.ClusterConfig,
 	checkpointFirstRun bool,
 ) (map[int64]map[string]struct{}, *pdutil.ClusterConfig, error) {
@@ -320,6 +319,23 @@ func (rc *SnapClient) InitCheckpoint(
 		meta, err := checkpoint.LoadCheckpointMetadataForSnapshotRestore(ctx, execCtx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
+		}
+
+		if meta.UpstreamClusterID != rc.backupMeta.ClusterId {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The upstream cluster id[%d] of the current snapshot restore does not match that[%d] recorded in checkpoint. "+
+					"Perhaps you should specify the last full backup storage instead, "+
+					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
+				rc.backupMeta.ClusterId, meta.UpstreamClusterID, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+		}
+
+		if meta.RestoredTS != rc.backupMeta.EndVersion {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The current snapshot restore want to restore cluster to the BackupTS[%d], which is different from that[%d] recorded in checkpoint. "+
+					"Perhaps you should specify the last full backup storage instead, "+
+					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
+				rc.backupMeta.EndVersion, meta.RestoredTS, checkpoint.SnapshotRestoreCheckpointDatabaseName,
+			)
 		}
 
 		// The schedulers config is nil, so the restore-schedulers operation is just nil.
@@ -355,7 +371,10 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
-		meta := &checkpoint.CheckpointMetadataForRestore{}
+		meta := &checkpoint.CheckpointMetadataForRestore{
+			UpstreamClusterID: rc.backupMeta.ClusterId,
+			RestoredTS:        rc.backupMeta.EndVersion,
+		}
 		// a nil config means undo function
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
@@ -365,7 +384,7 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 	}
 
-	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, rc.db.Session(), taskName)
+	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, rc.db.Session())
 	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
 }
 

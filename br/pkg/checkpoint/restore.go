@@ -57,7 +57,6 @@ func StartCheckpointRestoreRunnerForTest(
 func StartCheckpointRunnerForRestore(
 	ctx context.Context,
 	se glue.Session,
-	taskName string,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
 		ctx, newTableCheckpointStorage(se, snapshotRestoreCheckpointDatabaseName), nil, nil, nil, flushPosition{}, valueMarshalerForRestore)
@@ -99,8 +98,13 @@ func LoadCheckpointChecksumForRestore(
 }
 
 type CheckpointMetadataForRestore struct {
+	UpstreamClusterID uint64 `json:"upstream-cluster-id"`
+	RestoredTS        uint64 `json:"restored-ts"`
+	// only for log restore
+	StartTS uint64 `json:"start-ts,omitempty"`
+	GcRatio string `json:"gc-ratio,omitempty"`
+	// only for snapshot restore
 	SchedulersConfig *pdutil.ClusterConfig `json:"schedulers-config,omitempty"`
-	GcRatio          string                `json:"gc-ratio,omitempty"`
 }
 
 func LoadCheckpointMetadataForSnapshotRestore(

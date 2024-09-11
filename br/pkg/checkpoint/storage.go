@@ -55,8 +55,8 @@ func (s *externalCheckpointStorage) flushCheckpointChecksum(ctx context.Context,
 // 2. BR regards the metadata table as a file so that it is not empty if the table exists.
 // 3. BR regards the checkpoint table as a directory which is managed by metadata table.
 const (
-	logRestoreCheckpointDatabaseName      string = "__TiDB_BR_Temporary_Log_Restore_Checkpoint"
-	snapshotRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint"
+	LogRestoreCheckpointDatabaseName      string = "__TiDB_BR_Temporary_Log_Restore_Checkpoint"
+	SnapshotRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint"
 
 	// directory level table
 	checkpointDataTableName     string = "cpt_data"
@@ -67,7 +67,7 @@ const (
 	checkpointIngestTableName   string = "cpt_ingest"
 
 	createCheckpointTable string = `
-		CREATE TABLE IF NOT EXISTS %n.%n (
+		CREATE TABLE %n.%n (
 			uuid varchar(32) NOT NULL,
 			segment_id BIGINT NOT NULL,
 			data BLOB(524288) NOT NULL,
@@ -82,7 +82,7 @@ const (
 		SELECT uuid, segment_id, data FROM %s.%s ORDER BY uuid, segment_id;`
 
 	createCheckpointMetaTable string = `
-		CREATE TABLE IF NOT EXISTS %n.%n (
+		CREATE TABLE %n.%n (
 			segment_id BIGINT NOT NULL,
 			data BLOB(524288) NOT NULL,
 			update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
