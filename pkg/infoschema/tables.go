@@ -2448,7 +2448,7 @@ func (it *infoschemaTable) AddRecord(ctx table.MutateContext, txn kv.Transaction
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
+func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -2546,7 +2546,7 @@ func (vt *VirtualTable) AddRecord(ctx table.MutateContext, txn kv.Transaction, r
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
+func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
 	return table.ErrUnsupportedOp
 }
 

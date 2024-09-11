@@ -635,17 +635,24 @@ func getKeyInTxn(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, e
 	return val, nil
 }
 
+type IndexRowLayoutOption struct {
+	offsets []int
+}
+
 func (c *index) FetchValues(ctx table.MutateContext, r []types.Datum, vals []types.Datum) ([]types.Datum, error) {
+	return c.fetchValues(ctx, r, vals, nil)
+}
+
+func (c *index) fetchValues(ctx table.MutateContext, r []types.Datum, vals []types.Datum, opt table.IndexRowLayoutOption) ([]types.Datum, error) {
 	needLength := len(c.idxInfo.Columns)
 	if vals == nil || cap(vals) < needLength {
 		vals = make([]types.Datum, needLength)
 	}
 	vals = vals[:needLength]
 	// If the context has extra info, use the extra layout info to get index columns.
-	if ctx.HasExtraInfo() {
-		offsets := ctx.GetExtraIndexKeyPosInfo(c.idxInfo.ID)
-		intest.Assert(len(offsets) == len(c.idxInfo.Columns), fmt.Sprintf("offsets length is not equal to index columns length, offset len: %v, index len: %v", len(offsets), len(c.idxInfo.Columns)))
-		for i, offset := range offsets {
+	if opt != nil {
+		intest.Assert(len(opt) == len(c.idxInfo.Columns), fmt.Sprintf("offsets length is not equal to index columns length, offset len: %v, index len: %v", len(opt), len(c.idxInfo.Columns)))
+		for i, offset := range opt {
 			if offset < 0 || offset > len(r) {
 				return nil, table.ErrIndexOutBound.GenWithStackByArgs(c.idxInfo.Name, offset, r)
 			}

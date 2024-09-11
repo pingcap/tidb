@@ -5184,7 +5184,7 @@ type TblColPosInfo struct {
 	// HandleOrdinal represents the ordinal of the handle column.
 	HandleCols util.HandleCols
 
-	IndexesForDelete map[int64][]int
+	IndexesForDelete table.IndexesLayout
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -5329,7 +5329,7 @@ func buildSingleTableColPosInfoForDelete(
 		}
 		offsetMap[found] = i
 	}
-	indexColMap := make(map[int64][]int)
+	indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
 	for _, idx := range deletableIdxs {
 		idxCols := idx.Meta().Columns
 		colPos := make([]int, 0, len(idxCols))

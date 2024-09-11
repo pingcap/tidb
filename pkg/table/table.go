@@ -214,6 +214,36 @@ type UpdateRecordOption interface {
 	applyUpdateRecordOpt(*UpdateRecordOpt)
 }
 
+type RemoveRecordOpt struct {
+	indexesLayoutOffset map[int64]IndexRowLayoutOption
+}
+
+func (opt *RemoveRecordOpt) HasIndexesLayout() bool {
+	return opt.indexesLayoutOffset != nil
+}
+
+func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
+	return opt.indexesLayoutOffset[indexID]
+}
+
+func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
+	opt := &RemoveRecordOpt{}
+	for _, o := range opts {
+		o.applyRemoveRecordOpt(opt)
+	}
+	return opt
+}
+
+type RemoveRecordOption interface {
+	applyRemoveRecordOpt(*RemoveRecordOpt)
+}
+
+type IndexesLayout map[int64]IndexRowLayoutOption
+
+func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
+	opt.indexesLayoutOffset = idx
+}
+
 // CommonMutateOptFunc is a function to provide common options for mutating a table.
 type CommonMutateOptFunc func(*commonMutateOpt)
 
@@ -384,7 +414,7 @@ type Table interface {
 	UpdateRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, currData, newData []types.Datum, touched []bool, opts ...UpdateRecordOption) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error
+	RemoveRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...RemoveRecordOption) error
 
 	// Allocators returns all allocators.
 	Allocators(ctx AllocatorContext) autoid.Allocators

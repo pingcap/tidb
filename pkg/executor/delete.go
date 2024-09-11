@@ -274,9 +274,7 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 		return err
 	}
 
-	e.Ctx().GetTableCtx().SetExtraIndexKeyPosInfo(posInfo.IndexesForDelete)
-	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data)
-	defer e.Ctx().GetTableCtx().ResetExtraInfo()
+	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data, posInfo.IndexesForDelete)
 	if err != nil {
 		return err
 	}

@@ -105,6 +105,8 @@ type Index interface {
 	FetchValues(ctx MutateContext, row []types.Datum, columns []types.Datum) ([]types.Datum, error)
 }
 
+type IndexRowLayoutOption []int
+
 // IndexKVGenerator generates kv for an index.
 // It could be also used for generating multi-value indexes.
 type IndexKVGenerator struct {

@@ -216,28 +216,6 @@ func (ctx *TableContextImpl) vars() *variable.SessionVars {
 	return ctx.Context.GetSessionVars()
 }
 
-// SetExtraIndexKeyPosInfo sets the extra index key pos info.
-func (ctx *TableContextImpl) SetExtraIndexKeyPosInfo(indexKeyPos map[int64][]int) {
-	ctx.hasExtraPosInfo = true
-	ctx.extraIndexKeyPosInfo = indexKeyPos
-}
-
-// GetExtraIndexKeyPosInfo gets the extra index key pos info.
-// Check HasExtraInfo before calling this function.
-func (ctx *TableContextImpl) GetExtraIndexKeyPosInfo(idxID int64) []int {
-	return ctx.extraIndexKeyPosInfo[idxID]
-}
-
-// ResetExtraInfo resets the extra index key pos info.
-// We need to reset it just after the info is used because we supported the foreign key
-// and it's executed before the recordSet.Close() is called.
-// If we reset it in the executor's Close() triggered by recordSet.Close().
-// The execution of the foreign key will get wrong information.
-func (ctx *TableContextImpl) ResetExtraInfo() {
-	ctx.hasExtraPosInfo = false
-	ctx.extraIndexKeyPosInfo = nil
-}
-
 // HasExtraInfo returns whether the context has extra index key pos info.
 func (ctx *TableContextImpl) HasExtraInfo() bool {
 	return ctx.hasExtraPosInfo

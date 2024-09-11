@@ -1168,7 +1168,11 @@ func GetChangingColVal(ctx exprctx.BuildContext, cols []*table.Column, col *tabl
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (t *TableCommon) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
+func (t *TableCommon) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
+	opt := table.NewRemoveRecordOpt(opts...)
+	return t.removeRecord(ctx, txn, h, r, opt)
+}
+func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opt *table.RemoveRecordOpt) error {
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
@@ -1188,7 +1192,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, 
 	}
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
-	if !ctx.HasExtraInfo() && len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
+	if opt.HasIndexesLayout() && len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
 		// The changing column datum derived from related column should be casted here.
 		// Otherwise, the existed changing indexes will not be deleted.
 		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
@@ -1200,7 +1204,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, 
 		}
 		r = append(r, value)
 	}
-	err = t.removeRowIndices(ctx, txn, h, r)
+	err = t.removeRowIndices(ctx, txn, h, r, opt)
 	if err != nil {
 		return err
 	}
@@ -1365,13 +1369,41 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 	return txn.Delete(key)
 }
 
-// removeRowIndices removes all the indices of a row.
-func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, rec []types.Datum) error {
+func (t *TableCommon) removeRowIndicesNew(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, rec []types.Datum, opt *table.RemoveRecordOpt) error {
 	for _, v := range t.DeletableIndices() {
 		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
 			continue
 		}
-		vals, err := v.FetchValues(ctx, rec, nil)
+		vals, err := v.(*index).fetchValues(ctx, rec, nil, opt.GetIndexLayout(v.Meta().ID))
+		if err != nil {
+			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
+			return err
+		}
+		if err = v.Delete(ctx, txn, vals, h); err != nil {
+			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
+				// If the index is not in public state, we may have not created the index,
+				// or already deleted the index, so skip ErrNotExist error.
+				logutil.BgLogger().Debug("row index not exists", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()))
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// removeRowIndices removes all the indices of a row.
+func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, rec []types.Datum, opt *table.RemoveRecordOpt) (err error) {
+	for _, v := range t.DeletableIndices() {
+		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
+			continue
+		}
+		var vals []types.Datum
+		if opt.HasIndexesLayout() {
+			vals, err = v.(*index).fetchValues(ctx, rec, nil, opt.GetIndexLayout(v.Meta().ID))
+		} else {
+			vals, err = v.FetchValues(ctx, rec, nil)
+		}
 		if err != nil {
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
 			return err
