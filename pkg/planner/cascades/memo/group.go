@@ -89,7 +89,7 @@ func (g *Group) Insert(e *GroupExpression) bool {
 	if g.Exists(hash64) {
 		return false
 	}
-	operand := pattern.GetOperand(e.LogicalPlan)
+	operand := pattern.GetOperand(e.logicalPlan)
 	var newEquiv *list.Element
 	mark, ok := g.operand2FirstExpr[operand]
 	if ok {
@@ -101,7 +101,7 @@ func (g *Group) Insert(e *GroupExpression) bool {
 		g.operand2FirstExpr[operand] = newEquiv
 	}
 	g.hash2GroupExpr[hash64] = newEquiv
-	e.Group = g
+	e.group = g
 	return true
 }
 
