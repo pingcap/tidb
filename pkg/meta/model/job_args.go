@@ -283,31 +283,31 @@ func GetRenameTableArgs(job *Job) (*RenameTableArgs, error) {
 		newTableName  pmodel.CIStr
 	)
 
-	if job.Version == JobVersion1 {
-		// decode args and cache in args.
-		if len(job.Args) == 0 {
-			err := job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			job.Args = []any{oldSchemaID, newTableName, oldSchemaName}
-		} else {
-			oldSchemaID = job.Args[0].(int64)
-			newTableName = job.Args[1].(pmodel.CIStr)
-			oldSchemaName = job.Args[2].(pmodel.CIStr)
+	if job.Version == JobVersion2 {
+		argsV2, err := getOrDecodeArgsV2[*RenameTableArgs](job)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-
-		args := RenameTableArgs{
-			OldSchemaID:   oldSchemaID,
-			OldSchemaName: oldSchemaName,
-			NewTableName:  newTableName,
-		}
-		return &args, nil
+		return argsV2, nil
 	}
 
-	argsV2, err := getOrDecodeArgsV2[*RenameTableArgs](job)
-	if err != nil {
-		return nil, errors.Trace(err)
+	// decode args and cache in args.
+	if len(job.Args) == 0 {
+		err := job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		job.Args = []any{oldSchemaID, newTableName, oldSchemaName}
+	} else {
+		oldSchemaID = job.Args[0].(int64)
+		newTableName = job.Args[1].(pmodel.CIStr)
+		oldSchemaName = job.Args[2].(pmodel.CIStr)
 	}
-	return argsV2, err
+
+	args := RenameTableArgs{
+		OldSchemaID:   oldSchemaID,
+		OldSchemaName: oldSchemaName,
+		NewTableName:  newTableName,
+	}
+	return &args, nil
 }
