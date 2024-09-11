@@ -64,11 +64,9 @@ func testRenameTable(
 		},
 	}
 	args := model.RenameTableArgs{
-		OldSchemaID:  oldSchemaID,
-		SchemaName:   oldSchemaName,
-		NewTableName: tblInfo.Name,
-		SchemaIDs:    []int64{oldSchemaID, newSchemaID},
-		TableIDs:     []int64{tblInfo.ID},
+		OldSchemaID:   oldSchemaID,
+		OldSchemaName: oldSchemaName,
+		NewTableName:  tblInfo.Name,
 	}
 	job.FillArgs(&args)
 

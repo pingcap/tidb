@@ -705,7 +705,7 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 	case model.ActionExchangeTablePartition, model.ActionRenameTables, model.ActionRenameTable:
 		var ids []int64
 		if job.Type == model.ActionRenameTable {
-			ids = model.GetRenameTableUniqueIDs(job, schema)
+			ids = getRenameTableUniqueIDs(job, schema)
 		} else {
 			if schema {
 				ids = job.CtxVars[0].([]int64)

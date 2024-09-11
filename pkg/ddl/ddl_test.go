@@ -206,14 +206,12 @@ func TestBuildJobDependence(t *testing.T) {
 		model.JobVersion1,
 		model.JobVersion2,
 	}
-
 	for _, ver := range vers {
-		model.SetJobVerInUse(ver)
-		testBuildJobDependence(t)
+		testBuildJobDependence(t, ver)
 	}
 }
 
-func testBuildJobDependence(t *testing.T) {
+func testBuildJobDependence(t *testing.T, jobVer model.JobVersion) {
 	store := createMockStore(t)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -226,11 +224,11 @@ func testBuildJobDependence(t *testing.T) {
 	job6 := &model.Job{ID: 6, TableID: 1, Type: model.ActionDropTable}
 	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
 	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
-	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Version: model.GetJobVerInUse()}
+	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Version: jobVer}
 	job11.FillArgs(&model.RenameTableArgs{
-		OldSchemaID:  111,
-		NewTableName: pmodel.NewCIStr("new_table_name"),
-		SchemaName:   pmodel.NewCIStr("old_db_name"),
+		OldSchemaID:   111,
+		NewTableName:  pmodel.NewCIStr("new_table_name"),
+		OldSchemaName: pmodel.NewCIStr("old_db_name"),
 	})
 
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
