@@ -158,30 +158,12 @@ func (rts *rowTableSegment) getRowNum() int {
 	return len(rts.hashValues)
 }
 
-// This function is available to be used only when `rowStartOffset` has been initialized
-// The suffix `ForSpill` in function name means that `next_row_ptr` field will be reset.
-func (rts *rowTableSegment) getRowsBytesForSpill() [][]byte {
+func (rts *rowTableSegment) getRowBytes(idx int) []byte {
 	rowNum := rts.getRowNum()
-	startPos := int64(0)
-	rows := make([][]byte, 0)
-	for idx := 0; idx < rowNum; idx++ {
-		if idx == rowNum-1 {
-			rows = append(rows, rts.rawData[startPos:])
-			continue
-		}
-
-		rowByteLen := int64(rts.rowStartOffset[idx+1] - rts.rowStartOffset[idx])
-		end := startPos + rowByteLen
-
-		// set `next_ptr_row` to nil
-		nextPtrAddr := (unsafe.Pointer)(&rts.rawData[startPos])
-		*(*unsafe.Pointer)(nextPtrAddr) = nil
-
-		rows = append(rows, rts.rawData[startPos:end])
-		startPos = end
+	if idx == rowNum-1 {
+		return rts.rawData[rts.rowStartOffset[idx]:]
 	}
-
-	return rows
+	return rts.rawData[rts.rowStartOffset[idx]:rts.rowStartOffset[idx+1]]
 }
 
 func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress taggedPtr) {

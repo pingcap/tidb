@@ -348,9 +348,10 @@ func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.
 	// Get row bytes from segment and spill them
 	for _, seg := range segments {
 		h.validJoinKeysBuffer[workerID] = h.generateSpilledValidJoinKey(seg, h.validJoinKeysBuffer[workerID])
-		rows := seg.getRowsBytesForSpill()
 
-		for i, row := range rows {
+		rowNum := seg.getRowNum()
+		for i := 0; i < rowNum; i++ {
+			row := seg.getRowBytes(i)
 			if h.tmpSpillBuildSideChunks[workerID].IsFull() {
 				err := disk.Add(h.tmpSpillBuildSideChunks[workerID])
 				if err != nil {
