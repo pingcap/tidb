@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -197,7 +198,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
 	return nil
 }
 
-func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error) {
+func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) error {
 	switch job.Type {
 	case model.ActionAddColumn:
 		col := job.Args[0].(*table.Column)
@@ -210,8 +211,11 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
 		}
 	case model.ActionDropColumn:
-		colName := job.Args[0].(pmodel.CIStr)
-		info.DropColumns = append(info.DropColumns, colName)
+		args, err := model.GetDropColumnArgs(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		info.DropColumns = append(info.DropColumns, args.ColName)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		indexName := job.Args[0].(pmodel.CIStr)
 		info.DropIndexes = append(info.DropIndexes, indexName)

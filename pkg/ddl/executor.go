@@ -3160,6 +3160,7 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3167,10 +3168,13 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionDropColumn,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{colName, spec.IfExists},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+	job.FillArgs(&model.DropColumnArgs{
+		ColName:  colName,
+		IfExists: spec.IfExists,
+	})
 
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)

@@ -231,32 +231,46 @@ func checkDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (*model.T
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	var colName pmodel.CIStr
-	var ifExists bool
-	// indexIDs is used to make sure we don't truncate args when decoding the rawArgs.
-	var indexIDs []int64
-	err = job.DecodeArgs(&colName, &ifExists, &indexIDs)
+	// to do: we should refactor the interface to get arguments, after refactor all of DDL type.
+	/*
+		the interface:
+			func (job *Job) DecodeArgs()(args any, err error){
+				// return different args with given job type in job.
+			}
+
+		the caller:
+			args, err := job.DecodeArgs()
+			if err != nil {
+				return errors.trace(err)
+			}
+
+			dropColumnArgs, ok := args.(*mode.DropColumnArgs)
+			if !ok (){
+				return error.new(...)
+			}
+	*/
+	args, err := model.GetDropColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
+	colInfo := model.FindColumnInfo(tblInfo.Columns, args.ColName.L)
 	if colInfo == nil || colInfo.Hidden {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, ifExists, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+		return nil, nil, nil, args.IfExists, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", args.ColName)
 	}
-	if err = isDroppableColumn(tblInfo, colName); err != nil {
+	if err = isDroppableColumn(tblInfo, args.ColName); err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
 	}
-	if err = checkDropColumnWithForeignKeyConstraintInOwner(jobCtx.infoCache, job, tblInfo, colName.L); err != nil {
+	if err = checkDropColumnWithForeignKeyConstraintInOwner(jobCtx.infoCache, job, tblInfo, args.ColName.L); err != nil {
 		return nil, nil, nil, false, errors.Trace(err)
 	}
-	if err = checkDropColumnWithTTLConfig(tblInfo, colName.L); err != nil {
+	if err = checkDropColumnWithTTLConfig(tblInfo, args.ColName.L); err != nil {
 		return nil, nil, nil, false, errors.Trace(err)
 	}
-	idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
+	idxInfos := listIndicesWithColumn(args.ColName.L, tblInfo.Indices)
 	return tblInfo, colInfo, idxInfos, false, nil
 }
 

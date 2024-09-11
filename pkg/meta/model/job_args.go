@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -256,4 +257,55 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 	}
 
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
+}
+
+// DropColumnArgs is the arguments of dropping column job.
+type DropColumnArgs struct {
+	ColName  model.CIStr
+	IfExists bool
+	// indexIDs is used to make sure we don't truncate args when decoding the rawArgs.
+	IndexIDs     []int64
+	PartitionIDs []int64
+}
+
+func (a *DropColumnArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.ColName, a.IfExists, a.IndexIDs, a.PartitionIDs}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+func GetDropColumnArgs(job *Job) (*DropColumnArgs, error) {
+	var (
+		colName      model.CIStr
+		ifExists     bool
+		indexIDs     []int64
+		partitionIDs []int64
+	)
+
+	if job.Version == JobVersion1 {
+		if len(job.Args) == 0 {
+			err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			job.Args = []any{colName, ifExists, indexIDs, partitionIDs}
+		} else {
+			colName = job.Args[0].(model.CIStr)
+			ifExists = job.Args[1].(bool)
+			indexIDs = job.Args[2].([]int64)
+			partitionIDs = job.Args[3].([]int64)
+		}
+
+		return &DropColumnArgs{
+			ColName:      colName,
+			IfExists:     ifExists,
+			IndexIDs:     indexIDs,
+			PartitionIDs: partitionIDs,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*DropColumnArgs](job)
 }
