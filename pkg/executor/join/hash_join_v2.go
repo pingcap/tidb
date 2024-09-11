@@ -40,25 +40,15 @@ import (
 
 var (
 	_ exec.Executor = &HashJoinV2Exec{}
-	// enableHashJoinV2 is a variable used only in test
-	enableHashJoinV2 = atomic.Bool{}
+	UseHashJoinV2 = []string{"set tidb_opt_use_hash_join_v2 = false", "set tidb_opt_use_hash_join_v2 = true"}
 )
 
-func init() {
-	enableHashJoinV2.Store(true)
-}
-
-// IsHashJoinV2Enabled return true if hash join v2 is enabled
-func IsHashJoinV2Enabled() bool {
+// IsHashJoinV2Supported return true if hash join v2 is enabled
+func IsHashJoinV2Supported() bool {
 	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
 	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
 	// change this
-	return !heapObjectsCanMove() && enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
-}
-
-// SetEnableHashJoinV2 enable/disable hash join v2
-func SetEnableHashJoinV2(enable bool) {
-	enableHashJoinV2.Store(enable)
+	return !heapObjectsCanMove() && sizeOfUintptr >= sizeOfUnsafePointer
 }
 
 type hashTableContext struct {
