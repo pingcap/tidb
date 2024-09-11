@@ -63,7 +63,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -75,7 +74,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
-const RightDeriveSplit = true
+const RightDeriveSplit = false
 
 const MetaKVBatchSize = 64 * 1024 * 1024
 const maxSplitKeysOnce = 10240
@@ -194,16 +193,22 @@ func (rc *LogClient) CollectCompactedSsts(
 		if _, ok := regionCompactedMap[i.Meta.RegionId]; !ok {
 			regionCompactedMap[i.Meta.RegionId] = make([]CompactedItem, 0, CompactedSSTSplitBatchSize)
 		}
-		// translate min key to raw key
-		_, rawMinKey, err := codec.DecodeBytes(i.Meta.MinKey, nil)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
+
+		var maxRegionKey []byte
+		for _, r := range i.RegionMetaHints {
+			if len(r.EndKey) == 0 {
+				// region end key is max end key
+				maxRegionKey = r.EndKey
+				break
+			}
+			if bytes.Compare(maxRegionKey, r.EndKey) < 0 {
+				maxRegionKey = r.EndKey
+			}
 		}
-		// translate max key to raw key
-		_, rawMaxKey, err := codec.DecodeBytes(i.Meta.MaxKey, nil)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
+		/// _, rawMaxKey, err := codec.DecodeBytes(maxRegionKey, nil)
+		/// if err != nil {
+		/// 	return 0, nil, errors.Trace(err)
+		/// }
 		sstFileCount += len(i.SstOutputs)
 
 		regionCompactedMap[i.Meta.RegionId] = append(regionCompactedMap[i.Meta.RegionId], CompactedItem{
@@ -212,8 +217,7 @@ func (rc *LogClient) CollectCompactedSsts(
 				Files:        i.SstOutputs,
 				RewriteRules: rewriteRules,
 			},
-			regionMinKey: rawMinKey,
-			regionMaxKey: rawMaxKey,
+			regionMaxKey: maxRegionKey,
 		})
 	}
 	return sstFileCount, regionCompactedMap, nil
@@ -226,45 +230,28 @@ func findSplitRanges(regionId uint64, items CompactedItems, rightDeriveSplit boo
 	splitRanges := make([]rtree.Range, 0, CompactedSSTSplitBatchSize)
 
 	keyFn := func(i CompactedItem) []byte {
-		return i.files.Files[0].EndKey
-	}
-
-	if rightDeriveSplit {
-		keyFn = func(i CompactedItem) []byte {
-			return i.files.Files[0].StartKey
-		}
+		return i.regionMaxKey
 	}
 
 	sort.Slice(items, func(i, j int) bool {
-		return bytes.Compare(keyFn(items[i]), keyFn(items[j])) < 0
+		return bytes.Compare(keyFn(items[i]), keyFn(items[j])) > 0
 	})
-
-	// remove duplicate
-	uniqeItems := make([]CompactedItem, 0)
-	uniqeItems = append(uniqeItems, items[0])
-	for i := 1; i < len(items); i++ {
-		if !bytes.Equal(keyFn(items[i]), keyFn(items[i-1])) {
-			uniqeItems = append(uniqeItems, items[i])
-		}
-	}
 
 	log.Info("find split key for region",
 		zap.Uint64("region_id", regionId),
-		zap.Int("unique_items", len(uniqeItems)),
 		zap.Int("items", len(items)))
-	for i := 0; i < len(uniqeItems); i++ {
-		// build split ranges
-		tmpRng := rtree.Range{
-			StartKey: []byte(keyFn(uniqeItems[i])),
-			EndKey:   []byte(keyFn(uniqeItems[i])),
-		}
-		// only one range in the region should split
-		rg, err := restoreutils.RewriteRange(&tmpRng, uniqeItems[i].files.RewriteRules)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		splitRanges = append(splitRanges, *rg)
+
+	// build split ranges
+	tmpRng := rtree.Range{
+		StartKey: []byte(keyFn(items[0])),
+		EndKey:   []byte(keyFn(items[0])),
 	}
+	// only one range in the region should split
+	rg, err := restoreutils.RewriteRange(&tmpRng, items[0].files.RewriteRules)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	splitRanges = append(splitRanges, *rg)
 
 	return splitRanges, nil
 }
