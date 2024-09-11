@@ -554,6 +554,12 @@ func (h *Handle) initStatsFMSketch(cache util.StatsCache) error {
 
 func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
+	unspecifiedLengthTp := types.NewFieldType(mysql.TypeBlob)
+	var (
+		hasErr        bool
+		failedTableID int64
+		failedHistID  int64
+	)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		if table == nil || table.PhysicalID != tableID {
@@ -595,6 +601,7 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 			sc.AllowInvalidDate = true
 			sc.IgnoreZeroInDate = true
 			var err error
+<<<<<<< HEAD
 			lower, err = d.ConvertTo(sc, &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
@@ -606,6 +613,38 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
 				delete(table.Columns, histID)
+=======
+			if column.Info.FieldType.EvalType() == types.ETString && column.Info.FieldType.GetType() != mysql.TypeEnum && column.Info.FieldType.GetType() != mysql.TypeSet {
+				// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
+				// original value.
+				// But there's additional conversion logic for new collation data, and the collate key might be longer than
+				// the FieldType.flen.
+				// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
+				// or "Data too long".
+				// So we change it to TypeBlob to bypass those logics here.
+				lower, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, unspecifiedLengthTp)
+			} else {
+				lower, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
+			}
+			if err != nil {
+				hasErr = true
+				failedTableID = tableID
+				failedHistID = histID
+				table.DelCol(histID)
+				continue
+			}
+			d = types.NewBytesDatum(row.GetBytes(6))
+			if column.Info.FieldType.EvalType() == types.ETString && column.Info.FieldType.GetType() != mysql.TypeEnum && column.Info.FieldType.GetType() != mysql.TypeSet {
+				upper, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, unspecifiedLengthTp)
+			} else {
+				upper, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
+			}
+			if err != nil {
+				hasErr = true
+				failedTableID = tableID
+				failedHistID = histID
+				table.DelCol(histID)
+>>>>>>> ebf31468577 (statistics: fix the error that init stats might got failure when decoding column bucket (#55685))
 				continue
 			}
 		}
@@ -613,6 +652,9 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 	}
 	if table != nil {
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
+	}
+	if hasErr {
+		logutil.BgLogger().Error("failed to convert datum for at least one histogram bucket", zap.Int64("table ID", failedTableID), zap.Int64("column ID", failedHistID))
 	}
 }
 
