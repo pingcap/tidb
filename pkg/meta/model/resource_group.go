@@ -104,7 +104,7 @@ func (p *ResourceGroupSettings) String() string {
 			if !firstParam {
 				sb.WriteString(" ")
 			}
-			fmt.Fprintf(sb, "REQUEST_UNIT=%d", p.Runaway.RequestUnit)
+			fmt.Fprintf(sb, "RU=%d", p.Runaway.RequestUnit)
 		}
 		// action settings
 		if p.Runaway.Action == model.RunawayActionSwitchGroup {

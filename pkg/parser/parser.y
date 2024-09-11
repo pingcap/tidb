@@ -722,7 +722,7 @@ import (
 	exact                 "EXACT"
 	execElapsed           "EXEC_ELAPSED"
 	processedKeys         "PROCESSED_KEYS"
-	requestUnit           "REQUEST_UNIT"
+	ru                    "RU"
 	exprPushdownBlacklist "EXPR_PUSHDOWN_BLACKLIST"
 	extract               "EXTRACT"
 	flashback             "FLASHBACK"
@@ -1853,7 +1853,7 @@ DirectResourceGroupRunawayOption:
 			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleProcessedKeys, ProcessedKeys: $3.(int64)},
 		}
 	}
-|	"REQUEST_UNIT" EqOpt intLit
+|	"RU" EqOpt intLit
 	{
 		$$ = &ast.ResourceGroupRunawayOption{
 			Tp:         model.RunawayRule,
@@ -7235,7 +7235,7 @@ NotKeywordToken:
 |	"FULL_BACKUP_STORAGE"
 |	"EXEC_ELAPSED"
 |	"PROCESSED_KEYS"
-|	"REQUEST_UNIT"
+|	"RU"
 |	"DRYRUN"
 |	"COOLDOWN"
 |	"SWITCH_GROUP"

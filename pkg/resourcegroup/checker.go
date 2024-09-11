@@ -31,6 +31,8 @@ type RunawayChecker interface {
 	BeforeCopRequest(req *tikvrpc.Request) error
 	// CheckThresholds checks TiKV error whether it exceeds the threshold.
 	CheckThresholds(ruDetail *util.RUDetails, processKeys int64, err error) error
+	// ResetTotalProcessedKeys resets the current total processed keys.
+	ResetTotalProcessedKeys()
 	// CheckAction is used to check current action of the query.
 	// It's safe to call this method concurrently.
 	CheckAction() rmpb.RunawayAction

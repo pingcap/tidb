@@ -44,6 +44,8 @@ type Checker struct {
 	deadline               time.Time
 	ruThreshold            int64
 	processedKeysThreshold int64
+	// using total processed_keys to accumulate all coprocessor tasks.
+	totalProcessedKeys int64
 	// From the group runaway settings, which will be applied when a query lacks a specified watch rule.
 	settings *rmpb.RunawaySettings
 
@@ -321,7 +323,9 @@ func (r *Checker) CheckThresholds(ruDetail *util.RUDetails, processKeys int64, e
 	if err != nil && strings.HasPrefix(err.Error(), "Coprocessor task terminated due to exceeding the deadline") {
 		checkTime = now
 	}
-	exceedCause := r.exceedsThresholds(checkTime, ruDetail, processKeys)
+	// add the processed keys to the total processed keys.
+	r.totalProcessedKeys += processKeys
+	exceedCause := r.exceedsThresholds(checkTime, ruDetail, r.totalProcessedKeys)
 	if !r.markedByRule.Load() {
 		if exceedCause != "" && r.markRunawayByIdentify(&now, exceedCause) {
 			if r.markRunawayByIdentify(&now, exceedCause) {
@@ -363,7 +367,7 @@ func (t exceedCause) String() string {
 	}
 }
 
-func (r *Checker) exceedsThresholds(now time.Time, ru *util.RUDetails, processKeys int64) string {
+func (r *Checker) exceedsThresholds(now time.Time, ru *util.RUDetails, processedKeys int64) string {
 	until := r.deadline.Sub(now)
 	if !r.deadline.IsZero() && until <= 0 {
 		return exceedCause{
@@ -381,13 +385,21 @@ func (r *Checker) exceedsThresholds(now time.Time, ru *util.RUDetails, processKe
 		}.String()
 	}
 
-	if processKeys != 0 && r.processedKeysThreshold != 0 && processKeys >= r.processedKeysThreshold {
+	if processedKeys != 0 && r.processedKeysThreshold != 0 && processedKeys >= r.processedKeysThreshold {
 		return exceedCause{
 			cause:          exceedCauseProcessKeys,
-			actualValue:    processKeys,
+			actualValue:    processedKeys,
 			thresholdValue: r.processedKeysThreshold,
 		}.String()
 	}
 
 	return ""
+}
+
+// ResetTotalProcessedKeys resets the current total processed keys.
+func (r *Checker) ResetTotalProcessedKeys() {
+	if r == nil {
+		return
+	}
+	r.totalProcessedKeys = 0
 }

@@ -3714,7 +3714,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 				if !firstParam {
 					fmt.Fprintf(limitBuilder, ", ")
 				}
-				fmt.Fprintf(limitBuilder, "REQUEST_UNIT=%d", setting.Rule.RequestUnit)
+				fmt.Fprintf(limitBuilder, "RU=%d", setting.Rule.RequestUnit)
 			}
 			// action settings
 			actionType := pmodel.RunawayActionType(setting.Action)

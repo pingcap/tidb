@@ -672,7 +672,7 @@ var tokenMap = map[string]int{
 	"REPLICA":                  replica,
 	"REPLICAS":                 replicas,
 	"REPLICATION":              replication,
-	"REQUEST_UNIT":             requestUnit,
+	"RU":                       ru,
 	"REQUIRE":                  require,
 	"REQUIRED":                 required,
 	"RESET":                    reset,

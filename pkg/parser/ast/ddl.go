@@ -2351,7 +2351,7 @@ func (n *ResourceGroupRunawayRuleOption) restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("= ")
 		ctx.WritePlainf("%d", n.ProcessedKeys)
 	case RunawayRuleRequestUnit:
-		ctx.WriteKeyWord("REQUEST_UNIT ")
+		ctx.WriteKeyWord("RU ")
 		ctx.WritePlain("= ")
 		ctx.WritePlainf("%d", n.RequestUnit)
 	}

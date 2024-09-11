@@ -879,10 +879,10 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
 		}
 	})
-	go taskSender.run(it.req.ConnID)
+	go taskSender.run(it.req.ConnID, it.req.RunawayChecker)
 }
 
-func (sender *copIteratorTaskSender) run(connID uint64) {
+func (sender *copIteratorTaskSender) run(connID uint64, checker resourcegroup.RunawayChecker) {
 	// Send tasks to feed the worker goroutines.
 	for _, t := range sender.tasks {
 		// we control the sending rate to prevent all tasks
@@ -915,6 +915,10 @@ func (sender *copIteratorTaskSender) run(connID uint64) {
 	sender.wg.Wait()
 	if sender.respChan != nil {
 		close(sender.respChan)
+	}
+	if checker != nil {
+		// runaway checker need to focus on the all processed keys of all tasks at a time.
+		checker.ResetTotalProcessedKeys()
 	}
 }
 
