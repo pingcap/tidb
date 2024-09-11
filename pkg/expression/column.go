@@ -23,14 +23,20 @@ import (
 
 	"github.com/pingcap/errors"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/size"
+)
+
+var (
+	_ base.HashEquals = &Column{}
+	_ base.HashEquals = &CorrelatedColumn{}
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -241,6 +247,31 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 	}, nil
 }
 
+// Hash64 implements HashEquals.<0th> interface.
+func (col *CorrelatedColumn) Hash64(h base.Hasher) {
+	// correlatedColumn flag here is used to distinguish correlatedColumn and Column.
+	h.HashByte(correlatedColumn)
+	col.Column.Hash64(h)
+	// since col.Datum is filled in the runtime, we can't use it to calculate hash now, correlatedColumn flag + column is enough.
+}
+
+// Equals implements HashEquals.<1st> interface.
+func (col *CorrelatedColumn) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var col2 *CorrelatedColumn
+	switch x := other.(type) {
+	case CorrelatedColumn:
+		col2 = &x
+	case *CorrelatedColumn:
+		col2 = x
+	default:
+		return false
+	}
+	return col.Column.Equals(&col2.Column)
+}
+
 // Column represents a column.
 type Column struct {
 	RetType *types.FieldType `plan-cache-clone:"shallow"`
@@ -440,6 +471,61 @@ func (col *Column) GetType(_ EvalContext) *types.FieldType {
 // GetStaticType returns the type without considering the context.
 func (col *Column) GetStaticType() *types.FieldType {
 	return col.RetType
+}
+
+// Hash64 implements HashEquals.<0th> interface.
+func (col *Column) Hash64(h base.Hasher) {
+	if col.RetType == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		col.RetType.Hash64(h)
+	}
+	h.HashInt64(col.ID)
+	h.HashInt64(col.UniqueID)
+	h.HashInt(col.Index)
+	if col.VirtualExpr == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		col.VirtualExpr.Hash64(h)
+	}
+	h.HashString(col.OrigName)
+	h.HashBool(col.IsHidden)
+	h.HashBool(col.IsPrefix)
+	h.HashBool(col.InOperand)
+	col.collationInfo.Hash64(h)
+	h.HashInt64(col.CorrelatedColUniqueID)
+}
+
+// Equals implements HashEquals.<1st> interface.
+func (col *Column) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var col2 *Column
+	switch x := other.(type) {
+	case Column:
+		col2 = &x
+	case *Column:
+		col2 = x
+	default:
+		return false
+	}
+	// when step into here, we could ensure that col1.RetType and col2.RetType are same type.
+	// and we should ensure col1.RetType and col2.RetType is not nil ourselves.
+	ok := col.RetType == nil && col2.RetType == nil || col.RetType != nil && col2.RetType != nil && col.RetType.Equal(col2.RetType)
+	ok = ok && (col.VirtualExpr == nil && col2.VirtualExpr == nil || col.VirtualExpr != nil && col2.VirtualExpr != nil && col.VirtualExpr.Equals(col2.VirtualExpr))
+	return ok &&
+		col.ID == col2.ID &&
+		col.UniqueID == col2.UniqueID &&
+		col.Index == col2.Index &&
+		col.OrigName == col2.OrigName &&
+		col.IsHidden == col2.IsHidden &&
+		col.IsPrefix == col2.IsPrefix &&
+		col.InOperand == col2.InOperand &&
+		col.collationInfo.Equals(&col2.collationInfo) &&
+		col.CorrelatedColUniqueID == col2.CorrelatedColUniqueID
 }
 
 // Traverse implements the TraverseDown interface.

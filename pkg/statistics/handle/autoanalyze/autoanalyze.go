@@ -27,7 +27,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -41,6 +42,7 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -53,6 +55,9 @@ type statsAnalyze struct {
 	statsHandle statstypes.StatsHandle
 	// sysProcTracker is used to track sys process like analyze
 	sysProcTracker sysproctrack.Tracker
+	// refresher is used to refresh the analyze job queue and analyze the highest priority tables.
+	// It is only used when auto-analyze priority queue is enabled.
+	refresher *refresher.Refresher
 }
 
 // NewStatsAnalyze creates a new StatsAnalyze.
@@ -60,7 +65,14 @@ func NewStatsAnalyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) statstypes.StatsAnalyze {
-	return &statsAnalyze{statsHandle: statsHandle, sysProcTracker: sysProcTracker}
+	// Usually, we should only create the refresher when auto-analyze priority queue is enabled.
+	// But to allow users to enable auto-analyze priority queue on the fly, we need to create the refresher here.
+	r := refresher.NewRefresher(statsHandle, sysProcTracker)
+	return &statsAnalyze{
+		statsHandle:    statsHandle,
+		sysProcTracker: sysProcTracker,
+		refresher:      r,
+	}
 }
 
 // InsertAnalyzeJob inserts the analyze job to the storage.
@@ -268,10 +280,16 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 // HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
 // It also analyzes newly created tables and newly added indexes.
 func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
-	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		analyzed = HandleAutoAnalyze(sctx, sa.statsHandle, sa.sysProcTracker)
+	if err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		analyzed = sa.handleAutoAnalyze(sctx)
+		// During the test, we need to wait for the auto analyze job to be finished.
+		if intest.InTest {
+			sa.refresher.WaitAutoAnalyzeFinishedForTest()
+		}
 		return nil
-	})
+	}); err != nil {
+		statslogutil.StatsLogger().Error("Failed to handle auto analyze", zap.Error(err))
+	}
 	return
 }
 
@@ -291,12 +309,7 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
-// HandleAutoAnalyze analyzes the newly created table or index.
-func HandleAutoAnalyze(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sysproctrack.Tracker,
-) (analyzed bool) {
+func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Error(
@@ -307,13 +320,12 @@ func HandleAutoAnalyze(
 		}
 	}()
 	if variable.EnableAutoAnalyzePriorityQueue.Load() {
-		r := refresher.NewRefresher(statsHandle, sysProcTracker)
-		err := r.RebuildTableAnalysisJobQueue()
+		err := sa.refresher.RebuildTableAnalysisJobQueue()
 		if err != nil {
 			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
 			return false
 		}
-		return r.AnalyzeHighestPriorityTables()
+		return sa.refresher.AnalyzeHighestPriorityTables()
 	}
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
@@ -327,13 +339,18 @@ func HandleAutoAnalyze(
 
 	return RandomPickOneTableAndTryAutoAnalyze(
 		sctx,
-		statsHandle,
-		sysProcTracker,
+		sa.statsHandle,
+		sa.sysProcTracker,
 		autoAnalyzeRatio,
 		pruneMode,
 		start,
 		end,
 	)
+}
+
+// Close closes the auto-analyze worker.
+func (sa *statsAnalyze) Close() {
+	sa.refresher.Close()
 }
 
 // CheckAutoAnalyzeWindow determine the time window for auto-analysis and verify if the current time falls within this range.
@@ -400,7 +417,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			continue
 		}
 
-		tbls, err := is.SchemaTableInfos(context.Background(), model.NewCIStr(db))
+		tbls, err := is.SchemaTableInfos(context.Background(), pmodel.NewCIStr(db))
 		terror.Log(err)
 		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
 		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again

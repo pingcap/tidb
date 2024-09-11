@@ -77,7 +77,10 @@ func init() {
 	base.InvalidTask = &RootTask{} // invalid if p is nil
 	expression.EvalSimpleAst = evalAstExpr
 	expression.BuildSimpleExpr = buildSimpleExpr
-	expression.DecodeKeyFromString = decodeKeyFromString
+	helper := tidbCodecFuncHelper{}
+	expression.DecodeKeyFromString = helper.decodeKeyFromString
+	expression.EncodeRecordKeyFromRow = helper.encodeHandleFromRow
+	expression.EncodeIndexKeyFromRow = helper.encodeIndexKeyFromRow
 	plannerutil.EvalAstExprWithPlanCtx = evalAstExprWithPlanCtx
 	plannerutil.RewriteAstExprWithPlanCtx = rewriteAstExprWithPlanCtx
 	DefaultDisabledLogicalRulesList = new(atomic.Value)

@@ -16,8 +16,9 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
@@ -25,7 +26,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
+func (h *ddlHandlerImpl) onExchangeAPartition(t *ddlutil.SchemaChangeEvent) error {
 	globalTableInfo, originalPartInfo,
 		originalTableInfo := t.GetExchangePartitionInfo()
 	// Note: Put all the operations in a transaction.

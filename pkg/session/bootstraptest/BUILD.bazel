@@ -14,7 +14,7 @@ go_test(
         "//pkg/ddl",
         "//pkg/kv",
         "//pkg/meta",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/server/handler",
