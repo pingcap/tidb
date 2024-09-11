@@ -3105,12 +3105,10 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `sql_digest` varchar(64) DEFAULT '' AFTER `original_sql`;", infoschema.ErrColumnExists)
 	// add column `repeats`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `repeats` int DEFAULT 1 AFTER `time`;", infoschema.ErrColumnExists)
-	// modify column `time` to `start_time` and index(time).
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `time` `start_time` TIMESTAMP NOT NULL", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries DROP INDEX `time_index`", dbterror.ErrCantDropFieldOrKey)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD INDEX time_index(start_time) COMMENT 'accelerate the speed when querying with active watch'", dbterror.ErrDupKeyName)
-	// modify column `original_sql` to `sample_sql`.
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `original_sql` `sample_sql` TEXT NOT NULL", infoschema.ErrColumnExists)
+	// rename column name from `time` to `start_time`, will auto rebuild the index.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `time` TO `start_time`")
+	// rename column `original_sql` to `sample_sql`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`")
 	// modify column type of `plan_digest`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
 }
