@@ -463,6 +463,19 @@ func RunErrMsgTest(t *testing.T, table []testErrMsgCase) {
 	}
 }
 
+func TestRecommendIndex(t *testing.T) {
+	table := []testCase{
+		{"recommend index run", true, "RECOMMEND INDEX RUN"},
+		{"recommend index run for 'select * from t where a=1'", true,
+			"RECOMMEND INDEX RUN FOR 'select * from t where a=1'"},
+		{"recommend index show", true, "RECOMMEND INDEX SHOW"},
+		{"recommend index apply 1", true, "RECOMMEND INDEX APPLY 1"},
+		{"recommend index ignore 1", true, "RECOMMEND INDEX IGNORE 1"},
+		{"recommend index set A = 1", true, "RECOMMEND INDEX SET A = 1"},
+	}
+	RunTest(t, table, false)
+}
+
 func TestAdminStmt(t *testing.T) {
 	table := []testCase{
 		{"admin show ddl;", true, "ADMIN SHOW DDL"},

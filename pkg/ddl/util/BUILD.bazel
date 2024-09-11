@@ -22,6 +22,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/table/tables",
         "//pkg/util/chunk",
+        "//pkg/util/intest",
         "//pkg/util/mock",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
@@ -43,6 +44,8 @@ go_test(
     embed = [":util"],
     flaky = True,
     deps = [
+        "//pkg/meta/model",
+        "//pkg/parser/model",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

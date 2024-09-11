@@ -193,6 +193,17 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 	globalInfoSyncer.Store(is)
 }
 
+// SetPDHttpCliForTest sets the pdhttp.Client for testing.
+// Please do not use it in the production environment.
+func SetPDHttpCliForTest(cli pdhttp.Client) func() {
+	syncer := globalInfoSyncer.Load()
+	originalCli := syncer.pdHTTPCli
+	syncer.pdHTTPCli = cli
+	return func() {
+		syncer.pdHTTPCli = originalCli
+	}
+}
+
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(
 	ctx context.Context,

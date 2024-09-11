@@ -682,6 +682,12 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
 
+	for _, alloc := range allocs.Allocs {
+		err := alloc.Transfer(dbInfo.ID, tableID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	allocs = b.buildAllocsForCreateTable(tp, dbInfo, tblInfo, allocs)
 
 	tbl, err := tableFromMeta(allocs, b.factory, tblInfo)

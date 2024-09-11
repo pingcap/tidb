@@ -2339,14 +2339,27 @@ func (n *ResourceGroupRunawayRuleOption) restore(ctx *format.RestoreCtx) error {
 // ResourceGroupRunawayActionOption is used for parsing the resource group runaway action.
 type ResourceGroupRunawayActionOption struct {
 	node
-	Type model.RunawayActionType
+	Type            model.RunawayActionType
+	SwitchGroupName model.CIStr
 }
 
 // Restore implements Node interface.
 func (n *ResourceGroupRunawayActionOption) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ACTION ")
 	ctx.WritePlain("= ")
-	ctx.WriteKeyWord(n.Type.String())
+	switch n.Type {
+	case model.RunawayActionNone, model.RunawayActionDryRun, model.RunawayActionCooldown, model.RunawayActionKill:
+		ctx.WriteKeyWord(n.Type.String())
+	case model.RunawayActionSwitchGroup:
+		switchGroup := n.SwitchGroupName.String()
+		if len(switchGroup) == 0 {
+			return errors.New("SWITCH_GROUP runaway watch action requires a non-empty group name")
+		}
+		ctx.WriteKeyWord("SWITCH_GROUP")
+		ctx.WritePlain("(")
+		ctx.WriteName(switchGroup)
+		ctx.WritePlain(")")
+	}
 	return nil
 }
 
