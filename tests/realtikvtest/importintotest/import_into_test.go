@@ -146,19 +146,28 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 	})
 	s.prepareAndUseDB("import_into")
 
-	// IMPORT INTO does not support some functions
 	s.tk.MustExec("drop table if exists t")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 	s.tk.MustExec("set @v='test'")
-	sql := fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=tidb_is_ddl_owner() FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+	// IMPORT INTO does not support column reference
+	sql := fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=a+1 FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
 		with thread=1`, gcsEndpoint)
-	err := s.tk.QueryToErr(sql)
-	require.ErrorContains(s.T(), err, "[0]can't use function at SET index 0")
+	err := s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "COLUMN reference is not supported in IMPORT INTO column assignment, index 0")
+	// IMPORT INTO does not support some functions
+	sql = fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=tidb_is_ddl_owner() FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	err = s.tk.QueryToErr(sql)
+	require.ErrorContains(s.T(), err, "FUNCTION tidb_is_ddl_owner is not supported in IMPORT INTO column assignment, index 0")
 	// IMPORT INTO does not support reading session variables which are set outside this statement
 	s.tk.MustExec("drop table if exists t")
 	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
 	s.tk.MustExec("set @v='test'")
 	sql = fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=@v FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	err = s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "column assignment cannot use variables set outside IMPORT INTO statement, index 0")
+	sql = fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=getvar('v') FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
 		with thread=1`, gcsEndpoint)
 	err = s.tk.ExecToErr(sql)
 	require.ErrorContains(s.T(), err, "column assignment cannot use variables set outside IMPORT INTO statement, index 0")

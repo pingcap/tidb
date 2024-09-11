@@ -15,10 +15,10 @@
 package ddl
 
 import (
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 )
 
-func (h *ddlHandlerImpl) onReorganizePartitions(t *util.DDLEvent) error {
+func (h *ddlHandlerImpl) onReorganizePartitions(t *ddlutil.SchemaChangeEvent) error {
 	globalTableInfo,
 		addedPartInfo,
 		droppedPartitionInfo := t.GetReorganizePartitionInfo()

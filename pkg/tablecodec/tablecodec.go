@@ -78,6 +78,17 @@ const (
 // TableSplitKeyLen is the length of key 't{table_id}' which is used for table split.
 const TableSplitKeyLen = 1 + idLen
 
+func init() {
+	// help kv package to refer the tablecodec package to resolve the kv.Key functions.
+	kv.DecodeTableIDFunc = func(key kv.Key) int64 {
+		//preCheck, avoid the noise error log.
+		if hasTablePrefix(key) && len(key) >= TableSplitKeyLen {
+			return DecodeTableID(key)
+		}
+		return 0
+	}
+}
+
 // TablePrefix returns table's prefix 't'.
 func TablePrefix() []byte {
 	return tablePrefix

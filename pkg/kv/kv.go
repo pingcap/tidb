@@ -27,10 +27,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
+	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -576,7 +579,7 @@ type Request struct {
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
 	// ResourceGroupTagger indicates the kv request task group tagger.
-	ResourceGroupTagger tikvrpc.ResourceGroupTagger
+	ResourceGroupTagger *ResourceGroupTagBuilder
 	// Paging indicates whether the request is a paging request.
 	Paging struct {
 		Enable bool
@@ -766,3 +769,76 @@ const (
 	// RCCheckTS stands for 'read consistency read with ts check'.
 	RCCheckTS
 )
+
+// ResourceGroupTagBuilder is used to build the resource group tag for a kv request.
+type ResourceGroupTagBuilder struct {
+	sqlDigest  *parser.Digest
+	planDigest *parser.Digest
+	accessKey  []byte
+}
+
+// NewResourceGroupTagBuilder creates a new ResourceGroupTagBuilder.
+func NewResourceGroupTagBuilder() *ResourceGroupTagBuilder {
+	return &ResourceGroupTagBuilder{}
+}
+
+// SetSQLDigest sets the sql digest for the request.
+func (b *ResourceGroupTagBuilder) SetSQLDigest(digest *parser.Digest) *ResourceGroupTagBuilder {
+	b.sqlDigest = digest
+	return b
+}
+
+// SetPlanDigest sets the plan digest for the request.
+func (b *ResourceGroupTagBuilder) SetPlanDigest(digest *parser.Digest) *ResourceGroupTagBuilder {
+	b.planDigest = digest
+	return b
+}
+
+// BuildProtoTagger sets the access key for the request.
+func (b *ResourceGroupTagBuilder) BuildProtoTagger() tikvrpc.ResourceGroupTagger {
+	return func(req *tikvrpc.Request) {
+		b.Build(req)
+	}
+}
+
+// EncodeTagWithKey encodes the resource group tag, returns the encoded bytes.
+func (b *ResourceGroupTagBuilder) EncodeTagWithKey(key []byte) []byte {
+	tag := &tipb.ResourceGroupTag{}
+	if b.sqlDigest != nil {
+		tag.SqlDigest = b.sqlDigest.Bytes()
+	}
+	if b.planDigest != nil {
+		tag.PlanDigest = b.planDigest.Bytes()
+	}
+	if len(key) > 0 {
+		tag.TableId = decodeTableID(key)
+		label := resourcegrouptag.GetResourceGroupLabelByKey(key)
+		tag.Label = &label
+	}
+	tagEncoded, err := tag.Marshal()
+	if err != nil {
+		return nil
+	}
+	return tagEncoded
+}
+
+// Build builds the resource group tag for the request.
+func (b *ResourceGroupTagBuilder) Build(req *tikvrpc.Request) {
+	if req == nil {
+		return
+	}
+	if encodedBytes := b.EncodeTagWithKey(resourcegrouptag.GetFirstKeyFromRequest(req)); len(encodedBytes) > 0 {
+		req.ResourceGroupTag = encodedBytes
+	}
+}
+
+// DecodeTableIDFunc is used to decode table id from key.
+var DecodeTableIDFunc func(Key) int64
+
+// avoid import cycle, not import tablecodec in kv package.
+func decodeTableID(key Key) int64 {
+	if DecodeTableIDFunc != nil {
+		return DecodeTableIDFunc(key)
+	}
+	return 0
+}
