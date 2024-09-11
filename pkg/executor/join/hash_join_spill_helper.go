@@ -34,6 +34,7 @@ import (
 )
 
 const exceedMaxSpillRoundErrInfo = "Exceed max spill round"
+const memFactorAfterSpill = 0.5
 
 type hashJoinSpillHelper struct {
 	cond         *sync.Cond
@@ -219,6 +220,13 @@ func (h *hashJoinSpillHelper) isPartitionSpilled(partID int) bool {
 }
 
 func (h *hashJoinSpillHelper) discardInDisks(inDisks [][]*chunk.DataInDiskByChunks) error {
+	// Clear previous disks
+	for _, inDisk := range h.discardedInDisk {
+		inDisk.Close()
+	}
+
+	h.discardedInDisk = h.discardedInDisk[:0]
+
 	hasNilInDisk := false
 	for _, disks := range inDisks {
 		for _, disk := range disks {
@@ -235,11 +243,14 @@ func (h *hashJoinSpillHelper) discardInDisks(inDisks [][]*chunk.DataInDiskByChun
 	return nil
 }
 
-func (h *hashJoinSpillHelper) choosePartitionsToSpill() ([]int, int64) {
+func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64) ([]int, int64) {
 	partitionNum := h.hashJoinExec.partitionNumber
 	partitionsMemoryUsage := make([]int64, partitionNum)
 	for i := 0; i < int(partitionNum); i++ {
 		partitionsMemoryUsage[i] = h.hashJoinExec.hashTableContext.getPartitionMemoryUsage(i)
+		if hashTableMemUsage != nil {
+			partitionsMemoryUsage[i] += hashTableMemUsage[i]
+		}
 	}
 
 	spilledPartitions := h.getSpilledPartitions()
@@ -256,7 +267,7 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill() ([]int, int64) {
 	bytesConsumedAfterReleased := bytesConsumed - releasedMemoryUsage
 
 	// Check if it's enough to spill existing spilled partitions
-	if float64(bytesConsumedAfterReleased) <= float64(bytesLimit)*0.8 {
+	if float64(bytesConsumedAfterReleased) <= float64(bytesLimit)*memFactorAfterSpill {
 		return spilledPartitions, releasedMemoryUsage
 	}
 
@@ -283,25 +294,12 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill() ([]int, int64) {
 		return 0
 	})
 
-	// Pick half of unspilled partitions to spill
-	spilledPartitionNum := len(unspilledPartitionsAndMemory) / 2
-	for i := 0; i < spilledPartitionNum; i++ {
-		spilledPartitions = append(spilledPartitions, unspilledPartitionsAndMemory[i].partID)
-		releasedMemoryUsage += unspilledPartitionsAndMemory[i].memoryUsage
-	}
-
-	unspilledPartitionsAndMemory = unspilledPartitionsAndMemory[spilledPartitionNum:]
-
-	bytesConsumedAfterReleased = bytesConsumed - releasedMemoryUsage
-	if float64(bytesConsumedAfterReleased) <= float64(bytesLimit)*0.8 {
-		return spilledPartitions, releasedMemoryUsage
-	}
-
 	// Choose more partitions to spill
 	for _, item := range unspilledPartitionsAndMemory {
 		spilledPartitions = append(spilledPartitions, item.partID)
 		releasedMemoryUsage += item.memoryUsage
-		if float64(bytesConsumedAfterReleased) <= float64(bytesLimit)*0.8 {
+		bytesConsumedAfterReleased -= item.memoryUsage
+		if float64(bytesConsumedAfterReleased) <= float64(bytesLimit)*memFactorAfterSpill {
 			return spilledPartitions, releasedMemoryUsage
 		}
 	}
@@ -452,7 +450,7 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 	if err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -477,7 +475,7 @@ func (h *hashJoinSpillHelper) spillRemainingRows() error {
 	return h.spillRowTableImpl(spilledPartitions, totalReleasedMemoryUsage)
 }
 
-func (h *hashJoinSpillHelper) spillRowTable() error {
+func (h *hashJoinSpillHelper) spillRowTable(hashTableMemUsage []int64) error {
 	h.setInSpilling()
 	defer h.cond.Broadcast()
 	defer h.setNotSpilled()
@@ -489,7 +487,7 @@ func (h *hashJoinSpillHelper) spillRowTable() error {
 
 	h.init()
 
-	partitionsNeedSpill, totalReleasedMemory := h.choosePartitionsToSpill()
+	partitionsNeedSpill, totalReleasedMemory := h.choosePartitionsToSpill(hashTableMemUsage)
 	return h.spillRowTableImpl(partitionsNeedSpill, totalReleasedMemory)
 }
 
@@ -511,7 +509,7 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 	if err != nil {
 		return err
 	}
-	
+
 	if lastRound+1 > h.hashJoinExec.maxSpillRound {
 		return errors.NewNoStackError(exceedMaxSpillRoundErrInfo)
 	}

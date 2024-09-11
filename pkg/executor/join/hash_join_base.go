@@ -56,7 +56,6 @@ type hashJoinCtxBase struct {
 	finished             atomic.Bool
 	IsNullEQ             []bool
 	buildFinished        chan error
-	restoreBuildFinished chan error
 	JoinType             logicalop.JoinType
 	IsNullAware          bool
 	memTracker           *memory.Tracker // track memory usage.
@@ -250,7 +249,7 @@ func checkAndSpillRowTableIfNeeded(fetcherAndWorkerSyncer *sync.WaitGroup, spill
 	if spillHelper.isSpillNeeded() {
 		// Wait for the stop of all workers
 		fetcherAndWorkerSyncer.Wait()
-		return spillHelper.spillRowTable()
+		return spillHelper.spillRowTable(nil)
 	}
 	return nil
 }

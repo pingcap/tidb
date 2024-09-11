@@ -210,14 +210,14 @@ func (htc *hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable
 // In order to avoid the allocation of hash table, we pre-calculate the memory usage in advance
 // to know which hash tables need to be created.
 func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hashJoinSpillHelper) ([]*rowTable, error) {
-	totalMemoryUsage, partitionsMemoryUsage := htc.calculateHashTableMemoryUsage(rowTables)
+	totalMemoryUsage, hashTableMemoryUsage := htc.calculateHashTableMemoryUsage(rowTables)
 
 	// Pre-consume the memory usage
 	htc.memoryTracker.Consume(totalMemoryUsage)
 
 	if spillHelper != nil && spillHelper.isSpillNeeded() {
 		spillHelper.spillTriggeredBeforeBuildingHashTableForTest = true
-		err := spillHelper.spillRowTable()
+		err := spillHelper.spillRowTable(hashTableMemoryUsage)
 		if err != nil {
 			return nil, err
 		}
@@ -228,18 +228,14 @@ func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hash
 			rowTables[partID].clearSegments()
 		}
 
-		// Some partitions have been spilled, we need to release their pre-consumed memory
-		totalReleasedMemoryUsage := int64(0)
-		for _, partID := range spilledPartition {
-			totalReleasedMemoryUsage += partitionsMemoryUsage[partID]
-		}
-
 		// Though some partitions have been spilled or are empty, their hash tables are still be created
 		// because probe rows in these partitions may access their hash tables.
 		// We need to consider these memory usage.
 		totalDefaultMemUsage := getHashTableMemoryUsage(minimalHashTableLen) * int64(len(spilledPartition))
 
-		htc.memoryTracker.Consume(totalDefaultMemUsage - totalReleasedMemoryUsage)
+		// Hash table memory usage has already been released in spill operation.
+		// So it's unnecessary to release them again.
+		htc.memoryTracker.Consume(totalDefaultMemUsage)
 	}
 
 	return rowTables, nil
@@ -827,7 +823,7 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 	if e.inRestore {
 		// Wait for the restore build
-		err := <-e.restoreBuildFinished
+		err := <-e.buildFinished
 		if err != nil {
 			return
 		}
@@ -1042,11 +1038,11 @@ func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 	defer func() {
 		close(e.joinResultCh)
-		close(e.restoreBuildFinished)
 	}()
 
 	lastRound := 0
 	for {
+		e.buildFinished = make(chan error, 1)
 		e.fetchAndBuildHashTable(ctx)
 		e.fetchAndProbeHashTable(ctx)
 
@@ -1095,8 +1091,6 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		e.initHashTableContext()
 		e.initializeForProbe()
 		e.hashTableContext.memoryTracker.AttachTo(e.memTracker)
-		e.buildFinished = make(chan error, 1)
-		e.restoreBuildFinished = make(chan error, 1)
 		go e.startBuildAndProbe(ctx)
 		e.prepared = true
 	}
@@ -1119,18 +1113,10 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 }
 
 func (e *HashJoinV2Exec) handleFetchAndBuildHashTablePanic(r any) {
-	if e.inRestore {
-		if r != nil {
-			e.restoreBuildFinished <- util.GetRecoverError(r)
-		} else {
-			e.restoreBuildFinished <- nil
-		}
-	} else {
-		if r != nil {
-			e.buildFinished <- util.GetRecoverError(r)
-		}
-		close(e.buildFinished)
+	if r != nil {
+		e.buildFinished <- util.GetRecoverError(r)
 	}
+	close(e.buildFinished)
 }
 
 // checkBalance checks whether the segment count of each partition is balanced.
@@ -1222,11 +1208,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 		wg.Wait()
 		close(errCh)
 		if err := <-errCh; err != nil {
-			if e.inRestore {
-				e.restoreBuildFinished <- err
-			} else {
-				e.buildFinished <- err
-			}
+			e.buildFinished <- err
 			return false
 		}
 		return true
