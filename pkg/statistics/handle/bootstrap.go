@@ -578,15 +578,10 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 				lower, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
 			}
 			if err != nil {
-<<<<<<< HEAD
-				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
-				delete(table.Columns, histID)
-=======
 				hasErr = true
 				failedTableID = tableID
 				failedHistID = histID
-				table.DelCol(histID)
->>>>>>> ebf31468577 (statistics: fix the error that init stats might got failure when decoding column bucket (#55685))
+				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
@@ -596,15 +591,10 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 				upper, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
 			}
 			if err != nil {
-<<<<<<< HEAD
-				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
-				delete(table.Columns, histID)
-=======
 				hasErr = true
 				failedTableID = tableID
 				failedHistID = histID
-				table.DelCol(histID)
->>>>>>> ebf31468577 (statistics: fix the error that init stats might got failure when decoding column bucket (#55685))
+				delete(table.Columns, histID)
 				continue
 			}
 		}
