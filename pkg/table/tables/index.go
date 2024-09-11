@@ -635,15 +635,12 @@ func getKeyInTxn(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, e
 	return val, nil
 }
 
-type IndexRowLayoutOption struct {
-	offsets []int
+// FetchValues implements table.Index interface.
+func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum, error) {
+	return c.fetchValues(r, vals, nil)
 }
 
-func (c *index) FetchValues(ctx table.MutateContext, r []types.Datum, vals []types.Datum) ([]types.Datum, error) {
-	return c.fetchValues(ctx, r, vals, nil)
-}
-
-func (c *index) fetchValues(ctx table.MutateContext, r []types.Datum, vals []types.Datum, opt table.IndexRowLayoutOption) ([]types.Datum, error) {
+func (c *index) fetchValues(r []types.Datum, vals []types.Datum, opt table.IndexRowLayoutOption) ([]types.Datum, error) {
 	needLength := len(c.idxInfo.Columns)
 	if vals == nil || cap(vals) < needLength {
 		vals = make([]types.Datum, needLength)

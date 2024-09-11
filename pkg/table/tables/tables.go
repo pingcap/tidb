@@ -616,7 +616,7 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			if !touched[ic.Offset] {
 				continue
 			}
-			oldVs, err := idx.FetchValues(ctx, oldData, nil)
+			oldVs, err := idx.FetchValues(oldData, nil)
 			if err != nil {
 				return err
 			}
@@ -645,7 +645,7 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if untouched && opt.SkipWriteUntouchedIndices() {
 			continue
 		}
-		newVs, err := idx.FetchValues(ctx, newData, nil)
+		newVs, err := idx.FetchValues(newData, nil)
 		if err != nil {
 			return err
 		}
@@ -1013,7 +1013,7 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		// The latter one will create a new variable that shadows the outside `indexVals` that makes `indexVals` outside
 		// always nil, and we cannot reuse it.
 		var err error
-		indexVals, err = v.FetchValues(sctx, r, indexVals)
+		indexVals, err = v.FetchValues(r, indexVals)
 		if err != nil {
 			return nil, err
 		}
@@ -1192,7 +1192,7 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	}
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
-	if opt.HasIndexesLayout() && len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
+	if !opt.HasIndexesLayout() && len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
 		// The changing column datum derived from related column should be casted here.
 		// Otherwise, the existed changing indexes will not be deleted.
 		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
@@ -1369,29 +1369,6 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 	return txn.Delete(key)
 }
 
-func (t *TableCommon) removeRowIndicesNew(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, rec []types.Datum, opt *table.RemoveRecordOpt) error {
-	for _, v := range t.DeletableIndices() {
-		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
-			continue
-		}
-		vals, err := v.(*index).fetchValues(ctx, rec, nil, opt.GetIndexLayout(v.Meta().ID))
-		if err != nil {
-			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
-			return err
-		}
-		if err = v.Delete(ctx, txn, vals, h); err != nil {
-			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
-				// If the index is not in public state, we may have not created the index,
-				// or already deleted the index, so skip ErrNotExist error.
-				logutil.BgLogger().Debug("row index not exists", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()))
-				continue
-			}
-			return err
-		}
-	}
-	return nil
-}
-
 // removeRowIndices removes all the indices of a row.
 func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, rec []types.Datum, opt *table.RemoveRecordOpt) (err error) {
 	for _, v := range t.DeletableIndices() {
@@ -1400,9 +1377,9 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 		}
 		var vals []types.Datum
 		if opt.HasIndexesLayout() {
-			vals, err = v.(*index).fetchValues(ctx, rec, nil, opt.GetIndexLayout(v.Meta().ID))
+			vals, err = v.(*index).fetchValues(rec, nil, opt.GetIndexLayout(v.Meta().ID))
 		} else {
-			vals, err = v.FetchValues(ctx, rec, nil)
+			vals, err = v.FetchValues(rec, nil)
 		}
 		if err != nil {
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))

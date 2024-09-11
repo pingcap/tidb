@@ -102,10 +102,8 @@ type Index interface {
 	// FetchValues fetched index column values in a row.
 	// Param columns is a reused buffer, if it is not nil, FetchValues will fill the index values in it,
 	// and return the buffer, if it is nil, FetchValues will allocate the buffer instead.
-	FetchValues(ctx MutateContext, row []types.Datum, columns []types.Datum) ([]types.Datum, error)
+	FetchValues(row []types.Datum, columns []types.Datum) ([]types.Datum, error)
 }
-
-type IndexRowLayoutOption []int
 
 // IndexKVGenerator generates kv for an index.
 // It could be also used for generating multi-value indexes.

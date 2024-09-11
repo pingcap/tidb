@@ -231,9 +231,6 @@ func (*reorgTableMutateContext) GetExchangePartitionDMLSupport() (tbctx.Exchange
 	return nil, false
 }
 
-// SetExtraInfo implements table.MutateContext.SetExtraInfo.
-func (*reorgTableMutateContext) ResetExtraInfo() {}
-
 // newReorgTableMutateContext creates a new table.MutateContext for reorganization.
 func newReorgTableMutateContext(exprCtx exprctx.ExprContext) table.MutateContext {
 	rowEncoder := &rowcodec.Encoder{
