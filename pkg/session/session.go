@@ -3577,7 +3577,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 			Handle: dom.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(ses[9], pm)
-		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest && !intest.EnableAssert {
+		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest {
 			failToLoadOrParseSQLFile = true
 		}
 	}
