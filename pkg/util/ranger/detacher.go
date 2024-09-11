@@ -975,6 +975,7 @@ type DetachRangeResult struct {
 	// EqOrInCount is the number of equal/in conditions extracted.
 	EqOrInCount int
 	// IsDNFCond indicates if the top layer of conditions are in DNF.
+	// Please see comments of planner/util/AccessPath.MinAccessCondsForDNFCond for more details.
 	IsDNFCond                bool
 	MinAccessCondsForDNFCond int
 }
@@ -1040,8 +1041,8 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 	}
 	if len(d.allConds) == 1 {
 		if sf, ok := d.allConds[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
-			ranges, accesses, columnValues, hasResidual, minAccessConds, err := d.detachDNFCondAndBuildRangeForIndex(
-				sf, newTpSlice)
+			ranges, accesses, columnValues, hasResidual, minAccessConds, err :=
+				d.detachDNFCondAndBuildRangeForIndex(sf, newTpSlice)
 			if err != nil {
 				return res, errors.Trace(err)
 			}

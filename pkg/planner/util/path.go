@@ -73,6 +73,11 @@ type AccessPath struct {
 
 	StoreType kv.StoreType
 
+	// If the top level of the filters is an OR list, IsDNFCond is true.
+	// In this case, MinAccessCondsForDNFCond will record the minimum number of access conditions among all DNF items.
+	// For example, if the filter is (a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7),
+	// for index (a) or index (b), MinAccessCondsForDNFCond will be 1;
+	// for index (a, b, c), MinAccessCondsForDNFCond will be 2.
 	IsDNFCond                bool
 	MinAccessCondsForDNFCond int
 
