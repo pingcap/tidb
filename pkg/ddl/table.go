@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -123,7 +123,7 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver in
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
-			dropTableEvent := util.NewDropTableEvent(tblInfo)
+			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
 			asyncNotifyEvent(jobCtx, dropTableEvent, job)
 		}
 	default:
@@ -570,7 +570,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	truncateTableEvent := util.NewTruncateTableEvent(tblInfo, oldTblInfo)
+	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
 	asyncNotifyEvent(jobCtx, truncateTableEvent, job)
 	// see truncateTableByReassignPartitionIDs for why they might change.
 	args.OldPartitionIDs = oldPartitionIDs
