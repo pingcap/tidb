@@ -102,7 +102,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, op
 		return errRes
 	}
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
-	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+	if ctx.Value(util.RUDetailsCtxKey) == nil {
+		ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+	}
 	if sessionMemTracker != nil && enabledRateLimitAction {
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
