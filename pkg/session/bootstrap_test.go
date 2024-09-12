@@ -2449,6 +2449,4 @@ func TestTiDBUpgradeToVer212(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 	// the columns are changed automatically
 	MustExec(t, seCurVer, "select sample_sql, start_time, plan_digest from mysql.tidb_runaway_queries")
-
-	dom.Close()
 }
