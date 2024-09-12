@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -880,9 +881,6 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	if err == nil {
 		return nil
 	}
-<<<<<<< HEAD
-	if sc.IgnoreTruncate {
-=======
 
 	err = errors.Cause(err)
 	if e, ok := err.(*errors.Error); !ok ||
@@ -899,8 +897,7 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 		return err
 	}
 
-	if sc.IgnoreTruncate.Load() {
->>>>>>> 4f2ef40a0fe (*: fix warning message when to meet strconv.ErrSyntax (#43358))
+	if sc.IgnoreTruncate {
 		return nil
 	}
 	if sc.TruncateAsWarning {
