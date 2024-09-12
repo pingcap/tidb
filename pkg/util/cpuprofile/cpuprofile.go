@@ -29,7 +29,7 @@ import (
 )
 
 // DefProfileDuration exports for testing.
-var DefProfileDuration = 1000 * time.Millisecond
+var DefProfileDuration = 100 * time.Millisecond
 
 // globalCPUProfiler is the global CPU profiler.
 var globalCPUProfiler = newParallelCPUProfiler()
