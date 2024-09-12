@@ -1133,11 +1133,14 @@ const (
 	// version 213
 	//   create `mysql.tidb_pitr_id_map` table
 	version213 = 213
+
+	// version214 add global variables for password validation
+	version214 = 214
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version213
+var currentBootstrapVersion int64 = version214
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -3139,6 +3142,22 @@ func upgradeToVer213(s sessiontypes.Session, ver int64) {
 	}
 
 	mustExecute(s, CreatePITRIDMap)
+}
+
+func upgradeToVer214(s sessiontypes.Session, ver int64) {
+	if ver >= version214 {
+		return
+	}
+	mustExecute(s, "DELETE FROM mysql.global_variables where VARIABLE_NAME like 'validate_password_%'")
+
+	initGlobalVariableIfNotExists(s, variable.ValidatePasswordCheckUserName, variable.On)
+	initGlobalVariableIfNotExists(s, variable.ValidatePasswordSpecialCharCount, "1")
+	initGlobalVariableIfNotExists(s, variable.ValidatePasswordLength, "8")
+	initGlobalVariableIfNotExists(s, variable.ValidatePasswordNumberCount, "1")
+	initGlobalVariableIfNotExists(s, variable.ValidatePasswordMixedCaseCount, "1")
+	initGlobalVariableIfNotExists(s, variable.ValidatePasswordPolicy, "MEDIUM")
+	initGlobalVariableIfNotExists(s, variable.ValidatePasswordEnable, variable.Off)
+	initGlobalVariableIfNotExists(s, variable.ValidatePasswordDictionary, "")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
