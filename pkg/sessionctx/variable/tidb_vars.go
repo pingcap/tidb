@@ -958,8 +958,8 @@ const (
 	// TiDBOptEnableHashJoin indicates whether to enable hash join.
 	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
 
-	// TiDBOptUseHashJoinV2 indicates whether to enable hash join v2.
-	TiDBOptUseHashJoinV2 = "tidb_opt_use_hash_join_v2"
+	// TiDBHashJoinUseImplV2 indicates whether to use hash join implementation v2.
+	TiDBHashJoinUseImplV2 = "tidb_hash_join_use_impl_v2"
 
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
@@ -1542,7 +1542,7 @@ const (
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
-	DefTiDBOptEnableHashJoinV2                        = true
+	DefTiDBHashJoinUseImplV2                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0

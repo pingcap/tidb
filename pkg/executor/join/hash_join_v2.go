@@ -41,14 +41,14 @@ import (
 var (
 	_ exec.Executor = &HashJoinV2Exec{}
 	// EnableHashJoinV2 enable hash join v2, used for test
-	EnableHashJoinV2 = "set tidb_opt_use_hash_join_v2 = true"
+	EnableHashJoinV2 = "set tidb_hash_join_use_impl_v2 = true"
 	// DisableHashJoinV2 disable hash join v2, used for test
-	DisableHashJoinV2 = "set tidb_opt_use_hash_join_v2 = false"
+	DisableHashJoinV2 = "set tidb_hash_join_use_impl_v2 = false"
 	// UseHashJoinV2 is used for test
 	UseHashJoinV2 = []string{DisableHashJoinV2, EnableHashJoinV2}
 )
 
-// IsHashJoinV2Supported return true if hash join v2 is supported
+// IsHashJoinV2Supported return true if hash join v2 is supported in current env
 func IsHashJoinV2Supported() bool {
 	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
 	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
