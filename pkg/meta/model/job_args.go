@@ -290,15 +290,17 @@ func (a *ModifyColumnArgs) fillJob(job *Job) {
 		job.Args = []any{&a.NewCol, a.OldColName, a.Pos, a.ModifyColumnTp,
 			a.UpdatedAutoRandomBits, a.ChangingCol, a.ChangingIdxs, a.RemovedIdxs}
 		job.CtxVars = []any{a.NeedChangeColData}
+	} else {
+		job.Args = []any{a}
 	}
-	job.Args = []any{a}
 }
 
 func (a *ModifyColumnArgs) fillFinishedJob(job *Job) {
 	if job.Version <= JobVersion1 {
 		job.Args = []any{a.IndexIDs, a.PartitionIDs}
+	} else {
+		job.Args = []any{a}
 	}
-	job.Args = []any{a}
 }
 
 // GetModifyColumnArgs gets the args for modifying column job.
@@ -324,8 +326,8 @@ func getModifyColumnArgs(job *Job, argsOfFinished bool) (*ModifyColumnArgs, erro
 			}, nil
 		}
 
-		// not argsOfFinished
-		return &ModifyColumnArgs{
+		// for argsOfFinished = false.
+		args := &ModifyColumnArgs{
 			ModifyingColInfo: &ModifyingColInfo{
 				NewCol:                *job.Args[0].(**ColumnInfo),
 				OldColName:            job.Args[1].(model.CIStr),
@@ -336,7 +338,11 @@ func getModifyColumnArgs(job *Job, argsOfFinished bool) (*ModifyColumnArgs, erro
 				ChangingIdxs:          job.Args[6].([]*IndexInfo),
 				RemovedIdxs:           job.Args[7].([]int64),
 			},
-		}, nil
+		}
+		if len(job.CtxVars) > 0 {
+			args.NeedChangeColData = job.CtxVars[0].(bool)
+		}
+		return args, nil
 	}
 
 	// for job version2
@@ -355,6 +361,9 @@ func decodeModifyColumnArgs(job *Job, argsOfFinished bool) (*ModifyColumnArgs, e
 			if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
 				return nil, errors.Trace(err)
 			}
+			// cache the args after decode
+			job.Args = []any{indexIDs, partitionIDs}
+
 			return &ModifyColumnArgs{
 				IndexIDs:     indexIDs,
 				PartitionIDs: partitionIDs,
@@ -366,6 +375,12 @@ func decodeModifyColumnArgs(job *Job, argsOfFinished bool) (*ModifyColumnArgs, e
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+
+			// cache the args after decode.
+			job.Args = []any{&modifyInfo.NewCol, modifyInfo.OldColName, modifyInfo.Pos,
+				modifyInfo.ModifyColumnTp, modifyInfo.UpdatedAutoRandomBits,
+				modifyInfo.ChangingCol, modifyInfo.ChangingIdxs, modifyInfo.RemovedIdxs}
+
 			return &ModifyColumnArgs{
 				ModifyingColInfo: &modifyInfo,
 			}, nil
