@@ -612,7 +612,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 	analyzedMap.InsertCol(1, nil, true)
 	analyzedMap.InsertCol(2, nil, true)
 	analyzedMap.InsertIndex(1, nil, true)
-	histColl := statistics.NewHistColl(1, false, 0, 0, 2, 1)
+	histColl := statistics.NewHistColl(1, false, 1000, 10000, 2, 0)
 	histColl.SetCol(1, &statistics.Column{})
 	histColl.SetCol(2, &statistics.Column{})
 	tests := []struct {
