@@ -347,7 +347,7 @@ func CreateTableAnalysisJob(
 	statistics.CheckAnalyzeVerOnTable(tblStats, &tableStatsVer)
 
 	changePercentage := CalculateChangePercentage(tblStats, autoAnalyzeRatio)
-	tableSize := calculateTableSize(tblInfo, tblStats)
+	tableSize := calculateTableSize(tblStats)
 	lastAnalysisDuration := GetTableLastAnalyzeDuration(tblStats, currentTs)
 	indexes := CheckIndexesNeedAnalyze(tblInfo, tblStats)
 
@@ -391,7 +391,7 @@ func CreateStaticPartitionAnalysisJob(
 	statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
 
 	changePercentage := CalculateChangePercentage(partitionStats, autoAnalyzeRatio)
-	tableSize := calculateTableSize(globalTblInfo, partitionStats)
+	tableSize := calculateTableSize(partitionStats)
 	lastAnalysisDuration := GetTableLastAnalyzeDuration(partitionStats, currentTs)
 	indexes := CheckIndexesNeedAnalyze(globalTblInfo, partitionStats)
 
@@ -448,12 +448,10 @@ func CalculateChangePercentage(
 }
 
 func calculateTableSize(
-	tblInfo *model.TableInfo,
 	tblStats *statistics.Table,
 ) float64 {
 	tblCnt := float64(tblStats.RealtimeCount)
-	// TODO: Ignore unanalyzable columns.
-	colCnt := float64(len(tblInfo.Columns))
+	colCnt := float64(tblStats.ColNum())
 
 	return tblCnt * colCnt
 }
