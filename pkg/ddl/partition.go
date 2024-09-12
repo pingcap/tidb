@@ -449,8 +449,8 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 				return needWait, errors.Trace(err)
 			}
 			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, regionState.Meta.Peers)
-			failpoint.Inject("ForceTiflashNotAvailable", func(v failpoint.Value) {
-				tiflashPeerAtLeastOne = v.(bool)
+			failpoint.Inject("ForceTiflashNotAvailable", func(val failpoint.Value) {
+				tiflashPeerAtLeastOne = val.(bool)
 			})
 			// It's unnecessary to wait all tiflash peer to be replicated.
 			// Here only make sure that tiflash peer count > 0 (at least one).
@@ -2459,6 +2459,10 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		return ver, errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
+	if job.IsRollingback() {
+		return convertTruncateTablePartitionJob2RollbackJob(jobCtx, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
+	}
+
 	failpoint.Inject("truncatePartCancel1", func(val failpoint.Value) {
 		if val.(bool) {
 			job.State = model.JobStateCancelled
@@ -2503,6 +2507,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
 		// continue after job.SchemaState switch!
 	case model.StateWriteOnly:
+		// We can still rollback here, since we have not yet started to write to the new partitions!
 		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(job, t, tblInfo, oldIDs, newIDs)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -2510,6 +2515,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
 		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
 			if val.(bool) {
+				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
 				err = errors.New("Injected error by truncatePartFail1")
 				failpoint.Return(ver, err)
 			}
@@ -2542,6 +2548,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		}
 		failpoint.Inject("truncatePartFail2", func(val failpoint.Value) {
 			if val.(bool) {
+				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
 				err = errors.New("Injected error by truncatePartFail2")
 				failpoint.Return(ver, err)
 			}
@@ -2566,6 +2573,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 
 	failpoint.Inject("truncatePartFail3", func(val failpoint.Value) {
 		if val.(bool) {
+			job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
 			err = errors.New("Injected error by truncatePartFail3")
 			failpoint.Return(ver, err)
 		}

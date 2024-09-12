@@ -5,8 +5,10 @@ go_test(
     timeout = "short",
     srcs = [
         "db_partition_test.go",
+        "error_injection_test.go",
         "main_test.go",
         "multi_domain_test.go",
+        "reorg_partition_test.go",
     ],
     flaky = True,
     shard_count = 50,
@@ -39,6 +41,7 @@ go_test(
         "//pkg/util/codec",
         "//pkg/util/dbterror",
         "//pkg/util/logutil",
+        "//pkg/util/mathutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",

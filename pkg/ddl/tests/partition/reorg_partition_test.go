@@ -97,7 +97,7 @@ ROW:
 	}
 }
 
-func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable table.PhysicalTable) allTableData {
+func getAllDataForTableID(t *testing.T, ctx sessionctx.Context, tableID int64) allTableData {
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -111,8 +111,7 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 		vals: make([][]byte, 0),
 		tp:   make([]string, 0),
 	}
-	pid := physTable.GetPhysicalID()
-	prefix := tablecodec.EncodeTablePrefix(pid)
+	prefix := tablecodec.EncodeTablePrefix(tableID)
 	it, err := txn.Iter(prefix, nil)
 	require.NoError(t, err)
 	for it.Valid() {
@@ -124,7 +123,7 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 		if tablecodec.IsRecordKey(it.Key()) {
 			all.tp = append(all.tp, "Record")
 			tblID, kv, _ := tablecodec.DecodeRecordKey(it.Key())
-			require.Equal(t, pid, tblID)
+			require.Equal(t, tableID, tblID)
 			vals, _ := tablecodec.DecodeValuesBytesToStrings(it.Value())
 			logutil.DDLLogger().Info("Record",
 				zap.Int64("pid", tblID),
@@ -444,7 +443,7 @@ func getNumRowsFromPartitionDefs(t *testing.T, tk *testkit.TestKit, tbl table.Ta
 	require.NotNil(t, pt)
 	cnt := 0
 	for _, def := range defs {
-		data := getAllDataForPhysicalTable(t, ctx, pt.GetPartition(def.ID))
+		data := getAllDataForTableID(t, ctx, def.ID)
 		require.True(t, len(data.keys) == len(data.vals))
 		require.True(t, len(data.keys) == len(data.tp))
 		for _, s := range data.tp {

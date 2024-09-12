@@ -334,6 +334,50 @@ func rollingbackExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 	return ver, errors.Trace(err)
 }
 
+func rollingbackTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	return convertTruncateTablePartitionJob2RollbackJob(jobCtx, t, job, dbterror.ErrCancelledDDLJob, tblInfo)
+}
+
+func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, t *meta.Meta, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
+	okToConvert := false
+	if job.SchemaState == model.StatePublic {
+		okToConvert = true
+	}
+	if !okToConvert && job.SchemaState == model.StateWriteOnly {
+		for _, idx := range tblInfo.Indices {
+			if idx.Global {
+				okToConvert = true
+				break
+			}
+		}
+	}
+	// Set to cancelled, to prevent any attemtps on cleanup like delete_range etc.
+	job.State = model.JobStateCancelled
+	if !okToConvert {
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", tblInfo.Partition.DDLState)
+	}
+	// Have not yet allowed writes to new partitions
+	tblInfo.Partition.NewPartitionIDs = nil
+	tblInfo.Partition.DDLAction = model.ActionNone
+	tblInfo.Partition.DDLState = model.StateNone
+	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateRollbackDone
+	return ver, errors.Trace(otherwiseErr)
+}
+
 func convertAddTablePartitionJob2RollbackJob(jobCtx *jobContext, t *meta.Meta, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
 	addingDefinitions := tblInfo.Partition.AddingDefinitions
 	partNames := make([]string, 0, len(addingDefinitions))
@@ -504,8 +548,10 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, t *meta.Meta, job *mo
 		ver, err = rollingbackTruncateTable(t, job)
 	case model.ActionModifyColumn:
 		ver, err = rollingbackModifyColumn(w, jobCtx, t, job)
-	case model.ActionDropForeignKey, model.ActionTruncateTablePartition:
+	case model.ActionDropForeignKey:
 		ver, err = cancelOnlyNotHandledJob(job, model.StatePublic)
+	case model.ActionTruncateTablePartition:
+		ver, err = rollingbackTruncateTablePartition(jobCtx, t, job)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
 		model.ActionRenameTable, model.ActionRenameTables,
 		model.ActionModifyTableCharsetAndCollate,
