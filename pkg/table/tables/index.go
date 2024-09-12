@@ -637,28 +637,28 @@ func getKeyInTxn(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, e
 
 // FetchValues implements table.Index interface.
 func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum, error) {
-	return c.fetchValues(r, vals, nil)
+	return fetchIndexRow(c.idxInfo, r, vals, nil)
 }
 
-func (c *index) fetchValues(r []types.Datum, vals []types.Datum, opt table.IndexRowLayoutOption) ([]types.Datum, error) {
-	needLength := len(c.idxInfo.Columns)
+func fetchIndexRow(idxInfo *model.IndexInfo, r, vals []types.Datum, opt table.IndexRowLayoutOption) ([]types.Datum, error) {
+	needLength := len(idxInfo.Columns)
 	if vals == nil || cap(vals) < needLength {
 		vals = make([]types.Datum, needLength)
 	}
 	vals = vals[:needLength]
 	// If the context has extra info, use the extra layout info to get index columns.
 	if opt != nil {
-		intest.Assert(len(opt) == len(c.idxInfo.Columns), fmt.Sprintf("offsets length is not equal to index columns length, offset len: %v, index len: %v", len(opt), len(c.idxInfo.Columns)))
+		intest.Assert(len(opt) == len(idxInfo.Columns), fmt.Sprintf("offsets length is not equal to index columns length, offset len: %v, index len: %v", len(opt), len(idxInfo.Columns)))
 		for i, offset := range opt {
 			if offset < 0 || offset > len(r) {
-				return nil, table.ErrIndexOutBound.GenWithStackByArgs(c.idxInfo.Name, offset, r)
+				return nil, table.ErrIndexOutBound.GenWithStackByArgs(idxInfo.Name, offset, r)
 			}
 			vals[i] = r[offset]
 		}
 		return vals, nil
 	}
 	// Otherwise use the full column layout.
-	for i, ic := range c.idxInfo.Columns {
+	for i, ic := range idxInfo.Columns {
 		if ic.Offset < 0 || ic.Offset >= len(r) {
 			return nil, table.ErrIndexOutBound.GenWithStackByArgs(ic.Name, ic.Offset, r)
 		}

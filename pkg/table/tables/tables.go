@@ -1195,6 +1195,7 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	// DELETE will use deletable columns, which is the same as the full columns of the table.
 	// INSERT and UPDATE will only use the wrtiable columns. So they will not see column under MOIDFY/CHANGE state.
 	// This if block is for for the INSERT and UPDATE.
+	// And, only DELETE will make opt.HasIndexesLayout() to be true currently.
 	if !opt.HasIndexesLayout() && len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
 		// The changing column datum derived from related column should be casted here.
 		// Otherwise, the existed changing indexes will not be deleted.
@@ -1380,7 +1381,7 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 		}
 		var vals []types.Datum
 		if opt.HasIndexesLayout() {
-			vals, err = v.(*index).fetchValues(rec, nil, opt.GetIndexLayout(v.Meta().ID))
+			vals, err = fetchIndexRow(v.Meta(), rec, nil, opt.GetIndexLayout(v.Meta().ID))
 		} else {
 			vals, err = v.FetchValues(rec, nil)
 		}

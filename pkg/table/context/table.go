@@ -130,7 +130,6 @@ type MutateContext interface {
 	// which is a buffer for table related structures that aims to reuse memory and
 	// saves allocation.
 	GetMutateBuffers() *MutateBuffers
-
 	// GetRowIDShardGenerator returns the `RowIDShardGenerator` object to shard rows.
 	GetRowIDShardGenerator() *variable.RowIDShardGenerator
 	// GetReservedRowIDAlloc returns the `ReservedRowIDAlloc` object to allocate row id from reservation.

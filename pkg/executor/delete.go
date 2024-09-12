@@ -86,8 +86,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		colPosInfo    *plannercore.TblColPosInfo
 		rowCount      int
 	)
-	for i := range e.tblColPosInfos {
-		info := e.tblColPosInfos[i]
+	for _, info := range e.tblColPosInfos {
 		tbl = e.tblID2Table[info.TblID]
 		colPosInfo = &info
 		handleCols = info.HandleCols
