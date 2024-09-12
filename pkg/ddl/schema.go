@@ -29,17 +29,17 @@ import (
 
 func onCreateSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
-	dbInfo := &model.DBInfo{}
-	if err := job.DecodeArgs(dbInfo); err != nil {
+	args, err := model.GetCreateSchemaArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
+	dbInfo := args.DBInfo
 	dbInfo.ID = schemaID
 	dbInfo.State = model.StateNone
 
-	err := checkSchemaNotExists(jobCtx.infoCache, schemaID, dbInfo)
+	err = checkSchemaNotExists(jobCtx.infoCache, schemaID, dbInfo)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) {
 			// The database already exists, can't create it, we should cancel this job now.
@@ -86,8 +86,8 @@ func checkSchemaNotExists(infoCache *infoschema.InfoCache, schemaID int64, dbInf
 }
 
 func onModifySchemaCharsetAndCollate(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var toCharset, toCollate string
-	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -97,13 +97,13 @@ func onModifySchemaCharsetAndCollate(jobCtx *jobContext, t *meta.Meta, job *mode
 		return ver, errors.Trace(err)
 	}
 
-	if dbInfo.Charset == toCharset && dbInfo.Collate == toCollate {
+	if dbInfo.Charset == args.ToCharset && dbInfo.Collate == args.ToCollate {
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 		return ver, nil
 	}
 
-	dbInfo.Charset = toCharset
-	dbInfo.Collate = toCollate
+	dbInfo.Charset = args.ToCharset
+	dbInfo.Collate = args.ToCollate
 
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
@@ -116,12 +116,13 @@ func onModifySchemaCharsetAndCollate(jobCtx *jobContext, t *meta.Meta, job *mode
 }
 
 func onModifySchemaDefaultPlacement(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var placementPolicyRef *model.PolicyRefInfo
-	if err := job.DecodeArgs(&placementPolicyRef); err != nil {
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
+	placementPolicyRef := args.PolicyRef
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -210,14 +211,15 @@ func onDropSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		// we only drop meta key of database, but not drop tables' meta keys.
 		if err = t.DropDatabase(dbInfo.ID); err != nil {
 			break
 		}
 
 		// Finish this job.
-		if len(tables) > 0 {
-			job.Args = append(job.Args, getIDs(tables))
-		}
+		job.FillFinishedArgs(&model.DropSchemaArgs{
+			AllDroppedTableIDs: getIDs(tables),
+		})
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, dbInfo)
 	default:
 		// We can't enter here.

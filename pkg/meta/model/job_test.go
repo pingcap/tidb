@@ -407,7 +407,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.ToProxyJob()
 `
 	job := Job{}
-	require.Equal(t, 440, int(unsafe.Sizeof(job)), msg)
+	require.Equal(t, 400, int(unsafe.Sizeof(job)), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {
@@ -527,17 +527,17 @@ func TestJobEncodeV2(t *testing.T) {
 	j := &Job{
 		Version: JobVersion2,
 		Type:    ActionTruncateTable,
-		ArgsV2: &TruncateTableArgs{
+		Args: []any{&TruncateTableArgs{
 			FKCheck: true,
-		},
+		}},
 	}
 	_, err := j.Encode(false)
 	require.NoError(t, err)
-	require.Nil(t, j.RawArgsV2)
+	require.Nil(t, j.RawArgs)
 	_, err = j.Encode(true)
 	require.NoError(t, err)
-	require.NotNil(t, j.RawArgsV2)
+	require.NotNil(t, j.RawArgs)
 	args := &TruncateTableArgs{}
-	require.NoError(t, json.Unmarshal(j.RawArgsV2, args))
-	require.EqualValues(t, j.ArgsV2, args)
+	require.NoError(t, json.Unmarshal(j.RawArgs, args))
+	require.EqualValues(t, j.Args[0], args)
 }

@@ -523,7 +523,7 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 				partCount := jobW.Args[3].(int)
 				count += 1 + partCount
 			} else {
-				count += 1 + len(jobW.ArgsV2.(*model.TruncateTableArgs).OldPartitionIDs)
+				count += 1 + len(jobW.Args[0].(*model.TruncateTableArgs).OldPartitionIDs)
 			}
 		}
 	}
@@ -550,7 +550,12 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 				}
 			}
 		case model.ActionCreateSchema:
-			dbInfo := jobW.Args[0].(*model.DBInfo)
+			var dbInfo *model.DBInfo
+			if jobW.Version == model.JobVersion1 {
+				dbInfo = jobW.Args[0].(*model.DBInfo)
+			} else {
+				dbInfo = jobW.Args[0].(*model.CreateSchemaArgs).DBInfo
+			}
 			if !jobW.IDAllocated {
 				dbInfo.ID = alloc.next()
 			}
@@ -603,7 +608,7 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 					}
 					jobW.Args[2] = partIDs
 				} else {
-					args := jobW.ArgsV2.(*model.TruncateTableArgs)
+					args := jobW.Args[0].(*model.TruncateTableArgs)
 					args.NewTableID = alloc.next()
 					partIDs := make([]int64, len(args.OldPartitionIDs))
 					for i := range partIDs {

@@ -33,10 +33,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -767,6 +769,52 @@ func TestTableNameExtract(t *testing.T) {
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
+}
+
+func TestNameExtractFromJob(t *testing.T) {
+	type extractTestCase struct {
+		schemaName string
+		tableName  string
+	}
+
+	var job model.Job
+	// Inject some table_name and schema_name into other fields of json
+	job.Error = dbterror.ClassDDL.Synthesize(terror.CodeUnknown, `test error, "table_name":"aaa", "schema_name":"bbb"`)
+	job.Warning = dbterror.ClassDDL.Synthesize(terror.CodeUnknown, `test warning, "table_name":"ccc", "schema_name":"ddd"`)
+	job.Query = `create table test.t1(id int) comment 'create table, table_name:"eee", schema_name:"fff"'`
+
+	var testCases = []extractTestCase{
+		// Normal string
+		{"", "schema_name"},
+		{"table_name", ""},
+		// String with quota
+		{`"quota_schema_name"`, `"quota_table_name"`},
+		{`"single_quota`, `""triple_quota"`},
+		{"\"schema_name\"", "\"table_name\""},
+		// String with slash
+		{"\\", "\\\\"},
+		// Unicode
+		{"中文1", "中文2"},
+		{"😋", "😭"},
+		// Other interpunction
+		{"comma,1", "dot.3"},
+		// Put it together
+		{`"combine:\\\",你好\\`, `"schema_name:1️⃣","table_name:2️⃣"`},
+	}
+
+	for _, tc := range testCases {
+		job.SchemaName = tc.schemaName
+		job.TableName = tc.tableName
+
+		b, err := job.Encode(true)
+		require.NoError(t, err)
+
+		schemaName, tableName, err := meta.ExtractSchemaAndTableNameFromJob(b)
+		require.NoError(t, err)
+
+		require.Equal(t, tc.schemaName, schemaName)
+		require.Equal(t, tc.tableName, tableName)
+	}
 }
 
 var benchCases = [][2]string{

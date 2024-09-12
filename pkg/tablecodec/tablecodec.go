@@ -78,6 +78,17 @@ const (
 // TableSplitKeyLen is the length of key 't{table_id}' which is used for table split.
 const TableSplitKeyLen = 1 + idLen
 
+func init() {
+	// help kv package to refer the tablecodec package to resolve the kv.Key functions.
+	kv.DecodeTableIDFunc = func(key kv.Key) int64 {
+		//preCheck, avoid the noise error log.
+		if hasTablePrefix(key) && len(key) >= TableSplitKeyLen {
+			return DecodeTableID(key)
+		}
+		return 0
+	}
+}
+
 // TablePrefix returns table's prefix 't'.
 func TablePrefix() []byte {
 	return tablePrefix
@@ -956,9 +967,13 @@ func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, column
 
 // DecodeIndexHandle uses to decode the handle from index key/value.
 func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
-	_, b, err := CutIndexKeyNew(key, colsLen)
-	if err != nil {
-		return nil, errors.Trace(err)
+	var err error
+	b := key[prefixLen+idLen:]
+	for i := 0; i < colsLen; i++ {
+		_, b, err = codec.CutOne(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	if len(b) > 0 {
 		return decodeHandleInIndexKey(b)
