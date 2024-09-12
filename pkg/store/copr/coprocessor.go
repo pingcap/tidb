@@ -182,15 +182,14 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		return nil, copErrorResponse{err}
 	}
 	if req.StartTs == 0 {
-		if req.LazyStartTs != nil {
-			startTS, err := req.LazyStartTs(len(tasks) <= 1)
-			if err != nil {
-				return nil, copErrorResponse{err}
-			}
-			req.StartTs = startTS
-		} else {
+		if req.LazyStartTs == nil {
 			return nil, copErrorResponse{errors.New("unexpected req, since req.StartTs is 0")}
 		}
+		startTS, err := req.LazyStartTs(len(tasks) <= 1)
+		if err != nil {
+			return nil, copErrorResponse{err}
+		}
+		req.StartTs = startTS
 	}
 	it := &copIterator{
 		store:            c.store,
