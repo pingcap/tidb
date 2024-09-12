@@ -26,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -92,17 +90,11 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 				return
 			}
 			currJob = job
-			var (
-				_newCol                *model.ColumnInfo
-				_oldColName            *pmodel.CIStr
-				_pos                   = &ast.ColumnPosition{}
-				_modifyColumnTp        byte
-				_updatedAutoRandomBits uint64
-				changingCol            *model.ColumnInfo
-				changingIdxs           []*model.IndexInfo
-			)
-			checkErr = job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
-			elements = ddl.BuildElements(changingCol, changingIdxs)
+
+			var args *model.ModifyColumnArgs
+
+			args, checkErr = model.GetModifyColumnArgs(job)
+			elements = ddl.BuildElements(args.ChangingCol, args.ChangingIdxs)
 		}
 		if job.Type == model.ActionAddIndex {
 			if times == 1 {
