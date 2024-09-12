@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -79,21 +78,10 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPo
 }
 
 func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
-	var (
-		tbl           table.Table
-		isExtrahandle bool
-		handleCols    util.HandleCols
-		colPosInfo    *plannercore.TblColPosInfo
-		rowCount      int
-	)
-	for _, info := range e.tblColPosInfos {
-		tbl = e.tblID2Table[info.TblID]
-		colPosInfo = &info
-		handleCols = info.HandleCols
-		if !tbl.Meta().IsCommonHandle {
-			isExtrahandle = handleCols.IsInt() && handleCols.GetCol(0).ID == model.ExtraHandleID
-		}
-	}
+	colPosInfo := &e.tblColPosInfos[0]
+	tbl := e.tblID2Table[colPosInfo.TblID]
+	handleCols := colPosInfo.HandleCols
+	isExtraHandle := !tbl.Meta().IsCommonHandle && handleCols.IsInt() && handleCols.GetCol(0).ID == model.ExtraHandleID
 
 	batchDMLSize := e.Ctx().GetSessionVars().DMLBatchSize
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
@@ -103,6 +91,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	datumRow := make([]types.Datum, 0, len(fields))
 	chk := exec.TryNewCacheChunk(e.Children(0))
 	columns := e.Children(0).Schema().Columns
+	rowCount := 0
 	if len(columns) != len(fields) {
 		logutil.BgLogger().Error("schema columns and fields mismatch",
 			zap.Int("len(columns)", len(columns)),
@@ -139,7 +128,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				datumRow = append(datumRow, datum)
 			}
 
-			err = e.deleteOneRow(tbl, colPosInfo, isExtrahandle, datumRow)
+			err = e.deleteOneRow(tbl, colPosInfo, isExtraHandle, datumRow)
 			if err != nil {
 				return err
 			}
