@@ -1283,9 +1283,16 @@ outer:
 	theResult.Severity = precheck.Warn
 	if hasUniqueField && len(rows) > 1 {
 		theResult.Severity = precheck.Critical
-	} else if !checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.FromContext(ctx)) {
-		// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
-		theResult.Severity = precheck.Critical
+	} else {
+		ok, err := checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.FromContext(ctx))
+		if err != nil {
+			return nil, err
+		}
+
+		if !ok {
+			// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
+			theResult.Severity = precheck.Critical
+		}
 	}
 	return theResult, nil
 }
@@ -1295,10 +1302,14 @@ func checkFieldCompatibility(
 	ignoreCols map[string]struct{},
 	values []types.Datum,
 	logger log.Logger,
-) bool {
-	se := kv.NewSession(&encode.SessionOptions{
+) (bool, error) {
+	se, err := kv.NewSession(&encode.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
 	}, logger)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
 	for i, col := range tbl.Columns {
 		// do not check ignored columns
 		if _, ok := ignoreCols[col.Name.L]; ok {
@@ -1311,11 +1322,10 @@ func checkFieldCompatibility(
 		if err != nil {
 			logger.Error("field value is not consistent with column type", zap.String("value", values[i].GetString()),
 				zap.Any("column_info", col), zap.Error(err))
-			return false
+			return false, nil
 		}
 	}
-
-	return true
+	return true, nil
 }
 
 type tableEmptyCheckItem struct {
