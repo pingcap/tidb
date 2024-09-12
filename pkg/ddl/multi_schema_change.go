@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -184,6 +186,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
 		reorgTp = job.ReorgMeta.ReorgTp
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
+		Version:     job.Version,
 		Type:        job.Type,
 		Args:        job.Args,
 		RawArgs:     job.RawArgs,
@@ -213,9 +216,30 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		colName := job.Args[0].(pmodel.CIStr)
 		info.DropColumns = append(info.DropColumns, colName)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		indexName := job.Args[0].(pmodel.CIStr)
-		info.DropIndexes = append(info.DropIndexes, indexName)
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		args, err := model.GetDropIndexArgs(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		intest.Assert(len(args.IndexNames) == 1, "len(args.IndexNames) != 1")
+		info.DropIndexes = append(info.DropIndexes, args.IndexNames[0])
+	case model.ActionAddIndex:
+		args, err := model.GetAddIndexArgs(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// This job has not been merged, len(args) should be one.
+		intest.Assert(len(args.IndexArgs) == 1, "len(args.IndexArgs) != 1")
+		indexArg := args.IndexArgs[0]
+		info.AddIndexes = append(info.AddIndexes, indexArg.IndexName)
+		for _, indexPartSpecification := range indexArg.IndexPartSpecifications {
+			info.RelativeColumns = append(info.RelativeColumns, indexPartSpecification.Column.Name)
+		}
+		for _, c := range indexArg.HiddenCols {
+			for depColName := range c.Dependences {
+				info.RelativeColumns = append(info.RelativeColumns, pmodel.NewCIStr(depColName))
+			}
+		}
+	case model.ActionAddPrimaryKey:
 		indexName := job.Args[1].(pmodel.CIStr)
 		indexPartSpecifications := job.Args[2].([]*ast.IndexPartSpecification)
 		info.AddIndexes = append(info.AddIndexes, indexName)
@@ -345,26 +369,18 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 		return
 	}
 
-	var unique []bool
-	var indexNames []pmodel.CIStr
-	var indexPartSpecifications [][]*ast.IndexPartSpecification
-	var indexOption []*ast.IndexOption
-	var hiddenCols [][]*model.ColumnInfo
-
 	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs))
+	newAddIndexesArgs := &model.AddIndexArgs{}
+
 	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddIndex {
-			unique = append(unique, subJob.Args[0].(bool))
-			indexNames = append(indexNames, subJob.Args[1].(pmodel.CIStr))
-			indexPartSpecifications = append(indexPartSpecifications, subJob.Args[2].([]*ast.IndexPartSpecification))
-			indexOption = append(indexOption, subJob.Args[3].(*ast.IndexOption))
-			hiddenCols = append(hiddenCols, subJob.Args[4].([]*model.ColumnInfo))
+			newAddIndexesArgs.MergeIndexArg(subJob.Args, subJob.Version)
 		} else {
 			newSubJobs = append(newSubJobs, subJob)
 		}
 	}
+	mergedSubJob.FillArgs(newAddIndexesArgs)
 
-	mergedSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols}
 	// place the merged add index job at the end of the sub-jobs.
 	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs

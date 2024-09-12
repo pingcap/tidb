@@ -522,6 +522,18 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 				return nil, errors.Trace(err)
 			}
 			// TODO remember update sub-jobs' RawArgs when we do it.
+			if job.MultiSchemaInfo != nil {
+				for _, sub := range job.MultiSchemaInfo.SubJobs {
+					var arg any
+					if len(sub.Args) > 0 {
+						arg = sub.Args[0]
+					}
+					sub.RawArgs, err = json.Marshal(arg)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+				}
+			}
 		}
 	}
 
@@ -859,6 +871,7 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
+	Version     JobVersion      `json:"-"`
 	Type        ActionType      `json:"type"`
 	Args        []any           `json:"-"`
 	RawArgs     json.RawMessage `json:"raw_args"`
@@ -873,6 +886,11 @@ type SubJob struct {
 	SchemaVer   int64           `json:"schema_version"`
 	ReorgTp     ReorgType       `json:"reorg_tp"`
 	UseCloud    bool            `json:"use_cloud"`
+}
+
+// FillArgs fills args for subjob.
+func (subJob *SubJob) FillArgs(args SubJobArgs) {
+	args.fillSubJob(subJob)
 }
 
 // IsNormal returns true if the sub-job is normally running.

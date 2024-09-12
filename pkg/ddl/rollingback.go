@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -59,9 +58,10 @@ func convertAddIdxJob2RollbackJob(
 		}
 	})
 
-	originalState := allIndexInfos[0].State
-	idxNames := make([]pmodel.CIStr, 0, len(allIndexInfos))
+	indexNames := make([]pmodel.CIStr, 0, len(allIndexInfos))
 	ifExists := make([]bool, 0, len(allIndexInfos))
+
+	originalState := allIndexInfos[0].State
 	for _, indexInfo := range allIndexInfos {
 		if indexInfo.Primary {
 			nullCols, err := getNullColInfos(tblInfo, indexInfo)
@@ -78,12 +78,13 @@ func convertAddIdxJob2RollbackJob(
 		// The write reorganization state in add index job that likes write only state in drop index job.
 		// So the next state is delete only state.
 		indexInfo.State = model.StateDeleteOnly
-		idxNames = append(idxNames, indexInfo.Name)
+		indexNames = append(indexNames, indexInfo.Name)
 		ifExists = append(ifExists, false)
 	}
 
-	// the second and the third args will be used in onDropIndex.
-	job.Args = []any{idxNames, ifExists, getPartitionIDs(tblInfo)}
+	// Convert to DropIndexArgs
+	job.FillArgs(&model.DropIndexArgs{IndexNames: indexNames, IfExists: ifExists, PartitionIDs: getPartitionIDs(tblInfo)})
+
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != model.StateDeleteOnly)
 	if err1 != nil {
@@ -112,23 +113,15 @@ func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, t *meta.Meta, job 
 		return ver, errors.Trace(err)
 	}
 
-	unique := make([]bool, 1)
-	indexName := make([]pmodel.CIStr, 1)
-	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
-	indexOption := make([]*ast.IndexOption, 1)
-
-	err = job.DecodeArgs(&unique[0], &indexName[0], &indexPartSpecifications[0], &indexOption[0])
-	if err != nil {
-		err = job.DecodeArgs(&unique, &indexName, &indexPartSpecifications, &indexOption)
-	}
+	args, err := model.GetAddIndexArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	var indexesInfo []*model.IndexInfo
-	for _, idxName := range indexName {
-		indexInfo := tblInfo.FindIndexByName(idxName.L)
+	for _, info := range args.IndexArgs {
+		indexInfo := tblInfo.FindIndexByName(info.IndexName.L)
 		if indexInfo != nil {
 			indexesInfo = append(indexesInfo, indexInfo)
 		}
