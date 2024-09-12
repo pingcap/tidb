@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
