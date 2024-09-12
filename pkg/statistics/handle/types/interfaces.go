@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -459,9 +459,9 @@ type StatsGlobal interface {
 // DDL is used to handle ddl events.
 type DDL interface {
 	// HandleDDLEvent handles ddl events.
-	HandleDDLEvent(changeEvent *ddlutil.SchemaChangeEvent) error
+	HandleDDLEvent(changeEvent *notifier.SchemaChangeEvent) error
 	// DDLEventCh returns ddl events channel in handle.
-	DDLEventCh() chan *ddlutil.SchemaChangeEvent
+	DDLEventCh() chan *notifier.SchemaChangeEvent
 }
 
 // StatsHandle is used to manage TiDB Statistics.

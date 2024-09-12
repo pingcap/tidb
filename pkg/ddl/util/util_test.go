@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
@@ -37,7 +38,7 @@ func TestFolderNotEmpty(t *testing.T) {
 
 func TestEventString(t *testing.T) {
 	// Create an Event object
-	e := &SchemaChangeEvent{
+	e := &notifier.SchemaChangeEvent{
 		tp: model.ActionAddColumn,
 		tableInfo: &model.TableInfo{
 			ID:   1,
