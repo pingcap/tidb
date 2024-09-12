@@ -663,6 +663,7 @@ func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName pmodel.CI
 type TableItem struct {
 	DBName    pmodel.CIStr
 	TableName pmodel.CIStr
+	State     model.SchemaState
 }
 
 // IterateAllTableItems is used for special performance optimization.
