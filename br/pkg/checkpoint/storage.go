@@ -76,10 +76,10 @@ const (
 
 	insertCheckpointSQLTemplate string = `
 		REPLACE INTO %s.%s
-			(uuid, segment_id, data) VALUES (%?, %?, %?);`
+			(uuid, segment_id, data) VALUES (%%?, %%?, %%?);`
 
 	selectCheckpointSQLTemplate string = `
-		SELECT uuid, segment_id, data FROM %s.%s ORDER BY uuid, segment_id;`
+		SELECT uuid, segment_id, data FROM %n.%n ORDER BY uuid, segment_id;`
 
 	createCheckpointMetaTable string = `
 		CREATE TABLE %n.%n (
@@ -157,7 +157,8 @@ func mergeSelectCheckpoint(
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
-		fmt.Sprintf(selectCheckpointSQLTemplate, dbName, tableName),
+		selectCheckpointSQLTemplate,
+		dbName, tableName,
 	)
 	if errSQL != nil {
 		return nil, errors.Annotatef(errSQL, "failed to get checkpoint data from table %s.%s", dbName, tableName)
@@ -269,7 +270,8 @@ func selectCheckpointMeta[T any](ctx context.Context, execCtx sqlexec.Restricted
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
-		fmt.Sprintf(selectCheckpointMetaSQLTemplate, dbName, tableName),
+		selectCheckpointMetaSQLTemplate,
+		dbName, tableName,
 	)
 	if errSQL != nil {
 		return errors.Annotatef(errSQL, "failed to get checkpoint metadata from table %s.%s", dbName, tableName)

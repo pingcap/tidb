@@ -23,12 +23,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"go.uber.org/zap"
 )
 
 type LogRestoreKeyType = string
@@ -315,12 +313,11 @@ type CheckpointIngestIndexRepairSQLs struct {
 
 func LoadCheckpointIngestIndexRepairSQLs(
 	ctx context.Context,
-	s storage.ExternalStorage,
-	taskName string,
+	execCtx sqlexec.RestrictedSQLExecutor,
 ) (*CheckpointIngestIndexRepairSQLs, error) {
 	m := &CheckpointIngestIndexRepairSQLs{}
-	err := loadCheckpointMeta(ctx, s, getCheckpointIngestIndexRepairPathByTaskName(taskName), m)
-	return m, err
+	err := selectCheckpointMeta(ctx, execCtx, LogRestoreCheckpointDatabaseName, checkpointIngestTableName, m)
+	return m, errors.Trace(err)
 }
 
 func ExistsCheckpointIngestIndexRepairSQLs(ctx context.Context, dom *domain.Domain) bool {
@@ -335,34 +332,7 @@ func SaveCheckpointIngestIndexRepairSQLs(
 	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, checkpointIngestTableName, meta)
 }
 
-func removeCheckpointTaskInfoForLogRestore(ctx context.Context, s storage.ExternalStorage, clusterID uint64) error {
-	fileName := getCheckpointTaskInfoPathByID(clusterID)
-	exists, err := s.FileExists(ctx, fileName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if !exists {
-		log.Warn("the task info file doesn't exist", zap.String("file", fileName))
-		return nil
-	}
-
-	return s.DeleteFile(ctx, fileName)
-}
-
-func RemoveCheckpointDataForLogRestore(
-	ctx context.Context,
-	s storage.ExternalStorage,
-	taskName string,
-	clusterID uint64,
-) error {
-	if err := removeCheckpointTaskInfoForLogRestore(ctx, s, clusterID); err != nil {
-		return errors.Annotatef(err,
-			"failed to remove the task info file: clusterId is %d, taskName is %s",
-			clusterID,
-			taskName,
-		)
-	}
-	prefix := fmt.Sprintf(CheckpointRestoreDirFormat, taskName)
-	return removeCheckpointData(ctx, s, prefix)
+func RemoveCheckpointDataForLogRestore(ctx context.Context, dom *domain.Domain, se glue.Session) error {
+	return dropCheckpointTables(ctx, dom, se, LogRestoreCheckpointDatabaseName,
+		[]string{checkpointDataTableName, checkpointMetaTableName, checkpointProgressTableName, checkpointIngestTableName})
 }
