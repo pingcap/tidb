@@ -6,8 +6,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"hash/crc64"
-	"math"
 	"math/rand"
 	"os"
 	"path"
@@ -742,42 +740,6 @@ func mig(ops ...migOP) *backuppb.Migration {
 		op(mig)
 	}
 	return mig
-}
-
-func hashMigration(m *backuppb.Migration) uint64 {
-	var crc64 uint64 = 0
-	for _, compaction := range m.Compactions {
-		crc64 ^= compaction.ArtifactesHash
-	}
-	for _, metaEdit := range m.EditMeta {
-		crc64 ^= hashMetaEdit(metaEdit)
-	}
-	return crc64 ^ m.TruncatedTo
-}
-
-func hashMetaEdit(metaEdit *backuppb.MetaEdit) uint64 {
-	var res uint64 = 0
-	for _, df := range metaEdit.DeletePhysicalFiles {
-		digest := crc64.New(crc64.MakeTable(crc64.ISO))
-		digest.Write([]byte(df))
-		res ^= digest.Sum64()
-	}
-	for _, spans := range metaEdit.DeleteLogicalFiles {
-		for _, span := range spans.GetSpans() {
-			crc := crc64.New(crc64.MakeTable(crc64.ISO))
-			crc.Write([]byte(spans.GetPath()))
-			crc.Write(binary.LittleEndian.AppendUint64(nil, span.GetOffset()))
-			crc.Write(binary.LittleEndian.AppendUint64(nil, span.GetLength()))
-			res ^= crc.Sum64()
-		}
-	}
-	crc := crc64.New(crc64.MakeTable(crc64.ISO))
-	if metaEdit.DestructSelf {
-		crc.Write([]byte{1})
-	} else {
-		crc.Write([]byte{0})
-	}
-	return res ^ crc.Sum64()
 }
 
 func f(storeId int64, minTS, maxTS uint64, cf string, defaultTS uint64) *backuppb.DataFileGroup {
@@ -2334,22 +2296,23 @@ func TestTruncate3(t *testing.T) {
 	for i, cs := range cases {
 		for j, ts := range cs.testParams {
 			for _, until := range ts.until {
-				t.Logf("case %d, param %d, until %d", i, j, until)
-				metas := StreamMetadataSet{
-					Helper:                    NewMetadataHelper(),
-					MetadataDownloadBatchSize: 128,
-				}
-				err := generateFiles(ctx, s, cs.metas, tmpDir)
-				require.NoError(t, err)
-				shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, s, until)
-				require.NoError(t, err)
-				require.Equal(t, shiftUntilTS, ts.shiftUntilTS(until))
-				n, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, s, func(num int64) {})
-				require.Equal(t, len(n), 0)
-				require.NoError(t, err)
+				t.Run(fmt.Sprintf("case %d, param %d, until %d", i, j, until), func(t *testing.T) {
+					metas := StreamMetadataSet{
+						Helper:                    NewMetadataHelper(),
+						MetadataDownloadBatchSize: 128,
+					}
+					err := generateFiles(ctx, s, cs.metas, tmpDir)
+					require.NoError(t, err)
+					shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, s, until)
+					require.NoError(t, err)
+					require.Equal(t, shiftUntilTS, ts.shiftUntilTS(until))
+					n, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, s, func(num int64) {})
+					require.Equal(t, len(n), 0)
+					require.NoError(t, err)
 
-				// check the result
-				checkFiles(ctx, s, ts.restMetadata, t)
+					// check the result
+					checkFiles(ctx, s, ts.restMetadata, t)
+				})
 			}
 		}
 	}
@@ -2590,7 +2553,7 @@ func TestBasicMigration(t *testing.T) {
 
 	bs := storage.Batch(s)
 	est := MigerationExtension(bs)
-	res := mergeMigrations(mig1, mig2)
+	res := MergeMigrations(mig1, mig2)
 
 	resE := mig(
 		mDel("00001.meta", "bar.log"),
@@ -2622,7 +2585,7 @@ func TestBasicMigration(t *testing.T) {
 	require.NoError(t, bs.Commit(ctx))
 
 	delRem := mig(mLogDel("00002.meta", spans("00001.log", 1024, sp(60, 1024-60))))
-	newNewBase := mergeMigrations(mg.NewBase, delRem)
+	newNewBase := MergeMigrations(mg.NewBase, delRem)
 	mg = est.MigrateTo(ctx, newNewBase)
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, mg.NewBase, mig())
@@ -2725,7 +2688,7 @@ func TestRemoveCompaction(t *testing.T) {
 	bs := storage.Batch(s)
 	est := MigerationExtension(bs)
 
-	merged := mergeMigrations(mig1, mig2)
+	merged := MergeMigrations(mig1, mig2)
 	requireMigrationsEqual(t, merged, mig(
 		mCompaction(cDir(1), aDir(1), 10, 40),
 		mCompaction(cDir(2), aDir(2), 35, 50),

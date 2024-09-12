@@ -4,7 +4,9 @@ package stream
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"hash/crc64"
 	"math"
 	"path"
 	"slices"
@@ -13,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/docker/go-units"
 	"github.com/fatih/color"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/brpb"
@@ -24,13 +27,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
-	notDeletedBecameFatalThreshold = 128
-
 	baseMigrationSN   = 0
 	baseMigrationName = "BASE"
 	baseTmp           = "BASE_TMP"
@@ -171,129 +172,32 @@ func (ms *StreamMetadataSet) IterateFilesFullyBefore(before uint64, f func(d *Fi
 	})
 }
 
+type updateFnHook struct {
+	NoHooks
+	updateFn func(num int64)
+}
+
+func (hook updateFnHook) DeletedAFileForTruncating(count int) {
+	hook.updateFn(int64(count))
+}
+
 // RemoveDataFilesAndUpdateMetadataInBatch concurrently remove datafilegroups and update metadata.
 // Only one metadata is processed in each thread, including deleting its datafilegroup and updating it.
 // Returns the not deleted datafilegroups.
 func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	ctx context.Context,
 	from uint64,
-	storage storage.ExternalStorage,
+	st storage.ExternalStorage,
+	// num = deleted files
 	updateFn func(num int64),
 ) ([]string, error) {
-	var notDeleted struct {
-		item []string
-		sync.Mutex
-	}
-	worker := util.NewWorkerPool(ms.MetadataDownloadBatchSize, "delete files")
-	eg, cx := errgroup.WithContext(ctx)
-	for path, metaInfo := range ms.metadataInfos {
-		path := path
-		minTS := metaInfo.MinTS
-		// It's safety to remove the item within a range loop
-		delete(ms.metadataInfos, path)
-		if minTS >= from {
-			// That means all the datafiles wouldn't be removed,
-			// so that the metadata is skipped.
-			continue
-		}
-		worker.ApplyOnErrorGroup(eg, func() error {
-			if cx.Err() != nil {
-				return cx.Err()
-			}
+	hst := ms.hook(st)
+	est := MigerationExtension(hst)
+	est.Hooks = updateFnHook{updateFn: updateFn}
+	res := MigratedTo{NewBase: new(pb.Migration)}
+	est.doTruncatingLogs(ctx, ms.metadataInfos, from, &res)
 
-			data, err := storage.ReadFile(ctx, path)
-			if err != nil {
-				return err
-			}
-
-			meta, err := ms.Helper.ParseToMetadataHard(data)
-			if err != nil {
-				return err
-			}
-
-			num, notDeletedItems, err := ms.removeDataFilesAndUpdateMetadata(ctx, storage, from, meta, path)
-			if err != nil {
-				return err
-			}
-
-			updateFn(num)
-
-			notDeleted.Lock()
-			notDeleted.item = append(notDeleted.item, notDeletedItems...)
-			notDeleted.Unlock()
-			return nil
-		})
-	}
-
-	if err := eg.Wait(); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return notDeleted.item, nil
-}
-
-// removeDataFilesAndUpdateMetadata removes some datafilegroups of the metadata, if their max-ts is less than `from`
-func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(
-	ctx context.Context,
-	st storage.ExternalStorage,
-	from uint64,
-	meta *pb.Metadata,
-	metaPath string,
-) (num int64, notDeleted []string, err error) {
-	removed := make([]*pb.DataFileGroup, 0)
-	remainedDataFiles := make([]*pb.DataFileGroup, 0)
-	notDeleted = make([]string, 0)
-	// can we assume those files are sorted to avoid traversing here? (by what?)
-	for _, ds := range meta.FileGroups {
-		if ds.MaxTs < from {
-			removed = append(removed, ds)
-		} else {
-			// That means some kvs in the datafilegroup shouldn't be removed,
-			// so it will be kept out being removed.
-			remainedDataFiles = append(remainedDataFiles, ds)
-		}
-	}
-
-	num = int64(len(removed))
-
-	if ms.DryRun {
-		st = storage.Batch(st)
-	}
-
-	// remove data file groups
-	for _, f := range removed {
-		log.Info("Deleting file", zap.String("path", f.Path))
-		if err := st.DeleteFile(ctx, f.Path); err != nil {
-			log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
-			notDeleted = append(notDeleted, f.Path)
-			if len(notDeleted) > notDeletedBecameFatalThreshold {
-				return num, notDeleted, errors.Annotatef(berrors.ErrPiTRMalformedMetadata, "too many failure when truncating")
-			}
-		}
-	}
-
-	// update metadata
-	if len(remainedDataFiles) != len(meta.FileGroups) {
-		// rewrite metadata
-		log.Info("Updating metadata.", zap.String("file", metaPath),
-			zap.Int("data-file-before", len(meta.FileGroups)),
-			zap.Int("data-file-after", len(remainedDataFiles)))
-
-		// replace the filegroups and update the ts of the replaced metadata
-		ReplaceMetadata(meta, remainedDataFiles)
-
-		if ms.BeforeDoWriteBack != nil && ms.BeforeDoWriteBack(metaPath, meta) {
-			log.Info("Skipped writeback meta by the hook.", zap.String("meta", metaPath))
-			return num, notDeleted, nil
-		}
-
-		if err := ms.doWriteBackForFile(ctx, st, metaPath, meta); err != nil {
-			// NOTE: Maybe we'd better roll back all writebacks? (What will happen if roll back fails too?)
-			return num, notDeleted, errors.Annotatef(err, "failed to write back file %s", metaPath)
-		}
-	}
-
-	if bst, ok := st.(*storage.Batched); ok {
+	if bst, ok := hst.ExternalStorage.(*storage.Batched); ok {
 		effs, err := storage.SaveJSONEffectsToTmp(bst.ReadOnlyEffects())
 		if err != nil {
 			log.Warn("failed to save effects", logutil.ShortError(err))
@@ -302,32 +206,22 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(
 		}
 	}
 
-	return num, notDeleted, nil
-}
-
-func (ms *StreamMetadataSet) doWriteBackForFile(
-	ctx context.Context,
-	s storage.ExternalStorage,
-	path string,
-	meta *pb.Metadata,
-) error {
-	// If the metadata file contains no data file, remove it due to it is meanless.
-	if len(meta.FileGroups) == 0 {
-		if err := s.DeleteFile(ctx, path); err != nil {
-			return errors.Annotatef(err, "failed to remove the empty meta %s", path)
-		}
-		return nil
+	notDeleted := []string{}
+	for _, me := range res.NewBase.EditMeta {
+		notDeleted = append(notDeleted, me.DeletePhysicalFiles...)
 	}
 
-	bs, err := ms.Helper.Marshal(meta)
-	if err != nil {
-		return errors.Annotatef(err, "failed to marshal the file %s", path)
+	// Hacking: if we started to delete some files, we must enter the `cleanUp` phase,
+	// then, all warnings should be `cannot delete file`.
+	if len(res.Warnings) > 0 && len(notDeleted) == 0 {
+		return nil, multierr.Combine(res.Warnings...)
 	}
-	return truncateAndWrite(ctx, s, path, bs)
+
+	return notDeleted, nil
 }
 
 func truncateAndWrite(ctx context.Context, s storage.ExternalStorage, path string, data []byte) error {
-	// Performance hack: the `Write` implemention would truncate the file if it exists.
+	// Performance hack: the `Write` implementation would truncate the file if it exists.
 	if err := s.WriteFile(ctx, path, data); err != nil {
 		return errors.Annotatef(err, "failed to save the file %s to %s", path, s.URI())
 	}
@@ -504,19 +398,120 @@ layers = {
 type MigrationExt struct {
 	s      storage.ExternalStorage
 	prefix string
+	// The hooks used for tracking the execution.
+	// See the `Hooks` type for more details.
+	Hooks Hooks
 }
+
+type Hooks interface {
+	StartLoadingMetaForTruncating()
+	EndLoadingMetaForTruncating()
+
+	StartDeletingForTruncating(meta *StreamMetadataSet, shiftTS uint64)
+	DeletedAFileForTruncating(count int)
+
+	StartHandlingMetaEdits([]*pb.MetaEdit)
+	HandledAMetaEdit(*pb.MetaEdit)
+
+	FinishMigrateTo()
+}
+
+func NewProgressBarHooks(console glue.ConsoleOperations) *ProgressBarHooks {
+	return &ProgressBarHooks{console: console}
+}
+
+type ProgressBarHooks struct {
+	console glue.ConsoleOperations
+
+	readMetaDone            func()
+	deletingForTruncateProg glue.ProgressWaiter
+	handlingMetaEditProg    glue.ProgressWaiter
+}
+
+func (p *ProgressBarHooks) StartLoadingMetaForTruncating() {
+	p.readMetaDone = p.console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
+}
+
+func (p *ProgressBarHooks) EndLoadingMetaForTruncating() {
+	if p.readMetaDone != nil {
+		p.readMetaDone()
+	}
+}
+
+func (p *ProgressBarHooks) StartDeletingForTruncating(meta *StreamMetadataSet, shiftTS uint64) {
+	var (
+		fileCount int    = 0
+		kvCount   int64  = 0
+		totalSize uint64 = 0
+	)
+
+	meta.IterateFilesFullyBefore(shiftTS, func(d *FileGroupInfo) (shouldBreak bool) {
+		fileCount++
+		totalSize += d.Length
+		kvCount += d.KVCount
+		return
+	})
+
+	p.deletingForTruncateProg = p.console.StartProgressBar(
+		"Clearing Data Files and Metadata", fileCount,
+		glue.WithTimeCost(),
+		glue.WithConstExtraField("kv-count", kvCount),
+		glue.WithConstExtraField("kv-size", fmt.Sprintf("%d(%s)", totalSize, units.HumanSize(float64(totalSize)))),
+	)
+}
+
+func (p *ProgressBarHooks) DeletedAFileForTruncating(count int) {
+	if p.deletingForTruncateProg != nil {
+		p.deletingForTruncateProg.IncBy(int64(count))
+	}
+}
+
+func (p *ProgressBarHooks) StartHandlingMetaEdits(edits []*pb.MetaEdit) {
+	p.handlingMetaEditProg = p.console.StartProgressBar(
+		"Applying Meta Edits", len(edits),
+		glue.WithTimeCost(),
+		glue.WithConstExtraField("meta-edits", len(edits)),
+	)
+}
+
+func (p *ProgressBarHooks) HandledAMetaEdit(edit *pb.MetaEdit) {
+	if p.handlingMetaEditProg != nil {
+		p.handlingMetaEditProg.Inc()
+	}
+}
+
+func (p *ProgressBarHooks) FinishMigrateTo() {
+	if p.deletingForTruncateProg != nil {
+		p.deletingForTruncateProg.Close()
+	}
+	if p.handlingMetaEditProg != nil {
+		p.handlingMetaEditProg.Close()
+	}
+}
+
+// NoHooks is used for non-interactive secnarios.
+type NoHooks struct{}
+
+func (NoHooks) StartLoadingMetaForTruncating()                                     {}
+func (NoHooks) EndLoadingMetaForTruncating()                                       {}
+func (NoHooks) StartDeletingForTruncating(meta *StreamMetadataSet, shiftTS uint64) {}
+func (NoHooks) DeletedAFileForTruncating(count int)                                {}
+func (NoHooks) StartHandlingMetaEdits([]*pb.MetaEdit)                              {}
+func (NoHooks) HandledAMetaEdit(*pb.MetaEdit)                                      {}
+func (NoHooks) FinishMigrateTo()                                                   {}
 
 // MigrateionExtnsion installs the extension methods to an `ExternalStorage`.
 func MigerationExtension(s storage.ExternalStorage) MigrationExt {
 	return MigrationExt{
 		s:      s,
 		prefix: migrationPrefix,
+		Hooks:  NoHooks{},
 	}
 }
 
 // Merge merges two migrations.
 // The merged migration contains all operations from the two arguments.
-func mergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
+func MergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
 	out := new(pb.Migration)
 	out.EditMeta = mergeMetaEdits(m1.EditMeta, m2.EditMeta)
 	out.Compactions = append(out.Compactions, m1.Compactions...)
@@ -550,10 +545,10 @@ type MigratedTo struct {
 // Migrations represents living migrations from the storage.
 type Migrations struct {
 	// The BASE migration.
-	Base *pb.Migration
+	Base *pb.Migration `json:"base"`
 	// Appended migrations.
 	// They are sorted by their sequence numbers.
-	Layers []*OrderedMigration
+	Layers []*OrderedMigration `json:"layers"`
 }
 
 // OrderedMigration is a migration with its path and sequence number.
@@ -612,34 +607,42 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 	return result, nil
 }
 
-// EstimateEffectFor estimiates the possible modifications (or, effects) to the storage after
-// migrate to the specified migration.
-func (m MigrationExt) EstimateEffectFor(ctx context.Context, mig *pb.Migration) (MigratedTo, []storage.Effect) {
+func (m MigrationExt) DryRun(f func(MigrationExt)) []storage.Effect {
 	batchSelf := MigrationExt{
 		s:      storage.Batch(m.s),
 		prefix: m.prefix,
+		Hooks:  m.Hooks,
 	}
-	res := batchSelf.MigrateTo(ctx, mig)
-	return res, batchSelf.s.(*storage.Batched).ReadOnlyEffects()
+	f(batchSelf)
+	return batchSelf.s.(*storage.Batched).ReadOnlyEffects()
 }
 
-func (migs Migrations) AllPbMigrations() []*pb.Migration {
-	pbMigs := make([]*pb.Migration, 0, len(migs.Layers)+1)
-	pbMigs = append(pbMigs, migs.Base)
-	for _, m := range migs.Layers {
-		pbMigs = append(pbMigs, &m.Content)
+func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) error {
+	migs, err := m.Load(ctx)
+	if err != nil {
+		return err
 	}
-	return pbMigs
+	newSN := migs.Layers[len(migs.Layers)-1].SeqNum + 1
+	name := nameOf(mig, newSN)
+	data, err := mig.Marshal()
+	if err != nil {
+		return errors.Annotatef(err, "failed to encode the migration %s", mig)
+	}
+	return m.s.WriteFile(ctx, name, data)
 }
 
 // MergeTo merges migrations from the BASE in the live migrations until the specified sequence number.
 func (migs Migrations) MergeTo(seq int) *pb.Migration {
+	return migs.MergeToBy(seq, MergeMigrations)
+}
+
+func (migs Migrations) MergeToBy(seq int, merge func(m1, m2 *pb.Migration) *pb.Migration) *pb.Migration {
 	newBase := migs.Base
 	for _, mig := range migs.Layers {
 		if mig.SeqNum > seq {
 			return newBase
 		}
-		newBase = mergeMigrations(newBase, &mig.Content)
+		newBase = merge(newBase, &mig.Content)
 	}
 	return newBase
 }
@@ -664,13 +667,16 @@ func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, seq int) (result Me
 	}
 
 	newBase := result.Base
+	canSkipTruncate := true
 	for _, mig := range result.Source {
-		newBase = mergeMigrations(newBase, &mig.Content)
+		if mig.Content.TruncatedTo > newBase.TruncatedTo {
+			canSkipTruncate = false
+		}
+		newBase = MergeMigrations(newBase, &mig.Content)
 	}
 
-	migTo := m.MigrateTo(ctx, newBase)
-	result.MigratedTo = migTo
-
+	result.MigratedTo = m.MigrateTo(ctx, newBase, MTMaybeSkipTruncateLog(canSkipTruncate))
+	migTo := result.MigratedTo
 	err = m.writeBase(ctx, migTo.NewBase)
 	if err != nil {
 		result.MigratedTo.Warnings = append(result.MigratedTo.Warnings, errors.Annotatef(err, "failed to save the new base"))
@@ -688,17 +694,48 @@ func (m MigrationExt) MergeAndMigrateTo(ctx context.Context, seq int) (result Me
 	return
 }
 
+type MigrateToOpt func(*migToOpt)
+
+type migToOpt struct {
+	skipTruncateLog bool
+}
+
+func MTSkipTruncateLog(o *migToOpt) {
+	o.skipTruncateLog = true
+}
+
+func MTMaybeSkipTruncateLog(cond bool) MigrateToOpt {
+	if cond {
+		return MTSkipTruncateLog
+	}
+	return func(*migToOpt) {}
+}
+
 // MigrateTo migrates to a migration.
 // If encountered some error during executing some operation, the operation will be put
 // to the new BASE, which can be retryed then.
-func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration) MigratedTo {
+func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration, opts ...MigrateToOpt) MigratedTo {
+	defer m.Hooks.FinishMigrateTo()
+
+	opt := migToOpt{}
+	for _, o := range opts {
+		o(&opt)
+	}
+
 	result := MigratedTo{
 		NewBase: new(pb.Migration),
 	}
 	// Fills: EditMeta for new Base.
 	m.doMetaEdits(ctx, mig, &result)
 	// Fills: TruncatedTo, Compactions, DesctructPrefix.
-	m.doTruncating(ctx, mig, &result)
+	if !opt.skipTruncateLog {
+		m.doTruncating(ctx, mig, &result)
+	} else {
+		// Fast path: `truncate_to` wasn't updated, just copy the compactions and truncated to.
+		result.NewBase.Compactions = mig.Compactions
+		result.NewBase.TruncatedTo = mig.TruncatedTo
+	}
+
 	return result
 }
 
@@ -716,53 +753,66 @@ func (m MigrationExt) writeBase(ctx context.Context, mig *pb.Migration) error {
 
 // doMetaEdits applies the modification to the meta files in the storage.
 func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *MigratedTo) {
-	for _, medit := range mig.EditMeta {
+	m.Hooks.StartHandlingMetaEdits(mig.EditMeta)
+
+	handleAMetaEdit := func(medit *pb.MetaEdit) {
 		if isEmptyEdition(medit) {
-			continue
+			return
 		}
-		err := m.applyMetaEditToMeta(ctx, medit)
+		err := m.applyMetaEdit(ctx, medit)
 		if err != nil {
 			out.NewBase.EditMeta = append(out.NewBase.EditMeta, medit)
 			out.Warnings = append(out.Warnings, errors.Annotatef(err, "failed to apply meta edit %s to meta file", medit.Path))
-			continue
+			return
 		}
 
-		newMetaEdit := &pb.MetaEdit{
-			Path: medit.Path,
-		}
-
-		if len(medit.DeletePhysicalFiles) > 0 {
-			err = m.s.DeleteFiles(ctx, medit.DeletePhysicalFiles)
-			if err != nil {
-				out.Warnings = append(out.Warnings, errors.Annotate(err, "failed to delete file"))
-				newMetaEdit.DeletePhysicalFiles = slices.Clone(medit.DeletePhysicalFiles)
-			}
-		}
-
-		physicalFilesToDelete := []string{}
-		for _, spans := range medit.DeleteLogicalFiles {
-			if physicalFileCanBeDeleted(spans) {
-				physicalFilesToDelete = append(physicalFilesToDelete, spans.Path)
-			} else {
-				newMetaEdit.DeleteLogicalFiles = append(newMetaEdit.DeleteLogicalFiles, spans)
-			}
-		}
-		if len(physicalFilesToDelete) > 0 {
-			err = m.s.DeleteFiles(ctx, physicalFilesToDelete)
-			if err != nil {
-				out.Warnings = append(out.Warnings, errors.Annotate(err, "failed to delete file"))
-				newMetaEdit.DeletePhysicalFiles = append(newMetaEdit.DeletePhysicalFiles, physicalFilesToDelete...)
-			}
-		}
-
-		if !isEmptyEdition(newMetaEdit) {
-			out.NewBase.EditMeta = append(out.NewBase.EditMeta, newMetaEdit)
-		}
+		m.cleanUpFor(ctx, medit, out)
+	}
+	for _, medit := range mig.EditMeta {
+		handleAMetaEdit(medit)
+		m.Hooks.HandledAMetaEdit(medit)
 	}
 }
 
-// applyMetaEditToMeta applies the modifications in the `MetaEdit` to the real meta file.
-func (m MigrationExt) applyMetaEditToMeta(ctx context.Context, medit *pb.MetaEdit) (err error) {
+// cleanUpFor modifies the real storage, remove the log files removed in the meta file, AFTER the meta edition has been applied.
+func (m MigrationExt) cleanUpFor(ctx context.Context, medit *pb.MetaEdit, out *MigratedTo) {
+	var err error
+	newMetaEdit := &pb.MetaEdit{
+		Path: medit.Path,
+	}
+
+	if len(medit.DeletePhysicalFiles) > 0 {
+		err = m.s.DeleteFiles(ctx, medit.DeletePhysicalFiles)
+		if err != nil {
+			out.Warnings = append(out.Warnings, errors.Annotate(err, "failed to delete file"))
+			newMetaEdit.DeletePhysicalFiles = slices.Clone(medit.DeletePhysicalFiles)
+		}
+	}
+
+	physicalFilesToDelete := []string{}
+	for _, spans := range medit.DeleteLogicalFiles {
+		if physicalFileCanBeDeleted(spans) {
+			physicalFilesToDelete = append(physicalFilesToDelete, spans.Path)
+		} else {
+			newMetaEdit.DeleteLogicalFiles = append(newMetaEdit.DeleteLogicalFiles, spans)
+		}
+	}
+	if len(physicalFilesToDelete) > 0 {
+		err = m.s.DeleteFiles(ctx, physicalFilesToDelete)
+		if err != nil {
+			out.Warnings = append(out.Warnings, errors.Annotate(err, "failed to delete file"))
+			newMetaEdit.DeletePhysicalFiles = append(newMetaEdit.DeletePhysicalFiles, physicalFilesToDelete...)
+		}
+	}
+
+	if !isEmptyEdition(newMetaEdit) {
+		out.NewBase.EditMeta = append(out.NewBase.EditMeta, newMetaEdit)
+	}
+}
+
+// applyMetaEdit applies the modifications in the `MetaEdit` to the real meta file.
+// But this won't really clean up the real log files.
+func (m MigrationExt) applyMetaEdit(ctx context.Context, medit *pb.MetaEdit) (err error) {
 	if medit.DestructSelf {
 		return m.s.DeleteFile(ctx, medit.Path)
 	}
@@ -776,6 +826,11 @@ func (m MigrationExt) applyMetaEditToMeta(ctx context.Context, medit *pb.MetaEdi
 	if err != nil {
 		return err
 	}
+
+	return m.applyMetaEditTo(ctx, medit, &metadata)
+}
+
+func (m MigrationExt) applyMetaEditTo(ctx context.Context, medit *pb.MetaEdit, metadata *pb.Metadata) error {
 	metadata.Files = slices.DeleteFunc(metadata.Files, func(dfi *pb.DataFileInfo) bool {
 		// Here, `DeletePhysicalFiles` is usually tiny.
 		// Use a hashmap to filter out if this gets slow in the future.
@@ -792,6 +847,7 @@ func (m MigrationExt) applyMetaEditToMeta(ctx context.Context, medit *pb.MetaEdi
 			sort.Slice(medit.DeleteLogicalFiles[idx].Spans, func(i, j int) bool {
 				return medit.DeleteLogicalFiles[idx].Spans[i].Offset < medit.DeleteLogicalFiles[idx].Spans[j].Offset
 			})
+			var err error
 			group.DataFilesInfo = slices.DeleteFunc(group.DataFilesInfo, func(dfi *pb.DataFileInfo) bool {
 				received, ok := slices.BinarySearchFunc(
 					medit.DeleteLogicalFiles[idx].Spans,
@@ -810,7 +866,7 @@ func (m MigrationExt) applyMetaEditToMeta(ctx context.Context, medit *pb.MetaEdi
 				return ok
 			})
 			if err != nil {
-				return
+				return err
 			}
 		}
 	}
@@ -819,12 +875,12 @@ func (m MigrationExt) applyMetaEditToMeta(ctx context.Context, medit *pb.MetaEdi
 		return len(dfg.DataFilesInfo) == 0
 	})
 
-	if isEmptyMetadata(&metadata) {
+	if isEmptyMetadata(metadata) {
 		// As it is empty, even no hint to destruct self, we can safely delete it.
 		return m.s.DeleteFile(ctx, medit.Path)
 	}
 
-	updateMetadataInternalStat(&metadata)
+	updateMetadataInternalStat(metadata)
 	newContent, err := metadata.Marshal()
 	if err != nil {
 		return err
@@ -869,7 +925,19 @@ func (m MigrationExt) doTruncating(ctx context.Context, mig *pb.Migration, resul
 	for _, pfx := range mig.DestructPrefix {
 		m.tryRemovePrefix(ctx, pfx, result)
 	}
+
 	result.NewBase.TruncatedTo = mig.TruncatedTo
+
+	m.Hooks.StartLoadingMetaForTruncating()
+	mdSet := new(StreamMetadataSet)
+	shiftTS, err := mdSet.LoadUntilAndCalculateShiftTS(ctx, m.s, mig.TruncatedTo)
+	if err != nil {
+		result.Warnings = append(result.Warnings, errors.Annotatef(err, "failed to open meta storage"))
+		return
+	}
+	m.Hooks.EndLoadingMetaForTruncating()
+
+	m.doTruncatingLogs(ctx, mdSet.metadataInfos, shiftTS, result)
 }
 
 func (m MigrationExt) loadFilesOfPrefix(ctx context.Context, prefix string) (out []string, err error) {
@@ -878,6 +946,110 @@ func (m MigrationExt) loadFilesOfPrefix(ctx context.Context, prefix string) (out
 		return nil
 	})
 	return
+}
+
+// doTruncatingLogs truncates the logs until the specified TS.
+// This might be slow.
+func (m MigrationExt) doTruncatingLogs(
+	ctx context.Context,
+	metadataInfos map[string]*MetadataInfo,
+	from uint64,
+	out *MigratedTo,
+) {
+	mu := new(sync.Mutex)
+	updateResult := func(f func(r *MigratedTo)) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		f(out)
+	}
+	emitErr := func(err error) {
+		updateResult(func(r *MigratedTo) {
+			r.Warnings = append(r.Warnings, err)
+		})
+	}
+	cannotBeRetryByRerunBase := func(err error) error {
+		return errors.Annotate(err, "this error may not be retry by `migrate-to --base`, you may need to rerun `log truncate`")
+	}
+
+	worker := util.NewWorkerPool(128, "delete files")
+	wg := new(sync.WaitGroup)
+	for path, metaInfo := range metadataInfos {
+		path := path
+		if metaInfo.MinTS >= from {
+			continue
+		}
+		wg.Add(1)
+		worker.Apply(func() {
+			defer wg.Done()
+			data, err := m.s.ReadFile(ctx, path)
+			if err != nil {
+				emitErr(cannotBeRetryByRerunBase(
+					errors.Annotatef(err, "failed to open meta %s", path)))
+				return
+			}
+
+			// Note: maybe make this a static method or just a normal function...
+			meta, err := (*MetadataHelper).ParseToMetadataHard(nil, data)
+			if err != nil {
+				emitErr(cannotBeRetryByRerunBase(
+					errors.Annotatef(err, "failed to parse meta %s", path)))
+				return
+			}
+
+			me := new(pb.MetaEdit)
+			me.Path = path
+			for _, ds := range meta.FileGroups {
+				if ds.MaxTs < from {
+					me.DeletePhysicalFiles = append(me.DeletePhysicalFiles, ds.Path)
+				}
+			}
+
+			err = m.applyMetaEditTo(ctx, me, meta)
+			if err != nil {
+				updateResult(func(r *MigratedTo) {
+					r.Warnings = append(r.Warnings, errors.Annotatef(err, "during handling %s", me.Path))
+					r.NewBase.EditMeta = append(r.NewBase.EditMeta, me)
+				})
+			}
+			m.cleanUpFor(ctx, me, out)
+			m.Hooks.DeletedAFileForTruncating(len(me.DeletePhysicalFiles))
+		})
+	}
+	wg.Wait()
+}
+
+type hookedStorage struct {
+	storage.ExternalStorage
+	metaSet *StreamMetadataSet
+}
+
+func (h hookedStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if h.metaSet.BeforeDoWriteBack != nil {
+		meta, err := h.metaSet.Helper.ParseToMetadataHard(data)
+		if err != nil {
+			// Note: will this be too strict? But for now it seems this check won't fail.
+			// We can remove this in the future if needed.
+			return errors.Annotatef(err, "Writing non-meta during write back (to = %s)", name)
+		}
+		if h.metaSet.BeforeDoWriteBack(name, meta) {
+			log.Info("Skipped writeback meta by the hook.", zap.String("meta", name))
+			return nil
+		}
+	}
+
+	return h.ExternalStorage.WriteFile(ctx, name, data)
+}
+
+func (ms *StreamMetadataSet) hook(s storage.ExternalStorage) hookedStorage {
+	hooked := hookedStorage{
+		ExternalStorage: s,
+		metaSet:         ms,
+	}
+	if ms.DryRun {
+		hooked.ExternalStorage = storage.Batch(hooked.ExternalStorage)
+	}
+	return hooked
 }
 
 func physicalFileCanBeDeleted(fs *pb.DeleteSpansOfFile) bool {
@@ -924,6 +1096,7 @@ func mergeMetaEdits(s1, s2 []*pb.MetaEdit) []*pb.MetaEdit {
 	return val
 }
 
+// mergeDeleteLogicalFiles merges two `DeleteSpansOfFile`.
 func mergeDeleteLogicalFiles(s1, s2 []*pb.DeleteSpansOfFile) []*pb.DeleteSpansOfFile {
 	files := map[string]*pb.DeleteSpansOfFile{}
 	for _, file := range s1 {
@@ -989,4 +1162,44 @@ func isInsane(pfx string) bool {
 
 func isEmptyMetadata(md *pb.Metadata) bool {
 	return len(md.FileGroups) == 0 && len(md.Files) == 0
+}
+
+func hashMigration(m *pb.Migration) uint64 {
+	var crc64 uint64 = 0
+	for _, compaction := range m.Compactions {
+		crc64 ^= compaction.ArtifactesHash
+	}
+	for _, metaEdit := range m.EditMeta {
+		crc64 ^= hashMetaEdit(metaEdit)
+	}
+	return crc64 ^ m.TruncatedTo
+}
+
+func hashMetaEdit(metaEdit *pb.MetaEdit) uint64 {
+	var res uint64 = 0
+	for _, df := range metaEdit.DeletePhysicalFiles {
+		digest := crc64.New(crc64.MakeTable(crc64.ISO))
+		digest.Write([]byte(df))
+		res ^= digest.Sum64()
+	}
+	for _, spans := range metaEdit.DeleteLogicalFiles {
+		for _, span := range spans.GetSpans() {
+			crc := crc64.New(crc64.MakeTable(crc64.ISO))
+			crc.Write([]byte(spans.GetPath()))
+			crc.Write(binary.LittleEndian.AppendUint64(nil, span.GetOffset()))
+			crc.Write(binary.LittleEndian.AppendUint64(nil, span.GetLength()))
+			res ^= crc.Sum64()
+		}
+	}
+	crc := crc64.New(crc64.MakeTable(crc64.ISO))
+	if metaEdit.DestructSelf {
+		crc.Write([]byte{1})
+	} else {
+		crc.Write([]byte{0})
+	}
+	return res ^ crc.Sum64()
+}
+
+func nameOf(mig *pb.Migration, sn int) string {
+	return fmt.Sprintf("%08d_%16X.mgrt", sn, hashMigration(mig))
 }
