@@ -2146,7 +2146,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "irate(go_gc_cycles_automatic_gc_cycles_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])",
+              "expr": "increase(go_gc_cycles_automatic_gc_cycles_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -2158,7 +2158,7 @@
             },
             {
               "exemplar": true,
-              "expr": "irate(go_gc_cycles_forced_gc_cycles_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])",
+              "expr": "increase(go_gc_cycles_forced_gc_cycles_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -2170,7 +2170,7 @@
             },
             {
               "exemplar": true,
-              "expr": "irate(go_gc_cycles_total_gc_cycles_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])",
+              "expr": "increase(go_gc_cycles_total_gc_cycles_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])",
               "format": "time_series",
               "hide": false,
               "instant": false,
