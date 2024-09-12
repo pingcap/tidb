@@ -631,6 +631,15 @@ func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) er
 	return m.s.WriteFile(ctx, name, data)
 }
 
+func (migs Migrations) AllPbMigrations() []*pb.Migration {
+	pbMigs := make([]*pb.Migration, 0, len(migs.Layers)+1)
+	pbMigs = append(pbMigs, migs.Base)
+	for _, m := range migs.Layers {
+		pbMigs = append(pbMigs, &m.Content)
+	}
+	return pbMigs
+}
+
 // MergeTo merges migrations from the BASE in the live migrations until the specified sequence number.
 func (migs Migrations) MergeTo(seq int) *pb.Migration {
 	return migs.MergeToBy(seq, MergeMigrations)
@@ -1167,7 +1176,7 @@ func isEmptyMetadata(md *pb.Metadata) bool {
 func hashMigration(m *pb.Migration) uint64 {
 	var crc64 uint64 = 0
 	for _, compaction := range m.Compactions {
-		crc64 ^= compaction.ArtifactesHash
+		crc64 ^= compaction.ArtifactsHash
 	}
 	for _, metaEdit := range m.EditMeta {
 		crc64 ^= hashMetaEdit(metaEdit)
