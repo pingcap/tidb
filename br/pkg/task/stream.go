@@ -1297,7 +1297,7 @@ func restoreStream(
 	client.SetCurrentTS(currentTS)
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
-	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, false)
+	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, len(cfg.FullBackupStorage) == 0)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1350,6 +1350,11 @@ func restoreStream(
 	if err != nil {
 		return err
 	}
+	migs, err := client.GetMigrations(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	client.BuildMigrations(migs)
 
 	// get full backup meta storage to generate rewrite rules.
 	fullBackupStorage, err := parseFullBackupTablesStorage(cfg)
@@ -1423,8 +1428,22 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
+
+	compactionIter := client.LogFileManager.OpenCompactionIter(ctx, migs)
+
+	sstFileCount, regionCompactedMap, err := client.CollectCompactedSsts(ctx, rewriteRules, compactionIter)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount+sstFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
+		// TODO consider checkpoint
+		err = client.RestoreCompactedSsts(ctx, regionCompactedMap, importModeSwitcher, p.Inc)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		if cfg.UseCheckpoint {
 			updateStatsWithCheckpoint := func(kvCount, size uint64) {
 				mu.Lock()
@@ -1519,6 +1538,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	}
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetConcurrencyPerStore(uint(cfg.ConcurrencyPerStore.Value))
 	client.InitClients(ctx, u)
 
 	err = client.SetRawKVBatchClient(ctx, cfg.PD, cfg.TLS.ToKVSecurity())

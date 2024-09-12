@@ -330,11 +330,11 @@ replace (
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 
-	github.com/pingcap/kvproto => github.com/yujuncen/kvproto v0.0.0-20240725064730-6d93a3086bf2
+	github.com/pingcap/kvproto => github.com/YuJuncen/kvproto v0.0.0-20240725064730-6d93a3086bf2
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
-	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
+	v0.0.0-20240709031634-baefbf030e28sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )

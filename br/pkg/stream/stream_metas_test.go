@@ -4,8 +4,8 @@ package stream
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
-	"math"
 	"math/rand"
 	"os"
 	"path"

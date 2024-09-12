@@ -15,6 +15,7 @@
 package logclient
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/tls"
@@ -44,9 +45,11 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
+	"github.com/pingcap/tidb/br/pkg/restore/snap_client/sstfiles"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -59,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -75,15 +79,18 @@ const maxSplitKeysOnce = 10240
 
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
+const compactedSSTBatchSize = 16
 
 type LogClient struct {
-	cipher        *backuppb.CipherInfo
-	pdClient      pd.Client
-	pdHTTPClient  pdhttp.Client
-	clusterID     uint64
-	dom           *domain.Domain
-	tlsConf       *tls.Config
-	keepaliveConf keepalive.ClientParameters
+	restorer            sstfiles.FileRestorer
+	cipher              *backuppb.CipherInfo
+	pdClient            pd.Client
+	pdHTTPClient        pdhttp.Client
+	clusterID           uint64
+	dom                 *domain.Domain
+	tlsConf             *tls.Config
+	keepaliveConf       keepalive.ClientParameters
+	concurrencyPerStore uint
 
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     storage.ExternalStorage
@@ -140,7 +147,140 @@ func (rc *LogClient) Close() {
 		log.Warn("failed to close file improter")
 	}
 
+	if err := rc.restorer.Close(); err != nil {
+		log.Warn("failed to close file improter")
+	}
+
 	log.Info("Restore client closed")
+}
+
+type CompactedItem struct {
+	files         []sstfiles.SstFilesInfo
+	regionMinKeys [][]byte
+}
+
+func (c *CompactedItem) Append(file sstfiles.SstFilesInfo, key []byte) {
+	c.files = append(c.files, file)
+	c.regionMinKeys = append(c.regionMinKeys, key)
+}
+
+func (c *CompactedItem) Size() int {
+	return len(c.files)
+}
+
+func (rc *LogClient) CollectCompactedSsts(
+	ctx context.Context,
+	rules map[int64]*restoreutils.RewriteRules,
+	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
+) (int, map[uint64]*CompactedItem, error) {
+	totalSSTCount := 0
+	regionCompactedMap := make(map[uint64]*CompactedItem)
+	// read unorder files
+	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
+		if r.Err != nil {
+			return 0, nil, r.Err
+		}
+		i := r.Item
+		rewriteRules, ok := rules[i.Meta.TableId]
+		if !ok {
+			log.Warn("Skipped excluded tables.", zap.Int64("table_id", i.Meta.TableId))
+			continue
+		}
+
+		if _, ok := regionCompactedMap[i.Meta.RegionId]; !ok {
+			c := CompactedItem{
+				files: make([]sstfiles.SstFilesInfo, 0, compactedSSTBatchSize),
+				// TODO When log backup supports record region range, use it to split ranges.
+				// currently, we use the min key of the record key and rewrite it to split ranges.
+				regionMinKeys: make([][]byte, 0, compactedSSTBatchSize),
+			}
+			regionCompactedMap[i.Meta.RegionId] = &c
+		}
+		// translate min key to raw key
+		_, rawMinKey, err := codec.DecodeBytes(i.Meta.MinKey, nil)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
+		totalSSTCount += len(i.SstOutputs)
+
+		regionCompactedMap[i.Meta.RegionId].Append(sstfiles.SstFilesInfo{
+			TableID:      i.Meta.TableId,
+			Files:        i.SstOutputs,
+			RewriteRules: rewriteRules,
+		}, rawMinKey)
+	}
+	return totalSSTCount, regionCompactedMap, nil
+}
+
+func (rc *LogClient) RestoreCompactedSsts(
+	ctx context.Context,
+	regionCompactedMap map[uint64]*CompactedItem,
+	importModeSwitcher *restore.ImportModeSwitcher,
+	onProgress func(),
+) error {
+	// need to enter import mode before restore SST files
+	// it will set to noral mode whatever
+	importModeSwitcher.SwitchToImportMode(ctx)
+	defer importModeSwitcher.SwitchToNormalMode(ctx)
+
+	splitRanges := make([]rtree.Range, 0, compactedSSTBatchSize)
+
+	eg, eCtx := errgroup.WithContext(ctx)
+	// split every cnt regions
+	cnt := 0
+	for regionId, CompactedItems := range regionCompactedMap {
+		cnt += 1
+		if cnt >= compactedSSTBatchSize {
+			var regionSplitKey []byte
+			var splitKeyIndex int
+			for i, minKey := range CompactedItems.regionMinKeys {
+				if len(regionSplitKey) == 0 || bytes.Compare(minKey, regionSplitKey) < 0 {
+					regionSplitKey = minKey
+					splitKeyIndex = i
+				}
+			}
+			log.Info("find min split key for region",
+				zap.Uint64("region_id", regionId),
+				logutil.Key("split_key", regionSplitKey),
+				zap.Int("index", splitKeyIndex))
+
+			// build split ranges
+			tmpRng := rtree.Range{
+				StartKey: []byte(regionSplitKey),
+				// ignored this field, because we use start key to split region.
+				EndKey: []byte(regionSplitKey),
+			}
+			// only one range in the region should split
+			rg, err := restoreutils.RewriteRange(&tmpRng, CompactedItems.files[splitKeyIndex].RewriteRules)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			splitRanges = append(splitRanges, *rg)
+			cnt = 0
+		}
+
+		if len(splitRanges) > 0 {
+			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+				defer onProgress()
+				// TODO unify the onProcess and updateCh
+				err := rc.restorer.SplitRanges(eCtx, splitRanges, nil)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				return rc.restorer.RestoreFiles(eCtx, CompactedItems.files, nil)
+			})
+			// reset for next batch
+			splitRanges = nil
+		} else {
+			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+				defer onProgress()
+				// restore rest files
+				return rc.restorer.RestoreFiles(eCtx, CompactedItems.files, nil)
+			})
+		}
+	}
+
+	return eg.Wait()
 }
 
 func (rc *LogClient) SetRawKVBatchClient(
@@ -164,6 +304,14 @@ func (rc *LogClient) SetCrypter(crypter *backuppb.CipherInfo) {
 func (rc *LogClient) SetConcurrency(c uint) {
 	log.Info("download worker pool", zap.Uint("size", c))
 	rc.workerPool = tidbutil.NewWorkerPool(c, "file")
+}
+
+func (rc *LogClient) SetConcurrencyPerStore(c uint) {
+	if c == 0 {
+		c = 128
+	}
+	log.Info("download worker pool per store", zap.Uint("size", c))
+	rc.concurrencyPerStore = c
 }
 
 func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
@@ -235,6 +383,20 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewLogFileImporter(metaClient, importCli, backend)
+
+	var createCallBacks []func(*sstfiles.SnapFileImporter) error
+	var closeCallBacks []func(*sstfiles.SnapFileImporter) error
+	createCallBacks = append(createCallBacks, func(importer *sstfiles.SnapFileImporter) error {
+		return importer.CheckMultiIngestSupport(ctx, stores)
+	})
+	log.Info("Initializing client.", zap.Stringer("api", rc.dom.Store().GetCodec().GetAPIVersion()))
+	snapFileImporter, err := sstfiles.NewSnapFileImporter(
+		ctx, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion(), metaClient,
+		importCli, backend, false, false, stores, sstfiles.RewriteModeKeyspace, rc.concurrencyPerStore, createCallBacks, closeCallBacks)
+	if err != nil {
+		log.Fatal("failed to init snap file importer", zap.Error(err))
+	}
+	rc.restorer = sstfiles.NewSimpleFileRestorer(true, snapFileImporter, metaClient, rc.workerPool)
 }
 
 func (rc *LogClient) InitCheckpointMetadataForLogRestore(ctx context.Context, taskName string, gcRatio string) (string, error) {
@@ -273,12 +435,25 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(ctx context.Context, ta
 	return gcRatio, nil
 }
 
+func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, error) {
+	ext := stream.MigerationExtension(rc.storage)
+	migs, err := ext.Load(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return migs.AllPbMigrations(), nil
+}
+
 func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint) error {
 	init := LogFileManagerInit{
 		StartTS:   startTS,
 		RestoreTS: restoreTS,
 		Storage:   rc.storage,
 
+		MigrationsBuilder: &WithMigrationsBuilder{
+			startTS:    startTS,
+			restoredTS: restoreTS,
+		},
 		MetadataDownloadBatchSize: metadataDownloadBatchSize,
 	}
 	var err error

@@ -509,7 +509,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rc.restorer = sstfiles.NewSimpleFileRestorer(fileImporter, metaClient, rc.workerPool)
+		rc.restorer = sstfiles.NewSimpleFileRestorer(false, fileImporter, metaClient, rc.workerPool)
 
 	} else {
 		// or create a fileImporter with the cluster API version

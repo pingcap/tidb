@@ -99,6 +99,10 @@ type WithMigrationsBuilder struct {
 	restoredTS   uint64
 }
 
+func (builder *WithMigrationsBuilder) SetShiftStartTS(ts uint64) {
+	builder.shiftStartTS = ts
+}
+
 func (builder *WithMigrationsBuilder) updateSkipMap(skipmap metaSkipMap, metas []*backuppb.MetaEdit) {
 	for _, meta := range metas {
 		if meta.DestructSelf {
@@ -136,6 +140,7 @@ func (builder *WithMigrationsBuilder) coarseGrainedFilter(mig *backuppb.Migratio
 // Create the wrapper by migrations.
 func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigrations {
 	skipmap := make(metaSkipMap)
+
 	for _, mig := range migs {
 		// TODO: deal with TruncatedTo and DestructPrefix
 		if builder.coarseGrainedFilter(mig) {
@@ -218,13 +223,5 @@ func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 
 // Filter out logs that deleted by migrations.
 func (m WithMigrations) WrapLogIter(l LogIter) LogIter {
-	return nil
-}
-
-type CompactionIter *int
-
-// Fetch compactions that may contain file less than the TS.
-func (m WithMigrations) OpenCompactionIter(forTS uint64) CompactionIter {
-
 	return nil
 }

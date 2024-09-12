@@ -529,6 +529,10 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	cfg.PitrConcurrency += 1
 	log.Info("set restore kv files concurrency", zap.Int("concurrency", int(cfg.PitrConcurrency)))
 	cfg.Config.Concurrency = cfg.PitrConcurrency
+	if cfg.ConcurrencyPerStore.Value > 0 {
+		log.Info("set restore compacted sst files concurrency per store",
+			zap.Int("concurrency", int(cfg.ConcurrencyPerStore.Value)))
+	}
 }
 
 // generateLogRestoreTaskName generates the log restore taskName for checkpoint
@@ -787,8 +791,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	keepaliveCfg.PermitWithoutStream = true
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	// set to cfg so that restoreStream can use it.
+	cfg.ConcurrencyPerStore = kvConfigs.ImportGoroutines
 	// using tikv config to set the concurrency-per-store for client.
-	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
+	client.SetConcurrencyPerStore(cfg.ConcurrencyPerStore.Value)
 	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)

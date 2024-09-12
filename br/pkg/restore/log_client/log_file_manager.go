@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	pb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -26,8 +27,7 @@ import (
 // MetaIter is the type of iterator of metadata files' content.
 type MetaIter = iter.TryNextor[*pb.Metadata]
 
-// SubcompactionIter is the type that yields subcompaction.
-type SubcompactionIter = iter.TryNextor[*pb.LogFileSubcompactionMeta]
+type SubCompactionIter iter.TryNextor[*backuppb.LogFileSubcompaction]
 
 type MetaName struct {
 	meta Meta
@@ -79,6 +79,7 @@ type streamMetadataHelper interface {
 		storage storage.ExternalStorage,
 	) ([]byte, error)
 	ParseToMetadata(rawMetaData []byte) (*pb.Metadata, error)
+	ParseToOneCompaction(rawData []byte) (*pb.LogFileSubcompaction, error)
 }
 
 // LogFileManager is the manager for log files of a certain restoration,
@@ -98,7 +99,8 @@ type LogFileManager struct {
 	storage storage.ExternalStorage
 	helper  streamMetadataHelper
 
-	withmigrations *WithMigrations
+	migrationBuilder *WithMigrationsBuilder
+	withMigrations   *WithMigrations
 
 	metadataDownloadBatchSize uint
 }
@@ -109,7 +111,7 @@ type LogFileManagerInit struct {
 	RestoreTS uint64
 	Storage   storage.ExternalStorage
 
-	Migrations                *WithMigrations
+	MigrationsBuilder         *WithMigrationsBuilder
 	MetadataDownloadBatchSize uint
 }
 
@@ -122,10 +124,11 @@ type DDLMetaGroup struct {
 // Generally the config cannot be changed during its lifetime.
 func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFileManager, error) {
 	fm := &LogFileManager{
-		startTS:   init.StartTS,
-		restoreTS: init.RestoreTS,
-		storage:   init.Storage,
-		helper:    stream.NewMetadataHelper(),
+		startTS:          init.StartTS,
+		restoreTS:        init.RestoreTS,
+		storage:          init.Storage,
+		helper:           stream.NewMetadataHelper(),
+		migrationBuilder: init.MigrationsBuilder,
 
 		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}
@@ -134,6 +137,11 @@ func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFil
 		return nil, err
 	}
 	return fm, nil
+}
+
+func (rc *LogFileManager) BuildMigrations(migs []*backuppb.Migration) {
+	w := rc.migrationBuilder.Build(migs)
+	rc.withMigrations = &w
 }
 
 func (rc *LogFileManager) ShiftTS() uint64 {
@@ -169,9 +177,11 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 	}
 	if !shiftTS.exists {
 		rc.shiftStartTS = rc.startTS
+		rc.migrationBuilder.SetShiftStartTS(rc.shiftStartTS)
 		return nil
 	}
 	rc.shiftStartTS = shiftTS.value
+	rc.migrationBuilder.SetShiftStartTS(rc.shiftStartTS)
 	return nil
 }
 
@@ -223,7 +233,7 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 }
 
 func (rc *LogFileManager) FilterDataFiles(m MetaNameIter) LogIter {
-	ms := rc.withmigrations.Metas(m)
+	ms := rc.withMigrations.Metas(m)
 	return iter.FlatMap(ms, func(m *MetaWithMigrations) LogIter {
 		gs := m.Physicals(iter.Enumerate(iter.FromSlice(m.meta.FileGroups)))
 		return iter.FlatMap(gs, func(gim *PhysicalWithMigrations) LogIter {
@@ -333,6 +343,22 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 	})
 }
 
+// Fetch compactions that may contain file less than the TS.
+func (rc *LogFileManager) OpenCompactionIter(ctx context.Context, migs []*backuppb.Migration) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+	compactionDirs := make([]string, 0, 8)
+	for _, mig := range migs {
+		for _, c := range mig.Compactions {
+			compactionDirs = append(compactionDirs, c.Artifactes)
+		}
+	}
+
+	compactionDirIter := iter.FromSlice(compactionDirs)
+	return iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+		// name is the absolute path in external storage.
+		return Subcompactions(ctx, name, rc.storage)
+	})
+}
+
 // the kv entry with ts, the ts is decoded from entry.
 type KvEntryWithTS struct {
 	E  kv.Entry
@@ -416,14 +442,15 @@ func (rc *LogFileManager) ReadAllEntries(
 	return kvEntries, nextKvEntries, nil
 }
 
-type WithMigrate struct {
-	metas        MetaIter
-	compactions  SubcompactionIter
-	deletedFiles map[string]*pb.SpansOfFile
-}
-
-func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage) SubcompactionIter {
-	return storage.UnmarshalDir(ctx, &storage.WalkOption{SubDir: prefix}, s, func(t *pb.LogFileSubcompactionMeta, name string, b []byte) error { return t.Unmarshal(b) })
+func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage) SubCompactionIter {
+	return iter.FlatMap(storage.UnmarshalDir(
+		ctx,
+		&storage.WalkOption{SubDir: prefix},
+		s,
+		func(t *pb.LogFileSubcompactions, name string, b []byte) error { return t.Unmarshal(b) },
+	), func(subcs *pb.LogFileSubcompactions) iter.TryNextor[*pb.LogFileSubcompaction] {
+		return iter.FromSlice(subcs.Subcompactions)
+	})
 }
 
 func LoadMigrations(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*pb.Migration] {

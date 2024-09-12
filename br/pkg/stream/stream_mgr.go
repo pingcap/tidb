@@ -258,6 +258,12 @@ func (*MetadataHelper) ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, 
 	return meta, errors.Trace(err)
 }
 
+func (*MetadataHelper) ParseToOneCompaction(rawData []byte) (*backuppb.LogFileSubcompaction, error) {
+	c := &backuppb.LogFileSubcompaction{}
+	err := c.Unmarshal(rawData)
+	return c, errors.Trace(err)
+}
+
 // Only for deleting, after MetadataV1 is deprecated, we can remove it.
 // Hard means convert to MetaDataV2 deeply.
 func (*MetadataHelper) ParseToMetadataHard(rawMetaData []byte) (*backuppb.Metadata, error) {

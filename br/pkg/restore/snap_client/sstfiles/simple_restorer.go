@@ -19,33 +19,38 @@ package sstfiles
 
 import (
 	"context"
+	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/utils"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 type SimpleFileRestorer struct {
-	workerPool   *tidbutil.WorkerPool
-	splitter     split.SplitClient
-	fileImporter *SnapFileImporter
+	useStartKeySplit bool
+	workerPool       *tidbutil.WorkerPool
+	splitter         split.SplitClient
+	fileImporter     *SnapFileImporter
 }
 
 func NewSimpleFileRestorer(
+	useStartKeySplit bool,
 	fileImporter *SnapFileImporter,
 	splitter split.SplitClient,
 	workerPool *tidbutil.WorkerPool,
 ) FileRestorer {
 	return &SimpleFileRestorer{
-		fileImporter: fileImporter,
-		splitter:     splitter,
-		workerPool:   workerPool,
+		useStartKeySplit: useStartKeySplit,
+		fileImporter:     fileImporter,
+		splitter:         splitter,
+		workerPool:       workerPool,
 	}
 }
 
@@ -57,14 +62,19 @@ func (s *SimpleFileRestorer) Close() error {
 // data range after rewrite.
 // updateCh is used to record progress.
 func (s *SimpleFileRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress) error {
-	var splitClientOpt split.ClientOptionalParameter
-	splitClientOpt = split.WithOnSplit(func(keys [][]byte) {
-		for range keys {
-			updateCh.Inc()
-		}
-	})
-	s.splitter.ApplyOptions(splitClientOpt)
-	splitter := utils.NewRegionSplitter(s.splitter)
+	if updateCh != nil {
+		splitClientOpt := split.WithOnSplit(func(keys [][]byte) {
+			for range keys {
+				updateCh.Inc()
+			}
+		})
+		s.splitter.ApplyOptions(splitClientOpt)
+	}
+	opts := make([]utils.SplitOption, 0, 1)
+	if s.useStartKeySplit {
+		opts = append(opts, &utils.UseStartKeyOption{})
+	}
+	splitter := utils.NewRegionSplitter(s.splitter, opts...)
 	return splitter.ExecuteSplit(ctx, ranges)
 }
 
@@ -76,10 +86,16 @@ func (r *SimpleFileRestorer) RestoreFiles(ctx context.Context, files []SstFilesI
 	for _, file := range files {
 		fileReplica := file
 		r.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
+			func() (restoreErr error) {
+				fileStart := time.Now()
 				defer func() {
-					log.Info("import sst files done", logutil.Files(fileReplica.Files))
-					updateCh.Inc()
+					if restoreErr == nil {
+						log.Info("import sst files done", logutil.Files(fileReplica.Files),
+							zap.Duration("take", time.Since(fileStart)))
+						if updateCh != nil {
+							updateCh.Inc()
+						}
+					}
 				}()
 				return r.fileImporter.ImportSSTFiles(ectx, fileReplica.Files, fileReplica.RewriteRules)
 			})
