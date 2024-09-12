@@ -323,7 +323,7 @@ func applyDefaultAction(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]in
 	return b.applyAffectedOpts(m, tblIDs, diff, diff.Type)
 }
 
-func (b *Builder) getTableIDs(m *meta.Meta, diff *model.SchemaDiff) (oldTableID, newTableID int64, err error) {
+func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID, newTableID int64, err error) {
 	switch diff.Type {
 	case model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
