@@ -55,7 +55,7 @@ func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]Meta, error) {
 	return r.Item, nil
 }
 
-func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, storage storage.ExternalStorage, dom *domain.Domain, se glue.Session) *LogClient {
+func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, dom *domain.Domain, se glue.Session) *LogClient {
 	return &LogClient{
 		dom:               dom,
 		se:                se,
@@ -65,7 +65,6 @@ func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, 
 			restoreTS: restoreTS,
 		},
 		clusterID: clusterID,
-		storage:   storage,
 	}
 }
 

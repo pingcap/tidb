@@ -25,18 +25,22 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/keepalive"
@@ -1343,45 +1347,59 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	}
 }
 
-type fakeStorage struct {
-	storage.ExternalStorage
+type fakeSession struct {
+	glue.Session
 }
 
-func (fs fakeStorage) FileExists(ctx context.Context, name string) (bool, error) {
-	return false, errors.Errorf("name: %s", name)
+func (fs fakeSession) GetSessionCtx() sessionctx.Context {
+	return fakeSessionContext{}
 }
 
-type fakeStorageOK struct {
-	storage.ExternalStorage
+type fakeSessionContext struct {
+	sessionctx.Context
 }
 
-func (fs fakeStorageOK) FileExists(ctx context.Context, name string) (bool, error) {
-	return false, nil
+func (fsc fakeSessionContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return fakeSQLExecutor{}
+}
+
+type fakeSQLExecutor struct {
+	sqlexec.RestrictedSQLExecutor
+}
+
+func (fse fakeSQLExecutor) ExecRestrictedSQL(_ context.Context, _ []sqlexec.OptionFuncAlias, query string, args ...any) ([]chunk.Row, []*resolve.ResultField, error) {
+	return nil, nil, errors.Errorf("name: %s, %v", query, args)
 }
 
 func TestInitSchemasReplaceForDDL(t *testing.T) {
 	ctx := context.Background()
 
 	{
-		client := logclient.TEST_NewLogClient(123, 1, 2, 1, fakeStorage{}, domain.NewMockDomain(), nil)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		cfg := &logclient.InitSchemaConfig{IsNewTask: false}
 		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to check filename:pitr_id_maps/pitr_id_map.cluster_id:123.restored_ts:2")
+		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [2, 1]", err.Error())
 	}
 
 	{
-		client := logclient.TEST_NewLogClient(123, 1, 2, 1, fakeStorage{}, domain.NewMockDomain(), nil)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
 		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to check filename:pitr_id_maps/pitr_id_map.cluster_id:123.restored_ts:1")
+		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [1, 1]", err.Error())
 	}
 
 	{
-		client := logclient.TEST_NewLogClient(123, 1, 2, 1, fakeStorageOK{}, domain.NewMockDomain(), nil)
+		s := utiltest.CreateRestoreSchemaSuite(t)
+		tk := testkit.NewTestKit(t, s.Mock.Storage)
+		tk.Exec(session.CreatePITRIDMap)
+		g := gluetidb.New()
+		se, err := g.CreateSession(s.Mock.Storage)
+		require.NoError(t, err)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), se)
 		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
-		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
+		_, err = client.InitSchemasReplaceForDDL(ctx, cfg)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "miss upstream table information at `start-ts`(1) but the full backup path is not specified")
 	}
@@ -1450,7 +1468,7 @@ func TestPITRIDMap(t *testing.T) {
 	g := gluetidb.New()
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
-	client := logclient.TEST_NewLogClient(123, 1, 2, 3, nil, nil, se)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 3, nil, se)
 	baseSchemaReplaces := &stream.SchemasReplace{
 		DbMap: getDBMap(),
 	}
@@ -1459,7 +1477,7 @@ func TestPITRIDMap(t *testing.T) {
 	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1)
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
-	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, nil, nil, se)
+	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, nil, se)
 	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2)
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
