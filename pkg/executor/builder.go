@@ -3503,7 +3503,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		indexUsageReporter:         b.buildIndexUsageReporter(v),
 		dagPB:                      dagReq,
 		startTS:                    startTS,
-		getStartTS:                 lazyStartTS.getStartTS,
 		txnScope:                   b.txnScope,
 		readReplicaScope:           b.readReplicaScope,
 		isStaleness:                b.isStaleness,
@@ -3520,6 +3519,9 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		tablePlan:                  v.GetTablePlan(),
 		storeType:                  v.StoreType,
 		batchCop:                   v.ReadReqType == plannercore.BatchCop,
+	}
+	if lazyStartTS != nil {
+		e.getStartTS = lazyStartTS.getStartTS
 	}
 	e.buildVirtualColumnInfo()
 
@@ -3848,7 +3850,6 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		indexUsageReporter:         b.buildIndexUsageReporter(v),
 		dagPB:                      dagReq,
 		startTS:                    startTS,
-		getStartTS:                 lazyStartTS.getStartTS,
 		txnScope:                   b.txnScope,
 		readReplicaScope:           b.readReplicaScope,
 		isStaleness:                b.isStaleness,
@@ -3867,6 +3868,9 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		colLens:                    is.IdxColLens,
 		plans:                      v.IndexPlans,
 		outputColumns:              v.OutputColumns,
+	}
+	if lazyStartTS != nil {
+		e.getStartTS = lazyStartTS.getStartTS
 	}
 
 	for _, col := range v.OutputColumns {
