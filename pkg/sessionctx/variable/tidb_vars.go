@@ -958,8 +958,8 @@ const (
 	// TiDBOptEnableHashJoin indicates whether to enable hash join.
 	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
 
-	// TiDBOptEnableHashJoinV2 indicates whether to enable hash join v2.
-	TiDBOptEnableHashJoinV2 = "tidb_opt_enable_hash_join_v2"
+	// TiDBOptUseHashJoinV2 indicates whether to enable hash join v2.
+	TiDBOptUseHashJoinV2 = "tidb_opt_use_hash_join_v2"
 
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.

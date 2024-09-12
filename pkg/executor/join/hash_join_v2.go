@@ -41,7 +41,7 @@ import (
 var (
 	_ exec.Executor = &HashJoinV2Exec{}
 	// UseHashJoinV2 is used for test
-	UseHashJoinV2 = []string{"set tidb_opt_enable_hash_join_v2 = false", "set tidb_opt_enable_hash_join_v2 = true"}
+	UseHashJoinV2 = []string{"set tidb_opt_use_hash_join_v2 = false", "set tidb_opt_use_hash_join_v2 = true"}
 )
 
 // IsHashJoinV2Supported return true if hash join v2 is enabled
