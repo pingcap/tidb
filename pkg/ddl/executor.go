@@ -3380,6 +3380,7 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 	newCol := oldCol.Clone()
 	newCol.Name = newColName
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tbl.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3387,10 +3388,20 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		Type:           model.ActionModifyColumn,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      NewDDLReorgMeta(ctx),
-		Args:           []any{&newCol, oldColName, spec.Position, 0, 0},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+	args := &model.ModifyColumnArgs{
+		ModifyingColInfo: &model.ModifyingColInfo{
+			NewCol:                newCol,
+			OldColName:            oldColName,
+			Pos:                   spec.Position,
+			ModifyColumnTp:        0,
+			UpdatedAutoRandomBits: 0,
+		},
+	}
+	job.FillArgs(args)
+
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }

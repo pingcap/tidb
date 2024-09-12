@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -256,4 +258,119 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 	}
 
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
+}
+
+// ModifyingColInfo is the infomation about modifying column.
+type ModifyingColInfo struct {
+	NewCol                *ColumnInfo         `json:"new_column,omitempty"`
+	OldColName            model.CIStr         `json:"old_column_name,omitempty"`
+	ModifyColumnTp        byte                `json:"modify_column_tp,omitempty"`
+	UpdatedAutoRandomBits uint64              `json:"update_auto_random_bits,omitempty"`
+	ChangingCol           *ColumnInfo         `json:"changing_column,omitempty"`
+	ChangingIdxs          []*IndexInfo        `json:"changine_idxs,omitempty"`
+	Pos                   *ast.ColumnPosition `json:"column_position,omitempty"`
+	RemovedIdxs           []int64             `json:"removed_idxs,omitempty"`
+}
+
+// ModifyColumnArgs is the argument for Modifying column job.
+type ModifyColumnArgs struct {
+	// follow members are the args for job submission.
+	*ModifyingColInfo `json:"modifying_col_info,omitempty"`
+
+	// follow members are the args for finished job.
+	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	PartitionIDs []int64 `json:"partition_ids,omitempty"`
+
+	// context vars
+	NeedChangeColData bool `json:"-"`
+}
+
+func (a *ModifyColumnArgs) fillJob(job *Job) {
+	if job.Version <= JobVersion1 {
+		job.Args = []any{&a.NewCol, a.OldColName, a.Pos, a.ModifyColumnTp,
+			a.UpdatedAutoRandomBits, a.ChangingCol, a.ChangingIdxs, a.RemovedIdxs}
+		job.CtxVars = []any{a.NeedChangeColData}
+	}
+	job.Args = []any{a}
+}
+
+func (a *ModifyColumnArgs) fillFinishedJob(job *Job) {
+	if job.Version <= JobVersion1 {
+		job.Args = []any{a.IndexIDs, a.PartitionIDs}
+	}
+	job.Args = []any{a}
+}
+
+// GetModifyColumnArgs gets the args for modifying column job.
+func GetModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
+	return getModifyColumnArgs(job, false)
+}
+
+// GetFinishedModifyColumnArgs gets the args after the ddl job is finished.
+func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
+	return getModifyColumnArgs(job, true)
+}
+
+func getModifyColumnArgs(job *Job, argsOfFinished bool) (*ModifyColumnArgs, error) {
+	if len(job.Args) <= 0 {
+		return decodeModifyColumnArgs(job, argsOfFinished)
+	}
+
+	if job.Version <= JobVersion1 {
+		if argsOfFinished {
+			return &ModifyColumnArgs{
+				IndexIDs:     job.Args[0].([]int64),
+				PartitionIDs: job.Args[1].([]int64),
+			}, nil
+		}
+
+		// not argsOfFinished
+		return &ModifyColumnArgs{
+			ModifyingColInfo: &ModifyingColInfo{
+				NewCol:                *job.Args[0].(**ColumnInfo),
+				OldColName:            job.Args[1].(model.CIStr),
+				Pos:                   job.Args[2].(*ast.ColumnPosition),
+				ModifyColumnTp:        job.Args[3].(byte),
+				UpdatedAutoRandomBits: job.Args[4].(uint64),
+				ChangingCol:           job.Args[5].(*ColumnInfo),
+				ChangingIdxs:          job.Args[6].([]*IndexInfo),
+				RemovedIdxs:           job.Args[7].([]int64),
+			},
+		}, nil
+	}
+
+	// for job version2
+	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
+}
+
+func decodeModifyColumnArgs(job *Job, argsOfFinished bool) (*ModifyColumnArgs, error) {
+	var (
+		indexIDs     []int64
+		partitionIDs []int64
+		modifyInfo   ModifyingColInfo
+	)
+
+	if job.Version <= JobVersion1 {
+		if argsOfFinished {
+			if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
+				return nil, errors.Trace(err)
+			}
+			return &ModifyColumnArgs{
+				IndexIDs:     indexIDs,
+				PartitionIDs: partitionIDs,
+			}, nil
+		} else {
+			err := job.DecodeArgs(&modifyInfo.NewCol, &modifyInfo.OldColName, &modifyInfo.Pos,
+				&modifyInfo.ModifyColumnTp, &modifyInfo.UpdatedAutoRandomBits,
+				&modifyInfo.ChangingCol, &modifyInfo.ChangingIdxs, &modifyInfo.RemovedIdxs)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return &ModifyColumnArgs{
+				ModifyingColInfo: &modifyInfo,
+			}, nil
+		}
+	}
+
+	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
 }

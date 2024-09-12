@@ -156,12 +156,12 @@ func rollingbackModifyColumn(w *worker, jobCtx *jobContext, t *meta.Meta, job *m
 	if err != nil {
 		return ver, err
 	}
-	if !needChangeColumnData(oldCol, jp.newCol) {
+	if !needChangeColumnData(oldCol, jp.NewCol) {
 		// Normal-type rolling back
 		if job.SchemaState == model.StateNone {
 			// When change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
 			// To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
-			if jp.modifyColumnTp == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].GetFlag()|mysql.PreventNullInsertFlag != 0 {
+			if jp.ModifyColumnTp == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].GetFlag()|mysql.PreventNullInsertFlag != 0 {
 				job.State = model.JobStateRollingback
 				return ver, dbterror.ErrCancelledDDLJob
 			}
@@ -174,7 +174,7 @@ func rollingbackModifyColumn(w *worker, jobCtx *jobContext, t *meta.Meta, job *m
 		return ver, nil
 	}
 	// reorg-type rolling back
-	if jp.changingCol == nil {
+	if jp.ChangingCol == nil {
 		// The job hasn't been handled and we cancel it directly.
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob

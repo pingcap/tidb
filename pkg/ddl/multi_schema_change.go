@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -197,7 +198,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
 	return nil
 }
 
-func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error) {
+func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) error {
 	switch job.Type {
 	case model.ActionAddColumn:
 		col := job.Args[0].(*table.Column)
@@ -235,17 +236,18 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		info.AddIndexes = append(info.AddIndexes, to)
 		info.DropIndexes = append(info.DropIndexes, from)
 	case model.ActionModifyColumn:
-		newCol := *job.Args[0].(**model.ColumnInfo)
-		oldColName := job.Args[1].(pmodel.CIStr)
-		pos := job.Args[2].(*ast.ColumnPosition)
-		if newCol.Name.L != oldColName.L {
-			info.AddColumns = append(info.AddColumns, newCol.Name)
-			info.DropColumns = append(info.DropColumns, oldColName)
-		} else {
-			info.ModifyColumns = append(info.ModifyColumns, newCol.Name)
+		args, err := model.GetModifyColumnArgs(job)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
-			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
+		if args.NewCol.Name.L != args.OldColName.L {
+			info.AddColumns = append(info.AddColumns, args.NewCol.Name)
+			info.DropColumns = append(info.DropColumns, args.OldColName)
+		} else {
+			info.ModifyColumns = append(info.ModifyColumns, args.NewCol.Name)
+		}
+		if args.Pos != nil && args.Pos.Tp == ast.ColumnPositionAfter {
+			info.PositionColumns = append(info.PositionColumns, args.Pos.RelativeColumn.Name)
 		}
 	case model.ActionSetDefaultValue:
 		col := job.Args[0].(*table.Column)

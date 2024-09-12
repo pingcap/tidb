@@ -418,19 +418,19 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			}
 		}
 	case model.ActionModifyColumn:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
+		args, err := model.GetFinishedModifyColumnArgs(job)
+		if err != nil {
 			return errors.Trace(err)
 		}
-		if len(indexIDs) == 0 {
+
+		if len(args.IndexIDs) == 0 {
 			return nil
 		}
-		if len(partitionIDs) == 0 {
-			return doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "modify column: table ID")
+		if len(args.PartitionIDs) == 0 {
+			return doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, args.IndexIDs, ea, "modify column: table ID")
 		}
-		for _, pid := range partitionIDs {
-			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "modify column: partition table ID"); err != nil {
+		for _, pid := range args.PartitionIDs {
+			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, args.IndexIDs, ea, "modify column: partition table ID"); err != nil {
 				return errors.Trace(err)
 			}
 		}

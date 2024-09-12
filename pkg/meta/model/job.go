@@ -786,9 +786,14 @@ func (job *Job) MayNeedReorg() bool {
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
-		if len(job.CtxVars) > 0 {
-			needReorg, ok := job.CtxVars[0].(bool)
-			return ok && needReorg
+		if job.Version <= JobVersion1 {
+			if len(job.CtxVars) > 0 {
+				needReorg, ok := job.CtxVars[0].(bool)
+				return ok && needReorg
+			}
+		} else {
+			args, ok := job.Args[0].(*ModifyColumnArgs)
+			return ok && args.NeedChangeColData
 		}
 		return false
 	case ActionMultiSchemaChange:
