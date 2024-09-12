@@ -224,4 +224,5 @@ func runOneTest(t *testing.T, test InjectedTest, recoverable bool, failpointName
 	// TODO: Check Label rules
 	// TODO: Check bundles
 	// TODO: Check autoIDs
+	// TODO: Check delete_range tables, so no delete request for old partitions in failed alters!
 }
