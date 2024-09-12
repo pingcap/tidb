@@ -1,10 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "util",
     srcs = [
         "auto_analyze_proc_id_generator.go",
-        "ddl_event.go",
         "lease_getter.go",
         "pool.go",
         "table_info.go",
@@ -13,10 +12,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/util",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/ddl/util",
         "//pkg/infoschema",
         "//pkg/kv",
-        "//pkg/meta/model",
         "//pkg/parser/terror",
         "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
@@ -34,18 +31,5 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@org_golang_x_exp//maps",
         "@org_uber_go_atomic//:atomic",
-    ],
-)
-
-go_test(
-    name = "util_test",
-    timeout = "short",
-    srcs = ["ddl_event_test.go"],
-    embed = [":util"],
-    flaky = True,
-    deps = [
-        "//pkg/meta/model",
-        "//pkg/parser/model",
-        "@com_github_stretchr_testify//require",
     ],
 )

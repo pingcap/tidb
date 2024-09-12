@@ -27,15 +27,14 @@ import (
 // check the GetType of SchemaChange and call the corresponding getter function
 // to retrieve the needed information.
 type SchemaChangeEvent struct {
-	// todo: field and method will be added in the next few pr on demand
 	tableInfo       *model.TableInfo
 	oldTableInfo    *model.TableInfo
 	addedPartInfo   *model.PartitionInfo
 	droppedPartInfo *model.PartitionInfo
 	columnInfos     []*model.ColumnInfo
-	// nonPartTableID is used to store the non-partitioned table that is converted to
-	// a partitioned table in NewAddPartitioningEvent.
-	nonPartTableID int64
+	// oldTableID4Partition is used to store the table ID when a table transitions from being partitioned to non-partitioned,
+	// or vice versa.
+	oldTableID4Partition int64
 
 	tp model.ActionType
 }
@@ -54,17 +53,23 @@ func (s *SchemaChangeEvent) String() string {
 	if s.oldTableInfo != nil {
 		_, _ = fmt.Fprintf(&sb, ", Old Table ID: %d, Old Table Name: %s", s.oldTableInfo.ID, s.oldTableInfo.Name)
 	}
-	if s.nonPartTableID != 0 {
-		_, _ = fmt.Fprintf(&sb, ", Old Table ID for Partition: %d", s.nonPartTableID)
+	if s.oldTableID4Partition != 0 {
+		_, _ = fmt.Fprintf(&sb, ", Old Table ID for Partition: %d", s.oldTableID4Partition)
 	}
 	if s.addedPartInfo != nil {
 		for _, partDef := range s.addedPartInfo.Definitions {
-			_, _ = fmt.Fprintf(&sb, ", Partition Name: %s, Partition ID: %d", partDef.Name, partDef.ID)
+			if partDef.Name.L != "" {
+				_, _ = fmt.Fprintf(&sb, ", Partition Name: %s", partDef.Name)
+			}
+			_, _ = fmt.Fprintf(&sb, ", Partition ID: %d", partDef.ID)
 		}
 	}
 	if s.droppedPartInfo != nil {
 		for _, partDef := range s.droppedPartInfo.Definitions {
-			_, _ = fmt.Fprintf(&sb, ", Dropped Partition Name: %s, Dropped Partition ID: %d", partDef.Name, partDef.ID)
+			if partDef.Name.L != "" {
+				_, _ = fmt.Fprintf(&sb, ", Dropped Partition Name: %s", partDef.Name)
+			}
+			_, _ = fmt.Fprintf(&sb, ", Dropped Partition ID: %d", partDef.ID)
 		}
 	}
 	for _, columnInfo := range s.columnInfos {
@@ -323,10 +328,10 @@ func NewAddPartitioningEvent(
 	addedPartInfo *model.PartitionInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:             model.ActionAlterTablePartitioning,
-		nonPartTableID: nonPartTableID,
-		tableInfo:      newGlobalTableInfo,
-		addedPartInfo:  addedPartInfo,
+		tp:                   model.ActionAlterTablePartitioning,
+		oldTableID4Partition: nonPartTableID,
+		tableInfo:            newGlobalTableInfo,
+		addedPartInfo:        addedPartInfo,
 	}
 }
 
@@ -339,5 +344,39 @@ func (s *SchemaChangeEvent) GetAddPartitioningInfo() (
 	addedPartInfo *model.PartitionInfo,
 ) {
 	intest.Assert(s.tp == model.ActionAlterTablePartitioning)
-	return s.nonPartTableID, s.tableInfo, s.addedPartInfo
+	return s.oldTableID4Partition, s.tableInfo, s.addedPartInfo
+}
+
+// NewRemovePartitioningEvent creates a schema change event whose type is
+// ActionRemovePartitioning.
+func NewRemovePartitioningEvent(
+	oldPartitionedTableID int64,
+	nonPartitionTableInfo *model.TableInfo,
+	droppedPartInfo *model.PartitionInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp:                   model.ActionRemovePartitioning,
+		oldTableID4Partition: oldPartitionedTableID,
+		tableInfo:            nonPartitionTableInfo,
+		droppedPartInfo:      droppedPartInfo,
+	}
+}
+
+// GetRemovePartitioningInfo returns the table info and partition info of the SchemaChangeEvent whose type is
+// ActionRemovePartitioning.
+func (s *SchemaChangeEvent) GetRemovePartitioningInfo() (
+	oldPartitionedTableID int64,
+	newSingleTableInfo *model.TableInfo,
+	droppedPartInfo *model.PartitionInfo,
+) {
+	intest.Assert(s.tp == model.ActionRemovePartitioning)
+	return s.oldTableID4Partition, s.tableInfo, s.droppedPartInfo
+}
+
+// NewFlashbackClusterEvent creates a schema change event whose type is
+// ActionFlashbackCluster.
+func NewFlashbackClusterEvent() *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		tp: model.ActionFlashbackCluster,
+	}
 }

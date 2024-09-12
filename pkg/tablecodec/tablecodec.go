@@ -967,9 +967,13 @@ func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, column
 
 // DecodeIndexHandle uses to decode the handle from index key/value.
 func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
-	_, b, err := CutIndexKeyNew(key, colsLen)
-	if err != nil {
-		return nil, errors.Trace(err)
+	var err error
+	b := key[prefixLen+idLen:]
+	for i := 0; i < colsLen; i++ {
+		_, b, err = codec.CutOne(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	if len(b) > 0 {
 		return decodeHandleInIndexKey(b)
