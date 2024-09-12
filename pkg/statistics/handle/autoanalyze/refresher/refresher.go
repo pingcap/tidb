@@ -452,6 +452,7 @@ func calculateTableSize(
 ) float64 {
 	tblCnt := float64(tblStats.RealtimeCount)
 	colCnt := float64(tblStats.ColNum())
+	intest.Assert(colCnt != 0, "Column count should not be 0")
 
 	return tblCnt * colCnt
 }
@@ -576,6 +577,7 @@ func CalculateIndicatorsForPartitions(
 	count := 0.0
 	partitionNames = make([]string, 0, len(partitionStats))
 	cols := float64(globalStats.ColNum())
+	intest.Assert(cols != 0, "Column count should not be 0")
 	totalLastAnalyzeDuration := time.Duration(0)
 
 	for pIDAndName, tblStats := range partitionStats {
