@@ -361,20 +361,24 @@ func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, t *meta.Me
 			}
 		}
 	}
-	// Set to cancelled, to prevent any attemtps on cleanup like delete_range etc.
-	job.State = model.JobStateCancelled
 	if !okToConvert {
+		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", tblInfo.Partition.DDLState)
 	}
-	// Have not yet allowed writes to new partitions
-	tblInfo.Partition.NewPartitionIDs = nil
-	tblInfo.Partition.DDLAction = model.ActionNone
-	tblInfo.Partition.DDLState = model.StateNone
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
-	if err != nil {
-		return ver, errors.Trace(err)
+	pi := tblInfo.Partition
+	if len(pi.NewPartitionIDs) != 0 || pi.DDLAction != model.ActionNone || pi.DDLState != model.StateNone {
+		// Rollback the changes, note that no new partitions has been used yet!
+		// so only metadata rollback and we can cancel the DDL
+		tblInfo.Partition.NewPartitionIDs = nil
+		tblInfo.Partition.DDLAction = model.ActionNone
+		tblInfo.Partition.DDLState = model.StateNone
+		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
 	}
-	job.State = model.JobStateRollbackDone
+	job.State = model.JobStateCancelled
 	return ver, errors.Trace(otherwiseErr)
 }
 
