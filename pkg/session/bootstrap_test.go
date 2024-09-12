@@ -270,8 +270,9 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
 		MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
 	}
-	if ver < version212 {
+	if ver < version212 && ver >= version172 {
 		// for version < version212, revert column changes related to function `upgradeToVer212`.
+		// related tables created after version172.
 		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `start_time` TO `time`")
 		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `sample_sql` TO `original_sql`")
 	}

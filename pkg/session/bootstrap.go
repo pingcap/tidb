@@ -3095,6 +3095,12 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	if ver >= version212 {
 		return
 	}
+	// need to ensure curVersion has the column before rename.
+	// version169 created `tidb_runaway_queries` table
+	// version172 created `tidb_runaway_watch` and `tidb_runaway_watch_done` tables
+	if ver < version172 {
+		return
+	}
 	// version212 changed a lots of runaway related table.
 	// 1. switchGroup: add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD COLUMN `switch_group_name` VARCHAR(32) DEFAULT '' AFTER `action`;", infoschema.ErrColumnExists)
