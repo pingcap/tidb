@@ -1328,6 +1328,8 @@ func restoreStream(
 
 	var taskName string
 	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
+	var sstCheckpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+	var sstCheckpoints map[int64]struct{}
 	if cfg.UseCheckpoint {
 		taskName = cfg.generateLogRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
 		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, taskName, oldRatio)
@@ -1340,8 +1342,19 @@ func restoreStream(
 		if err != nil {
 			return errors.Trace(err)
 		}
+		sstTaskName := taskName + "_sst"
+		sstCheckpoints, err = client.InitCheckpointMetadataForSstRestore(ctx, sstTaskName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		sstCheckpointRunner, err = client.StartCheckpointRunnerForCompactedSSTRestore(ctx, sstTaskName)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		defer func() {
 			log.Info("wait for flush checkpoint...")
+			sstCheckpointRunner.WaitForFinish(ctx, !gcDisabledRestorable)
 			checkpointRunner.WaitForFinish(ctx, !gcDisabledRestorable)
 		}()
 	}
@@ -1435,11 +1448,13 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// total split ranges count
+	sstFileCount += sstFileCount / logclient.CompactedSSTSplitBatchSize
 
 	pd := g.StartProgress(ctx, "Restore SST+KV Files", int64(dataFileCount+sstFileCount), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
-		// TODO consider checkpoint
-		err = client.RestoreCompactedSsts(ctx, regionCompactedMap, importModeSwitcher, p.Inc)
+
+		err = client.RestoreCompactedSsts(ctx, regionCompactedMap, importModeSwitcher, sstCheckpoints, sstCheckpointRunner, p.Inc, logclient.RightDeriveSplit)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -348,7 +348,7 @@ func (rc *LogFileManager) OpenCompactionIter(ctx context.Context, migs []*backup
 	compactionDirs := make([]string, 0, 8)
 	for _, mig := range migs {
 		for _, c := range mig.Compactions {
-			compactionDirs = append(compactionDirs, c.Artifactes)
+			compactionDirs = append(compactionDirs, c.Artifacts)
 		}
 	}
 

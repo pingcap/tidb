@@ -238,7 +238,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 			// hence the checksum would fail.
 			done := b.registerTableIsRestoring(result.TablesToSend)
 			pool.ApplyOnErrorGroup(eg, func() error {
-				err := b.client.SplitRanges(ectx, result.Ranges, b.updateCh)
+				err := b.client.SplitRanges(ectx, result.Ranges, func() { b.updateCh.Inc() })
 				if err != nil {
 					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
 					return err
@@ -308,7 +308,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			// There has been a worker in the `RestoreSSTFiles` procedure.
 			// Spawning a raw goroutine won't make too many requests to TiKV.
 			eg.Go(func() error {
-				e := b.client.RestoreFiles(ectx, files, b.updateCh)
+				e := b.client.RestoreFiles(ectx, files, func() { b.updateCh.Inc() })
 				if e != nil {
 					log.Error("restore batch meet error", logutil.ShortError(e), zapTableIDWithFiles(files))
 					r.done()

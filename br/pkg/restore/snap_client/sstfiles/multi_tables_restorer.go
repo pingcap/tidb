@@ -28,7 +28,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
-	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/utils"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -68,10 +67,10 @@ func (s *MultiTablesRestorer) Close() error {
 // SplitRanges implements FileRestorer. It splits region by
 // data range after rewrite.
 // updateCh is used to record progress.
-func (s *MultiTablesRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress) error {
+func (s *MultiTablesRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, onProgress func()) error {
 	splitClientOpt := split.WithOnSplit(func(keys [][]byte) {
 		for range keys {
-			updateCh.Inc()
+			onProgress()
 		}
 	})
 	s.splitter.ApplyOptions(splitClientOpt)
@@ -81,7 +80,7 @@ func (s *MultiTablesRestorer) SplitRanges(ctx context.Context, ranges []rtree.Ra
 
 // RestoreSSTFiles tries to restore the files.
 // updateCh is used to record progress.
-func (s *MultiTablesRestorer) RestoreFiles(ctx context.Context, sstFiles []SstFilesInfo, updateCh glue.Progress) (err error) {
+func (s *MultiTablesRestorer) RestoreFiles(ctx context.Context, sstFiles []SstFilesInfo, onProgress func()) (err error) {
 	start := time.Now()
 	fileCount := 0
 	defer func() {
@@ -128,7 +127,7 @@ LOOPFORTABLE:
 					if restoreErr == nil {
 						log.Info("import files done", logutil.Files(filesReplica),
 							zap.Duration("take", time.Since(fileStart)))
-						updateCh.Inc()
+						onProgress()
 					}
 				}()
 				if importErr := s.fileImporter.ImportSSTFiles(ectx, filesReplica, rules); importErr != nil {

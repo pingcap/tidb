@@ -476,7 +476,7 @@ func addCompactionToTable(m *pb.LogFileCompaction, table *glue.Table, idx int) {
 	withIdx := func(s string) string { return fmt.Sprintf("compactions[%d].%s", idx, s) }
 	table.Add(withIdx("name"), m.Name)
 	table.Add(withIdx("time"), fmt.Sprintf("%d ~ %d", m.CompactionFromTs, m.CompactionUntilTs))
-	table.Add(withIdx("file"), fmt.Sprintf("[%q, %q]", m.Artifactes, m.GeneratedFiles))
+	table.Add(withIdx("file"), fmt.Sprintf("[%q, %q]", m.Artifacts, m.GeneratedFiles))
 }
 
 // MigrationExt is an extension to the `ExternalStorage` type.
@@ -862,7 +862,7 @@ func (m MigrationExt) doTruncating(ctx context.Context, mig *pb.Migration, resul
 		if compaction.CompactionUntilTs > mig.TruncatedTo {
 			result.NewBase.Compactions = append(result.NewBase.Compactions, compaction)
 		} else {
-			m.tryRemovePrefix(ctx, compaction.Artifactes, result)
+			m.tryRemovePrefix(ctx, compaction.Artifacts, result)
 			m.tryRemovePrefix(ctx, compaction.GeneratedFiles, result)
 		}
 	}

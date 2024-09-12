@@ -23,7 +23,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/utils"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -61,11 +60,11 @@ func (s *SimpleFileRestorer) Close() error {
 // SplitRanges implements FileRestorer. It splits region by
 // data range after rewrite.
 // updateCh is used to record progress.
-func (s *SimpleFileRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, updateCh glue.Progress) error {
-	if updateCh != nil {
+func (s *SimpleFileRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, onProgress func()) error {
+	if onProgress != nil {
 		splitClientOpt := split.WithOnSplit(func(keys [][]byte) {
 			for range keys {
-				updateCh.Inc()
+				onProgress()
 			}
 		})
 		s.splitter.ApplyOptions(splitClientOpt)
@@ -78,7 +77,7 @@ func (s *SimpleFileRestorer) SplitRanges(ctx context.Context, ranges []rtree.Ran
 	return splitter.ExecuteSplit(ctx, ranges)
 }
 
-func (r *SimpleFileRestorer) RestoreFiles(ctx context.Context, files []SstFilesInfo, updateCh glue.Progress) error {
+func (r *SimpleFileRestorer) RestoreFiles(ctx context.Context, files []SstFilesInfo, onProgress func()) error {
 	errCh := make(chan error, len(files))
 	eg, ectx := errgroup.WithContext(ctx)
 	defer close(errCh)
@@ -92,9 +91,7 @@ func (r *SimpleFileRestorer) RestoreFiles(ctx context.Context, files []SstFilesI
 					if restoreErr == nil {
 						log.Info("import sst files done", logutil.Files(fileReplica.Files),
 							zap.Duration("take", time.Since(fileStart)))
-						if updateCh != nil {
-							updateCh.Inc()
-						}
+						onProgress()
 					}
 				}()
 				return r.fileImporter.ImportSSTFiles(ectx, fileReplica.Files, fileReplica.RewriteRules)

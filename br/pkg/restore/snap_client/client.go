@@ -1062,7 +1062,7 @@ func (rc *SnapClient) execChecksum(
 
 // RestoreRaw tries to restore raw keys in the specified range.
 func (rc *SnapClient) RestoreRaw(
-	ctx context.Context, startKey, endKey []byte, updateCh glue.Progress, files []sstfiles.SstFilesInfo,
+	ctx context.Context, startKey, endKey []byte, onProgress func(), files []sstfiles.SstFilesInfo,
 ) error {
 	start := time.Now()
 	defer func() {
@@ -1073,7 +1073,7 @@ func (rc *SnapClient) RestoreRaw(
 			zap.Duration("take", elapsed))
 	}()
 
-	err := rc.restorer.RestoreFiles(ctx, files, updateCh)
+	err := rc.restorer.RestoreFiles(ctx, files, onProgress)
 	if err != nil {
 		return errors.Trace(err)
 	}
