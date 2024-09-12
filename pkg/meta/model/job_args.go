@@ -260,7 +260,7 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
 }
 
-// ModifyingColInfo is the infomation about modifying column.
+// ModifyingColInfo is the information about modifying column.
 type ModifyingColInfo struct {
 	NewCol                *ColumnInfo         `json:"new_column,omitempty"`
 	OldColName            model.CIStr         `json:"old_column_name,omitempty"`
