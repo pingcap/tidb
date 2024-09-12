@@ -2068,11 +2068,12 @@ func (b *executorBuilder) tryGetLazyStartTS() *LazyStartTS {
 	return nil
 }
 
+// LazyStartTS uses to get startTS lazily.
 type LazyStartTS struct {
 	ctx sessionctx.Context
 }
 
-func (ls *LazyStartTS) GetStartTS(tryUseMaxTS bool) (uint64, error) {
+func (ls *LazyStartTS) getStartTS(tryUseMaxTS bool) (uint64, error) {
 	txnManager := sessiontxn.GetTxnManager(ls.ctx)
 	if tryUseMaxTS {
 		return uint64(math.MaxUint64), nil
@@ -3502,7 +3503,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		indexUsageReporter:         b.buildIndexUsageReporter(v),
 		dagPB:                      dagReq,
 		startTS:                    startTS,
-		getStartTS:                 lazyStartTS.GetStartTS,
+		getStartTS:                 lazyStartTS.getStartTS,
 		txnScope:                   b.txnScope,
 		readReplicaScope:           b.readReplicaScope,
 		isStaleness:                b.isStaleness,
@@ -3847,7 +3848,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		indexUsageReporter:         b.buildIndexUsageReporter(v),
 		dagPB:                      dagReq,
 		startTS:                    startTS,
-		getStartTS:                 lazyStartTS.GetStartTS,
+		getStartTS:                 lazyStartTS.getStartTS,
 		txnScope:                   b.txnScope,
 		readReplicaScope:           b.readReplicaScope,
 		isStaleness:                b.isStaleness,

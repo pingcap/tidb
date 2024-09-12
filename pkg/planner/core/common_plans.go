@@ -1460,6 +1460,10 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	}
 }
 
+// IsTableOrIndexReaderByAutoCommit returns returns true when meets following conditions:
+//  1. ctx is auto commit tagged
+//  2. session is not InTxn
+//  3. plan is table reader or index reader.
 func IsTableOrIndexReaderByAutoCommit(vars *variable.SessionVars, p base.Plan) bool {
 	if !IsAutoCommitTxn(vars) {
 		return false

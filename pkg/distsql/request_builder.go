@@ -252,6 +252,7 @@ func (builder *RequestBuilder) SetStartTS(startTS uint64) *RequestBuilder {
 	return builder
 }
 
+// SetLazyStartTs sets "LazyStartTs" for "kv.Request".
 func (builder *RequestBuilder) SetLazyStartTs(fn func(bool) (uint64, error)) *RequestBuilder {
 	builder.Request.LazyStartTs = fn
 	return builder
