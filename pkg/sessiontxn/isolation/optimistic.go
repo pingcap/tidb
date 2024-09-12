@@ -109,6 +109,7 @@ func (p *OptimisticTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return p.baseTxnContextProvider.GetStmtForUpdateTS()
 }
 
+// AdviseWarmup implements TxnAdvisable interface.
 func (p *OptimisticTxnContextProvider) AdviseWarmup() error {
 	if p.TryOptimizeWithMaxTS || p.optimizeWithMaxTS {
 		return nil
