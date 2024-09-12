@@ -1680,6 +1680,18 @@ select /*+ set_var(tidb_opt_use_invisible_indexes=off) */ @@tidb_opt_use_invisib
 select @@tidb_opt_use_invisible_indexes;
 @@tidb_opt_use_invisible_indexes
 0
+select /*+ set_var(tidb_hash_join_use_impl_v2=on) */ @@tidb_hash_join_use_impl_v2;
+@@tidb_hash_join_use_impl_v2
+1
+select @@tidb_hash_join_use_impl_v2;
+@@tidb_hash_join_use_impl_v2
+1
+select /*+ set_var(tidb_hash_join_use_impl_v2=off) */ @@tidb_hash_join_use_impl_v2;
+@@tidb_hash_join_use_impl_v2
+0
+select @@tidb_hash_join_use_impl_v2;
+@@tidb_hash_join_use_impl_v2
+1
 set @@global.max_execution_time=1000;
 select @@max_execution_time;
 @@max_execution_time
