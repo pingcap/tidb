@@ -80,23 +80,42 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 }
 
 func (c *StatsTableRowCache) updateDirtyIDs(sctx sessionctx.Context) error {
+	logutil.BgLogger().Info("debug: Starting updateDirtyIDs",
+		zap.Int("dirtyIDCount", len(c.dirtyIDs)))
+
 	if len(c.dirtyIDs) > 0 {
 		tableRows, err := getRowCountTables(sctx, c.dirtyIDs...)
 		if err != nil {
+			logutil.BgLogger().Error("debug: Failed to get row count tables",
+				zap.Error(err))
 			return err
 		}
 		for id, tr := range tableRows {
 			c.tableRows[id] = tr
+			logutil.BgLogger().Info("debug: Updated table row count",
+				zap.Int64("tableID", id),
+				zap.Uint64("rowCount", tr))
 		}
+
 		colLength, err := getColLengthTables(sctx, c.dirtyIDs...)
 		if err != nil {
+			logutil.BgLogger().Error("debug: Failed to get column length tables",
+				zap.Error(err))
 			return err
 		}
 		for id, cl := range colLength {
 			c.colLength[id] = cl
+			logutil.BgLogger().Info("debug: Updated column length",
+				zap.Int64("tableID", id.tableID),
+				zap.Int64("histID", id.histID),
+				zap.Uint64("length", cl))
 		}
+
 		c.dirtyIDs = c.dirtyIDs[:0]
+		logutil.BgLogger().Info("debug: Cleared dirty IDs")
 	}
+
+	logutil.BgLogger().Info("debug: Finished updateDirtyIDs")
 	return nil
 }
 
@@ -104,26 +123,49 @@ func (c *StatsTableRowCache) updateDirtyIDs(sctx sessionctx.Context) error {
 func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	logutil.BgLogger().Info("debug: Acquired lock for UpdateByID",
+		zap.Int64("tableID", id))
+
 	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
+		logutil.BgLogger().Info("debug: Cache is still valid, updating dirty IDs",
+			zap.Int64("tableID", id))
 		return c.updateDirtyIDs(sctx)
 	}
+
+	logutil.BgLogger().Info("debug: Cache is expired, fetching new data",
+		zap.Int64("tableID", id))
+
 	tableRows, err := getRowCountTables(sctx, id)
 	if err != nil {
+		logutil.BgLogger().Error("debug: Failed to get row count tables",
+			zap.Int64("tableID", id), zap.Error(err))
 		return err
 	}
+
 	colLength, err := getColLengthTables(sctx, id)
 	if err != nil {
+		logutil.BgLogger().Error("debug: Failed to get column length tables",
+			zap.Int64("tableID", id), zap.Error(err))
 		return err
 	}
+
+	logutil.BgLogger().Info("debug: Successfully fetched new data",
+		zap.Int64("tableID", id), zap.Uint64("rowCount", tableRows[id]))
+
 	c.tableRows[id] = tableRows[id]
 	for k, v := range colLength {
 		c.colLength[k] = v
+		logutil.BgLogger().Info("debug: Updated column length",
+			zap.Int64("tableID", k.tableID), zap.Int64("histID", k.histID), zap.Uint64("length", v))
 	}
-	c.modifyTime = time.Now()
-	return nil
-}
 
-// Update tries to update the cache.
+	c.modifyTime = time.Now()
+	logutil.BgLogger().Info("debug: Updated modify time",
+		zap.Int64("tableID", id), zap.Time("modifyTime", c.modifyTime))
+
+	return nil
+} // Update tries to update the cache.
 func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
