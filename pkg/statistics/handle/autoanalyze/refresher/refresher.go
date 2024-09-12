@@ -524,7 +524,7 @@ func createTableAnalysisJobForPartitions(
 	statistics.CheckAnalyzeVerOnTable(tblStats, &tableStatsVer)
 
 	averageChangePercentage, avgSize, minLastAnalyzeDuration, partitionNames := CalculateIndicatorsForPartitions(
-		tblInfo,
+		tblStats,
 		partitionStats,
 		autoAnalyzeRatio,
 		currentTs,
@@ -561,7 +561,7 @@ func createTableAnalysisJobForPartitions(
 // Size is the product of the number of rows and the number of columns.
 // Last analyze duration is the duration since the last analyze.
 func CalculateIndicatorsForPartitions(
-	tblInfo *model.TableInfo,
+	globalStats *statistics.Table,
 	partitionStats map[PartitionIDAndName]*statistics.Table,
 	autoAnalyzeRatio float64,
 	currentTs uint64,
@@ -575,7 +575,7 @@ func CalculateIndicatorsForPartitions(
 	totalSize := 0.0
 	count := 0.0
 	partitionNames = make([]string, 0, len(partitionStats))
-	cols := float64(len(tblInfo.Columns))
+	cols := float64(globalStats.ColNum())
 	totalLastAnalyzeDuration := time.Duration(0)
 
 	for pIDAndName, tblStats := range partitionStats {

@@ -612,9 +612,12 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 	analyzedMap.InsertCol(1, nil, true)
 	analyzedMap.InsertCol(2, nil, true)
 	analyzedMap.InsertIndex(1, nil, true)
+	histColl := statistics.NewHistColl(1, false, 0, 0, 2, 1)
+	histColl.SetCol(1, &statistics.Column{})
+	histColl.SetCol(2, &statistics.Column{})
 	tests := []struct {
 		name                       string
-		tblInfo                    *model.TableInfo
+		globalStats                *statistics.Table
 		partitionStats             map[refresher.PartitionIDAndName]*statistics.Table
 		defs                       []model.PartitionDefinition
 		autoAnalyzeRatio           float64
@@ -626,22 +629,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 	}{
 		{
 			name: "Test Table not analyzed",
-			tblInfo: &model.TableInfo{
-				Indices: []*model.IndexInfo{
-					{
-						ID:    1,
-						Name:  pmodel.NewCIStr("index1"),
-						State: model.StatePublic,
-					},
-				},
-				Columns: []*model.ColumnInfo{
-					{
-						ID: 1,
-					},
-					{
-						ID: 2,
-					},
-				},
+			globalStats: &statistics.Table{
+				HistColl: *histColl,
 			},
 			partitionStats: map[refresher.PartitionIDAndName]*statistics.Table{
 				{
@@ -684,22 +673,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 		},
 		{
 			name: "Test Table analyzed and only one partition meets the threshold",
-			tblInfo: &model.TableInfo{
-				Indices: []*model.IndexInfo{
-					{
-						ID:    1,
-						Name:  pmodel.NewCIStr("index1"),
-						State: model.StatePublic,
-					},
-				},
-				Columns: []*model.ColumnInfo{
-					{
-						ID: 1,
-					},
-					{
-						ID: 2,
-					},
-				},
+			globalStats: &statistics.Table{
+				HistColl: *histColl,
 			},
 			partitionStats: map[refresher.PartitionIDAndName]*statistics.Table{
 				{
@@ -766,22 +741,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 		},
 		{
 			name: "No partition meets the threshold",
-			tblInfo: &model.TableInfo{
-				Indices: []*model.IndexInfo{
-					{
-						ID:    1,
-						Name:  pmodel.NewCIStr("index1"),
-						State: model.StatePublic,
-					},
-				},
-				Columns: []*model.ColumnInfo{
-					{
-						ID: 1,
-					},
-					{
-						ID: 2,
-					},
-				},
+			globalStats: &statistics.Table{
+				HistColl: *histColl,
 			},
 			partitionStats: map[refresher.PartitionIDAndName]*statistics.Table{
 				{
@@ -855,7 +816,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				gotAvgLastAnalyzeDuration,
 				gotPartitions :=
 				refresher.CalculateIndicatorsForPartitions(
-					tt.tblInfo,
+					tt.globalStats,
 					tt.partitionStats,
 					tt.autoAnalyzeRatio,
 					tt.currentTs,
