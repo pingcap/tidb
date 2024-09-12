@@ -2056,26 +2056,26 @@ func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
 	return txnManager.GetStmtReadTS()
 }
 
+func (b *executorBuilder) tryGetLazyStartTS() *LazyStartTS {
+	if b.forDataReaderBuilder ||
+		b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+		return nil
+	}
+	ctxProvider := sessiontxn.GetTxnManager(b.ctx).GetContextProvider()
+	if optimisticTxnCtxProvider, ok := ctxProvider.(*isolation.OptimisticTxnContextProvider); ok && optimisticTxnCtxProvider != nil && optimisticTxnCtxProvider.TryOptimizeWithMaxTS {
+		return &LazyStartTS{ctx: b.ctx}
+	}
+	return nil
+}
+
 type LazyStartTS struct {
-	ctx                  sessionctx.Context
-	forDataReaderBuilder bool
-	dataReaderTS         uint64
-	needForUpdateTS      bool
+	ctx sessionctx.Context
 }
 
 func (ls *LazyStartTS) GetStartTS(tryUseMaxTS bool) (uint64, error) {
-	if ls.forDataReaderBuilder {
-		return ls.dataReaderTS, nil
-	}
 	txnManager := sessiontxn.GetTxnManager(ls.ctx)
-	if ls.needForUpdateTS {
-		return txnManager.GetStmtForUpdateTS()
-	}
 	if tryUseMaxTS {
-		ctxProvider := txnManager.GetContextProvider()
-		if optimisticTxnCtxProvider, ok := ctxProvider.(*isolation.OptimisticTxnContextProvider); ok && optimisticTxnCtxProvider != nil && optimisticTxnCtxProvider.TryOptimizeWithMaxTS {
-			return uint64(math.MaxUint64), nil
-		}
+		return uint64(math.MaxUint64), nil
 	}
 	return txnManager.GetStmtReadTS()
 }
@@ -3486,11 +3486,13 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
 	}
-	lazyStartTS := LazyStartTS{
-		ctx:                  b.ctx,
-		forDataReaderBuilder: b.forDataReaderBuilder,
-		dataReaderTS:         b.dataReaderTS,
-		needForUpdateTS:      b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt,
+	lazyStartTS := b.tryGetLazyStartTS()
+	startTS := uint64(0)
+	if lazyStartTS == nil {
+		startTS, err = b.getSnapshotTS()
+		if err != nil {
+			return nil, err
+		}
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
 
@@ -3499,6 +3501,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		tableReaderExecutorContext: newTableReaderExecutorContext(b.ctx),
 		indexUsageReporter:         b.buildIndexUsageReporter(v),
 		dagPB:                      dagReq,
+		startTS:                    startTS,
 		getStartTS:                 lazyStartTS.GetStartTS,
 		txnScope:                   b.txnScope,
 		readReplicaScope:           b.readReplicaScope,
@@ -3828,11 +3831,13 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		physicalTableID = is.Table.ID
 	}
 
-	lazyStartTS := LazyStartTS{
-		ctx:                  b.ctx,
-		forDataReaderBuilder: b.forDataReaderBuilder,
-		dataReaderTS:         b.dataReaderTS,
-		needForUpdateTS:      b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt,
+	lazyStartTS := b.tryGetLazyStartTS()
+	startTS := uint64(0)
+	if lazyStartTS == nil {
+		startTS, err = b.getSnapshotTS()
+		if err != nil {
+			return nil, err
+		}
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
 
@@ -3841,6 +3846,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
 		indexUsageReporter:         b.buildIndexUsageReporter(v),
 		dagPB:                      dagReq,
+		startTS:                    startTS,
 		getStartTS:                 lazyStartTS.GetStartTS,
 		txnScope:                   b.txnScope,
 		readReplicaScope:           b.readReplicaScope,
