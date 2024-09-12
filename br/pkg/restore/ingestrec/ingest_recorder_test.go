@@ -39,6 +39,7 @@ const (
 func fakeJob(reorgTp model.ReorgType, jobTp model.ActionType, state model.JobState,
 	rowCnt int64, indices []*model.IndexInfo, rawArgs json.RawMessage) *model.Job {
 	return &model.Job{
+		Version:    model.JobVersion1,
 		SchemaName: SchemaName,
 		TableName:  TableName,
 		TableID:    TableID,

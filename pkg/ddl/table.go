@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -39,7 +39,6 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -124,9 +123,7 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver in
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
-			dropTableEvent := &statsutil.DDLEvent{
-				SchemaChangeEvent: util.NewDropTableEvent(tblInfo),
-			}
+			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
 			asyncNotifyEvent(jobCtx, dropTableEvent, job)
 		}
 	default:
@@ -426,8 +423,7 @@ func getTableInfo(t *meta.Meta, tableID, schemaID int64) (*model.TableInfo, erro
 // A background job will be created to delete old data.
 func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
-	tableID := job.TableID
-	args, err := model.GetTruncateTableArgsBeforeRun(job)
+	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -574,19 +570,12 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	truncateTableEvent := &statsutil.DDLEvent{
-		SchemaChangeEvent: util.NewTruncateTableEvent(tblInfo, oldTblInfo),
-	}
+	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
 	asyncNotifyEvent(jobCtx, truncateTableEvent, job)
-	if job.Version == model.JobVersion1 {
-		startKey := tablecodec.EncodeTablePrefix(tableID)
-		job.Args = []any{startKey, oldPartitionIDs}
-	} else {
-		// see truncateTableByReassignPartitionIDs for why they might change.
-		args.OldPartitionIDs = oldPartitionIDs
-		args.NewPartitionIDs = newPartitionIDs
-		job.ArgsV2 = args
-	}
+	// see truncateTableByReassignPartitionIDs for why they might change.
+	args.OldPartitionIDs = oldPartitionIDs
+	args.NewPartitionIDs = newPartitionIDs
+	job.FillFinishedArgs(args)
 	return ver, nil
 }
 

@@ -1353,7 +1353,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		},
 	})
 	if b.req.ResourceGroupTagger != nil {
-		b.req.ResourceGroupTagger(req)
+		b.req.ResourceGroupTagger.Build(req)
 	}
 	req.StoreTp = getEndPointType(kv.TiFlash)
 

@@ -299,6 +299,15 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		schemaTs = 0
 	}
 
+	var oldIsV2 bool
+	enableV2 := variable.SchemaCacheSize.Load() > 0
+	currentSchemaVersion := int64(0)
+	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
+		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
+		oldIsV2, _ = infoschema.IsV2(oldInfoSchema)
+	}
+	useV2, isV1V2Switch := shouldUseV2(enableV2, oldIsV2, isSnapshot)
+
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
 		isV2, raw := infoschema.IsV2(is)
 		if isV2 {
@@ -314,17 +323,10 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		// the insert method check if schemaTs is zero
 		do.infoCache.Insert(is, schemaTs)
 
-		return is, true, 0, nil, nil
+		if !isV1V2Switch {
+			return is, true, 0, nil, nil
+		}
 	}
-
-	var oldIsV2 bool
-	enableV2 := variable.SchemaCacheSize.Load() > 0
-	currentSchemaVersion := int64(0)
-	if oldInfoSchema := do.infoCache.GetLatest(); oldInfoSchema != nil {
-		currentSchemaVersion = oldInfoSchema.SchemaMetaVersion()
-		oldIsV2, _ = infoschema.IsV2(oldInfoSchema)
-	}
-	useV2, isV1V2Switch := shouldUseV2(enableV2, oldIsV2, isSnapshot)
 
 	// TODO: tryLoadSchemaDiffs has potential risks of failure. And it becomes worse in history reading cases.
 	// It is only kept because there is no alternative diff/partial loading solution.
@@ -371,7 +373,17 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	}
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
-	builder := infoschema.NewBuilder(do, do.sysFacHack, do.infoCache.Data, useV2)
+	data := do.infoCache.Data
+	if isSnapshot {
+		// Use a NewData() to avoid adding the snapshot schema to the infoschema history.
+		// Why? imagine that the current schema version is [103 104 105 ...]
+		// Then a snapshot read require infoschem version 53, and it's added
+		// Now the history becomes [53,  ... 103, 104, 105 ...]
+		// Then if a query ask for version 74, we'll mistakenly use 53!
+		// Not adding snapshot schema to history can avoid such cases.
+		data = infoschema.NewData()
+	}
+	builder := infoschema.NewBuilder(do, do.sysFacHack, data, useV2)
 	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -388,6 +400,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		// Reset the whole info cache to avoid co-existing of both v1 and v2, causing the memory usage doubled.
 		fn := do.infoCache.Upsert(is, schemaTs)
 		do.deferFn.add(fn, time.Now().Add(10*time.Minute))
+		logutil.BgLogger().Info("infoschema v1/v2 switch")
 	} else {
 		do.infoCache.Insert(is, schemaTs)
 	}

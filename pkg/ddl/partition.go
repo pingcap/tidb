@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -50,7 +50,6 @@ import (
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -230,9 +229,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Meta, job *mode
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		addPartitionEvent := &statsutil.DDLEvent{
-			SchemaChangeEvent: util.NewAddPartitionEvent(tblInfo, partInfo),
-		}
+		addPartitionEvent := notifier.NewAddPartitionEvent(tblInfo, partInfo)
 		asyncNotifyEvent(jobCtx, addPartitionEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
@@ -2332,12 +2329,10 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 		}
 		job.SchemaState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		dropPartitionEvent := &statsutil.DDLEvent{
-			SchemaChangeEvent: util.NewDropPartitionEvent(
-				tblInfo,
-				&model.PartitionInfo{Definitions: droppedDefs},
-			),
-		}
+		dropPartitionEvent := notifier.NewDropPartitionEvent(
+			tblInfo,
+			&model.PartitionInfo{Definitions: droppedDefs},
+		)
 		asyncNotifyEvent(jobCtx, dropPartitionEvent, job)
 		// A background job will be created to delete old partition data.
 		job.Args = []any{physicalTableIDs}
@@ -2425,13 +2420,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		truncatePartitionEvent := &statsutil.DDLEvent{
-			SchemaChangeEvent: util.NewTruncatePartitionEvent(
-				tblInfo,
-				&model.PartitionInfo{Definitions: newPartitions},
-				&model.PartitionInfo{Definitions: oldPartitions},
-			),
-		}
+		truncatePartitionEvent := notifier.NewTruncatePartitionEvent(
+			tblInfo,
+			&model.PartitionInfo{Definitions: newPartitions},
+			&model.PartitionInfo{Definitions: oldPartitions},
+		)
 		asyncNotifyEvent(jobCtx, truncatePartitionEvent, job)
 		// A background job will be created to delete old partition data.
 		job.Args = []any{oldIDs}
@@ -2565,13 +2558,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		truncatePartitionEvent := &statsutil.DDLEvent{
-			SchemaChangeEvent: util.NewTruncatePartitionEvent(
-				tblInfo,
-				&model.PartitionInfo{Definitions: newPartitions},
-				&model.PartitionInfo{Definitions: oldPartitions},
-			),
-		}
+		truncatePartitionEvent := notifier.NewTruncatePartitionEvent(
+			tblInfo,
+			&model.PartitionInfo{Definitions: newPartitions},
+			&model.PartitionInfo{Definitions: oldPartitions},
+		)
 		asyncNotifyEvent(jobCtx, truncatePartitionEvent, job)
 		// A background job will be created to delete old partition data.
 		job.Args = []any{oldIDs}
@@ -2939,8 +2930,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
-	exchangePartitionEvent := statsutil.NewExchangePartitionEvent(
-		job.SchemaID,
+	exchangePartitionEvent := notifier.NewExchangePartitionEvent(
 		pt,
 		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
 		originalNt,
@@ -3476,10 +3466,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 		// Should it actually be synchronous?
 		// Include the old table ID, if changed, which may contain global statistics,
 		// so it can be reused for the new (non)partitioned table.
-		event, err := newStatsDDLEventForJob(
-			job.SchemaID,
-			job.Type, oldTblID, tblInfo, statisticsPartInfo, droppedPartInfo,
-		)
+		event, err := newStatsDDLEventForJob(job.Type, oldTblID, tblInfo, statisticsPartInfo, droppedPartInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -3494,35 +3481,31 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 	return ver, errors.Trace(err)
 }
 
-// newStatsDDLEventForJob creates a statsutil.DDLEvent for a job.
+// newStatsDDLEventForJob creates a util.SchemaChangeEvent for a job.
 // It is used for reorganize partition, add partitioning and remove partitioning.
 func newStatsDDLEventForJob(
-	schemaID int64,
 	jobType model.ActionType,
 	oldTblID int64,
 	tblInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
-) (*statsutil.DDLEvent, error) {
-	var event *statsutil.DDLEvent
+) (*notifier.SchemaChangeEvent, error) {
+	var event *notifier.SchemaChangeEvent
 	switch jobType {
 	case model.ActionReorganizePartition:
-		event = statsutil.NewReorganizePartitionEvent(
-			schemaID,
+		event = notifier.NewReorganizePartitionEvent(
 			tblInfo,
 			addedPartInfo,
 			droppedPartInfo,
 		)
 	case model.ActionAlterTablePartitioning:
-		event = statsutil.NewAddPartitioningEvent(
-			schemaID,
+		event = notifier.NewAddPartitioningEvent(
 			oldTblID,
 			tblInfo,
 			addedPartInfo,
 		)
 	case model.ActionRemovePartitioning:
-		event = statsutil.NewRemovePartitioningEvent(
-			schemaID,
+		event = notifier.NewRemovePartitioningEvent(
 			oldTblID,
 			tblInfo,
 			droppedPartInfo,

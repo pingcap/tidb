@@ -2217,6 +2217,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
 		EnableRedactLog:               DefTiDBRedactLog,
+		EnableWindowFunction:          DefEnableWindowFunction,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName

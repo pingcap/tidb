@@ -4379,4 +4379,5 @@ LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
 LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
 Error 8020 (HY000): Table 't' was locked in WRITE by server: <server> session: <session>
 unlock tables;
+unlock tables;
 drop user 'testuser'@'localhost';
