@@ -67,7 +67,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
-	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
@@ -3325,9 +3324,9 @@ const (
 	// SlowLogWaitRUDuration is the total duration for kv requests to wait available request-units.
 	SlowLogWaitRUDuration = "Time_queued_by_rc"
 	// SlowLogTidbCPUUsageDuration is the total tidb cpu usages.
-	SlowLogTidbCPUUsageDuration = "Tidb_cpu_usage"
+	SlowLogTidbCPUUsageDuration = "Tidb_cpu_time"
 	// SlowLogTikvCPUUsageDuration is the total tikv cpu usages.
-	SlowLogTikvCPUUsageDuration = "Tikv_cpu_usage"
+	SlowLogTikvCPUUsageDuration = "Tikv_cpu_time"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.

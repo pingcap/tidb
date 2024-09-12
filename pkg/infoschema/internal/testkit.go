@@ -98,8 +98,8 @@ select * from t_slim;
 # Resource_group: rg1
 # Request_unit_read: 96.66703066666668
 # Request_unit_write: 3182.424414062492
-# Tidb_cpu_usage: 0.01
-# Tikv_cpu_usage: 0.021
+# Tidb_cpu_time: 0.01
+# Tikv_cpu_time: 0.021
 INSERT INTO ...;
 `)
 	require.NoError(t, f.Close())
