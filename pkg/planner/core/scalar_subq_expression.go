@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/types"
@@ -222,6 +223,29 @@ func (s *ScalarSubQueryExpr) ExplainInfo(expression.EvalContext) string {
 // ExplainNormalizedInfo implements the Expression interface.
 func (s *ScalarSubQueryExpr) ExplainNormalizedInfo() string {
 	return s.String()
+}
+
+// Hash64 implements the HashEquals.<0th> interface.
+func (s *ScalarSubQueryExpr) Hash64(h base2.Hasher) {
+	h.HashByte(expression.ScalarSubQFlag)
+	h.HashInt64(s.scalarSubqueryColID)
+}
+
+// Equals implements the HashEquals.<1st> interface.
+func (s *ScalarSubQueryExpr) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var s2 *ScalarSubQueryExpr
+	switch x := other.(type) {
+	case *ScalarSubQueryExpr:
+		s2 = x
+	case ScalarSubQueryExpr:
+		s2 = &x
+	default:
+		return false
+	}
+	return s.scalarSubqueryColID == s2.scalarSubqueryColID
 }
 
 // HashCode implements the Expression interface.

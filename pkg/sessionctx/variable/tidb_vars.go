@@ -1250,7 +1250,7 @@ const (
 	DefOptConcurrencyFactor                 = 3.0
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
-	DefOptPreferRangeScan                   = false
+	DefOptPreferRangeScan                   = true
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
 	DefBatchCommit                          = false

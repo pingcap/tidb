@@ -60,12 +60,14 @@ const (
 	TidbPartitionID  = "tidb_partition_id"
 	IndexName        = "index_name"
 	SchemaName       = "schema_name"
+	DBName           = "db_name"
 	ConstraintSchema = "constraint_schema"
 	ConstraintName   = "constraint_name"
 	TableID          = "table_id"
 	SequenceSchema   = "sequence_schema"
 	SequenceName     = "sequence_name"
 	ColumnName       = "column_name"
+	DDLStateName     = "state"
 )
 
 //revive:enable:exported
@@ -269,6 +271,38 @@ func (e *InfoSchemaTablesExtractor) HasTableName(name string) bool {
 // HasTableSchema returns true if table schema is specified in predicates.
 func (e *InfoSchemaTablesExtractor) HasTableSchema(name string) bool {
 	return !e.filter(TableSchema, name)
+}
+
+// InfoSchemaDDLExtractor is the predicate extractor for information_schema.ddl_jobs.
+type InfoSchemaDDLExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// NewInfoSchemaDDLExtractor creates a new InfoSchemaDDLExtractor.
+func NewInfoSchemaDDLExtractor() *InfoSchemaDDLExtractor {
+	e := &InfoSchemaDDLExtractor{}
+	e.extractableColumns = extractableCols{
+		schema: DBName,
+		table:  TableName,
+	}
+	e.colNames = []string{DBName, TableName, DDLStateName}
+	return e
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+//
+// Different from other extractor, input predicates will not be pruned.
+// For example, we will use state to determine whether to scan history ddl jobs,
+// but we don't not use these predicates to do filtering.
+// So the Selection Operator is still needed.
+func (e *InfoSchemaDDLExtractor) Extract(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	e.InfoSchemaBaseExtractor.Extract(ctx, schema, names, predicates)
+	return predicates
 }
 
 // InfoSchemaViewsExtractor is the predicate extractor for information_schema.views.

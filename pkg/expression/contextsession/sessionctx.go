@@ -298,6 +298,11 @@ func (ctx *SessionEvalContext) GetParamValue(idx int) (types.Datum, error) {
 	return params[idx], nil
 }
 
+// GetUserVarsReader returns the user variables.
+func (ctx *SessionEvalContext) GetUserVarsReader() variable.UserVarsReader {
+	return ctx.sctx.GetSessionVars().UserVars
+}
+
 // IntoStatic turns the SessionEvalContext into a StaticEvalContext.
 func (ctx *SessionEvalContext) IntoStatic() *contextstatic.StaticEvalContext {
 	return contextstatic.MakeEvalContextStatic(ctx)
