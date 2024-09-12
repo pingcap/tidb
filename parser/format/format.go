@@ -235,12 +235,9 @@ const (
 
 	RestoreTiDBSpecialComment
 	SkipPlacementRuleForRestore
-<<<<<<< HEAD
-=======
 	RestoreWithTTLEnableOff
 	RestoreWithoutSchemaName
 	RestoreWithoutTableName
->>>>>>> 702a5598f90 (ddl, parser: make generated column and expression index same as MySQL (#39888))
 )
 
 const (
