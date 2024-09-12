@@ -86,12 +86,12 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 	}
 	switch job.Type {
 	case model.ActionDropSchema:
-		var tableIDs []int64
-		if err := job.DecodeArgs(&tableIDs); err != nil {
+		args, err := model.GetFinishedDropSchemaArgs(job)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return len(tableIDs), nil
-	case model.ActionDropTable, model.ActionTruncateTable:
+		return len(args.AllDroppedTableIDs), nil
+	case model.ActionDropTable:
 		var startKey kv.Key
 		var physicalTableIDs []int64
 		var ruleIDs []string
@@ -99,6 +99,12 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return len(physicalTableIDs) + 1, nil
+	case model.ActionTruncateTable:
+		args, err := model.GetFinishedTruncateTableArgs(job)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return len(args.OldPartitionIDs) + 1, nil
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 		model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:

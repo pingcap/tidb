@@ -137,7 +137,11 @@ false]`),
 	}
 
 	for _, c := range cases {
-		job := &model.Job{RawArgs: c.raw}
+		job := &model.Job{
+			Version: model.JobVersion1,
+			Type:    model.ActionAddIndex,
+			RawArgs: c.raw,
+		}
 		uniques, indexNames, specs, indexOptions, hiddenCols, err := decodeAddIndexArgs(job)
 		require.NoError(t, err)
 		require.Equal(t, c.uniques, uniques)

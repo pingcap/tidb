@@ -122,7 +122,7 @@ func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Cont
 	optionList []*ast.QueryWatchOption) (*runaway.QuarantineRecord, error) {
 	record := &runaway.QuarantineRecord{
 		Source:    runaway.ManualSource,
-		StartTime: time.Now(),
+		StartTime: time.Now().UTC(),
 		EndTime:   runaway.NullTime,
 	}
 	for _, op := range optionList {

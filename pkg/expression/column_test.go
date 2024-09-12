@@ -415,8 +415,7 @@ func TestColumnHashEquals(t *testing.T) {
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, col1.Equals(col2))
 
-	// diff VirtualExpr
-	// TODO: add HashEquals for VirtualExpr
+	// diff VirtualExpr see TestColumnHashEuqals4VirtualExpr
 
 	// diff OrigName
 	col2.Index = col1.Index
@@ -467,4 +466,30 @@ func TestColumnHashEquals(t *testing.T) {
 	col2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, col1.Equals(col2))
+}
+
+func TestColumnHashEuqals4VirtualExpr(t *testing.T) {
+	col1 := &Column{UniqueID: 1, VirtualExpr: NewZero()}
+	col2 := &Column{UniqueID: 1, VirtualExpr: nil}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	col1.Hash64(hasher1)
+	col2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, col1.Equals(col2))
+
+	col2.VirtualExpr = NewZero()
+	hasher2.Reset()
+	col2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, col1.Equals(col2))
+
+	col1.VirtualExpr = nil
+	col2.VirtualExpr = nil
+	hasher1.Reset()
+	hasher2.Reset()
+	col1.Hash64(hasher1)
+	col2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, col1.Equals(col2))
 }

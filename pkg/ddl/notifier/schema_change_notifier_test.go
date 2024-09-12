@@ -1,10 +1,10 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package notifier
 
 import (
 	"testing"
@@ -24,14 +24,13 @@ import (
 
 func TestEventString(t *testing.T) {
 	// Create an Event object
-	e := &DDLEvent{
-		tp:       model.ActionAddColumn,
-		schemaID: 1,
+	e := &SchemaChangeEvent{
+		tp: model.ActionAddColumn,
 		tableInfo: &model.TableInfo{
 			ID:   1,
 			Name: pmodel.NewCIStr("Table1"),
 		},
-		partInfo: &model.PartitionInfo{
+		addedPartInfo: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
 				{ID: 2},
 				{ID: 3},
@@ -41,7 +40,7 @@ func TestEventString(t *testing.T) {
 			ID:   4,
 			Name: pmodel.NewCIStr("Table2"),
 		},
-		oldPartInfo: &model.PartitionInfo{
+		droppedPartInfo: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
 				{ID: 5},
 				{ID: 6},
@@ -57,9 +56,8 @@ func TestEventString(t *testing.T) {
 	result := e.String()
 
 	// Check the result
-	expected := "(Event Type: add column, Schema ID: 1, Table ID: 1, Table Name: Table1, " +
-		"Partition IDs: [2 3], Old Table ID: 4, Old Table Name: Table2, " +
-		"Old Partition IDs: [5 6], Column ID: 7, Column Name: Column1, " +
-		"Column ID: 8, Column Name: Column2"
+	expected := "(Event Type: add column, Table ID: 1, Table Name: Table1, Old Table ID: 4, Old Table Name: Table2," +
+		" Partition ID: 2, Partition ID: 3, Dropped Partition ID: 5, Dropped Partition ID: 6, " +
+		"Column ID: 7, Column Name: Column1, Column ID: 8, Column Name: Column2)"
 	require.Equal(t, expected, result)
 }

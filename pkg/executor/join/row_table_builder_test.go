@@ -392,12 +392,12 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 			rowStart := rowTables[0].getRowPointer(logicalIndex)
 			require.NotEqual(t, unsafe.Pointer(nil), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
 			if hasOtherConditionColumns {
-				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, rowStart), tmpChunk, 0, hasOtherConditionColumns)
+				mockJoinProber.appendBuildRowToCachedBuildRowsV1(0, rowStart, tmpChunk, 0, hasOtherConditionColumns)
 			} else {
-				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, rowStart), resultChunk, 0, hasOtherConditionColumns)
+				mockJoinProber.appendBuildRowToCachedBuildRowsV1(0, rowStart, resultChunk, 0, hasOtherConditionColumns)
 			}
 		}
-		if len(mockJoinProber.cachedBuildRows) > 0 {
+		if mockJoinProber.nextCachedBuildRowIndex > 0 {
 			if hasOtherConditionColumns {
 				mockJoinProber.batchConstructBuildRows(tmpChunk, 0, hasOtherConditionColumns)
 			} else {
@@ -430,13 +430,13 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 			rowStart := rowTables[0].getRowPointer(rowIndex)
 			require.NotEqual(t, unsafe.Pointer(nil), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
 			if hasOtherConditionColumns {
-				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, rowStart), tmpChunk, 0, hasOtherConditionColumns)
+				mockJoinProber.appendBuildRowToCachedBuildRowsV1(0, rowStart, tmpChunk, 0, hasOtherConditionColumns)
 			} else {
-				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(createMatchRowInfo(0, rowStart), resultChunk, 0, hasOtherConditionColumns)
+				mockJoinProber.appendBuildRowToCachedBuildRowsV1(0, rowStart, resultChunk, 0, hasOtherConditionColumns)
 			}
 			rowIndex++
 		}
-		if len(mockJoinProber.cachedBuildRows) > 0 {
+		if mockJoinProber.nextCachedBuildRowIndex > 0 {
 			if hasOtherConditionColumns {
 				mockJoinProber.batchConstructBuildRows(tmpChunk, 0, hasOtherConditionColumns)
 			} else {

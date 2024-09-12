@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	tidb_util "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -718,7 +718,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			require.NoError(t, err)
 			cmt := fmt.Sprintf("job: %s", runJob.String())
 			isPause := runJob.IsPausedBySystem() || runJob.IsPausing()
-			if tidb_util.IsSysDB(runJob.SchemaName) {
+			if tidbutil.IsSysDB(runJob.SchemaName) {
 				require.False(t, isPause, cmt)
 			} else {
 				require.True(t, isPause, cmt)

@@ -21,6 +21,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -56,21 +58,18 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 const (
-	// currentVersion is for all new DDL jobs.
-	currentVersion = 1
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey             = "/tidb/ddl/fg/owner"
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
@@ -314,7 +313,7 @@ type ddlCtx struct {
 	schemaVerSyncer   schemaver.Syncer
 	serverStateSyncer serverstate.Syncer
 
-	ddlEventCh   chan<- *statsutil.DDLEvent
+	ddlEventCh   chan<- *notifier.SchemaChangeEvent
 	lease        time.Duration        // lease is schema lease, default 45s, see config.Lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoCache    *infoschema.InfoCache
@@ -427,7 +426,7 @@ func (dc *ddlCtx) setDDLSourceForDiagnosis(jobID int64, jobType model.ActionType
 	ctx.setDDLLabelForDiagnosis(jobType)
 }
 
-func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) tikvrpc.ResourceGroupTagger {
+func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) *kv.ResourceGroupTagBuilder {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
@@ -556,7 +555,14 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *statsutil.DDLEvent) {
+func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job) {
+	// skip notify for system databases, system databases are expected to change at
+	// bootstrap and other nodes can also handle the changing in its bootstrap rather
+	// than be notified.
+	if tidbutil.IsMemOrSysDB(job.SchemaName) {
+		return
+	}
+
 	ch := jobCtx.oldDDLCtx.ddlEventCh
 	if ch != nil {
 		for i := 0; i < 10; i++ {
@@ -706,7 +712,21 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
-	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
+	// if we are running in test, random choose a job version to run with.
+	// TODO add a separate CI flow to run with different job version, so we can cover
+	// more cases in a single run.
+	if intest.InTest || config.GetGlobalConfig().Store == "unistore" {
+		jobVer := model.JobVersion1
+		// 50% percent to use JobVersion2 in test.
+		rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+		if rnd.Intn(2) == 0 {
+			jobVer = model.JobVersion2
+		}
+		model.SetJobVerInUse(jobVer)
+	}
+	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid),
+		zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()),
+		zap.Stringer("jobVersion", model.GetJobVerInUse()))
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool
