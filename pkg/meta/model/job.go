@@ -748,6 +748,10 @@ func (job *Job) IsPausing() bool {
 
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
+	// TODO: We can remove it after TiFlash support pause operation.
+	if job.Type == ActionAddVectorIndex && job.SchemaState == StateWriteReorganization {
+		return false
+	}
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 

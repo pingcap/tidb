@@ -32,7 +32,6 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errctx"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextstatic"
@@ -895,11 +894,6 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 			lastElemTempID := tablecodec.TempIndexPrefix | elements[len(elements)-1].ID
 			start = tablecodec.EncodeIndexSeekKey(pid, firstElemTempID, nil)
 			end = tablecodec.EncodeIndexSeekKey(pid, lastElemTempID, []byte{255})
-		} else if job.ReorgMeta.ReorgTp == model.ReorgTypeCheckTiFlash {
-			err = infosync.SyncTiFlashTableSchema(ctx.ddlJobCtx, tb.Meta().ID)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
 		} else {
 			start, end, err = getTableRange(ctx, jobCtx.store, tb, ver.Ver, job.Priority)
 			if err != nil {
@@ -908,7 +902,6 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 		}
 		logutil.DDLLogger().Info("job get table range",
 			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
-			zap.Stringer("reorgType", job.ReorgMeta.ReorgTp),
 			zap.String("startKey", hex.EncodeToString(start)),
 			zap.String("endKey", hex.EncodeToString(end)))
 

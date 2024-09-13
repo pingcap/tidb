@@ -266,19 +266,27 @@ func rollingbackDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver
 	}
 }
 
-func rollingbackAddIndex(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job, isPK, isVector bool) (ver int64, err error) {
-	if needNotifyAndStopReorgWorker(job) {
-		// add index workers are started. need to ask them to exit.
-		w.jobLogger(job).Info("run the cancelling DDL job", zap.String("job", job.String()), zap.Bool("isVector", isVector))
-		jobCtx.oldDDLCtx.notifyReorgWorkerJobStateChange(job)
-		if !isVector {
-			ver, err = w.onCreateIndex(jobCtx, t, job, isPK)
-		} else {
-			ver, err = w.onCreateVectorIndex(jobCtx, t, job)
-		}
+func rollingbackAddVectorIndex(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StateWriteReorganization {
+		// Add vector index workers are started. need to ask them to exit.
+		w.jobLogger(job).Info("run the cancelling DDL job", zap.String("job", job.String()))
+		ver, err = w.onCreateVectorIndex(jobCtx, t, job)
 	} else {
 		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
-		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, t, job, dbterror.ErrCancelledDDLJob, isVector)
+		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, t, job, dbterror.ErrCancelledDDLJob, true)
+	}
+	return
+}
+
+func rollingbackAddIndex(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
+	if needNotifyAndStopReorgWorker(job) {
+		// add index workers are started. need to ask them to exit.
+		w.jobLogger(job).Info("run the cancelling DDL job", zap.String("job", job.String()))
+		jobCtx.oldDDLCtx.notifyReorgWorkerJobStateChange(job)
+		ver, err = w.onCreateIndex(jobCtx, t, job, isPK)
+	} else {
+		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
+		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, t, job, dbterror.ErrCancelledDDLJob, false)
 	}
 	return
 }
@@ -488,11 +496,11 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, t *meta.Meta, job *mo
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(jobCtx, t, job)
 	case model.ActionAddIndex:
-		ver, err = rollingbackAddIndex(w, jobCtx, t, job, false, false)
+		ver, err = rollingbackAddIndex(w, jobCtx, t, job, false)
 	case model.ActionAddPrimaryKey:
-		ver, err = rollingbackAddIndex(w, jobCtx, t, job, true, false)
+		ver, err = rollingbackAddIndex(w, jobCtx, t, job, true)
 	case model.ActionAddVectorIndex:
-		ver, err = rollingbackAddIndex(w, jobCtx, t, job, false, true)
+		ver, err = rollingbackAddVectorIndex(w, jobCtx, t, job)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(jobCtx, t, job)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,

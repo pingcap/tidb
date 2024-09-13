@@ -121,9 +121,6 @@ const (
 	// The incremental index KVs written by DML are redirected to a temporary index.
 	// After the backfill is finished, the temporary index records are merged back to the original index.
 	ReorgTypeTxnMerge
-	// ReorgTypeCheckTiFlash means the vector index records are backfill in TiFlash
-	// and we need to check the process.
-	ReorgTypeCheckTiFlash
 )
 
 // NeedMergeProcess means the incremental changes need to be merged.
@@ -140,8 +137,6 @@ func (tp ReorgType) String() string {
 		return "ingest"
 	case ReorgTypeTxnMerge:
 		return "txn-merge"
-	case ReorgTypeCheckTiFlash:
-		return "check-tiflash"
 	}
 	return ""
 }

@@ -231,6 +231,13 @@ func TestPauseAndResumeSchemaStmt(t *testing.T) {
 func TestPauseAndResumeIndexStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	defer func() {
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount")
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess")
+	}()
+
 	require.Nil(t, generateTblUser(stmtKit, 10))
 
 	for _, stmtCase := range indexDDLStmtCase {
@@ -297,6 +304,13 @@ func TestPauseResumeCancelAndRerunSchemaStmt(t *testing.T) {
 
 func TestPauseResumeCancelAndRerunIndexStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	defer func() {
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount")
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess")
+	}()
 
 	require.Nil(t, generateTblUser(stmtKit, 10))
 

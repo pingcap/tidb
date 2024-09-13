@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -784,7 +785,6 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, t *meta.Meta, job *mode
 	switch indexInfo.State {
 	case model.StateNone:
 		// none -> delete only
-		job.ReorgMeta.ReorgTp = model.ReorgTypeCheckTiFlash
 		indexInfo.State = model.StateDeleteOnly
 		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, originalState != indexInfo.State)
@@ -817,8 +817,28 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, t *meta.Meta, job *mode
 			return ver, errors.Trace(err)
 		}
 
+		if job.IsCancelling() {
+			return convertAddIdxJob2RollbackJob(jobCtx, t, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, dbterror.ErrCancelledDDLJob)
+		}
+
+		// Send sync schema notification to TiFlash.
+		if job.SnapshotVer == 0 {
+			delayForAsyncCommit()
+			currVer, err := getValidCurrentVersion(jobCtx.store)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			err = infosync.SyncTiFlashTableSchema(jobCtx.ctx, tbl.Meta().ID)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			job.SnapshotVer = currVer.Ver
+			return ver, nil
+		}
+
+		// Check the progress of the TiFlash backfill index.
 		var done bool
-		done, ver, err = doReorgWorkForCreateIndexOnTiFlash(w, jobCtx, t, job, tbl, []*model.IndexInfo{indexInfo})
+		done, ver, err = w.checkVectorIndexProcessOnTiFlash(jobCtx, t, job, tbl, indexInfo)
 		if err != nil || !done {
 			return ver, err
 		}
@@ -842,44 +862,54 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, t *meta.Meta, job *mode
 	return ver, errors.Trace(err)
 }
 
-func doReorgWorkForCreateIndexOnTiFlash(w *worker, jobCtx *jobContext, t *meta.Meta, job *model.Job, tbl table.Table, allIndexInfos []*model.IndexInfo,
+func (w *worker) checkVectorIndexProcessOnTiFlash(jobCtx *jobContext, t *meta.Meta, job *model.Job, tbl table.Table, indexInfo *model.IndexInfo,
 ) (done bool, ver int64, err error) {
-	done, ver, err = runReorgJobAndHandleErr(w, jobCtx, t, job, tbl, allIndexInfos, false)
+	err = w.checkVectorIndexProcess(jobCtx, tbl, job, indexInfo)
 	if err != nil {
+		if dbterror.ErrWaitReorgTimeout.Equal(err) {
+			return false, ver, nil
+		}
 		if !errorIsRetryable(err, job) {
-			logutil.DDLLogger().Warn("[ddl] run reorg job failed, convert job to rollback",
-				zap.String("job", job.String()), zap.Error(err))
-			ver, err = convertAddIdxJob2RollbackJob(jobCtx, t, job, tbl.Meta(), allIndexInfos, err)
+			logutil.DDLLogger().Warn("run add vector index job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(jobCtx, t, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
 		}
 		return false, ver, errors.Trace(err)
 	}
 
-	return done, 0, nil
+	return true, ver, nil
 }
 
-func (w *worker) checkVectorIndexProcess(tbl table.Table, reorgInfo *reorgInfo) error {
-	cnt := 0
+func (w *worker) checkVectorIndexProcess(jobCtx *jobContext, tbl table.Table, job *model.Job, index *model.IndexInfo) error {
+	waitTimeout := ReorgWaitTimeout
 	for {
-		if err := w.ddlCtx.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
-			return errors.Trace(err)
+		select {
+		case <-w.ddlCtx.ctx.Done():
+			return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
+		case <-time.After(waitTimeout):
+			logutil.DDLLogger().Info("[ddl] index backfill state running, check vector index process",
+				zap.Stringer("job", job), zap.Stringer("index name", index.Name), zap.Int64("index ID", index.ID),
+				zap.Duration("wait time", waitTimeout), zap.Int64("total added row count", job.RowCount))
+			return dbterror.ErrWaitReorgTimeout
+		default:
 		}
-		isDone, addedIndexCnt, err := w.checkVectorIndexProcessOnce(reorgInfo.jobCtx, tbl, reorgInfo.currElement.ID)
+
+		if !w.ddlCtx.isOwner() {
+			// If it's not the owner, we will try later, so here just returns an error.
+			logutil.DDLLogger().Info("DDL is not the DDL owner", zap.String("ID", w.ddlCtx.uuid))
+			return errors.Trace(dbterror.ErrNotOwner)
+		}
+
+		isDone, addedIndexCnt, err := w.checkVectorIndexProcessOnce(jobCtx, tbl, index.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		w.getReorgCtx(reorgInfo.Job.ID).setRowCount(addedIndexCnt)
-		if cnt%10 == 0 {
-			logutil.DDLLogger().Info("[ddl] index backfill state running, check vector index process",
-				zap.Stringer("job", reorgInfo.Job), zap.Stringer("currElement", reorgInfo.currElement),
-				zap.Bool("isDone", isDone), zap.Int64("addedIndexCnt", addedIndexCnt), zap.Int("tried count", cnt))
-		}
+		job.RowCount = addedIndexCnt
 
 		if isDone {
 			break
 		}
 
-		cnt++
-		time.Sleep(GetWaitTimeWhenErrorOccurred())
+		time.Sleep(500 * time.Millisecond)
 	}
 	return nil
 }
@@ -896,7 +926,7 @@ func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table
 		}
 	})
 
-	// TODO: We need to add error_msg and error_count for to show error information.
+	// TODO: We need to add error_msg for to show error information.
 	sql := fmt.Sprintf("select rows_stable_not_indexed, rows_stable_indexed from information_schema.tiflash_indexes where table_id = %d and index_id = %d;",
 		tbl.Meta().ID, indexID)
 	rows, err := w.sess.Execute(jobCtx.ctx, sql, "add_vector_index_check_result")
@@ -1324,9 +1354,6 @@ func runReorgJobAndHandleErr(
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, allIndexInfos[0].Name)
 			}, false)
-		if job.Type == model.ActionAddVectorIndex {
-			return w.checkVectorIndexProcess(tbl, reorgInfo)
-		}
 		return w.addTableIndex(tbl, reorgInfo)
 	})
 	if err != nil {

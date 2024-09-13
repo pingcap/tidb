@@ -19,7 +19,9 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // AgeMax limits the max number of tuple generated for t_user.age
@@ -36,6 +38,7 @@ type TestTableUser struct {
 	phone       string
 	createdTime time.Time
 	updatedTime time.Time
+	vec         types.VectorFloat32
 }
 
 // Frequently referenced definition of `table` in all test cases among `admin pause test cases`
@@ -49,7 +52,8 @@ const adminPauseTestTableStmt string = `CREATE TABLE if not exists ` + adminPaus
 	city varchar(32) NOT NULL DEFAULT '',
 	phone varchar(16) NOT NULL DEFAULT '',
 	created_time datetime NOT NULL,
-	updated_time datetime NOT NULL
+	updated_time datetime NOT NULL,
+	vec vector(3)
   );`
 
 const adminPauseTestPartitionTable string = "t_user_partition"
@@ -117,16 +121,17 @@ func (tu *TestTableUser) generateAttributes(id int) (err error) {
 	}
 	tu.createdTime = time.Now()
 	tu.updatedTime = time.Now()
+	tu.vec = types.InitVectorFloat32(3)
 
 	return nil
 }
 
 func (tu *TestTableUser) insertStmt(tableName string, count int) string {
-	sql := fmt.Sprintf("INSERT INTO %s(tenant, name, age, province, city, phone, created_time, updated_time) VALUES ", tableName)
+	sql := fmt.Sprintf("INSERT INTO %s(tenant, name, age, province, city, phone, created_time, updated_time, vec) VALUES ", tableName)
 	for n := 0; n < count; n++ {
 		_ = tu.generateAttributes(n)
-		sql += fmt.Sprintf("('%s', '%s', %d, '%s', '%s', '%s', '%s', '%s')",
-			tu.tenant, tu.name, tu.age, tu.province, tu.city, tu.phone, tu.createdTime, tu.updatedTime)
+		sql += fmt.Sprintf("('%s', '%s', %d, '%s', '%s', '%s', '%s', '%s', '%s')",
+			tu.tenant, tu.name, tu.age, tu.province, tu.city, tu.phone, tu.createdTime, tu.updatedTime, tu.vec)
 		if n != count-1 {
 			sql += ", "
 		}
@@ -139,6 +144,16 @@ func generateTblUser(tk *testkit.TestKit, rowCount int) error {
 	if rowCount == 0 {
 		return nil
 	}
+
+	tk.MustExec("alter table t_user set tiflash replica 3 location labels 'a','b';")
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
 	tu := &TestTableUser{}
 	tk.MustExec(tu.insertStmt(adminPauseTestTable, rowCount))
 	return nil

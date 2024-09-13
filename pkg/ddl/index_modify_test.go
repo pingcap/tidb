@@ -1116,7 +1116,7 @@ func getJobsBySQL(se sessiontypes.Session, tbl, condition string) ([]*model.Job,
 	return jobs, nil
 }
 
-func TestAddVectorIndex(t *testing.T) {
+func TestAddVectorIndexSimple(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1269,7 +1269,7 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	}
 
 	// Case1: call SyncTiFlashTableSchema failed to rollback job.
-	tk.MustGetErrMsg(addIdxSQL, "[ddl:-1]MockTiFlash is not accessible")
+	tk.MustGetErrMsg(addIdxSQL, "[ddl:-1]DDL job rollback, error msg: MockTiFlash is not accessible")
 	checkRollbackInfo(model.JobStateRollbackDone)
 
 	// Case2: do 'admin cancel ddl job to rollback job.
