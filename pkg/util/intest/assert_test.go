@@ -15,6 +15,7 @@
 package intest_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -119,4 +120,71 @@ func doCheckAssert(t *testing.T, fn any, cond any, pass bool, msgAndArgs ...any)
 	default:
 		fail = "invalid input assert function"
 	}
+}
+
+func BenchmarkAssertWithSprintf(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		intest.Assert(true, fmt.Sprintf("assert failed, %s", "test"))
+	}
+}
+
+func BenchmarkAssertWithNativeFormat(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		intest.Assert(true, "assert failed, %s", "test")
+	}
+}
+
+func BenchmarkAssertFunc(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		intest.AssertFunc(func() bool { return returnTrue(i) }, "assert failed, %s", "test")
+	}
+}
+
+func BenchmarkAssertFuncWithWrapFunc(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		intest.Assert(wrapReturn1(), "assert failed, %s", "test")
+	}
+}
+
+func BenchmarkAssertFuncWithComplexFunc(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		intest.AssertFunc(func() bool { return returnTrue(fibo(i)) }, "assert failed, %s", "test")
+	}
+}
+
+func BenchmarkAssertFuncWithInterfaceParam(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		intest.AssertFunc(func() bool { return checkNotNil(i) }, "assert failed, %s", "test")
+	}
+}
+
+func BenchmarkAssertWithFunc(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		intest.Assert(returnTrue(i), "assert failed, %s", "test")
+	}
+}
+
+func BenchmarkAssertWithComplexFunc(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		intest.Assert(returnTrue(fibo(i)), "assert failed, %s", "test")
+	}
+}
+
+func wrapReturn1() bool {
+	return returnTrue(1)
+}
+
+func fibo(i int) int {
+	if i <= 1 {
+		return i
+	}
+	return fibo(i-1) + fibo(i-2)
+}
+
+func returnTrue(i int) bool {
+	return i >= 0
+}
+
+func checkNotNil(i any) bool {
+	return i != nil
 }
