@@ -2205,6 +2205,37 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, t *meta.Meta, job
 }
 
 // onDropTablePartition deletes old partition meta.
+// States:
+// StateNone
+//
+//	Old partitions are queued to be deleted (delete_range), global index up-to-date
+//
+// StateDeleteReorganization
+//
+//		Old partitions are not accessible/used by any sessions.
+//	 Inserts/updates of global index which still have entries pointing to old partitions
+//	 will overwrite those entries
+//	 In the background we are reading all old partitions and deleting their entries from
+//	 the global indexes.
+//
+// StateDeleteOnly
+//
+//	 old partitions are no longer visible, but if there is inserts/updates to the global indexes,
+//	 duplicate key errors will be given, even if the entries are from dropped partitions
+//		Note that overlapping ranges (i.e. a dropped partitions with 'less than (N)' will now .. ?!?
+//
+// # StateWriteOnly
+//
+// TODO: Issue to solve:
+// How to handle rows written to the overlapping range in the next partition,
+// that fits the old partition.
+// I.e. p0 values less than (10), p1 values less than (20) + drop partition p0
+// Session1 sees CurrSchemaVersion-1, and Session2 sees CurrSchemaVersion
+// Session2 inserts (9) into p1 (since it is the first state where p0 is gone)
+// Session1 does it see 9 or not? If 10 was written it should see it...
+//
+//	If full table scan it would see it, but if lookup with partition pruning it might not :(
+//	It should at least not be allowed to write anything to p0...
 func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
 	partInfo := model.PartitionInfo{}
@@ -2223,12 +2254,27 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 	originalState := job.SchemaState
 	switch job.SchemaState {
 	case model.StatePublic:
-		// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
+		// Here we mark the partitions to be dropped, so they are not read or written
 		err = CheckDropTablePartition(tblInfo, partNames)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		// TODO: Only apply this for dropping RANGE partitions (actually if it is the highest partition it can also be skipped) OR LIST with Default partition.
+		// Reason, see https://github.com/pingcap/tidb/issues/55888
+		// Only mark the partitions as to be dropped, so they are not used
+		originalDefs := tblInfo.Partition.Definitions
+		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
+		tblInfo.Partition.Definitions = originalDefs
+		tblInfo.Partition.DDLState = model.StateWriteOnly
+		tblInfo.Partition.DDLAction = model.ActionDropTablePartition
+
+		job.SchemaState = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != job.SchemaState)
+	case model.StateWriteOnly:
+		// Since the previous state do not use the dropping partitions,
+		// we can now actually remove them, allowing to write into the overlapping range
+		// of the higher range partition or LIST default partition.
 		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
 		err = dropLabelRules(w.ctx, job.SchemaName, tblInfo.Name.L, partNames)
 		if err != nil {
@@ -2267,12 +2313,14 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 			return ver, err
 		}
 
+		tblInfo.Partition.DDLState = model.StateDeleteOnly
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteOnly:
-		// This state is not a real 'DeleteOnly' state, because tidb does not maintaining the state check in partitionDefinition.
+		// This state is not a real 'DeleteOnly' state, because tidb does not maintain the state check in partitionDefinition.
 		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
 		// so that no new data will be inserted into old partitions when reorganizing.
+		tblInfo.Partition.DDLState = model.StateDeleteReorganization
 		job.SchemaState = model.StateDeleteReorganization
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteReorganization:
@@ -2332,6 +2380,8 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 		}
 		droppedDefs := tblInfo.Partition.DroppingDefinitions
 		tblInfo.Partition.DroppingDefinitions = nil
+		tblInfo.Partition.DDLState = model.StateNone
+		tblInfo.Partition.DDLAction = model.ActionNone
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []any{physicalTableIDs}
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
@@ -2461,6 +2511,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		pi.DroppingDefinitions = truncatingDefinitions
 		pi.NewPartitionIDs = newIDs[:]
 
+		tblInfo.Partition.DDLAction = model.ActionTruncateTablePartition
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	case model.StateDeleteOnly:

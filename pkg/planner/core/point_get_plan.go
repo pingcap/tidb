@@ -400,9 +400,37 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 	}
 	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), row)
 	if err != nil {
-		partIdx = -1
-		p.PartitionIdx = &partIdx
-		return true
+		if partIdx != -1 && table.ErrNoPartitionForGivenValue.Equal(err) &&
+			pi.DDLState == model.StateWriteOnly &&
+			len(pi.DroppingDefinitions) > 0 &&
+			len(pi.AddingDefinitions) == 0 {
+			// Partition is being dropped, find first non-dropping partition
+			nextNonDropping := -1
+			for i := partIdx + 1; i < len(pi.Definitions); i++ {
+				isDropping := false
+				for _, droppingDef := range pi.DroppingDefinitions {
+					if droppingDef.ID == pi.Definitions[i].ID {
+						isDropping = true
+						break
+					}
+				}
+				if isDropping {
+					continue
+				}
+				nextNonDropping = i
+				break
+			}
+			if nextNonDropping != -1 {
+				partIdx = nextNonDropping
+				err = nil
+			}
+			// TODO: Handle BatchGetPoint as well as List partitioning with default partition!
+		}
+		if err != nil {
+			partIdx = -1
+			p.PartitionIdx = &partIdx
+			return true
+		}
 	}
 	if len(p.PartitionNames) > 0 {
 		found := false

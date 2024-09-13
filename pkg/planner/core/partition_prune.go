@@ -16,10 +16,13 @@ package core
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"slices"
+	"strings"
 )
 
 // PartitionPruning finds all used partitions according to query conditions, it will
@@ -38,8 +41,69 @@ func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 			return nil, err
 		}
 		ret := s.convertToIntSlice(rangeOr, pi, partitionNames)
+		if len(pi.DroppingDefinitions) > 0 && len(pi.AddingDefinitions) == 0 && pi.DDLState == metamodel.StateWriteOnly {
+			if len(ret) == 1 && ret[0] == FullRange {
+				ret = make([]int, 0, len(pi.Definitions))
+				for i := range pi.Definitions {
+					ret = append(ret, i)
+				}
+			}
+			newRet := make([]int, 0, len(ret))
+			// For range partitioning, one can only drop a continues range of partitions!
+			lastDroppedPartitionPos := -1
+			for _, pos := range ret {
+				pid := pi.Definitions[pos].ID
+				dropping := false
+				for i, droppingDef := range pi.DroppingDefinitions {
+					if droppingDef.ID == pid {
+						dropping = true
+						lastDroppedPartitionPos = i
+						break
+					}
+				}
+				if !dropping {
+					newRet = append(newRet, pos)
+				}
+			}
+			if lastDroppedPartitionPos == -1 {
+				return ret, nil
+			}
+			if lastDroppedPartitionPos+1 == len(pi.Definitions) {
+				// Dropped the last partition, cannot add the next :)
+				return newRet, nil
+			}
+			for i, newPos := range newRet {
+				if newPos < lastDroppedPartitionPos+1 {
+					continue
+				}
+				if newPos == lastDroppedPartitionPos+1 {
+					// already includes the next higher partition pos
+					return newRet, nil
+				}
+				// Next higher partition pos is not included
+				if len(partitionNames) > 0 {
+					for _, name := range partitionNames {
+						if strings.EqualFold(name.L, pi.Definitions[lastDroppedPartitionPos+1].Name.L) {
+							return slices.Insert(newRet, i, lastDroppedPartitionPos+1), nil
+						}
+					}
+					return newRet, nil
+				}
+				return slices.Insert(newRet, i, lastDroppedPartitionPos+1), nil
+			}
+			if len(partitionNames) > 0 {
+				for _, name := range partitionNames {
+					if strings.EqualFold(name.L, pi.Definitions[lastDroppedPartitionPos+1].Name.L) {
+						return append(newRet, lastDroppedPartitionPos+1), nil
+					}
+				}
+				return newRet, nil
+			}
+			return append(newRet, lastDroppedPartitionPos+1), nil
+		}
 		return ret, nil
 	case model.PartitionTypeList:
+		// TODO: Handle Default partition and Drop Partition
 		return s.pruneListPartition(ctx, tbl, partitionNames, conds, columns)
 	}
 	return []int{FullRange}, nil

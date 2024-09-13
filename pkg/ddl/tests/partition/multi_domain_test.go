@@ -31,21 +31,54 @@ func TestMultiSchemaDropPartition(t *testing.T) {
 	testkit.SkipIfFailpointDisabled(t)
 	createSQL := `create table t (a int primary key, b varchar(255)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))`
 	initFn := func(tkO *testkit.TestKit) {
-		tkO.MustExec(`insert into t values (1,1)`)
+		tkO.MustExec(`insert into t values (1,1),(2,2),(101,101),(102,102)`)
 	}
 	alterSQL := `alter table t drop partition p0`
 	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
+		// TODO: Test both static and dynamic partition pruning!
 		switch schemaState {
+		case "write only":
+			// tkNO are unaware of the DDL
+			// tkO see non-readable/non-writable p0 partition, and should try to read from p1
+			// in case there is something written to overlapping p1
+			tkO.MustContainErrMsg(`insert into t values (1,1)`, "[table:1526]Table has no partition for value matching a partition being dropped, 'p0'")
+			tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
+			tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
+			tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
+			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102", "2 2"))
+			tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("101 101", "102 102"))
 		case "delete only":
+			// tkNO see non-readable/non-writable p0 partition, and should try to read from p1
+			// in case there is something written to overlapping p1
+			// tkO is not aware of p0.
 			tkO.MustExec(`insert into t values (1,1)`)
-			// PK violation!!!
-			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "1 1"))
-			// Original row
-			tkNO.MustQuery(`select * from t partition (p0)`).Sort().Check(testkit.Rows("1 1"))
-			// This is not consistent with the view of the partition definitions!
-			tkNO.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows("1 1"))
+			tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[table:1526]Table has no partition for value matching a partition being dropped, 'p0'")
+			tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
+			tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
+			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102"))
+			// Original row should not be seen in StateWriteOnly
+			tkNO.MustQuery(`select * from t partition (p0)`).Sort().Check(testkit.Rows())
+			tkNO.MustContainErrMsg(`select * from t partition (pNonExisting)`, "[table:1735]Unknown partition 'pnonexisting' in table 't'")
+			tkNO.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t where a < 1000`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t where a > 0`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t where a = 1`).Sort().Check(testkit.Rows("1 1"))
+			tkNO.MustQuery(`select * from t where a = 1 or a = 2 or a = 3`).Sort().Check(testkit.Rows("1 1"))
+			// TODO: Handle BatchPointGet!
+			//tkNO.MustQuery(`select * from t where a in (1,2,3)`).Sort().Check(testkit.Rows("1 1"))
+			tkNO.MustQuery(`select * from t where a < 100`).Sort().Check(testkit.Rows("1 1"))
+
+			tkNO.MustQuery(`select * from t where b = 1`).Sort().Check(testkit.Rows("1 1"))
+			//tkNO.MustQuery(`explain select * from t partition (p1)`).Sort().Check(testkit.Rows())
+			// TODO: Test update and delete!
+			// TODO: Test LIST partition with default partition
+			// TOOD: test key, hash and list partition without default partition :)
+			//tkNO.MustQuery(`explain select * from t where a < 100`).Sort().Check(testkit.Rows())
+			//tkNO.MustQuery(`explain select * from t where a < 100`).Sort().Check(testkit.Rows())
+			//tkNO.MustQuery(`explain select * from t where a = 1`).Sort().Check(testkit.Rows())
+			// Should we see the partition or not?!?
 			tkNO.MustQuery(`show create table t`).Check(testkit.Rows("" +
 				"t CREATE TABLE `t` (\n" +
 				"  `a` int(11) NOT NULL,\n" +
@@ -55,6 +88,14 @@ func TestMultiSchemaDropPartition(t *testing.T) {
 				"PARTITION BY RANGE (`a`)\n" +
 				"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 				" PARTITION `p1` VALUES LESS THAN (200))"))
+			tkO.MustQuery(`show create table t`).Check(testkit.Rows("" +
+				"t CREATE TABLE `t` (\n" +
+				"  `a` int(11) NOT NULL,\n" +
+				"  `b` varchar(255) DEFAULT NULL,\n" +
+				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE (`a`)\n" +
+				"(PARTITION `p1` VALUES LESS THAN (200))"))
 		case "delete reorganization":
 			// just to not fail :)
 		case "none":

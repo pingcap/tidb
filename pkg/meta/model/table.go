@@ -713,6 +713,8 @@ type PartitionInfo struct {
 
 	States []PartitionState `json:"states"`
 	Num    uint64           `json:"num"`
+	// Indicate which DDL Action is currently on going
+	DDLAction ActionType `json:"ddl_action,omitempty"`
 	// Only used during ReorganizePartition so far
 	DDLState SchemaState `json:"ddl_state"`
 	// Set during ALTER TABLE ... if the table id needs to change
@@ -853,6 +855,26 @@ func (pi *PartitionInfo) GetPartitionIDByName(partitionDefinitionName string) in
 	}
 	return -1
 }
+
+/*
+func (pi *PartitionInfo) GetOverlappingDroppingPartitionIdx(idx int) (int, error) {
+	if !(pi.Type != model.PartitionTypeRange && pi.Type != model.PartitionTypeList) ||
+		pi.DDLState != StateWriteOnly {
+		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("")
+	}
+	switch pi.Type {
+	case model.PartitionTypeRange:
+		if idx+1 == len(pi.Definitions) {
+			//
+			return -1, nil
+		}
+
+	//case model.PartitionTypeList:
+	// TODO: handle default partition!
+	}
+	return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("")
+}
+*/
 
 // PartitionState is the state of the partition.
 type PartitionState struct {

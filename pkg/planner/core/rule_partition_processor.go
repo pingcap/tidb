@@ -431,6 +431,22 @@ func (s *PartitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.Pa
 			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[pos].Name.L) {
 				continue
 			}
+			/*
+				if pi.DDLState == model.StateWriteOnly && len(pi.DroppingDefinitions) > 0 && len(pi.AddingDefinitions) == 0 {
+					// TODO: Also check pi.DDLAction == model.ActionDropTablePartition
+					dropping := false
+					for _, def := range pi.DroppingDefinitions {
+						if pi.Definitions[pos].ID == def.ID {
+							dropping = true
+							break
+						}
+					}
+					if dropping {
+						continue
+					}
+				}
+
+			*/
 			ret = append(ret, pos)
 		}
 	}
@@ -808,6 +824,7 @@ func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl ta
 	}
 	if _, ok := used[FullRange]; ok {
 		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
+		// TODO: Handle Drop partition StateWriteOnly and
 		return s.convertToIntSlice(or, pi, partitionNames), nil
 	}
 	ret := make([]int, 0, len(used))
