@@ -223,7 +223,7 @@ func (*Checker) RecoverSchema(_ sessionctx.Context, _ *ddl.RecoverSchemaInfo) (e
 // CreateTable implements the DDL interface.
 func (d *Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error {
 	err := d.realExecutor.CreateTable(ctx, stmt)
-	if err != nil {
+	if err != nil || d.closed.Load() {
 		return err
 	}
 
@@ -332,7 +332,7 @@ func (d *Checker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) err
 // AlterTable implements the DDL interface.
 func (d *Checker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
 	err := d.realExecutor.AlterTable(ctx, sctx, stmt)
-	if err != nil {
+	if err != nil || d.closed.Load() {
 		return err
 	}
 

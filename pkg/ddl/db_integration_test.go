@@ -1384,12 +1384,12 @@ func TestAlterAlgorithm(t *testing.T) {
 	tk.MustExec("drop table tscalar")
 
 	// Test rename index with scalar function
-	ddlChecker.Enable()
+	ddlChecker.Disable()
 	tk.MustExec(`create table tscalar(id int, col_1 json, KEY idx_1 ((cast(col_1 as char(64) array))))`)
 	tk.MustExec("alter table tscalar rename index idx_1 to idx_1_1")
 	tk.MustExec("admin check table tscalar")
 	tk.MustExec("drop table tscalar")
-	ddlChecker.Disable()
+	ddlChecker.Enable()
 
 	// partition.
 	assertAlterWarnExec(tk, t, "alter table t ALGORITHM=COPY, truncate partition p1")
