@@ -837,6 +837,12 @@ type SessionVars struct {
 	// status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
 	status atomic.Uint32
 
+	// ShardRowIDBits is the number of shard bits for user table row ID.
+	ShardRowIDBits uint64
+
+	// PreSplitRegions is the number of regions that should be pre-split for the table.
+	PreSplitRegions uint64
+
 	// ClientCapability is client's capability.
 	ClientCapability uint32
 

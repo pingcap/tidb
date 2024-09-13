@@ -77,8 +77,6 @@ const (
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
 	ddlPrompt          = "ddl"
 
-	shardRowIDBitsMax = 15
-
 	batchAddingJobs = 100
 
 	reorgWorkerCnt   = 10

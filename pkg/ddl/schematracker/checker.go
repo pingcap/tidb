@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync/atomic"
 
@@ -164,8 +165,24 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName pmode
 	s1 := removeClusteredIndexComment(result.String())
 	s2 := removeClusteredIndexComment(result2.String())
 
+	// Remove shard_row_id_bits and pre_split_regions comments.
+	if ctx.GetSessionVars().ShardRowIDBits != 0 || ctx.GetSessionVars().PreSplitRegions != 0 {
+		removeShardPreSplitComment := func(s string) string {
+			pattern := ` \/\*T! SHARD_ROW_ID_BITS=.*?\*\/`
+			re := regexp.MustCompile(pattern)
+			ret := re.ReplaceAllString(s, "")
+			pattern = ` \/\*T! PRE_SPLIT_REGIONS=.*?\*\/`
+			re = regexp.MustCompile(pattern)
+			ret = re.ReplaceAllString(ret, "")
+			return ret
+		}
+
+		s1 = removeShardPreSplitComment(s1)
+		s2 = removeShardPreSplitComment(s2)
+	}
+
 	if s1 != s2 {
-		errStr := fmt.Sprintf("%s != %s", s1, s2)
+		errStr := fmt.Sprintf("%s\n!=\n%s", s1, s2)
 		panic(errStr)
 	}
 }
