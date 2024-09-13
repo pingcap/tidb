@@ -110,7 +110,7 @@ require (
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
 	github.com/tikv/client-go/v2 v2.0.8-0.20240911041506-e7894a7b27ba
-	github.com/tikv/pd/client v0.0.0-20240805092608-838ee7983b78
+	github.com/tikv/pd/client v0.0.0-20240912084022-0ca83cf1cdd0
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -331,7 +331,6 @@ require (
 replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
-	github.com/tikv/pd/client => github.com/glorv/pd/client v0.0.0-20240904094201-d93ab00575ad
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.

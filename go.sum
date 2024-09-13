@@ -275,8 +275,6 @@ github.com/fzipp/gocyclo v0.3.1/go.mod h1:DJHO6AUmbdqj2ET4Z9iArSuwWgYDRryYt2wASx
 github.com/getsentry/sentry-go v0.27.0 h1:Pv98CIbtB3LkMWmXi4Joa5OOcwbmnX88sF5qbK3r3Ps=
 github.com/getsentry/sentry-go v0.27.0/go.mod h1:lc76E2QywIyW8WuBnwl8Lc4bkmQH4+w1gwTf25trprY=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
-github.com/glorv/pd/client v0.0.0-20240904094201-d93ab00575ad h1:TmH+IvYAQcPjp3y6ky3qahAXAA+xlsim5LAEANbv3FM=
-github.com/glorv/pd/client v0.0.0-20240904094201-d93ab00575ad/go.mod h1:Bt9oxCH+WhWZWjjZxwGVRR0Tx+fJR+VuQrPNmLr6UYg=
 github.com/go-asn1-ber/asn1-ber v1.5.4 h1:vXT6d/FNDiELJnLb6hGNa309LMsrCoYFvpwHDF0+Y1A=
 github.com/go-asn1-ber/asn1-ber v1.5.4/go.mod h1:hEBeB/ic+5LoWskz+yKT7vGhhPYkProFKoKdwZRWMe0=
 github.com/go-errors/errors v1.4.2 h1:J6MZopCL4uSllY1OfXM374weqZFFItUbrImctkmUxIA=
@@ -862,6 +860,8 @@ github.com/tidwall/btree v1.7.0 h1:L1fkJH/AuEh5zBnnBbmTwQ5Lt+bRJ5A8EWecslvo9iI=
 github.com/tidwall/btree v1.7.0/go.mod h1:twD9XRA5jj9VUQGELzDO4HPQTNJsoWWfYEL+EUQ2cKY=
 github.com/tikv/client-go/v2 v2.0.8-0.20240911041506-e7894a7b27ba h1:dwuuYqPYxU0xcv0bnDgT7I4btQ5c3joBG1HmNOhCTdo=
 github.com/tikv/client-go/v2 v2.0.8-0.20240911041506-e7894a7b27ba/go.mod h1:4HDOAx8OXAJPtqhCZ03IhChXgaFs4B3+vSrPWmiPxjg=
+github.com/tikv/pd/client v0.0.0-20240912084022-0ca83cf1cdd0 h1:lsdNc5qpeVbOg0PFgZhHCBQlULRn+4cU7FAwxoJnvvM=
+github.com/tikv/pd/client v0.0.0-20240912084022-0ca83cf1cdd0/go.mod h1:uBHhxAM/SPCMabt483gI/pN/+JXIMKYXohK96s+PwT8=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a/go.mod h1:mkjARE7Yr8qU23YcGMSALbIxTQ9r9QBVahQOBRfU460=
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=
