@@ -103,7 +103,7 @@ func genRunawayQueriesStmt(recordMap map[recordKey]*Record) (string, []any) {
 			builder.WriteByte(',')
 		}
 		firstRecord = false
-		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?, %?, %?)")
+		builder.WriteString("(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 		params = append(params, r.ResourceGroupName, r.StartTime, r.Match, r.Action, r.SampleText, r.SQLDigest, r.PlanDigest, r.Source, r.ExceedCause, r.Repeats)
 	}
 	return builder.String(), params
