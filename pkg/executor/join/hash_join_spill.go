@@ -50,7 +50,7 @@ func (h *hashJoinSpillAction) Action(t *memory.Tracker) {
 		return
 	}
 
-	if t.CheckExceed() && !hasEnoughDataToSpill(h.spillHelper.hashJoinExec.memTracker, t) {
+	if t.CheckExceed() && (!hasEnoughDataToSpill(h.spillHelper.hashJoinExec.memTracker, t) || !h.spillHelper.canSpill()) {
 		h.GetFallback().Action(t)
 	}
 }
@@ -64,7 +64,7 @@ func (h *hashJoinSpillAction) actionImpl(t *memory.Tracker) bool {
 		h.spillHelper.cond.Wait()
 	}
 
-	if t.CheckExceed() && h.spillHelper.isNotSpilledNoLock() && hasEnoughDataToSpill(h.spillHelper.hashJoinExec.memTracker, t) {
+	if t.CheckExceed() && h.spillHelper.isNotSpilledNoLock() && hasEnoughDataToSpill(h.spillHelper.hashJoinExec.memTracker, t) && h.spillHelper.canSpill() {
 		h.spillHelper.setNeedSpillNoLock()
 
 		// Because all executors could keep running before spill flag is set to `inSpilling`, memory

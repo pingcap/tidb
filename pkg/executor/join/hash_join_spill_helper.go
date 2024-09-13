@@ -78,6 +78,8 @@ type hashJoinSpillHelper struct {
 	// This variable will be set to false before restoring
 	spillTriggered bool
 
+	canSpillFlag atomic.Bool
+
 	spillTriggeredForTest                        bool
 	spillRoundForTest                            int
 	spillTriggedInBuildingStageForTest           bool
@@ -152,6 +154,17 @@ func (h *hashJoinSpillHelper) close() {
 	for _, inDisk := range h.discardedInDisk {
 		inDisk.Close()
 	}
+}
+
+// After merging row tables, hash join can not spill any more.
+// Set flag so that we can trigger other executor's spill when
+// hash join can not spill.
+func (h *hashJoinSpillHelper) setCanSpillFlag(canSpill bool) {
+	h.canSpillFlag.Store(canSpill)
+}
+
+func (h *hashJoinSpillHelper) canSpill() bool {
+	return h.canSpillFlag.Load()
 }
 
 func (h *hashJoinSpillHelper) getSpilledPartitions() []int {

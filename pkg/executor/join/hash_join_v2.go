@@ -268,6 +268,8 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber uint, spi
 		}
 	}
 
+	spillHelper.setCanSpillFlag(false)
+
 	taggedBits := uint8(maxTaggedBits)
 	for i := 0; i < int(partitionNumber); i++ {
 		for _, seg := range rowTables[i].segments {
@@ -1042,7 +1044,9 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 
 	lastRound := 0
 	for {
+		e.spillHelper.setCanSpillFlag(true)
 		e.buildFinished = make(chan error, 1)
+		
 		e.fetchAndBuildHashTable(ctx)
 		e.fetchAndProbeHashTable(ctx)
 

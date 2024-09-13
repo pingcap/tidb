@@ -67,6 +67,10 @@ func (j *outerJoinProbe) prepareIsNotMatchedRows() {
 		}
 
 		for _, spilledIdx := range j.spilledIdx {
+			// This may be hack.
+			// When one row is spilled to disk, we see this row
+			// can't be joined in this round though it may be
+			// joined successfully in future rounds.
 			j.isNotMatchedRows[spilledIdx] = false
 		}
 	}
@@ -281,6 +285,7 @@ func (j *outerJoinProbe) probeForInnerSideBuild(chk, joinedChk *chunk.Chunk, rem
 			// it could be
 			// 1. no match when lookup the hash table
 			// 2. filter by probeFilter
+			// 3. spilled to disk
 			j.finishLookupCurrentProbeRow()
 			j.currentProbeRow++
 		}
