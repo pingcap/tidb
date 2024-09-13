@@ -847,10 +847,10 @@ const (
 	// TiDBEnableInstancePlanCache indicates whether to enable instance plan cache.
 	// If this variable is false, session-level plan cache will be used.
 	TiDBEnableInstancePlanCache = "tidb_enable_instance_plan_cache"
-	// TiDBInstancePlanCacheTargetMemSize indicates the target memory size of instance plan cache.
-	TiDBInstancePlanCacheTargetMemSize = "tidb_instance_plan_cache_target_mem_size"
+	// TiDBInstancePlanCacheReservedPercentage indicates the percentage memory to evict.
+	TiDBInstancePlanCacheReservedPercentage = "tidb_instance_plan_cache_reserved_percentage"
 	// TiDBInstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.
-	TiDBInstancePlanCacheMaxMemSize = "tidb_instance_plan_cache_max_mem_size"
+	TiDBInstancePlanCacheMaxMemSize = "tidb_instance_plan_cache_max_size"
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
@@ -1440,8 +1440,7 @@ const (
 	DefTiDBEnableNonPreparedPlanCacheForDML        = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
-	DefTiDBInstancePlanCacheTargetMemSize          = 100 * size.MB
-	DefTiDBInstancePlanCacheMaxMemSize             = 120 * size.MB
+	DefTiDBInstancePlanCacheMaxMemSize             = 100 * size.MB
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
@@ -1588,17 +1587,17 @@ var (
 	OOMAction                            = atomic.NewString(DefTiDBMemOOMAction)
 	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
-	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
-	EnableInstancePlanCache           = atomic.NewBool(false)
-	InstancePlanCacheTargetMemSize    = atomic.NewInt64(int64(DefTiDBInstancePlanCacheTargetMemSize))
-	InstancePlanCacheMaxMemSize       = atomic.NewInt64(int64(DefTiDBInstancePlanCacheMaxMemSize))
-	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
-	EnableFastCreateTable             = atomic.NewBool(DefTiDBEnableFastCreateTable)
-	DDLForce2Queue                    = atomic.NewBool(false)
-	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
-	EnableMDL                         = atomic.NewBool(false)
-	AutoAnalyzePartitionBatchSize     = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
-	AutoAnalyzeConcurrency            = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
+	PreparedPlanCacheMemoryGuardRatio   = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
+	EnableInstancePlanCache             = atomic.NewBool(false)
+	InstancePlanCacheReservedPercentage = atomic.NewFloat64(0.1)
+	InstancePlanCacheMaxMemSize         = atomic.NewInt64(int64(DefTiDBInstancePlanCacheMaxMemSize))
+	EnableDistTask                      = atomic.NewBool(DefTiDBEnableDistTask)
+	EnableFastCreateTable               = atomic.NewBool(DefTiDBEnableFastCreateTable)
+	DDLForce2Queue                      = atomic.NewBool(false)
+	EnableNoopVariables                 = atomic.NewBool(DefTiDBEnableNoopVariables)
+	EnableMDL                           = atomic.NewBool(false)
+	AutoAnalyzePartitionBatchSize       = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
+	AutoAnalyzeConcurrency              = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
