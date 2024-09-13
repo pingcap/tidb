@@ -647,7 +647,7 @@ func fetchIndexRow(idxInfo *model.IndexInfo, r, vals []types.Datum, opt table.In
 	}
 	vals = vals[:needLength]
 	// If the context has extra info, use the extra layout info to get index columns.
-	if opt != nil {
+	if len(opt) != 0 {
 		intest.Assert(len(opt) == len(idxInfo.Columns), fmt.Sprintf("offsets length is not equal to index columns length, offset len: %v, index len: %v", len(opt), len(idxInfo.Columns)))
 		for i, offset := range opt {
 			if offset < 0 || offset > len(r) {

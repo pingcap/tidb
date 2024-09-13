@@ -1193,8 +1193,8 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
 	// DELETE will use deletable columns, which is the same as the full columns of the table.
-	// INSERT and UPDATE will only use the wrtiable columns. So they will not see column under MOIDFY/CHANGE state.
-	// This if block is for for the INSERT and UPDATE.
+	// INSERT and UPDATE will only use the writable columns. So they will not see columns under MODIFY/CHANGE state.
+	// This if block is for the INSERT and UPDATE.
 	// And, only DELETE will make opt.HasIndexesLayout() to be true currently.
 	if !opt.HasIndexesLayout() && len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
 		// The changing column datum derived from related column should be casted here.
