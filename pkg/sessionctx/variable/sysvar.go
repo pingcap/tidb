@@ -1348,12 +1348,14 @@ var defaultSysVars = []*SysVar{
 			EnableInstancePlanCache.Store(TiDBOptOn(val))
 			return nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheReservedPercentage, Value: "0.1", Type: TypeFloat, MinValue: 0, MaxValue: 1,
+	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheReservedPercentage,
+		Value: strconv.FormatFloat(DefTiDBInstancePlanCacheReservedPercentage, 'f', -1, 64),
+		Type:  TypeFloat, MinValue: 0, MaxValue: 1,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatFloat(InstancePlanCacheReservedPercentage.Load(), 'f', -1, 64), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v := tidbOptFloat64(val, 0.1)
+			v := tidbOptFloat64(val, DefTiDBInstancePlanCacheReservedPercentage)
 			InstancePlanCacheReservedPercentage.Store(v)
 			return nil
 		}},
