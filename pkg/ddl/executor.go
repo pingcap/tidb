@@ -6455,13 +6455,14 @@ func getRenameTableUniqueIDs(job *model.Job, schema bool) []int64 {
 		return []int64{job.TableID}
 	}
 
-	args := &model.RenameTableArgs{}
+	var oldSchemaID int64
 	if job.Version <= model.JobVersion1 {
-		args.OldSchemaID = job.Args[0].(int64)
+		oldSchemaID = job.Args[0].(int64)
 	} else {
-		args = job.Args[0].(*model.RenameTableArgs)
+		args := job.Args[0].(*model.RenameTableArgs)
+		oldSchemaID = args.OldSchemaID
 	}
-	return []int64{args.OldSchemaID, job.SchemaID}
+	return []int64{oldSchemaID, job.SchemaID}
 }
 
 // HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted

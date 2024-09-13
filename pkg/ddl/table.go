@@ -935,11 +935,10 @@ func finishJobRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int
 	// the table info can be dropped normally in `ApplyDiff`. This is because renaming table requires two
 	// schema versions to complete.
 	oldRawArgs := job.RawArgs
-	job.Args[0] = job.SchemaID
-	job.RawArgs, err = json.Marshal(job.Args)
-	if err != nil {
+	if err = model.UpdateRenameTableArgs(job); err != nil {
 		return 0, errors.Trace(err)
 	}
+
 	ver, err := updateSchemaVersion(jobCtx, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)

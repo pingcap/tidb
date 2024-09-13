@@ -195,3 +195,43 @@ func TestRenameTableArgs(t *testing.T) {
 		require.Equal(t, args, inArgs)
 	}
 }
+
+func TestUpdateRenameTableArgs(t *testing.T) {
+	inArgs := &RenameTableArgs{
+		OldSchemaID:   9527,
+		OldSchemaName: model.NewCIStr("old_schema_name"),
+		NewTableName:  model.NewCIStr("new_table_name"),
+	}
+
+	jobvers := []JobVersion{JobVersion1, JobVersion2}
+	for _, jobver := range jobvers {
+		job := &Job{
+			SchemaID: 9528,
+			Version:  jobver,
+			Type:     ActionRenameTable,
+		}
+		job.FillArgs(inArgs)
+
+		err := UpdateRenameTableArgs(job)
+		require.NoError(t, err)
+
+		// get args from job.Args
+		args, err := GetRenameTableArgs(job)
+		require.NoError(t, err)
+		require.Equal(t, args, &RenameTableArgs{
+			OldSchemaID:   9528,
+			OldSchemaName: model.NewCIStr("old_schema_name"),
+			NewTableName:  model.NewCIStr("new_table_name"),
+		})
+
+		// get args from job.RawArgs
+		job.Args = nil
+		args, err = GetRenameTableArgs(job)
+		require.NoError(t, err)
+		require.Equal(t, args, &RenameTableArgs{
+			OldSchemaID:   9528,
+			OldSchemaName: model.NewCIStr("old_schema_name"),
+			NewTableName:  model.NewCIStr("new_table_name"),
+		})
+	}
+}

@@ -312,3 +312,33 @@ func GetRenameTableArgs(job *Job) (*RenameTableArgs, error) {
 	}
 	return argsV2, nil
 }
+
+// UpdateRenameTableArgs updates the rename table args.
+// need to reset the old schema ID to new schema ID.
+func UpdateRenameTableArgs(job *Job) error {
+	var err error
+
+	// for job version1
+	if job.Version <= JobVersion1 {
+		// update schemaID and marshal()
+		job.Args[0] = job.SchemaID
+		job.RawArgs, err = json.Marshal(job.Args)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		argsV2, err := getOrDecodeArgsV2[*RenameTableArgs](job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// update schemaID and marshal()
+		argsV2.OldSchemaID = job.SchemaID
+		job.Args = []any{argsV2}
+		job.RawArgs, err = json.Marshal(job.Args[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
