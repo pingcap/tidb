@@ -298,7 +298,9 @@ type IndexPartSpecification struct {
 	Length int
 	// Order is parsed but should be ignored because MySQL v5.7 doesn't support it.
 	Desc bool
-	Expr ExprNode
+
+	// Skip marshalling interface type
+	Expr ExprNode `json:"-"`
 }
 
 // Restore implements Node interface.
