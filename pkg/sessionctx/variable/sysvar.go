@@ -1364,7 +1364,7 @@ var defaultSysVars = []*SysVar{
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			v, str := parseByteSize(val)
 			if str == "" {
-				v = DefTiDBInstancePlanCacheMaxMemSize
+				v = uint64(TidbOptInt64(val, int64(DefTiDBInstancePlanCacheMaxMemSize)))
 			}
 			if v < 0 {
 				return errors.New("tidb_instance_plan_cache_max_mem_size must be a non-negative integer")

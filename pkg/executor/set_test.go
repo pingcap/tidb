@@ -771,6 +771,8 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_size").Check(testkit.Rows("104857600"))
 	tk.MustExec("set global tidb_instance_plan_cache_max_size = 135829120")
 	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_size").Check(testkit.Rows("135829120"))
+	tk.MustExec("set global tidb_instance_plan_cache_max_size = 999999999")
+	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_size").Check(testkit.Rows("999999999"))
 	tk.MustExec("set global tidb_instance_plan_cache_max_size = 1GiB")
 	tk.MustQuery("select @@global.tidb_instance_plan_cache_max_size").Check(testkit.Rows("1073741824"))
 	tk.MustQuery("select @@global.tidb_instance_plan_cache_reserved_percentage").Check(testkit.Rows("0.1"))
