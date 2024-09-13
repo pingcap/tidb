@@ -48,7 +48,7 @@ func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count
 
 // StatsMetaCountAndModifyCountForUpdate reads count and modify_count for the given table from mysql.stats_meta with lock.
 func StatsMetaCountAndModifyCountForUpdate(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, isNull bool, err error) {
-	return statsMetaCountAndModifyCount(sctx, tableID, false)
+	return statsMetaCountAndModifyCount(sctx, tableID, true)
 }
 
 func statsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64, forUpdate bool) (count, modifyCount int64, isNull bool, err error) {
