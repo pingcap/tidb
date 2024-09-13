@@ -113,7 +113,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 		backoffSleep:       map[string]time.Duration{"RegionMiss": time.Millisecond},
 		totalProcessTime:   time.Second,
 		totalWaitTime:      time.Second,
-		rpcStat:            tikv.NewRegionRequestRuntimeStats(),
+		reqStat:            tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency: 15,
 	}
 	s1.copRespTime.Add(execdetails.Duration(time.Second))
@@ -130,13 +130,15 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
 
-	s1.rpcStat.Stats[tikvrpc.CmdCop] = &tikv.RPCRuntimeStats{
+	s1.reqStat.RPCStats[tikvrpc.CmdCop] = &tikv.RPCRuntimeStats{
 		Count:   1,
 		Consume: int64(time.Second),
 	}
+	s1.reqStat.RecordRPCErrorStats("server_is_busy")
+	s1.reqStat.RecordRPCErrorStats("server_is_busy")
 	stmtStats.RegisterStats(2, s1)
 	stats = stmtStats.GetRootStats(2)
-	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, rpc_num: 1, rpc_time: 1s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, backoff{RegionMiss: 1ms}"
+	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, rpc_info:{Cop:{num_rpc:1, total_time:1s}, rpc_errors:{server_is_busy:2}}, backoff{RegionMiss: 1ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
@@ -145,7 +147,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
 		totalProcessTime: time.Second,
 		totalWaitTime:    time.Second,
-		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
+		reqStat:          tikv.NewRegionRequestRuntimeStats(),
 	}
 	s1.copRespTime.Add(execdetails.Duration(time.Second))
 	s1.procKeys.Add(100)
