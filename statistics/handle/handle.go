@@ -499,7 +499,6 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
@@ -832,7 +831,11 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		// Update NDV of global-level stats
 		globalStats.Fms[i] = allFms[i][0].Copy()
 		for j := 1; j < partitionNum; j++ {
-			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+			if globalStats.Fms[i] == nil {
+				globalStats.Fms[i] = allFms[i][j].Copy()
+			} else {
+				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+			}
 		}
 
 		// update the NDV

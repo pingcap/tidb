@@ -2966,7 +2966,10 @@ func (du *baseDateArithmetical) addDate(ctx sessionctx.Context, date types.Time,
 	}
 
 	goTime = goTime.Add(time.Duration(nano))
-	goTime = types.AddDate(year, month, day, goTime)
+	goTime, err = types.AddDate(year, month, day, goTime)
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
 
 	// Adjust fsp as required by outer - always respect type inference.
 	date.SetFsp(resultFsp)
@@ -6186,13 +6189,11 @@ func addUnitToTime(unit string, t time.Time, v float64) (time.Time, bool, error)
 		if !validAddMonth(v, t.Year(), int(t.Month())) {
 			return tb, true, nil
 		}
-		tb = t.AddDate(0, int(v), 0)
 
-		// For corner case: timestampadd(month,1,date '2024-01-31') = "2024-02-29", timestampadd(month,1,date '2024-01-30') = "2024-02-29"
-		// `tb.Month()` refers to the actual result, `t.Month()+v` refers to the expect result.
-		// Actual result may be greater than expect result, we need to judge and modify it.
-		for int(tb.Month())%12 != (int(t.Month())+int(v))%12 {
-			tb = tb.AddDate(0, 0, -1)
+		var err error
+		tb, err = types.AddDate(0, int64(v), 0, t)
+		if err != nil {
+			return tb, true, err
 		}
 	case "QUARTER":
 		if !validAddMonth(v*3, t.Year(), int(t.Month())) {

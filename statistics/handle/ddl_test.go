@@ -94,6 +94,30 @@ func TestDDLTable(t *testing.T) {
 	require.Nil(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+
+	// For FK table's CreateTable Event
+	// https://github.com/pingcap/tidb/issues/53652
+	testKit.MustExec("create table t_parent (id int primary key)")
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_parent"))
+	require.NoError(t, err)
+	tableInfo = tbl.Meta()
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
+	statsTbl = h.GetTableStats(tableInfo)
+	require.False(t, statsTbl.Pseudo)
+
+	testKit.MustExec("create table t_child (id int primary key, pid int, foreign key (pid) references t_parent(id) on delete cascade on update cascade);")
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_child"))
+	require.NoError(t, err)
+	tableInfo = tbl.Meta()
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
+	statsTbl = h.GetTableStats(tableInfo)
+	require.False(t, statsTbl.Pseudo)
 }
 
 func TestDDLHistogram(t *testing.T) {
