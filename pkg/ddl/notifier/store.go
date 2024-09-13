@@ -46,12 +46,15 @@ type tableStore struct {
 func (t *tableStore) Insert(ctx context.Context, s *sess.Session, change *schemaChange) error {
 	// TODO: fill schema_change after we implement JSON serialization.
 	sql := fmt.Sprintf(`
-INSERT INTO %s.%s (
-	ddl_job_id,
-	multi_schema_change_seq,
-	schema_change,
-	processed_by_flag
-) VALUES (%d, %d, '%s', 0)`, t.db, t.table, change.ddlJobID, change.multiSchemaChangeSeq, "{}")
+		INSERT INTO %s.%s (
+			ddl_job_id,
+			multi_schema_change_seq,
+			schema_change,
+			processed_by_flag
+		) VALUES (%d, %d, '%s', 0)`,
+		t.db, t.table,
+		change.ddlJobID, change.multiSchemaChangeSeq, "{}",
+	)
 	_, err := s.Execute(ctx, sql, "ddl_notifier")
 	return err
 }
@@ -72,13 +75,13 @@ func (t *tableStore) Delete(ctx context.Context, se *sess.Session, ddlJobID int6
 
 func (t *tableStore) List(ctx context.Context, se *sess.Session, limit int) ([]*schemaChange, error) {
 	sql := fmt.Sprintf(`
-SELECT
-	ddl_job_id,
-	multi_schema_change_seq,
-	schema_change,
-	processed_by_flag
-FROM %s.%s ORDER BY ddl_job_id, multi_schema_change_seq LIMIT %d
-`, t.db, t.table, limit)
+		SELECT
+			ddl_job_id,
+			multi_schema_change_seq,
+			schema_change,
+			processed_by_flag
+		FROM %s.%s ORDER BY ddl_job_id, multi_schema_change_seq LIMIT %d`,
+		t.db, t.table, limit)
 	rows, err := se.Execute(ctx, sql, "ddl_notifier")
 	if err != nil {
 		return nil, err
