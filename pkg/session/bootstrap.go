@@ -1309,6 +1309,7 @@ var (
 		upgradeToVer211,
 		upgradeToVer212,
 		upgradeToVer213,
+		upgradeToVer214,
 	}
 )
 
@@ -3148,7 +3149,7 @@ func upgradeToVer214(s sessiontypes.Session, ver int64) {
 	if ver >= version214 {
 		return
 	}
-	mustExecute(s, "DELETE FROM mysql.global_variables where VARIABLE_NAME like 'validate_password_%'")
+	mustExecute(s, `DELETE FROM mysql.global_variables WHERE variable_name LIKE 'validate\_password\_%'`)
 
 	initGlobalVariableIfNotExists(s, variable.ValidatePasswordCheckUserName, variable.On)
 	initGlobalVariableIfNotExists(s, variable.ValidatePasswordSpecialCharCount, "1")
