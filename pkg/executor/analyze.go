@@ -399,7 +399,7 @@ func (e *AnalyzeExec) handleResultsError(
 		zap.Int("saveStatsConcurrency", saveStatsConcurrency),
 	)
 	failpoint.Inject("handleResultsErrorSingleThreadPanic", nil)
-	return e.handleResultsErrorWithConcurrency(buildStatsConcurrency, saveStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh)
+	return e.handleResultsErrorWithConcurrency(buildStatsConcurrency, 1, needGlobalStats, globalStatsMap, resultsCh)
 }
 
 func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
