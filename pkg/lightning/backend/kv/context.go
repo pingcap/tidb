@@ -28,12 +28,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 )
+
+var _ exprctx.ExprContext = &litExprContext{}
 
 // litExprContext implements the `exprctx.ExprContext` interface for lightning import.
 // It provides the context to build and evaluate expressions, furthermore, it allows to set user variables
@@ -97,15 +100,17 @@ func newLitExprContext(sqlMode mysql.SQLMode, sysVars map[string]string, timesta
 	}, nil
 }
 
-// SetUserVarVal sets the value of a user variable.
-func (ctx *litExprContext) SetUserVarVal(name string, dt types.Datum) {
+// setUserVarVal sets the value of a user variable.
+func (ctx *litExprContext) setUserVarVal(name string, dt types.Datum) {
 	ctx.userVars.SetUserVarVal(name, dt)
 }
 
 // UnsetUserVar unsets a user variable.
-func (ctx *litExprContext) UnsetUserVar(varName string) {
+func (ctx *litExprContext) unsetUserVar(varName string) {
 	ctx.userVars.UnsetUserVar(varName)
 }
+
+var _ table.MutateContext = &litTableMutateContext{}
 
 // litTableMutateContext implements the `table.MutateContext` interface for lightning import.
 type litTableMutateContext struct {
@@ -118,7 +123,8 @@ type litTableMutateContext struct {
 	assertionLevel        variable.AssertionLevel
 	tableDelta            struct {
 		sync.Mutex
-		m map[int64]variable.TableDelta
+		// tblID -> (colID -> deltaSize)
+		m map[int64]map[int64]int64
 	}
 }
 
@@ -188,30 +194,24 @@ func (ctx *litTableMutateContext) GetStatisticsSupport() (tbctx.StatisticsSuppor
 
 // UpdatePhysicalTableDelta implements the `table.StatisticsSupport` interface.
 func (ctx *litTableMutateContext) UpdatePhysicalTableDelta(
-	physicalTableID int64, delta int64,
-	count int64, cols variable.DeltaCols,
+	physicalTableID int64, _ int64,
+	_ int64, cols variable.DeltaCols,
 ) {
 	ctx.tableDelta.Lock()
 	defer ctx.tableDelta.Unlock()
 	if ctx.tableDelta.m == nil {
-		ctx.tableDelta.m = make(map[int64]variable.TableDelta)
+		ctx.tableDelta.m = make(map[int64]map[int64]int64)
 	}
 	tableMap := ctx.tableDelta.m
-	item := tableMap[physicalTableID]
-	item.Delta += delta
-	item.Count += count
-	item.TableID = physicalTableID
-	if cols != nil {
-		item.ColSize = cols.UpdateColSizeMap(item.ColSize)
-	}
-	tableMap[physicalTableID] = item
+	colSize := tableMap[physicalTableID]
+	tableMap[physicalTableID] = cols.UpdateColSizeMap(colSize)
 }
 
 // GetColumnSize returns the colum size map (colID -> deltaSize) for the given table ID.
 func (ctx *litTableMutateContext) GetColumnSize(tblID int64) (ret map[int64]int64) {
 	ctx.tableDelta.Lock()
 	defer ctx.tableDelta.Unlock()
-	return maps.Clone(ctx.tableDelta.m[tblID].ColSize)
+	return maps.Clone(ctx.tableDelta.m[tblID])
 }
 
 // GetCachedTableSupport implements the `table.MutateContext` interface.

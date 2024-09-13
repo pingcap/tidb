@@ -518,12 +518,12 @@ func (s *Session) TakeKvPairs() *Pairs {
 
 // SetUserVarVal sets the value of a user variable.
 func (s *Session) SetUserVarVal(name string, dt types.Datum) {
-	s.exprCtx.SetUserVarVal(name, dt)
+	s.exprCtx.setUserVarVal(name, dt)
 }
 
 // UnsetUserVar unsets a user variable.
 func (s *Session) UnsetUserVar(varName string) {
-	s.exprCtx.UnsetUserVar(varName)
+	s.exprCtx.unsetUserVar(varName)
 }
 
 // GetColumnSize returns the size of each column.

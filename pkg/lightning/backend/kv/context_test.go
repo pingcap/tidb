@@ -265,10 +265,13 @@ func TestLitExprContext(t *testing.T) {
 			userVars := evalCtx.GetUserVarsReader()
 			_, ok := userVars.GetUserVarVal("a")
 			require.False(t, ok)
-			ctx.SetUserVarVal("a", types.NewIntDatum(123))
+			ctx.setUserVarVal("a", types.NewIntDatum(123))
 			d, ok := userVars.GetUserVarVal("a")
 			require.True(t, ok)
 			require.Equal(t, types.NewIntDatum(123), d)
+			ctx.unsetUserVar("a")
+			_, ok = userVars.GetUserVarVal("a")
+			require.False(t, ok)
 		})
 	}
 }
@@ -299,10 +302,17 @@ func TestLitTableMutateContext(t *testing.T) {
 		require.False(t, ok)
 		stats, ok := tblCtx.GetStatisticsSupport()
 		require.True(t, ok)
+		// test for `UpdatePhysicalTableDelta` and `GetColumnSize`
 		stats.UpdatePhysicalTableDelta(123, 5, 2, variable.DeltaColsMap{1: 2, 3: 4})
-		require.Equal(t, map[int64]int64{1: 2, 3: 4}, tblCtx.GetColumnSize(123))
+		r := tblCtx.GetColumnSize(123)
+		require.Equal(t, map[int64]int64{1: 2, 3: 4}, r)
 		stats.UpdatePhysicalTableDelta(123, 8, 2, variable.DeltaColsMap{3: 5, 4: 3})
+		r = tblCtx.GetColumnSize(123)
+		require.Equal(t, map[int64]int64{1: 2, 3: 9, 4: 3}, r)
+		// the result should be a cloned value
+		r[1] = 100
 		require.Equal(t, map[int64]int64{1: 2, 3: 9, 4: 3}, tblCtx.GetColumnSize(123))
+		// test gets a non-existed table
 		require.Empty(t, tblCtx.GetColumnSize(456))
 	}
 
