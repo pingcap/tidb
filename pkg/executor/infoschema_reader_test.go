@@ -293,16 +293,16 @@ func TestForAnalyzeStatus(t *testing.T) {
 		"  `TABLE_NAME` varchar(64) DEFAULT NULL,\n" +
 		"  `PARTITION_NAME` varchar(64) DEFAULT NULL,\n" +
 		"  `JOB_INFO` longtext DEFAULT NULL,\n" +
-		"  `PROCESSED_ROWS` bigint(64) unsigned DEFAULT NULL,\n" +
+		"  `PROCESSED_ROWS` bigint(21) unsigned DEFAULT NULL,\n" +
 		"  `START_TIME` datetime DEFAULT NULL,\n" +
 		"  `END_TIME` datetime DEFAULT NULL,\n" +
 		"  `STATE` varchar(64) DEFAULT NULL,\n" +
 		"  `FAIL_REASON` longtext DEFAULT NULL,\n" +
 		"  `INSTANCE` varchar(512) DEFAULT NULL,\n" +
-		"  `PROCESS_ID` bigint(64) unsigned DEFAULT NULL,\n" +
+		"  `PROCESS_ID` bigint(21) unsigned DEFAULT NULL,\n" +
 		"  `REMAINING_SECONDS` varchar(512) DEFAULT NULL,\n" +
 		"  `PROGRESS` double(22,6) DEFAULT NULL,\n" +
-		"  `ESTIMATED_TOTAL_ROWS` bigint(64) unsigned DEFAULT NULL\n" +
+		"  `ESTIMATED_TOTAL_ROWS` bigint(21) unsigned DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	tk.MustQuery("show create table information_schema.analyze_status").Check(testkit.Rows("ANALYZE_STATUS " + analyzeStatusTable))
 	tk.MustExec("delete from mysql.analyze_jobs")
@@ -608,7 +608,7 @@ func TestColumnTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_2"))
 	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
-		testkit.RowsWithSep("|", "4941"))
+		testkit.RowsWithSep("|", "4943"))
 }
 
 func TestIndexUsageTable(t *testing.T) {
@@ -806,7 +806,7 @@ func TestReferencedTableSchemaWithForeignKey(t *testing.T) {
 	tk.MustExec("create table test.t1(id int primary key);")
 	tk.MustExec("create table test2.t2(i int, id int, foreign key (id) references test.t1(id));")
 
-	tk.MustQuery(`SELECT column_name, referenced_column_name, referenced_table_name, table_schema, referenced_table_schema 
+	tk.MustQuery(`SELECT column_name, referenced_column_name, referenced_table_name, table_schema, referenced_table_schema
 	FROM information_schema.key_column_usage
 	WHERE table_name = 't2' AND table_schema = 'test2';`).Check(testkit.Rows(
 		"id id t1 test2 test"))

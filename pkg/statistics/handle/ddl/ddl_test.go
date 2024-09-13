@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"testing"
 
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -1302,7 +1302,7 @@ func TestAddPartitioning(t *testing.T) {
 	)
 }
 
-func findEvent(eventCh <-chan *ddlutil.SchemaChangeEvent, eventType model.ActionType) *ddlutil.SchemaChangeEvent {
+func findEvent(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.ActionType) *notifier.SchemaChangeEvent {
 	// Find the target event.
 	for {
 		event := <-eventCh
