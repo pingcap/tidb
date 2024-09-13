@@ -2301,8 +2301,8 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	if do.statsLease >= 0 {
 		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
 	}
-	variable.EnableStatsOwner = do.EnableStatsOwner
-	variable.DisableStatsOwner = do.DisableStatsOwner
+	variable.EnableStatsOwner = do.enableStatsOwner
+	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	do.wg.Run(func() {
 		do.indexUsageWorker()
@@ -2370,10 +2370,10 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	return nil
 }
 
-// EnableStatsOwner enables this node to execute stats owner jobs.
+// enableStatsOwner enables this node to execute stats owner jobs.
 // Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
-// we should make sure that before invoking EnableStatsOwner(), stats owner is DISABLE.
-func (do *Domain) EnableStatsOwner() error {
+// we should make sure that before invoking enableStatsOwner(), stats owner is DISABLE.
+func (do *Domain) enableStatsOwner() error {
 	if !do.statsOwner.IsOwner() {
 		err := do.statsOwner.CampaignOwner()
 		return errors.Trace(err)
@@ -2381,9 +2381,9 @@ func (do *Domain) EnableStatsOwner() error {
 	return nil
 }
 
-// DisableStatsOwner disable this node to execute stats owner.
-// We should make sure that before invoking DisableStatsOwner(), stats owner is ENABLE.
-func (do *Domain) DisableStatsOwner() error {
+// disableStatsOwner disable this node to execute stats owner.
+// We should make sure that before invoking disableStatsOwner(), stats owner is ENABLE.
+func (do *Domain) disableStatsOwner() error {
 	if do.statsOwner.IsOwner() {
 		// disable campaign by interrupting campaignLoop
 		do.statsOwner.CampaignCancel()
