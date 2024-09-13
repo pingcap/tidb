@@ -1470,8 +1470,10 @@ func IsTableOrIndexReaderByAutoCommit(vars *variable.SessionVars, p base.Plan) b
 	}
 	for {
 		switch x := p.(type) {
-		case *PhysicalIndexReader, *PhysicalTableReader:
-			return true
+		case *PhysicalIndexReader:
+			return x.StatsCount() < 1000
+		case *PhysicalTableReader:
+			return x.StatsCount() < 1000
 		case *PhysicalProjection:
 			p = x.Children()[0]
 		case *PhysicalStreamAgg:

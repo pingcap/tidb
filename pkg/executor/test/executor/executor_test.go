@@ -3093,6 +3093,7 @@ func TestQueryWithMaxUint64TSO(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int key, b int, c int, index idx(b));")
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+	tk.MustExec("analyze table t")
 
 	reqStartTS := uint64(0)
 	ctx := interceptor.WithRPCInterceptor(context.Background(), interceptor.NewRPCInterceptor("get-rpc-star-ts", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
