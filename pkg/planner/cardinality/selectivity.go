@@ -22,8 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -46,7 +46,7 @@ var (
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]`
 // should be held when you call this.
-// Currently the time complexity is o(n^2).
+// Currently, the time complexity is o(n^2).
 func Selectivity(
 	ctx context.PlanContext,
 	coll *statistics.HistColl,
@@ -67,7 +67,7 @@ func Selectivity(
 			debugtrace.LeaveContextCommon(ctx)
 		}()
 	}
-	// If table's count is zero or conditions are empty, we should return 100% selectivity.
+	// If the table's count is zero or conditions are empty, we should return 100% selectivity.
 	if coll.RealtimeCount == 0 || len(exprs) == 0 {
 		return 1, nil, nil
 	}
@@ -86,7 +86,6 @@ func Selectivity(
 	}
 
 	var nodes []*StatsNode
-
 	var remainedExprStrs []string
 	remainedExprs := make([]expression.Expression, 0, len(exprs))
 
@@ -111,7 +110,7 @@ func Selectivity(
 			sel = 1.0 / pseudoEqualRate
 		}
 		if sc.EnableOptimizerDebugTrace {
-			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", expr.StringWithCtx(ctx.GetExprCtx().GetEvalCtx()), "Selectivity", sel)
+			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", expr.StringWithCtx(ctx.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable), "Selectivity", sel)
 		}
 		ret *= sel
 	}
@@ -156,7 +155,7 @@ func Selectivity(
 	}
 	id2Paths := make(map[int64]*planutil.AccessPath)
 	for _, path := range filledPaths {
-		// Index merge path and table path don't have index.
+		// Index merge path and table path don't have an index.
 		if path.Index == nil {
 			continue
 		}
@@ -167,7 +166,7 @@ func Selectivity(
 		idxIDs = append(idxIDs, id)
 		return false
 	})
-	// Stablize the result.
+	// Stabilize the result.
 	slices.Sort(idxIDs)
 	for _, id := range idxIDs {
 		idxStats := coll.GetIdx(id)
@@ -650,8 +649,8 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 	return
 }
 
-// isColEqCorCol checks if the expression is a eq function that one side is correlated column and another is column.
-// If so, it will return the column's reference. Otherwise return nil instead.
+// isColEqCorCol checks if the expression is an eq function that one side is correlated column and another is column.
+// If so, it will return the column's reference. Otherwise, return nil instead.
 func isColEqCorCol(filter expression.Expression) *expression.Column {
 	f, ok := filter.(*expression.ScalarFunction)
 	if !ok || f.FuncName.L != ast.EQ {

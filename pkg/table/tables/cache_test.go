@@ -334,6 +334,8 @@ func TestRenewLease(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(t, store)
+
 	se := tk.Session()
 	tk.MustExec("create table cache_renew_t (id int)")
 	tk.MustExec("alter table cache_renew_t cache")
@@ -342,7 +344,6 @@ func TestRenewLease(t *testing.T) {
 	var i int
 	tk.MustExec("select * from cache_renew_t")
 
-	tk1 := testkit.NewTestKit(t, store)
 	remote := tables.NewStateRemote(tk1.Session())
 	var leaseBefore uint64
 	for i = 0; i < 20; i++ {
@@ -520,16 +521,10 @@ func TestRenewLeaseABAFailPoint(t *testing.T) {
 	tk2.MustExec("use test")
 
 	// Load the cache data by this query.
-	var cacheUsed bool
-	for i := 0; i < 10; i++ {
+	require.Eventually(t, func() bool {
 		tk.MustQuery("select * from t_lease").Check(testkit.Rows("1 1"))
-		if lastReadFromCache(tk) {
-			cacheUsed = true
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	require.True(t, cacheUsed)
+		return lastReadFromCache(tk)
+	}, 3*time.Second, 100*time.Millisecond)
 
 	// Renew lease by this query, mock the operation is delayed.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/table/tables/mockRenewLeaseABA1", `return`))

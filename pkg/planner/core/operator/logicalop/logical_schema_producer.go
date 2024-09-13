@@ -15,6 +15,8 @@
 package logicalop
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
@@ -72,6 +74,22 @@ func (s *LogicalSchemaProducer) SetSchemaAndNames(schema *expression.Schema, nam
 func (s *LogicalSchemaProducer) InlineProjection(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
 	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(s.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, s.Schema())
+	if len(parentUsedCols) == 0 {
+		// When this operator output no columns, we return its smallest column for safety.
+		minColLen := math.MaxInt
+		chosenPos := 0
+		for i, col := range s.schema.Columns {
+			flen := col.GetType(s.SCtx().GetExprCtx().GetEvalCtx()).GetFlen()
+			if flen < minColLen {
+				chosenPos = i
+				minColLen = flen
+			}
+		}
+		// It should be always true.
+		if len(used) > 0 {
+			used[chosenPos] = true
+		}
+	}
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, s.Schema().Columns[i])

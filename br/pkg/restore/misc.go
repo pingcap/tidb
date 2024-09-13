@@ -16,14 +16,20 @@ package restore
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -53,8 +59,8 @@ func TransferBoolToValue(enable bool) string {
 // GetTableSchema returns the schema of a table from TiDB.
 func GetTableSchema(
 	dom *domain.Domain,
-	dbName model.CIStr,
-	tableName model.CIStr,
+	dbName pmodel.CIStr,
+	tableName pmodel.CIStr,
 ) (*model.TableInfo, error) {
 	info := dom.InfoSchema()
 	table, err := info.TableByName(context.Background(), dbName, tableName)
@@ -64,23 +70,52 @@ func GetTableSchema(
 	return table.Meta(), nil
 }
 
-// GetExistedUserDBs get dbs created or modified by users
-func GetExistedUserDBs(dom *domain.Domain) []*model.DBInfo {
+const maxUserTablesNum = 10
+
+// AssertUserDBsEmpty check whether user dbs exist in the cluster
+func AssertUserDBsEmpty(dom *domain.Domain) error {
 	databases := dom.InfoSchema().AllSchemas()
-	existedDatabases := make([]*model.DBInfo, 0, 16)
+	m := meta.NewSnapshotMeta(dom.Store().GetSnapshot(kv.MaxVersion))
+	userTables := make([]string, 0, maxUserTablesNum+1)
+	appendTables := func(dbName, tableName string) bool {
+		if len(userTables) >= maxUserTablesNum {
+			userTables = append(userTables, "...")
+			return true
+		}
+		userTables = append(userTables, fmt.Sprintf("%s.%s", dbName, tableName))
+		return false
+	}
+LISTDBS:
 	for _, db := range databases {
 		dbName := db.Name.L
 		if tidbutil.IsMemOrSysDB(dbName) {
 			continue
-		} else if dbName == "test" && len(db.Tables) == 0 {
+		}
+		tables, err := m.ListSimpleTables(db.ID)
+		if err != nil {
+			return errors.Annotatef(err, "failed to iterator tables of database[id=%d]", db.ID)
+		}
+		if len(tables) == 0 {
 			// tidb create test db on fresh cluster
 			// if it's empty we don't take it as user db
+			if dbName != "test" {
+				if appendTables(db.Name.O, "") {
+					break LISTDBS
+				}
+			}
 			continue
 		}
-		existedDatabases = append(existedDatabases, db)
+		for _, table := range tables {
+			if appendTables(db.Name.O, table.Name.O) {
+				break LISTDBS
+			}
+		}
 	}
-
-	return existedDatabases
+	if len(userTables) > 0 {
+		return errors.Annotate(berrors.ErrRestoreNotFreshCluster,
+			"user db/tables: "+strings.Join(userTables, ", "))
+	}
+	return nil
 }
 
 // GetTS gets a new timestamp from PD.

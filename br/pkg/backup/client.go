@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -809,9 +809,7 @@ func BuildBackupRangeAndInitSchema(
 		return nil, nil, nil, nil
 	}
 	return ranges, NewBackupSchemas(func(storage kv.Storage, fn func(*model.DBInfo, *model.TableInfo)) error {
-		return BuildBackupSchemas(storage, tableFilter, backupTS, isFullBackup, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
-			fn(dbInfo, tableInfo)
-		})
+		return BuildBackupSchemas(storage, tableFilter, backupTS, isFullBackup, fn)
 	}, schemasNum), policies, nil
 }
 
@@ -1235,9 +1233,9 @@ func (bc *Client) OnBackupResponse(
 				return txnlock.NewLock(lockErr), nil
 			}
 		}
-		res := errContext.HandleIgnorableError(errPb, storeID)
+		res := utils.HandleBackupError(errPb, storeID, errContext)
 		switch res.Strategy {
-		case utils.GiveUpStrategy:
+		case utils.StrategyGiveUp:
 			errMsg := res.Reason
 			if len(errMsg) <= 0 {
 				errMsg = errPb.Msg

@@ -422,37 +422,6 @@ func (hg *Histogram) StandardizeForV2AnalyzeIndex() {
 	hg.Bounds = c
 }
 
-// AddIdxVals adds the given values to the histogram.
-func (hg *Histogram) AddIdxVals(idxValCntPairs []TopNMeta) {
-	totalAddCnt := int64(0)
-	slices.SortFunc(idxValCntPairs, func(i, j TopNMeta) int {
-		return bytes.Compare(i.Encoded, j.Encoded)
-	})
-	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
-		for pairIdx < len(idxValCntPairs) {
-			// If the current val smaller than current bucket's lower bound, skip it.
-			cmpResult := bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2), idxValCntPairs[pairIdx].Encoded)
-			if cmpResult > 0 {
-				continue
-			}
-			// If the current val bigger than current bucket's upper bound, break.
-			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2+1), idxValCntPairs[pairIdx].Encoded)
-			if cmpResult < 0 {
-				break
-			}
-			totalAddCnt += int64(idxValCntPairs[pairIdx].Count)
-			hg.Buckets[bktIdx].NDV++
-			if cmpResult == 0 {
-				hg.Buckets[bktIdx].Repeat = int64(idxValCntPairs[pairIdx].Count)
-				pairIdx++
-				break
-			}
-			pairIdx++
-		}
-		hg.Buckets[bktIdx].Count += totalAddCnt
-	}
-}
-
 // ToString gets the string representation for the histogram.
 func (hg *Histogram) ToString(idxCols int) string {
 	strs := make([]string, 0, hg.Len()+1)

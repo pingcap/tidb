@@ -64,10 +64,12 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -234,6 +236,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	}
 	cc.setConn(conn)
 	cc.salt = fastrand.Buf(20)
+	metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName).Inc()
 	return cc
 }
 
@@ -642,7 +645,6 @@ func (s *Server) registerConn(conn *clientConn) bool {
 		return false
 	}
 	s.clients[conn.connectionID] = conn
-	metrics.ConnGauge.WithLabelValues(conn.getCtx().GetSessionVars().ResourceGroupName).Inc()
 	return true
 }
 
@@ -853,6 +855,21 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 	return rs
 }
 
+// UpdateProcessCPUTime updates specific process's tidb CPU time when the process is still running
+// It implements ProcessCPUTimeUpdater interface
+func (s *Server) UpdateProcessCPUTime(connID uint64, sqlID uint64, cpuTime time.Duration) {
+	s.rwlock.RLock()
+	conn, ok := s.clients[connID]
+	s.rwlock.RUnlock()
+	if !ok {
+		return
+	}
+	vars := conn.ctx.GetSessionVars()
+	if vars != nil {
+		vars.SQLCPUUsages.MergeTidbCPUTime(sqlID, cpuTime)
+	}
+}
+
 // GetProcessInfo implements the SessionManager interface.
 func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	s.rwlock.RLock()
@@ -891,8 +908,9 @@ func (s *Server) GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]stri
 }
 
 // Kill implements the SessionManager interface.
-func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
-	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID), zap.Bool("query", query))
+func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool, runaway bool) {
+	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID),
+		zap.Bool("query", query), zap.Bool("maxExecutionTime", maxExecutionTime), zap.Bool("runawayExceed", runaway))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
 	s.rwlock.RLock()
@@ -915,7 +933,7 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 			}
 		}
 	}
-	killQuery(conn, maxExecutionTime)
+	killQuery(conn, maxExecutionTime, runaway)
 }
 
 // UpdateTLSConfig implements the SessionManager interface.
@@ -928,9 +946,11 @@ func (s *Server) GetTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 
-func killQuery(conn *clientConn, maxExecutionTime bool) {
+func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {
 	sessVars := conn.ctx.GetSessionVars()
-	if maxExecutionTime {
+	if runaway {
+		sessVars.SQLKiller.SendKillSignal(sqlkiller.RunawayQueryExceeded)
+	} else if maxExecutionTime {
 		sessVars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
 	} else {
 		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
@@ -973,7 +993,7 @@ func (s *Server) KillAllConnections() {
 		if err := conn.closeWithoutLock(); err != nil {
 			terror.Log(err)
 		}
-		killQuery(conn, false)
+		killQuery(conn, false, false)
 	}
 
 	s.KillSysProcesses()
@@ -999,7 +1019,8 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	go func() {
 		defer close(allDone)
 		for _, conn := range conns {
-			if !conn.getCtx().GetSessionVars().InTxn() {
+			// Wait for the connections with explicit transaction or an executing auto-commit query.
+			if conn.getStatus() == connStatusReading && !conn.getCtx().GetSessionVars().InTxn() {
 				continue
 			}
 			select {
@@ -1031,11 +1052,6 @@ func (s *Server) ServerID() uint64 {
 	return s.dom.ServerID()
 }
 
-// GetAutoAnalyzeProcID implements SessionManager interface.
-func (s *Server) GetAutoAnalyzeProcID() uint64 {
-	return s.dom.GetAutoAnalyzeProcID()
-}
-
 // StoreInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
 func (s *Server) StoreInternalSession(se any) {
@@ -1057,10 +1073,9 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	s.sessionMapMutex.Lock()
 	defer s.sessionMapMutex.Unlock()
 	tsList := make([]uint64, 0, len(s.internalSessions))
-	analyzeProcID := s.GetAutoAnalyzeProcID()
 	for se := range s.internalSessions {
 		if ts, processInfoID := session.GetStartTSFromSession(se); ts != 0 {
-			if processInfoID == analyzeProcID {
+			if statsutil.GlobalAutoAnalyzeProcessList.Contains(processInfoID) {
 				continue
 			}
 			tsList = append(tsList, ts)
@@ -1133,6 +1148,6 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	}
 	s.rwlock.RUnlock()
 	for _, id := range connIDs {
-		s.Kill(id, false, false)
+		s.Kill(id, false, false, false)
 	}
 }

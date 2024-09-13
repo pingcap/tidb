@@ -17,11 +17,12 @@ package statistics
 import (
 	"cmp"
 	"fmt"
+	stdmaps "maps"
 	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
@@ -40,6 +41,10 @@ const (
 	// between condition selects 1/40 of total rows.
 	PseudoRowCount = 10000
 )
+
+// AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
+// Exported for testing.
+var AutoAnalyzeMinCnt int64 = 1000
 
 var (
 	// Below functions are used to solve cycle import problem.
@@ -63,6 +68,10 @@ type Table struct {
 	HistColl
 	Version uint64
 	// It's the timestamp of the last analyze time.
+	// We used it in auto-analyze to determine if this table has been analyzed.
+	// The source of this field comes from two parts:
+	// 1. Initialized by snapshot when loading stats_meta.
+	// 2. Updated by the analysis time of a specific column or index when loading the histogram of the column or index.
 	LastAnalyzeVersion uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
@@ -81,25 +90,6 @@ type ColAndIdxExistenceMap struct {
 	colAnalyzed map[int64]bool
 	idxInfoMap  map[int64]*model.IndexInfo
 	idxAnalyzed map[int64]bool
-}
-
-// SomeAnalyzed checks whether some part of the table is analyzed.
-// The newly added column/index might not have its stats.
-func (m *ColAndIdxExistenceMap) SomeAnalyzed() bool {
-	if m == nil {
-		return false
-	}
-	for _, v := range m.colAnalyzed {
-		if v {
-			return true
-		}
-	}
-	for _, v := range m.idxAnalyzed {
-		if v {
-			return true
-		}
-	}
-	return false
 }
 
 // Has checks whether a column/index stats exists.
@@ -161,10 +151,10 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
-	mm.colInfoMap = maps.Clone(m.colInfoMap)
-	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
-	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
-	mm.idxInfoMap = maps.Clone(m.idxInfoMap)
+	mm.colInfoMap = stdmaps.Clone(m.colInfoMap)
+	mm.colAnalyzed = stdmaps.Clone(m.colAnalyzed)
+	mm.idxAnalyzed = stdmaps.Clone(m.idxAnalyzed)
+	mm.idxInfoMap = stdmaps.Clone(m.idxInfoMap)
 	return mm
 }
 
@@ -211,7 +201,7 @@ const (
 	ExtendedStatsDeleted
 )
 
-// HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
+// HistColl is a collection of histograms. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
 	// Note that when used in a query, Column use UniqueID as the key while Indices use the index ID in the
 	// metadata. (See GenerateHistCollFromColumnInfo() for details)
@@ -705,6 +695,19 @@ func (t *Table) IsAnalyzed() bool {
 	return t.LastAnalyzeVersion > 0
 }
 
+// IsEligibleForAnalysis checks whether the table is eligible for analysis.
+func (t *Table) IsEligibleForAnalysis() bool {
+	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
+	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
+	// 2. If the table is too small, we don't want to waste time to analyze it.
+	//    Leave the opportunity to other bigger tables.
+	if t == nil || t.Pseudo || t.RealtimeCount < AutoAnalyzeMinCnt {
+		return false
+	}
+
+	return true
+}
+
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {
@@ -752,7 +755,11 @@ func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCn
 	if analyzeRowCount <= 0 {
 		return coll.RealtimeCount, coll.ModifyCount
 	}
-	scale := idxStats.TotalRowCount() / analyzeRowCount
+	idxTotalRowCount := idxStats.TotalRowCount()
+	if idxTotalRowCount <= 0 {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
+	scale := idxTotalRowCount / analyzeRowCount
 	return int64(float64(coll.RealtimeCount) * scale), int64(float64(coll.ModifyCount) * scale)
 }
 
@@ -787,20 +794,23 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if t.Pseudo {
 		return nil, false, false
 	}
+	// when we use non-lite init stats, it cannot init the stats for common columns.
+	// so we need to foce to load the stats.
 	col, ok := t.columns[id]
+	if !ok {
+		return nil, true, true
+	}
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
 	if !hasAnalyzed {
 		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
-		if !ok {
-			// If we don't have this column. We skip it.
-			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
-			// We need to find a way to maintain it more correctly.
-			return nil, t.ColAndIdxExistenceMap.Has(id, false), false
-		}
+		// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
+		// We need to find a way to maintain it more correctly.
 		// Otherwise we don't need to load it.
-		return nil, false, false
+		result := t.ColAndIdxExistenceMap.Has(id, false)
+		// If the column is not in the ColAndIdxExistenceMap, we need to load it.
+		return nil, !result, !result
 	}
 
 	// Restore the condition from the simplified form:

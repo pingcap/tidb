@@ -189,10 +189,10 @@ func encodeTableRecord(prefix kv.Key, rowID uint64) []byte {
 }
 
 func TestRangeTreeMerge(t *testing.T) {
-	rangeTree := rtree.NewRangeTree()
+	rangeTree := rtree.NewRangeStatsTree()
 	tablePrefix := tablecodec.GenTableRecordPrefix(1)
 	for i := uint64(0); i < 10000; i += 1 {
-		item := rtree.Range{
+		rangeTree.InsertRange(&rtree.Range{
 			StartKey: encodeTableRecord(tablePrefix, i),
 			EndKey:   encodeTableRecord(tablePrefix, i+1),
 			Files: []*backuppb.File{
@@ -202,9 +202,7 @@ func TestRangeTreeMerge(t *testing.T) {
 					TotalBytes: 1,
 				},
 			},
-			Size: i,
-		}
-		rangeTree.Update(item)
+		}, i, 0)
 	}
 	sortedRanges := rangeTree.MergedRanges(10, 10)
 	require.Equal(t, 1000, len(sortedRanges))

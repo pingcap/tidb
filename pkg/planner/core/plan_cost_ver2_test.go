@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -145,7 +146,8 @@ func BenchmarkGetPlanCost(b *testing.B) {
 	sctx := tk.Session()
 	sctx.GetSessionVars().CostModelVersion = 2
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-	plan, _, err := planner.Optimize(context.TODO(), sctx, stmt, is)
+	nodeW := resolve.NewNodeW(stmt)
+	plan, _, err := planner.Optimize(context.TODO(), sctx, nodeW, is)
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -623,7 +623,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
 	err = do.StatsHandle().DumpStatsDeltaToKV(true)
 	require.NoError(t, err)
-	err = do.StatsHandle().Update(do.InfoSchema())
+	err = do.StatsHandle().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
@@ -631,7 +631,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	tk.MustExec("delete from t")
 	err = do.StatsHandle().DumpStatsDeltaToKV(true)
 	require.NoError(t, err)
-	err = do.StatsHandle().Update(do.InfoSchema())
+	err = do.StatsHandle().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 }
@@ -1299,7 +1299,9 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/errorFetchBuildSideRowsMockOOMPanic"
 	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
+	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
 	defer func() {
+		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
 	useHashJoinV2 := []bool{true, false}

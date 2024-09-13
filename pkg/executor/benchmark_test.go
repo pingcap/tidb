@@ -35,11 +35,13 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -278,7 +280,7 @@ func BenchmarkAggDistinct(b *testing.B) {
 	}
 }
 
-func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *core.WindowFrame, srcExec exec.Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) exec.Executor {
+func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *logicalop.WindowFrame, srcExec exec.Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) exec.Executor {
 	src := testutil.BuildMockDataPhysicalPlan(ctx, srcExec)
 	win := new(core.PhysicalWindow)
 	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
@@ -476,8 +478,8 @@ func baseBenchmarkWindowFunctionsWithFrame(b *testing.B, pipelined int) {
 		ast.AggFuncBitXor,
 	}
 	numFuncs := []int{1, 5}
-	frames := []*core.WindowFrame{
-		{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{Type: ast.CurrentRow}},
+	frames := []*logicalop.WindowFrame{
+		{Type: ast.Rows, Start: &logicalop.FrameBound{UnBounded: true}, End: &logicalop.FrameBound{Type: ast.CurrentRow}},
 	}
 	sortTypes := []bool{false, true}
 	concs := []int{1, 2, 3, 4, 5, 6}
@@ -513,7 +515,7 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 func baseBenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B, pipelined int) {
 	b.ReportAllocs()
 	windowFunc := ast.AggFuncMax
-	frame := &core.WindowFrame{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{UnBounded: true}}
+	frame := &logicalop.WindowFrame{Type: ast.Rows, Start: &logicalop.FrameBound{UnBounded: true}, End: &logicalop.FrameBound{UnBounded: true}}
 	cas := testutil.DefaultWindowTestCase()
 	cas.Rows = 10000
 	cas.Ndv = 10
@@ -552,10 +554,10 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 	}
 	row := 100000
 	ndv := 100
-	frame := &core.WindowFrame{
+	frame := &logicalop.WindowFrame{
 		Type:  frameType,
-		Start: &core.FrameBound{Type: ast.Preceding, Num: 10},
-		End:   &core.FrameBound{Type: ast.Following, Num: 10},
+		Start: &logicalop.FrameBound{Type: ast.Preceding, Num: 10},
+		End:   &logicalop.FrameBound{Type: ast.Following, Num: 10},
 	}
 	for _, windowFunc := range windowFuncs {
 		cas := testutil.DefaultWindowTestCase()
@@ -585,7 +587,7 @@ type hashJoinTestCase struct {
 	concurrency        int
 	ctx                sessionctx.Context
 	keyIdx             []int
-	joinType           core.JoinType
+	joinType           logicalop.JoinType
 	disk               bool
 	useOuterToBuild    bool
 	rawData            string
@@ -606,7 +608,7 @@ func (tc hashJoinTestCase) String() string {
 		tc.rows, tc.cols, tc.concurrency, tc.keyIdx, tc.disk)
 }
 
-func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, useOuterToBuild bool) *hashJoinTestCase {
+func defaultHashJoinTestCase(cols []*types.FieldType, joinType logicalop.JoinType, useOuterToBuild bool) *hashJoinTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
@@ -620,10 +622,10 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	return tc
 }
 
-func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, joinType core.JoinType) *expression.Schema {
+func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, joinType logicalop.JoinType) *expression.Schema {
 	colsNeedResolving := joinSchema.Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if joinType == core.LeftOuterSemiJoin || joinType == core.AntiLeftOuterSemiJoin {
+	if joinType == logicalop.LeftOuterSemiJoin || joinType == logicalop.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	mergedSchema := expression.MergeSchema(lSchema, rSchema)
@@ -686,7 +688,7 @@ func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Ex
 	// todo: need systematic way to protect.
 	// physical join should resolveIndices to get right schema column index.
 	// otherwise, markChildrenUsedColsForTest will fail below.
-	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), core.InnerJoin)
+	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), logicalop.InnerJoin)
 
 	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
@@ -699,9 +701,10 @@ func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Ex
 		buildKeyTypes = append(buildKeyTypes, innerTypes[i])
 	}
 	hashJoinCtx := &join.HashJoinCtxV2{
-		OtherCondition:  nil,
-		PartitionNumber: min(testCase.concurrency, 16),
+		OtherCondition: nil,
 	}
+	hashJoinCtx.Concurrency = uint(testCase.concurrency)
+	hashJoinCtx.SetupPartitionInfo()
 	hashJoinCtx.SessCtx = testCase.ctx
 	hashJoinCtx.JoinType = testCase.joinType
 	hashJoinCtx.Concurrency = uint(testCase.concurrency)
@@ -774,7 +777,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 	// todo: need systematic way to protect.
 	// physical join should resolveIndices to get right schema column index.
 	// otherwise, markChildrenUsedColsForTest will fail below.
-	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), core.InnerJoin)
+	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), logicalop.InnerJoin)
 
 	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
@@ -1803,9 +1806,10 @@ func benchmarkLimitExec(b *testing.B, cas *testutil.LimitCase) {
 			}
 		}
 		proj := &ProjectionExec{
-			BaseExecutor:  exec.NewBaseExecutor(cas.Ctx, expression.NewSchema(usedCols...), 0, limit),
-			numWorkers:    1,
-			evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+			projectionExecutorContext: newProjectionExecutorContext(cas.Ctx),
+			BaseExecutorV2:            exec.NewBaseExecutorV2(cas.Ctx.GetSessionVars(), expression.NewSchema(usedCols...), 0, limit),
+			numWorkers:                1,
+			evaluatorSuit:             expression.NewEvaluatorSuite(exprs, false),
 		}
 		exe = proj
 	}
@@ -1935,7 +1939,7 @@ func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 func BenchmarkCompleteInsertErr(b *testing.B) {
 	b.ReportAllocs()
 	col := &model.ColumnInfo{
-		Name:      model.NewCIStr("a"),
+		Name:      pmodel.NewCIStr("a"),
 		FieldType: *types.NewFieldType(mysql.TypeBlob),
 	}
 	err := types.ErrWarnDataOutOfRange
@@ -1947,7 +1951,7 @@ func BenchmarkCompleteInsertErr(b *testing.B) {
 func BenchmarkCompleteLoadErr(b *testing.B) {
 	b.ReportAllocs()
 	col := &model.ColumnInfo{
-		Name: model.NewCIStr("a"),
+		Name: pmodel.NewCIStr("a"),
 	}
 	err := types.ErrDataTooLong
 	for n := 0; n < b.N; n++ {

@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -455,8 +454,10 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			if substituted {
 				flag := v.RetType.GetFlag()
 				var e Expression
+				var err error
 				if v.FuncName.L == ast.Cast {
-					e = BuildCastFunction(ctx, newArg, v.RetType)
+					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
+					terror.Log(err)
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
 					e = v.Clone()
@@ -1018,7 +1019,7 @@ func Contains(ectx EvalContext, exprs []Expression, e Expression) bool {
 		// Check string equivalence if one of the expressions is a clone.
 		sameString := false
 		if e != nil && expr != nil {
-			sameString = (e.StringWithCtx(ectx) == expr.StringWithCtx(ectx))
+			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
 		if e == expr || sameString {
 			return true
@@ -1196,8 +1197,8 @@ func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 }
 
 // ParamMarkerExpression generate a getparam function expression.
-func ParamMarkerExpression(ctx variable.SessionVarsProvider, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
-	useCache := ctx.GetSessionVars().StmtCtx.UseCache()
+func ParamMarkerExpression(ctx BuildContext, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
+	useCache := ctx.IsUseCache()
 	tp := types.NewFieldType(mysql.TypeUnspecified)
 	types.InferParamTypeFromDatum(&v.Datum, tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
@@ -1251,11 +1252,11 @@ func ConstructPositionExpr(p *driver.ParamMarkerExpr) *ast.PositionExpr {
 }
 
 // PosFromPositionExpr generates a position value from PositionExpr.
-func PosFromPositionExpr(ctx BuildContext, vars variable.SessionVarsProvider, v *ast.PositionExpr) (int, bool, error) {
+func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (int, bool, error) {
 	if v.P == nil {
 		return v.N, false, nil
 	}
-	value, err := ParamMarkerExpression(vars, v.P.(*driver.ParamMarkerExpr), false)
+	value, err := ParamMarkerExpression(ctx, v.P.(*driver.ParamMarkerExpr), false)
 	if err != nil {
 		return 0, true, err
 	}
@@ -1871,7 +1872,7 @@ func ExprsToStringsForDisplay(ctx EvalContext, exprs []Expression) []string {
 		// so we trim the \" prefix and suffix here.
 		strs[i] = strings.TrimSuffix(
 			strings.TrimPrefix(
-				strconv.Quote(cond.StringWithCtx(ctx)),
+				strconv.Quote(cond.StringWithCtx(ctx, errors.RedactLogDisable)),
 				quote),
 			quote)
 	}

@@ -36,7 +36,7 @@ func TestShowStatsMeta(t *testing.T) {
 	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("create table t1 (a int, b int)")
-	tk.MustExec("analyze table t, t1")
+	tk.MustExec("analyze table t, t1 all columns")
 	result := tk.MustQuery("show stats_meta")
 	result = result.Sort()
 	require.Len(t, result.Rows(), 2)
@@ -78,11 +78,11 @@ func TestShowStatsHistograms(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	result := tk.MustQuery("show stats_histograms")
 	require.Len(t, result.Rows(), 2)
 	tk.MustExec("insert into t values(1,1)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	result = tk.MustQuery("show stats_histograms").Sort()
 	require.Len(t, result.Rows(), 2)
 	require.Equal(t, "a", result.Rows()[0][3])
@@ -354,7 +354,7 @@ func TestShowStatsExtended(t *testing.T) {
 		"s1 2",
 		"s2 2",
 	))
-	dom.StatsHandle().Update(dom.InfoSchema())
+	dom.StatsHandle().Update(context.Background(), dom.InfoSchema())
 	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
 	require.Len(t, result.Rows(), 0)
 }

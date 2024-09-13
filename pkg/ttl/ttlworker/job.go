@@ -27,7 +27,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const updateJobCurrentStatusTemplate = "UPDATE mysql.tidb_ttl_table_status SET current_job_status = %? WHERE table_id = %? AND current_job_status = %? AND current_job_id = %?"
 const finishJobTemplate = `UPDATE mysql.tidb_ttl_table_status
 	SET last_job_id = current_job_id,
 		last_job_start_time = current_job_start_time,
@@ -67,10 +66,6 @@ const finishJobHistoryTemplate = `UPDATE mysql.tidb_ttl_job_history
 	    error_delete_rows = %?,
 	    status = %?
 	WHERE job_id = %?`
-
-func updateJobCurrentStatusSQL(tableID int64, oldStatus cache.JobStatus, newStatus cache.JobStatus, jobID string) (string, []any) {
-	return updateJobCurrentStatusTemplate, []any{string(newStatus), tableID, string(oldStatus), jobID}
-}
 
 func finishJobSQL(tableID int64, finishTime time.Time, summary string, jobID string) (string, []any) {
 	return finishJobTemplate, []any{finishTime.Format(timeFormat), summary, tableID, jobID}

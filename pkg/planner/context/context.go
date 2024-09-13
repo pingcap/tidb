@@ -19,7 +19,7 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -105,4 +105,15 @@ func (b *BuildPBContext) GetExprCtx() exprctx.BuildContext {
 // GetClient returns the kv client.
 func (b *BuildPBContext) GetClient() kv.Client {
 	return b.Client
+}
+
+// Detach detaches this context from the session context.
+//
+// NOTE: Though this session context can be used parallelly with this context after calling
+// it, the `StatementContext` cannot. The session context should create a new `StatementContext`
+// before executing another statement.
+func (b *BuildPBContext) Detach(staticExprCtx exprctx.BuildContext) *BuildPBContext {
+	newCtx := *b
+	newCtx.ExprCtx = staticExprCtx
+	return &newCtx
 }

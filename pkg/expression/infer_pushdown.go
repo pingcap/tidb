@@ -127,12 +127,12 @@ func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreTyp
 			if expr.GetType(ctx.EvalCtx()).GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
-			warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(ctx.EvalCtx()) + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType(ctx.EvalCtx()).GetType()) + "'.")
+			warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType(ctx.EvalCtx()).GetType()) + "'.")
 			ctx.AppendWarning(warnErr)
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType(ctx.EvalCtx()).IsDecimalValid() {
-				warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(ctx.EvalCtx()) + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetFlen()) + "','" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetDecimal()) + "').")
+				warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetFlen()) + "','" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetDecimal()) + "').")
 				ctx.AppendWarning(warnErr)
 				return false
 			}
@@ -197,6 +197,9 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
 		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONLength, ast.JSONMergePatch,
 		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf, ast.JSONArrayAppend,
+
+		// vector functions.
+		ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText,
 
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
@@ -335,6 +338,9 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 			return function.GetArgs()[0].GetType(ctx).GetType() != mysql.TypeYear
 		case tipb.ScalarFuncSig_CastTimeAsDuration:
 			return retType.GetType() == mysql.TypeDuration
+		case tipb.ScalarFuncSig_CastVectorFloat32AsString,
+			tipb.ScalarFuncSig_CastVectorFloat32AsVectorFloat32:
+			return true
 		case tipb.ScalarFuncSig_CastIntAsJson, tipb.ScalarFuncSig_CastRealAsJson, tipb.ScalarFuncSig_CastDecimalAsJson, tipb.ScalarFuncSig_CastStringAsJson,
 			tipb.ScalarFuncSig_CastTimeAsJson, tipb.ScalarFuncSig_CastDurationAsJson, tipb.ScalarFuncSig_CastJsonAsJson:
 			return true
@@ -396,6 +402,8 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 	case ast.GetFormat:
 		return true
 	case ast.IsIPv4, ast.IsIPv6:
+		return true
+	case ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText:
 		return true
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true

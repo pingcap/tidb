@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/gogo/protobuf/proto"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -57,7 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/config"
@@ -93,6 +95,8 @@ type LogClient struct {
 	// currentTS is used for rewrite meta kv when restore stream.
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
 	currentTS uint64
+
+	upstreamClusterID uint64
 
 	*LogFileManager
 
@@ -164,6 +168,11 @@ func (rc *LogClient) SetCrypter(crypter *backuppb.CipherInfo) {
 func (rc *LogClient) SetConcurrency(c uint) {
 	log.Info("download worker pool", zap.Uint("size", c))
 	rc.workerPool = tidbutil.NewWorkerPool(c, "file")
+}
+
+func (rc *LogClient) SetUpstreamClusterID(upstreamClusterID uint64) {
+	log.Info("upstream cluster id", zap.Uint64("cluster id", upstreamClusterID))
+	rc.upstreamClusterID = upstreamClusterID
 }
 
 func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
@@ -557,24 +566,38 @@ func (rc *LogClient) RestoreKVFiles(
 
 func (rc *LogClient) initSchemasMap(
 	ctx context.Context,
-	clusterID uint64,
 	restoreTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
-	filename := metautil.PitrIDMapsFilename(clusterID, restoreTS)
-	exist, err := rc.storage.FileExists(ctx, filename)
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to check filename:%s ", filename)
-	} else if !exist {
-		log.Info("pitr id maps isn't existed", zap.String("file", filename))
+	getPitrIDMapSQL := "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
+	execCtx := rc.se.GetSessionCtx().GetRestrictedSQLExecutor()
+	rows, _, errSQL := execCtx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		nil,
+		getPitrIDMapSQL,
+		restoreTS,
+		rc.upstreamClusterID,
+	)
+	if errSQL != nil {
+		return nil, errors.Annotatef(errSQL, "failed to get pitr id map from mysql.tidb_pitr_id_map")
+	}
+	if len(rows) == 0 {
+		log.Info("pitr id map does not exist", zap.Uint64("restored ts", restoreTS))
 		return nil, nil
 	}
-
-	metaData, err := rc.storage.ReadFile(ctx, filename)
-	if err != nil {
-		return nil, errors.Trace(err)
+	metaData := make([]byte, 0, len(rows)*PITRIdMapBlockSize)
+	for i, row := range rows {
+		elementID := row.GetUint64(0)
+		if uint64(i) != elementID {
+			return nil, errors.Errorf("the part(segment_id = %d) of pitr id map is lost", i)
+		}
+		d := row.GetBytes(1)
+		if len(d) == 0 {
+			return nil, errors.Errorf("get the empty part(segment_id = %d) of pitr id map", i)
+		}
+		metaData = append(metaData, d...)
 	}
 	backupMeta := &backuppb.BackupMeta{}
-	if err = backupMeta.Unmarshal(metaData); err != nil {
+	if err := backupMeta.Unmarshal(metaData); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -637,13 +660,69 @@ type FullBackupStorageConfig struct {
 
 type InitSchemaConfig struct {
 	// required
-	IsNewTask      bool
-	HasFullRestore bool
-	TableFilter    filter.Filter
+	IsNewTask   bool
+	TableFilter filter.Filter
 
 	// optional
 	TiFlashRecorder   *tiflashrec.TiFlashRecorder
 	FullBackupStorage *FullBackupStorageConfig
+}
+
+const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL"
+
+func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
+	ctx context.Context,
+	cfg *InitSchemaConfig,
+) (map[stream.UpstreamID]*stream.DBReplace, error) {
+	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
+	if cfg.FullBackupStorage == nil {
+		envVal, ok := os.LookupEnv(UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL)
+		if ok && len(envVal) > 0 {
+			log.Info(fmt.Sprintf("the environment variable %s is active, skip loading the base schemas.", UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL))
+			return dbReplaces, nil
+		}
+		return nil, errors.Errorf("miss upstream table information at `start-ts`(%d) but the full backup path is not specified", rc.startTS)
+	}
+	s, err := storage.New(ctx, cfg.FullBackupStorage.Backend, cfg.FullBackupStorage.Opts)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	fullBackupTables, err := initFullBackupTables(ctx, s, cfg.TableFilter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, t := range fullBackupTables {
+		dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
+		newDBInfo, exist := rc.dom.InfoSchema().SchemaByName(dbName)
+		if !exist {
+			log.Info("db not existed", zap.String("dbname", dbName.String()))
+			continue
+		}
+
+		dbReplace, exist := dbReplaces[t.DB.ID]
+		if !exist {
+			dbReplace = stream.NewDBReplace(t.DB.Name.O, newDBInfo.ID)
+			dbReplaces[t.DB.ID] = dbReplace
+		}
+
+		if t.Info == nil {
+			// If the db is empty, skip it.
+			continue
+		}
+		newTableInfo, err := restore.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
+		if err != nil {
+			log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
+			continue
+		}
+
+		dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
+			Name:         newTableInfo.Name.O,
+			TableID:      newTableInfo.ID,
+			PartitionMap: restoreutils.GetPartitionIDMap(newTableInfo, t.Info),
+			IndexMap:     restoreutils.GetIndexIDMap(newTableInfo, t.Info),
+		}
+	}
+	return dbReplaces, nil
 }
 
 // InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
@@ -658,14 +737,14 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 		// the id map doesn't need to construct only when it is not the first execution
 		needConstructIdMap bool
 
-		dbReplaces = make(map[stream.UpstreamID]*stream.DBReplace)
+		dbReplaces map[stream.UpstreamID]*stream.DBReplace
 	)
 
 	// not new task, load schemas map from external storage
 	if !cfg.IsNewTask {
 		log.Info("try to load pitr id maps")
 		needConstructIdMap = false
-		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.restoreTS)
+		dbMaps, err = rc.initSchemasMap(ctx, rc.restoreTS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -673,66 +752,31 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
-	if len(dbMaps) <= 0 && !cfg.HasFullRestore {
+	if len(dbMaps) <= 0 && cfg.FullBackupStorage == nil {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
 		needConstructIdMap = true
-		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.startTS)
+		dbMaps, err = rc.initSchemasMap(ctx, rc.startTS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		info := rc.dom.InfoSchema()
-		shcemas := info.AllSchemaNames()
-		for _, schema := range shcemas {
-			for _, table := range info.SchemaTables(schema) {
-				tableInfo := table.Meta()
-				if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
-					return nil, errors.Errorf("exist table(s) have tiflash replica, please remove it before restore")
-				}
+		existTiFlashTable := false
+		rc.dom.InfoSchema().ListTablesWithSpecialAttribute(func(tableInfo *model.TableInfo) bool {
+			if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
+				existTiFlashTable = true
 			}
+			return false
+		})
+		if existTiFlashTable {
+			return nil, errors.Errorf("exist table(s) have tiflash replica, please remove it before restore")
 		}
 	}
 
 	if len(dbMaps) <= 0 {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
 		needConstructIdMap = true
-		s, err := storage.New(ctx, cfg.FullBackupStorage.Backend, cfg.FullBackupStorage.Opts)
+		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		fullBackupTables, err := initFullBackupTables(ctx, s, cfg.TableFilter)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for _, t := range fullBackupTables {
-			dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
-			newDBInfo, exist := rc.dom.InfoSchema().SchemaByName(dbName)
-			if !exist {
-				log.Info("db not existed", zap.String("dbname", dbName.String()))
-				continue
-			}
-
-			dbReplace, exist := dbReplaces[t.DB.ID]
-			if !exist {
-				dbReplace = stream.NewDBReplace(t.DB.Name.O, newDBInfo.ID)
-				dbReplaces[t.DB.ID] = dbReplace
-			}
-
-			if t.Info == nil {
-				// If the db is empty, skip it.
-				continue
-			}
-			newTableInfo, err := restore.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
-			if err != nil {
-				log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
-				continue
-			}
-
-			dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
-				Name:         newTableInfo.Name.O,
-				TableID:      newTableInfo.ID,
-				PartitionMap: restoreutils.GetPartitionIDMap(newTableInfo, t.Info),
-				IndexMap:     restoreutils.GetIndexIDMap(newTableInfo, t.Info),
-			}
 		}
 	} else {
 		dbReplaces = stream.FromSchemaMaps(dbMaps)
@@ -865,7 +909,7 @@ func (rc *LogClient) PreConstructAndSaveIDMap(
 		return errors.Trace(err)
 	}
 
-	if err := rc.SaveIDMap(ctx, sr); err != nil {
+	if err := rc.saveIDMap(ctx, sr); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1235,7 +1279,6 @@ const (
 func (rc *LogClient) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
-	allSchema []*model.DBInfo,
 	taskName string,
 ) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
@@ -1255,7 +1298,9 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		}
 	}
 
-	ingestRecorder.UpdateIndexInfo(allSchema)
+	if err := ingestRecorder.UpdateIndexInfo(rc.dom.InfoSchema()); err != nil {
+		return sqls, false, errors.Trace(err)
+	}
 	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
 			addSQL  strings.Builder
@@ -1319,13 +1364,12 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
 func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, taskName string) error {
-	info := rc.dom.InfoSchema()
-
-	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, info.AllSchemas(), taskName)
+	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, taskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	info := rc.dom.InfoSchema()
 	console := glue.GetConsole(g)
 NEXTSQL:
 	for _, sql := range sqls {
@@ -1469,24 +1513,36 @@ func (rc *LogClient) GetGCRows() []*stream.PreDelRangeQuery {
 	return rc.deleteRangeQuery
 }
 
-// SaveIDMap saves the id mapping information.
-func (rc *LogClient) SaveIDMap(
+const PITRIdMapBlockSize int = 524288
+
+// saveIDMap saves the id mapping information.
+func (rc *LogClient) saveIDMap(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
 ) error {
-	idMaps := sr.TidySchemaMaps()
-	clusterID := rc.GetClusterID(ctx)
-	metaFileName := metautil.PitrIDMapsFilename(clusterID, rc.restoreTS)
-	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, metaFileName, nil)
-	metaWriter.Update(func(m *backuppb.BackupMeta) {
-		// save log startTS to backupmeta file
-		m.ClusterId = clusterID
-		m.DbMaps = idMaps
-	})
-
-	if err := metaWriter.FlushBackupMeta(ctx); err != nil {
+	backupmeta := &backuppb.BackupMeta{DbMaps: sr.TidySchemaMaps()}
+	data, err := proto.Marshal(backupmeta)
+	if err != nil {
 		return errors.Trace(err)
 	}
+	// clean the dirty id map at first
+	err = rc.se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;", rc.restoreTS, rc.upstreamClusterID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?);"
+	for startIdx, segmentId := 0, 0; startIdx < len(data); segmentId += 1 {
+		endIdx := startIdx + PITRIdMapBlockSize
+		if endIdx > len(data) {
+			endIdx = len(data)
+		}
+		err := rc.se.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		startIdx = endIdx
+	}
+
 	if rc.useCheckpoint {
 		var items map[int64]model.TiFlashReplicaInfo
 		if sr.TiflashRecorder != nil {
@@ -1555,7 +1611,7 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 		reidRules[downstreamID] = upstreamID
 	}
 	for upstreamID, downstreamID := range idrules {
-		newTable, ok := infoSchema.TableByID(downstreamID)
+		newTable, ok := infoSchema.TableByID(ctx, downstreamID)
 		if !ok {
 			// a dropped table
 			continue

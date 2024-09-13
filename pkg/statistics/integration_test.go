@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
@@ -45,12 +45,13 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
 	tblT, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT := h.GetTableStats(tblT.Meta())
 	// Analyze table with version 1 success, all statistics are version 1.
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -64,7 +65,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
@@ -72,14 +73,14 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	})
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("analyze table t ")
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(2), col.GetStatsVer())
@@ -93,7 +94,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
@@ -102,14 +103,14 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("analyze table t ")
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
@@ -134,12 +135,13 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
 	tblT, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT := h.GetTableStats(tblT.Meta())
 	// Analyze table with version 1 success, all statistics are version 1.
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -153,7 +155,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
@@ -161,14 +163,14 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	})
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("analyze table t ")
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(2), col.GetStatsVer())
@@ -183,7 +185,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\"")) // since fallback to ver2 path, should do samplerate adjustment
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
@@ -193,14 +195,14 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\""))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		require.Equal(t, int64(2), idx.GetStatsVer())
 		return false
 	})
 	tk.MustExec("analyze table t ")
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
@@ -266,7 +268,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 	tblT, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTblT := h.GetTableStats(tblT.Meta())
 	// Check the null count is 3.
 	statsTblT.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -328,9 +330,9 @@ func TestOutdatedStatsCheck(t *testing.T) {
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -343,9 +345,10 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19)) // 20 rows
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	// To pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 1")
@@ -361,12 +364,12 @@ func TestOutdatedStatsCheck(t *testing.T) {
 
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 13)) // 34 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 30)
 	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 	tk.MustExec("insert into t values (1)") // 35 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 25)
 	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 
@@ -374,13 +377,13 @@ func TestOutdatedStatsCheck(t *testing.T) {
 
 	tk.MustExec("delete from t limit 24") // 11 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 31)
 	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 
 	tk.MustExec("delete from t limit 1") // 10 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 28)
 	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 }
@@ -407,7 +410,7 @@ func TestShowHistogramsLoadStatus(t *testing.T) {
 	tk.MustExec("insert into t values (1,2,3), (4,5,6)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
-	require.NoError(t, h.Update(dom.InfoSchema()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	rows := tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Rows()
 	for _, row := range rows {
 		require.Equal(t, "allEvicted", row[10].(string))
@@ -450,6 +453,7 @@ func TestColumnStatsLazyLoad(t *testing.T) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values (1,2), (3,4), (5,6), (7,8)")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -483,7 +487,7 @@ func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
 	require.Nil(t, h.GetPartitionStats(tblInfo, p0.ID).GetIdx(idxInfo.ID).FMSketch)
 	require.Nil(t, h.GetPartitionStats(tblInfo, p1.ID).GetIdx(idxInfo.ID).FMSketch)
 	h.Clear()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	require.Nil(t, h.GetPartitionStats(tblInfo, p0.ID).GetIdx(idxInfo.ID).FMSketch)
 	require.Nil(t, h.GetPartitionStats(tblInfo, p1.ID).GetIdx(idxInfo.ID).FMSketch)
 }
@@ -499,7 +503,7 @@ func TestIssue44369(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t;")
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustExec("alter table t rename column b to bb;")
 	tk.MustExec("select * from t where a = 10 and bb > 20;")
 }
@@ -516,7 +520,7 @@ func TestColAndIdxExistenceMapChangedAfterAlterTable(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t;")
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -528,7 +532,7 @@ func TestColAndIdxExistenceMapChangedAfterAlterTable(t *testing.T) {
 	tk.MustExec("alter table t modify column a double")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	is = dom.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
@@ -538,7 +542,7 @@ func TestColAndIdxExistenceMapChangedAfterAlterTable(t *testing.T) {
 	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
 	require.Equal(t, newColA, colInfo)
 	tk.MustExec("analyze table t;")
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tblInfo)
 	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
 	require.Equal(t, newColA, colInfo)
@@ -554,7 +558,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	is := dom.InfoSchema()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl, found := h.Get(tbl.Meta().ID)
@@ -567,7 +571,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl, found = h.Get(tbl.Meta().ID)
 	require.True(t, found)
 	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
@@ -577,7 +581,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	// We don't handle the ADD INDEX event in the HandleDDLEvent.
 	require.Equal(t, 0, len(h.DDLEventCh()))
 	require.NoError(t, err)
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl, found = h.Get(tbl.Meta().ID)
 	require.True(t, found)
 	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
@@ -585,14 +589,14 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	// INSERT and updating the modify_count should not set the last_analyze_version
 	tk.MustExec("insert into t values(1, 1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl, found = h.Get(tbl.Meta().ID)
 	require.True(t, found)
 	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
 
 	// After analyze, last_analyze_version is set.
 	tk.MustExec("analyze table t")
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl, found = h.Get(tbl.Meta().ID)
 	require.True(t, found)
 	require.NotEqual(t, uint64(0), statsTbl.LastAnalyzeVersion)
@@ -614,7 +618,7 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 					PARTITION p1 VALUES LESS THAN (20),
 					PARTITION p2 VALUES LESS THAN (30),
 					PARTITION p3 VALUES LESS THAN (40))`)
-	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
+	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 	tk.MustExec("INSERT INTO t(a, b) values(1, 1), (2, 2), (3, 3), (15, 15), (25, 25), (35, 35)")
 
 	tblID := dom.MustGetTableID(t, "test", "t")

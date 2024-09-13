@@ -18,10 +18,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -107,7 +108,7 @@ func DebugTraceReceivedCommand(s base.PlanContext, cmd byte, stmtNode ast.StmtNo
 		execInfo.BinaryParamsInfo = make([]binaryParamInfo, len(binaryParams))
 		for i, param := range binaryParams {
 			execInfo.BinaryParamsInfo[i].Type = param.GetType(s.GetExprCtx().GetEvalCtx()).String()
-			execInfo.BinaryParamsInfo[i].Value = param.StringWithCtx(s.GetExprCtx().GetEvalCtx())
+			execInfo.BinaryParamsInfo[i].Value = param.StringWithCtx(s.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable)
 		}
 	}
 }

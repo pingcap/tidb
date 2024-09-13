@@ -82,7 +82,7 @@ func TestInfo(t *testing.T) {
 	dom.etcdClient = client
 	// Mock new DDL and init the schema syncer with etcd client.
 	goCtx := context.Background()
-	dom.ddl = ddl.NewDDL(
+	dom.ddl, dom.ddlExecutor = ddl.NewDDL(
 		goCtx,
 		ddl.WithEtcdClient(dom.GetEtcdClient()),
 		ddl.WithStore(s),
@@ -93,7 +93,8 @@ func TestInfo(t *testing.T) {
 	ddl.DisableTiFlashPoll(dom.ddl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop", `return(true)`))
-	require.NoError(t, dom.Init(ddlLease, sysMockFactory, nil))
+	require.NoError(t, dom.Init(sysMockFactory, nil))
+	require.NoError(t, dom.Start())
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL"))
 
@@ -120,9 +121,9 @@ func TestInfo(t *testing.T) {
 	require.Equalf(t, info.ID, infos[ddlID].ID, "server one info %v, info %v", infos[ddlID], info)
 
 	// Test the scene where syncer.Done() gets the information.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/syncer/ErrorMockSessionDone", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/schemaver/ErrorMockSessionDone", `return(true)`))
 	<-dom.ddl.SchemaSyncer().Done()
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/syncer/ErrorMockSessionDone"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/ErrorMockSessionDone"))
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
 	for i := 0; i < 1000; i++ {
@@ -149,7 +150,7 @@ func TestInfo(t *testing.T) {
 		},
 	}
 	ctx := mock.NewContext()
-	require.NoError(t, dom.ddl.CreateSchema(ctx, stmt))
+	require.NoError(t, dom.ddlExecutor.CreateSchema(ctx, stmt))
 	require.NoError(t, dom.Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 

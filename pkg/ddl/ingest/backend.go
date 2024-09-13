@@ -29,9 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
@@ -58,11 +57,9 @@ type BackendCtx interface {
 	// are Register-ed before. It's safe to call it multiple times.
 	//
 	// FinishAndUnregisterEngines is only used in local disk based ingest.
-	FinishAndUnregisterEngines() error
+	FinishAndUnregisterEngines(opt UnregisterOpt) error
 
 	FlushController
-	Done() bool
-	SetDone()
 
 	AttachCheckpointManager(*CheckpointManager)
 	GetCheckpointManager() *CheckpointManager
@@ -97,15 +94,15 @@ type litBackendCtx struct {
 	tbl      table.Table
 	backend  *local.Backend
 	ctx      context.Context
-	cfg      *lightning.Config
+	cfg      *local.BackendConfig
 	sysVars  map[string]string
-	done     bool
 
 	flushing        atomic.Bool
 	timeOfLastFlush atomicutil.Time
 	updateInterval  time.Duration
 	checkpointMgr   *CheckpointManager
 	etcdClient      *clientv3.Client
+	initTS          uint64
 
 	// unregisterMu prevents concurrent calls of `FinishAndUnregisterEngines`.
 	// For details, see https://github.com/pingcap/tidb/issues/53843.
@@ -151,12 +148,12 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 }
 
 func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
-	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
+	dupeController := bc.backend.GetDupeController(bc.cfg.WorkerConcurrency, nil)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-		SysVars: bc.sysVars,
-		IndexID: indexID,
+		SQLMode:     mysql.ModeStrictAllTables,
+		SysVars:     bc.sysVars,
+		IndexID:     indexID,
+		MinCommitTS: bc.initTS,
 	}, lightning.ErrorOnDup)
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
@@ -300,7 +297,6 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		}
 		ei.openedEngine = nil
-		ei.closedEngine = nil
 		return err
 	}
 	return nil
@@ -329,16 +325,6 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	shouldFlush = shouldImport ||
 		time.Since(bc.timeOfLastFlush.Load()) >= interval
 	return shouldFlush, shouldImport
-}
-
-// Done returns true if the lightning backfill is done.
-func (bc *litBackendCtx) Done() bool {
-	return bc.done
-}
-
-// SetDone sets the done flag.
-func (bc *litBackendCtx) SetDone() {
-	bc.done = true
 }
 
 // AttachCheckpointManager attaches a checkpoint manager to the backend context.

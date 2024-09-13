@@ -86,6 +86,7 @@ func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, expr
 			firstMatch = true
 		}
 		if firstMatch {
+			// This might trigger the statistics load.
 			statistics.IndexStatsIsInvalid(sctx, (*statistics.Index)(nil), coll, idx.ID)
 		}
 		if idx.Info.Unique && unique {

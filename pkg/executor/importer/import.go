@@ -39,12 +39,13 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	litlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -815,7 +816,7 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	}
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			val := opt.Value.StringWithCtx(evalCtx)
+			val := opt.Value.StringWithCtx(evalCtx, errors.RedactLogDisable)
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
@@ -1291,17 +1292,48 @@ func (p *Plan) IsGlobalSort() bool {
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
-func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, []contextutil.SQLWarn, error) {
+func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
+	_ []expression.Expression,
+	_ []contextutil.SQLWarn,
+	retErr error,
+) {
 	e.colAssignMu.Lock()
 	defer e.colAssignMu.Unlock()
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
 	allWarnings := []contextutil.SQLWarn{}
 	for _, assign := range e.ColumnAssignments {
-		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), assign.Expr, nil, nil, false)
+		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(planCtx, assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
-		allWarnings = append(allWarnings, sctx.GetSessionVars().StmtCtx.GetWarnings()...)
-		sctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		allWarnings = append(allWarnings, planCtx.GetSessionVars().StmtCtx.GetWarnings()...)
+		planCtx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		res = append(res, newExpr)
+	}
+	return res, allWarnings, nil
+}
+
+// CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
+// This method does not support:
+//   - Subquery
+//   - System Variables (e.g. `@@tidb_enable_async_commit`)
+//   - Window functions
+//   - Aggregate functions
+//   - Other special functions used in some specified queries such as `GROUPING`, `VALUES` ...
+func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
+	e.colAssignMu.Lock()
+	defer e.colAssignMu.Unlock()
+	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
+	var allWarnings []contextutil.SQLWarn
+	for _, assign := range e.ColumnAssignments {
+		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr)
+		// col assign expr warnings is static, we should generate it for each row processed.
+		// so we save it and clear it here.
+		if ctx.GetEvalCtx().WarningCount() > 0 {
+			allWarnings = append(allWarnings, ctx.GetEvalCtx().TruncateWarnings(0)...)
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1363,7 +1395,7 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 type JobImportResult struct {
 	Affected   uint64
 	Warnings   []contextutil.SQLWarn
-	ColSizeMap map[int64]int64
+	ColSizeMap variable.DeltaColsMap
 }
 
 // GetMsgFromBRError get msg from BR error.

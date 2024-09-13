@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -55,7 +56,8 @@ func (m *MockBackendCtxMgr) CheckMoreTasksAvailable() (bool, error) {
 }
 
 // Register implements BackendCtxMgr.Register interface.
-func (m *MockBackendCtxMgr) Register(ctx context.Context, jobID int64, unique bool, etcdClient *clientv3.Client, pdSvcDiscovery pd.ServiceDiscovery, resourceGroupName string) (BackendCtx, error) {
+func (m *MockBackendCtxMgr) Register(ctx context.Context, jobID int64, unique bool, etcdClient *clientv3.Client,
+	pdSvcDiscovery pd.ServiceDiscovery, resourceGroupName string, importConc int, initTS uint64) (BackendCtx, error) {
 	logutil.DDLIngestLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, nil
@@ -77,9 +79,6 @@ func (m *MockBackendCtxMgr) Unregister(jobID int64) {
 		err := mCtx.sessCtx.CommitTxn(context.Background())
 		logutil.DDLIngestLogger().Info("mock backend mgr unregister", zap.Int64("jobID", jobID), zap.Error(err))
 		delete(m.runningJobs, jobID)
-		if mCtx.checkpointMgr != nil {
-			mCtx.checkpointMgr.Close()
-		}
 	}
 }
 
@@ -123,7 +122,7 @@ func (m *MockBackendCtx) Register(indexIDs []int64, _ []bool, _ table.Table) ([]
 }
 
 // FinishAndUnregisterEngines implements BackendCtx interface.
-func (*MockBackendCtx) FinishAndUnregisterEngines() error {
+func (*MockBackendCtx) FinishAndUnregisterEngines(_ UnregisterOpt) error {
 	logutil.DDLIngestLogger().Info("mock backend ctx unregister")
 	return nil
 }
@@ -137,15 +136,6 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 // Flush implements BackendCtx.Flush interface.
 func (*MockBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err error) {
 	return false, false, nil
-}
-
-// Done implements BackendCtx.Done interface.
-func (*MockBackendCtx) Done() bool {
-	return false
-}
-
-// SetDone implements BackendCtx.SetDone interface.
-func (*MockBackendCtx) SetDone() {
 }
 
 // AttachCheckpointManager attaches a checkpoint manager to the backend context.
@@ -189,8 +179,8 @@ func (*MockEngineInfo) Flush() error {
 	return nil
 }
 
-// Clean implements Engine.Clean interface.
-func (*MockEngineInfo) Clean() {
+// Close implements Engine.Close interface.
+func (*MockEngineInfo) Close(_ bool) {
 }
 
 // SetHook set the write hook.
@@ -216,6 +206,8 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 	logutil.DDLIngestLogger().Info("mock writer write row",
 		zap.String("key", hex.EncodeToString(key)),
 		zap.String("idxVal", hex.EncodeToString(idxVal)))
+
+	failpoint.InjectCall("onMockWriterWriteRow")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.onWrite != nil {

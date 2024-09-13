@@ -50,7 +50,7 @@ func (ts *LogicalTableScan) ExplainInfo() string {
 	ectx := ts.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString(ts.Source.ExplainInfo())
 	if ts.Source.HandleCols != nil {
-		fmt.Fprintf(buffer, ", pk col:%s", ts.Source.HandleCols.StringWithCtx(ectx))
+		fmt.Fprintf(buffer, ", pk col:%s", ts.Source.HandleCols.StringWithCtx(ectx, ts.SCtx().GetSessionVars().EnableRedactLog))
 	}
 	if len(ts.AccessConds) > 0 {
 		fmt.Fprintf(buffer, ", cond:%v", ts.AccessConds)

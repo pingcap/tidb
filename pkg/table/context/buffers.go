@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 )
 
@@ -80,10 +82,15 @@ func (b *EncodeRowBuffer) WriteMemBufferEncoded(
 	return memBuffer.SetWithFlags(key, encoded, flags...)
 }
 
-// GetColDataBuffer returns the buffer for column data.
-// TODO: make sure the inner buffer is not used outside directly.
-func (b *EncodeRowBuffer) GetColDataBuffer() ([]int64, []types.Datum) {
-	return b.colIDs, b.row
+// EncodeBinlogRowData encodes the row data for binlog and returns the encoded row value.
+// The returned slice is not referenced in the buffer, so you can cache and modify them freely.
+func (b *EncodeRowBuffer) EncodeBinlogRowData(loc *time.Location, ec errctx.Context) ([]byte, error) {
+	value, err := tablecodec.EncodeOldRow(loc, b.row, b.colIDs, nil, nil)
+	err = ec.HandleError(err)
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 // CheckRowBuffer is used to check row constraints
@@ -92,9 +99,8 @@ type CheckRowBuffer struct {
 }
 
 // GetRowToCheck gets the row data for constraint check.
-// TODO: make sure the inner buffer is not used outside directly.
-func (b *CheckRowBuffer) GetRowToCheck() []types.Datum {
-	return b.rowToCheck
+func (b *CheckRowBuffer) GetRowToCheck() chunk.Row {
+	return chunk.MutRowFromDatums(b.rowToCheck).ToRow()
 }
 
 // AddColVal adds a column value to the buffer for checking.
@@ -106,6 +112,9 @@ func (b *CheckRowBuffer) AddColVal(val types.Datum) {
 func (b *CheckRowBuffer) Reset(capacity int) {
 	b.rowToCheck = ensureCapacityAndReset(b.rowToCheck, 0, capacity)
 }
+
+// ColSizeDeltaBuffer implements variable.DeltaCols
+var _ variable.DeltaCols = &ColSizeDeltaBuffer{}
 
 // ColSizeDeltaBuffer is a buffer to store the change of column size.
 type ColSizeDeltaBuffer struct {
@@ -122,10 +131,15 @@ func (b *ColSizeDeltaBuffer) AddColSizeDelta(colID int64, size int64) {
 	b.delta = append(b.delta, variable.ColSize{ColID: colID, Size: size})
 }
 
-// GetColSizeDelta gets the column size delta.
-// TODO: make sure the inner buffer is not used outside directly.
-func (b *ColSizeDeltaBuffer) GetColSizeDelta() []variable.ColSize {
-	return b.delta
+// UpdateColSizeMap updates the column size map which uses columID as the map key and column size as the value.
+func (b *ColSizeDeltaBuffer) UpdateColSizeMap(m map[int64]int64) map[int64]int64 {
+	if m == nil && len(b.delta) > 0 {
+		m = make(map[int64]int64, len(b.delta))
+	}
+	for _, delta := range b.delta {
+		m[delta.ColID] += delta.Size
+	}
+	return m
 }
 
 // MutateBuffers is a memory pool for table related memory allocation that aims to reuse memory
@@ -135,6 +149,7 @@ func (b *ColSizeDeltaBuffer) GetColSizeDelta() []variable.ColSize {
 // Because inner slices are reused, you should not call the get methods again before finishing the previous usage.
 // Otherwise, the previous data will be overwritten.
 type MutateBuffers struct {
+	stmtBufs     *variable.WriteStmtBufs
 	encodeRow    *EncodeRowBuffer
 	checkRow     *CheckRowBuffer
 	colSizeDelta *ColSizeDeltaBuffer
@@ -142,7 +157,9 @@ type MutateBuffers struct {
 
 // NewMutateBuffers creates a new `MutateBuffers`.
 func NewMutateBuffers(stmtBufs *variable.WriteStmtBufs) *MutateBuffers {
+	intest.AssertNotNil(stmtBufs)
 	return &MutateBuffers{
+		stmtBufs: stmtBufs,
 		encodeRow: &EncodeRowBuffer{
 			writeStmtBufs: stmtBufs,
 		},
@@ -182,13 +199,18 @@ func (b *MutateBuffers) GetCheckRowBufferWithCap(capacity int) *CheckRowBuffer {
 // Usage:
 // 1. Call `GetColSizeDeltaBufferWithCap` to get the buffer.
 // 2. Call `ColSizeDeltaBuffer.AddColSizeDelta` for every column to add column size delta.
-// 3. Call `ColSizeDeltaBuffer.ColSizeDeltaBuffer` to get deltas for all columns.
+// 3. Call `ColSizeDeltaBuffer.UpdateColSizeMap` to update a column size map.
 // Because the inner slices are reused, you should not call this method again before finishing the previous usage.
 // Otherwise, the previous data will be overwritten.
 func (b *MutateBuffers) GetColSizeDeltaBufferWithCap(capacity int) *ColSizeDeltaBuffer {
 	buffer := b.colSizeDelta
 	buffer.Reset(capacity)
 	return buffer
+}
+
+// GetWriteStmtBufs returns the `*variable.WriteStmtBufs`
+func (b *MutateBuffers) GetWriteStmtBufs() *variable.WriteStmtBufs {
+	return b.stmtBufs
 }
 
 // ensureCapacityAndReset is similar to the built-in make(),

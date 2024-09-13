@@ -31,10 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -166,7 +168,10 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `DISK` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `TxnStart` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `RESOURCE_GROUP` varchar(32) NOT NULL DEFAULT '',\n" +
-			"  `SESSION_ALIAS` varchar(64) NOT NULL DEFAULT ''\n" +
+			"  `SESSION_ALIAS` varchar(64) NOT NULL DEFAULT '',\n" +
+			"  `ROWS_AFFECTED` bigint(21) unsigned DEFAULT NULL,\n" +
+			"  `TIDB_CPU` double NOT NULL DEFAULT '0',\n" +
+			"  `TIKV_CPU` double NOT NULL DEFAULT '0'\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table information_schema.cluster_log").Check(
 		testkit.Rows("" +
@@ -231,9 +236,12 @@ func TestSomeTables(t *testing.T) {
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0  rg1 alias1", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0  rg2 ", "autocommit", strings.Repeat("x", 101)),
-			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0  rg3 中文alias", "in transaction", "check port"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0"+
+				"  rg1 alias1 0 0 0", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0  rg2  0 0 0",
+				"autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0  rg3"+
+				" 中文alias 0 0 0", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -270,13 +278,16 @@ func TestSomeTables(t *testing.T) {
 		CurTxnStartTS:     410090409861578752,
 		ResourceGroupName: "rg2",
 		SessionAlias:      "alias3",
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0  rg1 ", "in transaction", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752) rg2 alias3", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0"+
+				"  rg1  <nil> 0 0", "in transaction", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26"+
+				":05.158(410090409861578752) rg2 alias3 0 0 0", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
@@ -290,11 +301,14 @@ func TestSomeTables(t *testing.T) {
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26:05.158(410090409861578752) rg2 alias3", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26"+
+				":05.158(410090409861578752) rg2 alias3 0 0 0", "autocommit", strings.Repeat("x",
+				101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0  rg1 ", "in transaction", "<nil>"),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0"+
+				"  rg1  <nil> 0 0", "in transaction", "<nil>"),
 		))
 }
 
@@ -329,7 +343,7 @@ func TestTableRowIDShardingInfo(t *testing.T) {
 	testFunc := func(dbName string, expectInfo any) {
 		tableInfo := model.TableInfo{}
 
-		info := infoschema.GetShardingInfo(model.NewCIStr(dbName), &tableInfo)
+		info := infoschema.GetShardingInfo(pmodel.NewCIStr(dbName), &tableInfo)
 		require.Equal(t, expectInfo, info)
 	}
 
@@ -436,6 +450,8 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0",
 			"0",
+			"0",
+			"0",
 			"abcd",
 			"60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4",
 			"",
@@ -516,6 +532,8 @@ func TestSlowQuery(t *testing.T) {
 			"96.66703066666668",
 			"3182.424414062492",
 			"0",
+			"0.01",
+			"0.021",
 			"",
 			"",
 			"",
@@ -596,13 +614,13 @@ func TestReloadDropDatabase(t *testing.T) {
 	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("create table t3 (a int)")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	t2, err := is.TableByName(context.Background(), model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
+	t2, err := is.TableByName(context.Background(), pmodel.NewCIStr("test_dbs"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 	tk.MustExec("drop database test_dbs")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	_, err = is.TableByName(context.Background(), model.NewCIStr("test_dbs"), model.NewCIStr("t2"))
+	_, err = is.TableByName(context.Background(), pmodel.NewCIStr("test_dbs"), pmodel.NewCIStr("t2"))
 	require.True(t, terror.ErrorEqual(infoschema.ErrTableNotExists, err))
-	_, ok := is.TableByID(t2.Meta().ID)
+	_, ok := is.TableByID(context.Background(), t2.Meta().ID)
 	require.False(t, ok)
 }
 
@@ -618,22 +636,32 @@ func TestSystemSchemaID(t *testing.T) {
 func checkSystemSchemaTableID(t *testing.T, dom *domain.Domain, dbName string, dbID, start, end int64, uniqueIDMap map[int64]string) {
 	is := dom.InfoSchema()
 	require.NotNil(t, is)
-	db, ok := is.SchemaByName(model.NewCIStr(dbName))
+	db, ok := is.SchemaByName(pmodel.NewCIStr(dbName))
 	require.True(t, ok)
 	require.Equal(t, dbID, db.ID)
 	// Test for information_schema table id.
-	tables := is.SchemaTables(model.NewCIStr(dbName))
+	tables, err := is.SchemaTableInfos(context.Background(), pmodel.NewCIStr(dbName))
+	require.NoError(t, err)
 	require.Greater(t, len(tables), 0)
 	for _, tbl := range tables {
-		tid := tbl.Meta().ID
-		require.Greaterf(t, tid&autoid.SystemSchemaIDFlag, int64(0), "table name is %v", tbl.Meta().Name)
-		require.Greaterf(t, tid&^autoid.SystemSchemaIDFlag, start, "table name is %v", tbl.Meta().Name)
-		require.Lessf(t, tid&^autoid.SystemSchemaIDFlag, end, "table name is %v", tbl.Meta().Name)
+		tid := tbl.ID
+		require.Greaterf(t, tid&autoid.SystemSchemaIDFlag, int64(0), "table name is %v", tbl.Name)
+		require.Greaterf(t, tid&^autoid.SystemSchemaIDFlag, start, "table name is %v", tbl.Name)
+		require.Lessf(t, tid&^autoid.SystemSchemaIDFlag, end, "table name is %v", tbl.Name)
 
 		name, ok := uniqueIDMap[tid]
-		require.Falsef(t, ok, "schema id of %v is duplicate with %v, both is %v", name, tbl.Meta().Name, tid)
-		uniqueIDMap[tid] = tbl.Meta().Name.O
+		require.Falsef(t, ok, "schema id of %v is duplicate with %v, both is %v", name, tbl.Name, tid)
+		uniqueIDMap[tid] = tbl.Name.O
 	}
+}
+
+func updateTableMeta(t *testing.T, store kv.Storage, dbID int64, tableInfo *model.TableInfo) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		return m.UpdateTable(dbID, tableInfo)
+	})
+	require.NoError(t, err)
 }
 
 func TestSelectHiddenColumn(t *testing.T) {
@@ -645,20 +673,33 @@ func TestSelectHiddenColumn(t *testing.T) {
 	tk.MustExec("USE test_hidden;")
 	tk.MustExec("CREATE TABLE hidden (a int , b int, c int);")
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("3"))
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test_hidden"), model.NewCIStr("hidden"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test_hidden"), pmodel.NewCIStr("hidden"))
 	require.NoError(t, err)
-	colInfo := tb.Meta().Columns
+	tbInfo := tb.Meta()
+	colInfo := tbInfo.Columns
+
 	// Set column b to hidden
 	colInfo[1].Hidden = true
+	updateTableMeta(t, store, tbInfo.DBID, tbInfo)
+	dom.Reload()
+
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("2"))
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden' and column_name = 'b'").Check(testkit.Rows("0"))
+
 	// Set column b to visible
 	colInfo[1].Hidden = false
+	updateTableMeta(t, store, tbInfo.DBID, tbInfo)
+	dom.Reload()
+
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden' and column_name = 'b'").Check(testkit.Rows("1"))
+
 	// Set a, b ,c to hidden
 	colInfo[0].Hidden = true
 	colInfo[1].Hidden = true
 	colInfo[2].Hidden = true
+	updateTableMeta(t, store, tbInfo.DBID, tbInfo)
+	dom.Reload()
+
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("0"))
 }
 
@@ -786,9 +827,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10           \troot     \t100    \t\n" +
-		"\t├─IndexRangeScan_8(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_9(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_7            \troot     \t100    \t\n" +
+		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -808,9 +849,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"Select test test.t t:k 2 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-			"\tIndexLookUp_10           \troot     \t100    \t\n" +
-			"\t├─IndexRangeScan_8(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-			"\t└─TableRowIDScan_9(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+			"\tIndexLookUp_7            \troot     \t100    \t\n" +
+			"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+			"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -856,9 +897,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10           \troot     \t1000   \t\n" +
-		"\t├─IndexRangeScan_8(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_9(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_7            \troot     \t1000   \t\n" +
+		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")

@@ -20,27 +20,25 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	originHook := dom.DDL().GetHook()
 
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1);")
-	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
@@ -48,10 +46,10 @@ func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	sql := "alter table t add column b int default 2, add column c int default 3, add column d int default 4;"
 	tk.MustGetErrCode(sql, errno.ErrCancelledDDLJob)
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	hook.MustCancelDone(t)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
 }
@@ -79,15 +77,14 @@ func TestMultiSchemaChangeAddColumnsParallel(t *testing.T) {
 }
 
 func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	originHook := dom.DDL().GetHook()
 
 	// Test for cancelling the job in a middle state.
 	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, d int default 4);")
 	tk.MustExec("insert into t values ();")
-	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in delete-reorg.
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
@@ -95,9 +92,9 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteReorganization
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	tk.MustExec("alter table t drop column b, drop column a, drop column d;")
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	hook.MustCancelFailed(t)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("3"))
 
@@ -105,7 +102,7 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, d int default 4);")
 	tk.MustExec("insert into t values ();")
-	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook = newCancelJobHook(t, store, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in public.
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
@@ -113,24 +110,23 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	tk.MustGetErrCode("alter table t drop column b, drop column a, drop column d;", errno.ErrCancelledDDLJob)
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	hook.MustCancelDone(t)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3 4"))
 }
 
 func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	originHook := dom.DDL().GetHook()
 
 	// Test for cancelling the job in a middle state.
 	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, d int default 4, " +
 		"index(a), index(b), index(c), index(d));")
 	tk.MustExec("insert into t values ();")
-	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in delete-reorg.
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
@@ -138,9 +134,8 @@ func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteReorganization
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	tk.MustExec("alter table t drop column b, drop column a, drop column d;")
-	dom.DDL().SetHook(originHook)
 	hook.MustCancelFailed(t)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("3"))
 }
@@ -164,8 +159,7 @@ func TestMultiSchemaChangeDropColumnsParallel(t *testing.T) {
 }
 
 func TestMultiSchemaChangeRenameColumns(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	originHook := dom.DDL().GetHook()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -208,7 +202,7 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2)")
 	tk.MustExec("insert into t values ()")
-	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
@@ -216,9 +210,9 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 		assertMultiSchema(t, job, 2)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	tk.MustGetErrCode("alter table t add column c int default 3, rename column b to d;", errno.ErrCancelledDDLJob)
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	tk.MustQuery("select b from t").Check(testkit.Rows("2"))
 	tk.MustGetErrCode("select d from t", errno.ErrBadField)
 
@@ -226,24 +220,21 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2)")
 	tk.MustExec("insert into t values ()")
-	hook1 := &callback.TestDDLCallback{Do: dom}
-	hook1.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization {
 			rs, _ := tk.Exec("select b from t")
 			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "2")
 		}
-	}
-	dom.DDL().SetHook(hook1)
+	})
 	tk.MustExec("alter table t add column c int default 3, rename column b to d;")
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 	tk.MustQuery("select d from t").Check(testkit.Rows("2"))
 	tk.MustGetErrCode("select b from t", errno.ErrBadField)
 }
 
 func TestMultiSchemaChangeAlterColumns(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	originHook := dom.DDL().GetHook()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -280,7 +271,7 @@ func TestMultiSchemaChangeAlterColumns(t *testing.T) {
 	// Test cancel job with alter columns
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2)")
-	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in write-reorg.
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
@@ -288,32 +279,28 @@ func TestMultiSchemaChangeAlterColumns(t *testing.T) {
 		assertMultiSchema(t, job, 2)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	tk.MustGetErrCode("alter table t add column c int default 3, alter column b set default 3;", errno.ErrCancelledDDLJob)
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
 
 	// Test dml stmts when do alter
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2)")
-	hook1 := &callback.TestDDLCallback{Do: dom}
-	hook1.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteOnly {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("insert into test.t values ()")
 		}
-	}
-	dom.DDL().SetHook(hook1)
+	})
 	tk.MustExec("alter table t add column c int default 3, alter column b set default 3;")
-	dom.DDL().SetHook(originHook)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2 3"))
 }
 
 func TestMultiSchemaChangeChangeColumns(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	originHook := dom.DDL().GetHook()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -352,7 +339,7 @@ func TestMultiSchemaChangeChangeColumns(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2)")
 	tk.MustExec("insert into t values ()")
-	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
@@ -360,24 +347,23 @@ func TestMultiSchemaChangeChangeColumns(t *testing.T) {
 		assertMultiSchema(t, job, 2)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	tk.MustGetErrCode("alter table t add column c int default 3, change column b d bigint default 4;", errno.ErrCancelledDDLJob)
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	tk.MustQuery("select b from t").Check(testkit.Rows("2"))
 	tk.MustGetErrCode("select d from t", errno.ErrBadField)
 }
 
 func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	originHook := dom.DDL().GetHook()
 
 	// Test cancel successfully.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, c int);")
 	tk.MustExec("insert into t values (1, 2, 3);")
-	cancelHook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	cancelHook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		// Cancel the job when index 't2' is in write-reorg.
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
@@ -385,11 +371,11 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 		assertMultiSchema(t, job, 1)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
-	dom.DDL().SetHook(cancelHook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cancelHook.OnJobUpdated)
 	tk.MustGetErrCode("alter table t "+
 		"add index t(a, b), add index t1(a), "+
 		"add index t2(a), add index t3(a, b);", errno.ErrCancelledDDLJob)
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	cancelHook.MustCancelDone(t)
 	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
@@ -399,7 +385,7 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, c int);")
 	tk.MustExec("insert into t values (1, 2, 3);")
-	cancelHook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	cancelHook = newCancelJobHook(t, store, func(job *model.Job) bool {
 		// Cancel the job when index 't1' is in public.
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
@@ -407,33 +393,32 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 		assertMultiSchema(t, job, 1)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StatePublic
 	})
-	dom.DDL().SetHook(cancelHook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cancelHook.OnJobUpdated)
 	tk.MustExec("alter table t add index t(a, b), add index t1(a), " +
 		"add index t2(a), add index t3(a, b);")
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	cancelHook.MustCancelFailed(t)
 	tk.MustQuery("select * from t use index(t, t1, t2, t3);").Check(testkit.Rows("1 2 3"))
 	tk.MustExec("admin check table t;")
 }
 
 func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	originHook := dom.DDL().GetHook()
 
 	// Test for cancelling the job in a middle state.
 	tk.MustExec("create table t (a int, b int, index(a), unique index(b), index idx(a, b));")
-	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
 		}
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteOnly
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	tk.MustExec("alter table t drop index a, drop index b, drop index idx;")
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	hook.MustCancelFailed(t)
 	tk.MustGetErrCode("select * from t use index (a);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index (b);", errno.ErrKeyDoesNotExist)
@@ -442,16 +427,16 @@ func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {
 	// Test for cancelling the job in none state.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, index(a), unique index(b), index idx(a, b));")
-	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook = newCancelJobHook(t, store, func(job *model.Job) bool {
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
 		}
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	tk.MustGetErrCode("alter table t drop index a, drop index b, drop index idx;", errno.ErrCancelledDDLJob)
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	hook.MustCancelDone(t)
 	tk.MustQuery("select * from t use index (a);").Check(testkit.Rows())
 	tk.MustQuery("select * from t use index (b);").Check(testkit.Rows())
@@ -477,10 +462,9 @@ func TestMultiSchemaChangeDropIndexesParallel(t *testing.T) {
 }
 
 func TestMultiSchemaChangeRenameIndexes(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	originHook := dom.DDL().GetHook()
 
 	// Test rename index.
 	tk.MustExec("drop table if exists t")
@@ -513,7 +497,7 @@ func TestMultiSchemaChangeRenameIndexes(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2, index t(a))")
 	tk.MustExec("insert into t values ()")
-	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
@@ -521,33 +505,32 @@ func TestMultiSchemaChangeRenameIndexes(t *testing.T) {
 		assertMultiSchema(t, job, 2)
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	tk.MustGetErrCode("alter table t add column c int default 3, rename index t to t1;", errno.ErrCancelledDDLJob)
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	tk.MustQuery("select * from t use index (t);").Check(testkit.Rows("1 2"))
 	tk.MustGetErrCode("select * from t use index (t1);", errno.ErrKeyDoesNotExist)
 }
 
 func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	originHook := dom.DDL().GetHook()
 
 	// Test for cancelling the job in a middle state.
 	tk.MustExec("create table t (a int, b int, c int, index i1(a), unique index i2(b), index i3(a, b));")
 	tk.MustExec("insert into t values (1, 2, 3);")
-	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
 		}
 		assertMultiSchema(t, job, 3)
 		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
 	})
-	dom.DDL().SetHook(hook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
 	sql := "alter table t modify column a tinyint, modify column b bigint, modify column c char(20);"
 	tk.MustGetErrCode(sql, errno.ErrCancelledDDLJob)
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	hook.MustCancelDone(t)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
 	tk.MustQuery("select * from t use index (i1, i2, i3);").Check(testkit.Rows("1 2 3"))
@@ -557,7 +540,7 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAlterIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 
@@ -591,10 +574,8 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, b int, index i1(a, b), index i2(b));")
 	tk.MustExec("insert into t values (1, 2);")
-	originHook := dom.DDL().GetHook()
 	var checked bool
-	callback := &callback.TestDDLCallback{Do: dom}
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.MultiSchemaInfo == nil {
 			return
 		}
@@ -605,11 +586,9 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 			assert.NoError(t, err)
 			assert.NoError(t, rs.Close())
 		}
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	dom.DDL().SetHook(callback)
+	})
 	tk.MustExec("alter table t alter index i1 invisible, modify column a tinyint, alter index i2 invisible;")
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	require.True(t, checked)
 	tk.MustGetErrCode("select * from t use index (i1);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index (i2);", errno.ErrKeyDoesNotExist)
@@ -618,7 +597,7 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 }
 
 func TestMultiSchemaChangeMixCancelled(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set global tidb_enable_dist_task = 0;")
@@ -626,18 +605,17 @@ func TestMultiSchemaChangeMixCancelled(t *testing.T) {
 
 	tk.MustExec("create table t (a int, b int, c int, index i1(c), index i2(c));")
 	tk.MustExec("insert into t values (1, 2, 3);")
-	origin := dom.DDL().GetHook()
-	cancelHook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
+	cancelHook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		return job.MultiSchemaInfo != nil &&
 			len(job.MultiSchemaInfo.SubJobs) > 8 &&
 			job.MultiSchemaInfo.SubJobs[8].SchemaState == model.StateWriteReorganization
 	})
-	dom.DDL().SetHook(cancelHook)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cancelHook.OnJobUpdated)
 	tk.MustGetErrCode("alter table t add column d int default 4, add index i3(c), "+
 		"drop column a, drop column if exists z, add column if not exists e int default 5, "+
 		"drop index i2, add column f int default 6, drop column b, drop index i1, add column if not exists g int;",
 		errno.ErrCancelledDDLJob)
-	dom.DDL().SetHook(origin)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
 	cancelHook.MustCancelDone(t)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
 	tk.MustQuery("select * from t use index(i1, i2);").Check(testkit.Rows("1 2 3"))
@@ -645,14 +623,15 @@ func TestMultiSchemaChangeMixCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1;")
-	originHook := dom.DDL().GetHook()
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert into t values (1, 2, 3)")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateDeleteOnly {
 			newTk := testkit.NewTestKit(t, store)
@@ -669,18 +648,13 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 			assert.True(t, len(rows[1][10].(string)) > 0)
 			assert.Equal(t, "create table", rows[2][3])
 		}
-	}
+	})
 
-	tk.MustExec("create table t (a int, b int, c int)")
-	tk.MustExec("insert into t values (1, 2, 3)")
-
-	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t add index t(a), add index t1(b)")
-	dom.DDL().SetHook(originHook)
 }
 
 func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a int, b int);")
@@ -691,10 +665,8 @@ func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
 		errno.ErrDupEntry)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2", "2 1"))
 
-	originHook := dom.DDL().GetHook()
-	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -708,11 +680,10 @@ func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
 			}
 			_, checkErr = tk2.Exec("insert into t values (10, 10);")
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t add column c int default 10, add index idx1((a + b)), add unique index idx2((a + b));")
 	require.NoError(t, checkErr)
-	dom.DDL().SetHook(originHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int);")
@@ -735,7 +706,7 @@ func TestMultiSchemaChangeNoSubJobs(t *testing.T) {
 }
 
 func TestMultiSchemaChangeSchemaVersion(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t(a int, b int, c int, d int)")
@@ -743,26 +714,22 @@ func TestMultiSchemaChangeSchemaVersion(t *testing.T) {
 
 	schemaVerMap := map[int64]struct{}{}
 
-	originHook := dom.DDL().GetHook()
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobSchemaStateChanged = func(schemaVer int64) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaChanged", func(_ *model.Job, schemaVer int64) {
 		if schemaVer != 0 {
 			// No same return schemaVer during multi-schema change
 			_, ok := schemaVerMap[schemaVer]
 			assert.False(t, ok)
 			schemaVerMap[schemaVer] = struct{}{}
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t drop column b, drop column c")
 	tk.MustExec("alter table t add column b int, add column c int")
 	tk.MustExec("alter table t add index k(b), add column e int")
 	tk.MustExec("alter table t alter index k invisible, drop column e")
-	dom.DDL().SetHook(originHook)
 }
 
 func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (c_1 int, c_2 char(20), c_pos_1 int, c_idx_visible int, c_3 decimal(5, 3), " +
@@ -772,10 +739,8 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 	tk.MustExec("insert into t values (100, 'c_2_insert', 101, 12, 2.1, '10:00:00', " +
 		"'2020-01-01 10:00:00', 'wer', '10:00:00', 2.1, 12, 'qwer', 12, 'asdf');")
 
-	originHook := dom.DDL().GetHook()
-	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -791,8 +756,7 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 				return
 			}
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	tk.MustExec("alter table t " +
 		"add index i_add_1(c_add_idx_1), " +
 		"drop index idx_drop, " +
@@ -809,7 +773,6 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 		"alter index idx_visible invisible, " +
 		"modify column c_3 decimal(10, 2);")
 	require.NoError(t, checkErr)
-	dom.DDL().SetHook(originHook)
 }
 
 func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
@@ -839,8 +802,6 @@ type cancelOnceHook struct {
 	cancelErr error
 	pred      func(job *model.Job) bool
 	s         sessionctx.Context
-
-	callback.TestDDLCallback
 }
 
 func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
@@ -866,15 +827,14 @@ func (c *cancelOnceHook) MustCancelFailed(t *testing.T) {
 	require.Contains(t, c.cancelErr.Error(), strconv.Itoa(errno.ErrCannotCancelDDLJob))
 }
 
-func newCancelJobHook(t *testing.T, store kv.Storage, dom *domain.Domain,
+func newCancelJobHook(t *testing.T, store kv.Storage,
 	pred func(job *model.Job) bool) *cancelOnceHook {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	return &cancelOnceHook{
-		store:           store,
-		pred:            pred,
-		TestDDLCallback: callback.TestDDLCallback{Do: dom},
-		s:               tk.Session(),
+		store: store,
+		pred:  pred,
+		s:     tk.Session(),
 	}
 }
 

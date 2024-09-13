@@ -63,7 +63,6 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	}()
 	var dom *domain.Domain
 	session.DisableStats4Test()
-	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer dom.Close()
@@ -108,6 +107,11 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int) partition by hash(id) partitions 4")
+	tk.MustExec("select * from t where id = 0")
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	statsHandle := do.StatsHandle()
+	require.NoError(t, statsHandle.DumpColStatsUsageToKV())
 	testcases := []struct {
 		concurrency string
 	}{

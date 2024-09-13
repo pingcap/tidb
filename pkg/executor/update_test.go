@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -190,4 +191,31 @@ func TestLockUnchangedUniqueKeys(t *testing.T) {
 			)
 		}
 	}
+}
+
+func TestUpdateRowRetryAndThenDupKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewSteppedTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, u int unique)")
+	tk.MustExec("insert into t values(1, 1)")
+
+	// session 1 update u=2 for id=1 and halt before executor first runs.
+	tk.SetBreakPoints(sessiontxn.BreakPointBeforeExecutorFirstRun)
+	tk.SteppedMustExec("update ignore t set u = 2 where id = 1").
+		ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
+
+	// session 2  insert a new row (2, 2) to make the unique key conflict.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("insert into t values(2, 2)")
+
+	// Continue the execution of session1, it should meet an optimistic conflict and retry.
+	// The second execution is still failed because of the unique key conflict.
+	// But the `update ignore` statement should not give any error.
+	tk.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
+	tk.Continue().ExpectIdle()
+	// Should only a dup-key warning and the row 1 is not updated.
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '2' for key 't.u'"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 1", "2 2"))
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -136,6 +137,11 @@ func (ctx *SessionExprContext) ConnectionID() uint64 {
 	return ctx.sctx.GetSessionVars().ConnectionID
 }
 
+// IntoStatic turns the SessionExprContext into a StaticExprContext.
+func (ctx *SessionExprContext) IntoStatic() *contextstatic.StaticExprContext {
+	return contextstatic.MakeExprContextStatic(ctx)
+}
+
 // SessionEvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
 type SessionEvalContext struct {
 	sctx  sessionctx.Context
@@ -236,6 +242,11 @@ func (ctx *SessionEvalContext) GetMaxAllowedPacket() uint64 {
 	return ctx.sctx.GetSessionVars().MaxAllowedPacket
 }
 
+// GetTiDBRedactLog returns the value of the 'tidb_redact_log' system variable.
+func (ctx *SessionEvalContext) GetTiDBRedactLog() string {
+	return ctx.sctx.GetSessionVars().EnableRedactLog
+}
+
 // GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 func (ctx *SessionEvalContext) GetDefaultWeekFormatMode() string {
 	mode, ok := ctx.sctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
@@ -285,6 +296,16 @@ func (ctx *SessionEvalContext) GetParamValue(idx int) (types.Datum, error) {
 		return types.Datum{}, exprctx.ErrParamIndexExceedParamCounts
 	}
 	return params[idx], nil
+}
+
+// GetUserVarsReader returns the user variables.
+func (ctx *SessionEvalContext) GetUserVarsReader() variable.UserVarsReader {
+	return ctx.sctx.GetSessionVars().UserVars
+}
+
+// IntoStatic turns the SessionEvalContext into a StaticEvalContext.
+func (ctx *SessionEvalContext) IntoStatic() *contextstatic.StaticEvalContext {
+	return contextstatic.MakeEvalContextStatic(ctx)
 }
 
 func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
@@ -366,4 +387,63 @@ func sequenceOperatorProp(sctx sessionctx.Context) contextopt.SequenceOperatorPr
 		}
 		return &sequenceOperator{sctx, db, name, sequence}, nil
 	}
+}
+
+var _ exprctx.StaticConvertibleExprContext = &SessionExprContext{}
+
+// GetStaticConvertibleEvalContext implements context.StaticConvertibleExprContext.
+func (ctx *SessionExprContext) GetStaticConvertibleEvalContext() exprctx.StaticConvertibleEvalContext {
+	return ctx.SessionEvalContext
+}
+
+// GetPlanCacheTracker implements context.StaticConvertibleExprContext.
+func (ctx *SessionExprContext) GetPlanCacheTracker() *contextutil.PlanCacheTracker {
+	return &ctx.sctx.GetSessionVars().StmtCtx.PlanCacheTracker
+}
+
+// GetLastPlanColumnID implements context.StaticConvertibleExprContext.
+func (ctx *SessionExprContext) GetLastPlanColumnID() int64 {
+	return ctx.sctx.GetSessionVars().PlanColumnID.Load()
+}
+
+var _ exprctx.StaticConvertibleEvalContext = &SessionEvalContext{}
+
+// AllParamValues implements context.StaticConvertibleEvalContext.
+func (ctx *SessionEvalContext) AllParamValues() []types.Datum {
+	return ctx.sctx.GetSessionVars().PlanCacheParams.AllParamValues()
+}
+
+// GetDynamicPrivCheckFn implements context.StaticConvertibleEvalContext.
+func (ctx *SessionEvalContext) GetDynamicPrivCheckFn() func(privName string, grantable bool) bool {
+	checker := privilege.GetPrivilegeManager(ctx.sctx)
+	activeRoles := make([]*auth.RoleIdentity, len(ctx.sctx.GetSessionVars().ActiveRoles))
+	copy(activeRoles, ctx.sctx.GetSessionVars().ActiveRoles)
+
+	return func(privName string, grantable bool) bool {
+		if checker == nil {
+			return true
+		}
+
+		return checker.RequestDynamicVerification(activeRoles, privName, grantable)
+	}
+}
+
+// GetRequestVerificationFn implements context.StaticConvertibleEvalContext.
+func (ctx *SessionEvalContext) GetRequestVerificationFn() func(db string, table string, column string, priv mysql.PrivilegeType) bool {
+	checker := privilege.GetPrivilegeManager(ctx.sctx)
+	activeRoles := make([]*auth.RoleIdentity, len(ctx.sctx.GetSessionVars().ActiveRoles))
+	copy(activeRoles, ctx.sctx.GetSessionVars().ActiveRoles)
+
+	return func(db string, table string, column string, priv mysql.PrivilegeType) bool {
+		if checker == nil {
+			return true
+		}
+
+		return checker.RequestVerification(activeRoles, db, table, column, priv)
+	}
+}
+
+// GetWarnHandler implements context.StaticConvertibleEvalContext.
+func (ctx *SessionEvalContext) GetWarnHandler() contextutil.WarnHandler {
+	return ctx.sctx.GetSessionVars().StmtCtx.WarnHandler
 }

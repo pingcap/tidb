@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,6 +37,7 @@ func TestStatsCache(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("insert into t values(1, 2)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1", "c2")
 	do := dom
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -61,7 +63,7 @@ func TestStatsCache(t *testing.T) {
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -71,7 +73,7 @@ func TestStatsCache(t *testing.T) {
 	is = do.InfoSchema()
 
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -81,7 +83,8 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int,c3 int)")
+	testKit.MustExec("create table t (c1 int, c2 int, c3 int)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1", "c2", "c3")
 	testKit.MustExec("insert into t values(1, 2, 3)")
 	do := dom
 	is := do.InfoSchema()
@@ -114,7 +117,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -126,7 +129,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	is = do.InfoSchema()
 
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -142,6 +145,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("create index idx_t on t(c2)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1")
 	do := dom
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -152,7 +156,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
 
 	do.StatsHandle().Clear()
-	err = do.StatsHandle().Update(is)
+	err = do.StatsHandle().Update(context.Background(), is)
 	require.NoError(t, err)
 	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl2.Pseudo)
@@ -176,7 +180,7 @@ func testInitStatsMemTrace(t *testing.T) {
 	is := dom.InfoSchema()
 	h.Clear()
 	require.Equal(t, h.MemConsumed(), int64(0))
-	require.NoError(t, h.InitStats(is))
+	require.NoError(t, h.InitStats(context.Background(), is))
 
 	var memCostTot int64
 	for i := 1; i < 10; i++ {
@@ -262,11 +266,11 @@ func TestInitStats(t *testing.T) {
 	h.SetLease(time.Millisecond)
 
 	h.Clear()
-	require.NoError(t, h.InitStats(is))
+	require.NoError(t, h.InitStats(context.Background(), is))
 	table0 := h.GetTableStats(tbl.Meta())
 	require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
 	h.Clear()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	// Index and pk are loaded.
 	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
 index:1 ndv:6
@@ -304,7 +308,7 @@ func TestInitStats51358(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil"))
 	}()
-	require.NoError(t, h.InitStats(is))
+	require.NoError(t, h.InitStats(context.Background(), is))
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	stats := h.GetTableStats(tbl.Meta())
@@ -348,6 +352,7 @@ func initStatsVer2(t *testing.T, isConcurrency bool) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("create table t(a int, b int, c int, index idx(a), index idxab(a, b))")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (4, 4, 4), (4, 4, 4)")
 	tk.MustExec("analyze table t with 2 topn, 3 buckets")
 	h := dom.StatsHandle()
@@ -359,7 +364,7 @@ func initStatsVer2(t *testing.T, isConcurrency bool) {
 	h.SetLease(time.Millisecond)
 
 	h.Clear()
-	require.NoError(t, h.InitStats(is))
+	require.NoError(t, h.InitStats(context.Background(), is))
 	table0 := h.GetTableStats(tbl.Meta())
 	if isConcurrency {
 		require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
@@ -372,7 +377,7 @@ func initStatsVer2(t *testing.T, isConcurrency bool) {
 		require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
 	}
 	h.Clear()
-	require.NoError(t, h.InitStats(is))
+	require.NoError(t, h.InitStats(context.Background(), is))
 	table1 := h.GetTableStats(tbl.Meta())
 	internal.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
@@ -391,6 +396,6 @@ func TestInitStatsIssue41938(t *testing.T) {
 	// `InitStats` is only called when `Lease` is not 0, so here we just change it.
 	h.SetLease(time.Millisecond)
 	h.Clear()
-	require.NoError(t, h.InitStats(dom.InfoSchema()))
+	require.NoError(t, h.InitStats(context.Background(), dom.InfoSchema()))
 	h.SetLease(0)
 }

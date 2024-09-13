@@ -209,3 +209,15 @@ func TestRangeIntersection(t *testing.T) {
 		tk.MustQuery(sql).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }
+
+func TestOrderedIndexWithIsNull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 (a int key, b int, c int, index (b, c));")
+	tk.MustQuery("explain select a from t1 where b is null order by c").Check(testkit.Rows(
+		"Projection_6 10.00 root  test.t1.a",
+		"└─IndexReader_12 10.00 root  index:IndexRangeScan_11",
+		"  └─IndexRangeScan_11 10.00 cop[tikv] table:t1, index:b(b, c) range:[NULL,NULL], keep order:true, stats:pseudo",
+	))
+}

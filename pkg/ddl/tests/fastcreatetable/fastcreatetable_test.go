@@ -16,9 +16,15 @@ package fastcreatetable
 
 import (
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSwitchFastCreateTable(t *testing.T) {
@@ -86,4 +92,56 @@ func TestDDL(t *testing.T) {
 	// Create Table
 	tk.MustExec("create table db.tb1(id int)")
 	tk.MustExec("create table db.tb2(id int)")
+}
+
+func TestMergedJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	var wg util.WaitGroupWrapper
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_fast_create_table=ON")
+
+	startSchedule := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+		<-startSchedule
+	})
+
+	// this job will be run first.
+	wg.Run(func() {
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		tk1.MustExec("create table t(a int)")
+	})
+	require.Eventually(t, func() bool {
+		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		require.NoError(t, err)
+		return len(gotJobs) == 1
+	}, 10*time.Second, 100*time.Millisecond)
+
+	// below 2 jobs are merged into 1, they will fail together.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterGetJobFromLimitCh", func(ch chan *ddl.JobWrapper) {
+		require.Eventually(t, func() bool {
+			return len(ch) == 1
+		}, 10*time.Second, 100*time.Millisecond)
+	})
+	wg.Run(func() {
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		tk1.MustExecToErr("create table t(a int)")
+	})
+	wg.Run(func() {
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		tk1.MustExecToErr("create table t1(a int)")
+	})
+	require.Eventually(t, func() bool {
+		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		require.NoError(t, err)
+		return len(gotJobs) == 2 && gotJobs[1].Type == model.ActionCreateTables
+	}, 10*time.Second, 100*time.Millisecond)
+
+	// start to run the jobs
+	close(startSchedule)
+	wg.Wait()
 }
