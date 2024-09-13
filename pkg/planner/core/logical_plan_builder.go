@@ -5183,6 +5183,8 @@ type TblColPosInfo struct {
 	Start, End int
 	// HandleOrdinal represents the ordinal of the handle column.
 	HandleCols util.HandleCols
+
+	IndexesForDelete table.IndexesLayout
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -5230,33 +5232,110 @@ func (c TblColPosInfoSlice) FindTblIdx(colOrdinal int) (int, bool) {
 	return rangeBehindOrdinal - 1, true
 }
 
-// buildColumns2Handle builds columns to handle mapping.
-func buildColumns2Handle(
+// buildColumns2HandleWithWrtiableColumns builds columns to handle mapping.
+// This func is called by Update and can only see writable columns.
+func buildColumns2HandleWithWrtiableColumns(
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
 	tblID2Table map[int64]table.Table,
-	onlyWritableCol bool,
 ) (TblColPosInfoSlice, error) {
 	var cols2Handles TblColPosInfoSlice
 	for tblID, handleCols := range tblID2Handle {
 		tbl := tblID2Table[tblID]
-		var tblLen int
-		if onlyWritableCol {
-			tblLen = len(tbl.WritableCols())
-		} else {
-			tblLen = len(tbl.Cols())
-		}
+		tblLen := len(tbl.WritableCols())
 		for _, handleCol := range handleCols {
 			offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
 			if err != nil {
 				return nil, err
 			}
 			end := offset + tblLen
-			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol})
+			cols2Handles = append(cols2Handles, TblColPosInfo{TblID: tblID, Start: offset, End: end, HandleCols: handleCol})
 		}
 	}
 	sort.Sort(cols2Handles)
 	return cols2Handles, nil
+}
+
+// buildColPositionInfoForDelete builds columns to handle mapping for delete.
+// We'll have two kinds of columns seen by DELETE:
+//  1. The columns that are public. They are the columns that not affected by any DDL.
+//  2. The columns that are not public. They are the columns that are affected by DDL.
+//     But we need them because the non-public indexes may rely on them.
+//
+// The two kind of columns forms the whole columns of the table. Public part first.
+// This function records the following things:
+//  1. The position of the columns used by indexes in the DELETE's select's output.
+//  2. The row id's position in the output.
+func buildColPositionInfoForDelete(
+	names []*types.FieldName,
+	tblID2Handle map[int64][]util.HandleCols,
+	tblID2Table map[int64]table.Table,
+) (TblColPosInfoSlice, error) {
+	var cols2PosInfos TblColPosInfoSlice
+	for tblID, handleCols := range tblID2Handle {
+		tbl := tblID2Table[tblID]
+		deletableIdxs := tbl.DeletableIndices()
+		deletableCols := tbl.DeletableCols()
+		tblInfo := tbl.Meta()
+
+		for _, handleCol := range handleCols {
+			curColPosInfo, err := buildSingleTableColPosInfoForDelete(names, handleCol, deletableIdxs, deletableCols, tblInfo)
+			if err != nil {
+				return nil, err
+			}
+			cols2PosInfos = append(cols2PosInfos, curColPosInfo)
+		}
+	}
+	sort.Sort(cols2PosInfos)
+	return cols2PosInfos, nil
+}
+
+// buildSingleTableColPosInfoForDelete builds columns mapping for delete.
+func buildSingleTableColPosInfoForDelete(
+	names []*types.FieldName,
+	handleCol util.HandleCols,
+	deletableIdxs []table.Index,
+	deletableCols []*table.Column,
+	tblInfo *model.TableInfo,
+) (TblColPosInfo, error) {
+	// Columns can be seen by DELETE are the deletable columns.
+	tblLen := len(deletableCols)
+	offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
+	if err != nil {
+		return TblColPosInfo{}, err
+	}
+	end := offset + tblLen
+
+	// Index only records its columns' offsets in the deletableCols(the whole columns).
+	// So we need to first change the offsets to the real position of SELECT's output.
+	offsetMap := make(map[int]int, len(deletableCols))
+	// For multi-delete case, the offset is recorded for the mixed row. We need to use its position in single table's row layout.
+	//	e.g. The multi-delete case is [t1.a, t1.b, t2.a, t2.b] and There's a index [t2.b].
+	//	     The idxCols' original offset is [3]. And we should use [1] instead.
+	for i, name := range names[offset:end] {
+		found := false
+		for j, col := range deletableCols {
+			if col.Name.L == name.ColName.L {
+				offsetMap[j] = i
+				found = true
+				break
+			}
+		}
+		if !found {
+			return TblColPosInfo{}, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(name.ColName.O, tblInfo.Name.O)
+		}
+	}
+	indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
+	for _, idx := range deletableIdxs {
+		idxCols := idx.Meta().Columns
+		colPos := make([]int, 0, len(idxCols))
+		for _, col := range idxCols {
+			colPos = append(colPos, offsetMap[col.Offset])
+		}
+		indexColMap[idx.Meta().ID] = colPos
+	}
+
+	return TblColPosInfo{tblInfo.ID, offset, end, handleCol, indexColMap}, nil
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (base.Plan, error) {
@@ -5375,7 +5454,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(ctx, id)
 	}
-	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
+	updt.TblColPosInfos, err = buildColumns2HandleWithWrtiableColumns(updt.OutputNames(), tblID2Handle, tblID2table)
 	if err != nil {
 		return nil, err
 	}
@@ -5850,7 +5929,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(ctx, id)
 	}
-	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2table, false)
+	del.TblColPosInfos, err = buildColPositionInfoForDelete(del.names, tblID2Handle, tblID2table)
 	if err != nil {
 		return nil, err
 	}

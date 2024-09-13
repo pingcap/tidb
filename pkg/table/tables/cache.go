@@ -264,9 +264,9 @@ func (c *cachedTable) UpdateRecord(ctx table.MutateContext, txn kv.Transaction, 
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (c *cachedTable) RemoveRecord(sctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
+func (c *cachedTable) RemoveRecord(sctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
 	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
-	return c.TableCommon.RemoveRecord(sctx, txn, h, r)
+	return c.TableCommon.RemoveRecord(sctx, txn, h, r, opts...)
 }
 
 // TestMockRenewLeaseABA2 is used by test function TestRenewLeaseABAFailPoint.
