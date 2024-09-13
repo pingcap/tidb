@@ -7235,6 +7235,7 @@ NotKeywordToken:
 |	"BACKGROUND"
 |	"TASK_TYPES"
 |	"UNLIMITED"
+|	"UTILIZATION_LIMIT"
 
 /************************************************************************************
  *
