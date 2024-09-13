@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var _ base.HashEquals = &Group{}
@@ -85,7 +84,6 @@ func (g *Group) Insert(e *GroupExpression) bool {
 	}
 	// GroupExpressions hash should be initialized within Init(xxx) method.
 	hash64 := e.Sum64()
-	intest.Assert(hash64 != 0, "hash64 should not be 0")
 	if g.Exists(hash64) {
 		return false
 	}

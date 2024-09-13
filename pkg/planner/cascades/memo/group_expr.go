@@ -18,6 +18,7 @@ import (
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // GroupExpression is a single expression from the equivalent list classes inside a group.
@@ -40,6 +41,7 @@ type GroupExpression struct {
 
 // Sum64 returns the cached hash64 of the GroupExpression.
 func (e *GroupExpression) Sum64() uint64 {
+	intest.Assert(e.hash64 != 0, "hash64 should not be 0")
 	return e.hash64
 }
 
