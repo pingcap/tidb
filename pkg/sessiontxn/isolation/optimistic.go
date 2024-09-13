@@ -165,7 +165,6 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err err
 		ok = plannercore.IsTableOrIndexReaderByAutoCommit(p.sctx.GetSessionVars(), realPlan)
 		if ok {
 			p.TryOptimizeWithMaxTS = true
-			logutil.BgLogger().Info("TryOptimizeWithMaxTS is true", zap.String("sql", p.sctx.GetSessionVars().StmtCtx.OriginalSQL))
 		}
 	}
 	return nil
