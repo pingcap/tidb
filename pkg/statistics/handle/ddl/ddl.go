@@ -52,12 +52,6 @@ func NewDDLHandler(
 
 // HandleDDLEvent begins to process a ddl task.
 func (h *ddlHandlerImpl) HandleDDLEvent(s *notifier.SchemaChangeEvent) error {
-	sctx, err := h.statsHandler.SPool().Get()
-	if err != nil {
-		return err
-	}
-	defer h.statsHandler.SPool().Put(sctx)
-
 	switch s.GetType() {
 	case model.ActionCreateTable:
 		newTableInfo := s.GetCreateTableInfo()
