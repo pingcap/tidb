@@ -15,6 +15,7 @@
 package notifier
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -379,4 +380,43 @@ func NewFlashbackClusterEvent() *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		tp: model.ActionFlashbackCluster,
 	}
+}
+
+type jsonSchemaChangeEvent struct {
+	TableInfo            *model.TableInfo
+	OldTableInfo         *model.TableInfo
+	AddedPartInfo        *model.PartitionInfo
+	DroppedPartInfo      *model.PartitionInfo
+	ColumnInfos          []*model.ColumnInfo
+	OldTableID4Partition int64
+
+	Tp model.ActionType
+}
+
+func (s *SchemaChangeEvent) MarshalJSON() ([]byte, error) {
+	j := jsonSchemaChangeEvent{
+		TableInfo:            s.tableInfo,
+		OldTableInfo:         s.oldTableInfo,
+		AddedPartInfo:        s.addedPartInfo,
+		DroppedPartInfo:      s.droppedPartInfo,
+		ColumnInfos:          s.columnInfos,
+		OldTableID4Partition: s.oldTableID4Partition,
+		Tp:                   s.tp,
+	}
+	return json.Marshal(j)
+}
+
+func (s *SchemaChangeEvent) UnmarshalJSON(b []byte) error {
+	var j jsonSchemaChangeEvent
+	err := json.Unmarshal(b, &j)
+	if err != nil {
+		s.tableInfo = j.TableInfo
+		s.oldTableInfo = j.OldTableInfo
+		s.addedPartInfo = j.AddedPartInfo
+		s.droppedPartInfo = j.DroppedPartInfo
+		s.columnInfos = j.ColumnInfos
+		s.oldTableID4Partition = j.OldTableID4Partition
+		s.tp = j.Tp
+	}
+	return err
 }
