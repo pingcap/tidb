@@ -230,7 +230,7 @@ func GetFinishedTruncateTableArgs(job *Job) (*TruncateTableArgs, error) {
 }
 
 func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, error) {
-	if job.Version == JobVersion1 {
+	if job.Version <= JobVersion1 {
 		if argsOfFinished {
 			var startKey []byte
 			var oldPartitionIDs []int64
@@ -268,7 +268,7 @@ type RenameTableArgs struct {
 }
 
 func (rt *RenameTableArgs) fillJob(job *Job) {
-	if job.Version == JobVersion1 {
+	if job.Version <= JobVersion1 {
 		job.Args = []any{rt.OldSchemaID, rt.NewTableName, rt.OldSchemaName}
 	} else {
 		job.Args = []any{rt}
@@ -283,31 +283,32 @@ func GetRenameTableArgs(job *Job) (*RenameTableArgs, error) {
 		newTableName  pmodel.CIStr
 	)
 
-	if job.Version == JobVersion2 {
-		argsV2, err := getOrDecodeArgsV2[*RenameTableArgs](job)
-		if err != nil {
-			return nil, errors.Trace(err)
+	if job.Version <= JobVersion1 {
+		// decode args and cache in args.
+		if len(job.Args) == 0 {
+			err := job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			job.Args = []any{oldSchemaID, newTableName, oldSchemaName}
+		} else {
+			oldSchemaID = job.Args[0].(int64)
+			newTableName = job.Args[1].(pmodel.CIStr)
+			oldSchemaName = job.Args[2].(pmodel.CIStr)
 		}
-		return argsV2, nil
+
+		args := RenameTableArgs{
+			OldSchemaID:   oldSchemaID,
+			OldSchemaName: oldSchemaName,
+			NewTableName:  newTableName,
+		}
+		return &args, nil
 	}
 
-	// decode args and cache in args.
-	if len(job.Args) == 0 {
-		err := job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		job.Args = []any{oldSchemaID, newTableName, oldSchemaName}
-	} else {
-		oldSchemaID = job.Args[0].(int64)
-		newTableName = job.Args[1].(pmodel.CIStr)
-		oldSchemaName = job.Args[2].(pmodel.CIStr)
+	// for version V2
+	argsV2, err := getOrDecodeArgsV2[*RenameTableArgs](job)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-
-	args := RenameTableArgs{
-		OldSchemaID:   oldSchemaID,
-		OldSchemaName: oldSchemaName,
-		NewTableName:  newTableName,
-	}
-	return &args, nil
+	return argsV2, nil
 }

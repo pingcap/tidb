@@ -6456,7 +6456,7 @@ func getRenameTableUniqueIDs(job *model.Job, schema bool) []int64 {
 	}
 
 	args := &model.RenameTableArgs{}
-	if job.Version == model.JobVersion1 {
+	if job.Version <= model.JobVersion1 {
 		args.OldSchemaID = job.Args[0].(int64)
 	} else {
 		args = job.Args[0].(*model.RenameTableArgs)

@@ -17,6 +17,7 @@ package model
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -155,5 +156,42 @@ func TestTruncateTableArgs(t *testing.T) {
 		args, err := GetFinishedTruncateTableArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, []int64{5, 6}, args.OldPartitionIDs)
+	}
+}
+
+func TestRenameTableArgs(t *testing.T) {
+	inArgs := &RenameTableArgs{
+		OldSchemaID:   9527,
+		OldSchemaName: model.NewCIStr("old_schema_name"),
+		NewTableName:  model.NewCIStr("new_table_name"),
+	}
+
+	jobvers := []JobVersion{JobVersion1, JobVersion2}
+	for _, jobver := range jobvers {
+		job := &Job{
+			Version: jobver,
+			Type:    ActionRenameTable,
+		}
+		job.FillArgs(inArgs)
+
+		// get the args from args
+		args, err := GetRenameTableArgs(job)
+		require.NoError(t, err)
+		require.Equal(t, args, inArgs)
+
+		// encode job
+		_, err = job.Encode(true)
+		require.NoError(t, err)
+		job.Args = nil
+
+		// get the args after decode
+		args, err = GetRenameTableArgs(job)
+		require.NoError(t, err)
+		require.Equal(t, args, inArgs)
+
+		// get the args from args
+		args, err = GetRenameTableArgs(job)
+		require.NoError(t, err)
+		require.Equal(t, args, inArgs)
 	}
 }
