@@ -618,14 +618,19 @@ var defaultSysVars = []*SysVar{
 		return normalizedValue, nil
 	}},
 	/*
-	{Scope: ScopeGlobal, Name: TiDBWorkloadRepositoryDest, Type: TypeStr, Value: "",
-		SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
-			return SetRepositoryDest(ctx, val)
+		{Scope: ScopeGlobal, Name: TiDBWorkloadRepositoryDest, Type: TypeStr, Value: "",
+			SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+				return SetRepositoryDest(ctx, val)
+			},
+			Validation: func(_ *SessionVars, norm, _ string, _ ScopeFlag) (string, error) {
+				return ValidateRepositoryDest(norm)
+			},
 		},
-		Validation: func(_ *SessionVars, norm, _ string, _ ScopeFlag) (string, error) {
-			return ValidateRepositoryDest(norm)
+		{Scope: ScopeGlobal, Name: TiDBWorkloadRepositoryRetentionDays, Type: TypeInt, Value: strconv.Itoa(DefTiDBWorkloadRepositoryRetentionDays), MinValue: 0, MaxValue: 365,
+			SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+				return SetRepositoryRetentionDays(ctx, val)
+			},
 		},
-	},
 	*/
 	{Scope: ScopeGlobal, Name: ValidatePasswordEnable, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: ValidatePasswordPolicy, Value: "MEDIUM", Type: TypeEnum, PossibleValues: []string{"LOW", "MEDIUM", "STRONG"}},

@@ -159,6 +159,9 @@ const (
 	// TiDBWorkloadRepositoryDest is the destination of workload repository.
 	TiDBWorkloadRepositoryDest = "tidb_workload_repository_dest"
 
+	// TiDBWorkloadRepositoryRetentionDays will be used to drop expired statistics.
+	TiDBWorkloadRepositoryRetentionDays = "tidb_workload_repository_retention_days"
+
 	// TiDBDisableTxnAutoRetry disables transaction auto retry.
 	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
@@ -1445,6 +1448,7 @@ const (
 	DefTiDBEnablePrepPlanCache                        = true
 	DefTiDBPrepPlanCacheSize                          = 100
 	DefTiDBSessionPlanCacheSize                       = 100
+	DefTiDBWorkloadRepositoryRetentionDays            = 7
 	DefTiDBEnablePrepPlanCacheMemoryMonitor           = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio              = 0.1
 	DefTiDBEnableDistTask                             = true
@@ -1712,10 +1716,12 @@ var (
 	DisableDDL func() error = nil
 	// SwitchFastCreateTable is the func registered by DDL to switch fast create table.
 	SwitchFastCreateTable func(val bool) error
-	// SetRepositoryDest is the func registered by domain to noticy repository worker in this instance.
+	// SetRepositoryDest is the func registered by domain to notify repository worker in this instance.
 	SetRepositoryDest func(context.Context, string) error = nil
-	// ValidateRepositoryDest is the func registered by domain to noticy repository worker in this instance.
+	// ValidateRepositoryDest is the func registered by domain to notify repository worker in this instance.
 	ValidateRepositoryDest func(string) (string, error) = nil
+	// SetRepositoryRetentionDays is the func registered by domain to set retention days for repository worker.
+	SetRepositoryRetentionDays func(context.Context, string) error = nil
 	// SetExternalTimestamp is the func registered by staleread to set externaltimestamp in pd
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd

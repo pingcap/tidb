@@ -105,6 +105,7 @@ func (w *Worker) getSessionWithRetry() pools.Resource {
 }
 
 func (w *Worker) start(ctx context.Context) func() {
+	// TODO: add another txn type
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	return func() {
 		w.owner = w.newOwner(ownerKey, promptKey)
@@ -123,13 +124,16 @@ func (w *Worker) start(ctx context.Context) func() {
 					}
 				}
 				// check if table exists
-				if w.checkTablesExists(ctx, nil) {
+				if w.checkTablesExists(ctx) {
 					w.wg.RunWithRecover(w.startSample(ctx), func(err interface{}) {
 						logutil.BgLogger().Info("sample panic", zap.Any("err", err), zap.Stack("stack"))
 					}, "sample")
 					w.wg.RunWithRecover(w.startSnapshot(ctx), func(err interface{}) {
 						logutil.BgLogger().Info("snapshot panic", zap.Any("err", err), zap.Stack("stack"))
 					}, "snapshot")
+					w.wg.RunWithRecover(w.startHouseKeeper(ctx), func(err interface{}) {
+						logutil.BgLogger().Info("housekeeper panic", zap.Any("err", err), zap.Stack("stack"))
+					}, "housekeeper")
 					return
 				}
 			}

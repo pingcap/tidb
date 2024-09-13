@@ -15,6 +15,6 @@
 package repository
 
 const (
-	ownerKey = "/tidb/repository/owner"
+	ownerKey  = "/tidb/repository/owner"
 	promptKey = "repository"
 )

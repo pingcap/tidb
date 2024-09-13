@@ -16,7 +16,9 @@ package repository
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -32,19 +34,21 @@ const (
 
 var (
 	workloadSchemaCIStr = model.NewCIStr(WorkloadSchema)
+	zeroTime            = time.Time{}
 )
 
 type repoTbl struct {
-	name       string
-	createStmt string
+	name     string
+	createFn func(context.Context, *strings.Builder)
 }
 
-// TODO: make them partition
 var (
 	tbls = []repoTbl{
 		{
 			"hist_snapshots",
-			`CREATE TABLE IF NOT EXISTS hist_snapshots (
+			func(ctx context.Context, sb *strings.Builder) {
+				fmt.Fprintf(sb,
+					`CREATE TABLE IF NOT EXISTS hist_snapshots (
     SNAP_ID int unsigned NOT NULL AUTO_INCREMENT COMMENT 'Global unique identifier of the snapshot',
     BEGIN_TIME DATETIME NOT NULL COMMENT 'Datetime that TiDB begins taking this snapshot.',
     END_TIME DATETIME COMMENT 'Datetime that TiDB finish taking this snapshot.',
@@ -53,11 +57,15 @@ var (
     INSTANCE varchar(64) DEFAULT NULL COMMENT 'The instance that initializes the snapshots',
     SOURCE VARCHAR(20) NOT NULL COMMENT 'The program that initializes the snaphost. ',
     ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.'
-)`,
+)`)
+				generatePartitionDef(sb, "begin_time")
+			},
 		},
 		{
 			"hist_sp_statements_summary",
-			`CREATE TABLE IF NOT EXISTS hist_sp_statements_summary (
+			func(ctx context.Context, sb *strings.Builder) {
+				fmt.Fprintf(sb,
+					`CREATE TABLE IF NOT EXISTS hist_sp_statements_summary (
   SNAP_ID int unsigned NOT NULL COMMENT 'Identifier of the snaoshot',
   BEGIN_TIME DATETIME NOT NULL,
   INSTANCE varchar(64) DEFAULT NULL,
@@ -162,11 +170,15 @@ var (
   AVG_QUEUED_RC_TIME bigint(22) unsigned NOT NULL COMMENT 'Max time of waiting for available request-units',
   RESOURCE_GROUP varchar(64) DEFAULT NULL COMMENT 'Bind resource group name'
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-`,
+`)
+				generatePartitionDef(sb, "begin_time")
+			},
 		},
 		{
 			"hist_sp_tidb_index_usage",
-			`CREATE TABLE IF NOT EXISTS hist_sp_tidb_index_usage (
+			func(ctx context.Context, sb *strings.Builder) {
+				fmt.Fprintf(sb,
+					`CREATE TABLE IF NOT EXISTS hist_sp_tidb_index_usage (
   SNAP_ID int unsigned NOT NULL COMMENT 'Identifier of the snaoshot',
   BEGIN_TIME DATETIME NOT NULL,
   INSTANCE varchar(64) DEFAULT NULL,
@@ -185,11 +197,15 @@ var (
   PERCENTAGE_ACCESS_100 bigint(21) DEFAULT NULL,
   LAST_ACCESS_TIME datetime DEFAULT NULL
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-`,
+`)
+				generatePartitionDef(sb, "begin_time")
+			},
 		},
 		{
 			"hist_processlist",
-			`CREATE TABLE IF NOT EXISTS hist_processlist (
+			func(ctx context.Context, sb *strings.Builder) {
+				fmt.Fprintf(sb,
+					`CREATE TABLE IF NOT EXISTS hist_processlist (
   TS datetime NOT NULL,
   INSTANCE varchar(64) DEFAULT NULL,
   ID bigint(21) unsigned NOT NULL DEFAULT '0',
@@ -207,11 +223,15 @@ var (
   RESOURCE_GROUP varchar(32) NOT NULL DEFAULT '',
   SESSION_ALIAS varchar(64) NOT NULL DEFAULT ''
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-`,
+`)
+				generatePartitionDef(sb, "ts")
+			},
 		},
 		{
 			"hist_tidb_trx",
-			`CREATE TABLE IF NOT EXISTS hist_tidb_trx (
+			func(ctx context.Context, sb *strings.Builder) {
+				fmt.Fprintf(sb,
+					`CREATE TABLE IF NOT EXISTS hist_tidb_trx (
   TS datetime NOT NULL,
   INSTANCE varchar(64) DEFAULT NULL,
   ID bigint(21) unsigned NOT NULL,
@@ -229,7 +249,9 @@ var (
   RELATED_TABLE_IDS text DEFAULT NULL COMMENT 'A list of the table IDs that the transaction has accessed',
   WAITING_TIME double DEFAULT NULL COMMENT 'Current lock waiting time'
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-`,
+`)
+				generatePartitionDef(sb, "ts")
+			},
 		},
 	}
 )
@@ -250,42 +272,52 @@ func (w *Worker) createAllTables(ctx context.Context) error {
 	if _, err := exec.ExecuteInternal(ctx, "use "+WorkloadSchema); err != nil {
 		return err
 	}
+	sb := &strings.Builder{}
 	for _, tbl := range tbls {
-		if w.checkTablesExistsByIS(ctx, is, []string{tbl.name}) {
+		if w.checkTableExistsByIS(ctx, is, tbl.name, zeroTime) {
 			continue
 		}
-		var errs [5]error
-		var succeed bool
-		for i := 0; i < len(errs); i++ {
-			_, err := exec.ExecuteInternal(ctx, tbl.createStmt)
-			if err == nil {
-				succeed = true
-				break
-			}
-			errs[i] = err
-		}
-		if !succeed {
-			return errors.Join(errs[:]...)
+		sb.Reset()
+		tbl.createFn(ctx, sb)
+		if err := execRetry(ctx, exec, sb.String()); err != nil {
+			return err
 		}
 	}
-	return nil
+	return w.createAllPartitions(ctx, exec, is)
 }
 
-func (w *Worker) checkTablesExists(ctx context.Context, tblNames []string) bool {
+func (w *Worker) checkTablesExists(ctx context.Context) bool {
 	_sessctx := w.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)
 	defer w.sesspool.Put(_sessctx)
 	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
-	return w.checkTablesExistsByIS(ctx, is, tblNames)
+	now := time.Now()
+	return slice.AllOf(tbls, func(i int) bool {
+		return w.checkTableExistsByIS(ctx, is, tbls[i].name, now)
+	})
 }
 
-func (w *Worker) checkTablesExistsByIS(ctx context.Context, is infoschema.InfoSchema, tblNames []string) bool {
-	if tblNames == nil {
-		return slice.AllOf(tbls, func(i int) bool {
-			return is.TableExists(workloadSchemaCIStr, model.NewCIStr(tbls[i].name))
-		})
+func (w *Worker) checkTableExistsByIS(ctx context.Context, is infoschema.InfoSchema, tblName string, now time.Time) bool {
+	if now == zeroTime {
+		return is.TableExists(workloadSchemaCIStr, model.NewCIStr(tblName))
 	}
-	return slice.AllOf(tblNames, func(i int) bool {
-		return is.TableExists(workloadSchemaCIStr, model.NewCIStr(tblNames[i]))
-	})
+
+	// check for partitions, too
+	tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tblName))
+	if err != nil {
+		return false
+	}
+
+	tbInfo := tbSchema.Meta()
+	for i := 0; i < 2; i++ {
+		newPtTime := now.AddDate(0, 0, i+1)
+		newPtName := "p" + newPtTime.Format("20060102")
+		ptInfos := tbInfo.GetPartitionInfo().Definitions
+		if slice.NoneOf(ptInfos, func(i int) bool {
+			return ptInfos[i].Name.L == newPtName
+		}) {
+			return false
+		}
+	}
+	return true
 }

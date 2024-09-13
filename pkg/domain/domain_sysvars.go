@@ -43,6 +43,7 @@ func (do *Domain) initDomainSysVars() {
 
 	variable.SetRepositoryDest = do.setRepositoryDest
 	variable.ValidateRepositoryDest = repository.ValidateDest
+	variable.SetRepositoryRetentionDays = repository.SetRetentionDays
 
 	setGlobalResourceControlFunc := do.setGlobalResourceControl
 	variable.SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
