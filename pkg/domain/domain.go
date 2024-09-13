@@ -3111,7 +3111,7 @@ func (do *Domain) StopAutoAnalyze() {
 // InitInstancePlanCache initializes the instance level plan cache for this Domain.
 func (do *Domain) InitInstancePlanCache() {
 	hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
-	softLimit := float64(hardLimit) * (1-variable.InstancePlanCacheReservedPercentage.Load())
+	softLimit := float64(hardLimit) * (1 - variable.InstancePlanCacheReservedPercentage.Load())
 	do.instancePlanCache = NewInstancePlanCache(int64(softLimit), hardLimit)
 	// use a separate goroutine to avoid the eviction blocking other operations.
 	do.wg.Run(do.planCacheEvictTrigger, "planCacheEvictTrigger")
@@ -3137,7 +3137,7 @@ func (do *Domain) planCacheMetricsAndVars() {
 		case <-ticker.C:
 			// update limits
 			hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
-			softLimit := int64(float64(hardLimit) * (1-variable.InstancePlanCacheReservedPercentage.Load()))
+			softLimit := int64(float64(hardLimit) * (1 - variable.InstancePlanCacheReservedPercentage.Load()))
 			curSoft, curHard := do.instancePlanCache.GetLimits()
 			if curSoft != softLimit || curHard != hardLimit {
 				do.instancePlanCache.SetLimits(softLimit, hardLimit)
