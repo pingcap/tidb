@@ -15,12 +15,11 @@
 package memo
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,18 +48,16 @@ func TestGroupExpressionHashEquals(t *testing.T) {
 	hasher2 := base.NewHashEqualer()
 	child1 := &Group{groupID: 1}
 	child2 := &Group{groupID: 2}
-	ctx1 := mock.NewContext()
-	ctx2 := mock.NewContext()
 	a := GroupExpression{
 		group:       &Group{groupID: 3},
 		inputs:      []*Group{child1, child2},
-		logicalPlan: &logicalop.BaseLogicalPlan{Plan: baseimpl.NewBasePlan(ctx1, "test", 1)},
+		logicalPlan: &logicalop.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}},
 	}
 	b := GroupExpression{
 		// root group should change the hash.
 		group:       &Group{groupID: 4},
 		inputs:      []*Group{child1, child2},
-		logicalPlan: &logicalop.BaseLogicalPlan{Plan: baseimpl.NewBasePlan(ctx2, "test", 1)},
+		logicalPlan: &logicalop.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}},
 	}
 	a.Hash64(hasher1)
 	b.Hash64(hasher2)
