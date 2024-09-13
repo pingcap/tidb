@@ -1111,6 +1111,7 @@ func checkIncompatibleChangefeed(ctx context.Context, backupTS uint64, etcdCLI *
 // RunStreamRestore restores stream log.
 func RunStreamRestore(
 	c context.Context,
+	mgr *conn.Mgr,
 	g glue.Glue,
 	cmdName string,
 	cfg *RestoreConfig,
@@ -1163,7 +1164,7 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	checkInfo, err := checkPiTRTaskInfo(ctx, g, s, cfg)
+	checkInfo, err := checkPiTRTaskInfo(ctx, mgr, g, s, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1179,7 +1180,7 @@ func RunStreamRestore(
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
-		if err = runRestore(ctx, g, FullRestoreCmd, cfg, checkInfo); err != nil {
+		if err = runRestore(ctx, mgr, g, FullRestoreCmd, cfg, checkInfo); err != nil {
 			return errors.Trace(err)
 		}
 		cfg.Config.Storage = logStorage
@@ -1198,7 +1199,7 @@ func RunStreamRestore(
 	}
 	// restore log.
 	cfg.adjustRestoreConfigForStreamRestore()
-	if err := restoreStream(ctx, g, cfg, checkInfo.CheckpointInfo); err != nil {
+	if err := restoreStream(ctx, mgr, g, cfg, checkInfo.CheckpointInfo); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1207,6 +1208,7 @@ func RunStreamRestore(
 // RunStreamRestore start restore job
 func restoreStream(
 	c context.Context,
+	mgr *conn.Mgr,
 	g glue.Glue,
 	cfg *RestoreConfig,
 	taskInfo *checkpoint.CheckpointTaskInfoForLogRestore,
@@ -1252,13 +1254,6 @@ func restoreStream(
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true, conn.StreamVersionChecker)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer mgr.Close()
 
 	client, err := createRestoreClient(ctx, g, cfg, mgr)
 	if err != nil {
@@ -1316,10 +1311,8 @@ func restoreStream(
 		log.Info("finish restoring gc")
 	}()
 
-	var taskName string
 	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
 	if cfg.UseCheckpoint {
-		taskName = cfg.generateLogRestoreTaskName(client.GetClusterID(ctx), cfg.StartTS, cfg.RestoreTS)
 		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, oldRatio, cfg.tiflashRecorder)
 		if err != nil {
 			return errors.Trace(err)
@@ -1447,7 +1440,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
 	}
 
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, g, taskName); err != nil {
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, g); err != nil {
 		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
@@ -1754,6 +1747,7 @@ type PiTRTaskInfo struct {
 
 func checkPiTRTaskInfo(
 	ctx context.Context,
+	mgr *conn.Mgr,
 	g glue.Glue,
 	s storage.ExternalStorage,
 	cfg *RestoreConfig,
@@ -1764,14 +1758,6 @@ func checkPiTRTaskInfo(
 	)
 	checkInfo := &PiTRTaskInfo{}
 
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true, conn.StreamVersionChecker)
-	if err != nil {
-		return checkInfo, errors.Trace(err)
-	}
-	defer mgr.Close()
-
-	clusterID := mgr.GetPDClient().GetClusterID(ctx)
 	if cfg.UseCheckpoint {
 		se, err := g.CreateSession(mgr.GetStorage())
 		if err != nil {
@@ -1788,12 +1774,12 @@ func checkPiTRTaskInfo(
 			// TODO: check whether user has manually modified the cluster(ddl). If so, regard the behavior
 			//       as restore from scratch. (update `curTaskInfo.RewriteTs` to 0 as an uninitial value)
 
-			if curTaskInfo.Metadata.UpstreamClusterID != cfg.UpstreamClusterID {
+			if curTaskInfo.Metadata.UpstreamClusterID != cfg.upstreamClusterID {
 				return checkInfo, errors.Errorf(
 					"The upstream cluster id[%d] of the current log restore does not match that[%d] recorded in checkpoint. "+
 						"Perhaps you should specify the last log backup storage instead, "+
 						"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
-					cfg.UpstreamClusterId, curTaskInfo.Metadata.UpstreamClusterID, checkpoint.LogRestoreCheckpointDatabaseName)
+					cfg.upstreamClusterID, curTaskInfo.Metadata.UpstreamClusterID, checkpoint.LogRestoreCheckpointDatabaseName)
 			}
 
 			if curTaskInfo.Metadata.StartTS != cfg.StartTS || curTaskInfo.Metadata.RestoredTS != cfg.RestoreTS {
@@ -1810,10 +1796,6 @@ func checkPiTRTaskInfo(
 			log.Info("the same task, skip snapshot restore")
 			// the same task, skip full restore because it is already in the log restore stage.
 			doFullRestore = false
-			// update the snapshot restore task name to clean up in final
-			if !doFullRestore && (len(cfg.FullBackupStorage) > 0) {
-				_ = cfg.generateSnapshotRestoreTaskName(clusterID)
-			}
 		}
 	}
 	checkInfo.CheckpointInfo = curTaskInfo

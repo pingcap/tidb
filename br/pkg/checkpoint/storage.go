@@ -66,9 +66,10 @@ const (
 	checkpointProgressTableName string = "cpt_progress"
 	checkpointIngestTableName   string = "cpt_ingest"
 
+	// the primary key (uuid: uuid, segment_id:0) records the number of segment
 	createCheckpointTable string = `
 		CREATE TABLE %n.%n (
-			uuid varchar(32) NOT NULL,
+			uuid binary(32) NOT NULL,
 			segment_id BIGINT NOT NULL,
 			data BLOB(524288) NOT NULL,
 			update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -177,17 +178,7 @@ func mergeSelectCheckpoint(
 			log.Warn("get the empty uuid, but just skip it")
 			continue
 		}
-		if bytes.Equal(uuid, lastUUID) {
-			if lastUUIDInvalid {
-				continue
-			}
-			if nextSegmentID != segment_id {
-				lastUUIDInvalid = true
-				continue
-			}
-			rowData = append(rowData, data...)
-			nextSegmentID += 1
-		} else {
+		if !bytes.Equal(uuid, lastUUID) {
 			if !lastUUIDInvalid && len(rowData) > 0 {
 				retData = append(retData, rowData)
 			}
@@ -196,6 +187,21 @@ func mergeSelectCheckpoint(
 			nextSegmentID = 0
 			lastUUID = uuid
 		}
+
+		if lastUUIDInvalid {
+			continue
+		}
+
+		if nextSegmentID != segment_id {
+			lastUUIDInvalid = true
+			continue
+		}
+
+		rowData = append(rowData, data...)
+		nextSegmentID += 1
+	}
+	if !lastUUIDInvalid && len(rowData) > 0 {
+		retData = append(retData, rowData)
 	}
 	return retData, nil
 }
@@ -240,7 +246,7 @@ func selectCheckpointChecksum(
 }
 
 func initCheckpointTable(ctx context.Context, se glue.Session, dbName string, checkpointTableNames []string) error {
-	if err := se.ExecuteInternal(ctx, "CREATE DATABASE %n IF NOT EXISTS;", dbName); err != nil {
+	if err := se.ExecuteInternal(ctx, "CREATE DATABASE IF NOT EXISTS %n;", dbName); err != nil {
 		return errors.Trace(err)
 	}
 	for _, tableName := range checkpointTableNames {
@@ -304,7 +310,7 @@ func dropCheckpointTables(ctx context.Context, dom *domain.Domain, se glue.Sessi
 		return errors.Trace(err)
 	}
 	if len(tables) > 0 {
-		log.Warn("user tables in the checkpoint database, skip drop the database", zap.String("db", dbName))
+		log.Warn("user tables in the checkpoint database, skip drop the database", zap.String("db", dbName), zap.String("table", tables[0].Name.L))
 		return nil
 	}
 	if err := se.ExecuteInternal(ctx, "DROP DATABASE %n;", dbName); err != nil {

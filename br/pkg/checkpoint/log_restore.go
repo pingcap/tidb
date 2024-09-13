@@ -185,7 +185,7 @@ func SaveCheckpointMetadataForLogRestore(
 	se glue.Session,
 	meta *CheckpointMetadataForLogRestore,
 ) error {
-	err := initCheckpointTable(ctx, se, LogRestoreCheckpointDatabaseName, []string{checkpointDataTableName, checkpointChecksumTableName})
+	err := initCheckpointTable(ctx, se, LogRestoreCheckpointDatabaseName, []string{checkpointDataTableName})
 	if err != nil {
 		return errors.Trace(err)
 	}

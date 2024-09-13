@@ -94,7 +94,7 @@ func LoadCheckpointChecksumForRestore(
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
 ) (map[int64]*ChecksumItem, time.Duration, error) {
-	return selectCheckpointChecksum(ctx, execCtx, LogRestoreCheckpointDatabaseName)
+	return selectCheckpointChecksum(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName)
 }
 
 type CheckpointMetadataForSnapshotRestore struct {

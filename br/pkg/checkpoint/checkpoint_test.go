@@ -106,9 +106,18 @@ func TestCheckpointMetaForRestore(t *testing.T) {
 		Progress: checkpoint.InLogRestoreAndIdMapPersist,
 	})
 	require.NoError(t, err)
-	taskInfo, err := checkpoint.LoadCheckpointProgress(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
+	progress, err := checkpoint.LoadCheckpointProgress(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
-	require.Equal(t, taskInfo.Progress, checkpoint.InLogRestoreAndIdMapPersist)
+	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersist, progress.Progress)
+
+	taskInfo, err := checkpoint.TryToGetCheckpointTaskInfo(ctx, s.Mock.Domain, se.GetSessionCtx().GetRestrictedSQLExecutor())
+	require.NoError(t, err)
+	require.Equal(t, uint64(123), taskInfo.Metadata.UpstreamClusterID)
+	require.Equal(t, uint64(222), taskInfo.Metadata.RestoredTS)
+	require.Equal(t, uint64(111), taskInfo.Metadata.StartTS)
+	require.Equal(t, uint64(333), taskInfo.Metadata.RewriteTS)
+	require.Equal(t, "1.0", taskInfo.Metadata.GcRatio)
+	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersist, taskInfo.Progress)
 
 	exists = checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, dom)
 	require.False(t, exists)
@@ -266,6 +275,8 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 
+	err = checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, se, &checkpoint.CheckpointMetadataForSnapshotRestore{})
+	require.NoError(t, err)
 	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, 5*time.Second)
 	require.NoError(t, err)
 
@@ -312,6 +323,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 
 	checkpointRunner.WaitForFinish(ctx, true)
 
+	respCount := 0
 	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
 		require.NotNil(t, resp)
 		d, ok := data[resp.RangeKey]
@@ -323,10 +335,12 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 			require.Equal(t, tableID, int64(1))
 		}
 		require.Equal(t, d.RangeKey, resp.RangeKey)
+		respCount += 1
 	}
 
 	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checker)
 	require.NoError(t, err)
+	require.Equal(t, 4, respCount)
 
 	checksum, _, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
@@ -335,6 +349,14 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	for i = 1; i <= 4; i++ {
 		require.Equal(t, checksum[i].Crc64xor, uint64(i))
 	}
+
+	err = checkpoint.RemoveCheckpointDataForSnapshotRestore(ctx, s.Mock.Domain, se)
+	require.NoError(t, err)
+
+	exists := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, s.Mock.Domain)
+	require.False(t, exists)
+	exists = s.Mock.Domain.InfoSchema().SchemaExists(pmodel.NewCIStr(checkpoint.SnapshotRestoreCheckpointDatabaseName))
+	require.False(t, exists)
 }
 
 func TestCheckpointLogRestoreRunner(t *testing.T) {
@@ -344,6 +366,8 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 
+	err = checkpoint.SaveCheckpointMetadataForLogRestore(ctx, se, &checkpoint.CheckpointMetadataForLogRestore{})
+	require.NoError(t, err)
 	checkpointRunner, err := checkpoint.StartCheckpointLogRestoreRunnerForTest(ctx, se, 5*time.Second)
 	require.NoError(t, err)
 
@@ -389,6 +413,7 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 
 	checkpointRunner.WaitForFinish(ctx, true)
 
+	respCount := 0
 	checker := func(metaKey string, resp checkpoint.LogRestoreValueMarshaled) {
 		require.NotNil(t, resp)
 		d, ok := data[metaKey]
@@ -405,6 +430,7 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 			}
 			for _, foff := range foffs {
 				if f.foff == foff {
+					respCount += 1
 					return
 				}
 			}
@@ -414,6 +440,15 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 
 	_, err = checkpoint.LoadCheckpointDataForLogRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checker)
 	require.NoError(t, err)
+	require.Equal(t, 4, respCount)
+
+	err = checkpoint.RemoveCheckpointDataForLogRestore(ctx, s.Mock.Domain, se)
+	require.NoError(t, err)
+
+	exists := checkpoint.ExistsLogRestoreCheckpointMetadata(ctx, s.Mock.Domain)
+	require.False(t, exists)
+	exists = s.Mock.Domain.InfoSchema().SchemaExists(pmodel.NewCIStr(checkpoint.LogRestoreCheckpointDatabaseName))
+	require.False(t, exists)
 }
 
 func getLockData(p, l int64) ([]byte, error) {
