@@ -694,6 +694,15 @@ const (
 		KEY (created_by),
 		KEY (status));`
 
+	// CreatePITRIDMap is a table that records the id map from upstream to downstream for PITR.
+	CreatePITRIDMap = `CREATE TABLE IF NOT EXISTS mysql.tidb_pitr_id_map (
+		restored_ts BIGINT NOT NULL,
+		upstream_cluster_id BIGINT NOT NULL,
+		segment_id BIGINT NOT NULL,
+		id_map BLOB(524288) NOT NULL,
+		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id));`
+
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
 
@@ -1120,11 +1129,15 @@ const (
 	// 2. modify column `plan_digest` type, modify column `time` to `start_time,
 	// modify column `original_sql` to `sample_sql` to `mysql.tidb_runaway_queries`.
 	version212 = 212
+
+	// version 213
+	//   create `mysql.tidb_pitr_id_map` table
+	version213 = 213
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version212
+var currentBootstrapVersion int64 = version213
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1292,6 +1305,7 @@ var (
 		upgradeToVer210,
 		upgradeToVer211,
 		upgradeToVer212,
+		upgradeToVer213,
 	}
 )
 
@@ -3119,6 +3133,14 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer213(s sessiontypes.Session, ver int64) {
+	if ver >= version213 {
+		return
+	}
+
+	mustExecute(s, CreatePITRIDMap)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3263,6 +3285,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateDistFrameworkMeta)
 	// create request_unit_by_group
 	mustExecute(s, CreateRequestUnitByGroupTable)
+	// create tidb_pitr_id_map
+	mustExecute(s, CreatePITRIDMap)
 	// create `sys` schema
 	mustExecute(s, CreateSysSchema)
 	// create `sys.schema_unused_indexes` view
