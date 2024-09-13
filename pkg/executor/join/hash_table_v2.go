@@ -244,3 +244,11 @@ func (jht *hashTableV2) totalRowCount() uint64 {
 	}
 	return ret
 }
+
+func getHashTableLength(table *rowTable) uint64 {
+	return max(nextPowerOfTwo(table.validKeyCount()), uint64(minimalHashTableLen))
+}
+
+func getHashTableMemoryUsage(hashTableLength uint64) int64 {
+	return int64(hashTableLength) * taggedPointerLen
+}

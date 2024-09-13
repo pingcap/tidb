@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/serialization"
 )
 
 const minimalHashTableLen = 32
@@ -49,14 +48,6 @@ var (
 	// enableHashJoinV2 is a variable used only in test
 	enableHashJoinV2 = atomic.Bool{}
 )
-
-func getHashTableLength(table *rowTable) uint64 {
-	return max(nextPowerOfTwo(table.validKeyCount()), uint64(minimalHashTableLen))
-}
-
-func getHashTableMemoryUsage(hashTableLength uint64) int64 {
-	return int64(hashTableLength) * serialization.UnsafePointerLen
-}
 
 func init() {
 	enableHashJoinV2.Store(true)
@@ -266,9 +257,9 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber uint, spi
 		if err != nil {
 			return 0, err
 		}
-	}
 
-	spillHelper.setCanSpillFlag(false)
+		spillHelper.setCanSpillFlag(false)
+	}
 
 	taggedBits := uint8(maxTaggedBits)
 	for i := 0; i < int(partitionNumber); i++ {
@@ -935,6 +926,10 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 }
 
 func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
+	if w.HashJoinCtx.spillHelper.areAllPartitionsSpilled() {
+		return true, 0, joinResult
+	}
+
 	var ok bool
 	waitTime := int64(0)
 	for !w.JoinProbe.IsCurrentChunkProbeDone() {
@@ -1046,13 +1041,13 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 	for {
 		e.spillHelper.setCanSpillFlag(true)
 		e.buildFinished = make(chan error, 1)
-		
+
 		e.fetchAndBuildHashTable(ctx)
 		e.fetchAndProbeHashTable(ctx)
 
 		e.waiterWg.Wait()
 
-		e.spillHelper.spillRoundForTest = int(math.Max(float64(e.spillHelper.spillRoundForTest), float64(lastRound)))
+		e.spillHelper.spillRoundForTest = max(e.spillHelper.spillRoundForTest, lastRound)
 		err := e.spillHelper.prepareForRestoring(lastRound)
 		if err != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{err: err}
@@ -1263,11 +1258,11 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorke
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
-			fetcher := e.BuildWorkers[0]
 			if e.inRestore {
 				chunkNum := e.getRestoredChunkNum()
 				e.controlPrebuildWorkersForRestore(chunkNum, srcChkCh, waitForController, fetcherAndWorkerSyncer, errCh, doneCh)
 			} else {
+				fetcher := e.BuildWorkers[0]
 				fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, fetcherAndWorkerSyncer, e.spillHelper, srcChkCh, errCh, doneCh)
 			}
 		},
@@ -1537,6 +1532,14 @@ func (e *hashJoinRuntimeStatsV2) Merge(rs execdetails.RuntimeStats) {
 
 func generatePartitionIndex(hashValue uint64, partitionMaskOffset int) uint64 {
 	return hashValue >> uint64(partitionMaskOffset)
+}
+
+func getProbeSpillChunkFieldTypes(probeFieldTypes []*types.FieldType) []*types.FieldType {
+	ret := make([]*types.FieldType, 0, len(probeFieldTypes)+2)
+	ret = append(ret, types.NewFieldType(mysql.TypeLonglong)) // hash value
+	ret = append(ret, types.NewFieldType(mysql.TypeBit))      // serialized key
+	ret = append(ret, probeFieldTypes...)                     // row data
+	return ret
 }
 
 func triggerIntest(errProbability int) error {

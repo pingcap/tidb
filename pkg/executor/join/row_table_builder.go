@@ -198,13 +198,13 @@ func (b *rowTableBuilder) processOneRestoredChunk(chk *chunk.Chunk, hashJoinCtx 
 			if err != nil {
 				return err
 			}
-			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true, b.firstSegRowSizeHint)
+			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true, uint(maxRowTableSegmentSize))
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		} else {
 			partID = int(fakePartIndex)
 			newHashValue = fakePartIndex
 			fakePartIndex = (fakePartIndex + 1) % uint64(partitionNumber)
-			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true, b.firstSegRowSizeHint)
+			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partID, true, uint(maxRowTableSegmentSize))
 		}
 
 		seg.hashValues = append(seg.hashValues, newHashValue)

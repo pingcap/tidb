@@ -168,11 +168,6 @@ func (j *baseJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk) {
 }
 
 func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
-	if j.currentChunk != nil {
-		if j.currentProbeRow < j.chunkRows {
-			return errors.New("Previous chunk is not probed yet")
-		}
-	}
 	j.currentChunk = chk
 	logicalRows := chk.NumRows()
 	// if chk.sel != nil, then physicalRows is different from logicalRows
@@ -302,12 +297,6 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 }
 
 func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
-	if j.currentChunk != nil {
-		if j.currentProbeRow < j.chunkRows {
-			return errors.New("Previous chunk is not probed yet")
-		}
-	}
-
 	hashValueCol := chk.Column(0)
 	serializedKeysCol := chk.Column(1)
 	colNum := chk.NumCols()
@@ -321,18 +310,16 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 	logicalRows := chk.NumRows()
 	j.chunkRows = logicalRows
 
-	j.usedRows = chk.Sel()
-	if j.usedRows == nil {
-		if cap(j.selRows) >= logicalRows {
-			j.selRows = j.selRows[:logicalRows]
-		} else {
-			j.selRows = make([]int, 0, logicalRows)
-			for i := 0; i < logicalRows; i++ {
-				j.selRows = append(j.selRows, i)
-			}
+	if cap(j.selRows) >= logicalRows {
+		j.selRows = j.selRows[:logicalRows]
+	} else {
+		j.selRows = make([]int, 0, logicalRows)
+		for i := 0; i < logicalRows; i++ {
+			j.selRows = append(j.selRows, i)
 		}
-		j.usedRows = j.selRows
 	}
+
+	j.usedRows = j.selRows
 
 	if cap(j.matchedRowsHeaders) >= logicalRows {
 		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRows]
@@ -366,8 +353,8 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 	rehashBuf := new(bytes.Buffer)
 
 	// rehash all rows
-	for logicalRowIndex, physicalRowIndex := range j.usedRows {
-		oldHashValue := uint64(hashValueCol.GetInt64(physicalRowIndex))
+	for _, idx := range j.usedRows {
+		oldHashValue := uint64(hashValueCol.GetInt64(idx))
 		rehashBuf.Reset()
 		err := binary.Write(rehashBuf, binary.LittleEndian, oldHashValue)
 		if err != nil {
@@ -377,14 +364,14 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		hash.Reset()
 		hash.Write(rehashBuf.Bytes())
 		newHashVal := hash.Sum64()
-		j.matchedRowsHashValue[logicalRowIndex] = newHashVal
+		j.matchedRowsHashValue[idx] = newHashVal
 		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
 			j.spillTmpChk[partIndex].AppendInt64(0, int64(newHashVal))
-			j.spillTmpChk[partIndex].AppendBytes(1, serializedKeysCol.GetBytes(physicalRowIndex))
-			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(logicalRowIndex))
+			j.spillTmpChk[partIndex].AppendBytes(1, serializedKeysCol.GetBytes(idx))
+			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(idx))
 
-			j.spilledIdx = append(j.spilledIdx, logicalRowIndex)
+			j.spilledIdx = append(j.spilledIdx, idx)
 
 			if j.spillTmpChk[partIndex].IsFull() {
 				err := j.ctx.spillHelper.spillProbeChk(int(j.workID), int(partIndex), j.spillTmpChk[partIndex])
@@ -394,19 +381,19 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 				j.spillTmpChk[partIndex].Reset()
 			}
 
-			j.matchedRowsHeaders[logicalRowIndex] = 0
+			j.matchedRowsHeaders[idx] = 0
 		} else {
-			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: newHashVal, pos: logicalRowIndex})
+			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: newHashVal, pos: idx})
 		}
 	}
 
 	j.currentProbeRow = 0
 	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		for index := range j.hashValues[i] {
-			logicalPos := j.hashValues[i][index].pos
+			pos := j.hashValues[i][index].pos
 			physicalPos := j.usedRows[j.hashValues[i][index].pos]
-			j.serializedKeys[logicalPos] = append(j.serializedKeys[logicalPos], serializedKeysCol.GetBytes(physicalPos)...)
-			j.matchedRowsHeaders[logicalPos] = j.ctx.hashTableContext.lookup(i, j.hashValues[i][index].hashValue)
+			j.serializedKeys[pos] = append(j.serializedKeys[pos], serializedKeysCol.GetBytes(physicalPos)...)
+			j.matchedRowsHeaders[pos] = j.ctx.hashTableContext.lookup(i, j.hashValues[i][index].hashValue)
 		}
 	}
 	return nil
@@ -707,11 +694,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		rightAsBuildSide:      rightAsBuildSide,
 	}
 
-	probeSpillChkFieldTypes := make([]*types.FieldType, 0, len(probeChkFieldTypes)+2)
-	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, types.NewFieldType(mysql.TypeLonglong))
-	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))
-	probeSpillChkFieldTypes = append(probeSpillChkFieldTypes, probeChkFieldTypes...)
-	base.probeSpillChkFieldTypes = probeSpillChkFieldTypes
+	base.probeSpillChkFieldTypes = getProbeSpillChunkFieldTypes(probeChkFieldTypes)
 
 	for i := range keyIndex {
 		if !mysql.HasNotNullFlag(base.keyTypes[i].GetFlag()) {
