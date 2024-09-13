@@ -1432,7 +1432,7 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 				return nil, errors.Trace(err)
 			}
 		}
-		idxPart.Expr = nil
+		//idxPart.Expr = nil
 		hiddenCols = append(hiddenCols, colInfo)
 	}
 	return hiddenCols, nil
