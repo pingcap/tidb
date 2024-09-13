@@ -128,12 +128,12 @@ require (
 	golang.org/x/exp v0.0.0-20230711005742-c3f37128e5a4
 	golang.org/x/net v0.20.0
 	golang.org/x/oauth2 v0.16.0
-	golang.org/x/sync v0.3.0
-	golang.org/x/sys v0.19.0
+	golang.org/x/sync v0.5.0
+	golang.org/x/sys v0.25.0
 	golang.org/x/term v0.16.0
 	golang.org/x/text v0.14.0
 	golang.org/x/time v0.3.0
-	golang.org/x/tools v0.13.0
+	golang.org/x/tools v0.15.0
 	google.golang.org/api v0.128.0
 	google.golang.org/grpc v1.59.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -200,7 +200,7 @@ require (
 	github.com/go-kit/kit v0.9.0 // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
 	github.com/go-logr/logr v1.2.3 // indirect
-	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/golang-jwt/jwt v3.2.1+incompatible // indirect
 	github.com/golang/glog v1.1.2 // indirect
