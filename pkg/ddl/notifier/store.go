@@ -56,6 +56,8 @@ INSERT INTO %s.%s (
 	return err
 }
 
+//revive:disable
+
 func (t *tableStore) UpdateProcessed(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int, processedBy uint64) error {
 	//TODO implement me
 	panic("implement me")
@@ -66,6 +68,8 @@ func (t *tableStore) Delete(ctx context.Context, se *sess.Session, ddlJobID int6
 	panic("implement me")
 }
 
+//revive:enable
+
 func (t *tableStore) List(ctx context.Context, se *sess.Session, limit int) ([]*schemaChange, error) {
 	sql := fmt.Sprintf(`
 SELECT
@@ -73,7 +77,7 @@ SELECT
 	multi_schema_change_seq,
 	schema_change,
 	processed_by_flag
-FROM %s.%s ORDER BY ddl_job_id, multi_schema_change_seq LIMIT %d 
+FROM %s.%s ORDER BY ddl_job_id, multi_schema_change_seq LIMIT %d
 `, t.db, t.table, limit)
 	rows, err := se.Execute(ctx, sql, "ddl_notifier")
 	if err != nil {
