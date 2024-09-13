@@ -2068,6 +2068,7 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	var err error
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(context.Background(), tbl.ID)
+	intest.Assert(t != nil, "The point get executor is accessing a table without meta info.")
 	idxs := t.DeletableIndices()
 	deletableCols := t.DeletableCols()
 	colPosInfo, err := buildSingleTableColPosInfoForDelete(pointPlan.OutputNames(), handleCols, idxs, deletableCols, tbl)
@@ -2078,12 +2079,10 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 		SelectPlan:     pointPlan,
 		TblColPosInfos: []TblColPosInfo{colPosInfo},
 	}.Init(ctx)
-	if t != nil {
-		tblID2Table := map[int64]table.Table{tbl.ID: t}
-		err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
-		if err != nil {
-			return nil
-		}
+	tblID2Table := map[int64]table.Table{tbl.ID: t}
+	err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
+	if err != nil {
+		return nil
 	}
 	return delPlan
 }

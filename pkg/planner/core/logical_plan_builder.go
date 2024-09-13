@@ -5232,22 +5232,17 @@ func (c TblColPosInfoSlice) FindTblIdx(colOrdinal int) (int, bool) {
 	return rangeBehindOrdinal - 1, true
 }
 
-// buildColumns2Handle builds columns to handle mapping.
-func buildColumns2Handle(
+// buildColumns2HandleWithWrtiableColumns builds columns to handle mapping.
+// This func is called by Update and can only see writable columns.
+func buildColumns2HandleWithWrtiableColumns(
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
 	tblID2Table map[int64]table.Table,
-	onlyWritableCol bool,
 ) (TblColPosInfoSlice, error) {
 	var cols2Handles TblColPosInfoSlice
 	for tblID, handleCols := range tblID2Handle {
 		tbl := tblID2Table[tblID]
-		var tblLen int
-		if onlyWritableCol {
-			tblLen = len(tbl.WritableCols())
-		} else {
-			tblLen = len(tbl.Cols())
-		}
+		tblLen := len(tbl.WritableCols())
 		for _, handleCol := range handleCols {
 			offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
 			if err != nil {
@@ -5314,23 +5309,21 @@ func buildSingleTableColPosInfoForDelete(
 	// Index only records its columns' offsets in the deletableCols(the whole columns).
 	// So we need to first change the offsets to the real position of SELECT's output.
 	offsetMap := make(map[int]int, len(deletableCols))
-	for i := offset; i < end; i++ {
-		name := names[i]
-		found := -1
+	// For multi-delete case, the offset is recorded for the mixed row. We need to use its position in single table's row layout.
+	//	e.g. The multi-delete case is [t1.a, t1.b, t2.a, t2.b] and There's a index [t2.b].
+	//	     The idxCols' original offset is [3]. And we should use [1] instead.
+	for i, name := range names[offset:end] {
+		found := false
 		for j, col := range deletableCols {
 			if col.Name.L == name.ColName.L {
 				offsetMap[j] = i
-				found = j
+				found = true
 				break
 			}
 		}
-		if found == -1 {
+		if !found {
 			return TblColPosInfo{}, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(name.ColName.O, tblInfo.Name.O)
 		}
-		// For multi-delete case, the offset is recorded for the mixed row. We need to restore it to single table status.
-		//	e.g. The multi-delete case is [t1.a, t1.b, t2.a, t2.b] and There's a index [t2.b].
-		//	     The idxCols is [3]. And we should fix it to [1].
-		offsetMap[found] = i - offset
 	}
 	indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
 	for _, idx := range deletableIdxs {
@@ -5461,7 +5454,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(ctx, id)
 	}
-	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
+	updt.TblColPosInfos, err = buildColumns2HandleWithWrtiableColumns(updt.OutputNames(), tblID2Handle, tblID2table)
 	if err != nil {
 		return nil, err
 	}

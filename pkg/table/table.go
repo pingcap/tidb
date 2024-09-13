@@ -216,7 +216,7 @@ type UpdateRecordOption interface {
 
 // RemoveRecordOpt contains the options will be used when removing a record.
 type RemoveRecordOpt struct {
-	indexesLayoutOffset map[int64]IndexRowLayoutOption
+	indexesLayoutOffset IndexesLayout
 }
 
 // HasIndexesLayout returns whether the RemoveRecordOpt has indexes layout.
@@ -248,6 +248,7 @@ type RemoveRecordOption interface {
 type IndexRowLayoutOption []int
 
 // IndexesLayout is used to specify the layout of the indexes.
+// It's mapping from index ID to the layout of the index.
 type IndexesLayout map[int64]IndexRowLayoutOption
 
 func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {

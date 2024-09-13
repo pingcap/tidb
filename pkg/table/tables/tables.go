@@ -1172,6 +1172,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, 
 	opt := table.NewRemoveRecordOpt(opts...)
 	return t.removeRecord(ctx, txn, h, r, opt)
 }
+
 func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opt *table.RemoveRecordOpt) error {
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
@@ -1383,7 +1384,7 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 		if opt.HasIndexesLayout() {
 			vals, err = fetchIndexRow(v.Meta(), rec, nil, opt.GetIndexLayout(v.Meta().ID))
 		} else {
-			vals, err = v.FetchValues(rec, nil)
+			vals, err = fetchIndexRow(v.Meta(), rec, nil, nil)
 		}
 		if err != nil {
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
