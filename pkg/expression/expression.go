@@ -262,7 +262,7 @@ type Expression interface {
 
 	StringerWithCtx
 
-	StringerWithCtxForImport
+	StringifyWithoutTruncate
 }
 
 // CNFExprs stands for a CNF expression.

@@ -150,8 +150,8 @@ func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
 	return buffer.String()
 }
 
-// StringWithCtxForImport implements Expression interface.
-func (sf *ScalarFunction) StringWithCtxForImport(ctx ParamValues, redact string) string {
+// StringifyWithoutTruncate implements Expression interface.
+func (sf *ScalarFunction) StringifyWithoutTruncate(ctx ParamValues, redact string) string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
 	switch sf.FuncName.L {

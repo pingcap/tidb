@@ -816,7 +816,7 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	}
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			val := opt.Value.StringWithCtxForImport(evalCtx, errors.RedactLogDisable)
+			val := opt.Value.StringifyWithoutTruncate(evalCtx, errors.RedactLogDisable)
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
