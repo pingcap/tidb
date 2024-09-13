@@ -237,7 +237,7 @@ func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 	//              infoschema 54
 	//              infoschema 55
 	//              infoschema 56
-	//     After Insert()
+	//     After Upsert()
 	//              infoschema 56
 	//     Then load historial snapshot version 51
 	//              infoschema 51
