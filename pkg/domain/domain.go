@@ -2384,10 +2384,8 @@ func (do *Domain) enableStatsOwner() error {
 // disableStatsOwner disable this node to execute stats owner.
 // We should make sure that before invoking disableStatsOwner(), stats owner is ENABLE.
 func (do *Domain) disableStatsOwner() error {
-	if do.statsOwner.IsOwner() {
-		// disable campaign by interrupting campaignLoop
-		do.statsOwner.CampaignCancel()
-	}
+	// disable campaign by interrupting campaignLoop
+	do.statsOwner.CampaignCancel()
 	return nil
 }
 
