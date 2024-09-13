@@ -150,6 +150,29 @@ func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
 	return buffer.String()
 }
 
+// StringWithCtxForImport implements Expression interface.
+func (sf *ScalarFunction) StringWithCtxForImport(ctx ParamValues, redact string) string {
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
+	switch sf.FuncName.L {
+	case ast.Cast:
+		for _, arg := range sf.GetArgs() {
+			buffer.WriteString(arg.StringWithCtx(ctx, redact))
+			buffer.WriteString(", ")
+			buffer.WriteString(sf.RetType.String())
+		}
+	default:
+		for i, arg := range sf.GetArgs() {
+			buffer.WriteString(arg.StringWithCtx(ctx, redact))
+			if i+1 != len(sf.GetArgs()) {
+				buffer.WriteString(", ")
+			}
+		}
+	}
+	buffer.WriteString(")")
+	return buffer.String()
+}
+
 // String returns the string representation of the function
 func (sf *ScalarFunction) String() string {
 	return sf.StringWithCtx(exprctx.EmptyParamValues, errors.RedactLogDisable)

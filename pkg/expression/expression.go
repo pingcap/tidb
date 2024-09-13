@@ -261,6 +261,8 @@ type Expression interface {
 	MemoryUsage() int64
 
 	StringerWithCtx
+
+	StringerWithCtxForImport
 }
 
 // CNFExprs stands for a CNF expression.
