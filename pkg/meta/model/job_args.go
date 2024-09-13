@@ -368,23 +368,24 @@ func decodeModifyColumnArgs(job *Job, argsOfFinished bool) (*ModifyColumnArgs, e
 				IndexIDs:     indexIDs,
 				PartitionIDs: partitionIDs,
 			}, nil
-		} else {
-			err := job.DecodeArgs(&modifyInfo.NewCol, &modifyInfo.OldColName, &modifyInfo.Pos,
-				&modifyInfo.ModifyColumnTp, &modifyInfo.UpdatedAutoRandomBits,
-				&modifyInfo.ChangingCol, &modifyInfo.ChangingIdxs, &modifyInfo.RemovedIdxs)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			// cache the args after decode.
-			job.Args = []any{&modifyInfo.NewCol, modifyInfo.OldColName, modifyInfo.Pos,
-				modifyInfo.ModifyColumnTp, modifyInfo.UpdatedAutoRandomBits,
-				modifyInfo.ChangingCol, modifyInfo.ChangingIdxs, modifyInfo.RemovedIdxs}
-
-			return &ModifyColumnArgs{
-				ModifyingColInfo: &modifyInfo,
-			}, nil
 		}
+
+		// if argsOfFinished is false.
+		err := job.DecodeArgs(&modifyInfo.NewCol, &modifyInfo.OldColName, &modifyInfo.Pos,
+			&modifyInfo.ModifyColumnTp, &modifyInfo.UpdatedAutoRandomBits,
+			&modifyInfo.ChangingCol, &modifyInfo.ChangingIdxs, &modifyInfo.RemovedIdxs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		// cache the args after decode.
+		job.Args = []any{&modifyInfo.NewCol, modifyInfo.OldColName, modifyInfo.Pos,
+			modifyInfo.ModifyColumnTp, modifyInfo.UpdatedAutoRandomBits,
+			modifyInfo.ChangingCol, modifyInfo.ChangingIdxs, modifyInfo.RemovedIdxs}
+
+		return &ModifyColumnArgs{
+			ModifyingColInfo: &modifyInfo,
+		}, nil
 	}
 
 	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
