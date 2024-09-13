@@ -504,9 +504,7 @@ func TestBuildExpression(t *testing.T) {
 	require.Equal(t, types.KindInt64, v.Kind())
 	require.Equal(t, int64(7), v.GetInt64())
 
-	// user variable needs required option
-	_, err = buildExpr(t, ctx, "@a")
-	require.EqualError(t, err, "rewriting user variable requires 'OptPropSessionVars' in evalCtx")
+	// user variable write needs required option
 	_, err = buildExpr(t, ctx, "@a := 1")
 	require.EqualError(t, err, "rewriting user variable requires 'OptPropSessionVars' in evalCtx")
 
@@ -514,9 +512,7 @@ func TestBuildExpression(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
 	vars.TimeZone = evalCtx.Location()
 	vars.StmtCtx.SetTimeZone(vars.Location())
-	evalCtx = evalCtx.Apply(contextstatic.WithOptionalProperty(
-		contextopt.NewSessionVarsProvider(vars),
-	))
+	evalCtx = evalCtx.Apply(contextstatic.WithUserVarsReader(vars.GetSessionVars().UserVars))
 	ctx = ctx.Apply(contextstatic.WithEvalCtx(evalCtx))
 	vars.SetUserVarVal("a", types.NewStringDatum("abc"))
 	getVarExpr, err := buildExpr(t, ctx, "@a")
@@ -527,6 +523,8 @@ func TestBuildExpression(t *testing.T) {
 	require.Equal(t, "abc", v.GetString())
 
 	// writing user var
+	evalCtx = evalCtx.Apply(contextstatic.WithOptionalProperty(contextopt.NewSessionVarsProvider(vars)))
+	ctx = ctx.Apply(contextstatic.WithEvalCtx(evalCtx))
 	expr, err = buildExpr(t, ctx, "@a := 'def'")
 	require.NoError(t, err)
 	v, err = expr.Eval(evalCtx, chunk.Row{})

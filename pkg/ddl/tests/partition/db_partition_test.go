@@ -2549,11 +2549,11 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	require.Equal(t, "drop schema", row.GetString(3))
 	jobID := row.GetInt64(0)
 
-	var tableIDs []int64
 	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, err)
-	err = historyJob.DecodeArgs(&tableIDs)
+	args, err := model.GetFinishedDropSchemaArgs(historyJob)
 	require.NoError(t, err)
+	tableIDs := args.AllDroppedTableIDs
 	// There is 2 partitions.
 	require.Equal(t, 3, len(tableIDs))
 

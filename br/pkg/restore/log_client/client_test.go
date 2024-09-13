@@ -25,16 +25,22 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/keepalive"
@@ -1341,46 +1347,161 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	}
 }
 
-type fakeStorage struct {
-	storage.ExternalStorage
+type fakeSession struct {
+	glue.Session
 }
 
-func (fs fakeStorage) FileExists(ctx context.Context, name string) (bool, error) {
-	return false, errors.Errorf("name: %s", name)
+func (fs fakeSession) GetSessionCtx() sessionctx.Context {
+	return fakeSessionContext{}
 }
 
-type fakeStorageOK struct {
-	storage.ExternalStorage
+type fakeSessionContext struct {
+	sessionctx.Context
 }
 
-func (fs fakeStorageOK) FileExists(ctx context.Context, name string) (bool, error) {
-	return false, nil
+func (fsc fakeSessionContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return fakeSQLExecutor{}
+}
+
+type fakeSQLExecutor struct {
+	sqlexec.RestrictedSQLExecutor
+}
+
+func (fse fakeSQLExecutor) ExecRestrictedSQL(_ context.Context, _ []sqlexec.OptionFuncAlias, query string, args ...any) ([]chunk.Row, []*resolve.ResultField, error) {
+	return nil, nil, errors.Errorf("name: %s, %v", query, args)
 }
 
 func TestInitSchemasReplaceForDDL(t *testing.T) {
 	ctx := context.Background()
 
 	{
-		client := logclient.TEST_NewLogClient(123, 1, 2, fakeStorage{}, domain.NewMockDomain())
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		cfg := &logclient.InitSchemaConfig{IsNewTask: false}
 		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to check filename:pitr_id_maps/pitr_id_map.cluster_id:123.restored_ts:2")
+		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [2, 1]", err.Error())
 	}
 
 	{
-		client := logclient.TEST_NewLogClient(123, 1, 2, fakeStorage{}, domain.NewMockDomain())
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
 		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "failed to check filename:pitr_id_maps/pitr_id_map.cluster_id:123.restored_ts:1")
+		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [1, 1]", err.Error())
 	}
 
 	{
-		client := logclient.TEST_NewLogClient(123, 1, 2, fakeStorageOK{}, domain.NewMockDomain())
+		s := utiltest.CreateRestoreSchemaSuite(t)
+		tk := testkit.NewTestKit(t, s.Mock.Storage)
+		tk.Exec(session.CreatePITRIDMap)
+		g := gluetidb.New()
+		se, err := g.CreateSession(s.Mock.Storage)
+		require.NoError(t, err)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), se)
 		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
-		_, err := client.InitSchemasReplaceForDDL(ctx, cfg)
+		_, err = client.InitSchemasReplaceForDDL(ctx, cfg)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "miss upstream table information at `start-ts`(1) but the full backup path is not specified")
+	}
+}
+
+func downstreamID(upstreamID int64) int64 {
+	return upstreamID + 10000000
+}
+
+func emptyDB(startupID, endupID int64, replaces map[int64]*stream.DBReplace) {
+	for id := startupID; id < endupID; id += 1 {
+		replaces[id] = &stream.DBReplace{
+			Name: fmt.Sprintf("db_%d", id),
+			DbID: downstreamID(id),
+		}
+	}
+}
+
+func emptyTables(dbupID, startupID, endupID int64, replaces map[int64]*stream.DBReplace) {
+	tableMap := make(map[int64]*stream.TableReplace)
+	for id := startupID; id < endupID; id += 1 {
+		tableMap[id] = &stream.TableReplace{
+			Name:    fmt.Sprintf("table_%d", id),
+			TableID: downstreamID(id),
+		}
+	}
+	replaces[dbupID] = &stream.DBReplace{
+		Name:     fmt.Sprintf("db_%d", dbupID),
+		DbID:     downstreamID(dbupID),
+		TableMap: tableMap,
+	}
+}
+
+func partitions(dbupID, tableupID, startupID, endupID int64, replaces map[int64]*stream.DBReplace) {
+	partitionMap := make(map[int64]int64)
+	for id := startupID; id < endupID; id += 1 {
+		partitionMap[id] = downstreamID(id)
+	}
+	replaces[dbupID] = &stream.DBReplace{
+		Name: fmt.Sprintf("db_%d", dbupID),
+		DbID: downstreamID(dbupID),
+		TableMap: map[int64]*stream.TableReplace{
+			tableupID: {
+				Name:         fmt.Sprintf("table_%d", tableupID),
+				TableID:      downstreamID(tableupID),
+				PartitionMap: partitionMap,
+			},
+		},
+	}
+}
+
+func getDBMap() map[int64]*stream.DBReplace {
+	replaces := make(map[int64]*stream.DBReplace)
+	emptyDB(1, 3000, replaces)
+	emptyTables(3000, 3001, 8000, replaces)
+	partitions(8000, 8001, 8002, 12000, replaces)
+	emptyTables(12000, 12001, 30000, replaces)
+	return replaces
+}
+
+func TestPITRIDMap(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.Exec(session.CreatePITRIDMap)
+	g := gluetidb.New()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 3, nil, se)
+	baseSchemaReplaces := &stream.SchemasReplace{
+		DbMap: getDBMap(),
+	}
+	err = client.TEST_saveIDMap(ctx, baseSchemaReplaces)
+	require.NoError(t, err)
+	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1)
+	require.NoError(t, err)
+	require.Nil(t, newSchemaReplaces)
+	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, nil, se)
+	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2)
+	require.NoError(t, err)
+	require.Nil(t, newSchemaReplaces)
+	newSchemaReplaces, err = client.TEST_initSchemasMap(ctx, 2)
+	require.NoError(t, err)
+
+	require.Equal(t, len(baseSchemaReplaces.DbMap), len(newSchemaReplaces))
+	for _, dbMap := range newSchemaReplaces {
+		baseDbMap := baseSchemaReplaces.DbMap[dbMap.IdMap.UpstreamId]
+		require.NotNil(t, baseDbMap)
+		require.Equal(t, baseDbMap.DbID, dbMap.IdMap.DownstreamId)
+		require.Equal(t, baseDbMap.Name, dbMap.Name)
+		require.Equal(t, len(baseDbMap.TableMap), len(dbMap.Tables))
+		for _, tableMap := range dbMap.Tables {
+			baseTableMap := baseDbMap.TableMap[tableMap.IdMap.UpstreamId]
+			require.NotNil(t, baseTableMap)
+			require.Equal(t, baseTableMap.TableID, tableMap.IdMap.DownstreamId)
+			require.Equal(t, baseTableMap.Name, tableMap.Name)
+			require.Equal(t, len(baseTableMap.PartitionMap), len(tableMap.Partitions))
+			for _, partitionMap := range tableMap.Partitions {
+				basePartitionMap, exist := baseTableMap.PartitionMap[partitionMap.UpstreamId]
+				require.True(t, exist)
+				require.Equal(t, basePartitionMap, partitionMap.DownstreamId)
+			}
+		}
 	}
 }

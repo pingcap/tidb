@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -40,7 +41,6 @@ import (
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -181,11 +181,8 @@ func onCreateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-	createTableEvent := statsutil.NewCreateTableEvent(
-		job.SchemaID,
-		tbInfo,
-	)
-	asyncNotifyEvent(jobCtx, createTableEvent)
+	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
+	asyncNotifyEvent(jobCtx, createTableEvent, job)
 	return ver, errors.Trace(err)
 }
 
@@ -213,11 +210,8 @@ func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Meta, job *model.Job
 			return ver, errors.Trace(err)
 		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		createTableEvent := statsutil.NewCreateTableEvent(
-			job.SchemaID,
-			tbInfo,
-		)
-		asyncNotifyEvent(jobCtx, createTableEvent)
+		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
+		asyncNotifyEvent(jobCtx, createTableEvent, job)
 		return ver, nil
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
@@ -270,13 +264,9 @@ func onCreateTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, er
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
 	job.BinlogInfo.SetTableInfos(ver, args)
-
 	for i := range args {
-		createTableEvent := statsutil.NewCreateTableEvent(
-			job.SchemaID,
-			args[i],
-		)
-		asyncNotifyEvent(jobCtx, createTableEvent)
+		createTableEvent := notifier.NewCreateTableEvent(args[i])
+		asyncNotifyEvent(jobCtx, createTableEvent, job)
 	}
 
 	return ver, errors.Trace(err)

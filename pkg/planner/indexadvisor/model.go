@@ -26,7 +26,6 @@ type Query struct { // DQL or DML
 	SchemaName string
 	Text       string
 	Frequency  int
-	CostPerMon float64
 }
 
 // Key returns the key of the Query.
@@ -134,4 +133,27 @@ func (c IndexSetCost) Less(other IndexSetCost) bool {
 
 	// to make the result stable.
 	return c.IndexKeysStr < other.IndexKeysStr
+}
+
+// ImpactedQuery represents the impacted query.
+type ImpactedQuery struct {
+	Query       string
+	Improvement float64
+}
+
+// WorkloadImpact represents the workload impact.
+type WorkloadImpact struct {
+	WorkloadImprovement float64
+}
+
+// Recommendation represents the result of the index advisor.
+type Recommendation struct {
+	Database           string
+	Table              string
+	IndexName          string
+	IndexColumns       []string
+	IndexSize          uint64
+	Reason             string
+	WorkloadImpact     *WorkloadImpact
+	TopImpactedQueries []*ImpactedQuery
 }

@@ -258,6 +258,7 @@ type RestoreConfig struct {
 	checkpointSnapshotRestoreTaskName string `json:"-" toml:"-"`
 	checkpointLogRestoreTaskName      string `json:"-" toml:"-"`
 	checkpointTaskInfoClusterID       uint64 `json:"-" toml:"-"`
+	upstreamClusterID                 uint64 `json:"-" toml:"-"`
 	WaitTiflashReady                  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
 	// for ebs-based restore

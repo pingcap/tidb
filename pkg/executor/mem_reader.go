@@ -39,7 +39,6 @@ import (
 )
 
 type memReader interface {
-	getMemRows(ctx context.Context) ([][]types.Datum, error)
 	getMemRowsHandle() ([]kv.Handle, error)
 }
 
@@ -676,6 +675,7 @@ type memIndexLookUpReader struct {
 	table         table.Table
 	conditions    []expression.Expression
 	retFieldTypes []*types.FieldType
+	schema        *expression.Schema
 
 	idxReader *memIndexReader
 
@@ -713,6 +713,7 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 		table:         idxLookUpReader.table,
 		conditions:    us.conditions,
 		retFieldTypes: exec.RetTypes(us),
+		schema:        us.Schema(),
 		idxReader:     memIdxReader,
 
 		partitionMode:     idxLookUpReader.partitionTableMode,
@@ -726,17 +727,6 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 }
 
 func (m *memIndexLookUpReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
-	data, err := m.getMemRows(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &defaultRowsIter{data: data}, nil
-}
-
-func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
-	r, ctx := tracing.StartRegionEx(ctx, "memIndexLookUpReader.getMemRows")
-	defer r.End()
-
 	kvRanges := [][]kv.KeyRange{m.idxReader.kvRanges}
 	tbls := []table.Table{m.table}
 	if m.partitionMode {
@@ -763,13 +753,14 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 		tblKVRanges = append(tblKVRanges, ranges...)
 	}
 	if numHandles == 0 {
-		return nil, nil
+		return &defaultRowsIter{}, nil
 	}
 
 	if m.desc {
 		slices.Reverse(tblKVRanges)
 	}
 
+	cd := NewRowDecoder(m.ctx, m.schema, m.table.Meta())
 	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.ctx, m.table, m.columns)
 	memTblReader := &memTableReader{
 		ctx:           m.ctx,
@@ -784,13 +775,14 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 		buffer: allocBuf{
 			handleBytes: make([]byte, 0, 16),
 			rd:          rd,
+			cd:          cd,
 		},
 		cacheTable:  m.cacheTable,
 		keepOrder:   m.keepOrder,
 		compareExec: m.compareExec,
 	}
 
-	return memTblReader.getMemRows(ctx)
+	return memTblReader.getMemRowsIter(ctx)
 }
 
 func (*memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
