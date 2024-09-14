@@ -15,8 +15,13 @@
 package model
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -155,5 +160,238 @@ func TestTruncateTableArgs(t *testing.T) {
 		args, err := GetFinishedTruncateTableArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, []int64{5, 6}, args.OldPartitionIDs)
+	}
+}
+
+func TestDecodeAddIndexArgsCompatibility(t *testing.T) {
+	cases := []struct {
+		raw                     json.RawMessage
+		uniques                 []bool
+		indexNames              []pmodel.CIStr
+		indexPartSpecifications [][]*ast.IndexPartSpecification
+		indexOptions            []*ast.IndexOption
+		hiddenCols              [][]*ColumnInfo
+	}{
+		{
+			raw: json.RawMessage(`[
+true,
+{"O":"t","L":"t"},
+[
+	{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"a","L":"a"}},"Length":-1,"Desc":false,"Expr":null},
+	{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"b","L":"b"}},"Length":-1,"Desc":false,"Expr":null}
+],
+null,
+[],
+false]`),
+			uniques: []bool{true},
+			indexNames: []pmodel.CIStr{
+				{O: "t", L: "t"},
+			},
+			indexPartSpecifications: [][]*ast.IndexPartSpecification{
+				{
+					{
+						Column: &ast.ColumnName{
+							Schema: pmodel.CIStr{O: "", L: ""},
+							Table:  pmodel.CIStr{O: "", L: ""},
+							Name:   pmodel.CIStr{O: "a", L: "a"},
+						},
+						Length: -1,
+						Desc:   false,
+						Expr:   nil,
+					},
+					{
+						Column: &ast.ColumnName{
+							Schema: pmodel.CIStr{O: "", L: ""},
+							Table:  pmodel.CIStr{O: "", L: ""},
+							Name:   pmodel.CIStr{O: "b", L: "b"},
+						},
+						Length: -1,
+						Desc:   false,
+						Expr:   nil,
+					},
+				},
+			},
+			indexOptions: []*ast.IndexOption{nil},
+			hiddenCols:   [][]*ColumnInfo{{}},
+		},
+		{
+			raw: json.RawMessage(`[
+[false,true],
+[{"O":"t","L":"t"},{"O":"t1","L":"t1"}],
+[
+	[
+		{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"a","L":"a"}},"Length":-1,"Desc":false,"Expr":null},
+		{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"b","L":"b"}},"Length":-1,"Desc":false,"Expr":null}
+	],
+	[
+		{"Column":{"Schema":{"O":"","L":""},"Table":{"O":"","L":""},"Name":{"O":"a","L":"a"}},"Length":-1,"Desc":false,"Expr":null}
+	]
+],
+[null,null],
+[[],[]],
+[false,false]]`),
+			uniques: []bool{false, true},
+			indexNames: []pmodel.CIStr{
+				{O: "t", L: "t"}, {O: "t1", L: "t1"},
+			},
+			indexPartSpecifications: [][]*ast.IndexPartSpecification{
+				{
+					{
+						Column: &ast.ColumnName{
+							Schema: pmodel.CIStr{O: "", L: ""},
+							Table:  pmodel.CIStr{O: "", L: ""},
+							Name:   pmodel.CIStr{O: "a", L: "a"},
+						},
+						Length: -1,
+						Desc:   false,
+						Expr:   nil,
+					},
+					{
+						Column: &ast.ColumnName{
+							Schema: pmodel.CIStr{O: "", L: ""},
+							Table:  pmodel.CIStr{O: "", L: ""},
+							Name:   pmodel.CIStr{O: "b", L: "b"},
+						},
+						Length: -1,
+						Desc:   false,
+						Expr:   nil,
+					},
+				},
+				{
+					{
+						Column: &ast.ColumnName{
+							Schema: pmodel.CIStr{O: "", L: ""},
+							Table:  pmodel.CIStr{O: "", L: ""},
+							Name:   pmodel.CIStr{O: "a", L: "a"},
+						},
+						Length: -1,
+						Desc:   false,
+						Expr:   nil,
+					},
+				},
+			},
+			indexOptions: []*ast.IndexOption{nil, nil},
+			hiddenCols:   [][]*ColumnInfo{{}, {}},
+		},
+	}
+
+	for _, c := range cases {
+		job := &Job{
+			Version: JobVersion1,
+			Type:    ActionAddIndex,
+			RawArgs: c.raw,
+		}
+
+		args, err := getAddIndexArgs(job)
+		require.NoError(t, err)
+		for i, a := range args.IndexArgs {
+			require.Equal(t, c.uniques[i], a.Unique)
+			require.Equal(t, c.indexNames[i], a.IndexName)
+			require.Equal(t, c.indexPartSpecifications[i], a.IndexPartSpecifications)
+			require.Equal(t, c.indexOptions[i], a.IndexOption)
+			require.Equal(t, c.hiddenCols[i], a.HiddenCols)
+		}
+	}
+}
+
+func TestAddIndexArgs(t *testing.T) {
+	inArgs := &AddIndexArgs{
+		IndexArgs: []*IndexArg{{
+			Global:                  false,
+			Unique:                  true,
+			IndexName:               model.NewCIStr("idx1"),
+			IndexPartSpecifications: []*ast.IndexPartSpecification{},
+			IndexOption:             &ast.IndexOption{},
+			HiddenCols:              []*ColumnInfo{{}, {}},
+			SQLMode:                 mysql.ModeANSI,
+			Warning:                 "test warning",
+			AddIndexID:              1,
+			IfExist:                 false,
+			IsGlobal:                false,
+		}},
+		PartitionIDs: []int64{100, 101, 102},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IsPK = false
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddIndex)))
+
+		args, err := GetAddIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].Global, a.Global)
+		require.Equal(t, inArgs.IndexArgs[0].Unique, a.Unique)
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IsFinishedArg = true
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionAddIndex)))
+
+		args, err := GetFinishedAddIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].AddIndexID, a.AddIndexID)
+		require.Equal(t, inArgs.IndexArgs[0].IfExist, a.IfExist)
+		require.Equal(t, inArgs.IndexArgs[0].IsGlobal, a.IsGlobal)
+		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IsPK = true
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddPrimaryKey)))
+
+		args, err := getAddPrimaryKeyArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].Global, a.Global)
+		require.Equal(t, inArgs.IndexArgs[0].Unique, a.Unique)
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].SQLMode, a.SQLMode)
+		require.Equal(t, inArgs.IndexArgs[0].Warning, a.Warning)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IsFinishedArg = true
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionAddIndex)))
+
+		args, err := GetFinishedAddIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].AddIndexID, a.AddIndexID)
+		require.Equal(t, inArgs.IndexArgs[0].IfExist, a.IfExist)
+		require.Equal(t, inArgs.IndexArgs[0].IsGlobal, a.IsGlobal)
+		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
+	}
+}
+
+func TestDropIndex(t *testing.T) {
+	inArgs := &DropIndexArgs{
+		IndexNames:   []model.CIStr{model.NewCIStr("i1"), model.NewCIStr("i2")},
+		IfExists:     []bool{false, false},
+		IndexIDs:     []int64{1, 2, 3},
+		PartitionIDs: []int64{100, 101, 102, 103},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropIndex)))
+		args, err := GetDropIndexArgs(j2)
+		require.NoError(t, err)
+		require.EqualValues(t, inArgs.IndexNames, args.IndexNames)
+		require.EqualValues(t, inArgs.IfExists, args.IfExists)
+		require.EqualValues(t, inArgs.IndexIDs, args.IndexIDs)
+		require.EqualValues(t, inArgs.PartitionIDs, args.PartitionIDs)
 	}
 }

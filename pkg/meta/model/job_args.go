@@ -281,7 +281,7 @@ func (a *DropIndexArgs) fillJob(job *Job) {
 		// 1. For drop index, the first and second args are CIStr and bool.
 		// 2. For rollback add index, these args could be slices.
 		if len(a.IndexNames) == 1 {
-			job.Args = []any{a.IndexNames[0], a.IfExists[0], a.IndexIDs[0], a.PartitionIDs}
+			job.Args = []any{a.IndexNames[0], a.IfExists[0], a.IndexIDs, a.PartitionIDs}
 		} else {
 			job.Args = []any{a.IndexNames, a.IfExists, a.IndexIDs, a.PartitionIDs}
 		}
@@ -294,17 +294,30 @@ func (a *DropIndexArgs) fillJob(job *Job) {
 // It's used for both drop index and rollback add index.
 func GetDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 	if job.Version == JobVersion1 {
+		// A temp workaround
+		if len(job.Args) > 0 && len(job.RawArgs) == 0 {
+			b, err := json.Marshal(job.Args)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			job.RawArgs = b
+		}
+
 		indexNames := make([]pmodel.CIStr, 1)
 		ifExists := make([]bool, 1)
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
 
+		var rawArgs []json.RawMessage
+		if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		// idxNames can be slice or single CIStr
-		if err := job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs); err != nil {
-			if err = job.DecodeArgs(&indexNames, &ifExists, &indexIDs, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs, &partitionIDs); err != nil {
+			if err = job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs, &partitionIDs); err != nil {
 				return nil, errors.Trace(err)
 			}
-
 		}
 
 		return &DropIndexArgs{
@@ -326,18 +339,18 @@ type IndexArg struct {
 	Global                  bool                          `json:"global,omitempty"`
 	Unique                  bool                          `json:"unique,omitempty"`
 	IndexName               pmodel.CIStr                  `json:"index_name,omitempty"`
-	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications,omitempty"`
+	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications"`
 	IndexOption             *ast.IndexOption              `json:"index_option,omitempty"`
-	HiddenCols              []*ColumnInfo                 `json:"hidden_cols,omitempty"`
+	HiddenCols              []*ColumnInfo                 `json:"hidden_cols"`
 
 	// For PK
 	SQLMode mysql.SQLMode `json:"sql_mode,omitempty"`
 	Warning string        `json:"warnings,omitempty"`
 
-	// context vars, IfExist will be used in onDropIndex.
-	AddIndexID int64 `json:"-"`
-	IfExist    bool  `json:"-"`
-	IsGlobal   bool  `json:"-"`
+	// IfExist will be used in onDropIndex.
+	AddIndexID int64 `json:"add_index_id,omitempty"`
+	IfExist    bool  `json:"if_exist,omitempty"`
+	IsGlobal   bool  `json:"is_global,omitempty"`
 }
 
 // AddIndexArgs is the argument for add index.
@@ -345,7 +358,7 @@ type AddIndexArgs struct {
 	IndexArgs []*IndexArg `json:"index_args,omitempty"`
 
 	// PartitionIDs will be used in onDropIndex.
-	PartitionIDs []int64 `json:"-"`
+	PartitionIDs []int64 `json:"partition_ids"`
 
 	// Since most of the argument processing logic of PK and index is same,
 	// We use this variable to distinguish them.
@@ -395,12 +408,12 @@ func (a *AddIndexArgs) MergeIndexArg(Args []any, jobVersion JobVersion) {
 	var indexArg *IndexArg
 	if jobVersion == JobVersion1 {
 		indexArg = &IndexArg{
-			Unique:                  Args[0].(bool),
-			IndexName:               Args[1].(pmodel.CIStr),
-			IndexPartSpecifications: Args[2].([]*ast.IndexPartSpecification),
-			IndexOption:             Args[3].(*ast.IndexOption),
-			HiddenCols:              Args[4].([]*ColumnInfo),
-			Global:                  Args[5].(bool),
+			Unique:                  *Args[0].(*bool),
+			IndexName:               *Args[1].(*pmodel.CIStr),
+			IndexPartSpecifications: *Args[2].(*[]*ast.IndexPartSpecification),
+			IndexOption:             *Args[3].(**ast.IndexOption),
+			HiddenCols:              *Args[4].(*[]*ColumnInfo),
+			Global:                  *Args[5].(*bool),
 		}
 	} else {
 		indexArg = Args[0].(*AddIndexArgs).IndexArgs[0]
@@ -464,15 +477,15 @@ func GetAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 // GetFinishedAddIndexArgs gets the add index args after the job is finished.
 func GetFinishedAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 	if job.Version == JobVersion1 {
-		var (
-			addIndexIDs  []int64
-			ifExists     []bool
-			isGlobals    []bool
-			partitionIDs []int64
-		)
-		err := job.DecodeArgs(&addIndexIDs, &ifExists, &partitionIDs, &isGlobals)
-		if err != nil {
-			return nil, errors.Trace(err)
+		addIndexIDs := make([]int64, 1)
+		ifExists := make([]bool, 1)
+		isGlobals := make([]bool, 1)
+		var partitionIDs []int64
+
+		if err := job.DecodeArgs(&addIndexIDs[0], &ifExists[0], &partitionIDs, &isGlobals[0]); err != nil {
+			if err = job.DecodeArgs(&addIndexIDs, &ifExists, &partitionIDs, &isGlobals); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		a := &AddIndexArgs{PartitionIDs: partitionIDs, IsFinishedArg: true}
 		for i, addIndexID := range addIndexIDs {
@@ -497,6 +510,16 @@ func GetFinishedAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 
 func getAddPrimaryKeyArgs(job *Job) (*AddIndexArgs, error) {
 	intest.Assert(job.Version == JobVersion1, "job version is not v1")
+
+	// A temp workaround
+	if len(job.Args) > 0 && len(job.RawArgs) == 0 {
+		b, err := json.Marshal(job.Args)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		job.RawArgs = b
+	}
+
 	var (
 		unique                  bool
 		indexName               model.CIStr
@@ -528,6 +551,16 @@ func getAddPrimaryKeyArgs(job *Job) (*AddIndexArgs, error) {
 
 func getAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 	intest.Assert(job.Version == JobVersion1, "job version is not v1")
+
+	// A temp workaround
+	if len(job.Args) > 0 && len(job.RawArgs) == 0 {
+		b, err := json.Marshal(job.Args)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		job.RawArgs = b
+	}
+
 	uniques := make([]bool, 1)
 	indexNames := make([]model.CIStr, 1)
 	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)

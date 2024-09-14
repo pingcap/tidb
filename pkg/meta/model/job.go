@@ -524,11 +524,10 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 			// TODO remember update sub-jobs' RawArgs when we do it.
 			if job.MultiSchemaInfo != nil {
 				for _, sub := range job.MultiSchemaInfo.SubJobs {
-					var arg any
-					if len(sub.Args) > 0 {
-						arg = sub.Args[0]
+					if len(sub.Args) == 0 {
+						continue
 					}
-					sub.RawArgs, err = json.Marshal(arg)
+					sub.RawArgs, err = json.Marshal(sub.Args[0])
 					if err != nil {
 						return nil, errors.Trace(err)
 					}

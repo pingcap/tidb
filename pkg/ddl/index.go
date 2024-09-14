@@ -1145,10 +1145,11 @@ func onDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _
 			// Assign partitionIDs empty to guarantee correct prefix in insertJobIntoDeleteRangeTable.
 			// TODO(joechenrh): remove these codes after totally switched to V2
 			if job.Version == model.JobVersion1 {
+				job.Args[2] = []int64{indexIDs[0]}
 				if allIndexInfos[0].Global {
-					job.Args = append(job.Args, indexIDs[0], []int64{})
+					job.Args[3] = []int64{}
 				} else {
-					job.Args = append(job.Args, indexIDs[0], getPartitionIDs(tblInfo))
+					job.Args[3] = getPartitionIDs(tblInfo)
 				}
 			} else {
 				args := job.Args[0].(*model.DropIndexArgs)
