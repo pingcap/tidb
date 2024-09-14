@@ -221,7 +221,7 @@ func (h *hashJoinSpillHelper) isSpillNeeded() bool {
 	return h.spillStatus == needSpill
 }
 
-func (h *hashJoinSpillHelper) isSpillTriggeredNoLock() bool {
+func (h *hashJoinSpillHelper) isSpillTriggered() bool {
 	return h.spillTriggered
 }
 

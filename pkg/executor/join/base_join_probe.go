@@ -75,6 +75,8 @@ type ProbeV2 interface {
 	GetProbeCollision() uint64
 	// Reset probe collsion
 	ResetProbeCollision()
+	// Reset probe status
+	ResetProbeStatus()
 }
 
 type offsetAndLength struct {
@@ -240,7 +242,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 
 	// Not all sqls need spill, so we initialize it at runtime, or there will be too many unnecessary memory allocations
 	// spillTriggered can only be set in build stage, so it's ok to get it without lock
-	if j.ctx.spillHelper.isSpillTriggeredNoLock() && len(j.spillTmpChk) != int(j.ctx.partitionNumber) {
+	if j.ctx.spillHelper.isSpillTriggered() && len(j.spillTmpChk) != int(j.ctx.partitionNumber) {
 		for i := 0; i < int(j.ctx.partitionNumber); i++ {
 			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkWithCapacity(j.probeSpillChkFieldTypes, spillChunkSize))
 		}
@@ -421,6 +423,9 @@ func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
 		j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: j.usedRows[j.currentProbeRow], length: j.matchedRowsForCurrentProbeRow})
 	}
 	j.matchedRowsForCurrentProbeRow = 0
+}
+
+func (j *baseJoinProbe) ResetProbeStatus() {
 }
 
 func checkSQLKiller(killer *sqlkiller.SQLKiller, fpName string) error {

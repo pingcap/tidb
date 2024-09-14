@@ -803,7 +803,7 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 				ctx,
 				e.MaxChunkSize(),
 				func() bool { return e.ProbeSideTupleFetcher.hashTableContext.hashTable.isHashTableEmpty() },
-				func() bool { return e.spillHelper.isSpillTriggeredNoLock() },
+				func() bool { return e.spillHelper.isSpillTriggered() },
 				e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty,
 				e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone,
 				e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize(),
@@ -1042,6 +1042,7 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 	for {
 		e.spillHelper.setCanSpillFlag(true)
 		e.buildFinished = make(chan error, 1)
+		e.resetProbeStatus()
 
 		e.fetchAndBuildHashTable(ctx)
 		e.fetchAndProbeHashTable(ctx)
@@ -1072,6 +1073,12 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		e.restoredProbeInDisk = restoredPartition.probeSideChunks
 
 		e.inRestore = true
+	}
+}
+
+func (e *HashJoinV2Exec) resetProbeStatus() {
+	for _, probe := range e.ProbeWorkers {
+		probe.JoinProbe.ResetProbeStatus()
 	}
 }
 
@@ -1270,7 +1277,7 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorke
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
 			if e.inRestore {
 				chunkNum := e.getRestoredChunkNum()
-				e.controlPrebuildWorkersForRestore(chunkNum, srcChkCh, waitForController, fetcherAndWorkerSyncer, errCh, doneCh)
+				e.controlWorkersForRestore(chunkNum, srcChkCh, waitForController, fetcherAndWorkerSyncer, errCh, doneCh)
 			} else {
 				fetcher := e.BuildWorkers[0]
 				fetcher.fetchBuildSideRows(ctx, &fetcher.HashJoinCtx.hashJoinCtxBase, fetcherAndWorkerSyncer, e.spillHelper, srcChkCh, errCh, doneCh)
@@ -1294,7 +1301,7 @@ func (e *HashJoinV2Exec) getRestoredChunkNum() int {
 	return chunkNum
 }
 
-func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, errCh chan<- error, doneCh <-chan struct{}) {
+func (e *HashJoinV2Exec) controlWorkersForRestore(chunkNum int, syncCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, errCh chan<- error, doneCh <-chan struct{}) {
 	defer func() {
 		close(syncCh)
 
@@ -1307,7 +1314,7 @@ func (e *HashJoinV2Exec) controlPrebuildWorkersForRestore(chunkNum int, syncCh c
 		fetcherAndWorkerSyncer.Wait()
 
 		// Spill remaining rows
-		if !hasError && e.spillHelper.isSpillTriggeredNoLock() {
+		if !hasError && e.spillHelper.isSpillTriggered() {
 			err := e.spillHelper.spillRemainingRows()
 			if err != nil {
 				errCh <- err

@@ -52,14 +52,14 @@ type hashJoinCtxBase struct {
 	Concurrency  uint
 	joinResultCh chan *hashjoinWorkerResult
 	// closeCh add a lock for closing executor.
-	closeCh              chan struct{}
-	finished             atomic.Bool
-	IsNullEQ             []bool
-	buildFinished        chan error
-	JoinType             logicalop.JoinType
-	IsNullAware          bool
-	memTracker           *memory.Tracker // track memory usage.
-	diskTracker          *disk.Tracker   // track disk usage.
+	closeCh       chan struct{}
+	finished      atomic.Bool
+	IsNullEQ      []bool
+	buildFinished chan error
+	JoinType      logicalop.JoinType
+	IsNullAware   bool
+	memTracker    *memory.Tracker // track memory usage.
+	diskTracker   *disk.Tracker   // track disk usage.
 }
 
 type probeSideTupleFetcherBase struct {
@@ -273,7 +273,7 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 		}
 
 		if fetcherAndWorkerSyncer != nil {
-			if spillHelper.isSpillTriggeredNoLock() {
+			if spillHelper.isSpillTriggered() {
 				// Spill remaining rows
 				fetcherAndWorkerSyncer.Wait()
 				err := spillHelper.spillRemainingRows()
