@@ -113,7 +113,8 @@ func StartCheckpointLogRestoreRunnerForTest(
 	tick time.Duration,
 ) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
-		ctx, newTableCheckpointStorage(se, LogRestoreCheckpointDatabaseName), nil, nil, nil, flushPosition{}, valueMarshalerForLogRestore)
+		ctx, newTableCheckpointStorage(se, LogRestoreCheckpointDatabaseName),
+		nil, nil, nil, flushPosition{}, valueMarshalerForLogRestore)
 
 	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
@@ -124,7 +125,8 @@ func StartCheckpointRunnerForLogRestore(
 	se glue.Session,
 ) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
-		ctx, newTableCheckpointStorage(se, LogRestoreCheckpointDatabaseName), nil, nil, nil, flushPosition{}, valueMarshalerForLogRestore)
+		ctx, newTableCheckpointStorage(se, LogRestoreCheckpointDatabaseName),
+		nil, nil, nil, flushPosition{}, valueMarshalerForLogRestore)
 
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
@@ -196,7 +198,8 @@ func ExistsLogRestoreCheckpointMetadata(
 	ctx context.Context,
 	dom *domain.Domain,
 ) bool {
-	return dom.InfoSchema().TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointMetaTableName))
+	return dom.InfoSchema().
+		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointMetaTableName))
 }
 
 // A progress type for snapshot + log restore.
@@ -255,7 +258,8 @@ func ExistsCheckpointProgress(
 	ctx context.Context,
 	dom *domain.Domain,
 ) bool {
-	return dom.InfoSchema().TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointProgressTableName))
+	return dom.InfoSchema().
+		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointProgressTableName))
 }
 
 // CheckpointTaskInfo is unique information within the same cluster id. It represents the last
@@ -321,7 +325,8 @@ func LoadCheckpointIngestIndexRepairSQLs(
 }
 
 func ExistsCheckpointIngestIndexRepairSQLs(ctx context.Context, dom *domain.Domain) bool {
-	return dom.InfoSchema().TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointIngestTableName))
+	return dom.InfoSchema().
+		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointIngestTableName))
 }
 
 func SaveCheckpointIngestIndexRepairSQLs(

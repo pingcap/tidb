@@ -48,7 +48,8 @@ func StartCheckpointRestoreRunnerForTest(
 	tick time.Duration,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		ctx, newTableCheckpointStorage(se, SnapshotRestoreCheckpointDatabaseName), nil, nil, nil, flushPosition{}, valueMarshalerForRestore)
+		ctx, newTableCheckpointStorage(se, SnapshotRestoreCheckpointDatabaseName),
+		nil, nil, nil, flushPosition{}, valueMarshalerForRestore)
 
 	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
@@ -59,7 +60,8 @@ func StartCheckpointRunnerForRestore(
 	se glue.Session,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		ctx, newTableCheckpointStorage(se, SnapshotRestoreCheckpointDatabaseName), nil, nil, nil, flushPosition{}, valueMarshalerForRestore)
+		ctx, newTableCheckpointStorage(se, SnapshotRestoreCheckpointDatabaseName),
+		nil, nil, nil, flushPosition{}, valueMarshalerForRestore)
 
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
@@ -117,7 +119,8 @@ func SaveCheckpointMetadataForSnapshotRestore(
 	se glue.Session,
 	meta *CheckpointMetadataForSnapshotRestore,
 ) error {
-	err := initCheckpointTable(ctx, se, SnapshotRestoreCheckpointDatabaseName, []string{checkpointDataTableName, checkpointChecksumTableName})
+	err := initCheckpointTable(ctx, se, SnapshotRestoreCheckpointDatabaseName,
+		[]string{checkpointDataTableName, checkpointChecksumTableName})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -128,9 +131,11 @@ func ExistsSnapshotRestoreCheckpoint(
 	ctx context.Context,
 	dom *domain.Domain,
 ) bool {
-	return dom.InfoSchema().TableExists(pmodel.NewCIStr(SnapshotRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointMetaTableName))
+	return dom.InfoSchema().
+		TableExists(pmodel.NewCIStr(SnapshotRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointMetaTableName))
 }
 
 func RemoveCheckpointDataForSnapshotRestore(ctx context.Context, dom *domain.Domain, se glue.Session) error {
-	return dropCheckpointTables(ctx, dom, se, SnapshotRestoreCheckpointDatabaseName, []string{checkpointDataTableName, checkpointChecksumTableName, checkpointMetaTableName})
+	return dropCheckpointTables(ctx, dom, se, SnapshotRestoreCheckpointDatabaseName,
+		[]string{checkpointDataTableName, checkpointChecksumTableName, checkpointMetaTableName})
 }

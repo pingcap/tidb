@@ -1313,7 +1313,7 @@ func restoreStream(
 
 	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
 	if cfg.UseCheckpoint {
-		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, oldRatio, cfg.tiflashRecorder)
+		oldRatioFromCheckpoint, err := client.InitCheckpointMetadataForLogRestore(ctx, cfg.StartTS, cfg.RestoreTS, oldRatio, cfg.tiflashRecorder)
 		if err != nil {
 			return errors.Trace(err)
 		}

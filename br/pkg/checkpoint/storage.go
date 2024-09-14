@@ -167,7 +167,7 @@ func mergeSelectCheckpoint(
 
 	var (
 		retData         [][]byte = make([][]byte, 0, len(rows))
-		rowData         []byte   = nil
+		rowData         []byte   = make([]byte, 0)
 		lastUUID        []byte   = nil
 		lastUUIDInvalid bool     = false
 		nextSegmentID   uint64   = 0
@@ -182,7 +182,7 @@ func mergeSelectCheckpoint(
 			if !lastUUIDInvalid && len(rowData) > 0 {
 				retData = append(retData, rowData)
 			}
-			rowData = nil
+			rowData = make([]byte, 0)
 			lastUUIDInvalid = false
 			nextSegmentID = 0
 			lastUUID = uuid
@@ -272,7 +272,12 @@ func insertCheckpointMeta[T any](ctx context.Context, se glue.Session, dbName st
 	return errors.Trace(err)
 }
 
-func selectCheckpointMeta[T any](ctx context.Context, execCtx sqlexec.RestrictedSQLExecutor, dbName string, tableName string, meta *T) error {
+func selectCheckpointMeta[T any](
+	ctx context.Context,
+	execCtx sqlexec.RestrictedSQLExecutor,
+	dbName string, tableName string,
+	meta *T,
+) error {
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
@@ -283,14 +288,16 @@ func selectCheckpointMeta[T any](ctx context.Context, execCtx sqlexec.Restricted
 		return errors.Annotatef(errSQL, "failed to get checkpoint metadata from table %s.%s", dbName, tableName)
 	}
 	if len(rows) == 0 {
-		return errors.Errorf("get the empty checkpoint meta, the checkpoint is incomplete from table %s.%s", dbName, tableName)
+		return errors.Errorf(
+			"get the empty checkpoint meta, the checkpoint is incomplete from table %s.%s", dbName, tableName)
 	}
 
 	data := make([]byte, 0, len(rows)*CheckpointIdMapBlockSize)
 	for i, row := range rows {
 		segmentId, chunk := row.GetUint64(0), row.GetBytes(1)
 		if uint64(i) != segmentId {
-			return errors.Errorf("the checkpoint metadata is incomplete from table %s.%s at segment %d", dbName, tableName, segmentId)
+			return errors.Errorf(
+				"the checkpoint metadata is incomplete from table %s.%s at segment %d", dbName, tableName, segmentId)
 		}
 		data = append(data, chunk...)
 	}
@@ -298,7 +305,12 @@ func selectCheckpointMeta[T any](ctx context.Context, execCtx sqlexec.Restricted
 	return errors.Trace(err)
 }
 
-func dropCheckpointTables(ctx context.Context, dom *domain.Domain, se glue.Session, dbName string, tableNames []string) error {
+func dropCheckpointTables(
+	ctx context.Context,
+	dom *domain.Domain,
+	se glue.Session,
+	dbName string, tableNames []string,
+) error {
 	for _, tableName := range tableNames {
 		if err := se.ExecuteInternal(ctx, "DROP TABLE IF EXISTS %n.%n;", dbName, tableName); err != nil {
 			return errors.Trace(err)
@@ -310,7 +322,8 @@ func dropCheckpointTables(ctx context.Context, dom *domain.Domain, se glue.Sessi
 		return errors.Trace(err)
 	}
 	if len(tables) > 0 {
-		log.Warn("user tables in the checkpoint database, skip drop the database", zap.String("db", dbName), zap.String("table", tables[0].Name.L))
+		log.Warn("user tables in the checkpoint database, skip drop the database",
+			zap.String("db", dbName), zap.String("table", tables[0].Name.L))
 		return nil
 	}
 	if err := se.ExecuteInternal(ctx, "DROP DATABASE %n;", dbName); err != nil {

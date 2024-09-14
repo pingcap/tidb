@@ -250,7 +250,12 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	rc.fileImporter = NewLogFileImporter(metaClient, importCli, backend)
 }
 
-func (rc *LogClient) InitCheckpointMetadataForLogRestore(ctx context.Context, gcRatio string, tiflashRecorder *tiflashrec.TiFlashRecorder) (string, error) {
+func (rc *LogClient) InitCheckpointMetadataForLogRestore(
+	ctx context.Context,
+	startTS, restoredTS uint64,
+	gcRatio string,
+	tiflashRecorder *tiflashrec.TiFlashRecorder,
+) (string, error) {
 	rc.useCheckpoint = true
 
 	// if the checkpoint metadata exists in the external storage, the restore is not
@@ -272,12 +277,12 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(ctx context.Context, gc
 		items = tiflashRecorder.GetItems()
 	}
 	log.Info("save gc ratio into checkpoint metadata",
-		zap.Uint64("start-ts", rc.startTS), zap.Uint64("restored-ts", rc.restoreTS), zap.Uint64("rewrite-ts", rc.currentTS),
+		zap.Uint64("start-ts", startTS), zap.Uint64("restored-ts", restoredTS), zap.Uint64("rewrite-ts", rc.currentTS),
 		zap.String("gc-ratio", gcRatio), zap.Int("tiflash-item-count", len(items)))
 	if err := checkpoint.SaveCheckpointMetadataForLogRestore(ctx, rc.se, &checkpoint.CheckpointMetadataForLogRestore{
 		UpstreamClusterID: rc.upstreamClusterID,
-		RestoredTS:        rc.restoreTS,
-		StartTS:           rc.startTS,
+		RestoredTS:        restoredTS,
+		StartTS:           startTS,
 		RewriteTS:         rc.currentTS,
 		GcRatio:           gcRatio,
 		TiFlashItems:      items,
