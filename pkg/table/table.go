@@ -214,6 +214,47 @@ type UpdateRecordOption interface {
 	applyUpdateRecordOpt(*UpdateRecordOpt)
 }
 
+// RemoveRecordOpt contains the options will be used when removing a record.
+type RemoveRecordOpt struct {
+	indexesLayoutOffset IndexesLayout
+}
+
+// HasIndexesLayout returns whether the RemoveRecordOpt has indexes layout.
+func (opt *RemoveRecordOpt) HasIndexesLayout() bool {
+	return opt.indexesLayoutOffset != nil
+}
+
+// GetIndexLayout returns the IndexRowLayoutOption for the specified index.
+func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
+	return opt.indexesLayoutOffset[indexID]
+}
+
+// NewRemoveRecordOpt creates a new RemoveRecordOpt with options.
+func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
+	opt := &RemoveRecordOpt{}
+	for _, o := range opts {
+		o.applyRemoveRecordOpt(opt)
+	}
+	return opt
+}
+
+// RemoveRecordOption is defined for the RemoveRecord() method of the Table interface.
+type RemoveRecordOption interface {
+	applyRemoveRecordOpt(*RemoveRecordOpt)
+}
+
+// IndexRowLayoutOption is the option for index row layout.
+// It is used to specify the order of the index columns in the row.
+type IndexRowLayoutOption []int
+
+// IndexesLayout is used to specify the layout of the indexes.
+// It's mapping from index ID to the layout of the index.
+type IndexesLayout map[int64]IndexRowLayoutOption
+
+func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
+	opt.indexesLayoutOffset = idx
+}
+
 // CommonMutateOptFunc is a function to provide common options for mutating a table.
 type CommonMutateOptFunc func(*commonMutateOpt)
 
@@ -367,6 +408,7 @@ type Table interface {
 	// Indices returns the indices of the table.
 	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
+	DeletableIndices() []Index
 
 	// WritableConstraint returns constraints of the table in writable states.
 	WritableConstraint() []*Constraint
@@ -383,7 +425,7 @@ type Table interface {
 	UpdateRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, currData, newData []types.Datum, touched []bool, opts ...UpdateRecordOption) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error
+	RemoveRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...RemoveRecordOption) error
 
 	// Allocators returns all allocators.
 	Allocators(ctx AllocatorContext) autoid.Allocators

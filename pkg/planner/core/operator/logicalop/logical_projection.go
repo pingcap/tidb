@@ -60,18 +60,10 @@ func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProj
 
 // Hash64 implements the base.Hash64.<0th> interface.
 func (p *LogicalProjection) Hash64(h base2.Hasher) {
-	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
-	// like schema and names are lost.
-	p.LogicalSchemaProducer.Hash64(h)
-	// todo: if we change the logicalProjection's Expr definition as:Exprs []memo.ScalarOperator[any],
-	// we should use like below:
-	// for _, one := range p.Exprs {
-	//		one.Hash64(one)
-	// }
-	// otherwise, we would use the belowing code.
-	//for _, one := range p.Exprs {
-	//	one.Hash64(h)
-	//}
+	h.HashInt(len(p.Exprs))
+	for _, one := range p.Exprs {
+		one.Hash64(h)
+	}
 	h.HashBool(p.CalculateNoDelay)
 	h.HashBool(p.Proj4Expand)
 }
@@ -81,24 +73,24 @@ func (p *LogicalProjection) Equals(other any) bool {
 	if other == nil {
 		return false
 	}
-	proj, ok := other.(*LogicalProjection)
-	if !ok {
+	var p2 *LogicalProjection
+	switch x := other.(type) {
+	case *LogicalProjection:
+		p2 = x
+	case LogicalProjection:
+		p2 = &x
+	default:
 		return false
 	}
-	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
-	// like schema and names are lost.
-	if !p.LogicalSchemaProducer.Equals(&proj.LogicalSchemaProducer) {
+	if len(p.Exprs) != len(p2.Exprs) {
 		return false
 	}
-	//for i, one := range p.Exprs {
-	//	if !one.(memo.ScalarOperator[any]).Equals(other.Exprs[i]) {
-	//		return false
-	//	}
-	//}
-	if p.CalculateNoDelay != proj.CalculateNoDelay {
-		return false
+	for i, one := range p.Exprs {
+		if !one.Equals(p2.Exprs[i]) {
+			return false
+		}
 	}
-	return p.Proj4Expand == proj.Proj4Expand
+	return p.CalculateNoDelay == p2.CalculateNoDelay && p.Proj4Expand == p2.Proj4Expand
 }
 
 // *************************** start implementation of Plan interface **********************************

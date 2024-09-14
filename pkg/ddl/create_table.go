@@ -674,6 +674,12 @@ func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
+	// set default shard row id bits and pre-split regions for table.
+	if !tbInfo.HasClusteredIndex() && tbInfo.TempTableType == model.TempTableNone {
+		tbInfo.ShardRowIDBits = ctx.GetSessionVars().ShardRowIDBits
+		tbInfo.PreSplitRegions = ctx.GetSessionVars().PreSplitRegions
+	}
+
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -799,8 +805,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				return dbterror.ErrUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
-			if tbInfo.ShardRowIDBits > shardRowIDBitsMax {
-				tbInfo.ShardRowIDBits = shardRowIDBitsMax
+			if tbInfo.ShardRowIDBits > variable.MaxShardRowIDBits {
+				tbInfo.ShardRowIDBits = variable.MaxShardRowIDBits
 			}
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
