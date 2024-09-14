@@ -130,6 +130,75 @@ func TestModifySchemaArgs(t *testing.T) {
 	}
 }
 
+func TestCreateTableArgs(t *testing.T) {
+	t.Run("create table", func(t *testing.T) {
+		inArgs := &CreateTableArgs{
+			TableInfo: &TableInfo{ID: 100},
+			FKCheck:   true,
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateTable)))
+			args, err := GetCreateTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+			require.EqualValues(t, inArgs.FKCheck, args.FKCheck)
+		}
+	})
+	t.Run("create view", func(t *testing.T) {
+		inArgs := &CreateTableArgs{
+			TableInfo:      &TableInfo{ID: 122},
+			OnExistReplace: true,
+			OldViewTblID:   123,
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateView)))
+			args, err := GetCreateTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+			require.EqualValues(t, inArgs.OnExistReplace, args.OnExistReplace)
+			require.EqualValues(t, inArgs.OldViewTblID, args.OldViewTblID)
+		}
+	})
+	t.Run("create sequence", func(t *testing.T) {
+		inArgs := &CreateTableArgs{
+			TableInfo: &TableInfo{ID: 22},
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateSequence)))
+			args, err := GetCreateTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+		}
+	})
+}
+
+func TestBatchCreateTableArgs(t *testing.T) {
+	inArgs := &BatchCreateTableArgs{
+		Tables: []*CreateTableArgs{
+			{TableInfo: &TableInfo{ID: 100}, FKCheck: true},
+			{TableInfo: &TableInfo{ID: 101}, FKCheck: false},
+		},
+	}
+	// in job version 1, we only save one FKCheck value for all tables.
+	j2 := &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, inArgs, JobVersion1, ActionCreateTables)))
+	args, err := GetBatchCreateTableArgs(j2)
+	require.NoError(t, err)
+	for i := 0; i < len(inArgs.Tables); i++ {
+		require.EqualValues(t, inArgs.Tables[i].TableInfo, args.Tables[i].TableInfo)
+		require.EqualValues(t, true, args.Tables[i].FKCheck)
+	}
+
+	j2 = &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, inArgs, JobVersion2, ActionCreateTables)))
+	args, err = GetBatchCreateTableArgs(j2)
+	require.NoError(t, err)
+	require.EqualValues(t, inArgs.Tables, args.Tables)
+}
+
 func TestTruncateTableArgs(t *testing.T) {
 	inArgs := &TruncateTableArgs{
 		NewTableID:      1,

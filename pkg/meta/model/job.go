@@ -515,6 +515,7 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 		} else {
 			var arg any
 			if len(job.Args) > 0 {
+				intest.Assert(len(job.Args) == 1, "Job.Args should have only one element")
 				arg = job.Args[0]
 			}
 			job.RawArgs, err = json.Marshal(arg)
@@ -542,6 +543,7 @@ func (job *Job) Decode(b []byte) error {
 
 // DecodeArgs decodes serialized job arguments from job.RawArgs into the given
 // variables, and also save the result in job.Args. It's for JobVersion1.
+// TODO make it un-exported after we finish the migration to JobVersion2.
 func (job *Job) DecodeArgs(args ...any) error {
 	intest.Assert(job.Version == JobVersion1, "Job.DecodeArgs is only used for JobVersion1")
 	var rawArgs []json.RawMessage
