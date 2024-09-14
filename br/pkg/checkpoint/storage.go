@@ -167,7 +167,7 @@ func mergeSelectCheckpoint(
 
 	var (
 		retData         [][]byte = make([][]byte, 0, len(rows))
-		rowData         []byte   = make([]byte, 0)
+		rowData         []byte   = make([]byte, 0, CheckpointIdMapBlockSize)
 		lastUUID        []byte   = nil
 		lastUUIDInvalid bool     = false
 		nextSegmentID   uint64   = 0
@@ -182,7 +182,7 @@ func mergeSelectCheckpoint(
 			if !lastUUIDInvalid && len(rowData) > 0 {
 				retData = append(retData, rowData)
 			}
-			rowData = make([]byte, 0)
+			rowData = rowData[:0]
 			lastUUIDInvalid = false
 			nextSegmentID = 0
 			lastUUID = uuid
