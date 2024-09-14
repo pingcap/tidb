@@ -647,6 +647,7 @@ func (e *HashJoinV2Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
+	e.releaseDisk()
 	e.spillHelper.close()
 	err := e.BaseExecutor.Close()
 	return err
@@ -1047,6 +1048,8 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 
 		e.waiterWg.Wait()
 
+		e.releaseDisk()
+
 		e.spillHelper.spillRoundForTest = max(e.spillHelper.spillRoundForTest, lastRound)
 		err := e.spillHelper.prepareForRestoring(lastRound)
 		if err != nil {
@@ -1064,20 +1067,27 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 			e.isMemoryClearedForTest = false
 		}
 
-		// Collect, so that we can close them in the end.
-		// We must collect them once they are popped from stack, or the resource may
-		// fail to be recycled because of the possible panic.
-		err = e.spillHelper.discardInDisks([][]*chunk.DataInDiskByChunks{restoredPartition.buildSideChunks, restoredPartition.probeSideChunks})
-		if err != nil {
-			e.joinResultCh <- &hashjoinWorkerResult{err: err}
-			return
-		}
-
 		lastRound = restoredPartition.round
 		e.restoredBuildInDisk = restoredPartition.buildSideChunks
 		e.restoredProbeInDisk = restoredPartition.probeSideChunks
 
 		e.inRestore = true
+	}
+}
+
+func (e *HashJoinV2Exec) releaseDisk() {
+	if e.restoredBuildInDisk != nil {
+		for _, inDisk := range e.restoredBuildInDisk {
+			inDisk.Close()
+		}
+		e.restoredBuildInDisk = nil
+	}
+
+	if e.restoredProbeInDisk != nil {
+		for _, inDisk := range e.restoredProbeInDisk {
+			inDisk.Close()
+		}
+		e.restoredProbeInDisk = nil
 	}
 }
 

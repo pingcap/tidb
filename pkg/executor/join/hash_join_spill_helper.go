@@ -55,11 +55,6 @@ type hashJoinSpillHelper struct {
 
 	stack restoreStack
 
-	// inDisk that has been popped from stack should be saved here
-	// so that we can ensure all inDisk will be closed or disk
-	// resource will be leaked.
-	discardedInDisk []*chunk.DataInDiskByChunks
-
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 
@@ -147,10 +142,6 @@ func (h *hashJoinSpillHelper) close() {
 		}
 		partition = h.stack.pop()
 	}
-
-	for _, inDisk := range h.discardedInDisk {
-		inDisk.Close()
-	}
 }
 
 func (h *hashJoinSpillHelper) areAllPartitionsSpilled() bool {
@@ -236,30 +227,6 @@ func (h *hashJoinSpillHelper) isSpillTriggeredNoLock() bool {
 
 func (h *hashJoinSpillHelper) isPartitionSpilled(partID int) bool {
 	return h.spilledPartitions[partID]
-}
-
-func (h *hashJoinSpillHelper) discardInDisks(inDisks [][]*chunk.DataInDiskByChunks) error {
-	// Clear previous disks
-	for _, inDisk := range h.discardedInDisk {
-		inDisk.Close()
-	}
-
-	h.discardedInDisk = h.discardedInDisk[:0]
-
-	hasNilInDisk := false
-	for _, disks := range inDisks {
-		for _, disk := range disks {
-			if disk == nil {
-				hasNilInDisk = true
-			}
-			h.discardedInDisk = append(h.discardedInDisk, disk)
-		}
-	}
-
-	if hasNilInDisk {
-		return errors.NewNoStackError("Receive nil DataInDiskByChunks")
-	}
-	return nil
 }
 
 func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64) ([]int, int64) {
@@ -438,13 +405,13 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 					// finalize current segment of every partition in the worker
 					worker := h.hashJoinExec.BuildWorkers[workerID]
 					builder := worker.builder
-	
+
 					if builder.rowNumberInCurrentRowTableSeg[partID] > 0 {
 						worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, worker.builder, false)
 					}
 					spilledSegments := worker.getSegmentsInRowTable(partID)
 					worker.clearSegmentsInRowTable(partID)
-	
+
 					err := h.spillBuildSegmentToDisk(workerID, partID, spilledSegments)
 					if err != nil {
 						errChannel <- util.GetRecoverError(err)
