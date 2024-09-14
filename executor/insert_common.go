@@ -1102,7 +1102,7 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 		if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
 			// lock duplicated row key on insert-ignore
-			txnCtx.AddUnchangedRowKey(r.handleKey.newKey)
+			txnCtx.AddUnchangedRowKey(uk.newKey)
 		}
 		return true, nil
 	}
