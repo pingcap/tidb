@@ -534,7 +534,6 @@ func TestGetTsoSlow(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mock_get_tso_slow"))
 	}()
 
-	logutil.BgLogger().Info("gjt debug beg select")
 	err := tk.ExecToErr("select * from t")
 	require.NotNil(t, err)
 	require.Contains(t, err.Error(), "Query execution was interrupted, maximum statement execution time exceeded")
