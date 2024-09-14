@@ -527,7 +527,7 @@ func TestGetTsoSlow(t *testing.T) {
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("insert t values (1), (2)")
 
-	tk.MustExec("set @@max_execution_time = 1000")
+	tk.MustExec("set @@max_execution_time = 500")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mock_get_tso_slow", "return(3)"))
 	defer func() {

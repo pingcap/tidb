@@ -608,8 +608,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 		defer func(begin time.Time) {
 			sctx.GetSessionVars().DurationWaitTS = time.Since(begin)
 		}(time.Now())
-		err := txn.waitWithSQLKiller(ctx, sctx)
-		if err != nil {
+		if err := txn.waitWithSQLKiller(ctx, sctx); err != nil {
 			return txn, err
 		}
 		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic
@@ -644,37 +643,22 @@ func (txn *LazyTxn) waitWithSQLKiller(ctx context.Context, sctx sessionctx.Conte
 		close(tsoCh)
 	}()
 
-	sqlKillCh := make(chan error)
-
-	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		defer close(sqlKillCh)
-
-		for {
-			select {
-			case <-ticker.C:
-				if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-					select {
-					case sqlKillCh <- err:
-					case <-finishCh:
-					}
-					return
-				}
-			case <-finishCh:
-				return
-			}
-		}
-	}()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 
 	var err error
-	select {
-	case err = <-tsoCh:
-	case err = <-sqlKillCh:
-	case <-ctx.Done():
-		err = ctx.Err()
+	for {
+		select {
+		case <-ticker.C:
+			if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+				return err
+			}
+		case err = <- tsoCh:
+			return err
+		case <- ctx.Done():
+			return ctx.Err()
+		}
 	}
-	return err
 }
 
 // KeyNeedToLock returns true if the key need to lock.
