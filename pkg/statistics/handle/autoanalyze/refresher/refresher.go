@@ -347,7 +347,7 @@ func CreateTableAnalysisJob(
 	statistics.CheckAnalyzeVerOnTable(tblStats, &tableStatsVer)
 
 	changePercentage := CalculateChangePercentage(tblStats, autoAnalyzeRatio)
-	tableSize := calculateTableSize(tblInfo, tblStats)
+	tableSize := calculateTableSize(tblStats)
 	lastAnalysisDuration := GetTableLastAnalyzeDuration(tblStats, currentTs)
 	indexes := CheckIndexesNeedAnalyze(tblInfo, tblStats)
 
@@ -391,7 +391,7 @@ func CreateStaticPartitionAnalysisJob(
 	statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
 
 	changePercentage := CalculateChangePercentage(partitionStats, autoAnalyzeRatio)
-	tableSize := calculateTableSize(globalTblInfo, partitionStats)
+	tableSize := calculateTableSize(partitionStats)
 	lastAnalysisDuration := GetTableLastAnalyzeDuration(partitionStats, currentTs)
 	indexes := CheckIndexesNeedAnalyze(globalTblInfo, partitionStats)
 
@@ -448,12 +448,11 @@ func CalculateChangePercentage(
 }
 
 func calculateTableSize(
-	tblInfo *model.TableInfo,
 	tblStats *statistics.Table,
 ) float64 {
 	tblCnt := float64(tblStats.RealtimeCount)
-	// TODO: Ignore unanalyzable columns.
-	colCnt := float64(len(tblInfo.Columns))
+	colCnt := float64(tblStats.ColAndIdxExistenceMap.ColNum())
+	intest.Assert(colCnt != 0, "Column count should not be 0")
 
 	return tblCnt * colCnt
 }
@@ -526,7 +525,7 @@ func createTableAnalysisJobForPartitions(
 	statistics.CheckAnalyzeVerOnTable(tblStats, &tableStatsVer)
 
 	averageChangePercentage, avgSize, minLastAnalyzeDuration, partitionNames := CalculateIndicatorsForPartitions(
-		tblInfo,
+		tblStats,
 		partitionStats,
 		autoAnalyzeRatio,
 		currentTs,
@@ -563,7 +562,7 @@ func createTableAnalysisJobForPartitions(
 // Size is the product of the number of rows and the number of columns.
 // Last analyze duration is the duration since the last analyze.
 func CalculateIndicatorsForPartitions(
-	tblInfo *model.TableInfo,
+	globalStats *statistics.Table,
 	partitionStats map[PartitionIDAndName]*statistics.Table,
 	autoAnalyzeRatio float64,
 	currentTs uint64,
@@ -577,7 +576,8 @@ func CalculateIndicatorsForPartitions(
 	totalSize := 0.0
 	count := 0.0
 	partitionNames = make([]string, 0, len(partitionStats))
-	cols := float64(len(tblInfo.Columns))
+	cols := float64(globalStats.ColAndIdxExistenceMap.ColNum())
+	intest.Assert(cols != 0, "Column count should not be 0")
 	totalLastAnalyzeDuration := time.Duration(0)
 
 	for pIDAndName, tblStats := range partitionStats {
