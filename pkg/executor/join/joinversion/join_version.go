@@ -19,10 +19,13 @@ import (
 )
 
 const (
+	// HashJoinVersionLegacy means hash join v1
 	HashJoinVersionLegacy    = "legacy"
+	// HashJoinVersionOptimized means hash join v2
 	HashJoinVersionOptimized = "optimized"
 )
 
+// IsOptimizedVersion returns true if hashJoinVersion equals to HashJoinVersionOptimized
 func IsOptimizedVersion(hashJoinVersion string) bool {
 	return strings.ToLower(hashJoinVersion) == HashJoinVersionOptimized
 }
