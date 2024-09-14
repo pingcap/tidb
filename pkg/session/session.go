@@ -2060,7 +2060,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Uncorrelated subqueries will execute once when building plan, so we reset process info before building plan.
 	s.currentPlan = nil // reset current plan
-	s.SetProcessInfo(stmtNode.Text(), time.Now(), cmdByte, 0)
+	var maxExecutionTime uint64
+	if intest.InTest {
+		maxExecutionTime = sessVars.MaxExecutionTime
+	}
+	s.SetProcessInfo(stmtNode.Text(), time.Now(), cmdByte, maxExecutionTime)
 	s.txn.onStmtStart(digest.String())
 	defer sessiontxn.GetTxnManager(s).OnStmtEnd()
 	defer s.txn.onStmtEnd()

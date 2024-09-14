@@ -22,15 +22,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -511,9 +512,16 @@ func TestInTrans(t *testing.T) {
 }
 
 func TestGetTsoSlow(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	defer sv.Close()
 
-	tk := testkit.NewTestKit(t, store)
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+
+	go dom.ExpensiveQueryHandle().SetSessionManager(sv).Run()
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int)")
@@ -527,7 +535,7 @@ func TestGetTsoSlow(t *testing.T) {
 	}()
 
 	logutil.BgLogger().Info("gjt debug beg select")
-	err := tk.QueryToErr("select * from t")
+	err := tk.ExecToErr("select * from t")
 	require.NotNil(t, err)
-	fmt.Println("gjt debug", err)
+	require.Contains(t, err.Error(), "Query execution was interrupted, maximum statement execution time exceeded")
 }

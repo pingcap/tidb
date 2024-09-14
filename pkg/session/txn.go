@@ -627,13 +627,10 @@ func (txn *LazyTxn) waitWithSQLKiller(ctx context.Context, sctx sessionctx.Conte
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
 		var err error
-			logutil.BgLogger().Info("gjt debug 1")
 		failpoint.Inject("mock_get_tso_slow", func(v failpoint.Value) {
 			t := v.(int)
-			logutil.BgLogger().Info("gjt debug enable")
 			time.Sleep(time.Duration(t) * time.Second)
 		})
-			logutil.BgLogger().Info("gjt debug 2")
 		if err = txn.changePendingToValid(ctx, sctx); err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
@@ -657,9 +654,7 @@ func (txn *LazyTxn) waitWithSQLKiller(ctx context.Context, sctx sessionctx.Conte
 		for {
 			select {
 			case <-ticker.C:
-			logutil.BgLogger().Info("gjt debug ticker")
 				if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			logutil.BgLogger().Info("gjt debug got sqlkill err")
 					select {
 					case sqlKillCh <- err:
 					case <-finishCh:
