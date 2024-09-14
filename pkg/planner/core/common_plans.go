@@ -24,11 +24,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -96,7 +98,7 @@ type CheckTable struct {
 type RecoverIndex struct {
 	baseSchemaProducer
 
-	Table     *ast.TableName
+	Table     *resolve.TableNameW
 	IndexName string
 }
 
@@ -104,7 +106,7 @@ type RecoverIndex struct {
 type CleanupIndex struct {
 	baseSchemaProducer
 
-	Table     *ast.TableName
+	Table     *resolve.TableNameW
 	IndexName string
 }
 
@@ -122,7 +124,7 @@ type CheckIndexRange struct {
 type ChecksumTable struct {
 	baseSchemaProducer
 
-	Tables []*ast.TableName
+	Tables []*resolve.TableNameW
 }
 
 // CancelDDLJobs represents a cancel DDL jobs plan.
@@ -237,6 +239,17 @@ type SetConfig struct {
 	Value    expression.Expression
 }
 
+// RecommendIndexPlan represents a plan for recommend index stmt.
+type RecommendIndexPlan struct {
+	baseSchemaProducer
+
+	Action   string
+	SQL      string
+	AdviseID int64
+	Option   string
+	Value    ast.ValueExpr
+}
+
 // SQLBindOpType repreents the SQL bind type
 type SQLBindOpType int
 
@@ -262,13 +275,21 @@ const (
 )
 
 // SQLBindPlan represents a plan for SQL bind.
+// One SQLBindPlan can be either global or session, and can only contain one type of operation, but can contain multiple
+// operations of that type.
 type SQLBindPlan struct {
 	baseSchemaProducer
 
-	SQLBindOp    SQLBindOpType
+	IsGlobal  bool
+	SQLBindOp SQLBindOpType
+	Details   []*SQLBindOpDetail
+}
+
+// SQLBindOpDetail represents the detail of an operation on a single binding.
+// Different SQLBindOpType use different fields in this struct.
+type SQLBindOpDetail struct {
 	NormdOrigSQL string
 	BindSQL      string
-	IsGlobal     bool
 	BindStmt     ast.StmtNode
 	Db           string
 	Charset      string
@@ -292,6 +313,8 @@ type Simple struct {
 
 	// StaleTxnStartTS is the StartTS that is used to build a staleness transaction by 'START TRANSACTION READ ONLY' statement.
 	StaleTxnStartTS uint64
+
+	ResolveCtx *resolve.Context
 }
 
 // MemoryUsage return the memory usage of Simple
@@ -528,7 +551,7 @@ type V2AnalyzeOptions struct {
 	PhyTableID  int64
 	RawOpts     map[ast.AnalyzeOptionType]uint64
 	FilledOpts  map[ast.AnalyzeOptionType]uint64
-	ColChoice   model.ColumnChoice
+	ColChoice   pmodel.ColumnChoice
 	ColumnList  []*model.ColumnInfo
 	IsPartition bool
 }
@@ -569,7 +592,7 @@ type LoadData struct {
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
 	Format      *string
-	Table       *ast.TableName
+	Table       *resolve.TableNameW
 	Charset     *string
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
@@ -594,7 +617,7 @@ type LoadDataOpt struct {
 type ImportInto struct {
 	baseSchemaProducer
 
-	Table              *ast.TableName
+	Table              *resolve.TableNameW
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	Path               string
@@ -643,23 +666,12 @@ type PlanReplayer struct {
 	PlanDigest string
 }
 
-// IndexAdvise represents a index advise plan.
-type IndexAdvise struct {
-	baseSchemaProducer
-
-	IsLocal     bool
-	Path        string
-	MaxMinutes  uint64
-	MaxIndexNum *ast.MaxIndexNumClause
-	LineFieldsInfo
-}
-
 // SplitRegion represents a split regions plan.
 type SplitRegion struct {
 	baseSchemaProducer
 
 	TableInfo      *model.TableInfo
-	PartitionNames []model.CIStr
+	PartitionNames []pmodel.CIStr
 	IndexInfo      *model.IndexInfo
 	Lower          []types.Datum
 	Upper          []types.Datum
@@ -681,7 +693,7 @@ type CompactTable struct {
 
 	ReplicaKind    ast.CompactReplicaKind
 	TableInfo      *model.TableInfo
-	PartitionNames []model.CIStr
+	PartitionNames []pmodel.CIStr
 }
 
 // DDL represents a DDL statement plan.

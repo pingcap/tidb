@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -107,21 +108,23 @@ type mppTaskGenerator struct {
 	// For MPPGather under UnionScan, need keyRange to scan MemBuffer.
 	KVRanges []kv.KeyRange
 
-	nodeInfo map[string]bool
+	nodeInfo         map[string]bool
+	tableReaderCache map[string][]kv.MPPTaskMeta // cache for table reader
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
 func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppGatherID uint64,
 	mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, []kv.KeyRange, map[string]bool, error) {
 	g := &mppTaskGenerator{
-		ctx:        ctx,
-		gatherID:   mppGatherID,
-		startTS:    startTs,
-		mppQueryID: mppQueryID,
-		is:         is,
-		cache:      make(map[int]tasksAndFrags),
-		KVRanges:   make([]kv.KeyRange, 0),
-		nodeInfo:   make(map[string]bool),
+		ctx:              ctx,
+		gatherID:         mppGatherID,
+		startTS:          startTs,
+		mppQueryID:       mppQueryID,
+		is:               is,
+		cache:            make(map[int]tasksAndFrags),
+		KVRanges:         make([]kv.KeyRange, 0),
+		nodeInfo:         make(map[string]bool),
+		tableReaderCache: make(map[string][]kv.MPPTaskMeta),
 	}
 	frags, err := g.generateMPPTasks(sender)
 	if err != nil {
@@ -587,9 +590,18 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		ttl = time.Duration(0)
 	}
 	tiflashReplicaRead := e.ctx.GetSessionVars().TiFlashReplicaRead
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy, tiflashReplicaRead, e.ctx.GetSessionVars().StmtCtx.AppendWarning)
-	if err != nil {
-		return nil, errors.Trace(err)
+
+	var metas []kv.MPPTaskMeta
+	if val := req.ToString(); e.tableReaderCache[val] != nil {
+		metas = e.tableReaderCache[val]
+		failpoint.InjectCall("mppTaskGeneratorTableReaderCacheHit")
+	} else {
+		metas, err = e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy, tiflashReplicaRead, e.ctx.GetSessionVars().StmtCtx.AppendWarning)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.tableReaderCache[val] = metas
+		failpoint.InjectCall("mppTaskGeneratorTableReaderCacheMiss")
 	}
 
 	mppVersion := e.ctx.GetSessionVars().ChooseMppVersion()

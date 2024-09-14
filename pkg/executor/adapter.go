@@ -40,16 +40,18 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -92,7 +94,7 @@ type processinfoSetter interface {
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
 type recordSet struct {
-	fields   []*ast.ResultField
+	fields   []*resolve.ResultField
 	executor exec.Executor
 	// The `Fields` method may be called after `Close`, and the executor is cleared in the `Close` function.
 	// Therefore, we need to store the schema in `recordSet` to avoid a null pointer exception when calling `executor.Schema()`.
@@ -103,16 +105,16 @@ type recordSet struct {
 	once       sync.Once
 }
 
-func (a *recordSet) Fields() []*ast.ResultField {
+func (a *recordSet) Fields() []*resolve.ResultField {
 	if len(a.fields) == 0 {
 		a.fields = colNames2ResultFields(a.schema, a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
 	}
 	return a.fields
 }
 
-func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*ast.ResultField {
-	rfs := make([]*ast.ResultField, 0, schema.Len())
-	defaultDBCIStr := model.NewCIStr(defaultDB)
+func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*resolve.ResultField {
+	rfs := make([]*resolve.ResultField, 0, schema.Len())
+	defaultDBCIStr := pmodel.NewCIStr(defaultDB)
 	for i := 0; i < schema.Len(); i++ {
 		dbName := names[i].DBName
 		if dbName.L == "" && names[i].TblName.L != "" {
@@ -124,7 +126,7 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 			origColName = names[i].ColName
 			emptyOrgName = true
 		}
-		rf := &ast.ResultField{
+		rf := &resolve.ResultField{
 			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType},
 			ColumnAsName: names[i].ColName,
 			EmptyOrgName: emptyOrgName,
@@ -395,7 +397,8 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 // It returns the current information schema version that 'a' is using.
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	ret := &plannercore.PreprocessorReturn{}
-	if err := plannercore.Preprocess(ctx, a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	nodeW := resolve.NewNodeW(a.StmtNode)
+	if err := plannercore.Preprocess(ctx, a.Ctx, nodeW, plannercore.InTxnRetry, plannercore.InitTxnContextProvider, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return 0, err
 	}
 
@@ -417,7 +420,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if a.Ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && replicaReadScope == kv.GlobalReplicaScope {
 		logutil.BgLogger().Warn(fmt.Sprintf("tidb can't read closest replicas due to it haven't %s label", placement.DCLabelKey))
 	}
-	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
+	p, names, err := planner.Optimize(ctx, a.Ctx, nodeW, a.InfoSchema)
 	if err != nil {
 		return 0, err
 	}
@@ -547,8 +550,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		_, planDigest := GetPlanDigest(stmtCtx)
 		_, sqlDigest := stmtCtx.SQLDigest()
 		stmtCtx.RunawayChecker = rm.DeriveChecker(stmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, sqlDigest.String(), planDigest.String(), sessionVars.StartTime)
-		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
+		switchGroupName, err := stmtCtx.RunawayChecker.BeforeExecutor()
+		if err != nil {
 			return nil, err
+		}
+		if len(switchGroupName) > 0 {
+			stmtCtx.ResourceGroupName = switchGroupName
 		}
 	}
 	ctx = a.observeStmtBeginForTopSQL(ctx)
@@ -868,12 +875,12 @@ func isNoResultPlan(p base.Plan) bool {
 type chunkRowRecordSet struct {
 	rows     []chunk.Row
 	idx      int
-	fields   []*ast.ResultField
+	fields   []*resolve.ResultField
 	e        exec.Executor
 	execStmt *ExecStmt
 }
 
-func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
+func (c *chunkRowRecordSet) Fields() []*resolve.ResultField {
 	if c.fields == nil {
 		c.fields = colNames2ResultFields(c.e.Schema(), c.execStmt.OutputNames, c.execStmt.Ctx.GetSessionVars().CurrentDB)
 	}
@@ -985,6 +992,8 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
+	// TODO: it's better to use a.ReadOnly to check if the statement is a write statement
+	// instead of listing executor types here.
 	switch e.(type) {
 	case *DeleteExec, *InsertExec, *UpdateExec, *ReplaceExec, *LoadDataExec, *DDLExec, *ImportIntoExec:
 		snapshotTS := sctx.GetSessionVars().SnapshotTS
@@ -1412,6 +1421,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	a.updatePrevStmt()
 	a.recordLastQueryInfo(err)
+	a.recordAffectedRows2Metrics()
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := sessVars.GetExecuteDuration()
 	if sessVars.InRestrictedSQL {
@@ -1456,6 +1466,22 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 
 	a.Ctx.ReportUsageStats()
+}
+
+func (a *ExecStmt) recordAffectedRows2Metrics() {
+	sessVars := a.Ctx.GetSessionVars()
+	if affectedRows := sessVars.StmtCtx.AffectedRows(); affectedRows > 0 {
+		switch sessVars.StmtCtx.StmtType {
+		case "Insert":
+			metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
+		case "Replace":
+			metrics.AffectedRowsCounterReplace.Add(float64(affectedRows))
+		case "Delete":
+			metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
+		case "Update":
+			metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
+		}
+	}
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {
@@ -1667,6 +1693,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		RRU:               ruDetails.RRU(),
 		WRU:               ruDetails.WRU(),
 		WaitRUDuration:    ruDetails.RUWaitDuration(),
+		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
@@ -2009,6 +2036,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		KeyspaceID:          keyspaceID,
 		RUDetail:            ruDetail,
 		ResourceGroupName:   sessVars.StmtCtx.ResourceGroupName,
+		CPUUsages:           sessVars.SQLCPUUsages.GetCPUUsages(),
 
 		PlanCacheUnqualified: sessVars.StmtCtx.PlanCacheUnqualified(),
 	}

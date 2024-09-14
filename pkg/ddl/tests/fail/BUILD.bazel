@@ -14,6 +14,7 @@ go_test(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/schematracker",
+        "//pkg/ddl/schemaver",
         "//pkg/ddl/testutil",
         "//pkg/ddl/util",
         "//pkg/domain",

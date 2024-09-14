@@ -44,7 +44,7 @@ func FDToString(p base.LogicalPlan) string {
 
 func needIncludeChildrenString(plan base.Plan) bool {
 	switch x := plan.(type) {
-	case *LogicalUnionAll, *PhysicalUnionAll, *LogicalPartitionUnionAll:
+	case *logicalop.LogicalUnionAll, *PhysicalUnionAll, *logicalop.LogicalPartitionUnionAll:
 		// after https://github.com/pingcap/tidb/pull/25218, the union may contain less than 2 children,
 		// but we still wants to include its child plan's information when calling `toString` on union.
 		return true
@@ -64,14 +64,14 @@ func fdToString(in base.LogicalPlan, strs []string, idxs []int) ([]string, []int
 		for _, child := range x.Children() {
 			strs, idxs = fdToString(child, strs, idxs)
 		}
-	case *LogicalAggregation:
+	case *logicalop.LogicalAggregation:
 		strs = append(strs, "{"+x.FDs().String()+"}")
 		for _, child := range x.Children() {
 			strs, idxs = fdToString(child, strs, idxs)
 		}
 	case *DataSource:
 		strs = append(strs, "{"+x.FDs().String()+"}")
-	case *LogicalApply:
+	case *logicalop.LogicalApply:
 		strs = append(strs, "{"+x.FDs().String()+"}")
 	case *logicalop.LogicalJoin:
 		strs = append(strs, "{"+x.FDs().String()+"}")
@@ -160,7 +160,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := x.RightJoinKeys[i].StringWithCtx(ectx, perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *LogicalApply, *PhysicalApply:
+	case *logicalop.LogicalApply, *PhysicalApply:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -201,7 +201,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := eq.GetArgs()[1].StringWithCtx(ectx, perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *LogicalUnionAll, *PhysicalUnionAll, *LogicalPartitionUnionAll:
+	case *logicalop.LogicalUnionAll, *PhysicalUnionAll, *logicalop.LogicalPartitionUnionAll:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -248,7 +248,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "HashAgg"
 	case *PhysicalStreamAgg:
 		str = "StreamAgg"
-	case *LogicalAggregation:
+	case *logicalop.LogicalAggregation:
 		str = "Aggr("
 		for i, aggFunc := range x.AggFuncs {
 			str += aggFunc.StringWithCtx(ectx, perrors.RedactLogDisable)

@@ -15,9 +15,11 @@
 package logicalop
 
 import (
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -41,7 +43,7 @@ type LogicalMemTable struct {
 	LogicalSchemaProducer
 
 	Extractor base.MemTablePredicateExtractor
-	DBName    model.CIStr
+	DBName    pmodel.CIStr
 	TableInfo *model.TableInfo
 	Columns   []*model.ColumnInfo
 	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
@@ -65,6 +67,9 @@ func (p LogicalMemTable) Init(ctx base.PlanContext, offset int) *LogicalMemTable
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
 	if p.Extractor != nil {
+		failpoint.Inject("skipExtractor", func(_ failpoint.Value) {
+			failpoint.Return(predicates, p.Self())
+		})
 		predicates = p.Extractor.Extract(p.SCtx(), p.Schema(), p.OutputNames(), predicates)
 	}
 	return predicates, p.Self()

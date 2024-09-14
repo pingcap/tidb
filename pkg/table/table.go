@@ -27,7 +27,8 @@ import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
@@ -121,8 +122,9 @@ type RecordIterFunc func(h kv.Handle, rec []types.Datum, cols []*Column) (more b
 
 // commonMutateOpt is the common options for mutating a table.
 type commonMutateOpt struct {
-	ctx         context.Context
-	dupKeyCheck DupKeyCheckMode
+	ctx                        context.Context
+	dupKeyCheck                DupKeyCheckMode
+	pessimisticLazyDupKeyCheck PessimisticLazyDupKeyCheckMode
 }
 
 // Ctx returns the go context in the option
@@ -133,6 +135,11 @@ func (opt *commonMutateOpt) Ctx() context.Context {
 // DupKeyCheck returns the DupKeyCheckMode in the option
 func (opt *commonMutateOpt) DupKeyCheck() DupKeyCheckMode {
 	return opt.dupKeyCheck
+}
+
+// PessimisticLazyDupKeyCheck returns the PessimisticLazyDupKeyCheckMode in the option
+func (opt *commonMutateOpt) PessimisticLazyDupKeyCheck() PessimisticLazyDupKeyCheckMode {
+	return opt.pessimisticLazyDupKeyCheck
 }
 
 // AddRecordOpt contains the options will be used when adding a record.
@@ -205,6 +212,47 @@ func (opt *UpdateRecordOpt) GetCreateIdxOpt() *CreateIdxOpt {
 // UpdateRecordOption is defined for the UpdateRecord() method of the Table interface.
 type UpdateRecordOption interface {
 	applyUpdateRecordOpt(*UpdateRecordOpt)
+}
+
+// RemoveRecordOpt contains the options will be used when removing a record.
+type RemoveRecordOpt struct {
+	indexesLayoutOffset IndexesLayout
+}
+
+// HasIndexesLayout returns whether the RemoveRecordOpt has indexes layout.
+func (opt *RemoveRecordOpt) HasIndexesLayout() bool {
+	return opt.indexesLayoutOffset != nil
+}
+
+// GetIndexLayout returns the IndexRowLayoutOption for the specified index.
+func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
+	return opt.indexesLayoutOffset[indexID]
+}
+
+// NewRemoveRecordOpt creates a new RemoveRecordOpt with options.
+func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
+	opt := &RemoveRecordOpt{}
+	for _, o := range opts {
+		o.applyRemoveRecordOpt(opt)
+	}
+	return opt
+}
+
+// RemoveRecordOption is defined for the RemoveRecord() method of the Table interface.
+type RemoveRecordOption interface {
+	applyRemoveRecordOpt(*RemoveRecordOpt)
+}
+
+// IndexRowLayoutOption is the option for index row layout.
+// It is used to specify the order of the index columns in the row.
+type IndexRowLayoutOption []int
+
+// IndexesLayout is used to specify the layout of the indexes.
+// It's mapping from index ID to the layout of the index.
+type IndexesLayout map[int64]IndexRowLayoutOption
+
+func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
+	opt.indexesLayoutOffset = idx
 }
 
 // CommonMutateOptFunc is a function to provide common options for mutating a table.
@@ -296,6 +344,35 @@ func (m DupKeyCheckMode) applyCreateIdxOpt(opt *CreateIdxOpt) {
 	opt.dupKeyCheck = m
 }
 
+// PessimisticLazyDupKeyCheckMode only takes effect for pessimistic transaction
+// when `DupKeyCheckMode` is set to `DupKeyCheckLazy`.
+// It indicates how to check the duplicated key in store.
+type PessimisticLazyDupKeyCheckMode uint8
+
+const (
+	// DupKeyCheckInAcquireLock indicates to check the duplicated key when acquiring the pessimistic lock.
+	DupKeyCheckInAcquireLock PessimisticLazyDupKeyCheckMode = iota
+	// DupKeyCheckInPrewrite indicates to check the duplicated key in the prewrite step when committing.
+	// Please notice that if it is used, the duplicated key error may not be returned immediately after each statement,
+	// because the duplicated key is not checked when acquiring the pessimistic lock.
+	DupKeyCheckInPrewrite
+)
+
+// applyAddRecordOpt implements the AddRecordOption interface.
+func (m PessimisticLazyDupKeyCheckMode) applyAddRecordOpt(opt *AddRecordOpt) {
+	opt.pessimisticLazyDupKeyCheck = m
+}
+
+// applyUpdateRecordOpt implements the UpdateRecordOption interface.
+func (m PessimisticLazyDupKeyCheckMode) applyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	opt.pessimisticLazyDupKeyCheck = m
+}
+
+// applyCreateIdxOpt implements the CreateIdxOption interface.
+func (m PessimisticLazyDupKeyCheckMode) applyCreateIdxOpt(opt *CreateIdxOpt) {
+	opt.pessimisticLazyDupKeyCheck = m
+}
+
 type columnAPI interface {
 	// Cols returns the columns of the table which is used in select, including hidden columns.
 	Cols() []*Column
@@ -331,6 +408,7 @@ type Table interface {
 	// Indices returns the indices of the table.
 	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
+	DeletableIndices() []Index
 
 	// WritableConstraint returns constraints of the table in writable states.
 	WritableConstraint() []*Constraint
@@ -341,13 +419,13 @@ type Table interface {
 	IndexPrefix() kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	AddRecord(ctx MutateContext, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
+	AddRecord(ctx MutateContext, txn kv.Transaction, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
-	UpdateRecord(ctx MutateContext, h kv.Handle, currData, newData []types.Datum, touched []bool, opts ...UpdateRecordOption) error
+	UpdateRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, currData, newData []types.Datum, touched []bool, opts ...UpdateRecordOption) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx MutateContext, h kv.Handle, r []types.Datum) error
+	RemoveRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...RemoveRecordOption) error
 
 	// Allocators returns all allocators.
 	Allocators(ctx AllocatorContext) autoid.Allocators
@@ -419,7 +497,7 @@ type PartitionedTable interface {
 	GetPartitionIdxByRow(expression.EvalContext, []types.Datum) (int, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
-	GetPartitionColumnNames() []model.CIStr
+	GetPartitionColumnNames() []pmodel.CIStr
 	CheckForExchangePartition(ctx expression.EvalContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 

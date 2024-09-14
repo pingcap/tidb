@@ -15,14 +15,16 @@
 package util
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
@@ -220,7 +222,7 @@ func Exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, 
 }
 
 // ExecRows is a helper function to execute sql and return rows and fields.
-func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	if intest.InTest {
 		if v := sctx.Value(mock.RestrictedSQLExecutorKey{}); v != nil {
 			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(StatsCtx,
@@ -233,7 +235,7 @@ func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Ro
 }
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
-func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, opts, sql, args...)
 }
@@ -256,6 +258,13 @@ type JSONTable struct {
 	ModifyCount       int64                  `json:"modify_count"`
 	Version           uint64                 `json:"version"`
 	IsHistoricalStats bool                   `json:"is_historical_stats"`
+}
+
+// Sort is used to sort the object in the JSONTable. it is used for testing to avoid flaky test.
+func (j *JSONTable) Sort() {
+	slices.SortFunc(j.PredicateColumns, func(a, b *JSONPredicateColumn) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 }
 
 // JSONExtendedStats is used for dumping extended statistics.

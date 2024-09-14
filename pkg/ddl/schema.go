@@ -24,22 +24,22 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
-func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
-	dbInfo := &model.DBInfo{}
-	if err := job.DecodeArgs(dbInfo); err != nil {
+	args, err := model.GetCreateSchemaArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
+	dbInfo := args.DBInfo
 	dbInfo.ID = schemaID
 	dbInfo.State = model.StateNone
 
-	err := checkSchemaNotExists(d, schemaID, dbInfo)
+	err = checkSchemaNotExists(jobCtx.infoCache, schemaID, dbInfo)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) {
 			// The database already exists, can't create it, we should cancel this job now.
@@ -48,7 +48,7 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	ver, err = updateSchemaVersion(jobCtx, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -72,8 +72,8 @@ func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 
 // checkSchemaNotExists checks whether the database already exists.
 // see checkTableNotExists for the rationale of why we check using info schema only.
-func checkSchemaNotExists(d *ddlCtx, schemaID int64, dbInfo *model.DBInfo) error {
-	is := d.infoCache.GetLatest()
+func checkSchemaNotExists(infoCache *infoschema.InfoCache, schemaID int64, dbInfo *model.DBInfo) error {
+	is := infoCache.GetLatest()
 	// Check database exists by name.
 	if is.SchemaExists(dbInfo.Name) {
 		return infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
@@ -85,9 +85,9 @@ func checkSchemaNotExists(d *ddlCtx, schemaID int64, dbInfo *model.DBInfo) error
 	return nil
 }
 
-func onModifySchemaCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var toCharset, toCollate string
-	if err := job.DecodeArgs(&toCharset, &toCollate); err != nil {
+func onModifySchemaCharsetAndCollate(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -97,31 +97,32 @@ func onModifySchemaCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		return ver, errors.Trace(err)
 	}
 
-	if dbInfo.Charset == toCharset && dbInfo.Collate == toCollate {
+	if dbInfo.Charset == args.ToCharset && dbInfo.Collate == args.ToCollate {
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 		return ver, nil
 	}
 
-	dbInfo.Charset = toCharset
-	dbInfo.Collate = toCollate
+	dbInfo.Charset = args.ToCharset
+	dbInfo.Collate = args.ToCollate
 
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
-	if ver, err = updateSchemaVersion(d, t, job); err != nil {
+	if ver, err = updateSchemaVersion(jobCtx, t, job); err != nil {
 		return ver, errors.Trace(err)
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 	return ver, nil
 }
 
-func onModifySchemaDefaultPlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var placementPolicyRef *model.PolicyRefInfo
-	if err := job.DecodeArgs(&placementPolicyRef); err != nil {
+func onModifySchemaDefaultPlacement(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
+	placementPolicyRef := args.PolicyRef
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -144,26 +145,26 @@ func onModifySchemaDefaultPlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
-	if ver, err = updateSchemaVersion(d, t, job); err != nil {
+	if ver, err = updateSchemaVersion(jobCtx, t, job); err != nil {
 		return ver, errors.Trace(err)
 	}
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 	return ver, nil
 }
 
-func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	if dbInfo.State == model.StatePublic {
-		err = checkDatabaseHasForeignKeyReferredInOwner(d, t, job)
+		err = checkDatabaseHasForeignKeyReferredInOwner(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	ver, err = updateSchemaVersion(jobCtx, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -210,14 +211,15 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		// we only drop meta key of database, but not drop tables' meta keys.
 		if err = t.DropDatabase(dbInfo.ID); err != nil {
 			break
 		}
 
 		// Finish this job.
-		if len(tables) > 0 {
-			job.Args = append(job.Args, getIDs(tables))
-		}
+		job.FillFinishedArgs(&model.DropSchemaArgs{
+			AllDroppedTableIDs: getIDs(tables),
+		})
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, dbInfo)
 	default:
 		// We can't enter here.
@@ -227,7 +229,7 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	return ver, errors.Trace(err)
 }
 
-func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var (
 		recoverSchemaInfo      *RecoverSchemaInfo
 		recoverSchemaCheckFlag int64
@@ -321,7 +323,7 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		schemaInfo.State = model.StatePublic
 		// use to update InfoSchema
 		job.SchemaID = schemaInfo.ID
-		ver, err = updateSchemaVersion(d, t, job)
+		ver, err = updateSchemaVersion(jobCtx, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

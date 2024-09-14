@@ -61,3 +61,11 @@ func TestMustReloadSchemas(t *testing.T) {
 	sch.mustReloadSchemas()
 	require.True(t, ctrl.Satisfied())
 }
+
+func TestUnSyncedJobTracker(t *testing.T) {
+	jt := newUnSyncedJobTracker()
+	jt.addUnSynced(1)
+	require.True(t, jt.isUnSynced(1))
+	jt.removeUnSynced(1)
+	require.False(t, jt.isUnSynced(1))
+}

@@ -32,6 +32,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -48,7 +49,8 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 
 	ctx := context.Background()
 	builder, _ := plannercore.NewPlanBuilder().Init(se.GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
-	plan, err := builder.Build(ctx, stmt)
+	nodeW := resolve.NewNodeW(stmt)
+	plan, err := builder.Build(ctx, nodeW)
 	require.NoError(t, err)
 
 	logicalPlan, err := plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
@@ -1575,7 +1577,7 @@ func TestColumns(t *testing.T) {
 	}{
 		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where lower(column_name)=lower('T');`,
-			columnName: set.NewStringSet(),
+			columnName: set.NewStringSet("t"),
 		},
 		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name=lower('T');`,
@@ -1632,33 +1634,33 @@ func TestColumns(t *testing.T) {
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
 
-		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.ColumnsTableExtractor)
+		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaColumnsExtractor)
 		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
 
-		require.Equal(t, ca.columnName.Count(), columnsTableExtractor.ColumnName.Count())
-		if ca.columnName.Count() > 0 && columnsTableExtractor.ColumnName.Count() > 0 {
-			require.EqualValues(t, ca.columnName, columnsTableExtractor.ColumnName, "SQL: %v", ca.sql)
+		require.Equal(t, ca.columnName.Count(), columnsTableExtractor.ColPredicates["column_name"].Count())
+		if ca.columnName.Count() > 0 && columnsTableExtractor.ColPredicates["column_name"].Count() > 0 {
+			require.EqualValues(t, ca.columnName, columnsTableExtractor.ColPredicates["column_name"], "SQL: %v", ca.sql)
 		}
 
-		require.Equal(t, ca.tableSchema.Count(), columnsTableExtractor.TableSchema.Count())
-		if ca.tableSchema.Count() > 0 && columnsTableExtractor.TableSchema.Count() > 0 {
-			require.EqualValues(t, ca.tableSchema, columnsTableExtractor.TableSchema, "SQL: %v", ca.sql)
+		require.Equal(t, ca.tableSchema.Count(), columnsTableExtractor.ColPredicates["table_schema"].Count())
+		if ca.tableSchema.Count() > 0 && columnsTableExtractor.ColPredicates["table_schema"].Count() > 0 {
+			require.EqualValues(t, ca.tableSchema, columnsTableExtractor.ColPredicates["table_schema"], "SQL: %v", ca.sql)
 		}
-		require.Equal(t, ca.tableName.Count(), columnsTableExtractor.TableName.Count())
-		if ca.tableName.Count() > 0 && columnsTableExtractor.TableName.Count() > 0 {
-			require.EqualValues(t, ca.tableName, columnsTableExtractor.TableName, "SQL: %v", ca.sql)
+		require.Equal(t, ca.tableName.Count(), columnsTableExtractor.ColPredicates["table_name"].Count())
+		if ca.tableName.Count() > 0 && columnsTableExtractor.ColPredicates["table_name"].Count() > 0 {
+			require.EqualValues(t, ca.tableName, columnsTableExtractor.ColPredicates["table_name"], "SQL: %v", ca.sql)
 		}
-		require.Equal(t, len(ca.tableNamePattern), len(columnsTableExtractor.TableNamePatterns))
-		if len(ca.tableNamePattern) > 0 && len(columnsTableExtractor.TableNamePatterns) > 0 {
-			require.EqualValues(t, ca.tableNamePattern, columnsTableExtractor.TableNamePatterns, "SQL: %v", ca.sql)
+		require.Equal(t, len(ca.tableNamePattern), len(columnsTableExtractor.LikePatterns["table_name"]))
+		if len(ca.tableNamePattern) > 0 && len(columnsTableExtractor.LikePatterns["table_name"]) > 0 {
+			require.EqualValues(t, ca.tableNamePattern, columnsTableExtractor.LikePatterns["table_name"], "SQL: %v", ca.sql)
 		}
-		require.Equal(t, len(ca.columnNamePattern), len(columnsTableExtractor.ColumnNamePatterns))
-		if len(ca.columnNamePattern) > 0 && len(columnsTableExtractor.ColumnNamePatterns) > 0 {
-			require.EqualValues(t, ca.columnNamePattern, columnsTableExtractor.ColumnNamePatterns, "SQL: %v", ca.sql)
+		require.Equal(t, len(ca.columnNamePattern), len(columnsTableExtractor.LikePatterns["column_name"]))
+		if len(ca.columnNamePattern) > 0 && len(columnsTableExtractor.LikePatterns["column_name"]) > 0 {
+			require.EqualValues(t, ca.columnNamePattern, columnsTableExtractor.LikePatterns["column_name"], "SQL: %v", ca.sql)
 		}
-		require.Equal(t, len(ca.tableSchemaPattern), len(columnsTableExtractor.TableSchemaPatterns))
-		if len(ca.tableSchemaPattern) > 0 && len(columnsTableExtractor.TableSchemaPatterns) > 0 {
-			require.EqualValues(t, ca.tableSchemaPattern, columnsTableExtractor.TableSchemaPatterns, "SQL: %v", ca.sql)
+		require.Equal(t, len(ca.tableSchemaPattern), len(columnsTableExtractor.LikePatterns["table_schema"]))
+		if len(ca.tableSchemaPattern) > 0 && len(columnsTableExtractor.LikePatterns["table_schema"]) > 0 {
+			require.EqualValues(t, ca.tableSchemaPattern, columnsTableExtractor.LikePatterns["table_schema"], "SQL: %v", ca.sql)
 		}
 	}
 }
@@ -1763,8 +1765,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			userVars: []any{`"a%"`},
 			params:   []any{"a%"},
 			checker: func(extractor base.MemTablePredicateExtractor) {
-				rse := extractor.(*plannercore.ColumnsTableExtractor)
-				require.EqualValues(t, []string{"a%"}, rse.TableNamePatterns)
+				rse := extractor.(*plannercore.InfoSchemaColumnsExtractor)
+				require.EqualValues(t, []string{"a%"}, rse.LikePatterns["table_name"])
 			},
 		},
 		{
@@ -1800,7 +1802,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		tk.MustExec(setStmt)
 		stmt, err := parser.ParseOneStmt(exec, "", "")
 		require.NoError(t, err)
-		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), stmt.(*ast.ExecuteStmt), dom.InfoSchema())
+		nodeW := resolve.NewNodeW(stmt)
+		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
@@ -1817,7 +1820,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			BinaryArgs: params,
 			PrepStmt:   prepStmt,
 		}
-		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), execStmt, dom.InfoSchema())
+		nodeW := resolve.NewNodeW(execStmt)
+		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
@@ -1834,6 +1838,27 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		skipRequest   bool
 		colPredicates map[string]set.StringSet
 	}{
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='test';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("test"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_name='t';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where tidb_table_id=111;`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"tidb_table_id": set.NewStringSet("111"),
+			},
+		},
 		{
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where lower(table_name)='T';`,
 			skipRequest: false,
@@ -2038,22 +2063,11 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	for _, ca := range cases {
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
-		var base *plannercore.InfoSchemaBaseExtractor
-		switch ex := logicalMemTable.Extractor.(type) {
-		case *plannercore.InfoSchemaBaseExtractor:
-			base = ex
-		case *plannercore.InfoSchemaTablesExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaPartitionsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaStatisticsExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		case *plannercore.InfoSchemaSchemataExtractor:
-			base = &ex.InfoSchemaBaseExtractor
-		default:
-			require.Failf(t, "unexpected extractor type", "%T", ex)
-		}
-		require.Equal(t, ca.skipRequest, base.SkipRequest, "SQL: %v", ca.sql)
-		require.Equal(t, ca.colPredicates, base.ColPredicates, "SQL: %v", ca.sql)
+		ex, ok := logicalMemTable.Extractor.(interface {
+			GetBase() *plannercore.InfoSchemaBaseExtractor
+		})
+		require.True(t, ok)
+		require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
+		require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
 	}
 }

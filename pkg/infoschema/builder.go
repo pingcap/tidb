@@ -29,8 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -444,14 +445,14 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 func getKeptAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
 	var autoIDChanged, autoRandomChanged bool
 	switch diff.Type {
-	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIDCache:
 		autoIDChanged = true
 	case model.ActionRebaseAutoRandomBase:
 		autoRandomChanged = true
 	case model.ActionMultiSchemaChange:
 		for _, t := range diff.SubActionTypes {
 			switch t {
-			case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+			case model.ActionRebaseAutoID, model.ActionModifyTableAutoIDCache:
 				autoIDChanged = true
 			case model.ActionRebaseAutoRandomBase:
 				autoRandomChanged = true
@@ -620,8 +621,8 @@ func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.D
 	if len(allocs.Allocs) != 0 {
 		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
 		switch tp {
-		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
-			idCacheOpt := autoid.CustomAutoIncCacheOption(tblInfo.AutoIdCache)
+		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIDCache:
+			idCacheOpt := autoid.CustomAutoIncCacheOption(tblInfo.AutoIDCache)
 			// If the allocator type might be AutoIncrementType, create both AutoIncrementType
 			// and RowIDAllocType allocator for it. Because auto id and row id could share the same allocator.
 			// Allocate auto id may route to allocate row id, if row id allocator is nil, the program panic!
@@ -681,6 +682,12 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
 
+	for _, alloc := range allocs.Allocs {
+		err := alloc.Transfer(dbInfo.ID, tableID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	allocs = b.buildAllocsForCreateTable(tp, dbInfo, tblInfo, allocs)
 
 	tbl, err := tableFromMeta(allocs, b.factory, tblInfo)
@@ -864,10 +871,6 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	info := b.infoSchema
 	info.schemaMetaVersion = schemaVersion
 
-	b.initBundleInfoBuilder()
-
-	b.initMisc(dbInfos, policies, resourceGroups)
-
 	if b.enableV2 {
 		// We must not clear the historial versions like b.infoData = NewData(), because losing
 		// the historial versions would cause applyDiff get db not exist error and fail, then
@@ -887,12 +890,17 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		b.infoData.resetBeforeFullLoad(schemaVersion)
 	}
 
+	b.initBundleInfoBuilder()
+
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di, tableFromMeta, schemaVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
+
+	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
+	b.initMisc(dbInfos, policies, resourceGroups)
 
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {
@@ -953,9 +961,9 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 	if b.enableV2 {
 		for name, id := range di.TableName2ID {
 			item := tableItem{
-				dbName:        di.Name.L,
+				dbName:        di.Name,
 				dbID:          di.ID,
-				tableName:     name,
+				tableName:     pmodel.NewCIStr(name),
 				tableID:       id,
 				schemaVersion: schemaVersion,
 			}
@@ -983,9 +991,9 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
 	if b.enableV2 {
 		b.infoData.add(tableItem{
-			dbName:        di.Name.L,
+			dbName:        di.Name,
 			dbID:          di.ID,
-			tableName:     tblInfo.Name.L,
+			tableName:     tblInfo.Name,
 			tableID:       tblInfo.ID,
 			schemaVersion: schemaVersion,
 		}, tbl)
@@ -1018,9 +1026,7 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 		enableV2:     useV2,
 	}
 	schemaCacheSize := variable.SchemaCacheSize.Load()
-	if schemaCacheSize > 0 {
-		infoData.tableCache.SetCapacity(schemaCacheSize)
-	}
+	infoData.tableCache.SetCapacity(schemaCacheSize)
 	return builder
 }
 
