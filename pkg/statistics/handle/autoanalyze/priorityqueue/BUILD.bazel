@@ -24,6 +24,7 @@ go_library(
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
+        "//pkg/util/intest",
         "//pkg/util/timeutil",
         "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_zap//:zap",
