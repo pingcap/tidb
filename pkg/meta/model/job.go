@@ -522,6 +522,18 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 				return nil, errors.Trace(err)
 			}
 			// TODO remember update sub-jobs' RawArgs when we do it.
+			if job.MultiSchemaInfo != nil {
+				for _, sub := range job.MultiSchemaInfo.SubJobs {
+					// Only update the args of executing sub-jobs.
+					if len(sub.Args) <= 0 {
+						continue
+					}
+					sub.RawArgs, err = json.Marshal(sub.Args[0])
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+				}
+			}
 		}
 	}
 
@@ -569,8 +581,8 @@ func (job *Job) DecodeArgs(args ...any) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, RawArgsLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), len(job.RawArgs), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
