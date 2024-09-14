@@ -20,7 +20,7 @@ import (
 
 const (
 	// HashJoinVersionLegacy means hash join v1
-	HashJoinVersionLegacy    = "legacy"
+	HashJoinVersionLegacy = "legacy"
 	// HashJoinVersionOptimized means hash join v2
 	HashJoinVersionOptimized = "optimized"
 )
