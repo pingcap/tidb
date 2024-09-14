@@ -16,8 +16,10 @@ package notifier
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 )
 
@@ -44,7 +46,10 @@ type tableStore struct {
 }
 
 func (t *tableStore) Insert(ctx context.Context, s *sess.Session, change *schemaChange) error {
-	// TODO: fill schema_change after we implement JSON serialization.
+	event, err := json.Marshal(change.event)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	sql := fmt.Sprintf(`
 		INSERT INTO %s.%s (
 			ddl_job_id,
@@ -53,9 +58,9 @@ func (t *tableStore) Insert(ctx context.Context, s *sess.Session, change *schema
 			processed_by_flag
 		) VALUES (%d, %d, '%s', 0)`,
 		t.db, t.table,
-		change.ddlJobID, change.multiSchemaChangeSeq, "{}",
+		change.ddlJobID, change.multiSchemaChangeSeq, event,
 	)
-	_, err := s.Execute(ctx, sql, "ddl_notifier")
+	_, err = s.Execute(ctx, sql, "ddl_notifier")
 	return err
 }
 
@@ -88,11 +93,16 @@ func (t *tableStore) List(ctx context.Context, se *sess.Session, limit int) ([]*
 	}
 	ret := make([]*schemaChange, 0, len(rows))
 	for _, row := range rows {
+		event := SchemaChangeEvent{}
+		err = json.Unmarshal(row.GetBytes(2), &event)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		ret = append(ret, &schemaChange{
 			ddlJobID:             row.GetInt64(0),
 			multiSchemaChangeSeq: row.GetInt64(1),
-			// TODO: fill schema_change after we implement JSON serialization.
-			processedByFlag: row.GetUint64(3),
+			event:                &event,
+			processedByFlag:      row.GetUint64(3),
 		})
 	}
 	return ret, nil

@@ -393,6 +393,7 @@ type jsonSchemaChangeEvent struct {
 	Tp model.ActionType
 }
 
+// MarshalJSON implements the json.Marshaler interface.
 func (s *SchemaChangeEvent) MarshalJSON() ([]byte, error) {
 	j := jsonSchemaChangeEvent{
 		TableInfo:            s.tableInfo,
@@ -406,6 +407,7 @@ func (s *SchemaChangeEvent) MarshalJSON() ([]byte, error) {
 	return json.Marshal(j)
 }
 
+// UnmarshalJSON implements the json.Unmarshaler interface.
 func (s *SchemaChangeEvent) UnmarshalJSON(b []byte) error {
 	var j jsonSchemaChangeEvent
 	err := json.Unmarshal(b, &j)
