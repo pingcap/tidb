@@ -16,8 +16,6 @@ package ddl
 
 import (
 	"context"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
 
@@ -34,9 +32,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
