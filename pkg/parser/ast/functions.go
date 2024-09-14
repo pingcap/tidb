@@ -382,12 +382,6 @@ const (
 	SetVal  = "setval"
 )
 
-// IsVectorIndexDistanceMetricSupported stores distance metrics for the vector index.
-var IsVectorIndexDistanceMetricSupported = map[string]struct{}{
-	VecCosineDistance: struct{}{},
-	VecL2Distance:     struct{}{},
-}
-
 type FuncCallExprType int8
 
 const (

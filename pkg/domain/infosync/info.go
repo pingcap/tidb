@@ -1127,7 +1127,13 @@ func SyncTiFlashTableSchema(ctx context.Context, tableID int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return is.tiflashReplicaManager.SyncTiFlashTableSchema(tableID, tikvStats)
+	tiflashStores := make([]pdhttp.StoreInfo, 0, len(tikvStats.Stores))
+	for _, store := range tikvStats.Stores {
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			tiflashStores = append(tiflashStores, store)
+		}
+	}
+	return is.tiflashReplicaManager.SyncTiFlashTableSchema(tableID, tiflashStores)
 }
 
 // CalculateTiFlashProgress calculates TiFlash replica progress
