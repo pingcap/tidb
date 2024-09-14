@@ -120,8 +120,8 @@ func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, t *meta.Meta, job 
 	}
 
 	var indexesInfo []*model.IndexInfo
-	for _, info := range args.IndexArgs {
-		indexInfo := tblInfo.FindIndexByName(info.IndexName.L)
+	for _, a := range args.IndexArgs {
+		indexInfo := tblInfo.FindIndexByName(a.IndexName.L)
 		if indexInfo != nil {
 			indexesInfo = append(indexesInfo, indexInfo)
 		}

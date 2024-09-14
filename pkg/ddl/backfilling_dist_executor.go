@@ -166,8 +166,8 @@ func hasUniqueIndex(job *model.Job) (bool, error) {
 		return false, errors.Trace(err)
 	}
 
-	for _, info := range args.IndexArgs {
-		if info.Unique {
+	for _, a := range args.IndexArgs {
+		if a.Unique {
 			return true, nil
 		}
 	}

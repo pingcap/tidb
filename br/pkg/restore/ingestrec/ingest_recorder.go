@@ -107,8 +107,8 @@ func (i *IngestRecorder) TryAddJob(job *model.Job, isSubJob bool) error {
 
 	// the current information of table/index might be modified by other ddl jobs,
 	// therefore update the index information at last
-	for _, info := range args.IndexArgs {
-		tableindexes[info.AddIndexID] = &IngestIndexInfo{
+	for _, a := range args.IndexArgs {
+		tableindexes[a.AddIndexID] = &IngestIndexInfo{
 			IsPrimary: job.Type == model.ActionAddPrimaryKey,
 			Updated:   false,
 		}
