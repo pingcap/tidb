@@ -524,7 +524,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 	// TODO: Check that there are no additional placement rules,
 	// bundles, or ranges with non-completed tableIDs
 	// (partitions used during reorg, but was dropped)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", `return(2)`))
 	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
 	tk.MustExec(`admin check table t`)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr"))
