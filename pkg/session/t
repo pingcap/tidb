@@ -1,0 +1,3 @@
+testing: warning: no tests to run
+PASS
+ok  	github.com/pingcap/tidb/pkg/session	1.028s [no tests to run]

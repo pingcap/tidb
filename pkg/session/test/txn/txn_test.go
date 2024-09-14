@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -507,4 +508,26 @@ func TestInTrans(t *testing.T) {
 	require.True(t, txn.Valid())
 	tk.MustExec("rollback")
 	require.False(t, txn.Valid())
+}
+
+func TestGetTsoSlow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("insert t values (1), (2)")
+
+	tk.MustExec("set @@max_execution_time = 1000")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mock_get_tso_slow", "return(3)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mock_get_tso_slow"))
+	}()
+
+	logutil.BgLogger().Info("gjt debug beg select")
+	err := tk.QueryToErr("select * from t")
+	require.NotNil(t, err)
+	fmt.Println("gjt debug", err)
 }

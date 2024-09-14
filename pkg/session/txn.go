@@ -608,20 +608,78 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 		defer func(begin time.Time) {
 			sctx.GetSessionVars().DurationWaitTS = time.Since(begin)
 		}(time.Now())
-
-		// Transaction is lazy initialized.
-		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
-		// If Txn() is called later, wait for the future to get a valid txn.
-		if err := txn.changePendingToValid(ctx, sctx); err != nil {
-			logutil.BgLogger().Error("active transaction fail",
-				zap.Error(err))
-			txn.cleanup()
-			sctx.GetSessionVars().TxnCtx.StartTS = 0
+		err := txn.waitWithSQLKiller(ctx, sctx)
+		if err != nil {
 			return txn, err
 		}
 		txn.lazyUniquenessCheckEnabled = !sctx.GetSessionVars().ConstraintCheckInPlacePessimistic
 	}
 	return txn, nil
+}
+
+func (txn *LazyTxn) waitWithSQLKiller(ctx context.Context, sctx sessionctx.Context) error {
+	finishCh := make(chan struct{})
+	defer close(finishCh)
+
+	tsoCh := make(chan error)
+	go func() {
+		// Transaction is lazy initialized.
+		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
+		// If Txn() is called later, wait for the future to get a valid txn.
+		var err error
+			logutil.BgLogger().Info("gjt debug 1")
+		failpoint.Inject("mock_get_tso_slow", func(v failpoint.Value) {
+			t := v.(int)
+			logutil.BgLogger().Info("gjt debug enable")
+			time.Sleep(time.Duration(t) * time.Second)
+		})
+			logutil.BgLogger().Info("gjt debug 2")
+		if err = txn.changePendingToValid(ctx, sctx); err != nil {
+			logutil.BgLogger().Error("active transaction fail",
+				zap.Error(err))
+			txn.cleanup()
+			sctx.GetSessionVars().TxnCtx.StartTS = 0
+		}
+		select {
+		case tsoCh <- err:
+		case <-finishCh:
+		}
+		close(tsoCh)
+	}()
+
+	sqlKillCh := make(chan error)
+
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		defer close(sqlKillCh)
+
+		for {
+			select {
+			case <-ticker.C:
+			logutil.BgLogger().Info("gjt debug ticker")
+				if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			logutil.BgLogger().Info("gjt debug got sqlkill err")
+					select {
+					case sqlKillCh <- err:
+					case <-finishCh:
+					}
+					return
+				}
+			case <-finishCh:
+				return
+			}
+		}
+	}()
+
+	var err error
+	select {
+	case err = <-tsoCh:
+	case err = <-sqlKillCh:
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
+	return err
 }
 
 // KeyNeedToLock returns true if the key need to lock.
