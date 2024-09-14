@@ -275,14 +275,13 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 					cancel()
 				}
 			}
-			opCtx := ddl.NewOperatorCtx(ctx, 1, 1)
+			opCtx := ddl.NewOperatorCtx(ctx)
 			pipeline, err := ddl.NewAddIndexIngestPipeline(
 				opCtx, store,
 				sessPool,
 				mockBackendCtx,
 				[]ingest.Engine{mockEngine},
 				tk.Session(),
-				1, // job id
 				tbl.(table.PhysicalTable),
 				[]*model.IndexInfo{idxInfo},
 				startKey,
@@ -290,8 +289,6 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				&atomic.Int64{},
 				nil,
 				ddl.NewDDLReorgMeta(tk.Session()),
-				0,
-				2,
 			)
 			require.NoError(t, err)
 			err = pipeline.Execute()
@@ -307,41 +304,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				require.Equal(t, tc.operatorErrMsg, opCtx.OperatorErr().Error())
 			}
 			cancel()
-<<<<<<< HEAD
-		}
-		opCtx := ddl.NewOperatorCtx(ctx)
-		pipeline, err := ddl.NewAddIndexIngestPipeline(
-			opCtx, store,
-			sessPool,
-			mockBackendCtx,
-			[]ingest.Engine{mockEngine},
-			tk.Session(),
-			tbl.(table.PhysicalTable),
-			[]*model.IndexInfo{idxInfo},
-			startKey,
-			endKey,
-			&atomic.Int64{},
-			nil,
-			ddl.NewDDLReorgMeta(tk.Session()),
-		)
-		require.NoError(t, err)
-		err = pipeline.Execute()
-		require.NoError(t, err)
-		err = pipeline.Close()
-		comment := fmt.Sprintf("case: %s", tc.failPointPath)
-		require.ErrorContains(t, err, tc.closeErrMsg, comment)
-		opCtx.Cancel()
-		if tc.operatorErrMsg == "" {
-			require.NoError(t, opCtx.OperatorErr())
-		} else {
-			require.Error(t, opCtx.OperatorErr())
-			require.Equal(t, tc.operatorErrMsg, opCtx.OperatorErr().Error())
-		}
-		require.NoError(t, failpoint.Disable(tc.failPointPath))
-		cancel()
-=======
 		})
->>>>>>> 3004c07b939 (copIterator: return context error to avoid return incorrect result on context cancel/timeout (#53489))
 	}
 }
 
