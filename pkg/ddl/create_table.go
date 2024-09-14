@@ -1313,10 +1313,11 @@ func BuildTableInfo(
 		// build index info.
 		idxInfo, err := BuildIndexInfo(
 			ctx,
-			tbInfo.Columns,
+			tbInfo,
 			pmodel.NewCIStr(indexName),
 			primary,
 			unique,
+			false,
 			constr.Keys,
 			constr.Option,
 			model.StatePublic,
@@ -1480,7 +1481,7 @@ func addIndexForForeignKey(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 				Length: types.UnspecifiedLength,
 			})
 		}
-		idxInfo, err := BuildIndexInfo(ctx, tbInfo.Columns, idxName, false, false, keys, nil, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, false, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
 		}

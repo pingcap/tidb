@@ -1070,7 +1070,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if !modified {
 			return
 		}
-		err = checkIndexInModifiableColumns(columns, indexInfo.Columns)
+		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.VectorInfo != nil)
 		if err != nil {
 			return
 		}
@@ -1103,7 +1103,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	return nil
 }
 
-func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
+func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, isVectorIndex bool) error {
 	for _, ic := range idxColumns {
 		col := model.FindColumnInfo(columns, ic.Name.L)
 		if col == nil {
@@ -1116,7 +1116,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if err := checkIndexColumn(nil, col, prefixLength); err != nil {
+		if err := checkIndexColumn(nil, col, prefixLength, isVectorIndex); err != nil {
 			return err
 		}
 	}
