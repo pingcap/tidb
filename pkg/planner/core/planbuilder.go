@@ -4484,6 +4484,39 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		}
 		options = append(options, &loadDataOpt)
 	}
+<<<<<<< HEAD
+=======
+
+	neededVars, err := checkImportIntoColAssignments(ld.ColumnAssignments)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, v := range ld.ColumnsAndUserVars {
+		userVar := v.UserVar
+		if userVar == nil {
+			continue
+		}
+		delete(neededVars, strings.ToLower(userVar.Name))
+	}
+	if len(neededVars) > 0 {
+		valuesStr := make([]string, 0, len(neededVars))
+		for _, v := range neededVars {
+			valuesStr = append(valuesStr, strconv.Itoa(v))
+		}
+		return nil, errors.Errorf(
+			"column assignment cannot use variables set outside IMPORT INTO statement, index %s",
+			strings.Join(valuesStr, ","),
+		)
+	}
+
+	tnW := b.resolveCtx.GetTableName(ld.Table)
+	if tnW.TableInfo.TempTableType != model.TempTableNone {
+		return nil, errors.Errorf("IMPORT INTO does not support temporary table")
+	} else if tnW.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return nil, errors.Errorf("IMPORT INTO does not support cached table")
+	}
+>>>>>>> ae86e046b62 (importinto: fix panic when import to a temporary table, disallow import to cached table (#55983))
 	p := ImportInto{
 		Path:               ld.Path,
 		Format:             ld.Format,
