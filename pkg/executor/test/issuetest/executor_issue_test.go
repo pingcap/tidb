@@ -178,7 +178,7 @@ func TestIssue30289(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
-	for _, hashJoinV2 := range join.UseHashJoinV2 {
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
 		tk.MustExec(hashJoinV2)
 		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
 		require.EqualError(t, err, "issue30289 build return error")
@@ -193,7 +193,7 @@ func TestIssue51998(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
-	for _, hashJoinV2 := range join.UseHashJoinV2 {
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
 		tk.MustExec(hashJoinV2)
 		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
 		require.EqualError(t, err, "issue51998 build return error")
@@ -609,7 +609,7 @@ func TestIssue42662(t *testing.T) {
 	tk.MustExec("set global tidb_server_memory_limit='1600MB'")
 	tk.MustExec("set global tidb_server_memory_limit_sess_min_size=128*1024*1024")
 	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	for _, hashJoinV2 := range join.UseHashJoinV2 {
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
 		tk.MustExec(hashJoinV2)
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1", `return(true)`))
 		// tk.Session() should be marked as MemoryTop1Tracker but not killed.

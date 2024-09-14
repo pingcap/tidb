@@ -655,7 +655,7 @@ func TestIssue55016(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a varchar(10), b char(10))")
 	tk.MustExec("insert into t values('aa','a')")
-	for _, hashJoinV2 := range join.UseHashJoinV2 {
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
 		tk.MustExec(hashJoinV2)
 		tk.MustQuery("select count(*) from t t1 join t t2 on t1.a = t2.b and t2.a = t1.b").Check(testkit.Rows("0"))
 	}

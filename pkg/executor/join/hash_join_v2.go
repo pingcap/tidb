@@ -45,8 +45,8 @@ var (
 	EnableHashJoinV2 = "set tidb_hash_join_version = " + joinversion.HashJoinVersionOptimized
 	// DisableHashJoinV2 disable hash join v2, used for test
 	DisableHashJoinV2 = "set tidb_hash_join_version = " + joinversion.HashJoinVersionLegacy
-	// UseHashJoinV2 is used for test
-	UseHashJoinV2 = []string{DisableHashJoinV2, EnableHashJoinV2}
+	// HashJoinV2Strings is used for test
+	HashJoinV2Strings = []string{DisableHashJoinV2, EnableHashJoinV2}
 )
 
 // IsHashJoinV2Supported return true if hash join v2 is supported in current env
