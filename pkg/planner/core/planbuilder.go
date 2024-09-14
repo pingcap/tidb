@@ -2305,7 +2305,8 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // TODO: find a better way to find indexed columns in ANALYZE rather than use IndexColumn.Offset
 // For multi-valued index, we need to collect it separately here and analyze it as independent index analyze task.
 // See comments for AnalyzeResults.ForMVIndex for more details.
-func (b *PlanBuilder) getModifiedIndexesInfoForAnalyze(
+func getModifiedIndexesInfoForAnalyze(
+	stmtCtx *stmtctx.StatementContext,
 	tblInfo *model.TableInfo,
 	allColumns bool,
 	colsInfo []*model.ColumnInfo,
@@ -2321,7 +2322,7 @@ func (b *PlanBuilder) getModifiedIndexesInfoForAnalyze(
 			continue
 		}
 		if originIdx.VectorInfo != nil {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", originIdx.Name.L))
+			stmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {
@@ -2440,7 +2441,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-		indexes, independentIndexes := b.getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
+		indexes, independentIndexes := getModifiedIndexesInfoForAnalyze(b.ctx.GetSessionVars().StmtCtx, tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,

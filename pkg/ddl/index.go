@@ -786,7 +786,6 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, t *meta.Meta, job *mode
 	case model.StateNone:
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
-		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err
@@ -823,7 +822,6 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, t *meta.Meta, job *mode
 
 		// Send sync schema notification to TiFlash.
 		if job.SnapshotVer == 0 {
-			delayForAsyncCommit()
 			currVer, err := getValidCurrentVersion(jobCtx.store)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -856,7 +854,7 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, t *meta.Meta, job *mode
 			zap.String("charset", job.Charset),
 			zap.String("collation", job.Collate))
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -1124,7 +1122,7 @@ SwitchIndexState:
 			zap.String("charset", job.Charset),
 			zap.String("collation", job.Collate))
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State)
 	}
 
 	return ver, errors.Trace(err)
