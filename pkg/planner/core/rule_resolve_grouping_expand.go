@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
@@ -97,7 +98,7 @@ func genExpand(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.L
 		}
 		p.Children()[i] = np
 	}
-	if expand, ok := p.(*LogicalExpand); ok {
+	if expand, ok := p.(*logicalop.LogicalExpand); ok {
 		expand.GenLevelProjections()
 	}
 	return p, nil

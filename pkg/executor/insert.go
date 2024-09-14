@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -324,6 +324,22 @@ func optimizeDupKeyCheckForNormalInsert(vars *variable.SessionVars, txn kv.Trans
 		return table.DupKeyCheckLazy
 	}
 	return table.DupKeyCheckInPlace
+}
+
+// getPessimisticLazyCheckMode returns the lazy check mode for pessimistic txn.
+// The returned `PessimisticLazyDupKeyCheckMode` only takes effect for pessimistic txn with `DupKeyCheckLazy`;
+// otherwise, this option will be ignored.
+func getPessimisticLazyCheckMode(vars *variable.SessionVars) table.PessimisticLazyDupKeyCheckMode {
+	if !vars.ConstraintCheckInPlacePessimistic && vars.InTxn() && !vars.InRestrictedSQL && vars.ConnectionID > 0 {
+		// We can postpone the duplicated key check to the prewrite stage when both of the following conditions are met:
+		// - `tidb_constraint_check_in_place_pessimistic='OFF'`.
+		// - The current transaction should be an explicit transaction because an autocommit txn cannot get
+		//   any benefits from checking the duplicated key in the prewrite stage.
+		// - The current connection is a user connection, and we always check duplicated key in place for
+		//   internal connections.
+		return table.DupKeyCheckInPrewrite
+	}
+	return table.DupKeyCheckInAcquireLock
 }
 
 // Next implements the Executor Next interface.

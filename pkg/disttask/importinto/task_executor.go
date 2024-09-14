@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -168,6 +169,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		return err
 	}
 
+	panicked := atomic.Bool{}
 outer:
 	for _, chunk := range subtaskMeta.Chunks {
 		// TODO: current workpool impl doesn't drain the input channel, it will
@@ -177,6 +179,7 @@ outer:
 			Plan:       s.taskMeta.Plan,
 			Chunk:      chunk,
 			SharedVars: sharedVars,
+			panicked:   &panicked,
 		}:
 		case <-op.Done():
 			break outer
@@ -184,7 +187,13 @@ outer:
 	}
 	source.Finish()
 
-	return pipeline.Close()
+	if err = pipeline.Close(); err != nil {
+		return err
+	}
+	if panicked.Load() {
+		return errors.Errorf("panic occurred during import, please check log")
+	}
+	return nil
 }
 
 func (*importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -404,18 +413,23 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
 	localBackend.WorkerConcurrency = subtask.Concurrency * 2
+	// compatible with old version task meta
+	jobKeys := sm.RangeJobKeys
+	if jobKeys == nil {
+		jobKeys = sm.RangeSplitKeys
+	}
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			StorageURI:      e.taskMeta.Plan.CloudStorageURI,
-			DataFiles:       sm.DataFiles,
-			StatFiles:       sm.StatFiles,
-			StartKey:        sm.StartKey,
-			EndKey:          sm.EndKey,
-			SplitKeys:       sm.RangeSplitKeys,
-			RegionSplitSize: sm.RangeSplitSize,
-			TotalFileSize:   int64(sm.TotalKVSize),
-			TotalKVCount:    0,
-			CheckHotspot:    false,
+			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
+			DataFiles:     sm.DataFiles,
+			StatFiles:     sm.StatFiles,
+			StartKey:      sm.StartKey,
+			EndKey:        sm.EndKey,
+			JobKeys:       jobKeys,
+			SplitKeys:     sm.RangeSplitKeys,
+			TotalFileSize: int64(sm.TotalKVSize),
+			TotalKVCount:  0,
+			CheckHotspot:  false,
 		},
 		TS: sm.TS,
 	}, engineUUID)

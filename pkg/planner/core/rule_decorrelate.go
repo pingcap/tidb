@@ -58,28 +58,24 @@ import (
 //	     |_ outerSide
 //	     |_ innerSide(cor_col_3)
 func ExtractOuterApplyCorrelatedCols(p base.PhysicalPlan) []*expression.CorrelatedColumn {
-	return extractOuterApplyCorrelatedColsHelper(p, []*expression.Schema{})
+	corCols, _ := extractOuterApplyCorrelatedColsHelper(p)
+	return corCols
 }
 
-func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan, outerSchemas []*expression.Schema) []*expression.CorrelatedColumn {
+func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan) ([]*expression.CorrelatedColumn, []*expression.Schema) {
 	if p == nil {
-		return nil
+		return nil, nil
 	}
-	curCorCols := p.ExtractCorrelatedCols()
-	newCorCols := make([]*expression.CorrelatedColumn, 0, len(curCorCols))
 
-	// If a corresponding Apply is found inside this PhysicalPlan, ignore it.
-	for _, corCol := range curCorCols {
-		var found bool
-		for _, outerSchema := range outerSchemas {
-			if outerSchema.ColumnIndex(&corCol.Column) != -1 {
-				found = true
-				break
-			}
-		}
-		if !found {
-			newCorCols = append(newCorCols, corCol)
-		}
+	// allCorCols store all sub plan's correlated columns.
+	// allOuterSchemas store all child Apply's outer side schemas.
+	allCorCols := p.ExtractCorrelatedCols()
+	allOuterSchemas := []*expression.Schema{}
+
+	handler := func(child base.PhysicalPlan) {
+		childCorCols, childOuterSchemas := extractOuterApplyCorrelatedColsHelper(child)
+		allCorCols = append(allCorCols, childCorCols...)
+		allOuterSchemas = append(allOuterSchemas, childOuterSchemas...)
 	}
 
 	switch v := p.(type) {
@@ -90,25 +86,41 @@ func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan, outerSchemas []*
 		} else {
 			outerPlan = v.Children()[0]
 		}
-		outerSchemas = append(outerSchemas, outerPlan.Schema())
-		newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(v.Children()[0], outerSchemas)...)
-		newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(v.Children()[1], outerSchemas)...)
+		allOuterSchemas = append(allOuterSchemas, outerPlan.Schema())
+		handler(v.Children()[0])
+		handler(v.Children()[1])
 	case *PhysicalCTE:
-		newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(v.SeedPlan, outerSchemas)...)
-		newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(v.RecurPlan, outerSchemas)...)
+		handler(v.SeedPlan)
+		handler(v.RecurPlan)
 	default:
 		for _, child := range p.Children() {
-			newCorCols = append(newCorCols, extractOuterApplyCorrelatedColsHelper(child, outerSchemas)...)
+			handler(child)
 		}
 	}
 
-	return newCorCols
+	resCorCols := make([]*expression.CorrelatedColumn, 0, len(allCorCols))
+
+	// If one correlated column is found in allOuterSchemas, it means this correlated column is corresponding to an Apply inside `p`.
+	// However, we only need the correlated columns that correspond to the Apply of the parent node of `p`.
+	for _, corCol := range allCorCols {
+		var found bool
+		for _, outerSchema := range allOuterSchemas {
+			if outerSchema.ColumnIndex(&corCol.Column) != -1 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			resCorCols = append(resCorCols, corCol)
+		}
+	}
+	return resCorCols, allOuterSchemas
 }
 
 // DecorrelateSolver tries to convert apply plan to join plan.
 type DecorrelateSolver struct{}
 
-func (*DecorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {
+func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) map[int]*expression.Constant {
 	defaultValueMap := make(map[int]*expression.Constant, len(agg.AggFuncs))
 	for i, f := range agg.AggFuncs {
 		switch f.Name {
@@ -124,7 +136,7 @@ func (*DecorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*e
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	if apply, ok := p.(*LogicalApply); ok {
+	if apply, ok := p.(*logicalop.LogicalApply); ok {
 		outerPlan := apply.Children()[0]
 		innerPlan := apply.Children()[1]
 		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
@@ -230,8 +242,8 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 				appendRemoveLimitTraceStep(li, opt)
 				return s.Optimize(ctx, p, opt)
 			}
-		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
-			if apply.CanPullUpAgg() && agg.canPullUp() {
+		} else if agg, ok := innerPlan.(*logicalop.LogicalAggregation); ok {
+			if apply.CanPullUpAgg() && agg.CanPullUp() {
 				innerPlan = agg.Children()[0]
 				apply.JoinType = logicalop.LeftOuterJoin
 				apply.SetChildren(outerPlan, innerPlan)
@@ -373,7 +385,7 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 	}
 NoOptimize:
 	// CTE's logical optimization is independent.
-	if _, ok := p.(*LogicalCTE); ok {
+	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p, planChanged, nil
 	}
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
@@ -393,7 +405,7 @@ func (*DecorrelateSolver) Name() string {
 	return "decorrelate"
 }
 
-func appendApplySimplifiedTraceStep(p *LogicalApply, j *logicalop.LogicalJoin, opt *optimizetrace.LogicalOptimizeOp) {
+func appendApplySimplifiedTraceStep(p *logicalop.LogicalApply, j *logicalop.LogicalJoin, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v simplified into %v_%v", plancodec.TypeApply, p.ID(), plancodec.TypeJoin, j.ID())
 	}
@@ -433,7 +445,7 @@ func appendRemoveLimitTraceStep(limit *logicalop.LogicalLimit, opt *optimizetrac
 	opt.AppendStepToCurrent(limit.ID(), limit.TP(), reason, action)
 }
 
-func appendRemoveProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendRemoveProjTraceStep(p *logicalop.LogicalApply, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", proj.TP(), proj.ID())
 	}
@@ -443,7 +455,7 @@ func appendRemoveProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjectio
 	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendMoveProjTraceStep(p *LogicalApply, np base.LogicalPlan, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendMoveProjTraceStep(p *logicalop.LogicalApply, np base.LogicalPlan, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is moved as %v_%v's parent", proj.TP(), proj.ID(), np.TP(), np.ID())
 	}
@@ -463,7 +475,7 @@ func appendRemoveSortTraceStep(sort *logicalop.LogicalSort, opt *optimizetrace.L
 	opt.AppendStepToCurrent(sort.ID(), sort.TP(), reason, action)
 }
 
-func appendPullUpAggTraceStep(p *LogicalApply, np base.LogicalPlan, agg *LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
+func appendPullUpAggTraceStep(p *logicalop.LogicalApply, np base.LogicalPlan, agg *logicalop.LogicalAggregation, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v pulled up as %v_%v's parent, and %v_%v's join type becomes %v",
 			agg.TP(), agg.ID(), np.TP(), np.ID(), p.TP(), p.ID(), p.JoinType.String())
@@ -475,7 +487,7 @@ func appendPullUpAggTraceStep(p *LogicalApply, np base.LogicalPlan, agg *Logical
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendAddProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
+func appendAddProjTraceStep(p *logicalop.LogicalApply, proj *logicalop.LogicalProjection, opt *optimizetrace.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is added as %v_%v's parent", proj.TP(), proj.ID(), p.TP(), p.ID())
 	}
@@ -485,7 +497,7 @@ func appendAddProjTraceStep(p *LogicalApply, proj *logicalop.LogicalProjection, 
 	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *LogicalApply, agg *LogicalAggregation, sel *logicalop.LogicalSelection,
+func appendModifyAggTraceStep(outerPlan base.LogicalPlan, p *logicalop.LogicalApply, agg *logicalop.LogicalAggregation, sel *logicalop.LogicalSelection,
 	appendedGroupByCols *expression.Schema, appendedAggFuncs []*aggregation.AggFuncDesc,
 	eqCondWithCorCol []*expression.ScalarFunction, opt *optimizetrace.LogicalOptimizeOp) {
 	evalCtx := outerPlan.SCtx().GetExprCtx().GetEvalCtx()

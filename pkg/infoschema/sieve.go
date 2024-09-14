@@ -46,10 +46,11 @@ func (t *entry[K, V]) Size() uint64 {
 // See blog post https://cachemon.github.io/SIEVE-website/blog/2023/12/17/sieve-is-simpler-than-lru/
 // and also the academic paper "SIEVE is simpler than LRU"
 type Sieve[K comparable, V any] struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
-	size     uint64
+	ctx    context.Context
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	size   uint64
+	// capacity can be set to zero for disabling infoschema v2
 	capacity uint64
 	items    map[K]*entry[K, V]
 	ll       *list.List

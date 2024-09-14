@@ -15,6 +15,7 @@
 package local
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"fmt"
@@ -136,6 +137,113 @@ type injectedWriteBehaviour struct {
 type injectedIngestBehaviour struct {
 	nextStage jobStageTp
 	err       error
+}
+
+func newRegionJob(
+	region *split.RegionInfo,
+	data common.IngestData,
+	jobStart []byte,
+	jobEnd []byte,
+	regionSplitSize int64,
+	regionSplitKeys int64,
+	metrics *metric.Common,
+) *regionJob {
+	log.L().Debug("new region job",
+		zap.Binary("jobStart", jobStart),
+		zap.Binary("jobEnd", jobEnd),
+		zap.Uint64("id", region.Region.GetId()),
+		zap.Stringer("epoch", region.Region.GetRegionEpoch()),
+		zap.Binary("regionStart", region.Region.GetStartKey()),
+		zap.Binary("regionEnd", region.Region.GetEndKey()),
+		zap.Reflect("peers", region.Region.GetPeers()))
+	return &regionJob{
+		keyRange:        common.Range{Start: jobStart, End: jobEnd},
+		region:          region,
+		stage:           regionScanned,
+		ingestData:      data,
+		regionSplitSize: regionSplitSize,
+		regionSplitKeys: regionSplitKeys,
+		metrics:         metrics,
+	}
+}
+
+// newRegionJobs creates a list of regionJob from the given regions and job
+// ranges.
+//
+// pre-condition:
+// - sortedRegions must be non-empty, sorted and continuous
+// - sortedJobRanges must be non-empty, sorted and continuous
+// - sortedRegions can cover sortedJobRanges
+func newRegionJobs(
+	sortedRegions []*split.RegionInfo,
+	data common.IngestData,
+	sortedJobRanges []common.Range,
+	regionSplitSize int64,
+	regionSplitKeys int64,
+	metrics *metric.Common,
+) []*regionJob {
+	var (
+		lenRegions   = len(sortedRegions)
+		lenJobRanges = len(sortedJobRanges)
+		ret          = make([]*regionJob, 0, max(lenRegions, lenJobRanges)*2)
+
+		curRegionIdx   = 0
+		curRegion      = sortedRegions[curRegionIdx].Region
+		curRegionStart []byte
+		curRegionEnd   []byte
+	)
+
+	_, curRegionStart, _ = codec.DecodeBytes(curRegion.StartKey, nil)
+	_, curRegionEnd, _ = codec.DecodeBytes(curRegion.EndKey, nil)
+
+	for _, jobRange := range sortedJobRanges {
+		// build the job and move to next region for these cases:
+		//
+		// --region--)           or   -----region--)
+		// -------job range--)        --job range--)
+		for !beforeEnd(jobRange.End, curRegionEnd) {
+			ret = append(ret, newRegionJob(
+				sortedRegions[curRegionIdx],
+				data,
+				largerStartKey(jobRange.Start, curRegionStart),
+				curRegionEnd,
+				regionSplitSize,
+				regionSplitKeys,
+				metrics,
+			))
+
+			curRegionIdx++
+			if curRegionIdx >= lenRegions {
+				return ret
+			}
+			curRegion = sortedRegions[curRegionIdx].Region
+			_, curRegionStart, _ = codec.DecodeBytes(curRegion.StartKey, nil)
+			_, curRegionEnd, _ = codec.DecodeBytes(curRegion.EndKey, nil)
+		}
+
+		// now we can make sure
+		//
+		//               --region--)
+		// --job range--)
+		//
+		// only need to handle the case that job range has remaining part after above loop:
+		//
+		//            [----region--)
+		// --job range--)
+		if bytes.Compare(curRegionStart, jobRange.End) < 0 {
+			ret = append(ret, newRegionJob(
+				sortedRegions[curRegionIdx],
+				data,
+				largerStartKey(jobRange.Start, curRegionStart),
+				jobRange.End,
+				regionSplitSize,
+				regionSplitKeys,
+				metrics,
+			))
+		}
+	}
+
+	return ret
 }
 
 func (j *regionJob) convertStageTo(stage jobStageTp) {

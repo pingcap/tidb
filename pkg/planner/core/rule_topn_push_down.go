@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -54,14 +53,4 @@ func pushDownTopNForBaseLogicalPlan(lp base.LogicalPlan, topNLogicalPlan base.Lo
 // Name implements the base.LogicalOptRule.<1st> interface.
 func (*PushDownTopNOptimizer) Name() string {
 	return "topn_push_down"
-}
-
-func appendNewTopNTraceStep(topN *logicalop.LogicalTopN, union *LogicalUnionAll, opt *optimizetrace.LogicalOptimizeOp) {
-	reason := func() string {
-		return ""
-	}
-	action := func() string {
-		return fmt.Sprintf("%v_%v is added and pushed down across %v_%v", topN.TP(), topN.ID(), union.TP(), union.ID())
-	}
-	opt.AppendStepToCurrent(topN.ID(), topN.TP(), reason, action)
 }

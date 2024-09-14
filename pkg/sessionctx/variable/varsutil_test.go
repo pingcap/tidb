@@ -251,9 +251,6 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, false, v.OptimizerEnableNewOnlyFullGroupByCheck)
 
-	err = v.SetSystemVar(TiDBDDLReorgWorkerCount, "4") // wrong scope global only
-	require.True(t, terror.ErrorEqual(err, errGlobalVariable))
-
 	err = v.SetSystemVar(TiDBRetryLimit, "3")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBRetryLimit)

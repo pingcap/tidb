@@ -21,27 +21,28 @@ import (
 
 var (
 	_ base.LogicalPlan = &logicalop.LogicalJoin{}
-	_ base.LogicalPlan = &LogicalAggregation{}
+	_ base.LogicalPlan = &logicalop.LogicalAggregation{}
 	_ base.LogicalPlan = &logicalop.LogicalProjection{}
 	_ base.LogicalPlan = &logicalop.LogicalSelection{}
-	_ base.LogicalPlan = &LogicalApply{}
+	_ base.LogicalPlan = &logicalop.LogicalApply{}
 	_ base.LogicalPlan = &logicalop.LogicalMaxOneRow{}
 	_ base.LogicalPlan = &logicalop.LogicalTableDual{}
 	_ base.LogicalPlan = &DataSource{}
 	_ base.LogicalPlan = &TiKVSingleGather{}
 	_ base.LogicalPlan = &LogicalTableScan{}
 	_ base.LogicalPlan = &LogicalIndexScan{}
-	_ base.LogicalPlan = &LogicalUnionAll{}
+	_ base.LogicalPlan = &logicalop.LogicalUnionAll{}
+	_ base.LogicalPlan = &logicalop.LogicalPartitionUnionAll{}
 	_ base.LogicalPlan = &logicalop.LogicalSort{}
 	_ base.LogicalPlan = &logicalop.LogicalLock{}
 	_ base.LogicalPlan = &logicalop.LogicalLimit{}
 	_ base.LogicalPlan = &logicalop.LogicalWindow{}
-	_ base.LogicalPlan = &LogicalExpand{}
+	_ base.LogicalPlan = &logicalop.LogicalExpand{}
 	_ base.LogicalPlan = &logicalop.LogicalUnionScan{}
 	_ base.LogicalPlan = &logicalop.LogicalMemTable{}
 	_ base.LogicalPlan = &logicalop.LogicalShow{}
 	_ base.LogicalPlan = &logicalop.LogicalShowDDLJobs{}
-	_ base.LogicalPlan = &LogicalCTE{}
+	_ base.LogicalPlan = &logicalop.LogicalCTE{}
 	_ base.LogicalPlan = &logicalop.LogicalCTETable{}
 	_ base.LogicalPlan = &logicalop.LogicalSequence{}
 )

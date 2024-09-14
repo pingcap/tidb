@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -37,6 +38,7 @@ var (
 	_ builtinFunc = &builtinCaseWhenTimeSig{}
 	_ builtinFunc = &builtinCaseWhenDurationSig{}
 	_ builtinFunc = &builtinCaseWhenJSONSig{}
+	_ builtinFunc = &builtinCaseWhenVectorFloat32Sig{}
 	_ builtinFunc = &builtinIfNullIntSig{}
 	_ builtinFunc = &builtinIfNullRealSig{}
 	_ builtinFunc = &builtinIfNullDecimalSig{}
@@ -44,6 +46,7 @@ var (
 	_ builtinFunc = &builtinIfNullTimeSig{}
 	_ builtinFunc = &builtinIfNullDurationSig{}
 	_ builtinFunc = &builtinIfNullJSONSig{}
+	_ builtinFunc = &builtinIfNullVectorFloat32Sig{}
 	_ builtinFunc = &builtinIfIntSig{}
 	_ builtinFunc = &builtinIfRealSig{}
 	_ builtinFunc = &builtinIfDecimalSig{}
@@ -51,6 +54,7 @@ var (
 	_ builtinFunc = &builtinIfTimeSig{}
 	_ builtinFunc = &builtinIfDurationSig{}
 	_ builtinFunc = &builtinIfJSONSig{}
+	_ builtinFunc = &builtinIfVectorFloat32Sig{}
 )
 
 func maxlen(lhsFlen, rhsFlen int) int {
@@ -372,6 +376,11 @@ func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	case types.ETJson:
 		sig = &builtinCaseWhenJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CaseWhenJson)
+	case types.ETVectorFloat32:
+		sig = &builtinCaseWhenVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_CaseWhenVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for CASE WHEN", tp)
 	}
 	return sig, nil
 }
@@ -626,6 +635,40 @@ func (b *builtinCaseWhenJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (ret t
 	return ret, true, nil
 }
 
+type builtinCaseWhenVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCaseWhenVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinCaseWhenVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalVectorFloat32 evals a builtinCaseWhenVectorFloat32Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
+func (b *builtinCaseWhenVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (ret types.VectorFloat32, isNull bool, err error) {
+	var condition int64
+	args, l := b.getArgs(), len(b.getArgs())
+	for i := 0; i < l-1; i += 2 {
+		condition, isNull, err = args[i].EvalInt(ctx, row)
+		if err != nil {
+			return
+		}
+		if isNull || condition == 0 {
+			continue
+		}
+		return args[i+1].EvalVectorFloat32(ctx, row)
+	}
+	// when clause(condition, result) -> args[i], args[i+1]; (i >= 0 && i+1 < l-1)
+	// else clause -> args[l-1]
+	// If case clause has else clause, l%2 == 1.
+	if l%2 == 1 {
+		return args[l-1].EvalVectorFloat32(ctx, row)
+	}
+	return ret, true, nil
+}
+
 type ifFunctionClass struct {
 	baseFunctionClass
 }
@@ -673,6 +716,11 @@ func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 	case types.ETJson:
 		sig = &builtinIfJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfJson)
+	case types.ETVectorFloat32:
+		sig = &builtinIfVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_IfVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for IF()", evalTps)
 	}
 	return sig, nil
 }
@@ -824,6 +872,27 @@ func (b *builtinIfJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (ret types.B
 	return b.args[2].EvalJSON(ctx, row)
 }
 
+type builtinIfVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinIfVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinIfVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinIfVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (ret types.VectorFloat32, isNull bool, err error) {
+	arg0, isNull0, err := b.args[0].EvalInt(ctx, row)
+	if err != nil {
+		return ret, true, err
+	}
+	if !isNull0 && arg0 != 0 {
+		return b.args[1].EvalVectorFloat32(ctx, row)
+	}
+	return b.args[2].EvalVectorFloat32(ctx, row)
+}
+
 type ifNullFunctionClass struct {
 	baseFunctionClass
 }
@@ -873,6 +942,11 @@ func (c *ifNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	case types.ETJson:
 		sig = &builtinIfNullJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullJson)
+	case types.ETVectorFloat32:
+		sig = &builtinIfNullVectorFloat32Sig{bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_IfNullVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for IFNULL()", evalTps)
 	}
 	return sig, nil
 }
@@ -1007,5 +1081,24 @@ func (b *builtinIfNullJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (types.B
 		return arg0, err != nil, err
 	}
 	arg1, isNull, err := b.args[1].EvalJSON(ctx, row)
+	return arg1, isNull || err != nil, err
+}
+
+type builtinIfNullVectorFloat32Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinIfNullVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinIfNullVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinIfNullVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	arg0, isNull, err := b.args[0].EvalVectorFloat32(ctx, row)
+	if !isNull {
+		return arg0, err != nil, err
+	}
+	arg1, isNull, err := b.args[1].EvalVectorFloat32(ctx, row)
 	return arg1, isNull || err != nil, err
 }

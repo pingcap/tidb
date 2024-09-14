@@ -232,7 +232,7 @@ func checkResult(t *testing.T, tk *testkit.TestKit, result ...string) {
 	var rows []string
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
-			rows = append(rows, v.DBName+" "+tblInfo.Name.L)
+			rows = append(rows, v.DBName.L+" "+tblInfo.Name.L)
 		}
 	}
 	slices.SortFunc(rows, strings.Compare)
@@ -278,7 +278,7 @@ func TestUnrelatedDDLTriggerReload(t *testing.T) {
 	is := dom.InfoSchema()
 	ok, v2 := infoschema.IsV2(is)
 	require.True(t, ok)
-	v2.EvictTable("test", "t1")
+	v2.EvictTable(model.NewCIStr("test"), model.NewCIStr("t1"))
 
 	tk.MustExec("create table t2 (id int)")
 
@@ -309,7 +309,7 @@ func TestTrace(t *testing.T) {
 	require.True(t, ok)
 
 	// Evict the table cache and check the trace information can catch this calling.
-	raw.EvictTable("test", "t_trace")
+	raw.EvictTable(model.NewCIStr("test"), model.NewCIStr("t_trace"))
 	tk.MustQuery("trace select * from information_schema.tables where table_schema='test' and table_name='t_trace'").CheckContain("infoschema.loadTableInfo")
 }
 
@@ -326,7 +326,7 @@ func TestCachedTable(t *testing.T) {
 	require.True(t, ok)
 
 	// Cover a case that after cached table evict and load, table.Table goes wrong.
-	raw.EvictTable("test", "t_cache")
+	raw.EvictTable(model.NewCIStr("test"), model.NewCIStr("t_cache"))
 	tk.MustExec("insert into t_cache values (2)") // no panic here
 	tk.MustQuery("select * from t_cache").Check(testkit.Rows("1", "2"))
 }
@@ -503,4 +503,33 @@ func TestSchemaSimpleTableInfos(t *testing.T) {
 	require.Len(t, tblInfos, 2)
 	require.Equal(t, tblInfos[0].Name.L, "t2")
 	require.Equal(t, tblInfos[1].Name.L, "t1")
+}
+
+func TestSnapshotInfoschemaReader(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("create database issue55827")
+	tk.MustExec("use issue55827")
+
+	time1 := time.Now()
+	timeStr := time1.Format("2006-1-2 15:04:05.000")
+
+	tk.MustExec("create table t (id int primary key);")
+	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.TABLES where table_schema = 'issue55827'").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(tidb_table_id) from INFORMATION_SCHEMA.TABLES where table_schema = 'issue55827'").Check(testkit.Rows("1"))
+
+	// For issue 55827
+	sql := fmt.Sprintf("select count(*) from INFORMATION_SCHEMA.TABLES as of timestamp '%s' where table_schema = 'issue55827'", timeStr)
+	tk.MustQuery(sql).Check(testkit.Rows("0"))
+	sql = fmt.Sprintf("select * from INFORMATION_SCHEMA.TABLES as of timestamp '%s' where table_schema = 'issue55827'", timeStr)
+	tk.MustQuery(sql).Check(testkit.Rows())
 }

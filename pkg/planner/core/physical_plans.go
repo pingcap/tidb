@@ -24,8 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -154,10 +155,16 @@ type PhysicalTableReader struct {
 	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
 }
 
+// LoadTableStats loads the stats of the table read by this plan.
+func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	loadTableStats(ctx, ts.Table, ts.physicalTableID)
+}
+
 // PhysPlanPartInfo indicates partition helper info in physical plan.
 type PhysPlanPartInfo struct {
 	PruningConds   []expression.Expression
-	PartitionNames []model.CIStr
+	PartitionNames []pmodel.CIStr
 	Columns        []*expression.Column
 	ColumnNames    types.NameSlice
 }
@@ -724,9 +731,9 @@ type PhysicalIndexScan struct {
 	IdxColLens []int
 	Ranges     []*ranger.Range
 	Columns    []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	DBName     model.CIStr         `plan-cache-clone:"shallow"`
+	DBName     pmodel.CIStr        `plan-cache-clone:"shallow"`
 
-	TableAsName *model.CIStr `plan-cache-clone:"shallow"`
+	TableAsName *pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
@@ -865,7 +872,7 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 type PhysicalMemTable struct {
 	physicalSchemaProducer
 
-	DBName         model.CIStr
+	DBName         pmodel.CIStr
 	Table          *model.TableInfo
 	Columns        []*model.ColumnInfo
 	Extractor      base.MemTablePredicateExtractor
@@ -897,10 +904,10 @@ type PhysicalTableScan struct {
 
 	Table   *model.TableInfo    `plan-cache-clone:"shallow"`
 	Columns []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	DBName  model.CIStr         `plan-cache-clone:"shallow"`
+	DBName  pmodel.CIStr        `plan-cache-clone:"shallow"`
 	Ranges  []*ranger.Range
 
-	TableAsName *model.CIStr `plan-cache-clone:"shallow"`
+	TableAsName *pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	physicalTableID int64
 
@@ -2135,7 +2142,7 @@ func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
 }
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
-func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
+func NewPhysicalHashAgg(la *logicalop.LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
 	newGbyItems := make([]expression.Expression, len(la.GroupByItems))
 	copy(newGbyItems, la.GroupByItems)
 	newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
@@ -2679,9 +2686,9 @@ type PhysicalCTE struct {
 
 	SeedPlan  base.PhysicalPlan
 	RecurPlan base.PhysicalPlan
-	CTE       *CTEClass
-	cteAsName model.CIStr
-	cteName   model.CIStr
+	CTE       *logicalop.CTEClass
+	cteAsName pmodel.CIStr
+	cteName   pmodel.CIStr
 
 	readerReceiver *PhysicalExchangeReceiver
 	storageSender  *PhysicalExchangeSender

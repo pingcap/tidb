@@ -19,20 +19,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -56,7 +62,7 @@ func TestPlacementPolicy(t *testing.T) {
 	// test the meta storage of placemnt policy.
 	policy := &model.PolicyInfo{
 		ID:   1,
-		Name: model.NewCIStr("aa"),
+		Name: pmodel.NewCIStr("aa"),
 		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion:      "my primary",
 			Regions:            "my regions",
@@ -81,7 +87,7 @@ func TestPlacementPolicy(t *testing.T) {
 	require.Equal(t, policy, val)
 
 	// mock updating the placement policy.
-	policy.Name = model.NewCIStr("bb")
+	policy.Name = pmodel.NewCIStr("bb")
 	policy.LearnerConstraints = "+zone=nanjing"
 	err = m.UpdatePolicy(policy)
 	require.NoError(t, err)
@@ -136,7 +142,7 @@ func TestResourceGroup(t *testing.T) {
 
 	rg := &model.ResourceGroupInfo{
 		ID:   groupID,
-		Name: model.NewCIStr("aa"),
+		Name: pmodel.NewCIStr("aa"),
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate: 100,
 		},
@@ -207,7 +213,7 @@ func TestMeta(t *testing.T) {
 
 	dbInfo := &model.DBInfo{
 		ID:   1,
-		Name: model.NewCIStr("a"),
+		Name: pmodel.NewCIStr("a"),
 	}
 	err = m.CreateDatabase(dbInfo)
 	require.NoError(t, err)
@@ -220,7 +226,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, dbInfo, v)
 
-	dbInfo.Name = model.NewCIStr("aa")
+	dbInfo.Name = pmodel.NewCIStr("aa")
 	err = m.UpdateDatabase(dbInfo)
 	require.NoError(t, err)
 
@@ -234,7 +240,7 @@ func TestMeta(t *testing.T) {
 
 	tbInfo := &model.TableInfo{
 		ID:   1,
-		Name: model.NewCIStr("t"),
+		Name: pmodel.NewCIStr("t"),
 		DBID: dbInfo.ID,
 	}
 	err = m.CreateTableOrView(1, tbInfo)
@@ -252,7 +258,7 @@ func TestMeta(t *testing.T) {
 	require.NotNil(t, err)
 	require.True(t, meta.ErrTableExists.Equal(err))
 
-	tbInfo.Name = model.NewCIStr("tt")
+	tbInfo.Name = pmodel.NewCIStr("tt")
 	err = m.UpdateTable(1, tbInfo)
 	require.NoError(t, err)
 
@@ -272,7 +278,7 @@ func TestMeta(t *testing.T) {
 
 	tbInfo2 := &model.TableInfo{
 		ID:   2,
-		Name: model.NewCIStr("bb"),
+		Name: pmodel.NewCIStr("bb"),
 		DBID: dbInfo.ID,
 	}
 	err = m.CreateTableOrView(1, tbInfo2)
@@ -338,7 +344,7 @@ func TestMeta(t *testing.T) {
 	tid := int64(100)
 	tbInfo100 := &model.TableInfo{
 		ID:   tid,
-		Name: model.NewCIStr("t_rename"),
+		Name: pmodel.NewCIStr("t_rename"),
 	}
 	// Create table.
 	err = m.CreateTableOrView(1, tbInfo100)
@@ -365,7 +371,7 @@ func TestMeta(t *testing.T) {
 	// Test case for CreateTableAndSetAutoID.
 	tbInfo3 := &model.TableInfo{
 		ID:   3,
-		Name: model.NewCIStr("tbl3"),
+		Name: pmodel.NewCIStr("tbl3"),
 	}
 	err = m.CreateTableAndSetAutoID(1, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
 	require.NoError(t, err)
@@ -727,7 +733,7 @@ func TestIsTableInfoMustLoadSubStringsOrder(t *testing.T) {
 
 func TestTableNameExtract(t *testing.T) {
 	var tbl model.TableInfo
-	tbl.Name = model.NewCIStr(`a`)
+	tbl.Name = pmodel.NewCIStr(`a`)
 	b, err := json.Marshal(tbl)
 	require.NoError(t, err)
 
@@ -736,28 +742,28 @@ func TestTableNameExtract(t *testing.T) {
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, "a", nameLMatch[1])
 
-	tbl.Name = model.NewCIStr(`"a"`)
+	tbl.Name = pmodel.NewCIStr(`"a"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"a"`, meta.Unescape(nameLMatch[1]))
 
-	tbl.Name = model.NewCIStr(`""a"`)
+	tbl.Name = pmodel.NewCIStr(`""a"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `""a"`, meta.Unescape(nameLMatch[1]))
 
-	tbl.Name = model.NewCIStr(`"\"a"`)
+	tbl.Name = pmodel.NewCIStr(`"\"a"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"\"a"`, meta.Unescape(nameLMatch[1]))
 
-	tbl.Name = model.NewCIStr(`"\"啊"`)
+	tbl.Name = pmodel.NewCIStr(`"\"啊"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
@@ -765,10 +771,55 @@ func TestTableNameExtract(t *testing.T) {
 	require.Equal(t, `"\"啊"`, meta.Unescape(nameLMatch[1]))
 }
 
-func BenchmarkIsTableInfoMustLoad(b *testing.B) {
-	benchCases := [][2]string{
-		{"narrow", `CREATE TABLE t (c INT PRIMARY KEY);`},
-		{"wide", `
+func TestNameExtractFromJob(t *testing.T) {
+	type extractTestCase struct {
+		schemaName string
+		tableName  string
+	}
+
+	var job model.Job
+	// Inject some table_name and schema_name into other fields of json
+	job.Error = dbterror.ClassDDL.Synthesize(terror.CodeUnknown, `test error, "table_name":"aaa", "schema_name":"bbb"`)
+	job.Warning = dbterror.ClassDDL.Synthesize(terror.CodeUnknown, `test warning, "table_name":"ccc", "schema_name":"ddd"`)
+	job.Query = `create table test.t1(id int) comment 'create table, table_name:"eee", schema_name:"fff"'`
+
+	var testCases = []extractTestCase{
+		// Normal string
+		{"", "schema_name"},
+		{"table_name", ""},
+		// String with quota
+		{`"quota_schema_name"`, `"quota_table_name"`},
+		{`"single_quota`, `""triple_quota"`},
+		{"\"schema_name\"", "\"table_name\""},
+		// String with slash
+		{"\\", "\\\\"},
+		// Unicode
+		{"中文1", "中文2"},
+		{"😋", "😭"},
+		// Other interpunction
+		{"comma,1", "dot.3"},
+		// Put it together
+		{`"combine:\\\",你好\\`, `"schema_name:1️⃣","table_name:2️⃣"`},
+	}
+
+	for _, tc := range testCases {
+		job.SchemaName = tc.schemaName
+		job.TableName = tc.tableName
+
+		b, err := job.Encode(true)
+		require.NoError(t, err)
+
+		schemaName, tableName, err := meta.ExtractSchemaAndTableNameFromJob(b)
+		require.NoError(t, err)
+
+		require.Equal(t, tc.schemaName, schemaName)
+		require.Equal(t, tc.tableName, tableName)
+	}
+}
+
+var benchCases = [][2]string{
+	{"narrow", `CREATE TABLE t (c INT PRIMARY KEY);`},
+	{"wide", `
 CREATE TABLE t (
 	c BIGINT PRIMARY KEY AUTO_RANDOM,
 	c2 TINYINT,
@@ -789,8 +840,9 @@ CREATE TABLE t (
     UNIQUE INDEX idx4(c12),
     INDEX idx5((c + c2))
 );`},
-	}
+}
 
+func BenchmarkIsTableInfoMustLoad(b *testing.B) {
 	for _, benchCase := range benchCases {
 		b.Run(benchCase[0], func(b *testing.B) {
 			benchIsTableInfoMustLoad(b, benchCase[1])
@@ -798,7 +850,7 @@ CREATE TABLE t (
 	}
 }
 
-func benchIsTableInfoMustLoad(b *testing.B, sql string) {
+func getTableInfoJSON(b *testing.B, sql string) []byte {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(b, err)
@@ -808,9 +860,320 @@ func benchIsTableInfoMustLoad(b *testing.B, sql string) {
 	data, err := json.Marshal(tblInfo)
 	require.NoError(b, err)
 
+	return data
+}
+
+func benchIsTableInfoMustLoad(b *testing.B, sql string) {
+	data := getTableInfoJSON(b, sql)
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		got := meta.IsTableInfoMustLoad(data)
 		intest.Assert(!got)
 	}
+}
+
+func BenchmarkTableNameInfo(b *testing.B) {
+	for _, benchCase := range benchCases {
+		b.Run(benchCase[0]+"-json", func(b *testing.B) {
+			benchJSONTableNameInfo(b, benchCase[1])
+		})
+		b.Run(benchCase[0]+"-fastjson", func(b *testing.B) {
+			benchFastJSONTableNameInfo(b, benchCase[1])
+		})
+	}
+}
+
+func benchJSONTableNameInfo(b *testing.B, sql string) {
+	data := getTableInfoJSON(b, sql)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tbInfo := &model.TableNameInfo{}
+		err := json.Unmarshal(data, tbInfo)
+		intest.Assert(tbInfo.ID == 1)
+		intest.Assert(tbInfo.Name.L == "t")
+		intest.AssertNoError(err)
+	}
+}
+
+func benchFastJSONTableNameInfo(b *testing.B, sql string) {
+	data := getTableInfoJSON(b, sql)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tbInfo, err := meta.FastUnmarshalTableNameInfo(data)
+		intest.AssertNoError(err)
+		intest.Assert(tbInfo.ID == 1)
+		intest.Assert(tbInfo.Name.L == "t")
+	}
+}
+
+func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	// create database
+	dbInfo := &model.DBInfo{
+		ID:    10001,
+		Name:  pmodel.NewCIStr("sc"),
+		State: model.StatePublic,
+	}
+
+	// create table with special attributes
+	tblInfo := &model.TableInfo{
+		ID:    10002,
+		Name:  pmodel.NewCIStr("cs"),
+		State: model.StatePublic,
+		Partition: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{
+				{ID: 11, Name: pmodel.NewCIStr("p1")},
+				{ID: 22, Name: pmodel.NewCIStr("p2")},
+			},
+			Enable: true,
+		},
+		ForeignKeys: []*model.FKInfo{{
+			ID:       1,
+			Name:     pmodel.NewCIStr("fk"),
+			RefTable: pmodel.NewCIStr("t"),
+			RefCols:  []pmodel.CIStr{pmodel.NewCIStr("a")},
+			Cols:     []pmodel.CIStr{pmodel.NewCIStr("t_a")},
+		}},
+		TiFlashReplica: &model.TiFlashReplicaInfo{
+			Count:          0,
+			LocationLabels: []string{"a,b,c"},
+			Available:      true,
+		},
+		Lock: &model.TableLockInfo{
+			Tp:    pmodel.TableLockRead,
+			State: model.TableLockStatePreLock,
+			TS:    0,
+		},
+		PlacementPolicyRef: &model.PolicyRefInfo{
+			ID:   1,
+			Name: pmodel.NewCIStr("r1"),
+		},
+		TTLInfo: &model.TTLInfo{
+			IntervalExprStr:  "1",
+			IntervalTimeUnit: int(ast.TimeUnitDay),
+			Enable:           true,
+			JobInterval:      "1h",
+		},
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		require.NoError(t, err)
+		err = meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	// bootstrap
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+
+	// verify partition info correctness
+	tblInfoRes := dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.Partition, tblInfoRes[0].TableInfos[0].Partition)
+	// foreign key info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.ForeignKeysAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.ForeignKeys, tblInfoRes[0].TableInfos[0].ForeignKeys)
+	// tiflash replica info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.TiFlashReplica, tblInfoRes[0].TableInfos[0].TiFlashReplica)
+	// lock info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TableLockAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.Lock, tblInfoRes[0].TableInfos[0].Lock)
+	// placement policy
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PlacementPolicyAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.PlacementPolicyRef, tblInfoRes[0].TableInfos[0].PlacementPolicyRef)
+	// ttl info
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.TTLInfo, tblInfoRes[0].TableInfos[0].TTLInfo)
+}
+
+func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	// create database
+	dbInfo := &model.DBInfo{
+		ID:      10001,
+		Name:    pmodel.NewCIStr("sc"),
+		Charset: "utf8",
+		Collate: "utf8_general_ci",
+		State:   model.StatePublic,
+	}
+
+	// create table with partition info
+	tblInfo := &model.TableInfo{
+		ID:      10002,
+		Name:    pmodel.NewCIStr("cs"),
+		Charset: "latin1",
+		Collate: "latin1_bin",
+		State:   model.StatePublic,
+		Partition: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{
+				{ID: 1, Name: pmodel.NewCIStr("p1")},
+			},
+			Enable: true,
+		},
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		require.NoError(t, err)
+		err = meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	// bootstrap
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+
+	is := dom.InfoSchema()
+	//byID, traverse byID and load from store
+	tbl, ok := is.TableByID(context.Background(), 10002)
+	require.True(t, ok)
+	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
+
+	//byName, traverse byName and load from store,
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("sc"), pmodel.NewCIStr("cs"))
+	require.NoError(t, err)
+	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
+
+	//tableCache, table info exists in cache now, just use id to seek
+	tbl, ok = is.TableByID(context.Background(), 10002)
+	require.True(t, ok)
+	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
+
+	//schemaMap, traverse schemaMap find dbInfo
+	db, ok := is.SchemaByName(pmodel.NewCIStr("sc"))
+	require.True(t, ok)
+	require.Equal(t, db.ID, dbInfo.ID)
+
+	//schemaID2Name, traverse schemaID2Name find dbInfo
+	db, ok = is.SchemaByID(dbInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, db.ID, dbInfo.ID)
+
+	//pid2tid, traverse pid2tid find tblInfo, dbInfo and partition info
+	tbl, ok = is.TableByID(context.Background(), 10002)
+	require.True(t, ok)
+	require.Equal(t, len(tbl.Meta().GetPartitionInfo().Definitions), 1)
+	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
+	tbl, db, pDef := is.FindTableByPartitionID(pid)
+	require.NotNil(t, tbl)
+	require.NotNil(t, db)
+	require.NotNil(t, pDef)
+}
+
+func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	dbInfo := &model.DBInfo{
+		ID:    10001,
+		Name:  pmodel.NewCIStr("sc"),
+		State: model.StatePublic,
+	}
+	policy := &model.PolicyInfo{
+		ID:   2,
+		Name: pmodel.NewCIStr("policy_1"),
+		PlacementSettings: &model.PlacementSettings{
+			PrimaryRegion: "r1",
+			Regions:       "r1,r2",
+		},
+	}
+	group := &model.ResourceGroupInfo{
+		ID:   3,
+		Name: pmodel.NewCIStr("groupName_1"),
+	}
+	tblInfo := &model.TableInfo{
+		ID:    10002,
+		Name:  pmodel.NewCIStr("cs"),
+		State: model.StatePublic,
+		ForeignKeys: []*model.FKInfo{{
+			ID:        1,
+			Name:      pmodel.NewCIStr("fk_1"),
+			RefSchema: pmodel.NewCIStr("t1"),
+			RefTable:  pmodel.NewCIStr("parent"),
+			Version:   1,
+		}},
+		PlacementPolicyRef: &model.PolicyRefInfo{
+			ID:   policy.ID,
+			Name: policy.Name,
+		},
+	}
+	tblInfo1 := &model.TableInfo{
+		ID:            10003,
+		Name:          pmodel.NewCIStr("cs"),
+		State:         model.StatePublic,
+		TempTableType: model.TempTableLocal,
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := m.CreatePolicy(policy)
+		require.NoError(t, err)
+		err = m.AddResourceGroup(group)
+		require.NoError(t, err)
+		err = m.CreateDatabase(dbInfo)
+		require.NoError(t, err)
+		err = m.CreateTableOrView(dbInfo.ID, tblInfo)
+		require.NoError(t, err)
+		err = m.CreateTableOrView(dbInfo.ID, tblInfo1)
+		require.NoError(t, err)
+		return errors.Trace(err)
+	})
+	require.NoError(t, err)
+
+	// bootstrap
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+	is := dom.InfoSchema()
+	tbl, ok := is.TableByID(context.Background(), 10002)
+	require.True(t, ok)
+	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
+	// placement policy
+	policy1 := is.AllPlacementPolicies()
+	require.Equal(t, len(policy1), 1)
+	require.Equal(t, policy1[0].Name, policy.Name)
+	// resource group
+	group1 := is.AllResourceGroups()
+	require.Equal(t, len(group1), 2)
+	sort.Slice(group1, func(i, j int) bool {
+		return group1[i].Name.L < group1[j].Name.L
+	})
+	require.Equal(t, group1[1].Name, group.Name)
+	// referred foreign key
+	referredFk := is.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
+	require.Equal(t, len(referredFk), 1)
+	require.Equal(t, referredFk[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
+	// temp table
+	require.True(t, is.HasTemporaryTable())
 }

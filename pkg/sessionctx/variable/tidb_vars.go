@@ -387,6 +387,14 @@ const (
 	// The default value is 0
 	TiDBAllowBatchCop = "tidb_allow_batch_cop"
 
+	// TiDBShardRowIDBits means all the tables created in the current session will be sharded.
+	// The default value is 0
+	TiDBShardRowIDBits = "tidb_shard_row_id_bits"
+
+	// TiDBPreSplitRegions means all the tables created in the current session will be pre-splited.
+	// The default value is 0
+	TiDBPreSplitRegions = "tidb_pre_split_regions"
+
 	// TiDBAllowMPPExecution means if we should use mpp way to execute query or not.
 	// Default value is `true`, means to be determined by the optimizer.
 	// Value set to `false` means never use mpp.
@@ -1023,6 +1031,7 @@ const (
 	// TiDBMemQuotaAnalyze indicates the memory quota for all analyze jobs.
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
 	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
+	// In test, we disable it by default. See GlobalSystemVariableInitialValue for details.
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
 	// TiDBEnableAutoAnalyzePriorityQueue determines whether TiDB executes automatic analysis with priority queue.
 	TiDBEnableAutoAnalyzePriorityQueue = "tidb_enable_auto_analyze_priority_queue"
@@ -1034,6 +1043,8 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
+	// TiDBAutoAnalyzeConcurrency is the concurrency of the auto analyze
+	TiDBAutoAnalyzeConcurrency = "tidb_auto_analyze_concurrency"
 	// TiDBEnableDistTask indicates whether to enable the distributed execute background tasks(For example DDL, Import etc).
 	TiDBEnableDistTask = "tidb_enable_dist_task"
 	// TiDBEnableFastCreateTable indicates whether to enable the fast create table feature.
@@ -1204,6 +1215,12 @@ const (
 	// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
 	// for any type of configuration item that has concurrent workers.
 	MaxConfigurableConcurrency = 256
+
+	// MaxShardRowIDBits is the maximum number of bits that can be used for row-id sharding.
+	MaxShardRowIDBits = 15
+
+	// MaxPreSplitRegions is the maximum number of regions that can be pre-split.
+	MaxPreSplitRegions = 15
 )
 
 // Default TiDB system variable values.
@@ -1247,7 +1264,7 @@ const (
 	DefOptConcurrencyFactor                 = 3.0
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true
-	DefOptPreferRangeScan                   = false
+	DefOptPreferRangeScan                   = true
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
 	DefBatchCommit                          = false
@@ -1276,6 +1293,8 @@ const (
 	DefTiDBEnableOuterJoinReorder           = true
 	DefTiDBEnableNAAJ                       = true
 	DefTiDBAllowBatchCop                    = 1
+	DefShardRowIDBits                       = 0
+	DefPreSplitRegions                      = 0
 	DefBlockEncryptionMode                  = "aes-128-ecb"
 	DefTiDBAllowMPPExecution                = true
 	DefTiDBAllowTiFlashCop                  = false
@@ -1407,6 +1426,7 @@ const (
 	DefTiDBAnalyzeColumnOptions                    = "PREDICATE"
 	DefTiDBMemOOMAction                            = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
+	DefTiDBAutoAnalyzeConcurrency                  = 2
 	DefTiDBEnablePrepPlanCache                     = true
 	DefTiDBPrepPlanCacheSize                       = 100
 	DefTiDBSessionPlanCacheSize                    = 100
@@ -1523,7 +1543,7 @@ const (
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
 	DefTiDBTxnEntrySizeLimit                          = 0
-	DefTiDBSchemaCacheSize                            = 0
+	DefTiDBSchemaCacheSize                            = 512 * 1024 * 1024
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
 	DefDivPrecisionIncrement                          = 4
 	DefTiDBDMLType                                    = "STANDARD"
@@ -1594,6 +1614,7 @@ var (
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize     = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
+	AutoAnalyzeConcurrency            = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning

@@ -754,6 +754,7 @@ store-limit=0
 ttl-refreshed-txn-size=8192
 resolve-lock-lite-threshold = 16
 copr-req-timeout = "120s"
+grpc-keepalive-timeout = 0.2
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
@@ -804,6 +805,7 @@ max_connections = 200
 	require.Equal(t, uint(6000), conf.TiKVClient.RegionCacheTTL)
 	require.Equal(t, int64(0), conf.TiKVClient.StoreLimit)
 	require.Equal(t, int64(8192), conf.TiKVClient.TTLRefreshedTxnSize)
+	require.Equal(t, time.Millisecond*200, conf.TiKVClient.GetGrpcKeepAliveTimeout())
 	require.Equal(t, uint(1000), conf.TokenLimit)
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
@@ -901,6 +903,35 @@ spilled-file-encryption-method = "aes128-ctr"
 
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
+
+	conf = NewConfig()
+	require.Equal(t, time.Second*3, conf.TiKVClient.GetGrpcKeepAliveTimeout())
+	err = f.Truncate(0)
+	require.NoError(t, err)
+	_, err = f.Seek(0, 0)
+	require.NoError(t, err)
+	_, err = f.WriteString(`
+[tikv-client]
+grpc-keepalive-timeout = 3
+`)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, time.Second*3, conf.TiKVClient.GetGrpcKeepAliveTimeout())
+
+	err = f.Truncate(0)
+	require.NoError(t, err)
+	_, err = f.Seek(0, 0)
+	require.NoError(t, err)
+	_, err = f.WriteString(`
+[tikv-client]
+grpc-keepalive-timeout = 0.01
+`)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	require.NoError(t, conf.Load(configFile))
+	require.NotNil(t, conf.Valid())
+	require.Equal(t, "grpc-keepalive-timeout should be at least 0.05, but got 0.010000", conf.Valid().Error())
 
 	configFile = "config.toml.example"
 	require.NoError(t, conf.Load(configFile))
