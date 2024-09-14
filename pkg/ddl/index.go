@@ -590,26 +590,30 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job,
 		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 
-	// TODO: merge isPK
-	args, err := model.GetAddIndexArgs(job)
+	var args *model.AddIndexArgs
+	if isPK {
+		args, err = model.GetAddPrimaryIndexArgs(job)
+	} else {
+		args, err = model.GetAddIndexArgs(job)
+	}
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	allIndexInfos := make([]*model.IndexInfo, 0, len(args.IndexArgs))
-	for _, a := range args.IndexArgs {
-		indexInfo := tblInfo.FindIndexByName(a.IndexName.L)
+	for _, indexArg := range args.IndexArgs {
+		indexInfo := tblInfo.FindIndexByName(indexArg.IndexName.L)
 		if indexInfo != nil && indexInfo.State == model.StatePublic {
 			job.State = model.JobStateCancelled
-			err = dbterror.ErrDupKeyName.GenWithStack("index already exist %s", a.IndexName)
+			err = dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexArg.IndexName)
 			if isPK {
 				err = infoschema.ErrMultiplePriKey
 			}
 			return ver, err
 		}
 		if indexInfo == nil {
-			for _, hiddenCol := range a.HiddenCols {
+			for _, hiddenCol := range indexArg.HiddenCols {
 				columnInfo := model.FindColumnInfo(tblInfo.Columns, hiddenCol.Name.L)
 				if columnInfo != nil && columnInfo.State == model.StatePublic {
 					// We already have a column with the same column name.
@@ -620,8 +624,8 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job,
 			}
 		}
 		if indexInfo == nil {
-			if len(a.HiddenCols) > 0 {
-				for _, hiddenCol := range a.HiddenCols {
+			if len(indexArg.HiddenCols) > 0 {
+				for _, hiddenCol := range indexArg.HiddenCols {
 					InitAndAddColumnToTable(tblInfo, hiddenCol)
 				}
 			}
@@ -632,11 +636,11 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job,
 			indexInfo, err = BuildIndexInfo(
 				nil,
 				tblInfo.Columns,
-				a.IndexName,
+				indexArg.IndexName,
 				isPK,
-				a.Unique,
-				a.IndexPartSpecifications,
-				a.IndexOption,
+				indexArg.Unique,
+				indexArg.IndexPartSpecifications,
+				indexArg.IndexOption,
 				model.StateNone,
 			)
 			if err != nil {
@@ -644,7 +648,7 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job,
 				return ver, errors.Trace(err)
 			}
 			if isPK {
-				if _, err = CheckPKOnGeneratedColumn(tblInfo, a.IndexPartSpecifications); err != nil {
+				if _, err = CheckPKOnGeneratedColumn(tblInfo, indexArg.IndexPartSpecifications); err != nil {
 					job.State = model.JobStateCancelled
 					return ver, err
 				}
@@ -777,15 +781,16 @@ SwitchIndexState:
 			return ver, errors.Trace(err)
 		}
 
-		allIndexIDs := make([]int64, 0, len(allIndexInfos))
-		ifExists := make([]bool, 0, len(allIndexInfos))
-		isGlobal := make([]bool, 0, len(allIndexInfos))
+		a := &model.AddIndexArgs{PartitionIDs: getPartitionIDs(tbl.Meta()), IsFinishedArg: true}
 		for _, indexInfo := range allIndexInfos {
-			allIndexIDs = append(allIndexIDs, indexInfo.ID)
-			ifExists = append(ifExists, false)
-			isGlobal = append(isGlobal, indexInfo.Global)
+			a.IndexArgs = append(a.IndexArgs, &model.IndexArg{
+				AddIndexID: indexInfo.ID,
+				IfExist:    false,
+				IsGlobal:   indexInfo.Global,
+			})
 		}
-		job.Args = []any{allIndexIDs, ifExists, getPartitionIDs(tbl.Meta()), isGlobal}
+		job.FillFinishedArgs(a)
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
@@ -1131,7 +1136,7 @@ func onDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 
-			// Convert drop index args to add index args
+			// Convert drop index args to add index args, only indexID is needed.
 			args := &model.AddIndexArgs{}
 			for _, indexID := range indexIDs {
 				args.IndexArgs = append(args.IndexArgs, &model.IndexArg{AddIndexID: indexID})
@@ -1143,7 +1148,7 @@ func onDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 			// Global index key has t{tableID}_ prefix.
 			// Assign partitionIDs empty to guarantee correct prefix in insertJobIntoDeleteRangeTable.
-			// TODO(joechenrh): remove these codes after switching to V2
+			// TODO(joechenrh): remove these codes after totally switched to V2
 			if job.Version == model.JobVersion1 {
 				if allIndexInfos[0].Global {
 					job.Args = append(job.Args, indexIDs[0], []int64{})
@@ -1153,9 +1158,7 @@ func onDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _
 			} else {
 				args := job.Args[0].(*model.DropIndexArgs)
 				args.IndexIDs = indexIDs
-				if allIndexInfos[0].Global {
-					args.PartitionIDs = []int64{}
-				} else {
+				if !allIndexInfos[0].Global {
 					args.PartitionIDs = getPartitionIDs(tblInfo)
 				}
 			}
@@ -1217,11 +1220,11 @@ func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Meta, job *model.Jo
 	}
 
 	indexInfos := make([]*model.IndexInfo, 0, len(args.IndexNames))
-	for i, idxName := range args.IndexNames {
-		indexInfo := tblInfo.FindIndexByName(idxName.L)
+	for i, indexName := range args.IndexNames {
+		indexInfo := tblInfo.FindIndexByName(indexName.L)
 		if indexInfo == nil {
 			job.State = model.JobStateCancelled
-			return nil, nil, args.IfExists[i], dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", idxName)
+			return nil, nil, args.IfExists[i], dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		}
 
 		// Check that drop primary index will not cause invisible implicit primary index.

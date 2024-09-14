@@ -118,8 +118,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		if err != nil {
 			_, err := model.GetAddIndexArgs(job)
 			if err == nil {
-				// The first argument is bool means nothing need to be added to delete-range table.
-				// TODO(joechenrh): update the comment
+				// This mean this job is not finished, there are nothing need to be added to delete-range table.
 				return 0, nil
 			}
 			return 0, errors.Trace(err)

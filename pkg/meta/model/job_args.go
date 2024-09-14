@@ -266,6 +266,8 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
 }
 
+// DropIndexArgs is the argument for drop index.
+// IndexIDs may have different length with IndexNames and IfExists.
 type DropIndexArgs struct {
 	IndexNames   []pmodel.CIStr `json:"index_names,omitempty"`
 	IfExists     []bool         `json:"if_exists,omitempty"`
@@ -316,17 +318,21 @@ func GetDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 }
 
 // IndexArg is the argument for single add index operation
+// For NonPK, used fields are (listed in order of v1)
+// Unique, IndexName, IndexPartSpecifications, IndexOption, SQLMode, Warning, Global
+// For PK
+// Unique, IndexName, IndexPartSpecifications, IndexOptions, HiddelCols, Global
 type IndexArg struct {
+	Global                  bool                          `json:"global,omitempty"`
 	Unique                  bool                          `json:"unique,omitempty"`
 	IndexName               pmodel.CIStr                  `json:"index_name,omitempty"`
 	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications,omitempty"`
 	IndexOption             *ast.IndexOption              `json:"index_option,omitempty"`
 	HiddenCols              []*ColumnInfo                 `json:"hidden_cols,omitempty"`
-	Global                  bool                          `json:"global,omitempty"`
 
 	// For PK
-	SQLMode  mysql.SQLMode `json:"sql_mode,omitempty"`
-	Warnings []string      `json:"warnings,omitempty"`
+	SQLMode mysql.SQLMode `json:"sql_mode,omitempty"`
+	Warning string        `json:"warnings,omitempty"`
 
 	// context vars, IfExist will be used in onDropIndex.
 	AddIndexID int64 `json:"-"`
@@ -334,6 +340,7 @@ type IndexArg struct {
 	IsGlobal   bool  `json:"-"`
 }
 
+// AddIndexArgs is the argument for add index.
 type AddIndexArgs struct {
 	IndexArgs []*IndexArg `json:"index_args,omitempty"`
 
@@ -341,8 +348,11 @@ type AddIndexArgs struct {
 	PartitionIDs []int64 `json:"-"`
 
 	// Since most of the argument processing logic of PK and index is same,
-	// We use this variable to distinguish them
+	// We use this variable to distinguish them.
 	IsPK bool `json:"is_pk"`
+
+	// This is to dintinguish finished and running args, used for expectedDeleteRangeCnt
+	IsFinishedArg bool `json:"is_finished,omitempty"`
 }
 
 // getV1Args is used to get arglists for v1
@@ -351,7 +361,7 @@ func (a *AddIndexArgs) getV1Args() []any {
 		arg := a.IndexArgs[0]
 		return []any{
 			arg.Unique, arg.IndexName, arg.IndexPartSpecifications,
-			arg.IndexOption, arg.SQLMode, arg.Warnings, arg.Global,
+			arg.IndexOption, arg.SQLMode, arg.Warning, arg.Global,
 		}
 	}
 
@@ -372,6 +382,7 @@ func (a *AddIndexArgs) getV1Args() []any {
 		global[i] = arg.Global
 	}
 
+	// This is to make the args compatible with old logic, same like DropIndexArgs
 	if n == 1 {
 		return []any{unique[0], indexName[0], indexPartSpecification[0], indexOption[0], hiddenCols[0], global[0]}
 	} else {
@@ -379,6 +390,7 @@ func (a *AddIndexArgs) getV1Args() []any {
 	}
 }
 
+// MergeIndexArg is used to merge from
 func (a *AddIndexArgs) MergeIndexArg(Args []any, jobVersion JobVersion) {
 	var indexArg *IndexArg
 	if jobVersion == JobVersion1 {
@@ -397,6 +409,7 @@ func (a *AddIndexArgs) MergeIndexArg(Args []any, jobVersion JobVersion) {
 }
 
 func (a *AddIndexArgs) fillSubJob(job *SubJob) {
+	intest.Assert(!a.IsPK, "a should not be add primary key argument")
 	if job.Version == JobVersion1 {
 		job.Args = a.getV1Args()
 	} else {
@@ -431,18 +444,18 @@ func (a *AddIndexArgs) fillFinishedJob(job *Job) {
 
 // GetAddIndexArgs gets the add index args.
 func GetAddIndexArgs(job *Job) (*AddIndexArgs, error) {
-	if job.Version == JobVersion2 {
-		return getOrDecodeArgsV2[*AddIndexArgs](job)
+	if job.Version == JobVersion1 {
+		return getAddIndexArgs(job)
 	}
-	return getAddIndexArgs(job)
+	return getOrDecodeArgsV2[*AddIndexArgs](job)
 }
 
 // GetAddPrimaryIndexArgs get the add primary key args
 func GetAddPrimaryIndexArgs(job *Job) (*AddIndexArgs, error) {
 	if job.Version == JobVersion2 {
-		return getOrDecodeArgsV2[*AddIndexArgs](job)
+		return getAddPrimaryKeyArgs(job)
 	}
-	return getAddPrimaryKeyArgs(job)
+	return getOrDecodeArgsV2[*AddIndexArgs](job)
 }
 
 // GetFinishedAddIndexArgs gets the add index args after the job is finished.
@@ -458,7 +471,7 @@ func GetFinishedAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		a := &AddIndexArgs{PartitionIDs: partitionIDs}
+		a := &AddIndexArgs{PartitionIDs: partitionIDs, IsFinishedArg: true}
 		for i, addIndexID := range addIndexIDs {
 			a.IndexArgs = append(a.IndexArgs, &IndexArg{
 				AddIndexID: addIndexID,
@@ -468,7 +481,15 @@ func GetFinishedAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 		}
 		return a, nil
 	}
-	return getOrDecodeArgsV2[*AddIndexArgs](job)
+
+	args, err := getOrDecodeArgsV2[*AddIndexArgs](job)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !args.IsFinishedArg {
+		return nil, errors.Errorf("Got running AddIndexArgs, expect finished AddIndexArgs")
+	}
+	return args, nil
 }
 
 func getAddPrimaryKeyArgs(job *Job) (*AddIndexArgs, error) {
@@ -479,48 +500,46 @@ func getAddPrimaryKeyArgs(job *Job) (*AddIndexArgs, error) {
 		indexPartSpecifications []*ast.IndexPartSpecification
 		indexOption             *ast.IndexOption
 		sqlMode                 mysql.SQLMode
-		warnings                []string
+		warning                 string
 		global                  bool
 	)
-	err := job.DecodeArgs(
+	if err := job.DecodeArgs(
 		&unique, &indexName, &indexPartSpecifications,
-		&indexOption, &sqlMode, &warnings, &global,
-	)
-	if err != nil {
+		&indexOption, &sqlMode, &warning, &global); err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	return &AddIndexArgs{
 		IsPK: true,
 		IndexArgs: []*IndexArg{{
+			Global:                  global,
 			Unique:                  unique,
 			IndexName:               indexName,
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
 			SQLMode:                 sqlMode,
-			Warnings:                warnings,
-			Global:                  global,
+			Warning:                 warning,
 		}},
 	}, nil
 }
 
 func getAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 	intest.Assert(job.Version == JobVersion1, "job version is not v1")
-	var (
-		uniques                 []bool
-		indexNames              []model.CIStr
-		indexPartSpecifications [][]*ast.IndexPartSpecification
-		indexOptions            []*ast.IndexOption
-		hiddenCols              [][]*ColumnInfo
-		globals                 []bool
-	)
+	uniques := make([]bool, 1)
+	indexNames := make([]model.CIStr, 1)
+	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
+	indexOptions := make([]*ast.IndexOption, 1)
+	hiddenCols := make([][]*ColumnInfo, 1)
+	globals := make([]bool, 1)
 
-	err := job.DecodeArgs(&uniques, &indexNames, &indexPartSpecifications, &indexOptions, &hiddenCols, &globals)
-	if err != nil {
-		err = job.DecodeArgs(&uniques[0], &indexNames[0], &indexPartSpecifications[0], &indexOptions[0], &hiddenCols[0], &globals[0])
-	}
-
-	if err != nil {
-		return nil, errors.Trace(err)
+	if err := job.DecodeArgs(
+		&uniques, &indexNames, &indexPartSpecifications,
+		&indexOptions, &hiddenCols, &globals); err != nil {
+		if err = job.DecodeArgs(
+			&uniques[0], &indexNames[0], &indexPartSpecifications[0],
+			&indexOptions[0], &hiddenCols[0], &globals[0]); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	a := AddIndexArgs{}

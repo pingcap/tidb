@@ -222,8 +222,14 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		}
 		intest.Assert(len(args.IndexNames) == 1, "len(args.IndexNames) != 1")
 		info.DropIndexes = append(info.DropIndexes, args.IndexNames[0])
-	case model.ActionAddIndex:
-		args, err := model.GetAddIndexArgs(job)
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		var args *model.AddIndexArgs
+		var err error
+		if job.Type == model.ActionAddIndex {
+			args, err = model.GetAddIndexArgs(job)
+		} else {
+			args, err = model.GetAddPrimaryIndexArgs(job)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -237,20 +243,6 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		for _, c := range indexArg.HiddenCols {
 			for depColName := range c.Dependences {
 				info.RelativeColumns = append(info.RelativeColumns, pmodel.NewCIStr(depColName))
-			}
-		}
-	case model.ActionAddPrimaryKey:
-		indexName := job.Args[1].(pmodel.CIStr)
-		indexPartSpecifications := job.Args[2].([]*ast.IndexPartSpecification)
-		info.AddIndexes = append(info.AddIndexes, indexName)
-		for _, indexPartSpecification := range indexPartSpecifications {
-			info.RelativeColumns = append(info.RelativeColumns, indexPartSpecification.Column.Name)
-		}
-		if hiddenCols, ok := job.Args[4].([]*model.ColumnInfo); ok {
-			for _, c := range hiddenCols {
-				for depColName := range c.Dependences {
-					info.RelativeColumns = append(info.RelativeColumns, pmodel.NewCIStr(depColName))
-				}
 			}
 		}
 	case model.ActionRenameIndex:
