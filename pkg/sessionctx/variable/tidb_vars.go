@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -958,8 +959,8 @@ const (
 	// TiDBOptEnableHashJoin indicates whether to enable hash join.
 	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
 
-	// TiDBHashJoinUseImplV2 indicates whether to use hash join implementation v2.
-	TiDBHashJoinUseImplV2 = "tidb_hash_join_use_impl_v2"
+	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
+	TiDBHashJoinVersion = "tidb_hash_join_version"
 
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
@@ -1542,7 +1543,7 @@ const (
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
-	DefTiDBHashJoinUseImplV2                          = true
+	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionOptimized
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
