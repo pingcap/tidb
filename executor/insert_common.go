@@ -1100,8 +1100,9 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transaction, uk *keyValueWithDupInfo, replace bool, r toBeCheckedRow) (bool, error) {
 	if !replace {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-		if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic && e.ctx.GetSessionVars().LockUnchangedKeys {
-			txnCtx.AddUnchangedKeyForLock(uk.newKey)
+		if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+			// lock duplicated row key on insert-ignore
+			txnCtx.AddUnchangedRowKey(r.handleKey.newKey)
 		}
 		return true, nil
 	}
@@ -1240,12 +1241,10 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		// If row was checked with no duplicate keys,
 		// it should be add to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
-		if !skip {
-			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
-			err = addRecord(ctx, rows[i])
-			if err != nil {
-				return err
-			}
+		e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+		err = addRecord(ctx, rows[i])
+		if err != nil {
+			return err
 		}
 	}
 	if e.stats != nil {
