@@ -189,7 +189,12 @@ func onDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.Args = append(job.Args, indexInfosToIDList(idxInfos))
+		dropColumnArgs, err := model.GetDropColumnArgs(job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		dropColumnArgs.IndexIDs = indexInfosToIDList(idxInfos)
+		job.FillArgs(dropColumnArgs)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		colInfo.State = model.StateDeleteReorganization
@@ -215,7 +220,12 @@ func onDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, 
 		} else {
 			// We should set related index IDs for job
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, getPartitionIDs(tblInfo))
+			dropColumnArgs, err := model.GetDropColumnArgs(job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			dropColumnArgs.PartitionIDs = getPartitionIDs(tblInfo)
+			job.FillArgs(dropColumnArgs)
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State))
