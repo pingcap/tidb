@@ -646,14 +646,13 @@ func (txn *LazyTxn) waitWithSQLKiller(ctx context.Context, sctx sessionctx.Conte
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
-	var err error
 	for {
 		select {
 		case <-ticker.C:
 			if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 				return err
 			}
-		case err = <-tsoCh:
+		case err := <-tsoCh:
 			return err
 		case <-ctx.Done():
 			return ctx.Err()
