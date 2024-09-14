@@ -653,9 +653,9 @@ func (txn *LazyTxn) waitWithSQLKiller(ctx context.Context, sctx sessionctx.Conte
 			if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 				return err
 			}
-		case err = <- tsoCh:
+		case err = <-tsoCh:
 			return err
-		case <- ctx.Done():
+		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
