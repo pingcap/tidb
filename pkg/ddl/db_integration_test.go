@@ -1333,7 +1333,8 @@ func assertAlterWarnExec(tk *testkit.TestKit, t *testing.T, sql string) {
 }
 
 func TestAlterAlgorithm(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1375,6 +1376,20 @@ func TestAlterAlgorithm(t *testing.T) {
 	assertAlterWarnExec(tk, t, "alter table t rename index idx_c1 to idx_c2, ALGORITHM=INPLACE")
 	tk.MustExec("alter table t rename index idx_c2 to idx_c, ALGORITHM=INSTANT")
 	tk.MustExec("alter table t rename index idx_c to idx_c1, ALGORITHM=DEFAULT")
+
+	// Test corner case for renameIndexes
+	tk.MustExec(`create table tscalar(c1 int, col_1_1 int, key col_1(col_1_1))`)
+	tk.MustExec("alter table tscalar rename index col_1 to col_2")
+	tk.MustExec("admin check table tscalar")
+	tk.MustExec("drop table tscalar")
+
+	// Test rename index with scalar function
+	ddlChecker.Disable()
+	tk.MustExec(`create table tscalar(id int, col_1 json, KEY idx_1 ((cast(col_1 as char(64) array))))`)
+	tk.MustExec("alter table tscalar rename index idx_1 to idx_1_1")
+	tk.MustExec("admin check table tscalar")
+	tk.MustExec("drop table tscalar")
+	ddlChecker.Enable()
 
 	// partition.
 	assertAlterWarnExec(tk, t, "alter table t ALGORITHM=COPY, truncate partition p1")

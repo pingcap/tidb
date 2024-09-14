@@ -387,6 +387,14 @@ const (
 	// The default value is 0
 	TiDBAllowBatchCop = "tidb_allow_batch_cop"
 
+	// TiDBShardRowIDBits means all the tables created in the current session will be sharded.
+	// The default value is 0
+	TiDBShardRowIDBits = "tidb_shard_row_id_bits"
+
+	// TiDBPreSplitRegions means all the tables created in the current session will be pre-splited.
+	// The default value is 0
+	TiDBPreSplitRegions = "tidb_pre_split_regions"
+
 	// TiDBAllowMPPExecution means if we should use mpp way to execute query or not.
 	// Default value is `true`, means to be determined by the optimizer.
 	// Value set to `false` means never use mpp.
@@ -1207,6 +1215,12 @@ const (
 	// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
 	// for any type of configuration item that has concurrent workers.
 	MaxConfigurableConcurrency = 256
+
+	// MaxShardRowIDBits is the maximum number of bits that can be used for row-id sharding.
+	MaxShardRowIDBits = 15
+
+	// MaxPreSplitRegions is the maximum number of regions that can be pre-split.
+	MaxPreSplitRegions = 15
 )
 
 // Default TiDB system variable values.
@@ -1279,6 +1293,8 @@ const (
 	DefTiDBEnableOuterJoinReorder           = true
 	DefTiDBEnableNAAJ                       = true
 	DefTiDBAllowBatchCop                    = 1
+	DefShardRowIDBits                       = 0
+	DefPreSplitRegions                      = 0
 	DefBlockEncryptionMode                  = "aes-128-ecb"
 	DefTiDBAllowMPPExecution                = true
 	DefTiDBAllowTiFlashCop                  = false

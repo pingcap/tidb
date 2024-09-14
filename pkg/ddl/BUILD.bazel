@@ -76,6 +76,7 @@ go_library(
         "//pkg/ddl/ingest",
         "//pkg/ddl/label",
         "//pkg/ddl/logutil",
+        "//pkg/ddl/notifier",
         "//pkg/ddl/placement",
         "//pkg/ddl/resourcegroup",
         "//pkg/ddl/schemaver",

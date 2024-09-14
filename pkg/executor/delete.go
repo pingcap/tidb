@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -62,16 +61,16 @@ func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.deleteSingleTableByChunk(ctx)
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols util.HandleCols, isExtraHandle bool, row []types.Datum) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPosInfo, isExtraHandle bool, row []types.Datum) error {
 	end := len(row)
 	if isExtraHandle {
 		end--
 	}
-	handle, err := handleCols.BuildHandleByDatums(row)
+	handle, err := colInfo.HandleCols.BuildHandleByDatums(row)
 	if err != nil {
 		return err
 	}
-	err = e.removeRow(e.Ctx(), tbl, handle, row[:end])
+	err = e.removeRow(e.Ctx(), tbl, handle, row[:end], colInfo)
 	if err != nil {
 		return err
 	}
@@ -79,19 +78,10 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols util.HandleCols, i
 }
 
 func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
-	var (
-		tbl           table.Table
-		isExtrahandle bool
-		handleCols    util.HandleCols
-		rowCount      int
-	)
-	for _, info := range e.tblColPosInfos {
-		tbl = e.tblID2Table[info.TblID]
-		handleCols = info.HandleCols
-		if !tbl.Meta().IsCommonHandle {
-			isExtrahandle = handleCols.IsInt() && handleCols.GetCol(0).ID == model.ExtraHandleID
-		}
-	}
+	colPosInfo := &e.tblColPosInfos[0]
+	tbl := e.tblID2Table[colPosInfo.TblID]
+	handleCols := colPosInfo.HandleCols
+	isExtraHandle := !tbl.Meta().IsCommonHandle && handleCols.IsInt() && handleCols.GetCol(0).ID == model.ExtraHandleID
 
 	batchDMLSize := e.Ctx().GetSessionVars().DMLBatchSize
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
@@ -101,6 +91,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	datumRow := make([]types.Datum, 0, len(fields))
 	chk := exec.TryNewCacheChunk(e.Children(0))
 	columns := e.Children(0).Schema().Columns
+	rowCount := 0
 	if len(columns) != len(fields) {
 		logutil.BgLogger().Error("schema columns and fields mismatch",
 			zap.Int("len(columns)", len(columns)),
@@ -137,7 +128,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				datumRow = append(datumRow, datum)
 			}
 
-			err = e.deleteOneRow(tbl, handleCols, isExtrahandle, datumRow)
+			err = e.deleteOneRow(tbl, colPosInfo, isExtraHandle, datumRow)
 			if err != nil {
 				return err
 			}
@@ -167,12 +158,13 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the corresponding rows in joinedRow.
 	var totalMemDelta int64
-	for _, info := range colPosInfos {
+	for i := range colPosInfos {
+		info := colPosInfos[i]
 		if unmatchedOuterRow(info, joinedRow) {
 			continue
 		}
 		if tblRowMap[info.TblID] == nil {
-			tblRowMap[info.TblID] = kv.NewMemAwareHandleMap[[]types.Datum]()
+			tblRowMap[info.TblID] = kv.NewMemAwareHandleMap[handleInfoPair]()
 		}
 		handle, err := info.HandleCols.BuildHandleByDatums(joinedRow)
 		if err != nil {
@@ -181,10 +173,10 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
 		row, exist := tblRowMap[info.TblID].Get(handle)
 		if !exist {
-			row = make([]types.Datum, info.End-info.Start)
+			row = handleInfoPair{handleVal: make([]types.Datum, info.End-info.Start), posInfo: &info}
 		}
 		for i, d := range joinedRow[info.Start:info.End] {
-			d.Copy(&row[i])
+			d.Copy(&row.handleVal[i])
 		}
 		memDelta := tblRowMap[info.TblID].Set(handle, row)
 		if !exist {
@@ -231,32 +223,30 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 			}
 		}
 	}
-
 	return e.removeRowsInTblRowMap(tblRowMap)
 }
 
 func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
 		var err error
-		rowMap.Range(func(h kv.Handle, val []types.Datum) bool {
-			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val)
+		rowMap.Range(func(h kv.Handle, val handleInfoPair) bool {
+			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
 			return err == nil
 		})
 		if err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
+func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *plannercore.TblColPosInfo) error {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
 	}
 
-	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data)
+	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data, posInfo.IndexesForDelete)
 	if err != nil {
 		return err
 	}
@@ -323,7 +313,12 @@ func (e *DeleteExec) HasFKCascades() bool {
 	return len(e.fkCascades) > 0
 }
 
+type handleInfoPair struct {
+	handleVal []types.Datum
+	posInfo   *plannercore.TblColPosInfo
+}
+
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
 // the key in map[int64]Row is the joined table handle, which represent a unique reference row.
 // the value in map[int64]Row is the deleting row.
-type tableRowMapType map[int64]*kv.MemAwareHandleMap[[]types.Datum]
+type tableRowMapType map[int64]*kv.MemAwareHandleMap[handleInfoPair]
