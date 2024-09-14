@@ -43,7 +43,19 @@ type TestTableUser struct {
 
 // Frequently referenced definition of `table` in all test cases among `admin pause test cases`
 const adminPauseTestTable string = "t_user"
+const adminPauseTestTableWithVec string = "t_user_vec"
 const adminPauseTestTableStmt string = `CREATE TABLE if not exists ` + adminPauseTestTable + ` (
+	id int(11) NOT NULL AUTO_INCREMENT,
+	tenant varchar(128) NOT NULL,
+	name varchar(128) NOT NULL,
+	age int(11) NOT NULL,
+	province varchar(32) NOT NULL DEFAULT '',
+	city varchar(32) NOT NULL DEFAULT '',
+	phone varchar(16) NOT NULL DEFAULT '',
+	created_time datetime NOT NULL,
+	updated_time datetime NOT NULL
+  );`
+const adminPauseTestTableStmtWithVec string = `CREATE TABLE if not exists ` + adminPauseTestTableWithVec + ` (
 	id int(11) NOT NULL AUTO_INCREMENT,
 	tenant varchar(128) NOT NULL,
 	name varchar(128) NOT NULL,
@@ -127,11 +139,19 @@ func (tu *TestTableUser) generateAttributes(id int) (err error) {
 }
 
 func (tu *TestTableUser) insertStmt(tableName string, count int) string {
-	sql := fmt.Sprintf("INSERT INTO %s(tenant, name, age, province, city, phone, created_time, updated_time, vec) VALUES ", tableName)
+	sql := fmt.Sprintf("INSERT INTO %s(tenant, name, age, province, city, phone, created_time, updated_time) VALUES ", tableName)
+	if tableName == adminPauseTestTableWithVec {
+		sql = fmt.Sprintf("INSERT INTO %s(tenant, name, age, province, city, phone, created_time, updated_time, vec) VALUES ", tableName)
+	}
 	for n := 0; n < count; n++ {
 		_ = tu.generateAttributes(n)
-		sql += fmt.Sprintf("('%s', '%s', %d, '%s', '%s', '%s', '%s', '%s', '%s')",
-			tu.tenant, tu.name, tu.age, tu.province, tu.city, tu.phone, tu.createdTime, tu.updatedTime, tu.vec)
+		if tableName == adminPauseTestTable {
+			sql += fmt.Sprintf("('%s', '%s', %d, '%s', '%s', '%s', '%s', '%s')",
+				tu.tenant, tu.name, tu.age, tu.province, tu.city, tu.phone, tu.createdTime, tu.updatedTime)
+		} else {
+			sql += fmt.Sprintf("('%s', '%s', %d, '%s', '%s', '%s', '%s', '%s', '%s')",
+				tu.tenant, tu.name, tu.age, tu.province, tu.city, tu.phone, tu.createdTime, tu.updatedTime, tu.vec)
+		}
 		if n != count-1 {
 			sql += ", "
 		}
@@ -145,7 +165,18 @@ func generateTblUser(tk *testkit.TestKit, rowCount int) error {
 		return nil
 	}
 
-	tk.MustExec("alter table t_user set tiflash replica 3 location labels 'a','b';")
+	tu := &TestTableUser{}
+	tk.MustExec(tu.insertStmt(adminPauseTestTable, rowCount))
+	return nil
+}
+
+func generateTblUserWithVec(tk *testkit.TestKit, rowCount int) error {
+	tk.MustExec(adminPauseTestTableStmtWithVec)
+	if rowCount == 0 {
+		return nil
+	}
+
+	tk.MustExec(fmt.Sprintf("alter table %s set tiflash replica 3 location labels 'a','b';", adminPauseTestTableWithVec))
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
 	defer func() {
@@ -155,7 +186,7 @@ func generateTblUser(tk *testkit.TestKit, rowCount int) error {
 	}()
 
 	tu := &TestTableUser{}
-	tk.MustExec(tu.insertStmt(adminPauseTestTable, rowCount))
+	tk.MustExec(tu.insertStmt(adminPauseTestTableWithVec, rowCount))
 	return nil
 }
 

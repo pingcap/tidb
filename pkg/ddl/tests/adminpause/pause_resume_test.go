@@ -239,6 +239,7 @@ func TestPauseAndResumeIndexStmt(t *testing.T) {
 	}()
 
 	require.Nil(t, generateTblUser(stmtKit, 10))
+	require.Nil(t, generateTblUserWithVec(stmtKit, 10))
 
 	for _, stmtCase := range indexDDLStmtCase {
 		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, false)
@@ -313,6 +314,7 @@ func TestPauseResumeCancelAndRerunIndexStmt(t *testing.T) {
 	}()
 
 	require.Nil(t, generateTblUser(stmtKit, 10))
+	require.Nil(t, generateTblUserWithVec(stmtKit, 10))
 
 	for _, stmtCase := range indexDDLStmtCase {
 		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)

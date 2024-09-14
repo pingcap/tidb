@@ -114,8 +114,8 @@ const dropUniqueIndexStmt string = alterTableDropPrefix + "index if exists idx_p
 const addIndexStmt string = alterTableAddPrefix + "index if not exists idx_name (name);"
 const dropIndexStmt string = alterTableDropPrefix + "index if exists idx_name;"
 
-const addVectorIndexStmt string = alterTableAddPrefix + "vector index v_idx((VEC_COSINE_DISTANCE(vec))) USING HNSW;"
-const dropVectorIndexStmt string = alterTableDropPrefix + "index if exists v_idx;"
+const addVectorIndexStmt string = "alter table " + adminPauseTestTableWithVec + " add vector index v_idx((VEC_COSINE_DISTANCE(vec))) USING HNSW;"
+const dropVectorIndexStmt string = "alter table " + adminPauseTestTableWithVec + " drop index if exists v_idx;"
 
 var indexDDLStmtCase = [...]StmtCase{
 	// Add primary key

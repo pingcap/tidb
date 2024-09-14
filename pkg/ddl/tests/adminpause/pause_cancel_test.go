@@ -198,6 +198,7 @@ func TestPauseCancelAndRerunIndexStmt(t *testing.T) {
 	}()
 
 	require.Nil(t, generateTblUser(stmtKit, 10))
+	require.Nil(t, generateTblUserWithVec(stmtKit, 10))
 
 	for _, stmtCase := range indexDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)
