@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -41,9 +42,9 @@ import (
 var (
 	_ exec.Executor = &HashJoinV2Exec{}
 	// EnableHashJoinV2 enable hash join v2, used for test
-	EnableHashJoinV2 = "set tidb_hash_join_version = true"
+	EnableHashJoinV2 = "set tidb_hash_join_version = " + joinversion.HashJoinVersionOptimized
 	// DisableHashJoinV2 disable hash join v2, used for test
-	DisableHashJoinV2 = "set tidb_hash_join_version = false"
+	DisableHashJoinV2 = "set tidb_hash_join_version = " + joinversion.HashJoinVersionLegacy
 	// UseHashJoinV2 is used for test
 	UseHashJoinV2 = []string{DisableHashJoinV2, EnableHashJoinV2}
 )

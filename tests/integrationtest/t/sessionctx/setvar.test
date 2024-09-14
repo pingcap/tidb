@@ -684,9 +684,9 @@ select /*+ set_var(tidb_opt_use_invisible_indexes=on) */ @@tidb_opt_use_invisibl
 select @@tidb_opt_use_invisible_indexes;
 select /*+ set_var(tidb_opt_use_invisible_indexes=off) */ @@tidb_opt_use_invisible_indexes;
 select @@tidb_opt_use_invisible_indexes;
-select /*+ set_var(tidb_hash_join_version=on) */ @@tidb_hash_join_version;
+select /*+ set_var(tidb_hash_join_version=optimized) */ @@tidb_hash_join_version;
 select @@tidb_hash_join_version;
-select /*+ set_var(tidb_hash_join_version=off) */ @@tidb_hash_join_version;
+select /*+ set_var(tidb_hash_join_version=legacy) */ @@tidb_hash_join_version;
 select @@tidb_hash_join_version;
 
 set @@global.max_execution_time=1000;
