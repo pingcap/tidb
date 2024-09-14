@@ -4561,6 +4561,9 @@ func checkIndexNameAndColumns(ctx sessionctx.Context, t table.Table, indexName p
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
 		colName := pmodel.NewCIStr("expression_index")
+		if isVector {
+			colName = pmodel.NewCIStr("vector_index")
+		}
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}

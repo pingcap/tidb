@@ -192,10 +192,6 @@ func TestPauseCancelAndRerunIndexStmt(t *testing.T) {
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
-	defer func() {
-		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount")
-		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess")
-	}()
 
 	require.Nil(t, generateTblUser(stmtKit, 10))
 	require.Nil(t, generateTblUserWithVec(stmtKit, 10))

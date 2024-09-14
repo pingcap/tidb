@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -1162,18 +1163,25 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// for duplicated index name
 	tk.MustExec("alter table t add key idx(a);")
-	tk.MustGetErrCode("alter table t add vector index idx((vec_cosine_distance(b))) USING HNSW;", errno.ErrDupKeyName)
+	tk.MustGetErrCode("alter table t add vector index idx((vec_cosine_distance(c))) USING HNSW;", errno.ErrDupKeyName)
 	// for duplicated function
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
-	defer func() {
-		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess")
-	}()
 	tk.MustContainErrMsg("alter table t add vector index vecIdx((vec_cosine_distance(b))) USING HNSW;",
 		"add vector index can only be defined on fixed-dimension vector columns")
 	tk.MustExec("alter table t add vector index vecIdx((vec_cosine_distance(c))) USING HNSW;")
 	tk.MustGetErrCode("alter table t add vector index vecIdx1((vec_cosine_distance(c))) USING HNSW;", errno.ErrDupKeyName)
 	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
 	tk.MustExec("alter table t add vector index vecIdx2((vec_l2_distance(c))) USING HNSW;")
+	// for "if not exists"
+	tk.MustExec("alter table t drop index vecIdx2")
+	tk.MustExec("alter table t add vector index if not exists idx((vec_l2_distance(c))) USING HNSW;")
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.GreaterOrEqual(t, len(warnings), 1)
+	lastWarn := warnings[len(warnings)-1]
+	require.Truef(t, terror.ErrorEqual(dbterror.ErrDupKeyName, lastWarn.Err), "err %v", lastWarn.Err)
+	require.Equal(t, contextutil.WarnLevelNote, lastWarn.Level)
+	tk.MustContainErrMsg("alter table t add vector index if not exists idx((vec_cosine_distance(c))) USING HNSW;",
+		"Duplicate vector index function name 'vector index: vecIdx, column name: c, duplicate function name: vec_cosine_distance'")
 
 	// normal test cases
 	tk.MustExec("drop table if exists t;")
@@ -1216,7 +1224,6 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	require.Equal(t, 0, len(indexes))
 	gcCnt := tk.MustQuery("select count(*) from mysql.gc_delete_range").Rows()[0][0]
 	require.Equal(t, "0", gcCnt)
-
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
@@ -1231,6 +1238,32 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	require.Equal(t, 1, len(indexes))
 	require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
 	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` vector(3) DEFAULT NULL,\n" +
+		"  VECTOR INDEX `idx`((VEC_COSINE_DISTANCE(`b`))) COMMENT 'b comment'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// test anonymous index
+	tk.MustExec("alter table t drop index idx;")
+	tk.MustExec("alter table t add vector index ((vec_l2_distance(b))) USING HNSW;")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tbl.Meta().Indices))
+	idx := tbl.Meta().Indices[0]
+	require.Equal(t, "vector_index", idx.Name.O)
+	require.Equal(t, pmodel.IndexTypeHNSW, idx.Tp)
+	require.Equal(t, model.DistanceMetricL2, idx.VectorInfo.DistanceMetric)
+	tk.MustExec("alter table t add key vector_index_2(a);")
+	tk.MustExec("alter table t add vector index ((VEC_COSINE_DISTANCE(b))) USING HNSW;")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 3, len(tbl.Meta().Indices))
+	require.Equal(t, "vector_index_2", tbl.Meta().Indices[1].Name.O)
+	require.Equal(t, true, tbl.Meta().Indices[1].VectorInfo == nil)
+	require.Equal(t, "vector_index_3", tbl.Meta().Indices[2].Name.O)
+	require.Equal(t, false, tbl.Meta().Indices[2].VectorInfo == nil)
 }
 
 func TestAddVectorIndexRollback(t *testing.T) {

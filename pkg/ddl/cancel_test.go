@@ -259,9 +259,6 @@ func TestCancelVariousJobs(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t(c1, c2, c3) values(%d, %d, %d)", i*3, i*2, i))
 	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(2048)`)
-	defer func() {
-		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess")
-	}()
 
 	// Change some configurations.
 	ddl.ReorgWaitTimeout = 10 * time.Millisecond
