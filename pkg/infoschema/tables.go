@@ -466,7 +466,7 @@ var columnsCols = []columnInfo{
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "COLUMN_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "ORDINAL_POSITION", tp: mysql.TypeLonglong, size: 64},
+	{name: "ORDINAL_POSITION", tp: mysql.TypeLonglong, size: 21},
 	{name: "COLUMN_DEFAULT", tp: mysql.TypeBlob, size: 196606},
 	{name: "IS_NULLABLE", tp: mysql.TypeVarchar, size: 3},
 	{name: "DATA_TYPE", tp: mysql.TypeVarchar, size: 64},
@@ -1032,16 +1032,16 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "JOB_INFO", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
-	{name: "PROCESSED_ROWS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "PROCESSED_ROWS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "START_TIME", tp: mysql.TypeDatetime},
 	{name: "END_TIME", tp: mysql.TypeDatetime},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
 	{name: "FAIL_REASON", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 512},
-	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "REMAINING_SECONDS", tp: mysql.TypeVarchar, size: 512},
 	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22, decimal: 6},
-	{name: "ESTIMATED_TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "ESTIMATED_TOTAL_ROWS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 }
 
 // TableTiKVRegionStatusCols is TiKV region status mem table columns.
@@ -1197,7 +1197,7 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
-	{name: "REPLICA_COUNT", tp: mysql.TypeLonglong, size: 64},
+	{name: "REPLICA_COUNT", tp: mysql.TypeLonglong, size: 21},
 	{name: "LOCATION_LABELS", tp: mysql.TypeVarchar, size: 64},
 	{name: "AVAILABLE", tp: mysql.TypeTiny, size: 1},
 	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
@@ -1409,8 +1409,8 @@ var tableStorageStatsCols = []columnInfo{
 	{name: "PEER_COUNT", tp: mysql.TypeLonglong, size: 21},
 	{name: "REGION_COUNT", tp: mysql.TypeLonglong, size: 21, comment: "The region count of single replica of the table"},
 	{name: "EMPTY_REGION_COUNT", tp: mysql.TypeLonglong, size: 21, comment: "The region count of single replica of the table"},
-	{name: "TABLE_SIZE", tp: mysql.TypeLonglong, size: 64, comment: "The disk usage(MB) of single replica of the table, if the table size is empty or less than 1MB, it would show 1MB "},
-	{name: "TABLE_KEYS", tp: mysql.TypeLonglong, size: 64, comment: "The count of keys of single replica of the table"},
+	{name: "TABLE_SIZE", tp: mysql.TypeLonglong, size: 21, comment: "The disk usage(MB) of single replica of the table, if the table size is empty or less than 1MB, it would show 1MB "},
+	{name: "TABLE_KEYS", tp: mysql.TypeLonglong, size: 21, comment: "The count of keys of single replica of the table"},
 }
 
 var tableTableTiFlashTablesCols = []columnInfo{
@@ -1421,54 +1421,54 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
-	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
-	{name: "SEGMENT_COUNT", tp: mysql.TypeLonglong, size: 64},
-	{name: "TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64},
-	{name: "TOTAL_SIZE", tp: mysql.TypeLonglong, size: 64},
-	{name: "TOTAL_DELETE_RANGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 21},
+	{name: "SEGMENT_COUNT", tp: mysql.TypeLonglong, size: 21},
+	{name: "TOTAL_ROWS", tp: mysql.TypeLonglong, size: 21},
+	{name: "TOTAL_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "TOTAL_DELETE_RANGES", tp: mysql.TypeLonglong, size: 21},
 	{name: "DELTA_RATE_ROWS", tp: mysql.TypeDouble, size: 64},
 	{name: "DELTA_RATE_SEGMENTS", tp: mysql.TypeDouble, size: 64},
 	{name: "DELTA_PLACED_RATE", tp: mysql.TypeDouble, size: 64},
-	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 21},
 	{name: "DELTA_CACHE_RATE", tp: mysql.TypeDouble, size: 64},
 	{name: "DELTA_CACHE_WASTED_RATE", tp: mysql.TypeDouble, size: 64},
-	{name: "DELTA_INDEX_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_INDEX_SIZE", tp: mysql.TypeLonglong, size: 21},
 	{name: "AVG_SEGMENT_ROWS", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_SEGMENT_SIZE", tp: mysql.TypeDouble, size: 64},
-	{name: "DELTA_COUNT", tp: mysql.TypeLonglong, size: 64},
-	{name: "TOTAL_DELTA_ROWS", tp: mysql.TypeLonglong, size: 64},
-	{name: "TOTAL_DELTA_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_COUNT", tp: mysql.TypeLonglong, size: 21},
+	{name: "TOTAL_DELTA_ROWS", tp: mysql.TypeLonglong, size: 21},
+	{name: "TOTAL_DELTA_SIZE", tp: mysql.TypeLonglong, size: 21},
 	{name: "AVG_DELTA_ROWS", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_DELTA_SIZE", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_DELTA_DELETE_RANGES", tp: mysql.TypeDouble, size: 64},
-	{name: "STABLE_COUNT", tp: mysql.TypeLonglong, size: 64},
-	{name: "TOTAL_STABLE_ROWS", tp: mysql.TypeLonglong, size: 64},
-	{name: "TOTAL_STABLE_SIZE", tp: mysql.TypeLonglong, size: 64},
-	{name: "TOTAL_STABLE_SIZE_ON_DISK", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_COUNT", tp: mysql.TypeLonglong, size: 21},
+	{name: "TOTAL_STABLE_ROWS", tp: mysql.TypeLonglong, size: 21},
+	{name: "TOTAL_STABLE_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "TOTAL_STABLE_SIZE_ON_DISK", tp: mysql.TypeLonglong, size: 21},
 	{name: "AVG_STABLE_ROWS", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_STABLE_SIZE", tp: mysql.TypeDouble, size: 64},
-	{name: "TOTAL_PACK_COUNT_IN_DELTA", tp: mysql.TypeLonglong, size: 64},
-	{name: "MAX_PACK_COUNT_IN_DELTA", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_PACK_COUNT_IN_DELTA", tp: mysql.TypeLonglong, size: 21},
+	{name: "MAX_PACK_COUNT_IN_DELTA", tp: mysql.TypeLonglong, size: 21},
 	{name: "AVG_PACK_COUNT_IN_DELTA", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_PACK_ROWS_IN_DELTA", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_PACK_SIZE_IN_DELTA", tp: mysql.TypeDouble, size: 64},
-	{name: "TOTAL_PACK_COUNT_IN_STABLE", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_PACK_COUNT_IN_STABLE", tp: mysql.TypeLonglong, size: 21},
 	{name: "AVG_PACK_COUNT_IN_STABLE", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_PACK_ROWS_IN_STABLE", tp: mysql.TypeDouble, size: 64},
 	{name: "AVG_PACK_SIZE_IN_STABLE", tp: mysql.TypeDouble, size: 64},
-	{name: "STORAGE_STABLE_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_STABLE_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 21},
 	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
-	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "STORAGE_STABLE_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
-	{name: "STORAGE_DELTA_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_DELTA_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 21},
 	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
-	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "STORAGE_DELTA_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
-	{name: "STORAGE_META_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_META_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 21},
 	{name: "STORAGE_META_OLDEST_SNAPSHOT_LIFETIME", tp: mysql.TypeDouble, size: 64},
-	{name: "STORAGE_META_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_META_OLDEST_SNAPSHOT_THREAD_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "STORAGE_META_OLDEST_SNAPSHOT_TRACING_ID", tp: mysql.TypeVarchar, size: 128},
-	{name: "BACKGROUND_TASKS_LENGTH", tp: mysql.TypeLonglong, size: 64},
+	{name: "BACKGROUND_TASKS_LENGTH", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
 }
 
@@ -1480,61 +1480,61 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
-	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
-	{name: "SEGMENT_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 21},
+	{name: "SEGMENT_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "RANGE", tp: mysql.TypeVarchar, size: 64},
-	{name: "EPOCH", tp: mysql.TypeLonglong, size: 64},
-	{name: "ROWS", tp: mysql.TypeLonglong, size: 64},
-	{name: "SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "EPOCH", tp: mysql.TypeLonglong, size: 21},
+	{name: "ROWS", tp: mysql.TypeLonglong, size: 21},
+	{name: "SIZE", tp: mysql.TypeLonglong, size: 21},
 	{name: "DELTA_RATE", tp: mysql.TypeDouble, size: 64},
-	{name: "DELTA_MEMTABLE_ROWS", tp: mysql.TypeLonglong, size: 64},
-	{name: "DELTA_MEMTABLE_SIZE", tp: mysql.TypeLonglong, size: 64},
-	{name: "DELTA_MEMTABLE_COLUMN_FILES", tp: mysql.TypeLonglong, size: 64},
-	{name: "DELTA_MEMTABLE_DELETE_RANGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "DELTA_PERSISTED_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
-	{name: "DELTA_PERSISTED_ROWS", tp: mysql.TypeLonglong, size: 64},
-	{name: "DELTA_PERSISTED_SIZE", tp: mysql.TypeLonglong, size: 64},
-	{name: "DELTA_PERSISTED_COLUMN_FILES", tp: mysql.TypeLonglong, size: 64},
-	{name: "DELTA_PERSISTED_DELETE_RANGES", tp: mysql.TypeLonglong, size: 64},
-	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 64},
-	{name: "DELTA_INDEX_SIZE", tp: mysql.TypeLonglong, size: 64},
-	{name: "STABLE_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
-	{name: "STABLE_ROWS", tp: mysql.TypeLonglong, size: 64},
-	{name: "STABLE_SIZE", tp: mysql.TypeLonglong, size: 64},
-	{name: "STABLE_DMFILES", tp: mysql.TypeLonglong, size: 64},
-	{name: "STABLE_DMFILES_ID_0", tp: mysql.TypeLonglong, size: 64},
-	{name: "STABLE_DMFILES_ROWS", tp: mysql.TypeLonglong, size: 64},
-	{name: "STABLE_DMFILES_SIZE", tp: mysql.TypeLonglong, size: 64},
-	{name: "STABLE_DMFILES_SIZE_ON_DISK", tp: mysql.TypeLonglong, size: 64},
-	{name: "STABLE_DMFILES_PACKS", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_MEMTABLE_ROWS", tp: mysql.TypeLonglong, size: 21},
+	{name: "DELTA_MEMTABLE_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "DELTA_MEMTABLE_COLUMN_FILES", tp: mysql.TypeLonglong, size: 21},
+	{name: "DELTA_MEMTABLE_DELETE_RANGES", tp: mysql.TypeLonglong, size: 21},
+	{name: "DELTA_PERSISTED_PAGE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "DELTA_PERSISTED_ROWS", tp: mysql.TypeLonglong, size: 21},
+	{name: "DELTA_PERSISTED_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "DELTA_PERSISTED_COLUMN_FILES", tp: mysql.TypeLonglong, size: 21},
+	{name: "DELTA_PERSISTED_DELETE_RANGES", tp: mysql.TypeLonglong, size: 21},
+	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "DELTA_INDEX_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "STABLE_PAGE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "STABLE_ROWS", tp: mysql.TypeLonglong, size: 21},
+	{name: "STABLE_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "STABLE_DMFILES", tp: mysql.TypeLonglong, size: 21},
+	{name: "STABLE_DMFILES_ID_0", tp: mysql.TypeLonglong, size: 21},
+	{name: "STABLE_DMFILES_ROWS", tp: mysql.TypeLonglong, size: 21},
+	{name: "STABLE_DMFILES_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "STABLE_DMFILES_SIZE_ON_DISK", tp: mysql.TypeLonglong, size: 21},
+	{name: "STABLE_DMFILES_PACKS", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
 }
 
 var tableClientErrorsSummaryGlobalCols = []columnInfo{
-	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
-	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26},
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
 }
 
 var tableClientErrorsSummaryByUserCols = []columnInfo{
 	{name: "USER", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
-	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26},
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
 }
 
 var tableClientErrorsSummaryByHostCols = []columnInfo{
 	{name: "HOST", tp: mysql.TypeVarchar, size: 255, flag: mysql.NotNullFlag},
-	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
-	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
-	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ERROR_COUNT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "WARNING_COUNT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26},
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
 }
@@ -1546,8 +1546,8 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: txninfo.CurrentSQLDigestTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The normalized sql the transaction are currently running"},
 	{name: txninfo.StateStr, tp: mysql.TypeEnum, size: 16, enumElems: txninfo.TxnRunningStateStrs, comment: "Current running state of the transaction"},
 	{name: txninfo.WaitingStartTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "Current lock waiting's start time"},
-	{name: txninfo.MemBufferKeysStr, tp: mysql.TypeLonglong, size: 64, comment: "How many entries are in MemDB"},
-	{name: txninfo.MemBufferBytesStr, tp: mysql.TypeLonglong, size: 64, comment: "MemDB used memory"},
+	{name: txninfo.MemBufferKeysStr, tp: mysql.TypeLonglong, size: 21, comment: "How many entries are in MemDB"},
+	{name: txninfo.MemBufferBytesStr, tp: mysql.TypeLonglong, size: 21, comment: "MemDB used memory"},
 	{name: txninfo.SessionIDStr, tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag, comment: "Which session this transaction belongs to"},
 	{name: txninfo.UserStr, tp: mysql.TypeVarchar, size: 16, comment: "The user who open this session"},
 	{name: txninfo.DBStr, tp: mysql.TypeVarchar, size: 64, comment: "The schema this transaction works on"},
@@ -1580,7 +1580,7 @@ var tableDataLockWaitsCols = []columnInfo{
 var tableStatementsSummaryEvictedCols = []columnInfo{
 	{name: "BEGIN_TIME", tp: mysql.TypeTimestamp, size: 26},
 	{name: "END_TIME", tp: mysql.TypeTimestamp, size: 26},
-	{name: "EVICTED_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "EVICTED_COUNT", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 }
 
 var tableAttributesCols = []columnInfo{
@@ -1596,7 +1596,7 @@ var tableTrxSummaryCols = []columnInfo{
 }
 
 var tablePlacementPoliciesCols = []columnInfo{
-	{name: "POLICY_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "POLICY_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "CATALOG_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
 	{name: "POLICY_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag}, // Catalog wide policy
 	{name: "PRIMARY_REGION", tp: mysql.TypeVarchar, size: 1024},
@@ -1606,8 +1606,8 @@ var tablePlacementPoliciesCols = []columnInfo{
 	{name: "FOLLOWER_CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024},
 	{name: "LEARNER_CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024},
 	{name: "SCHEDULE", tp: mysql.TypeVarchar, size: 20}, // EVEN or MAJORITY_IN_PRIMARY
-	{name: "FOLLOWERS", tp: mysql.TypeLonglong, size: 64},
-	{name: "LEARNERS", tp: mysql.TypeLonglong, size: 64},
+	{name: "FOLLOWERS", tp: mysql.TypeLonglong, size: 21},
+	{name: "LEARNERS", tp: mysql.TypeLonglong, size: 21},
 }
 
 var tableVariablesInfoCols = []columnInfo{
@@ -1615,8 +1615,8 @@ var tableVariablesInfoCols = []columnInfo{
 	{name: "VARIABLE_SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "DEFAULT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "CURRENT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 64},
-	{name: "MAX_VALUE", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 21},
+	{name: "MAX_VALUE", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "POSSIBLE_VALUES", tp: mysql.TypeVarchar, size: 256},
 	{name: "IS_NOOP", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 }
@@ -1666,7 +1666,7 @@ var tableResourceGroupsCols = []columnInfo{
 }
 
 var tableRunawayWatchListCols = []columnInfo{
-	{name: "ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "RESOURCE_GROUP_NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
 	{name: "START_TIME", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
 	{name: "END_TIME", tp: mysql.TypeVarchar, size: 32},
@@ -2422,6 +2422,11 @@ func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (it *infoschemaTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 // WritableConstraint implements table.Table WritableConstraint interface.
 func (it *infoschemaTable) WritableConstraint() []*table.Constraint {
 	return nil
@@ -2443,7 +2448,7 @@ func (it *infoschemaTable) AddRecord(ctx table.MutateContext, txn kv.Transaction
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
+func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -2515,6 +2520,11 @@ func (vt *VirtualTable) Indices() []table.Index {
 	return nil
 }
 
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (vt *VirtualTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 // WritableConstraint implements table.Table WritableConstraint interface.
 func (vt *VirtualTable) WritableConstraint() []*table.Constraint {
 	return nil
@@ -2536,7 +2546,7 @@ func (vt *VirtualTable) AddRecord(ctx table.MutateContext, txn kv.Transaction, r
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
+func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
 	return table.ErrUnsupportedOp
 }
 

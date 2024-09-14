@@ -1685,15 +1685,16 @@ func (t *partitionTableWithGivenSets) GetAllPartitionIDs() []int64 {
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
+func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
+	opt := table.NewRemoveRecordOpt(opts...)
 	ectx := ctx.GetExprCtx()
 	pid, err := t.locatePartition(ectx.GetEvalCtx(), r)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tbl := t.GetPartition(pid)
-	err = tbl.RemoveRecord(ctx, txn, h, r)
+	tbl := t.getPartition(pid)
+	err = tbl.removeRecord(ctx, txn, h, r, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1703,8 +1704,8 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transact
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbl = t.GetPartition(pid)
-		err = tbl.RemoveRecord(ctx, txn, h, r)
+		tbl = t.getPartition(pid)
+		err = tbl.removeRecord(ctx, txn, h, r, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}
