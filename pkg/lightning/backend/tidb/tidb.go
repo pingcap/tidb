@@ -98,9 +98,9 @@ type tidbEncoder struct {
 	// the there are enough columns.
 	columnCnt int
 	// data file path
-	path                  string
-	logger                log.Logger
-	logicalImportPrepStmt bool
+	path     string
+	logger   log.Logger
+	prepStmt bool
 }
 
 type encodingBuilder struct{}
@@ -114,11 +114,11 @@ func NewEncodingBuilder() encode.EncodingBuilder {
 // It implements the `backend.EncodingBuilder` interface.
 func (*encodingBuilder) NewEncoder(_ context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
 	return &tidbEncoder{
-		mode:                  config.SQLMode,
-		tbl:                   config.Table,
-		path:                  config.Path,
-		logger:                config.Logger,
-		logicalImportPrepStmt: config.LogicalImportPrepStmt,
+		mode:     config.SQLMode,
+		tbl:      config.Table,
+		path:     config.Path,
+		logger:   config.Logger,
+		prepStmt: config.LogicalImportPrepStmt,
 	}, nil
 }
 
@@ -592,7 +592,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 	var values []any
 	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
-	if enc.logicalImportPrepStmt {
+	if enc.prepStmt {
 		preparedInsertStmt.Grow(2 * len(row))
 		preparedInsertStmt.WriteByte('(')
 	}
@@ -603,7 +603,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 		}
 		if cnt > 0 {
 			encoded.WriteByte(',')
-			if enc.logicalImportPrepStmt {
+			if enc.prepStmt {
 				preparedInsertStmt.WriteByte(',')
 			}
 		}
@@ -616,14 +616,14 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 			)
 			return nil, err
 		}
-		if enc.logicalImportPrepStmt {
+		if enc.prepStmt {
 			preparedInsertStmt.WriteByte('?')
 			values = append(values, datum.GetValue())
 		}
 		cnt++
 	}
 	encoded.WriteByte(')')
-	if enc.logicalImportPrepStmt {
+	if enc.prepStmt {
 		preparedInsertStmt.WriteByte(')')
 	}
 
@@ -731,6 +731,9 @@ func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string,
 	// Note: we are not going to do interpolation (prepared statements) to avoid
 	// complication arise from data length overflow of BIT and BINARY columns
 	var values []any
+	if be.stmtCache != nil && len(rows) > 0 {
+		values = make([]any, 0, len(rows[0].values)*len(rows))
+	}
 	stmtTasks := make([]stmtTask, 1)
 	for i, row := range rows {
 		if i != 0 {
@@ -769,17 +772,18 @@ func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, colu
 	}
 	is := insertStmt.String()
 	stmtTasks := make([]stmtTask, 0, len(rows))
-	var values []any
 	for _, row := range rows {
+		fmt.Printf("print each row\n")
+		fmt.Printf("row.insertStmt: %s\n", row.insertStmt)
+		fmt.Printf("row.preparedInsertStmt: %s\n", row.preparedInsertStmt)
 		var finalInsertStmt strings.Builder
 		finalInsertStmt.WriteString(is)
 		if be.stmtCache != nil {
 			finalInsertStmt.WriteString(row.preparedInsertStmt)
-			values = append(values, row.values...)
 		} else {
 			finalInsertStmt.WriteString(row.insertStmt)
 		}
-		stmtTasks = append(stmtTasks, stmtTask{[]tidbRow{row}, finalInsertStmt.String(), values})
+		stmtTasks = append(stmtTasks, stmtTask{[]tidbRow{row}, finalInsertStmt.String(), row.values})
 	}
 	return be.execStmts(ctx, stmtTasks, tableName, false)
 }
