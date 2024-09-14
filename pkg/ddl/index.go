@@ -590,12 +590,7 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job,
 		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 
-	var args *model.AddIndexArgs
-	if isPK {
-		args, err = model.GetAddPrimaryIndexArgs(job)
-	} else {
-		args, err = model.GetAddIndexArgs(job)
-	}
+	args, err := model.GetAddIndexArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

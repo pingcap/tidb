@@ -445,17 +445,20 @@ func (a *AddIndexArgs) fillFinishedJob(job *Job) {
 // GetAddIndexArgs gets the add index args.
 func GetAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 	if job.Version == JobVersion1 {
-		return getAddIndexArgs(job)
-	}
-	return getOrDecodeArgsV2[*AddIndexArgs](job)
-}
-
-// GetAddPrimaryIndexArgs get the add primary key args
-func GetAddPrimaryIndexArgs(job *Job) (*AddIndexArgs, error) {
-	if job.Version == JobVersion2 {
+		if job.Type == ActionAddIndex {
+			return getAddIndexArgs(job)
+		}
+		intest.Assert(job.Type == ActionAddPrimaryKey, "Type should be ActionAddPrimaryKey")
 		return getAddPrimaryKeyArgs(job)
 	}
-	return getOrDecodeArgsV2[*AddIndexArgs](job)
+	args, err := getOrDecodeArgsV2[*AddIndexArgs](job)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if args.IsFinishedArg {
+		return nil, errors.Errorf("Got finished AddIndexArgs, expect running AddIndexArgs")
+	}
+	return args, nil
 }
 
 // GetFinishedAddIndexArgs gets the add index args after the job is finished.

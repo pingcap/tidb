@@ -83,7 +83,7 @@ func convertAddIdxJob2RollbackJob(
 	}
 
 	// Convert to DropIndexArgs
-	job.FillArgs(&model.DropIndexArgs{IndexNames: indexNames, IfExists: ifExists, PartitionIDs: getPartitionIDs(tblInfo)})
+	job.FillArgs(&model.DropIndexArgs{IndexNames: indexNames, IfExists: ifExists, IndexIDs: getPartitionIDs(tblInfo)})
 
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != model.StateDeleteOnly)
