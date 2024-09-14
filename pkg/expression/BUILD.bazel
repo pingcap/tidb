@@ -123,6 +123,7 @@ go_library(
         "//pkg/util/size",
         "//pkg/util/sqlexec",
         "//pkg/util/stringutil",
+        "//pkg/util/timeutil",
         "//pkg/util/vitess",
         "//pkg/util/zeropool",
         "@com_github_gogo_protobuf//proto",
