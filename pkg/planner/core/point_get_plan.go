@@ -749,6 +749,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			partIdxs := p.getPartitionIdxs(sctx)
 			partitionsFound := 0
 			for i, idx := range partIdxs {
+				idx = pi.GetOverlappingDroppingPartitionIdx(idx)
 				if idx < 0 ||
 					(p.SinglePartition &&
 						idx != p.PartitionIdxs[0]) ||
@@ -758,6 +759,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 					partIdxs[i] = -1
 				} else {
 					partitionsFound++
+					partIdxs[i] = idx
 				}
 			}
 			if partitionsFound == 0 {
@@ -808,6 +810,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				}
 				d.Copy(&r[p.HandleColOffset])
 				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
+				pIdx = pi.GetOverlappingDroppingPartitionIdx(pIdx)
 				if err != nil ||
 					!isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
 					(p.SinglePartition &&

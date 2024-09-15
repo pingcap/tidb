@@ -431,22 +431,6 @@ func (s *PartitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.Pa
 			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[pos].Name.L) {
 				continue
 			}
-			/*
-				if pi.DDLState == model.StateWriteOnly && len(pi.DroppingDefinitions) > 0 && len(pi.AddingDefinitions) == 0 {
-					// TODO: Also check pi.DDLAction == model.ActionDropTablePartition
-					dropping := false
-					for _, def := range pi.DroppingDefinitions {
-						if pi.Definitions[pos].ID == def.ID {
-							dropping = true
-							break
-						}
-					}
-					if dropping {
-						continue
-					}
-				}
-
-			*/
 			ret = append(ret, pos)
 		}
 	}
@@ -824,8 +808,40 @@ func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl ta
 	}
 	if _, ok := used[FullRange]; ok {
 		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
-		// TODO: Handle Drop partition StateWriteOnly and
-		return s.convertToIntSlice(or, pi, partitionNames), nil
+		ret := s.convertToIntSlice(or, pi, partitionNames)
+		if len(ret) > 0 && pi.CanHaveOverlappingDroppingPartition() {
+			newRet := make([]int, 0, len(ret))
+			l := len(ret)
+			overlappingIdx := -1
+			for i := 0; i < l; i++ {
+				newIdx := pi.GetOverlappingDroppingPartitionIdx(ret[i])
+				if newIdx == ret[i] {
+					newRet = append(newRet, ret[i])
+				} else {
+					overlappingIdx = newIdx
+				}
+			}
+			if overlappingIdx != -1 {
+				// Find where it should be in the ordered array, and if already included or not
+				injectAt := sort.Search(len(newRet), func(i int) bool { return newRet[i] >= overlappingIdx })
+				if newRet[injectAt] == overlappingIdx {
+					// Already included overlappingIdx
+					return newRet, nil
+				}
+				if len(partitionNames) > 0 {
+					for _, name := range partitionNames {
+						if strings.EqualFold(name.L, pi.Definitions[overlappingIdx].Name.L) {
+							slices.Insert(newRet, injectAt, overlappingIdx)
+							break
+						}
+					}
+					return newRet, nil
+				}
+				slices.Insert(newRet, injectAt, overlappingIdx)
+				return newRet, nil
+			}
+		}
+		return ret, nil
 	}
 	ret := make([]int, 0, len(used))
 	for k := range used {
@@ -1851,12 +1867,21 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	partitionNameSet := make(set.StringSet)
 	usedDefinition := make(map[int64]model.PartitionDefinition)
 	for _, r := range or {
-		for i := r.start; i < r.end; i++ {
+		for m := r.start; m < r.end; m++ {
+			// TODO: Handle DROP PARTITION!!
+			partIdx := pi.GetOverlappingDroppingPartitionIdx(m)
+			if partIdx < 0 {
+				continue
+			}
+
 			// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
 			if len(ds.PartitionNames) != 0 {
-				if !s.findByName(ds.PartitionNames, pi.Definitions[i].Name.L) {
+				if !s.findByName(ds.PartitionNames, pi.Definitions[partIdx].Name.L) {
 					continue
 				}
+			}
+			if _, found := usedDefinition[pi.Definitions[partIdx].ID]; found {
+				continue
 			}
 			// Not a deep copy.
 			newDataSource := *ds
@@ -1864,21 +1889,20 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			newDataSource.SetSchema(ds.Schema().Clone())
 			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 			copy(newDataSource.Columns, ds.Columns)
-			idx := i
-			newDataSource.PartitionDefIdx = &idx
-			newDataSource.PhysicalTableID = pi.Definitions[i].ID
+			newDataSource.PartitionDefIdx = &partIdx
+			newDataSource.PhysicalTableID = pi.Definitions[partIdx].ID
 
 			// There are many expression nodes in the plan tree use the original datasource
 			// id as FromID. So we set the id of the newDataSource with the original one to
 			// avoid traversing the whole plan tree to update the references.
 			newDataSource.SetID(ds.ID())
-			err := s.resolveOptimizeHint(&newDataSource, pi.Definitions[i].Name)
-			partitionNameSet.Insert(pi.Definitions[i].Name.L)
+			err := s.resolveOptimizeHint(&newDataSource, pi.Definitions[partIdx].Name)
+			partitionNameSet.Insert(pi.Definitions[partIdx].Name.L)
 			if err != nil {
 				return nil, err
 			}
 			children = append(children, &newDataSource)
-			usedDefinition[pi.Definitions[i].ID] = pi.Definitions[i]
+			usedDefinition[pi.Definitions[partIdx].ID] = pi.Definitions[partIdx]
 		}
 	}
 	s.checkHintsApplicable(ds, partitionNameSet)
