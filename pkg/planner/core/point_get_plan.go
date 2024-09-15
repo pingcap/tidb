@@ -399,38 +399,16 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		dVal.Copy(&row[p.HandleColOffset])
 	}
 	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), row)
+	if err != nil && partIdx >= 0 {
+		partIdx = pt.Meta().Partition.GetOverlappingDroppingPartitionIdx(partIdx)
+		if partIdx >= 0 {
+			err = nil
+		}
+	}
 	if err != nil {
-		if partIdx != -1 && table.ErrNoPartitionForGivenValue.Equal(err) &&
-			pi.DDLState == model.StateWriteOnly &&
-			len(pi.DroppingDefinitions) > 0 &&
-			len(pi.AddingDefinitions) == 0 {
-			// Partition is being dropped, find first non-dropping partition
-			nextNonDropping := -1
-			for i := partIdx + 1; i < len(pi.Definitions); i++ {
-				isDropping := false
-				for _, droppingDef := range pi.DroppingDefinitions {
-					if droppingDef.ID == pi.Definitions[i].ID {
-						isDropping = true
-						break
-					}
-				}
-				if isDropping {
-					continue
-				}
-				nextNonDropping = i
-				break
-			}
-			if nextNonDropping != -1 {
-				partIdx = nextNonDropping
-				err = nil
-			}
-			// TODO: Handle BatchGetPoint as well as List partitioning with default partition!
-		}
-		if err != nil {
-			partIdx = -1
-			p.PartitionIdx = &partIdx
-			return true
-		}
+		partIdx = -1
+		p.PartitionIdx = &partIdx
+		return true
 	}
 	if len(p.PartitionNames) > 0 {
 		found := false
@@ -710,6 +688,12 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 			rows[i][j].Copy(&r[p.IndexInfo.Columns[j].Offset])
 		}
 		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
+		if err != nil && pIdx >= 0 {
+			pIdx = pTbl.Meta().Partition.GetOverlappingDroppingPartitionIdx(pIdx)
+			if pIdx >= 0 {
+				err = nil
+			}
+		}
 		if err != nil {
 			// Skip on any error, like:
 			// No matching partition, overflow etc.
@@ -810,9 +794,13 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				}
 				d.Copy(&r[p.HandleColOffset])
 				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
-				pIdx = pi.GetOverlappingDroppingPartitionIdx(pIdx)
+				if err != nil && pIdx >= 0 {
+					pIdx = pi.GetOverlappingDroppingPartitionIdx(pIdx)
+					if pIdx >= 0 {
+						err = nil
+					}
+				}
 				if err != nil ||
-					pIdx < 0 ||
 					!isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
 					(p.SinglePartition &&
 						p.PartitionIdxs[0] != pIdx) {

@@ -16,13 +16,10 @@ package core
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
-	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
-	"slices"
-	"strings"
 )
 
 // PartitionPruning finds all used partitions according to query conditions, it will
@@ -41,7 +38,7 @@ func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 			return nil, err
 		}
 		ret := s.convertToIntSlice(rangeOr, pi, partitionNames)
-		if len(pi.DroppingDefinitions) > 0 && len(pi.AddingDefinitions) == 0 && pi.DDLState == metamodel.StateWriteOnly {
+		if pi.CanHaveOverlappingDroppingPartition() {
 			if len(ret) == 1 && ret[0] == FullRange {
 				ret = make([]int, 0, len(pi.Definitions))
 				for i := range pi.Definitions {
@@ -49,57 +46,37 @@ func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 				}
 			}
 			newRet := make([]int, 0, len(ret))
-			// For range partitioning, one can only drop a continues range of partitions!
-			lastDroppedPartitionPos := -1
-			for _, pos := range ret {
-				pid := pi.Definitions[pos].ID
-				dropping := false
-				for i, droppingDef := range pi.DroppingDefinitions {
-					if droppingDef.ID == pid {
-						dropping = true
-						lastDroppedPartitionPos = i
-						break
-					}
-				}
-				if !dropping {
-					newRet = append(newRet, pos)
-				}
-			}
-			if lastDroppedPartitionPos == -1 {
-				return ret, nil
-			}
-			if lastDroppedPartitionPos+1 == len(pi.Definitions) {
-				// Dropped the last partition, cannot add the next :)
-				return newRet, nil
-			}
-			for i, newPos := range newRet {
-				if newPos < lastDroppedPartitionPos+1 {
+			for i := range ret {
+				idx := pi.GetOverlappingDroppingPartitionIdx(ret[i])
+				if idx == -1 {
 					continue
 				}
-				if newPos == lastDroppedPartitionPos+1 {
-					// already includes the next higher partition pos
-					return newRet, nil
+				if idx == ret[i] {
+					newRet = append(newRet, idx)
+					continue
 				}
-				// Next higher partition pos is not included
-				if len(partitionNames) > 0 {
-					for _, name := range partitionNames {
-						if strings.EqualFold(name.L, pi.Definitions[lastDroppedPartitionPos+1].Name.L) {
-							return slices.Insert(newRet, i, lastDroppedPartitionPos+1), nil
-						}
+				// partition being dropped, remove the consecutive range of dropping partitions
+				// and add the overlapping partition.
+				end := i + 1
+				for ; end < len(ret); end++ {
+					if ret[end] < idx {
+						continue
 					}
-					return newRet, nil
-				}
-				return slices.Insert(newRet, i, lastDroppedPartitionPos+1), nil
-			}
-			if len(partitionNames) > 0 {
-				for _, name := range partitionNames {
-					if strings.EqualFold(name.L, pi.Definitions[lastDroppedPartitionPos+1].Name.L) {
-						return append(newRet, lastDroppedPartitionPos+1), nil
+					if ret[end] == idx {
+						newRet = append(newRet, ret[end:]...)
+						return newRet, nil
 					}
+					break
 				}
-				return newRet, nil
+				if len(partitionNames) == 0 || s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+					newRet = append(newRet, idx)
+				}
+				if end < len(ret) {
+					newRet = append(newRet, ret[end:]...)
+				}
+				break
 			}
-			return append(newRet, lastDroppedPartitionPos+1), nil
+			return newRet, nil
 		}
 		return ret, nil
 	case model.PartitionTypeList:

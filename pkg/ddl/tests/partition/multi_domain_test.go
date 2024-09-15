@@ -53,24 +53,23 @@ func TestMultiSchemaDropPartition(t *testing.T) {
 			// tkNO see non-readable/non-writable p0 partition, and should try to read from p1
 			// in case there is something written to overlapping p1
 			// tkO is not aware of p0.
-			tkO.MustExec(`insert into t values (1,1)`)
-			tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[table:1526]Table has no partition for value matching a partition being dropped, 'p0'")
+			tkO.MustExec(`insert into t values (1,2)`)
+			tkNO.MustContainErrMsg(`insert into t values (1,2)`, "[table:1526]Table has no partition for value matching a partition being dropped, 'p0'")
 			tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
 			tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.PRIMARY'")
-			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 2", "101 101", "102 102"))
 			// Original row should not be seen in StateWriteOnly
 			tkNO.MustQuery(`select * from t partition (p0)`).Sort().Check(testkit.Rows())
 			tkNO.MustContainErrMsg(`select * from t partition (pNonExisting)`, "[table:1735]Unknown partition 'pnonexisting' in table 't'")
-			tkNO.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102"))
-			tkNO.MustQuery(`select * from t where a < 1000`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102"))
-			tkNO.MustQuery(`select * from t where a > 0`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102"))
-			tkNO.MustQuery(`select * from t where a = 1`).Sort().Check(testkit.Rows("1 1"))
-			tkNO.MustQuery(`select * from t where a = 1 or a = 2 or a = 3`).Sort().Check(testkit.Rows("1 1"))
-			// TODO: Handle BatchPointGet!
-			//tkNO.MustQuery(`select * from t where a in (1,2,3)`).Sort().Check(testkit.Rows("1 1"))
-			tkNO.MustQuery(`select * from t where a < 100`).Sort().Check(testkit.Rows("1 1"))
+			tkNO.MustQuery(`select * from t partition (p1)`).Sort().Check(testkit.Rows("1 2", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t where a < 1000`).Sort().Check(testkit.Rows("1 2", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t where a > 0`).Sort().Check(testkit.Rows("1 2", "101 101", "102 102"))
+			tkNO.MustQuery(`select * from t where a = 1`).Sort().Check(testkit.Rows("1 2"))
+			tkNO.MustQuery(`select * from t where a = 1 or a = 2 or a = 3`).Sort().Check(testkit.Rows("1 2"))
+			tkNO.MustQuery(`select * from t where a in (1,2,3)`).Sort().Check(testkit.Rows("1 2"))
+			tkNO.MustQuery(`select * from t where a < 100`).Sort().Check(testkit.Rows("1 2"))
 
-			tkNO.MustQuery(`select * from t where b = 1`).Sort().Check(testkit.Rows("1 1"))
+			tkNO.MustQuery(`select * from t where b = 2`).Sort().Check(testkit.Rows("1 2"))
 			//tkNO.MustQuery(`explain select * from t partition (p1)`).Sort().Check(testkit.Rows())
 			// TODO: Test update and delete!
 			// TODO: Test LIST partition with default partition

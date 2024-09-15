@@ -1321,15 +1321,12 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 			return -1, err
 		}
 		pi := t.Meta().Partition
-		if pi.DDLAction == model.ActionDropTablePartition &&
-			pi.DDLState == model.StateWriteOnly &&
-			len(pi.DroppingDefinitions) > 0 &&
-			len(pi.AddingDefinitions) == 0 {
+		if pi.CanHaveOverlappingDroppingPartition() {
 			pid := pi.Definitions[idx].ID
 			for _, droppingDef := range pi.DroppingDefinitions {
 				if pid == droppingDef.ID {
 					// idx != -1, so the correct partition, but give an error, since it should
-					// not be written to!
+					// not be written to! For read it can check the Overlapping partition and ignore the error.
 					// One should use the next non-dropping partition for range, or the default
 					// partition for list partitioned table with default partition, for read.
 					return idx, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", droppingDef.Name.String()))

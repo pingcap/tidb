@@ -1040,9 +1040,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		}()
 	}
 
-	// TODO: undo
-	sessionVars := logic.SCtx().GetSessionVars()
-	sessionVars.StmtCtx.TaskMapBakTS = 0
+	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
 	t, _, err := logic.FindBestTask(prop, planCounter, opt)
 	if err != nil {
 		return nil, 0, err
