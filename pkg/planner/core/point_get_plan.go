@@ -812,6 +812,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
 				pIdx = pi.GetOverlappingDroppingPartitionIdx(pIdx)
 				if err != nil ||
+					pIdx < 0 ||
 					!isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
 					(p.SinglePartition &&
 						p.PartitionIdxs[0] != pIdx) {

@@ -707,14 +707,27 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 			}
 		}
 		for _, location := range locations {
-			if len(l.partitionNames) > 0 {
-				for _, pg := range location {
+			for _, pg := range location {
+				idx := l.pi.GetOverlappingDroppingPartitionIdx(pg.PartIdx)
+				if idx == -1 {
+					// Skip dropping partitions
+					continue
+				}
+				if idx != pg.PartIdx {
+					pg = tables.ListPartitionGroup{
+						PartIdx: idx,
+						// TODO: Test this!!!
+						// How does it work with intersection for example?
+						GroupIdxs: []int{-1}, // Special group!
+					}
+				}
+				if len(l.partitionNames) > 0 {
 					if l.findByName(l.partitionNames, l.pi.Definitions[pg.PartIdx].Name.L) {
 						helper.UnionPartitionGroup(pg)
 					}
+				} else {
+					helper.UnionPartitionGroup(pg)
 				}
-			} else {
-				helper.Union(location)
 			}
 		}
 	}
@@ -779,6 +792,7 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 			return nil, err
 		}
 		partitionIdx := l.listPrune.LocatePartition(value, isNull)
+		partitionIdx = l.pi.GetOverlappingDroppingPartitionIdx(partitionIdx)
 		if partitionIdx == -1 {
 			continue
 		}
@@ -1867,9 +1881,8 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	partitionNameSet := make(set.StringSet)
 	usedDefinition := make(map[int64]model.PartitionDefinition)
 	for _, r := range or {
-		for m := r.start; m < r.end; m++ {
-			// TODO: Handle DROP PARTITION!!
-			partIdx := pi.GetOverlappingDroppingPartitionIdx(m)
+		for i := r.start; i < r.end; i++ {
+			partIdx := pi.GetOverlappingDroppingPartitionIdx(i)
 			if partIdx < 0 {
 				continue
 			}
