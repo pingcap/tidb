@@ -73,7 +73,7 @@ func TestMultiSchemaDropPartition(t *testing.T) {
 			//tkNO.MustQuery(`explain select * from t partition (p1)`).Sort().Check(testkit.Rows())
 			// TODO: Test update and delete!
 			// TODO: Test LIST partition with default partition
-			// TOOD: test key, hash and list partition without default partition :)
+			// TODO: test key, hash and list partition without default partition :)
 			//tkNO.MustQuery(`explain select * from t where a < 100`).Sort().Check(testkit.Rows())
 			//tkNO.MustQuery(`explain select * from t where a < 100`).Sort().Check(testkit.Rows())
 			//tkNO.MustQuery(`explain select * from t where a = 1`).Sort().Check(testkit.Rows())
