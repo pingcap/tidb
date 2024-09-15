@@ -381,18 +381,9 @@ func GetDropColumnArgs(job *Job) (*DropColumnArgs, error) {
 	)
 
 	if job.Version == JobVersion1 {
-		if len(job.Args) == 0 {
-			err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			job.Args = []any{colName, ifExists, indexIDs, partitionIDs}
-		} else {
-			colName = job.Args[0].(model.CIStr)
-			ifExists = job.Args[1].(bool)
-			indexIDs = job.Args[2].([]int64)
-			partitionIDs = job.Args[3].([]int64)
+		err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 
 		return &DropColumnArgs{

@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -211,11 +210,13 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) error {
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
 		}
 	case model.ActionDropColumn:
-		args, err := model.GetDropColumnArgs(job)
-		if err != nil {
-			return errors.Trace(err)
+		var colName pmodel.CIStr
+		if job.Version == model.JobVersion1 {
+			colName = job.Args[0].(pmodel.CIStr)
+		} else {
+			colName = job.Args[0].(*model.DropColumnArgs).ColName
 		}
-		info.DropColumns = append(info.DropColumns, args.ColName)
+		info.DropColumns = append(info.DropColumns, colName)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		indexName := job.Args[0].(pmodel.CIStr)
 		info.DropIndexes = append(info.DropIndexes, indexName)
