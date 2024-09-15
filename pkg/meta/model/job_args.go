@@ -380,7 +380,7 @@ func GetDropColumnArgs(job *Job) (*DropColumnArgs, error) {
 		partitionIDs []int64
 	)
 
-	if job.Version == JobVersion1 {
+	if job.Version <= JobVersion1 {
 		err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
