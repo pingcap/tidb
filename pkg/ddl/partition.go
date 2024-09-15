@@ -2218,18 +2218,16 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, t *meta.Meta, job
 //	 duplicate key errors will be given, even if the entries are from dropped partitions
 //		Note that overlapping ranges (i.e. a dropped partitions with 'less than (N)' will now .. ?!?
 //
-// # StateWriteOnly
+// StateWriteOnly
 //
-// TODO: Issue to solve:
-// How to handle rows written to the overlapping range in the next partition,
-// that fits the old partition.
-// I.e. p0 values less than (10), p1 values less than (20) + drop partition p0
-// Session1 sees CurrSchemaVersion-1, and Session2 sees CurrSchemaVersion
-// Session2 inserts (9) into p1 (since it is the first state where p0 is gone)
-// Session1 does it see 9 or not? If 10 was written it should see it...
+//	old partitions are blocked for read and write. But for read we are allowing
+//	"overlapping" partition to be read instead. Which means that write can only
+//	happen in the 'overlapping' partitions original range, not into the extended
+//	range open by the dropped partitions.
 //
-//	If full table scan it would see it, but if lookup with partition pruning it might not :(
-//	It should at least not be allowed to write anything to p0...
+// StatePublic
+//
+//	Original state, unaware of DDL
 func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
 	partInfo := model.PartitionInfo{}
@@ -2254,9 +2252,8 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		// TODO: Only apply this for dropping RANGE partitions (actually if it is the highest partition it can also be skipped) OR LIST with Default partition.
 		// Reason, see https://github.com/pingcap/tidb/issues/55888
-		// Only mark the partitions as to be dropped, so they are not used
+		// Only mark the partitions as to be dropped, so they are not used, but not yet removed.
 		originalDefs := tblInfo.Partition.Definitions
 		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
 		tblInfo.Partition.Definitions = originalDefs
@@ -2272,6 +2269,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
 		err = dropLabelRules(w.ctx, job.SchemaName, tblInfo.Name.L, partNames)
 		if err != nil {
+			// TODO: Add failpoint error/cancel injection and test failure/rollback and cancellation!
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 		}

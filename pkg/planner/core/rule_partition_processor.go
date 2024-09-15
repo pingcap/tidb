@@ -845,13 +845,13 @@ func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl ta
 				if len(partitionNames) > 0 {
 					for _, name := range partitionNames {
 						if strings.EqualFold(name.L, pi.Definitions[overlappingIdx].Name.L) {
-							slices.Insert(newRet, injectAt, overlappingIdx)
+							newRet = slices.Insert(newRet, injectAt, overlappingIdx)
 							break
 						}
 					}
 					return newRet, nil
 				}
-				slices.Insert(newRet, injectAt, overlappingIdx)
+				newRet = slices.Insert(newRet, injectAt, overlappingIdx)
 				return newRet, nil
 			}
 		}
