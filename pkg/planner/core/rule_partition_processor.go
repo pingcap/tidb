@@ -829,6 +829,7 @@ func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl ta
 			if i != pi.GetOverlappingDroppingPartitionIdx(i) {
 				continue
 			}
+			ret = append(ret, i)
 		}
 		return ret, nil
 	}
