@@ -65,6 +65,9 @@ func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 					if ret[end] == idx {
 						// overlapping partition already included, append it together with the following
 						newRet = append(newRet, ret[end:]...)
+						if len(newRet) == len(pi.Definitions) {
+							return []int{FullRange}, nil
+						}
 						return newRet, nil
 					}
 					break
@@ -76,6 +79,9 @@ func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 					newRet = append(newRet, ret[end:]...)
 				}
 				break
+			}
+			if len(newRet) == len(pi.Definitions) {
+				return []int{FullRange}, nil
 			}
 			return newRet, nil
 		}

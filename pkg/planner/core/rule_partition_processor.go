@@ -831,7 +831,13 @@ func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl ta
 			}
 			ret = append(ret, i)
 		}
+		if len(ret) == len(pi.Definitions) {
+			return []int{FullRange}, nil
+		}
 		return ret, nil
+	}
+	if len(used) == len(pi.Definitions) {
+		return []int{FullRange}, nil
 	}
 	ret := make([]int, 0, len(used))
 	for k := range used {
