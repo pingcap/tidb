@@ -43,7 +43,7 @@ const (
 	maxWatchListCap           = 10000
 	maxWatchRecordChannelSize = 1024
 
-	runawayRecordFlushInterval   = time.Second
+	runawayRecordFlushInterval   = 30 * time.Second
 	runawayRecordGCInterval      = time.Hour * 24
 	runawayRecordExpiredDuration = time.Hour * 24 * 7
 
@@ -155,17 +155,19 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 	quarantineRecordCh := rm.quarantineRecordChan()
 	staleQuarantineRecordCh := rm.staleQuarantineRecordChan()
 	flushThreshold := flushThreshold()
-	records := make([]*Record, 0, flushThreshold)
+	// recordMap is used to deduplicate records.
+	recordMap = make(map[recordKey]*Record, flushThreshold)
 
 	flushRunawayRecords := func() {
-		if len(records) == 0 {
+		if len(recordMap) == 0 {
 			return
 		}
-		sql, params := genRunawayQueriesStmt(records)
+		sql, params := genRunawayQueriesStmt(recordMap)
 		if _, err := ExecRCRestrictedSQL(rm.sysSessionPool, sql, params); err != nil {
-			logutil.BgLogger().Error("flush runaway records failed", zap.Error(err), zap.Int("count", len(records)))
+			logutil.BgLogger().Error("flush runaway records failed", zap.Error(err), zap.Int("count", len(recordMap)))
 		}
-		records = records[:0]
+		// reset the map.
+		recordMap = make(map[recordKey]*Record, flushThreshold)
 	}
 
 	for {
@@ -176,11 +178,21 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 			flushRunawayRecords()
 			fired = true
 		case r := <-recordCh:
-			records = append(records, r)
+			key := recordKey{
+				ResourceGroupName: r.ResourceGroupName,
+				SQLDigest:         r.SQLDigest,
+				PlanDigest:        r.PlanDigest,
+				Match:             r.Match,
+			}
+			if _, exists := recordMap[key]; exists {
+				recordMap[key].Repeats++
+			} else {
+				recordMap[key] = r
+			}
 			failpoint.Inject("FastRunawayGC", func() {
 				flushRunawayRecords()
 			})
-			if len(records) >= flushThreshold {
+			if len(recordMap) >= flushThreshold {
 				flushRunawayRecords()
 			} else if fired {
 				fired = false
@@ -321,7 +333,7 @@ func (rm *Manager) getWatchFromWatchList(key string) *QuarantineRecord {
 	return nil
 }
 
-func (rm *Manager) markRunaway(resourceGroupName, originalSQL, planDigest, action, matchType string, now *time.Time) {
+func (rm *Manager) markRunaway(checker *Checker, action, matchType string, now *time.Time) {
 	source := rm.serverID
 	if !rm.syncerInitialized.Load() {
 		rm.logOnce.Do(func() {
@@ -331,13 +343,16 @@ func (rm *Manager) markRunaway(resourceGroupName, originalSQL, planDigest, actio
 	}
 	select {
 	case rm.runawayQueriesChan <- &Record{
-		ResourceGroupName: resourceGroupName,
-		Time:              *now,
+		ResourceGroupName: checker.resourceGroupName,
+		StartTime:         *now,
 		Match:             matchType,
 		Action:            action,
-		SQLText:           originalSQL,
-		PlanDigest:        planDigest,
+		SampleText:        checker.originalSQL,
+		SQLDigest:         checker.sqlDigest,
+		PlanDigest:        checker.planDigest,
 		Source:            source,
+		// default value for Repeats
+		Repeats: 1,
 	}:
 	default:
 		// TODO: add warning for discard flush records
