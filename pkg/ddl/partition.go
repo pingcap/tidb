@@ -2171,7 +2171,6 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, t *meta.Meta, job
 		job.State = model.JobStateCancelled
 		return ver, err
 	}
-	tblInfo.Partition.ClearReorgIntermediateInfo()
 	if partInfo.Type != pmodel.PartitionTypeNone {
 		// ALTER TABLE ... PARTITION BY
 		// Also remove anything with the new table id
@@ -2181,6 +2180,9 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, t *meta.Meta, job
 			tblInfo.Partition.DDLType == pmodel.PartitionTypeNone {
 			tblInfo.Partition = nil
 		}
+	}
+	if tblInfo.Partition != nil {
+		tblInfo.Partition.ClearReorgIntermediateInfo()
 	}
 
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
