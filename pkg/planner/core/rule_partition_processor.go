@@ -821,38 +821,13 @@ func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl ta
 		return nil, err
 	}
 	if _, ok := used[FullRange]; ok {
-		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
-		ret := s.convertToIntSlice(or, pi, partitionNames)
-		if len(ret) > 0 && pi.CanHaveOverlappingDroppingPartition() {
-			newRet := make([]int, 0, len(ret))
-			l := len(ret)
-			overlappingIdx := -1
-			for i := 0; i < l; i++ {
-				newIdx := pi.GetOverlappingDroppingPartitionIdx(ret[i])
-				if newIdx == ret[i] {
-					newRet = append(newRet, ret[i])
-				} else {
-					overlappingIdx = newIdx
-				}
+		ret := make([]int, 0, len(pi.Definitions))
+		for i := 0; i < len(pi.Definitions); i++ {
+			if len(partitionNames) > 0 && !listPruner.findByName(partitionNames, pi.Definitions[i].Name.L) {
+				continue
 			}
-			if overlappingIdx != -1 {
-				// Find where it should be in the ordered array, and if already included or not
-				injectAt := sort.Search(len(newRet), func(i int) bool { return newRet[i] >= overlappingIdx })
-				if newRet[injectAt] == overlappingIdx {
-					// Already included overlappingIdx
-					return newRet, nil
-				}
-				if len(partitionNames) > 0 {
-					for _, name := range partitionNames {
-						if strings.EqualFold(name.L, pi.Definitions[overlappingIdx].Name.L) {
-							newRet = slices.Insert(newRet, injectAt, overlappingIdx)
-							break
-						}
-					}
-					return newRet, nil
-				}
-				newRet = slices.Insert(newRet, injectAt, overlappingIdx)
-				return newRet, nil
+			if i != pi.GetOverlappingDroppingPartitionIdx(i) {
+				continue
 			}
 		}
 		return ret, nil

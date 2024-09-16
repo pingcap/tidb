@@ -2153,9 +2153,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, t *meta.Meta, job
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	// If rollback from reorganize partition, remove DroppingDefinitions from tableInfo
 	tblInfo.Partition.DroppingDefinitions = nil
-	// If rollback from adding table partition, remove addingDefinitions from tableInfo.
 	physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
 	err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
 	if err != nil {
@@ -2173,20 +2171,16 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, t *meta.Meta, job
 		job.State = model.JobStateCancelled
 		return ver, err
 	}
-	// ALTER TABLE ... PARTITION BY
+	tblInfo.Partition.ClearReorgIntermediateInfo()
 	if partInfo.Type != pmodel.PartitionTypeNone {
+		// ALTER TABLE ... PARTITION BY
 		// Also remove anything with the new table id
 		physicalTableIDs = append(physicalTableIDs, partInfo.NewTableID)
 		// Reset if it was normal table before
 		if tblInfo.Partition.Type == pmodel.PartitionTypeNone ||
 			tblInfo.Partition.DDLType == pmodel.PartitionTypeNone {
 			tblInfo.Partition = nil
-		} else {
-			tblInfo.Partition.ClearReorgIntermediateInfo()
 		}
-	} else {
-		// REMOVE PARTITIONING
-		tblInfo.Partition.ClearReorgIntermediateInfo()
 	}
 
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)

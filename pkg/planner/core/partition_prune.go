@@ -63,6 +63,7 @@ func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 						continue
 					}
 					if ret[end] == idx {
+						// overlapping partition already included, append it together with the following
 						newRet = append(newRet, ret[end:]...)
 						return newRet, nil
 					}
@@ -80,7 +81,6 @@ func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 		}
 		return ret, nil
 	case model.PartitionTypeList:
-		// TODO: Handle Default partition and Drop Partition
 		return s.pruneListPartition(ctx, tbl, partitionNames, conds, columns)
 	}
 	return []int{FullRange}, nil

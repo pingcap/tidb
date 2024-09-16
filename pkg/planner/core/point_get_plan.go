@@ -405,25 +405,10 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 			err = nil
 		}
 	}
-	if err != nil {
+	if err != nil || !isInExplicitPartitions(pi, partIdx, p.PartitionNames) {
 		partIdx = -1
 		p.PartitionIdx = &partIdx
 		return true
-	}
-	if len(p.PartitionNames) > 0 {
-		found := false
-		partName := pi.Definitions[partIdx].Name.L
-		for _, name := range p.PartitionNames {
-			if name.L == partName {
-				found = true
-				break
-			}
-		}
-		if !found {
-			partIdx = -1
-			p.PartitionIdx = &partIdx
-			return true
-		}
 	}
 	p.PartitionIdx = &partIdx
 	return false
@@ -733,7 +718,6 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			partIdxs := p.getPartitionIdxs(sctx)
 			partitionsFound := 0
 			for i, idx := range partIdxs {
-				idx = pi.GetOverlappingDroppingPartitionIdx(idx)
 				if idx < 0 ||
 					(p.SinglePartition &&
 						idx != p.PartitionIdxs[0]) ||
@@ -743,7 +727,6 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 					partIdxs[i] = -1
 				} else {
 					partitionsFound++
-					partIdxs[i] = idx
 				}
 			}
 			if partitionsFound == 0 {

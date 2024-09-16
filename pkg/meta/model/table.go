@@ -827,6 +827,8 @@ func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
 
 // ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
 func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
+	pi.DDLAction = ActionNone
+	pi.DDLState = StateNone
 	pi.DDLType = model.PartitionTypeNone
 	pi.DDLExpr = ""
 	pi.DDLColumns = nil
@@ -917,7 +919,12 @@ func (pi *PartitionInfo) GetOverlappingDroppingPartitionIdx(idx int) int {
 		case model.PartitionTypeList:
 			for _, def := range pi.DroppingDefinitions {
 				if def.ID == pi.Definitions[idx].ID {
-					return pi.GetDefaultListPartition()
+					defaultIdx := pi.GetDefaultListPartition()
+					if defaultIdx == idx {
+						// Dropping default partition
+						return -1
+					}
+					return defaultIdx
 				}
 			}
 			return idx

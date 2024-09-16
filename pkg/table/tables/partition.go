@@ -1340,7 +1340,10 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 		idx, err = partitionExpr.LocateKeyPartition(num, r)
 	case pmodel.PartitionTypeList:
 		idx, err = partitionExpr.locateListPartition(ctx, r)
-		// TODO: handle dropping partitions and default list partition
+		pi := t.Meta().Partition
+		if idx != pi.GetOverlappingDroppingPartitionIdx(idx) {
+			return idx, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", pi.Definitions[idx].Name.String()))
+		}
 	case pmodel.PartitionTypeNone:
 		idx = 0
 	}

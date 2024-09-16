@@ -186,15 +186,14 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn
 		require.Equal(t, verCurr, domOwner.InfoSchema().SchemaMetaVersion())
 		loopFn(tkO, tkNO)
 		domNonOwner.Reload()
-		verCurr++
-		i++
-		if releaseHook {
-			// Continue to next state
-			hookChan <- struct{}{}
-		} else {
+		if !releaseHook {
 			// Alter done!
 			break
 		}
+		// Continue to next state
+		verCurr++
+		i++
+		hookChan <- struct{}{}
 	}
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
 	postFn(tkO)
