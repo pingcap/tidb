@@ -83,7 +83,6 @@ func testRenameTable(
 func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, oldSchemaIDs, newSchemaIDs []int64, newTableNames []*pmodel.CIStr, oldTableIDs []int64, oldSchemaNames, oldTableNames []*pmodel.CIStr) *model.Job {
 	job := &model.Job{
 		Type:       model.ActionRenameTables,
-		Version:    model.GetJobVerInUse(),
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []any{oldSchemaIDs, newSchemaIDs, newTableNames, oldTableIDs, oldSchemaNames, oldTableNames},
 		CtxVars:    []any{append(oldSchemaIDs, newSchemaIDs...), oldTableIDs},
