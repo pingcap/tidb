@@ -169,7 +169,7 @@ set @@tidb_partition_prune_mode = default;
 # TestIssue21731
 drop table if exists p, t;
 set tidb_enable_global_index = 1;
-create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));
+create table t (a int, b int, unique index idx(a) global) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));
 drop table t;
 set tidb_enable_global_index = default;
 
