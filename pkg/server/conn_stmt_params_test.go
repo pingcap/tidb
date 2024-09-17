@@ -45,7 +45,7 @@ func decodeAndParse(typectx types.Context, args []expression.Expression, boundPa
 		return err
 	}
 
-	parsedArgs, err := param.ExecArgs(typectx, binParams)
+	parsedArgs, err := expression.ExecBinaryParam(typectx, binParams)
 	if err != nil {
 		return err
 	}

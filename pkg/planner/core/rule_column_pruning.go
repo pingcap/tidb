@@ -18,7 +18,6 @@ import (
 	"context"
 	"slices"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -41,27 +40,29 @@ func (*ColumnPruner) Optimize(_ context.Context, lp base.LogicalPlan, opt *optim
 	if err != nil {
 		return nil, planChanged, err
 	}
-	intest.AssertNoError(noZeroColumnLayOut(lp), "After column pruning, some operator got zero row output. Please fix it.")
+	intest.AssertFunc(func() bool {
+		return noZeroColumnLayOut(lp)
+	}, "After column pruning, some operator got zero row output. Please fix it.")
 	return lp, planChanged, nil
 }
 
-func noZeroColumnLayOut(p base.LogicalPlan) error {
+func noZeroColumnLayOut(p base.LogicalPlan) bool {
 	for _, child := range p.Children() {
-		if err := noZeroColumnLayOut(child); err != nil {
-			return err
+		if success := noZeroColumnLayOut(child); !success {
+			return false
 		}
 	}
 	if p.Schema().Len() == 0 {
 		// The p don't hold its schema. So we don't need check itself.
 		if len(p.Children()) > 0 && p.Schema() == p.Children()[0].Schema() {
-			return nil
+			return true
 		}
 		_, ok := p.(*logicalop.LogicalTableDual)
 		if !ok {
-			return errors.Errorf("Operator %s has zero row output", p.ExplainID().String())
+			return false
 		}
 	}
-	return nil
+	return true
 }
 
 func pruneByItems(p base.LogicalPlan, old []*util.ByItems, opt *optimizetrace.LogicalOptimizeOp) (byItems []*util.ByItems,

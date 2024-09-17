@@ -170,8 +170,8 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `RESOURCE_GROUP` varchar(32) NOT NULL DEFAULT '',\n" +
 			"  `SESSION_ALIAS` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `ROWS_AFFECTED` bigint(21) unsigned DEFAULT NULL,\n" +
-			"  `TIDB_CPU` double NOT NULL DEFAULT '0',\n" +
-			"  `TIKV_CPU` double NOT NULL DEFAULT '0'\n" +
+			"  `TIDB_CPU` bigint(21) NOT NULL DEFAULT '0',\n" +
+			"  `TIKV_CPU` bigint(21) NOT NULL DEFAULT '0'\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table information_schema.cluster_log").Check(
 		testkit.Rows("" +

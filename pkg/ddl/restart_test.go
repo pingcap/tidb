@@ -59,7 +59,7 @@ func restartWorkers(t *testing.T, store kv.Storage, d *domain.Domain) {
 }
 
 // runInterruptedJob should be called concurrently with restartWorkers
-func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.Executor, job *model.Job, doneCh chan error) {
+func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.Executor, job *model.Job, args model.JobArgs, doneCh chan error) {
 	var (
 		history *model.Job
 		err     error
@@ -68,7 +68,7 @@ func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.Executor, job *mode
 	de := d.(ddl.ExecutorForTest)
 	ctx := testkit.NewTestKit(t, store).Session()
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	if errors.Is(err, context.Canceled) {
 		endlessLoopTime := time.Now().Add(time.Minute)
 		for history == nil {
@@ -88,9 +88,9 @@ func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.Executor, job *mode
 	doneCh <- err
 }
 
-func testRunInterruptedJob(t *testing.T, store kv.Storage, d *domain.Domain, job *model.Job) {
+func testRunInterruptedJob(t *testing.T, store kv.Storage, d *domain.Domain, job *model.Job, args model.JobArgs) {
 	done := make(chan error, 1)
-	go runInterruptedJob(t, store, d.DDLExecutor(), job, done)
+	go runInterruptedJob(t, store, d.DDLExecutor(), job, args, done)
 
 	ticker := time.NewTicker(d.GetSchemaLease())
 	defer ticker.Stop()
@@ -121,11 +121,11 @@ func TestSchemaResume(t *testing.T) {
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	job.FillArgs(&model.CreateSchemaArgs{DBInfo: dbInfo})
-	testRunInterruptedJob(t, store, dom, job)
+	testRunInterruptedJob(t, store, dom, job, nil)
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 
 	job = buildDropSchemaJob(dbInfo)
-	testRunInterruptedJob(t, store, dom, job)
+	testRunInterruptedJob(t, store, dom, job, nil)
 	testCheckSchemaState(t, store, dbInfo, model.StateNone)
 }
 
@@ -139,7 +139,7 @@ func TestStat(t *testing.T) {
 
 	job := buildDropSchemaJob(dbInfo)
 	done := make(chan error, 1)
-	go runInterruptedJob(t, store, dom.DDLExecutor(), job, done)
+	go runInterruptedJob(t, store, dom.DDLExecutor(), job, nil, done)
 
 	ticker := time.NewTicker(dom.GetSchemaLease() * 1)
 	defer ticker.Stop()
@@ -174,15 +174,15 @@ func TestTableResume(t *testing.T) {
 	tblInfo, err := testTableInfo(store, "t1", 3)
 	require.NoError(t, err)
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{tblInfo},
 	}
-	testRunInterruptedJob(t, store, dom, job)
+	testRunInterruptedJob(t, store, dom, job, &model.CreateTableArgs{TableInfo: tblInfo})
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
 
 	job = &model.Job{
@@ -193,6 +193,6 @@ func TestTableResume(t *testing.T) {
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	testRunInterruptedJob(t, store, dom, job)
+	testRunInterruptedJob(t, store, dom, job, nil)
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StateNone)
 }

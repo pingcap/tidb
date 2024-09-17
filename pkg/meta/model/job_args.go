@@ -26,6 +26,7 @@ import (
 func getOrDecodeArgsV2[T JobArgs](job *Job) (T, error) {
 	intest.Assert(job.Version == JobVersion2, "job version is not v2")
 	if len(job.Args) > 0 {
+		intest.Assert(len(job.Args) == 1, "job args length is not 1")
 		return job.Args[0].(T), nil
 	}
 	var v T
@@ -181,6 +182,100 @@ func GetModifySchemaArgs(job *Job) (*ModifySchemaArgs, error) {
 		}, nil
 	}
 	return getOrDecodeArgsV2[*ModifySchemaArgs](job)
+}
+
+// CreateTableArgs is the arguments for create table/view/sequence job.
+type CreateTableArgs struct {
+	TableInfo *TableInfo `json:"table_info,omitempty"`
+	// below 2 are used for create view.
+	OnExistReplace bool  `json:"on_exist_replace,omitempty"`
+	OldViewTblID   int64 `json:"old_view_tbl_id,omitempty"`
+	// used for create table.
+	FKCheck bool `json:"fk_check,omitempty"`
+}
+
+func (a *CreateTableArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		switch job.Type {
+		case ActionCreateTable:
+			job.Args = []any{a.TableInfo, a.FKCheck}
+		case ActionCreateView:
+			job.Args = []any{a.TableInfo, a.OnExistReplace, a.OldViewTblID}
+		case ActionCreateSequence:
+			job.Args = []any{a.TableInfo}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetCreateTableArgs gets the create-table args.
+func GetCreateTableArgs(job *Job) (*CreateTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			tableInfo      = &TableInfo{}
+			onExistReplace bool
+			oldViewTblID   int64
+			fkCheck        bool
+		)
+		switch job.Type {
+		case ActionCreateTable:
+			if err := job.DecodeArgs(tableInfo, &fkCheck); err != nil {
+				return nil, errors.Trace(err)
+			}
+		case ActionCreateView:
+			if err := job.DecodeArgs(tableInfo, &onExistReplace, &oldViewTblID); err != nil {
+				return nil, errors.Trace(err)
+			}
+		case ActionCreateSequence:
+			if err := job.DecodeArgs(tableInfo); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		return &CreateTableArgs{
+			TableInfo:      tableInfo,
+			OnExistReplace: onExistReplace,
+			OldViewTblID:   oldViewTblID,
+			FKCheck:        fkCheck,
+		}, nil
+	}
+	return getOrDecodeArgsV2[*CreateTableArgs](job)
+}
+
+// BatchCreateTableArgs is the arguments for batch create table job.
+type BatchCreateTableArgs struct {
+	Tables []*CreateTableArgs `json:"tables,omitempty"`
+}
+
+func (a *BatchCreateTableArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		infos := make([]*TableInfo, 0, len(a.Tables))
+		for _, info := range a.Tables {
+			infos = append(infos, info.TableInfo)
+		}
+		job.Args = []any{infos, a.Tables[0].FKCheck}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetBatchCreateTableArgs gets the batch create-table args.
+func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			tableInfos []*TableInfo
+			fkCheck    bool
+		)
+		if err := job.DecodeArgs(&tableInfos, &fkCheck); err != nil {
+			return nil, errors.Trace(err)
+		}
+		args := &BatchCreateTableArgs{Tables: make([]*CreateTableArgs, 0, len(tableInfos))}
+		for _, info := range tableInfos {
+			args.Tables = append(args.Tables, &CreateTableArgs{TableInfo: info, FKCheck: fkCheck})
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*BatchCreateTableArgs](job)
 }
 
 // TruncateTableArgs is the arguments for truncate table job.
