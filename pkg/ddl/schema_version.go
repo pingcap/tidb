@@ -31,18 +31,18 @@ import (
 
 // SetSchemaDiffForCreateTables set SchemaDiff for ActionCreateTables.
 func SetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error {
-	var tableInfos []*model.TableInfo
-	err := job.DecodeArgs(&tableInfos)
+	args, err := model.GetBatchCreateTableArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	diff.AffectedOpts = make([]*model.AffectedOption, len(tableInfos))
-	for i := range tableInfos {
+	diff.AffectedOpts = make([]*model.AffectedOption, len(args.Tables))
+	for i := range args.Tables {
+		tblInfo := args.Tables[i].TableInfo
 		diff.AffectedOpts[i] = &model.AffectedOption{
 			SchemaID:    job.SchemaID,
 			OldSchemaID: job.SchemaID,
-			TableID:     tableInfos[i].ID,
-			OldTableID:  tableInfos[i].ID,
+			TableID:     tblInfo.ID,
+			OldTableID:  tblInfo.ID,
 		}
 	}
 	return nil
@@ -75,12 +75,11 @@ func SetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job) error
 
 // SetSchemaDiffForCreateView set SchemaDiff for ActionCreateView.
 func SetSchemaDiffForCreateView(diff *model.SchemaDiff, job *model.Job) error {
-	tbInfo := &model.TableInfo{}
-	var orReplace bool
-	var oldTbInfoID int64
-	if err := job.DecodeArgs(tbInfo, &orReplace, &oldTbInfoID); err != nil {
+	args, err := model.GetCreateTableArgs(job)
+	if err != nil {
 		return errors.Trace(err)
 	}
+	tbInfo, orReplace, oldTbInfoID := args.TableInfo, args.OnExistReplace, args.OldViewTblID
 	// When the statement is "create or replace view " and we need to drop the old view,
 	// it has two table IDs and should be handled differently.
 	if oldTbInfoID > 0 && orReplace {
@@ -247,19 +246,26 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) err
 }
 
 // SetSchemaDiffForCreateTable set SchemaDiff for ActionCreateTable.
-func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) {
+func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) error {
 	diff.TableID = job.TableID
-	if len(job.Args) > 0 {
-		tbInfo, _ := job.Args[0].(*model.TableInfo)
-		// When create table with foreign key, there are two schema status change:
-		// 1. none -> write-only
-		// 2. write-only -> public
-		// In the second status change write-only -> public, infoschema loader should apply drop old table first, then
-		// apply create new table. So need to set diff.OldTableID here to make sure it.
-		if tbInfo != nil && tbInfo.State == model.StatePublic && len(tbInfo.ForeignKeys) > 0 {
-			diff.OldTableID = job.TableID
-		}
+	var tbInfo *model.TableInfo
+	// create table with foreign key will update tableInfo in the job args, so we
+	// must reuse already decoded ones.
+	// TODO make DecodeArgs can reuse already decoded args, so we can use GetCreateTableArgs.
+	if job.Version == model.JobVersion1 {
+		tbInfo, _ = job.Args[0].(*model.TableInfo)
+	} else {
+		tbInfo = job.Args[0].(*model.CreateTableArgs).TableInfo
 	}
+	// When create table with foreign key, there are two schema status change:
+	// 1. none -> write-only
+	// 2. write-only -> public
+	// In the second status change write-only -> public, infoschema loader should apply drop old table first, then
+	// apply create new table. So need to set diff.OldTableID here to make sure it.
+	if tbInfo.State == model.StatePublic && len(tbInfo.ForeignKeys) > 0 {
+		diff.OldTableID = job.TableID
+	}
+	return nil
 }
 
 // SetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.
@@ -353,7 +359,7 @@ func updateSchemaVersion(jobCtx *jobContext, t *meta.Meta, job *model.Job, multi
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		err = SetSchemaDiffForPartitionModify(diff, job)
 	case model.ActionCreateTable:
-		SetSchemaDiffForCreateTable(diff, job)
+		err = SetSchemaDiffForCreateTable(diff, job)
 	case model.ActionRecoverSchema:
 		err = SetSchemaDiffForRecoverSchema(diff, job)
 	case model.ActionFlashbackCluster:

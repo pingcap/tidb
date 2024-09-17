@@ -675,6 +675,11 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	var sql bytes.Buffer
 	sql.WriteString(addDDLJobSQL)
 	for i, jobW := range jobWs {
+		// TODO remove this check when all job type pass args in this way.
+		if jobW.JobArgs != nil {
+			jobW.FillArgs(jobW.JobArgs)
+		}
+		injectModifyJobArgFailPoint(jobWs)
 		b, err := jobW.Encode(true)
 		if err != nil {
 			return err
@@ -683,7 +688,7 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 			sql.WriteString(",")
 		}
 		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", jobW.ID, jobW.MayNeedReorg(),
-			strconv.Quote(job2SchemaIDs(jobW.Job)), strconv.Quote(job2TableIDs(jobW.Job)),
+			strconv.Quote(job2SchemaIDs(jobW)), strconv.Quote(job2TableIDs(jobW)),
 			util.WrapKey2String(b), jobW.Type, jobW.Started())
 	}
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
@@ -692,22 +697,22 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	return errors.Trace(err)
 }
 
-func job2SchemaIDs(job *model.Job) string {
-	return job2UniqueIDs(job, true)
+func job2SchemaIDs(jobW *JobWrapper) string {
+	return job2UniqueIDs(jobW, true)
 }
 
-func job2TableIDs(job *model.Job) string {
-	return job2UniqueIDs(job, false)
+func job2TableIDs(jobW *JobWrapper) string {
+	return job2UniqueIDs(jobW, false)
 }
 
-func job2UniqueIDs(job *model.Job, schema bool) string {
-	switch job.Type {
+func job2UniqueIDs(jobW *JobWrapper, schema bool) string {
+	switch jobW.Type {
 	case model.ActionExchangeTablePartition, model.ActionRenameTables, model.ActionRenameTable:
 		var ids []int64
 		if schema {
-			ids = job.CtxVars[0].([]int64)
+			ids = jobW.CtxVars[0].([]int64)
 		} else {
-			ids = job.CtxVars[1].([]int64)
+			ids = jobW.CtxVars[1].([]int64)
 		}
 		set := make(map[int64]struct{}, len(ids))
 		for _, id := range ids {
@@ -722,15 +727,15 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		return strings.Join(s, ",")
 	case model.ActionTruncateTable:
 		if schema {
-			return strconv.FormatInt(job.SchemaID, 10)
+			return strconv.FormatInt(jobW.SchemaID, 10)
 		}
-		newTableID := getTruncateTableNewTableID(job)
-		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
+		newTableID := jobW.JobArgs.(*model.TruncateTableArgs).NewTableID
+		return strconv.FormatInt(jobW.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
 	}
 	if schema {
-		return strconv.FormatInt(job.SchemaID, 10)
+		return strconv.FormatInt(jobW.SchemaID, 10)
 	}
-	return strconv.FormatInt(job.TableID, 10)
+	return strconv.FormatInt(jobW.TableID, 10)
 }
 
 func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) error {
