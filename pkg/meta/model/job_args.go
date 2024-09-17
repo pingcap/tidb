@@ -325,7 +325,7 @@ func GetFinishedTruncateTableArgs(job *Job) (*TruncateTableArgs, error) {
 }
 
 func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, error) {
-	if job.Version <= JobVersion1 {
+	if job.Version == JobVersion1 {
 		if argsOfFinished {
 			var startKey []byte
 			var oldPartitionIDs []int64
@@ -380,18 +380,10 @@ func GetRenameTableArgs(job *Job) (*RenameTableArgs, error) {
 
 	if job.Version == JobVersion1 {
 		// decode args and cache in args.
-		if len(job.Args) == 0 {
-			err := job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			job.Args = []any{oldSchemaID, newTableName, oldSchemaName}
-		} else {
-			oldSchemaID = job.Args[0].(int64)
-			newTableName = job.Args[1].(pmodel.CIStr)
-			oldSchemaName = job.Args[2].(pmodel.CIStr)
+		err := job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-
 		args := RenameTableArgs{
 			OldSchemaID:   oldSchemaID,
 			OldSchemaName: oldSchemaName,
@@ -410,7 +402,7 @@ func UpdateRenameTableArgs(job *Job) error {
 	var err error
 
 	// for job version1
-	if job.Version <= JobVersion1 {
+	if job.Version == JobVersion1 {
 		// update schemaID and marshal()
 		job.Args[0] = job.SchemaID
 		job.RawArgs, err = json.Marshal(job.Args)

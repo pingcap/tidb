@@ -243,18 +243,13 @@ func TestRenameTableArgs(t *testing.T) {
 		}
 		job.FillArgs(inArgs)
 
-		// get the args from args
-		args, err := GetRenameTableArgs(job)
-		require.NoError(t, err)
-		require.Equal(t, args, inArgs)
-
 		// encode job
-		_, err = job.Encode(true)
+		_, err := job.Encode(true)
 		require.NoError(t, err)
 		job.Args = nil
 
 		// get the args after decode
-		args, err = GetRenameTableArgs(job)
+		args, err := GetRenameTableArgs(job)
 		require.NoError(t, err)
 		require.Equal(t, args, inArgs)
 

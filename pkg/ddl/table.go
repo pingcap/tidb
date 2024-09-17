@@ -742,11 +742,12 @@ func onRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 
+	oldSchemaID, oldSchemaName, tableName := args.OldSchemaID, args.OldSchemaName, args.NewTableName
 	if job.SchemaState == model.StatePublic {
 		return finishJobRenameTable(jobCtx, t, job)
 	}
 	newSchemaID := job.SchemaID
-	err = checkTableNotExists(jobCtx.infoCache, newSchemaID, args.NewTableName.L)
+	err = checkTableNotExists(jobCtx.infoCache, newSchemaID, tableName.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -754,18 +755,18 @@ func onRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, args.OldSchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	oldTableName := tblInfo.Name
-	ver, err = checkAndRenameTables(t, job, tblInfo, args.OldSchemaID, job.SchemaID, &args.OldSchemaName, &args.NewTableName)
+	ver, err = checkAndRenameTables(t, job, tblInfo, oldSchemaID, job.SchemaID, &oldSchemaName, &tableName)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	fkh := newForeignKeyHelper()
 	err = adjustForeignKeyChildTableInfoAfterRenameTable(jobCtx.infoCache, t,
-		job, &fkh, tblInfo, args.OldSchemaName, oldTableName, args.NewTableName, newSchemaID)
+		job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
