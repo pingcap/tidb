@@ -15,7 +15,9 @@
 package stream
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -195,7 +197,7 @@ func (m *MetadataHelper) decodeCompressedData(data []byte, compressionType backu
 		"failed to decode compressed data: compression type is unimplemented. type id is %d", compressionType)
 }
 
-func (m *MetadataHelper) decryptIfNeeded(ctx context.Context, data []byte, encryptionInfo *encryptionpb.FileEncryptionInfo) ([]byte, error) {
+func (m *MetadataHelper) verifyChecksumAndDecryptIfNeeded(ctx context.Context, data []byte, encryptionInfo *encryptionpb.FileEncryptionInfo) ([]byte, error) {
 	// no need to decrypt
 	if encryptionInfo == nil {
 		return data, nil
@@ -203,6 +205,14 @@ func (m *MetadataHelper) decryptIfNeeded(ctx context.Context, data []byte, encry
 
 	if m.encryptionManager == nil {
 		return data, errors.New("need to decrypt data but encryption manager not set")
+	}
+
+	// Verify checksum before decryption
+	if encryptionInfo.Checksum != nil {
+		actualChecksum := sha256.Sum256(data)
+		if !bytes.Equal(actualChecksum[:], encryptionInfo.Checksum) {
+			return nil, errors.New("checksum mismatch before decryption")
+		}
 	}
 
 	decryptedContent, err := m.encryptionManager.Decrypt(ctx, data, encryptionInfo)
@@ -235,7 +245,7 @@ func (m *MetadataHelper) ReadFile(
 			return nil, errors.Trace(err)
 		}
 		// decrypt if needed
-		decryptedData, err := m.decryptIfNeeded(ctx, data, encryptionInfo)
+		decryptedData, err := m.verifyChecksumAndDecryptIfNeeded(ctx, data, encryptionInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -251,7 +261,7 @@ func (m *MetadataHelper) ReadFile(
 		}
 	}
 	// decrypt if needed
-	decryptedData, err := m.decryptIfNeeded(ctx, cref.data[offset:offset+length], encryptionInfo)
+	decryptedData, err := m.verifyChecksumAndDecryptIfNeeded(ctx, cref.data[offset:offset+length], encryptionInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

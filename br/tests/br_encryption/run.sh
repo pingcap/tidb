@@ -166,12 +166,17 @@ run_backup_restore_test() {
     # Drop databases before restoring
     drop_db || { echo "Failed to drop databases before restore"; exit 1; }
 
-    # Run pitr restore
+    # Run pitr restore and measure the performance
     echo "restore log backup with $full_encryption_args and $log_encryption_args"
+    local start_time=$(date +%s.%N)
     timeout 300 run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" $full_encryption_args $log_encryption_args || { 
         echo "Log backup restore failed or timed out after 5 minutes"
         exit 1
     }
+    local end_time=$(date +%s.%N)
+    local duration=$(echo "$end_time - $start_time" | bc | awk '{printf "%.3f", $0}')
+    echo "${encryption_mode} took ${duration} seconds"
+    echo "${encryption_mode},${duration}" >> "$TEST_DIR/performance_results.csv"
 
     # Check data consistency after restore
     echo "check data consistency after restore"
@@ -318,14 +323,23 @@ test_mixed_full_plain_log_encrypted() {
     run_backup_restore_test "mixed_full_plain_log_encrypted" "$full_encryption_args" "$log_encryption_args"
 }
 
+# Initialize performance results file
+echo "Operation,Encryption Mode,Duration (seconds)" > "$TEST_DIR/performance_results.csv"
+
 # Run tests
-#test_plaintext
+test_plaintext
 test_plaintext_data_key
 test_local_master_key
 test_aws_kms
+test_mixed_full_encrypted_log_plain
+test_mixed_full_plain_log_encrypted
 
-# uncomment for manual testing
+# uncomment for manual GCP KMS testing
 #test_gcp_kms
 
 echo "All encryption tests passed successfully"
+
+# Display performance results
+echo "Performance Results:"
+cat "$TEST_DIR/performance_results.csv"
 
