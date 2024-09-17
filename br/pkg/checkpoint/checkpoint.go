@@ -561,7 +561,7 @@ func parseCheckpointData[K KeyType, V ValueType](
 		*pastDureTime = checkpointData.DureTime
 	}
 	for _, meta := range checkpointData.RangeGroupMetas {
-		decryptContent, err := metautil.Decrypt(meta.RangeGroupsEncriptedData, cipher, meta.CipherIv)
+		decryptContent, err := utils.Decrypt(meta.RangeGroupsEncriptedData, cipher, meta.CipherIv)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -48,7 +48,7 @@ func TestMetadataHelperReadFile(t *testing.T) {
 	tmpdir := t.TempDir()
 	s, err := storage.NewLocalStorage(tmpdir)
 	require.Nil(t, err)
-	helper := stream.NewMetadataHelper()
+	helper := stream.NewMetadataHelper(nil)
 	filename1 := "full_data"
 	filename2 := "misc_data"
 	data1 := []byte("Test MetadataHelper. The data contains bare data (or maybe compressed data).")

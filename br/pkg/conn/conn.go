@@ -299,8 +299,8 @@ func (mgr *Mgr) Close() {
 	mgr.PdController.Close()
 }
 
-// GetTS gets current ts from pd.
-func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
+// GetCurrentTsFromPd gets current ts from pd.
+func (mgr *Mgr) GetCurrentTsFromPd(ctx context.Context) (uint64, error) {
 	p, l, err := mgr.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
