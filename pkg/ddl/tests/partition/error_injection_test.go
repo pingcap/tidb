@@ -91,8 +91,7 @@ func TestTruncatePartitionListFailuresWithGlobalIndex(t *testing.T) {
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
 	afterRecover := testkit.Rows("1 1 1", "2 2 2", "8 8 8")
-	testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, afterRecover, "Cancel1", "Cancel2")
-	//testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, afterRecover, "Cancel2")
+	testReorganizePartitionFailures(t, truncateTests, create, alter, beforeDML, beforeResult, afterDML, afterResult, afterRecover, "Cancel2")
 }
 
 func TestTruncatePartitionListFailures(t *testing.T) {
@@ -106,9 +105,9 @@ func TestTruncatePartitionListFailures(t *testing.T) {
 		`update t set a = 7, b = 7, c = 7 where a = 1`,
 		`update t set b = 3, c = 3, a = 3 where c = 4`,
 		`delete from t where a = 8`,
-		//`delete from t where b = 2`,
+		`delete from t where b = 2`,
 	}
-	beforeResult := testkit.Rows("2 2 2", "3 3 3", "6 6 6", "7 7 7", "9 9 9")
+	beforeResult := testkit.Rows("3 3 3", "6 6 6", "7 7 7", "9 9 9")
 	afterDML := []string{
 		`insert into t values (1,1,1),(5,5,5),(8,8,8)`,
 		`update t set a = 2, b = 2, c = 2 where a = 1`,
@@ -130,12 +129,9 @@ TEST:
 				continue TEST
 			}
 		}
-		/*
-			if test.Recoverable {
-				runOneTest(t, test, true, tests.FailpointPrefix, createSQL, alterSQL, beforeDML, beforeResult, afterDML, afterRecover)
-			}
-
-		*/
+		if test.Recoverable {
+			runOneTest(t, test, true, tests.FailpointPrefix, createSQL, alterSQL, beforeDML, beforeResult, afterDML, afterRecover)
+		}
 		if test.Rollback {
 			runOneTest(t, test, false, tests.FailpointPrefix, createSQL, alterSQL, beforeDML, beforeResult, afterDML, afterRollback)
 		}
