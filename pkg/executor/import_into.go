@@ -146,10 +146,13 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 // For example, the function `tidb_is_ddl_owner()` requires the optional eval properties which are not
 // provided by the encoding context, so we should avoid using it in the column assignment expressions.
 func ValidateImportIntoColAssignmentsWithEncodeCtx(plan *importer.Plan, assigns []*ast.Assignment) error {
-	encodeCtx := litkv.NewSession(&encode.SessionOptions{
+	encodeCtx, err := litkv.NewSession(&encode.SessionOptions{
 		SQLMode: plan.SQLMode,
 		SysVars: plan.ImportantSysVars,
 	}, log.L())
+	if err != nil {
+		return err
+	}
 
 	providedProps := encodeCtx.GetExprCtx().GetEvalCtx().GetOptionalPropSet()
 	for i, assign := range assigns {

@@ -270,6 +270,12 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
 		MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
 	}
+	if ver < version212 && ver >= version172 {
+		// for version < version212, revert column changes related to function `upgradeToVer212`.
+		// related tables created after version172.
+		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `start_time` TO `time`")
+		MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `sample_sql` TO `original_sql`")
+	}
 }
 
 // TestUpgrade tests upgrading
@@ -312,6 +318,7 @@ func TestUpgrade(t *testing.T) {
 	MustExec(t, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s"`, variable.TiDBDistSQLScanConcurrency))
 	MustExec(t, se1, `commit`)
 	unsetStoreBootstrapped(store.UUID())
+	revertVersionAndVariables(t, se1, 0)
 	// Make sure the version is downgraded.
 	r = MustExecToRecodeSet(t, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
 	req = r.NewChunk(nil)
@@ -2411,4 +2418,36 @@ func TestTiDBHistoryTableConsistent(t *testing.T) {
 	require.Equal(t, int64(1), row.GetInt64(0))
 
 	dom.Close()
+}
+
+func TestTiDBUpgradeToVer212(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// bootstrap as version198, version 199~208 is reserved for v8.1.x bugfix patch.
+	ver198 := version198
+	seV198 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver198))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV198, ver198)
+	// simulate a real ver198 where mysql.tidb_runaway_queries` doesn't have `start_time`/`sample_sql` columns yet.
+	MustExec(t, seV198, "select original_sql, time from mysql.tidb_runaway_queries")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	// upgrade to ver212
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	// the columns are changed automatically
+	MustExec(t, seCurVer, "select sample_sql, start_time, plan_digest from mysql.tidb_runaway_queries")
 }

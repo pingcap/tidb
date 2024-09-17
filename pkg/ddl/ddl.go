@@ -77,8 +77,6 @@ const (
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
 	ddlPrompt          = "ddl"
 
-	shardRowIDBitsMax = 15
-
 	batchAddingJobs = 100
 
 	reorgWorkerCnt   = 10
@@ -203,6 +201,7 @@ type JobWrapper struct {
 	// IDAllocated see config of same name in CreateTableConfig.
 	// exported for test.
 	IDAllocated bool
+	JobArgs     model.JobArgs
 	// job submission is run in async, we use this channel to notify the caller.
 	// when fast create table enabled, we might combine multiple jobs into one, and
 	// append the channel to this slice.
@@ -216,6 +215,17 @@ func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {
 	return &JobWrapper{
 		Job:         job,
 		IDAllocated: idAllocated,
+		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
+	}
+}
+
+// NewJobWrapperWithArgs creates a new JobWrapper with job args.
+// TODO: merge with NewJobWrapper later.
+func NewJobWrapperWithArgs(job *model.Job, args model.JobArgs, idAllocated bool) *JobWrapper {
+	return &JobWrapper{
+		Job:         job,
+		IDAllocated: idAllocated,
+		JobArgs:     args,
 		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
 	}
 }
