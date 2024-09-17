@@ -12,18 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package memo
 
-import "github.com/pingcap/tidb/pkg/meta/model"
+// GroupID is the unique id for a group.
+type GroupID uint64
 
-// SchemaChangeEvent stands for a schema change event. DDL will generate one event or multiple events (only for multi-schema change DDL).
-// The caller should check the Type field of SchemaChange and call the corresponding getter function to retrieve the needed information.
-type SchemaChangeEvent struct {
-	// todo: field and method will be added in the next few pr on demand
-	tp model.ActionType
+// GroupIDGenerator is used to generate group id.
+type GroupIDGenerator struct {
+	id uint64
 }
 
-// GetType returns the type of the schema change event.
-func (s *SchemaChangeEvent) GetType() model.ActionType {
-	return s.tp
+// NextGroupID generates the next group id.
+// It is not thread-safe, since memo optimizing is also in one thread.
+func (gi *GroupIDGenerator) NextGroupID() GroupID {
+	gi.id++
+	return GroupID(gi.id)
 }

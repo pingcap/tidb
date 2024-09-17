@@ -24,6 +24,7 @@ go_library(
         "//pkg/util/kvcache",
         "//pkg/util/logutil",
         "//pkg/util/plancodec",
+        "//pkg/util/ppcpuusage",
         "//pkg/util/set",
         "//pkg/util/stmtsummary",
         "//pkg/util/stringutil",

@@ -2060,6 +2060,14 @@ var defaultSysVars = []*SysVar{
 		s.AllowBatchCop = int(TidbOptInt64(val, DefTiDBAllowBatchCop))
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardRowIDBits, Value: strconv.Itoa(DefShardRowIDBits), Type: TypeInt, MinValue: 0, MaxValue: MaxShardRowIDBits, SetSession: func(s *SessionVars, val string) error {
+		s.ShardRowIDBits = TidbOptUint64(val, DefShardRowIDBits)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPreSplitRegions, Value: strconv.Itoa(DefPreSplitRegions), Type: TypeInt, MinValue: 0, MaxValue: MaxPreSplitRegions, SetSession: func(s *SessionVars, val string) error {
+		s.PreSplitRegions = TidbOptUint64(val, DefPreSplitRegions)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBInitChunkSize, Value: strconv.Itoa(DefInitChunkSize), Type: TypeUnsigned, MinValue: 1, MaxValue: initChunkSizeUpperBound, SetSession: func(s *SessionVars, val string) error {
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 		return nil

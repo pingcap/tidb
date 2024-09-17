@@ -301,10 +301,10 @@ func (e *executor) CreateSchemaWithInfo(
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaName:     dbInfo.Name.L,
 		Type:           model.ActionCreateSchema,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{dbInfo},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: dbInfo.Name.L,
@@ -312,6 +312,9 @@ func (e *executor) CreateSchemaWithInfo(
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+	job.FillArgs(&model.CreateSchemaArgs{
+		DBInfo: dbInfo,
+	})
 	if ref := dbInfo.PlacementPolicyRef; ref != nil {
 		job.InvolvingSchemaInfo = append(job.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
 			Policy: ref.Name.L,
@@ -348,11 +351,11 @@ func (e *executor) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *a
 	}
 	// Do the DDL job.
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       dbInfo.ID,
 		SchemaName:     dbInfo.Name.L,
 		Type:           model.ActionModifySchemaCharsetAndCollate,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{toCharset, toCollate},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: dbInfo.Name.L,
@@ -360,6 +363,10 @@ func (e *executor) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *a
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+	job.FillArgs(&model.ModifySchemaArgs{
+		ToCharset: toCharset,
+		ToCollate: toCollate,
+	})
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }
@@ -383,11 +390,11 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 
 	// Do the DDL job.
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       dbInfo.ID,
 		SchemaName:     dbInfo.Name.L,
 		Type:           model.ActionModifySchemaDefaultPlacement,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{placementPolicyRef},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: dbInfo.Name.L,
@@ -395,6 +402,8 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+	job.FillArgs(&model.ModifySchemaArgs{PolicyRef: placementPolicyRef})
+
 	if placementPolicyRef != nil {
 		job.InvolvingSchemaInfo = append(job.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
 			Policy: placementPolicyRef.Name.L,
@@ -741,12 +750,12 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 		return err
 	}
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       old.ID,
 		SchemaName:     old.Name.L,
 		SchemaState:    old.State,
 		Type:           model.ActionDropSchema,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{fkCheck},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: old.Name.L,
@@ -754,6 +763,9 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+	job.FillArgs(&model.DropSchemaArgs{
+		FKCheck: fkCheck,
+	})
 
 	err = e.DoDDLJob(ctx, job)
 	if err != nil {
@@ -768,8 +780,9 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 	if !config.TableLockEnabled() {
 		return nil
 	}
+
 	// Clear table locks hold by the session.
-	tbs, err := is.SchemaTableInfos(e.ctx, stmt.Name)
+	tbs, err := is.SchemaSimpleTableInfos(e.ctx, stmt.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1041,8 +1054,8 @@ func (e *executor) createTableWithInfoJob(
 	dbName pmodel.CIStr,
 	tbInfo *model.TableInfo,
 	involvingRef []model.InvolvingSchemaInfo,
-	onExist OnExist,
-) (job *model.Job, err error) {
+	cfg CreateTableConfig,
+) (jobW *JobWrapper, err error) {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -1056,7 +1069,7 @@ func (e *executor) createTableWithInfoJob(
 	var oldViewTblID int64
 	if oldTable, err := is.TableByName(e.ctx, schema.Name, tbInfo.Name); err == nil {
 		err = infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schema.Name, Name: tbInfo.Name})
-		switch onExist {
+		switch cfg.OnExist {
 		case OnExistIgnore:
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil, nil
@@ -1081,16 +1094,13 @@ func (e *executor) createTableWithInfoJob(
 	}
 
 	var actionType model.ActionType
-	args := []any{tbInfo}
 	switch {
 	case tbInfo.View != nil:
 		actionType = model.ActionCreateView
-		args = append(args, onExist == OnExistReplace, oldViewTblID)
 	case tbInfo.Sequence != nil:
 		actionType = model.ActionCreateSequence
 	default:
 		actionType = model.ActionCreateTable
-		args = append(args, ctx.GetSessionVars().ForeignKeyChecks)
 	}
 
 	var involvingSchemas []model.InvolvingSchemaInfo
@@ -1106,18 +1116,24 @@ func (e *executor) createTableWithInfoJob(
 		involvingSchemas = append(involvingSchemas, sharedInvolvingFromTableInfo...)
 	}
 
-	job = &model.Job{
+	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
 		SchemaID:            schema.ID,
 		SchemaName:          schema.Name.L,
 		TableName:           tbInfo.Name.L,
 		Type:                actionType,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                args,
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemas,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
-	return job, nil
+	args := &model.CreateTableArgs{
+		TableInfo:      tbInfo,
+		OnExistReplace: cfg.OnExist == OnExistReplace,
+		OldViewTblID:   oldViewTblID,
+		FKCheck:        ctx.GetSessionVars().ForeignKeyChecks,
+	}
+	return NewJobWrapperWithArgs(job, args, cfg.IDAllocated), nil
 }
 
 func getSharedInvolvingSchemaInfo(info *model.TableInfo) []model.InvolvingSchemaInfo {
@@ -1187,17 +1203,13 @@ func (e *executor) CreateTableWithInfo(
 ) (err error) {
 	c := GetCreateTableConfig(cs)
 
-	job, err := e.createTableWithInfoJob(
-		ctx, dbName, tbInfo, involvingRef, c.OnExist,
-	)
+	jobW, err := e.createTableWithInfoJob(ctx, dbName, tbInfo, involvingRef, c)
 	if err != nil {
 		return err
 	}
-	if job == nil {
+	if jobW == nil {
 		return nil
 	}
-
-	jobW := NewJobWrapper(job, c.IDAllocated)
 
 	err = e.DoDDLJobWrapper(ctx, jobW)
 	if err != nil {
@@ -1207,7 +1219,7 @@ func (e *executor) CreateTableWithInfo(
 			err = nil
 		}
 	} else {
-		err = e.createTableWithInfoPost(ctx, tbInfo, job.SchemaID)
+		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID)
 	}
 
 	return errors.Trace(err)
@@ -1226,15 +1238,12 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	})
 	c := GetCreateTableConfig(cs)
 
-	jobW := NewJobWrapper(
-		&model.Job{
-			BinlogInfo:     &model.HistoryInfo{},
-			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-			SQLMode:        ctx.GetSessionVars().SQLMode,
-		},
-		c.IDAllocated,
-	)
-	args := make([]*model.TableInfo, 0, len(infos))
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
 
 	var err error
 
@@ -1256,43 +1265,41 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		duplication[info.Name.L] = struct{}{}
 	}
 
+	args := &model.BatchCreateTableArgs{
+		Tables: make([]*model.CreateTableArgs, 0, len(infos)),
+	}
 	for _, info := range infos {
-		job, err := e.createTableWithInfoJob(ctx, dbName, info, nil, c.OnExist)
+		jobItem, err := e.createTableWithInfoJob(ctx, dbName, info, nil, c)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if job == nil {
+		if jobItem == nil {
 			continue
 		}
 
 		// if jobW.Type == model.ActionCreateTables, it is initialized
 		// if not, initialize jobW by job.XXXX
-		if jobW.Type != model.ActionCreateTables {
-			jobW.Type = model.ActionCreateTables
-			jobW.SchemaID = job.SchemaID
-			jobW.SchemaName = job.SchemaName
+		if job.Type != model.ActionCreateTables {
+			job.Type = model.ActionCreateTables
+			job.SchemaID = jobItem.SchemaID
+			job.SchemaName = jobItem.SchemaName
 		}
 
 		// append table job args
-		info, ok := job.Args[0].(*model.TableInfo)
-		if !ok {
-			return errors.Trace(fmt.Errorf("except table info"))
-		}
-		args = append(args, info)
-		jobW.InvolvingSchemaInfo = append(jobW.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
+		args.Tables = append(args.Tables, jobItem.JobArgs.(*model.CreateTableArgs))
+		job.InvolvingSchemaInfo = append(job.InvolvingSchemaInfo, model.InvolvingSchemaInfo{
 			Database: dbName.L,
 			Table:    info.Name.L,
 		})
 		if sharedInv := getSharedInvolvingSchemaInfo(info); len(sharedInv) > 0 {
-			jobW.InvolvingSchemaInfo = append(jobW.InvolvingSchemaInfo, sharedInv...)
+			job.InvolvingSchemaInfo = append(job.InvolvingSchemaInfo, sharedInv...)
 		}
 	}
-	if len(args) == 0 {
+	if len(args.Tables) == 0 {
 		return nil
 	}
-	jobW.Args = append(jobW.Args, args)
-	jobW.Args = append(jobW.Args, ctx.GetSessionVars().ForeignKeyChecks)
 
+	jobW := NewJobWrapperWithArgs(job, args, c.IDAllocated)
 	err = e.DoDDLJobWrapper(ctx, jobW)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
@@ -1303,8 +1310,8 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 
-	for j := range args {
-		if err = e.createTableWithInfoPost(ctx, args[j], jobW.SchemaID); err != nil {
+	for _, tblArgs := range args.Tables {
+		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1835,8 +1842,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			for i, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
-					if opt.UintValue > shardRowIDBitsMax {
-						opt.UintValue = shardRowIDBitsMax
+					if opt.UintValue > variable.MaxShardRowIDBits {
+						opt.UintValue = variable.MaxShardRowIDBits
 					}
 					err = e.ShardRowID(sctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
@@ -4186,26 +4193,29 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		return errors.Trace(dbterror.ErrTruncateIllegalForeignKey.GenWithStackByArgs(msg))
 	}
 
-	var partCount int
+	var oldPartitionIDs []int64
 	if tblInfo.Partition != nil {
-		partCount = len(tblInfo.Partition.Definitions)
+		oldPartitionIDs = make([]int64, 0, len(tblInfo.Partition.Definitions))
+		for _, def := range tblInfo.Partition.Definitions {
+			oldPartitionIDs = append(oldPartitionIDs, def.ID)
+		}
 	}
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tblInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tblInfo.Name.L,
-		Type:       model.ActionTruncateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		// Args[0] is the new table ID, args[2] is the ids for table partitions, we
-		// add a placeholder here, they will be filled by job submitter.
-		// the last param is not required for execution, we need it to calculate
-		// number of new IDs to generate.
-		Args:           []any{int64(0), fkCheck, []int64{}, partCount},
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        tblInfo.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      tblInfo.Name.L,
+		Type:           model.ActionTruncateTable,
+		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = e.DoDDLJob(ctx, job)
+	args := &model.TruncateTableArgs{
+		FKCheck:         fkCheck,
+		OldPartitionIDs: oldPartitionIDs,
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6241,6 +6251,10 @@ func (e *executor) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return e.DoDDLJobWrapper(ctx, NewJobWrapper(job, false))
 }
 
+func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.JobArgs) error {
+	return e.DoDDLJobWrapper(ctx, NewJobWrapperWithArgs(job, args, false))
+}
+
 // DoDDLJobWrapper submit DDL job and wait it finishes.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
@@ -6426,8 +6440,11 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 func HandleLockTablesOnSuccessSubmit(ctx sessionctx.Context, jobW *JobWrapper) {
 	if jobW.Type == model.ActionTruncateTable {
 		if ok, lockTp := ctx.CheckTableLocked(jobW.TableID); ok {
-			newTableID := jobW.Args[0].(int64)
-			ctx.AddTableLock([]model.TableLockTpInfo{{SchemaID: jobW.SchemaID, TableID: newTableID, Tp: lockTp}})
+			ctx.AddTableLock([]model.TableLockTpInfo{{
+				SchemaID: jobW.SchemaID,
+				TableID:  jobW.JobArgs.(*model.TruncateTableArgs).NewTableID,
+				Tp:       lockTp,
+			}})
 		}
 	}
 }
@@ -6437,7 +6454,7 @@ func HandleLockTablesOnSuccessSubmit(ctx sessionctx.Context, jobW *JobWrapper) {
 func HandleLockTablesOnFinish(ctx sessionctx.Context, jobW *JobWrapper, ddlErr error) {
 	if jobW.Type == model.ActionTruncateTable {
 		if ddlErr != nil {
-			newTableID := jobW.Args[0].(int64)
+			newTableID := jobW.JobArgs.(*model.TruncateTableArgs).NewTableID
 			ctx.ReleaseTableLockByTableIDs([]int64{newTableID})
 			return
 		}

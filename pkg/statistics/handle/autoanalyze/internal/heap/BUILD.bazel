@@ -11,9 +11,16 @@ go_library(
 go_test(
     name = "heap_test",
     timeout = "short",
-    srcs = ["heap_test.go"],
+    srcs = [
+        "heap_test.go",
+        "main_test.go",
+    ],
     embed = [":heap"],
     flaky = True,
     shard_count = 14,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
 )

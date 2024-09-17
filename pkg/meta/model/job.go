@@ -18,12 +18,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // ActionType is the type for DDL action.
@@ -68,8 +70,8 @@ const (
 	ActionCreateSequence                ActionType = 34
 	ActionAlterSequence                 ActionType = 35
 	ActionDropSequence                  ActionType = 36
-	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
-	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
+	_DEPRECATEDActionAddColumns         ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
+	_DEPRECATEDActionDropColumns        ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionModifyTableAutoIDCache        ActionType = 39
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
@@ -83,7 +85,7 @@ const (
 	_DEPRECATEDActionAlterTableAlterPartition ActionType = 46
 
 	ActionRenameTables                  ActionType = 47
-	ActionDropIndexes                   ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
+	_DEPRECATEDActionDropIndexes        ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionAlterTableAttributes          ActionType = 49
 	ActionAlterTablePartitionAttributes ActionType = 50
 	ActionCreatePlacementPolicy         ActionType = 51
@@ -241,6 +243,44 @@ func (s SchemaState) String() string {
 	}
 }
 
+// JobVersion is the version of DDL job.
+type JobVersion int64
+
+const (
+	// JobVersion1 is the first version of DDL job where job args are stored as un-typed
+	// array. Before v8.4.0, all DDL jobs are in this version.
+	JobVersion1 JobVersion = 1
+	// JobVersion2 is the second version of DDL job where job args are stored as
+	// typed structs, we start to use this version from v8.4.0.
+	// Note: this version is not enabled right now except in some test cases, will
+	// enable it after we have CI to run both versions.
+	JobVersion2 JobVersion = 2
+)
+
+// String implements fmt.Stringer interface.
+func (v JobVersion) String() string {
+	if v == JobVersion1 {
+		return "v1"
+	} else if v == JobVersion2 {
+		return "v2"
+	}
+	return fmt.Sprintf("unknown(%d)", v)
+}
+
+// JobVerInUse is the job version for new DDL jobs in the node.
+// it's for test now.
+var jobVerInUse atomic.Int64
+
+// SetJobVerInUse sets the version of DDL job used in the node.
+func SetJobVerInUse(ver JobVersion) {
+	jobVerInUse.Store(int64(ver))
+}
+
+// GetJobVerInUse returns the version of DDL job used in the node.
+func GetJobVerInUse() JobVersion {
+	return JobVersion(jobVerInUse.Load())
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID   int64      `json:"id"`
@@ -261,6 +301,7 @@ type Job struct {
 	// RowCount means the number of rows that are processed.
 	RowCount int64      `json:"row_count"`
 	Mu       sync.Mutex `json:"-"`
+
 	// CtxVars are variables attached to the job. It is for internal usage.
 	// E.g. passing arguments between functions by one single *Job pointer.
 	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
@@ -271,10 +312,14 @@ type Job struct {
 	// - TruncateTable: [new-table-id, foreignKeyCheck, ...
 	// - RenameTable: [old-db-id, new-table-name, old-db-name]
 	// - ExchangeTablePartition: [partition-id, pt-db-id, pt-id, partition-name, with-validation]
+	// when Version is JobVersion2, Args contains a single element of type JobArgs.
+	// TODO make it private after we finish the migration to JobVersion2.
 	Args []any `json:"-"`
-	// RawArgs : We must use json raw message to delay parsing special args.
-	RawArgs     json.RawMessage `json:"raw_args"`
-	SchemaState SchemaState     `json:"schema_state"`
+	// we use json raw message to delay parsing special args.
+	// the args are cleared out unless Job.FillFinishedArgs is called.
+	RawArgs json.RawMessage `json:"raw_args"`
+
+	SchemaState SchemaState `json:"schema_state"`
 	// SnapshotVer means snapshot version for this job.
 	SnapshotVer uint64 `json:"snapshot_ver"`
 	// RealStartTS uses timestamp allocated by TSO.
@@ -289,8 +334,8 @@ type Job struct {
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
 
-	// Version indicates the DDL job version. For old jobs, it will be 0.
-	Version int64 `json:"version"`
+	// Version indicates the DDL job version.
+	Version JobVersion `json:"version"`
 
 	// ReorgMeta is meta info of ddl reorganization.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
@@ -435,26 +480,49 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 	return w, wc
 }
 
+// FillArgs fills args for new job.
+func (job *Job) FillArgs(args JobArgs) {
+	args.fillJob(job)
+}
+
+// FillFinishedArgs fills args for finished job.
+func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
+	args.fillFinishedJob(job)
+}
+
 // Encode encodes job with json format.
 // updateRawArgs is used to determine whether to update the raw args.
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
 	if updateRawArgs {
-		job.RawArgs, err = json.Marshal(job.Args)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if job.MultiSchemaInfo != nil {
-			for _, sub := range job.MultiSchemaInfo.SubJobs {
-				// Only update the args of executing sub-jobs.
-				if sub.Args == nil {
-					continue
-				}
-				sub.RawArgs, err = json.Marshal(sub.Args)
-				if err != nil {
-					return nil, errors.Trace(err)
+		if job.Version == JobVersion1 {
+			job.RawArgs, err = json.Marshal(job.Args)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if job.MultiSchemaInfo != nil {
+				for _, sub := range job.MultiSchemaInfo.SubJobs {
+					// Only update the args of executing sub-jobs.
+					if sub.Args == nil {
+						continue
+					}
+					sub.RawArgs, err = json.Marshal(sub.Args)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
 				}
 			}
+		} else {
+			var arg any
+			if len(job.Args) > 0 {
+				intest.Assert(len(job.Args) == 1, "Job.Args should have only one element")
+				arg = job.Args[0]
+			}
+			job.RawArgs, err = json.Marshal(arg)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			// TODO remember update sub-jobs' RawArgs when we do it.
 		}
 	}
 
@@ -474,8 +542,10 @@ func (job *Job) Decode(b []byte) error {
 }
 
 // DecodeArgs decodes serialized job arguments from job.RawArgs into the given
-// variables, and also save the result in job.Args.
+// variables, and also save the result in job.Args. It's for JobVersion1.
+// TODO make it un-exported after we finish the migration to JobVersion2.
 func (job *Job) DecodeArgs(args ...any) error {
+	intest.Assert(job.Version == JobVersion1, "Job.DecodeArgs is only used for JobVersion1")
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {
 		return errors.Trace(err)
@@ -501,8 +571,8 @@ func (job *Job) DecodeArgs(args ...any) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, LocalMode: %t",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.LocalMode)
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
@@ -1180,4 +1250,8 @@ type TraceInfo struct {
 	ConnectionID uint64 `json:"connection_id"`
 	// SessionAlias is the alias of session
 	SessionAlias string `json:"session_alias"`
+}
+
+func init() {
+	SetJobVerInUse(JobVersion1)
 }

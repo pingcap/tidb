@@ -54,6 +54,7 @@ go_library(
         "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/paging",
+        "//pkg/util/ppcpuusage",
         "//pkg/util/redact",
         "//pkg/util/replayer",
         "//pkg/util/rowcodec",
