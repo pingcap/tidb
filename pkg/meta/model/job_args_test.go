@@ -276,7 +276,6 @@ func TestUpdateRenameTableArgs(t *testing.T) {
 	}
 }
 
-
 func TestDropColumnArgs(t *testing.T) {
 	inArgs := &DropColumnArgs{
 		ColName:      model.NewCIStr("col_name"),
@@ -290,6 +289,6 @@ func TestDropColumnArgs(t *testing.T) {
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropColumn)))
 		args, err := GetDropColumnArgs(j2)
 		require.NoError(t, err)
-		require.Equal(t, args, inArgs)
+		require.Equal(t, inArgs, args)
 	}
 }

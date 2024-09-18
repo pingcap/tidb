@@ -246,6 +246,12 @@ func checkDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (*model.T
 		the interface:
 			func (job *Job) DecodeArgs()(args any, err error){
 				// return different args with given job type in job.
+				switch job.Type {
+				case ActionDropColumn:
+					//...
+					return &mode.DropColumnArgs{}
+				case ...
+				}
 			}
 
 		the caller:
@@ -259,28 +265,29 @@ func checkDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (*model.T
 				return error.new(...)
 			}
 	*/
-	args, err := model.GetDropColumnArgs(job)
+	dropColumnArgs, err := model.GetDropColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	colInfo := model.FindColumnInfo(tblInfo.Columns, args.ColName.L)
+	colName, ifExists := dropColumnArgs.ColName, dropColumnArgs.IfExists
+	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil || colInfo.Hidden {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, args.IfExists, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", args.ColName)
+		return nil, nil, nil, ifExists, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
-	if err = isDroppableColumn(tblInfo, args.ColName); err != nil {
+	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
 	}
-	if err = checkDropColumnWithForeignKeyConstraintInOwner(jobCtx.infoCache, job, tblInfo, args.ColName.L); err != nil {
+	if err = checkDropColumnWithForeignKeyConstraintInOwner(jobCtx.infoCache, job, tblInfo, colName.L); err != nil {
 		return nil, nil, nil, false, errors.Trace(err)
 	}
-	if err = checkDropColumnWithTTLConfig(tblInfo, args.ColName.L); err != nil {
+	if err = checkDropColumnWithTTLConfig(tblInfo, colName.L); err != nil {
 		return nil, nil, nil, false, errors.Trace(err)
 	}
-	idxInfos := listIndicesWithColumn(args.ColName.L, tblInfo.Indices)
+	idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
 	return tblInfo, colInfo, idxInfos, false, nil
 }
 
