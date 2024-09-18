@@ -473,3 +473,42 @@ func TestCancelBalancer(t *testing.T) {
 	<-done
 	jobWg.Wait()
 }
+
+func TestStoreBalancerNoRace(t *testing.T) {
+	jobToWorkerCh := make(chan *regionJob)
+	jobFromWorkerCh := make(chan *regionJob)
+	jobWg := sync.WaitGroup{}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	b := newStoreBalancer(jobToWorkerCh, jobFromWorkerCh, &jobWg)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.interceptToWorker(ctx)
+	}()
+	go func() {
+		b.interceptFromWorker()
+	}()
+
+	cnt := 200
+	done2 := make(chan struct{})
+	go func() {
+		for j := range jobFromWorkerCh {
+			j.done(&jobWg)
+		}
+		close(done2)
+	}()
+
+	jobs := mockRegionJob4Balance(t, cnt)
+	for _, job := range jobs {
+		jobWg.Add(1)
+		jobToWorkerCh <- job
+	}
+
+	cancel()
+	<-done
+	jobWg.Wait()
+	close(b.innerJobFromWorkerCh)
+	<-done2
+	require.Len(t, jobFromWorkerCh, 0)
+}

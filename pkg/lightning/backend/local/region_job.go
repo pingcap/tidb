@@ -1073,7 +1073,6 @@ func (b *storeBalancer) interceptToWorker(workerCtx context.Context) {
 		value.(*regionJob).done(b.jobWg)
 		return true
 	})
-	b.jobs.Clear()
 }
 
 func (b *storeBalancer) runReadToWorkerCh(workerCtx context.Context) {
