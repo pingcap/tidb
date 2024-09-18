@@ -4283,8 +4283,6 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		OldSchemaName: schemas[0].Name,
 		NewTableName:  newIdent.Name,
 	}
-	job.FillArgs(args)
-
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }

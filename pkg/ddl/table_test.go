@@ -63,15 +63,14 @@ func testRenameTable(
 			{Database: newSchemaName.L, Table: tblInfo.Name.L},
 		},
 	}
-	args := model.RenameTableArgs{
+	args := &model.RenameTableArgs{
 		OldSchemaID:   oldSchemaID,
 		OldSchemaName: oldSchemaName,
 		NewTableName:  tblInfo.Name,
 	}
-	job.FillArgs(&args)
 
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
 	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
