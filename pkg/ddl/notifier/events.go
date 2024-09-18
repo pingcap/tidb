@@ -402,16 +402,16 @@ func NewFlashbackClusterEvent() *SchemaChangeEvent {
 // jsonSchemaChangeEvent is used by SchemaChangeEvent when needed to (un)marshal data,
 // we want to hide the details to subscribers, so SchemaChangeEvent contain this struct.
 type jsonSchemaChangeEvent struct {
-	TableInfo       *model.TableInfo
-	OldTableInfo    *model.TableInfo
-	AddedPartInfo   *model.PartitionInfo
-	DroppedPartInfo *model.PartitionInfo
-	ColumnInfos     []*model.ColumnInfo
+	TableInfo       *model.TableInfo     `json:"tableInfo"`
+	OldTableInfo    *model.TableInfo     `json:"oldTableInfo"`
+	AddedPartInfo   *model.PartitionInfo `json:"addedPartInfo"`
+	DroppedPartInfo *model.PartitionInfo `json:"droppedPartInfo"`
+	ColumnInfos     []*model.ColumnInfo  `json:"columnInfos"`
 	// OldTableID4Partition is used to store the table ID when a table transitions from being partitioned to non-partitioned,
 	// or vice versa.
-	OldTableID4Partition int64
+	OldTableID4Partition int64 `json:"oldTableID4Partition"`
 
-	Tp model.ActionType
+	Tp model.ActionType `json:"type"`
 }
 
 // MarshalJSON implements the json.Marshaler interface.
