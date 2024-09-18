@@ -1049,6 +1049,10 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 
 		e.waiterWg.Wait()
 
+		if e.finished.Load() {
+			return
+		}
+
 		e.releaseDisk()
 
 		e.spillHelper.spillRoundForTest = max(e.spillHelper.spillRoundForTest, lastRound)
