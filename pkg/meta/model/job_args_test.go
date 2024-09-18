@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -280,8 +279,8 @@ func TestUpdateRenameTableArgs(t *testing.T) {
 func TestGetRenameTablesArgs(t *testing.T) {
 	inArgs := &RenameTablesArgs{
 		RenameTableInfos: []*RenameTableArgs{
-			{1, pmodel.CIStr{O: "db1", L: "db1"}, pmodel.CIStr{O: "tb3", L: "tb3"}, pmodel.CIStr{O: "tb1", L: "tb1"}, 3, 100},
-			{2, pmodel.CIStr{O: "db2", L: "db2"}, pmodel.CIStr{O: "tb2", L: "tb2"}, pmodel.CIStr{O: "tb4", L: "tb4"}, 3, 101},
+			{1, model.CIStr{O: "db1", L: "db1"}, model.CIStr{O: "tb3", L: "tb3"}, model.CIStr{O: "tb1", L: "tb1"}, 3, 100},
+			{2, model.CIStr{O: "db2", L: "db2"}, model.CIStr{O: "tb2", L: "tb2"}, model.CIStr{O: "tb4", L: "tb4"}, 3, 101},
 		},
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
