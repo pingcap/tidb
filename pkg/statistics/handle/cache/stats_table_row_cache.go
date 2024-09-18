@@ -127,11 +127,11 @@ func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error
 	logutil.BgLogger().Info("debug: Acquired lock for UpdateByID",
 		zap.Int64("tableID", id))
 
-	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
-		logutil.BgLogger().Info("debug: Cache is still valid, updating dirty IDs",
-			zap.Int64("tableID", id))
-		return c.updateDirtyIDs(sctx)
-	}
+	// if time.Since(c.modifyTime) < tableStatsCacheExpiry {
+	// 	logutil.BgLogger().Info("debug: Cache is still valid, updating dirty IDs",
+	// 		zap.Int64("tableID", id))
+	// 	return c.updateDirtyIDs(sctx)
+	// }
 
 	logutil.BgLogger().Info("debug: Cache is expired, fetching new data",
 		zap.Int64("tableID", id))
