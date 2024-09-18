@@ -1276,7 +1276,7 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorke
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
 			if e.inRestore {
-				chunkNum := e.getRestoredChunkNum()
+				chunkNum := e.getRestoredBuildChunkNum()
 				e.controlWorkersForRestore(chunkNum, srcChkCh, waitForController, fetcherAndWorkerSyncer, errCh, doneCh)
 			} else {
 				fetcher := e.BuildWorkers[0]
@@ -1293,7 +1293,7 @@ func (e *HashJoinV2Exec) fetchBuildSideRows(ctx context.Context, fetcherAndWorke
 	return srcChkCh, waitForController
 }
 
-func (e *HashJoinV2Exec) getRestoredChunkNum() int {
+func (e *HashJoinV2Exec) getRestoredBuildChunkNum() int {
 	chunkNum := 0
 	for _, inDisk := range e.restoredBuildInDisk {
 		chunkNum += inDisk.NumChunks()
