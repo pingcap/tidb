@@ -457,7 +457,7 @@ func (a *RenameTablesArgs) fillJob(job *Job) {
 		}
 
 		// To make it compatible with previous create metas
-		job.Args = []any{oldSchemaIDs, newSchemaIDs, oldTableNames, tableIDs, oldSchemaNames, newTableNames}
+		job.Args = []any{oldSchemaIDs, newSchemaIDs, newTableNames, tableIDs, oldSchemaNames, oldTableNames}
 		return
 	}
 	job.Args = []any{a}
@@ -501,8 +501,8 @@ func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
 			tableIDs       []int64
 		)
 		if err := job.DecodeArgs(
-			&oldSchemaIDs, &newSchemaIDs, &oldTableNames,
-			&tableIDs, &oldSchemaNames, &newTableNames); err != nil {
+			&oldSchemaIDs, &newSchemaIDs, &newTableNames,
+			&tableIDs, &oldSchemaNames, &oldTableNames); err != nil {
 			return nil, errors.Trace(err)
 		}
 
