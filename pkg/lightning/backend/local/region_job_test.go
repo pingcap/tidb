@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -427,4 +428,48 @@ func TestStoreBalancerPick(t *testing.T) {
 	<-done
 	close(b.innerJobFromWorkerCh)
 	<-jobFromWorkerCh
+}
+
+func mockRegionJob4Balance(t *testing.T, cnt int) []*regionJob {
+	seed := time.Now().UnixNano()
+	t.Logf("seed: %d", seed)
+	r := rand.New(rand.NewSource(seed))
+	ret := make([]*regionJob, cnt)
+	for i := range ret {
+		ret[i] = &regionJob{
+			region: &split.RegionInfo{
+				Region: &metapb.Region{
+					Peers: []*metapb.Peer{
+						{StoreId: uint64(r.Intn(10))},
+						{StoreId: uint64(r.Intn(10))},
+					},
+				},
+			},
+		}
+	}
+
+	return ret
+}
+
+func TestCancelBalancer(t *testing.T) {
+	jobToWorkerCh := make(chan *regionJob)
+	jobWg := sync.WaitGroup{}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	b := newStoreBalancer(jobToWorkerCh, nil, &jobWg)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.interceptToWorker(ctx)
+	}()
+
+	jobs := mockRegionJob4Balance(t, 20)
+	for _, job := range jobs {
+		jobWg.Add(1)
+		jobToWorkerCh <- job
+	}
+
+	cancel()
+	<-done
+	jobWg.Wait()
 }

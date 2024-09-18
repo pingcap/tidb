@@ -1068,7 +1068,12 @@ func (b *storeBalancer) interceptToWorker(workerCtx context.Context) {
 	}()
 
 	wg.Wait()
-	// TODO(lance6716): all job should be done
+
+	b.jobs.Range(func(_, value any) bool {
+		value.(*regionJob).done(b.jobWg)
+		return true
+	})
+	b.jobs.Clear()
 }
 
 func (b *storeBalancer) runReadToWorkerCh(workerCtx context.Context) {
@@ -1176,34 +1181,28 @@ func (b *storeBalancer) pickJob() *regionJob {
 
 func (b *storeBalancer) interceptFromWorker() {
 	defer close(b.jobFromWorkerCh)
-	for {
-		select {
-		case job, ok := <-b.innerJobFromWorkerCh:
-			if !ok {
-				return
+
+	for job := range b.innerJobFromWorkerCh {
+		for _, p := range job.region.Region.Peers {
+		retry:
+			val, ok2 := b.storeLoadMap.Load(p.StoreId)
+			if !ok2 {
+				intest.Assert(false,
+					"missing key in storeLoadMap. key: %d, job: %+v",
+					p.StoreId, job,
+				)
+				log.L().Error("missing key in storeLoadMap",
+					zap.Uint64("storeID", p.StoreId),
+					zap.Any("job", job))
+				continue
 			}
 
-			for _, p := range job.region.Region.Peers {
-			retry:
-				val, ok2 := b.storeLoadMap.Load(p.StoreId)
-				if !ok2 {
-					intest.Assert(false,
-						"missing key in storeLoadMap. key: %d, job: %+v",
-						p.StoreId, job,
-					)
-					log.L().Error("missing key in storeLoadMap",
-						zap.Uint64("storeID", p.StoreId),
-						zap.Any("job", job))
-					continue
-				}
-
-				old := val.(int)
-				if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old-1) {
-					goto retry
-				}
+			old := val.(int)
+			if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old-1) {
+				goto retry
 			}
-
-			b.jobFromWorkerCh <- job
 		}
+
+		b.jobFromWorkerCh <- job
 	}
 }
