@@ -5274,9 +5274,14 @@ func pruneAndBuildColPositionInfoForDelete(
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
 	tblID2Table map[int64]table.Table,
+	hasFK bool,
 ) (TblColPosInfoSlice, *bitset.BitSet, error) {
-	nonPruned := bitset.New(uint(len(names)))
-	nonPruned.SetAll()
+	var nonPruned *bitset.BitSet
+	// If there is foreign key, we can't prune the columns.
+	if !hasFK {
+		nonPruned := bitset.New(uint(len(names)))
+		nonPruned.SetAll()
+	}
 	cols2PosInfos := make(TblColPosInfoSlice, 0, len(tblID2Handle))
 	for tid, handleCols := range tblID2Handle {
 		for _, handleCol := range handleCols {
@@ -5337,7 +5342,8 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	tblLen := len(deletableCols)
 
 	// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
-	if tblInfo.GetPartitionInfo() != nil || len(tblInfo.ForeignKeys) > 0 || nonPrunedSet == nil {
+	// nonPrunedSet will be nil if it's a point get or has foreign keys.
+	if tblInfo.GetPartitionInfo() != nil || nonPrunedSet == nil {
 		indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
 		for _, idx := range deletableIdxs {
 			idxCols := idx.Meta().Columns
@@ -6018,16 +6024,34 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(ctx, id)
 	}
-	var nonPruned *bitset.BitSet
-	del.TblColPosInfos, nonPruned, err = pruneAndBuildColPositionInfoForDelete(preProjNames, tblID2Handle, tblID2table)
+
+	err = del.buildOnDeleteFKTriggers(b.ctx, b.is, tblID2table)
 	if err != nil {
 		return nil, err
 	}
-	finalProjCols := make([]*expression.Column, 0, oldLen/2)
-	finalProjNames := make(types.NameSlice, 0, oldLen/2)
-	for i, found := nonPruned.NextSet(0); found; i, found = nonPruned.NextSet(i + 1) {
-		finalProjCols = append(finalProjCols, p.Schema().Columns[i])
-		finalProjNames = append(finalProjNames, p.OutputNames()[i])
+
+	var nonPruned *bitset.BitSet
+	del.TblColPosInfos, nonPruned, err = pruneAndBuildColPositionInfoForDelete(preProjNames, tblID2Handle, tblID2table, len(del.FKCascades) > 0 || len(del.FKChecks) > 0)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		finalProjCols  []*expression.Column
+		finalProjNames types.NameSlice
+	)
+	// Use a very relax check for foreign key cascades and checks.
+	// It should be strict in the future or just support pruning column when there is foreign key.
+	if nonPruned == nil {
+		finalProjCols = make([]*expression.Column, oldLen)
+		copy(finalProjCols, p.Schema().Columns[:oldLen])
+		finalProjNames = preProjNames.Shallow()
+	} else {
+		finalProjCols = make([]*expression.Column, 0, oldLen/2)
+		finalProjNames = make(types.NameSlice, 0, oldLen/2)
+		for i, found := nonPruned.NextSet(0); found; i, found = nonPruned.NextSet(i + 1) {
+			finalProjCols = append(finalProjCols, p.Schema().Columns[i])
+			finalProjNames = append(finalProjNames, p.OutputNames()[i])
+		}
 	}
 	proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(finalProjCols)}.Init(b.ctx, b.getSelectOffset())
 	proj.SetChildren(p)
@@ -6036,11 +6060,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	p = proj
 	del.names = p.OutputNames()
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
-	if err != nil {
-		return nil, err
-	}
 
-	err = del.buildOnDeleteFKTriggers(b.ctx, b.is, tblID2table)
 	return del, err
 }
 
