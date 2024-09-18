@@ -233,7 +233,8 @@ func (a *recordSet) Close() error {
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
 func (a *recordSet) OnFetchReturned() {
-	a.stmt.LogSlowQuery(a.txnStartTS, len(a.lastErrs) == 0, true)
+	succ := a.lastErrs == nil && a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal() == nil
+	a.stmt.LogSlowQuery(a.txnStartTS, succ, true)
 }
 
 // TryDetach creates a new `RecordSet` which doesn't depend on the current session context.
@@ -1402,7 +1403,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 			a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
 		}
 	}
-	succ := err == nil
+	succ := err == nil && a.Ctx.GetSessionVars().SQLKiller.HandleSignal() == nil
 	if a.Plan != nil {
 		// If this statement has a Plan, the StmtCtx.plan should have been set when it comes here,
 		// but we set it again in case we missed some code paths.
