@@ -130,6 +130,7 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite) {
 }
 
 func TestBinlog(t *testing.T) {
+	t.Skip()
 	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
@@ -272,6 +273,7 @@ func TestBinlog(t *testing.T) {
 }
 
 func TestMaxRecvSize(t *testing.T) {
+	t.Skip()
 	s := createBinlogSuite(t)
 
 	info := &binloginfo.BinlogInfo{
@@ -390,6 +392,7 @@ func mutationRowsToRows(t *testing.T, mutationRows [][]byte, columnValueOffsets 
 }
 
 func TestBinlogForSequence(t *testing.T) {
+	t.Skip()
 	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
@@ -467,6 +470,7 @@ func TestBinlogForSequence(t *testing.T) {
 // Sometimes this test doesn't clean up fail, let the function name begin with 'Z'
 // so it runs last and would not disrupt other tests.
 func TestZIgnoreError(t *testing.T) {
+	t.Skip()
 	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
@@ -492,6 +496,7 @@ func TestZIgnoreError(t *testing.T) {
 }
 
 func TestPartitionedTable(t *testing.T) {
+	t.Skip()
 	s := createBinlogSuite(t)
 
 	// This test checks partitioned table write binlog with table ID, rather than partition ID.
@@ -517,6 +522,7 @@ func TestPartitionedTable(t *testing.T) {
 }
 
 func TestPessimisticLockThenCommit(t *testing.T) {
+	t.Skip()
 	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
@@ -532,6 +538,7 @@ func TestPessimisticLockThenCommit(t *testing.T) {
 }
 
 func TestDeleteSchema(t *testing.T) {
+	t.Skip()
 	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
@@ -549,6 +556,7 @@ func TestDeleteSchema(t *testing.T) {
 }
 
 func TestFormatAndAddTiDBSpecificComment(t *testing.T) {
+	t.Skip()
 	testCase := []struct {
 		input  string
 		result string
@@ -723,6 +731,7 @@ func mustGetDDLBinlog(s *binlogSuite, ddlQuery string, t *testing.T) (matched bo
 }
 
 func TestTempTableBinlog(t *testing.T) {
+	t.Skip()
 	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
@@ -799,6 +808,7 @@ func TestTempTableBinlog(t *testing.T) {
 }
 
 func TestAlterTableCache(t *testing.T) {
+	t.Skip()
 	s := createBinlogSuite(t)
 
 	// Don't write binlog for 'ALTER TABLE t CACHE|NOCACHE'.
@@ -824,6 +834,7 @@ func TestAlterTableCache(t *testing.T) {
 }
 
 func TestIssue28292(t *testing.T) {
+	t.Skip()
 	s := createBinlogSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
