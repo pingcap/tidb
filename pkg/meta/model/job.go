@@ -589,11 +589,12 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 			return true, nil
 		}
 		if job.Type == ActionRenameTable {
-			var oldSchemaID int64
-			if err := job.DecodeArgs(&oldSchemaID); err != nil {
+			args, err := GetRenameTableArgs(job)
+			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if other.SchemaID == oldSchemaID {
+
+			if other.SchemaID == args.OldSchemaID {
 				return true, nil
 			}
 		}

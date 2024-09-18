@@ -725,7 +725,11 @@ func job2SchemaIDs(jobW *JobWrapper) string {
 			}
 		}
 		return makeStringForIDs(ids)
-	case model.ActionExchangeTablePartition, model.ActionRenameTable:
+	case model.ActionRenameTable:
+		oldSchemaID := jobW.JobArgs.(*model.RenameTableArgs).OldSchemaID
+		ids := []int64{oldSchemaID, jobW.SchemaID}
+		return makeStringForIDs(ids)
+	case model.ActionExchangeTablePartition:
 		ids := jobW.CtxVars[0].([]int64)
 		return makeStringForIDs(ids)
 	default:
@@ -747,7 +751,7 @@ func job2TableIDs(jobW *JobWrapper) string {
 			}
 		}
 		return makeStringForIDs(ids)
-	case model.ActionExchangeTablePartition, model.ActionRenameTable:
+	case model.ActionExchangeTablePartition:
 		ids := jobW.CtxVars[1].([]int64)
 		return makeStringForIDs(ids)
 	case model.ActionTruncateTable:

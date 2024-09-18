@@ -52,19 +52,25 @@ func testRenameTable(
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
-		SchemaID:   newSchemaID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionRenameTable,
+		SchemaID: newSchemaID,
+		TableID:  tblInfo.ID,
+		Type:     model.ActionRenameTable,
+		Version:  model.GetJobVerInUse(),
+
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{oldSchemaID, tblInfo.Name, oldSchemaName},
-		CtxVars:    []any{[]int64{oldSchemaID, newSchemaID}, []int64{tblInfo.ID}},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: oldSchemaName.L, Table: tblInfo.Name.L},
 			{Database: newSchemaName.L, Table: tblInfo.Name.L},
 		},
 	}
+	args := &model.RenameTableArgs{
+		OldSchemaID:   oldSchemaID,
+		OldSchemaName: oldSchemaName,
+		NewTableName:  tblInfo.Name,
+	}
+
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
 	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic

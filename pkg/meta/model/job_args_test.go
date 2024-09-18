@@ -17,7 +17,7 @@ package model
 import (
 	"testing"
 
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -228,28 +228,50 @@ func TestTruncateTableArgs(t *testing.T) {
 	}
 }
 
-func TestGetRenameTablesArgs(t *testing.T) {
-	inArgs := &RenameTablesArgs{
-		RenameTableInfos: []*RenameTableInfo{
-			{1, &pmodel.CIStr{O: "db1", L: "db1"}, &pmodel.CIStr{O: "tb1", L: "tb1"}, 3, &pmodel.CIStr{O: "tb3", L: "tb3"}, 100},
-			{2, &pmodel.CIStr{O: "db2", L: "db2"}, &pmodel.CIStr{O: "tb2", L: "tb2"}, 3, &pmodel.CIStr{O: "tb4", L: "tb4"}, 101},
-		},
+func TestRenameTableArgs(t *testing.T) {
+	inArgs := &RenameTableArgs{
+		OldSchemaID:   9527,
+		OldSchemaName: model.NewCIStr("old_schema_name"),
+		NewTableName:  model.NewCIStr("new_table_name"),
 	}
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+
+	jobvers := []JobVersion{JobVersion1, JobVersion2}
+	for _, jobver := range jobvers {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, jobver, ActionRenameTable)))
+
+		// get the args after decode
+		args, err := GetRenameTableArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestUpdateRenameTableArgs(t *testing.T) {
+	inArgs := &RenameTableArgs{
+		OldSchemaID:   9527,
+		OldSchemaName: model.NewCIStr("old_schema_name"),
+		NewTableName:  model.NewCIStr("new_table_name"),
+	}
+
+	jobvers := []JobVersion{JobVersion1, JobVersion2}
+	for _, jobver := range jobvers {
 		job := &Job{
-			Version: v,
-			Type:    ActionRenameTables,
+			SchemaID: 9528,
+			Version:  jobver,
+			Type:     ActionRenameTable,
 		}
 		job.FillArgs(inArgs)
-		bytes, err := job.Encode(true)
+
+		err := UpdateRenameTableArgs(job)
 		require.NoError(t, err)
 
-		j2 := &Job{}
-		err = j2.Decode(bytes)
+		args, err := GetRenameTableArgs(job)
 		require.NoError(t, err)
-		args, err := GetRenameTablesArgs(j2)
-		require.NoError(t, err)
-		require.Equal(t, inArgs.RenameTableInfos[0], args.RenameTableInfos[0])
-		require.Equal(t, inArgs.RenameTableInfos[1], args.RenameTableInfos[1])
+		require.Equal(t, &RenameTableArgs{
+			OldSchemaID:   9528,
+			OldSchemaName: model.NewCIStr("old_schema_name"),
+			NewTableName:  model.NewCIStr("new_table_name"),
+		}, args)
 	}
 }
