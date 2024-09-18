@@ -65,11 +65,12 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 
 	jobs := []*ddl.JobWrapper{{
 		Job: &model.Job{
+			Version:    model.GetJobVerInUse(),
 			Type:       model.ActionCreateTable,
 			SchemaName: "test",
 			TableName:  "t1",
-			Args:       []any{&model.TableInfo{}},
 		},
+		JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{}},
 	}}
 	initialGID := getGlobalID(ctx, t, store)
 	threads, iterations := 10, 500
@@ -134,24 +135,32 @@ func TestCombinedIDAllocation(t *testing.T) {
 		return info
 	}
 
-	genCreateTblJob := func(tp model.ActionType, partitionCnt int) *model.Job {
-		return &model.Job{
-			Version: model.JobVersion1,
-			Type:    tp,
-			Args:    []any{genTblInfo(partitionCnt)},
-		}
+	genCreateTblJobW := func(tp model.ActionType, partitionCnt int, idAllocated bool) *ddl.JobWrapper {
+		return ddl.NewJobWrapperWithArgs(
+			&model.Job{
+				Version: model.GetJobVerInUse(),
+				Type:    tp,
+			},
+			&model.CreateTableArgs{TableInfo: genTblInfo(partitionCnt)},
+			idAllocated,
+		)
 	}
 
-	genCreateTblsJob := func(partitionCounts ...int) *model.Job {
-		infos := make([]*model.TableInfo, 0, len(partitionCounts))
+	genCreateTblsJobW := func(idAllocated bool, partitionCounts ...int) *ddl.JobWrapper {
+		args := &model.BatchCreateTableArgs{
+			Tables: make([]*model.CreateTableArgs, 0, len(partitionCounts)),
+		}
 		for _, c := range partitionCounts {
-			infos = append(infos, genTblInfo(c))
+			args.Tables = append(args.Tables, &model.CreateTableArgs{TableInfo: genTblInfo(c)})
 		}
-		return &model.Job{
-			Version: model.JobVersion1,
-			Type:    model.ActionCreateTables,
-			Args:    []any{infos},
-		}
+		return ddl.NewJobWrapperWithArgs(
+			&model.Job{
+				Version: model.JobVersion1,
+				Type:    model.ActionCreateTables,
+			},
+			args,
+			idAllocated,
+		)
 	}
 
 	genCreateDBJob := func() *model.Job {
@@ -220,50 +229,50 @@ func TestCombinedIDAllocation(t *testing.T) {
 		}
 	}
 
-	genTruncTblJob := func(partCnt int) *model.Job {
+	genTruncTblJob := func(partCnt int, idAllocated bool) *ddl.JobWrapper {
 		j := &model.Job{
 			Version: model.GetJobVerInUse(),
 			Type:    model.ActionTruncateTable,
 		}
-		j.FillArgs(&model.TruncateTableArgs{OldPartitionIDs: make([]int64, partCnt)})
-		return j
+		args := &model.TruncateTableArgs{OldPartitionIDs: make([]int64, partCnt)}
+		return ddl.NewJobWrapperWithArgs(j, args, idAllocated)
 	}
 
 	cases := []idAllocationCase{
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblsJob(1, 2, 0), false),
+			jobW:            genCreateTblsJobW(false, 1, 2, 0),
 			requiredIDCount: 1 + 3 + 1 + 2,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblsJob(3, 4), true),
+			jobW:            genCreateTblsJobW(true, 3, 4),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateTable, 3), false),
+			jobW:            genCreateTblJobW(model.ActionCreateTable, 3, false),
 			requiredIDCount: 1 + 1 + 3,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateTable, 0), false),
+			jobW:            genCreateTblJobW(model.ActionCreateTable, 0, false),
 			requiredIDCount: 1 + 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateTable, 8), true),
+			jobW:            genCreateTblJobW(model.ActionCreateTable, 8, true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateSequence, 0), false),
+			jobW:            genCreateTblJobW(model.ActionCreateSequence, 0, false),
 			requiredIDCount: 2,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateSequence, 0), true),
+			jobW:            genCreateTblJobW(model.ActionCreateSequence, 0, true),
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateView, 0), false),
+			jobW:            genCreateTblJobW(model.ActionCreateView, 0, false),
 			requiredIDCount: 2,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genCreateTblJob(model.ActionCreateView, 0), true),
+			jobW:            genCreateTblJobW(model.ActionCreateView, 0, true),
 			requiredIDCount: 1,
 		},
 		{
@@ -323,11 +332,11 @@ func TestCombinedIDAllocation(t *testing.T) {
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genTruncTblJob(17), false),
+			jobW:            genTruncTblJob(17, false),
 			requiredIDCount: 19,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genTruncTblJob(6), true),
+			jobW:            genTruncTblJob(6, true),
 			requiredIDCount: 1,
 		},
 	}
@@ -402,15 +411,15 @@ func TestCombinedIDAllocation(t *testing.T) {
 			switch j.Type {
 			case model.ActionCreateTable, model.ActionCreateView, model.ActionCreateSequence:
 				require.Greater(t, j.TableID, initialGlobalID)
-				info := &model.TableInfo{}
-				require.NoError(t, j.DecodeArgs(info))
-				require.Equal(t, j.TableID, info.ID)
-				checkTableInfo(info)
+				args, err := model.GetCreateTableArgs(j)
+				require.NoError(t, err)
+				require.Equal(t, j.TableID, args.TableInfo.ID)
+				checkTableInfo(args.TableInfo)
 			case model.ActionCreateTables:
-				var infos []*model.TableInfo
-				require.NoError(t, j.DecodeArgs(&infos))
-				for _, info := range infos {
-					checkTableInfo(info)
+				args, err := model.GetBatchCreateTableArgs(j)
+				require.NoError(t, err)
+				for _, tblArgs := range args.Tables {
+					checkTableInfo(tblArgs.TableInfo)
 				}
 			case model.ActionCreateSchema:
 				require.Greater(t, j.SchemaID, initialGlobalID)
@@ -481,11 +490,12 @@ func TestGenIDAndInsertJobsWithRetryQPS(t *testing.T) {
 	payload := strings.Repeat("a", payloadSize)
 	jobs := []*ddl.JobWrapper{{
 		Job: &model.Job{
+			Version:    model.GetJobVerInUse(),
 			Type:       model.ActionCreateTable,
 			SchemaName: "test",
 			TableName:  "t1",
-			Args:       []any{&model.TableInfo{Comment: payload}},
 		},
+		JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{Comment: payload}},
 	}}
 	counters := make([]atomic.Int64, thread+1)
 	var wg util.WaitGroupWrapper
@@ -541,11 +551,12 @@ func TestGenGIDAndInsertJobsWithRetryOnErr(t *testing.T) {
 	ddlSe := sess.NewSession(tk.Session())
 	jobs := []*ddl.JobWrapper{{
 		Job: &model.Job{
+			Version:    model.GetJobVerInUse(),
 			Type:       model.ActionCreateTable,
 			SchemaName: "test",
 			TableName:  "t1",
-			Args:       []any{&model.TableInfo{}},
 		},
+		JobArgs: &model.CreateTableArgs{TableInfo: &model.TableInfo{}},
 	}}
 	submitter := ddl.NewJobSubmitterForTest()
 	// retry for 3 times

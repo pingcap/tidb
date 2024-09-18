@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/types",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/ddl/util",
+        "//pkg/ddl/notifier",
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/ast",
