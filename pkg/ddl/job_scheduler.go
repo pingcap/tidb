@@ -718,7 +718,7 @@ func job2SchemaIDs(jobW *JobWrapper) string {
 		if jobW.Version == model.JobVersion1 {
 			ids = append(jobW.Args[0].([]int64), jobW.Args[1].([]int64)...)
 		} else {
-			arg := jobW.Args[0].(*model.RenameTablesArgs)
+			arg := jobW.JobArgs.(*model.RenameTablesArgs)
 			ids = make([]int64, 0, len(arg.RenameTableInfos)*2)
 			for _, info := range arg.RenameTableInfos {
 				ids = append(ids, info.OldSchemaID, info.NewSchemaID)
@@ -744,7 +744,7 @@ func job2TableIDs(jobW *JobWrapper) string {
 		if jobW.Version == model.JobVersion1 {
 			ids = jobW.Args[3].([]int64)
 		} else {
-			arg := jobW.Args[0].(*model.RenameTablesArgs)
+			arg := jobW.JobArgs.(*model.RenameTablesArgs)
 			ids = make([]int64, 0, len(arg.RenameTableInfos))
 			for _, info := range arg.RenameTableInfos {
 				ids = append(ids, info.TableID)
