@@ -917,7 +917,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(
 					columnValues[0] = nil
 				}
 			}
-			if minAccessConds == -1 || 1 < minAccessConds {
+			if minAccessConds == -1 || minAccessConds > 1 {
 				minAccessConds = 1
 			}
 		}
