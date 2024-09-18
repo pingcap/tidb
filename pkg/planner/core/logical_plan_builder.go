@@ -5373,7 +5373,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	// Mark the columns in indexes.
 	for _, idx := range deletableIdxs {
 		for _, col := range idx.Meta().Columns {
-			if col.Offset >= len(names) || deletableCols[col.Offset].Name.L != names[col.Offset].ColName.L {
+			if col.Offset+originalStart >= len(names) || deletableCols[col.Offset].Name.L != names[col.Offset+originalStart].ColName.L {
 				return 0, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tblInfo.Name.O)
 			}
 			visitedCols[col.Offset] = struct{}{}
