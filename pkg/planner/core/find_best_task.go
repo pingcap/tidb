@@ -1082,9 +1082,6 @@ func getIndexMergeCandidate(ds *DataSource, path *util.AccessPath, prop *propert
 // skylinePruning prunes access paths according to different factors. An access path can be pruned only if
 // there exists a path that is not worse than it at all factors and there is at least one better factor.
 func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidatePath {
-	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("fuck")
-	}
 	candidates := make([]*candidatePath, 0, 4)
 	for _, path := range ds.PossibleAccessPaths {
 		// We should check whether the possible access path is valid first.

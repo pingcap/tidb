@@ -16,7 +16,6 @@ package core
 
 import (
 	"cmp"
-	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -52,9 +51,6 @@ func generateIndexMergePath(ds *DataSource) error {
 	}
 	var warningMsg string
 	stmtCtx := ds.SCtx().GetSessionVars().StmtCtx
-	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	defer func() {
 		if len(ds.IndexMergeHints) > 0 && warningMsg != "" {
 			ds.IndexMergeHints = nil
