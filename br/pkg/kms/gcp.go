@@ -56,7 +56,7 @@ func NewGcpKms(config *encryptionpb.MasterKeyKms) (*GcpKms, error) {
 	}, nil
 }
 
-func (g *GcpKms) doJSONRequest(ctx context.Context, keyName, method string, data interface{}) ([]byte, error) {
+func (g *GcpKms) doJSONRequest(ctx context.Context, keyName, method string, data any) ([]byte, error) {
 	url := g.formatCallURL(keyName, method)
 	jsonData, err := json.Marshal(data)
 	if err != nil {
