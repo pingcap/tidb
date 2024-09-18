@@ -1,3 +1,5 @@
+// Copyright 2024 PingCAP, Inc. Licensed under Apache-2.0.
+
 package kms
 
 import (
@@ -39,9 +41,7 @@ func NewGcpKms(config *encryptionpb.MasterKeyKms) (*GcpKms, error) {
 	if !KeyIdRegex.MatchString(config.KeyId) {
 		return nil, errors.Errorf("invalid key: '%s'", config.KeyId)
 	}
-	if strings.HasSuffix(config.KeyId, "/") {
-		config.KeyId = strings.TrimSuffix(config.KeyId, "/")
-	}
+	config.KeyId = strings.TrimSuffix(config.KeyId, "/")
 	location := strings.Join(strings.Split(config.KeyId, "/")[:4], "/")
 
 	client, err := google.DefaultClient(context.Background(), "https://www.googleapis.com/auth/cloud-platform")
