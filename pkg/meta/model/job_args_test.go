@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
@@ -135,6 +134,75 @@ func TestModifySchemaArgs(t *testing.T) {
 	}
 }
 
+func TestCreateTableArgs(t *testing.T) {
+	t.Run("create table", func(t *testing.T) {
+		inArgs := &CreateTableArgs{
+			TableInfo: &TableInfo{ID: 100},
+			FKCheck:   true,
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateTable)))
+			args, err := GetCreateTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+			require.EqualValues(t, inArgs.FKCheck, args.FKCheck)
+		}
+	})
+	t.Run("create view", func(t *testing.T) {
+		inArgs := &CreateTableArgs{
+			TableInfo:      &TableInfo{ID: 122},
+			OnExistReplace: true,
+			OldViewTblID:   123,
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateView)))
+			args, err := GetCreateTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+			require.EqualValues(t, inArgs.OnExistReplace, args.OnExistReplace)
+			require.EqualValues(t, inArgs.OldViewTblID, args.OldViewTblID)
+		}
+	})
+	t.Run("create sequence", func(t *testing.T) {
+		inArgs := &CreateTableArgs{
+			TableInfo: &TableInfo{ID: 22},
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateSequence)))
+			args, err := GetCreateTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+		}
+	})
+}
+
+func TestBatchCreateTableArgs(t *testing.T) {
+	inArgs := &BatchCreateTableArgs{
+		Tables: []*CreateTableArgs{
+			{TableInfo: &TableInfo{ID: 100}, FKCheck: true},
+			{TableInfo: &TableInfo{ID: 101}, FKCheck: false},
+		},
+	}
+	// in job version 1, we only save one FKCheck value for all tables.
+	j2 := &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, inArgs, JobVersion1, ActionCreateTables)))
+	args, err := GetBatchCreateTableArgs(j2)
+	require.NoError(t, err)
+	for i := 0; i < len(inArgs.Tables); i++ {
+		require.EqualValues(t, inArgs.Tables[i].TableInfo, args.Tables[i].TableInfo)
+		require.EqualValues(t, true, args.Tables[i].FKCheck)
+	}
+
+	j2 = &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, inArgs, JobVersion2, ActionCreateTables)))
+	args, err = GetBatchCreateTableArgs(j2)
+	require.NoError(t, err)
+	require.EqualValues(t, inArgs.Tables, args.Tables)
+}
+
 func TestTruncateTableArgs(t *testing.T) {
 	inArgs := &TruncateTableArgs{
 		NewTableID:      1,
@@ -167,7 +235,7 @@ func TestDecodeAddIndexArgsCompatibility(t *testing.T) {
 	cases := []struct {
 		raw                     json.RawMessage
 		uniques                 []bool
-		indexNames              []pmodel.CIStr
+		indexNames              []model.CIStr
 		indexPartSpecifications [][]*ast.IndexPartSpecification
 		indexOptions            []*ast.IndexOption
 		hiddenCols              [][]*ColumnInfo
@@ -184,16 +252,16 @@ null,
 [],
 false]`),
 			uniques: []bool{true},
-			indexNames: []pmodel.CIStr{
+			indexNames: []model.CIStr{
 				{O: "t", L: "t"},
 			},
 			indexPartSpecifications: [][]*ast.IndexPartSpecification{
 				{
 					{
 						Column: &ast.ColumnName{
-							Schema: pmodel.CIStr{O: "", L: ""},
-							Table:  pmodel.CIStr{O: "", L: ""},
-							Name:   pmodel.CIStr{O: "a", L: "a"},
+							Schema: model.CIStr{O: "", L: ""},
+							Table:  model.CIStr{O: "", L: ""},
+							Name:   model.CIStr{O: "a", L: "a"},
 						},
 						Length: -1,
 						Desc:   false,
@@ -201,9 +269,9 @@ false]`),
 					},
 					{
 						Column: &ast.ColumnName{
-							Schema: pmodel.CIStr{O: "", L: ""},
-							Table:  pmodel.CIStr{O: "", L: ""},
-							Name:   pmodel.CIStr{O: "b", L: "b"},
+							Schema: model.CIStr{O: "", L: ""},
+							Table:  model.CIStr{O: "", L: ""},
+							Name:   model.CIStr{O: "b", L: "b"},
 						},
 						Length: -1,
 						Desc:   false,
@@ -231,16 +299,16 @@ false]`),
 [[],[]],
 [false,false]]`),
 			uniques: []bool{false, true},
-			indexNames: []pmodel.CIStr{
+			indexNames: []model.CIStr{
 				{O: "t", L: "t"}, {O: "t1", L: "t1"},
 			},
 			indexPartSpecifications: [][]*ast.IndexPartSpecification{
 				{
 					{
 						Column: &ast.ColumnName{
-							Schema: pmodel.CIStr{O: "", L: ""},
-							Table:  pmodel.CIStr{O: "", L: ""},
-							Name:   pmodel.CIStr{O: "a", L: "a"},
+							Schema: model.CIStr{O: "", L: ""},
+							Table:  model.CIStr{O: "", L: ""},
+							Name:   model.CIStr{O: "a", L: "a"},
 						},
 						Length: -1,
 						Desc:   false,
@@ -248,9 +316,9 @@ false]`),
 					},
 					{
 						Column: &ast.ColumnName{
-							Schema: pmodel.CIStr{O: "", L: ""},
-							Table:  pmodel.CIStr{O: "", L: ""},
-							Name:   pmodel.CIStr{O: "b", L: "b"},
+							Schema: model.CIStr{O: "", L: ""},
+							Table:  model.CIStr{O: "", L: ""},
+							Name:   model.CIStr{O: "b", L: "b"},
 						},
 						Length: -1,
 						Desc:   false,
@@ -260,9 +328,9 @@ false]`),
 				{
 					{
 						Column: &ast.ColumnName{
-							Schema: pmodel.CIStr{O: "", L: ""},
-							Table:  pmodel.CIStr{O: "", L: ""},
-							Name:   pmodel.CIStr{O: "a", L: "a"},
+							Schema: model.CIStr{O: "", L: ""},
+							Table:  model.CIStr{O: "", L: ""},
+							Name:   model.CIStr{O: "a", L: "a"},
 						},
 						Length: -1,
 						Desc:   false,
@@ -393,5 +461,53 @@ func TestDropIndex(t *testing.T) {
 		require.EqualValues(t, inArgs.IfExists, args.IfExists)
 		require.EqualValues(t, inArgs.IndexIDs, args.IndexIDs)
 		require.EqualValues(t, inArgs.PartitionIDs, args.PartitionIDs)
+	}
+}
+
+func TestRenameTableArgs(t *testing.T) {
+	inArgs := &RenameTableArgs{
+		OldSchemaID:   9527,
+		OldSchemaName: model.NewCIStr("old_schema_name"),
+		NewTableName:  model.NewCIStr("new_table_name"),
+	}
+
+	jobvers := []JobVersion{JobVersion1, JobVersion2}
+	for _, jobver := range jobvers {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, jobver, ActionRenameTable)))
+
+		// get the args after decode
+		args, err := GetRenameTableArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestUpdateRenameTableArgs(t *testing.T) {
+	inArgs := &RenameTableArgs{
+		OldSchemaID:   9527,
+		OldSchemaName: model.NewCIStr("old_schema_name"),
+		NewTableName:  model.NewCIStr("new_table_name"),
+	}
+
+	jobvers := []JobVersion{JobVersion1, JobVersion2}
+	for _, jobver := range jobvers {
+		job := &Job{
+			SchemaID: 9528,
+			Version:  jobver,
+			Type:     ActionRenameTable,
+		}
+		job.FillArgs(inArgs)
+
+		err := UpdateRenameTableArgs(job)
+		require.NoError(t, err)
+
+		args, err := GetRenameTableArgs(job)
+		require.NoError(t, err)
+		require.Equal(t, &RenameTableArgs{
+			OldSchemaID:   9528,
+			OldSchemaName: model.NewCIStr("old_schema_name"),
+			NewTableName:  model.NewCIStr("new_table_name"),
+		}, args)
 	}
 }

@@ -3,8 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "notifier",
     srcs = [
+        "events.go",
         "publish.go",
-        "schema_change_notifier.go",
         "store.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/ddl/notifier",
@@ -13,6 +13,7 @@ go_library(
         "//pkg/ddl/session",
         "//pkg/meta/model",
         "//pkg/util/intest",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 
@@ -20,8 +21,8 @@ go_test(
     name = "notifier_test",
     timeout = "short",
     srcs = [
+        "events_test.go",
         "publish_testkit_test.go",
-        "schema_change_notifier_test.go",
     ],
     embed = [":notifier"],
     flaky = True,

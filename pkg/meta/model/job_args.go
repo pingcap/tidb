@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -30,6 +29,7 @@ import (
 func getOrDecodeArgsV2[T JobArgs](job *Job) (T, error) {
 	intest.Assert(job.Version == JobVersion2, "job version is not v2")
 	if len(job.Args) > 0 {
+		intest.Assert(len(job.Args) == 1, "job args length is not 1")
 		return job.Args[0].(T), nil
 	}
 	var v T
@@ -191,6 +191,100 @@ func GetModifySchemaArgs(job *Job) (*ModifySchemaArgs, error) {
 	return getOrDecodeArgsV2[*ModifySchemaArgs](job)
 }
 
+// CreateTableArgs is the arguments for create table/view/sequence job.
+type CreateTableArgs struct {
+	TableInfo *TableInfo `json:"table_info,omitempty"`
+	// below 2 are used for create view.
+	OnExistReplace bool  `json:"on_exist_replace,omitempty"`
+	OldViewTblID   int64 `json:"old_view_tbl_id,omitempty"`
+	// used for create table.
+	FKCheck bool `json:"fk_check,omitempty"`
+}
+
+func (a *CreateTableArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		switch job.Type {
+		case ActionCreateTable:
+			job.Args = []any{a.TableInfo, a.FKCheck}
+		case ActionCreateView:
+			job.Args = []any{a.TableInfo, a.OnExistReplace, a.OldViewTblID}
+		case ActionCreateSequence:
+			job.Args = []any{a.TableInfo}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetCreateTableArgs gets the create-table args.
+func GetCreateTableArgs(job *Job) (*CreateTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			tableInfo      = &TableInfo{}
+			onExistReplace bool
+			oldViewTblID   int64
+			fkCheck        bool
+		)
+		switch job.Type {
+		case ActionCreateTable:
+			if err := job.DecodeArgs(tableInfo, &fkCheck); err != nil {
+				return nil, errors.Trace(err)
+			}
+		case ActionCreateView:
+			if err := job.DecodeArgs(tableInfo, &onExistReplace, &oldViewTblID); err != nil {
+				return nil, errors.Trace(err)
+			}
+		case ActionCreateSequence:
+			if err := job.DecodeArgs(tableInfo); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		return &CreateTableArgs{
+			TableInfo:      tableInfo,
+			OnExistReplace: onExistReplace,
+			OldViewTblID:   oldViewTblID,
+			FKCheck:        fkCheck,
+		}, nil
+	}
+	return getOrDecodeArgsV2[*CreateTableArgs](job)
+}
+
+// BatchCreateTableArgs is the arguments for batch create table job.
+type BatchCreateTableArgs struct {
+	Tables []*CreateTableArgs `json:"tables,omitempty"`
+}
+
+func (a *BatchCreateTableArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		infos := make([]*TableInfo, 0, len(a.Tables))
+		for _, info := range a.Tables {
+			infos = append(infos, info.TableInfo)
+		}
+		job.Args = []any{infos, a.Tables[0].FKCheck}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetBatchCreateTableArgs gets the batch create-table args.
+func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			tableInfos []*TableInfo
+			fkCheck    bool
+		)
+		if err := job.DecodeArgs(&tableInfos, &fkCheck); err != nil {
+			return nil, errors.Trace(err)
+		}
+		args := &BatchCreateTableArgs{Tables: make([]*CreateTableArgs, 0, len(tableInfos))}
+		for _, info := range tableInfos {
+			args.Tables = append(args.Tables, &CreateTableArgs{TableInfo: info, FKCheck: fkCheck})
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*BatchCreateTableArgs](job)
+}
+
 // TruncateTableArgs is the arguments for truncate table job.
 type TruncateTableArgs struct {
 	FKCheck         bool    `json:"fk_check,omitempty"`
@@ -266,13 +360,85 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
 }
 
+// RenameTableArgs is the arguments for rename table DDL job.
+type RenameTableArgs struct {
+	// for Args
+	OldSchemaID   int64       `json:"old_schema_id,omitempty"`
+	OldSchemaName model.CIStr `json:"old_schema_name,omitempty"`
+	NewTableName  model.CIStr `json:"new_table_name,omitempty"`
+}
+
+func (rt *RenameTableArgs) fillJob(job *Job) {
+	if job.Version <= JobVersion1 {
+		job.Args = []any{rt.OldSchemaID, rt.NewTableName, rt.OldSchemaName}
+	} else {
+		job.Args = []any{rt}
+	}
+}
+
+// GetRenameTableArgs get the arguments from job.
+func GetRenameTableArgs(job *Job) (*RenameTableArgs, error) {
+	var (
+		oldSchemaID   int64
+		oldSchemaName model.CIStr
+		newTableName  model.CIStr
+	)
+
+	if job.Version == JobVersion1 {
+		// decode args and cache in args.
+		err := job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		args := RenameTableArgs{
+			OldSchemaID:   oldSchemaID,
+			OldSchemaName: oldSchemaName,
+			NewTableName:  newTableName,
+		}
+		return &args, nil
+	}
+
+	// for version V2
+	return getOrDecodeArgsV2[*RenameTableArgs](job)
+}
+
+// UpdateRenameTableArgs updates the rename table args.
+// need to reset the old schema ID to new schema ID.
+func UpdateRenameTableArgs(job *Job) error {
+	var err error
+
+	// for job version1
+	if job.Version == JobVersion1 {
+		// update schemaID and marshal()
+		job.Args[0] = job.SchemaID
+		job.RawArgs, err = json.Marshal(job.Args)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		argsV2, err := getOrDecodeArgsV2[*RenameTableArgs](job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// update schemaID and marshal()
+		argsV2.OldSchemaID = job.SchemaID
+		job.Args = []any{argsV2}
+		job.RawArgs, err = json.Marshal(job.Args[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 // DropIndexArgs is the argument for drop index.
 // IndexIDs may have different length with IndexNames and IfExists.
 type DropIndexArgs struct {
-	IndexNames   []pmodel.CIStr `json:"index_names,omitempty"`
-	IfExists     []bool         `json:"if_exists,omitempty"`
-	IndexIDs     []int64        `json:"index_ids,omitempty"`
-	PartitionIDs []int64        `json:"partition_ids,omitempty"`
+	IndexNames   []model.CIStr `json:"index_names,omitempty"`
+	IfExists     []bool        `json:"if_exists,omitempty"`
+	IndexIDs     []int64       `json:"index_ids,omitempty"`
+	PartitionIDs []int64       `json:"partition_ids,omitempty"`
 }
 
 func (a *DropIndexArgs) fillJob(job *Job) {
@@ -303,7 +469,7 @@ func GetDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 			job.RawArgs = b
 		}
 
-		indexNames := make([]pmodel.CIStr, 1)
+		indexNames := make([]model.CIStr, 1)
 		ifExists := make([]bool, 1)
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
@@ -338,7 +504,7 @@ func GetDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 type IndexArg struct {
 	Global                  bool                          `json:"global,omitempty"`
 	Unique                  bool                          `json:"unique,omitempty"`
-	IndexName               pmodel.CIStr                  `json:"index_name,omitempty"`
+	IndexName               model.CIStr                   `json:"index_name,omitempty"`
 	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications"`
 	IndexOption             *ast.IndexOption              `json:"index_option,omitempty"`
 	HiddenCols              []*ColumnInfo                 `json:"hidden_cols"`
@@ -380,7 +546,7 @@ func (a *AddIndexArgs) getV1Args() []any {
 
 	n := len(a.IndexArgs)
 	unique := make([]bool, n)
-	indexName := make([]pmodel.CIStr, n)
+	indexName := make([]model.CIStr, n)
 	indexPartSpecification := make([][]*ast.IndexPartSpecification, n)
 	indexOption := make([]*ast.IndexOption, n)
 	hiddenCols := make([][]*ColumnInfo, n)
@@ -409,7 +575,7 @@ func (a *AddIndexArgs) MergeIndexArg(Args []any, jobVersion JobVersion) {
 	if jobVersion == JobVersion1 {
 		indexArg = &IndexArg{
 			Unique:                  *Args[0].(*bool),
-			IndexName:               *Args[1].(*pmodel.CIStr),
+			IndexName:               *Args[1].(*model.CIStr),
 			IndexPartSpecifications: *Args[2].(*[]*ast.IndexPartSpecification),
 			IndexOption:             *Args[3].(**ast.IndexOption),
 			HiddenCols:              *Args[4].(*[]*ColumnInfo),
