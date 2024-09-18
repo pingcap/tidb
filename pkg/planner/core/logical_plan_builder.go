@@ -5187,6 +5187,8 @@ type TblColPosInfo struct {
 	HandleCols util.HandleCols
 
 	IndexesForDelete table.IndexesLayout
+
+	ColumnSizes *table.ColumnSizeOption
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -5303,7 +5305,8 @@ func pruneAndBuildColPositionInfoForDelete(
 		deletableIdxs := tbl.DeletableIndices()
 		deletableCols := tbl.DeletableCols()
 		tblInfo := tbl.Meta()
-		prunedColCnt, err = pruneAndBuildSingleTableColPosInfoForDelete(names, deletableIdxs, deletableCols, tblInfo, cols2PosInfo, prunedColCnt, nonPruned)
+		publicCols := tbl.Cols()
+		prunedColCnt, err = pruneAndBuildSingleTableColPosInfoForDelete(names, deletableIdxs, deletableCols, publicCols, tblInfo, cols2PosInfo, prunedColCnt, nonPruned)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -5324,7 +5327,7 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 func pruneAndBuildSingleTableColPosInfoForDelete(
 	names []*types.FieldName,
 	deletableIdxs []table.Index,
-	deletableCols []*table.Column,
+	deletableCols, publicCols []*table.Column,
 	tblInfo *model.TableInfo,
 	colPosInfo *TblColPosInfo,
 	prePrunedCount int,
@@ -5382,6 +5385,20 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 		}
 		fixedPos[i] = i - pruned
 	}
+	colPosInfo.ColumnSizes = &table.ColumnSizeOption{
+		NotPruned:        bitset.New(uint(len(publicCols))),
+		AvgSizes:         make([]float64, 0, len(publicCols)),
+		PublicColsLayout: make([]int, 0, len(publicCols)),
+	}
+	colPosInfo.ColumnSizes.NotPruned.SetAll()
+	for i, col := range publicCols {
+		if _, ok := visitedCols[col.Offset]; ok {
+			colPosInfo.ColumnSizes.PublicColsLayout = append(colPosInfo.ColumnSizes.PublicColsLayout, fixedPos[col.Offset])
+			continue
+		}
+		colPosInfo.ColumnSizes.NotPruned.Clear(uint(i))
+		colPosInfo.ColumnSizes.AvgSizes = append(colPosInfo.ColumnSizes.AvgSizes, float64(chunk.EstimateTypeWidth(&col.FieldType)))
+	}
 	// Fix the index layout and fill in table.IndexRowLayoutOption.
 	indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
 	for _, idx := range deletableIdxs {
@@ -5392,21 +5409,23 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 		}
 		indexColMap[idx.Meta().ID] = colPos
 	}
+
 	// Fix the column offset of handle columns.
+	newStart := originalStart - prePrunedCount
 	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
 		col := colPosInfo.HandleCols.GetCol(i)
 		// If the row id the hidden extra row id, it can not be in deletableCols.
 		// It will be appended to the end of the row.
-		// So we use originalStart + tblLen to get the tail, then minus the pruned to the its new offset of the whole mixed row.
+		// So we use newStart + tblLen to get the tail, then minus the pruned to the its new offset of the whole mixed row.
 		if col.Index-originalStart >= tblLen {
-			col.Index = originalStart + tblLen - pruned
+			col.Index = newStart + tblLen - pruned
 			continue
 		}
 		// Its index is the offset in the original mixed row.
 		// col.Index-originalStart is the offset in the table.
 		// Then we use its offset in the table to find the new offset in the pruned row by fixedPos[col.Index-originalStart].
-		// Finally, we plus the originalStart to get new offset in the mixed row.
-		col.Index = fixedPos[col.Index-originalStart] + originalStart
+		// Finally, we plus the newStart to get new offset in the mixed row.
+		col.Index = fixedPos[col.Index-originalStart] + newStart
 	}
 	colPosInfo.End = colPosInfo.Start + tblLen - pruned
 	colPosInfo.IndexesForDelete = indexColMap
