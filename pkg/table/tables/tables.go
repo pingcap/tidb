@@ -1264,7 +1264,6 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 					size = int(columnSizeOpt.AvgSizes[pruned])
 					pruned++
 					colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
-					s.UpdatePhysicalTableDelta(t.physicalTableID, -1, 1, colSizeBuffer)
 					continue
 				}
 				columnOffset = columnSizeOpt.PublicColsLayout[notPruned]
