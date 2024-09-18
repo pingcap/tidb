@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -1012,4 +1014,195 @@ func (q *regionJobRetryer) push(job *regionJob) bool {
 	default:
 	}
 	return true
+}
+
+// storeBalancer is used to balance the store load when sending region jobs to
+// worker. Internally it maintains a large enough buffer to hold all region jobs,
+// and pick the job that has the least load to send to worker. Because it does
+// not have backpressure, it should not be used with external engine to avoid
+// OOM.
+type storeBalancer struct {
+	// map[int]*regionJob
+	jobs   sync.Map
+	jobIdx int
+	jobWg  *sync.WaitGroup
+
+	jobToWorkerCh        <-chan *regionJob
+	jobFromWorkerCh      chan<- *regionJob
+	innerJobToWorkerCh   chan *regionJob
+	innerJobFromWorkerCh chan *regionJob
+
+	wakeSendToWorker chan struct{}
+
+	// map[uint64]int. 0 can appear in the map after it's decremented to 0.
+	storeLoadMap sync.Map
+}
+
+func newStoreBalancer(
+	jobToWorkerCh <-chan *regionJob,
+	jobFromWorkerCh chan<- *regionJob,
+	jobWg *sync.WaitGroup,
+) *storeBalancer {
+	return &storeBalancer{
+		jobToWorkerCh:        jobToWorkerCh,
+		jobFromWorkerCh:      jobFromWorkerCh,
+		innerJobToWorkerCh:   make(chan *regionJob),
+		innerJobFromWorkerCh: make(chan *regionJob),
+		wakeSendToWorker:     make(chan struct{}, 1),
+		jobWg:                jobWg,
+	}
+}
+
+// interceptToWorker should be called in a separate goroutine with the workers'
+// context to have a correct exit time.
+func (b *storeBalancer) interceptToWorker(workerCtx context.Context) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		b.runReadToWorkerCh(workerCtx)
+	}()
+	go func() {
+		defer wg.Done()
+		b.runSendToWorker(workerCtx)
+	}()
+
+	wg.Wait()
+}
+
+func (b *storeBalancer) runReadToWorkerCh(workerCtx context.Context) {
+	for {
+		select {
+		case <-workerCtx.Done():
+			return
+		case job := <-b.jobToWorkerCh:
+			b.jobs.Store(b.jobIdx, job)
+			b.jobIdx++
+
+			select {
+			case b.wakeSendToWorker <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
+	for {
+		select {
+		case <-workerCtx.Done():
+			return
+		case <-b.wakeSendToWorker:
+		}
+
+		jobCnt := 0
+		b.jobs.Range(func(_, _ any) bool {
+			jobCnt++
+			return true
+		})
+
+		for i := 0; i < jobCnt; i++ {
+			j := b.pickJob()
+			if j == nil {
+				// j can be nil if it's executed after the jobs.Store of runReadToWorkerCh
+				// and before the sending to wakeSendToWorker of runReadToWorkerCh.
+				continue
+			}
+
+			// after the job is picked and before the job is sent to worker, the score may
+			// have changed so we should pick again to get the optimal job. However for
+			// simplicity we don't do it. The optimal job will be picked in the next round.
+			select {
+			case <-workerCtx.Done():
+				j.done(b.jobWg)
+				return
+			case b.innerJobToWorkerCh <- j:
+			}
+		}
+	}
+}
+
+func (b *storeBalancer) pickJob() *regionJob {
+	var (
+		best     *regionJob
+		bestIdx  = -1
+		minScore = math.MaxInt64
+	)
+	b.jobs.Range(func(key, value any) bool {
+		idx := key.(int)
+		job := value.(*regionJob)
+
+		score := 0
+		for _, p := range job.region.Region.Peers {
+			if v, ok := b.storeLoadMap.Load(p.StoreId); ok {
+				score += v.(int)
+			}
+		}
+
+		if score == 0 {
+			best = job
+			bestIdx = idx
+			return false
+		}
+		if score < minScore {
+			minScore = score
+			best = job
+			bestIdx = idx
+		}
+		return true
+	})
+	if bestIdx == -1 {
+		return nil
+	}
+
+	b.jobs.Delete(bestIdx)
+	for _, p := range best.region.Region.Peers {
+	retry:
+		if val, ok := b.storeLoadMap.Load(p.StoreId); !ok {
+			// this is the only place that entry is saved to storeLoadMap, we will not
+			// overwrite anything.
+			b.storeLoadMap.Store(p.StoreId, 1)
+		} else {
+			old := val.(int)
+			if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old+1) {
+				// retry the whole check because the entry may have been deleted
+				goto retry
+			}
+		}
+	}
+	return best
+}
+
+func (b *storeBalancer) interceptFromWorker() {
+	defer close(b.jobFromWorkerCh)
+	for {
+		select {
+		case job, ok := <-b.innerJobFromWorkerCh:
+			if !ok {
+				return
+			}
+
+			for _, p := range job.region.Region.Peers {
+			retry:
+				val, ok2 := b.storeLoadMap.Load(p.StoreId)
+				if !ok2 {
+					intest.Assert(false,
+						"missing key in storeLoadMap. key: %d, job: %+v",
+						p.StoreId, job,
+					)
+					log.L().Error("missing key in storeLoadMap",
+						zap.Uint64("storeID", p.StoreId),
+						zap.Any("job", job))
+					continue
+				}
+
+				old := val.(int)
+				if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old-1) {
+					goto retry
+				}
+			}
+
+			b.jobFromWorkerCh <- job
+		}
+	}
 }

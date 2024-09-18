@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -1094,6 +1095,7 @@ func (local *Backend) startWorker(
 			if !ok {
 				// In fact we don't use close input channel to notify worker to
 				// exit, because there's a cycle in workflow.
+				intest.Assert(false, "jobInCh should not be closed")
 				return nil
 			}
 
@@ -1364,13 +1366,18 @@ func (local *Backend) doImport(
 	regionSplitSize, regionSplitKeyCnt int64,
 ) error {
 	/*
-	   [prepareAndSendJob]-----jobToWorkerCh--->[workers]
-	                        ^                       |
-	                        |                jobFromWorkerCh
-	                        |                       |
-	                        |                       v
-	               [regionJobRetryer]<--[dispatchJobGoroutine]-->done
+	 [prepareAndSendJob]---jobToWorkerCh->[storeBalancer(optional)]->[workers]
+	                     ^                                             |
+	                     |                                             v
+	                     |                           [storeBalancer(optional)]
+	                     |                                             |
+	                     |                                     jobFromWorkerCh
+	                     |                                             |
+	                     |                                             v
+	               [regionJobRetryer]<-------------[dispatchJobGoroutine]-->done
 	*/
+
+	// TODO(lance6716): explain exit order
 
 	var (
 		ctx2, workerCancel = context.WithCancel(ctx)
@@ -1405,6 +1412,7 @@ func (local *Backend) doImport(
 		// use defer to close jobFromWorkerCh after all workers are exited
 		close(jobFromWorkerCh)
 		<-dispatchJobGoroutine
+		// TODO(lance6716): wait balancer exit
 	}()
 	go func() {
 		defer close(dispatchJobGoroutine)
@@ -1452,6 +1460,7 @@ func (local *Backend) doImport(
 
 	for i := 0; i < local.WorkerConcurrency; i++ {
 		workGroup.Go(func() error {
+			// TODO(lance6716): here replace the ch
 			return local.startWorker(workerCtx, jobToWorkerCh, jobFromWorkerCh, &jobWg)
 		})
 	}

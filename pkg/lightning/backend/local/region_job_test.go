@@ -339,3 +339,94 @@ func TestNewRegionJobs(t *testing.T) {
 		}
 	}
 }
+
+func mockWorkerReadJob(
+	b *storeBalancer,
+	jobs []*regionJob,
+	jobToWorkerCh chan<- *regionJob,
+) []*regionJob {
+	ret := make([]*regionJob, len(jobs))
+
+	go func() {
+		for _, job := range jobs {
+			jobToWorkerCh <- job
+		}
+	}()
+	for i := range ret {
+		got := <-b.innerJobToWorkerCh
+		ret[i] = got
+	}
+	return ret
+}
+
+func TestStoreBalancerPick(t *testing.T) {
+	jobToWorkerCh := make(chan *regionJob)
+	jobFromWorkerCh := make(chan *regionJob)
+	jobWg := sync.WaitGroup{}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	b := newStoreBalancer(jobToWorkerCh, jobFromWorkerCh, &jobWg)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.interceptToWorker(ctx)
+	}()
+	go func() {
+		b.interceptFromWorker()
+	}()
+
+	job := &regionJob{
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Peers: []*metapb.Peer{
+					{Id: 1, StoreId: 1},
+					{Id: 2, StoreId: 2},
+				},
+			},
+		},
+	}
+
+	got := mockWorkerReadJob(b, []*regionJob{job}, jobToWorkerCh)
+	require.Equal(t, []*regionJob{job}, got)
+
+	gotCh := make(chan *regionJob)
+	go func() {
+		close(gotCh)
+		<-jobFromWorkerCh
+	}()
+	b.innerJobFromWorkerCh <- job
+	<-gotCh
+	b.storeLoadMap.Range(func(_, value interface{}) bool {
+		require.Equal(t, 0, value.(int))
+		return true
+	})
+
+	busyStoreJob := &regionJob{
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Peers: []*metapb.Peer{
+					{Id: 3, StoreId: 2},
+					{Id: 4, StoreId: 2},
+				},
+			},
+		},
+	}
+	idleStoreJob := &regionJob{
+		region: &split.RegionInfo{
+			Region: &metapb.Region{
+				Peers: []*metapb.Peer{
+					{Id: 5, StoreId: 3},
+					{Id: 6, StoreId: 4},
+				},
+			},
+		},
+	}
+
+	got = mockWorkerReadJob(b, []*regionJob{job, busyStoreJob, idleStoreJob}, jobToWorkerCh)
+	require.Equal(t, []*regionJob{job, idleStoreJob, busyStoreJob}, got)
+
+	cancel()
+	<-done
+	close(b.innerJobFromWorkerCh)
+	<-jobFromWorkerCh
+}
