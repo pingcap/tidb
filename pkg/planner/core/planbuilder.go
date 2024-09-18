@@ -2318,7 +2318,7 @@ func getModifiedIndexesInfoForAnalyze(
 		if originIdx.State != model.StatePublic {
 			continue
 		}
-		if isSpecialGlobalIndex(originIdx, tblInfo) {
+		if handleutil.IsSpecialGlobalIndex(originIdx, tblInfo) {
 			specialGlobalIdxsInfo = append(specialGlobalIdxsInfo, originIdx)
 			continue
 		}
@@ -2398,9 +2398,12 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			if idx.State != model.StatePublic {
 				continue
 			}
-			if !isSpecialGlobalIndex(idx, tbl.TableInfo) {
+			if !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
 				allSpecialGlobalIndex = false
 				break
+			}
+			if !isAnalyzeTable {
+				return errors.NewNoStackErrorf("Analyze global index '%s' can't work with analyze specified partitions", idx.Name.O)
 			}
 		}
 	} else {
@@ -2409,12 +2412,12 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			if idx == nil || idx.State != model.StatePublic {
 				return plannererrors.ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tbl.Name.O)
 			}
-			if !isSpecialGlobalIndex(idx, tbl.TableInfo) {
+			if !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
 				allSpecialGlobalIndex = false
 				break
 			}
 			if !isAnalyzeTable {
-				return errors.NewNoStackErrorf("Analyze special global index %s can't work with analyze partition", idxName.O)
+				return errors.NewNoStackErrorf("Analyze global index '%s' can't work with analyze specified partitions", idx.Name.O)
 			}
 		}
 	}
@@ -2506,14 +2509,14 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	}
 
 	if isAnalyzeTable {
-		if !as.IndexFlag {
+		if needAnalyzeCols {
 			for _, indexInfo := range specialGlobalIndexes {
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
 			}
 		} else {
 			for _, idxName := range as.IndexNames {
 				idx := tbl.TableInfo.FindIndexByName(idxName.L)
-				if idx == nil || !isSpecialGlobalIndex(idx, tbl.TableInfo) {
+				if idx == nil || !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
 					continue
 				}
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(idx, as, tbl.TableInfo, nil, nil, version)...)

@@ -5,10 +5,13 @@ CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
   `b` int(11) DEFAULT NULL,
   `c` int(11) DEFAULT NULL,
-  UNIQUE KEY `idx` ((`c` + 1)),
-  UNIQUE KEY `idx1` (`c`)
+  UNIQUE KEY `idx` ((`c` + 1)) global,
+  UNIQUE KEY `idx1` (`c`) global
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`b`) PARTITIONS 4;
+
+show warnings;
+
 insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5);
 insert into t(a) values (1), (2);
 analyze table t;
@@ -21,6 +24,47 @@ explain select c+1 from t where (c+1)>4;
 explain select c from t where c > 2;
 explain select c from t where c > 3;
 
+alter table t add unique index idx2((`c` + 2)) global;
+show warnings;
+
+analyze table t index idx2;
+
+--echo #Test special global index after analyze index
+explain select c+2 from t where (c+2)>3;
+explain select c+2 from t where (c+2)>4;
+
+--echo #Test return error with analyze special global index
+--error 1105
+analyze table t partition p0, p1 index idx;
+--error 1105
+analyze table t partition p0, p1 index;
+
 --sorted_result
 --replace_column 6 <update_time> 9 <avg_col_size>
 show stats_histograms where table_name='t' and Db_name='globalindex__analyze';
+
+
+--echo #Test global index + primary key + prefix index
+drop table if exists t;
+create table t (
+    id int,
+    value int,
+    name varchar(20),
+    primary key(name(2), id) global
+) partition by hash(value) partitions 4;
+
+show warnings;
+
+insert into t values (1, 1, 'abc'), (2, 2, 'abd'), (3, 3, 'axe'), (4, 4, 'axf'), (5, 5, 'azd');
+
+analyze table t;
+
+explain select id from t use index(primary) where name like 'ab%';
+select id from t use index(primary) where name like 'ab%';
+
+--echo #Test return error with analyze special global index
+--error 1105
+analyze table t partition p0 index primary;
+--error 1105
+analyze table t partition p0 index;
+

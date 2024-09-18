@@ -974,6 +974,7 @@ func checkGlobalIndex(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) erro
 		if inAllPartitionColumns {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index including all columns in the partitioning expression")
 		}
+		validateGlobalIndexWithGeneratedColumns(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexInfo.Name.O, indexInfo.Columns)
 	}
 	return nil
 }
@@ -4557,6 +4558,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			if indexOption == nil || !indexOption.Global {
 				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs("PRIMARY")
 			}
+			validateGlobalIndexWithGeneratedColumns(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns)
 		}
 	}
 
@@ -4716,6 +4718,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			if !globalIndex {
 				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName.O)
 			}
+			validateGlobalIndexWithGeneratedColumns(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns)
 		} else if globalIndex {
 			// TODO: remove this restriction
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on index including all columns in the partitioning expression")
@@ -5163,6 +5166,18 @@ func validateCommentLength(ec errctx.Context, sqlMode mysql.SQLMode, name string
 		*comment = (*comment)[:maxLen]
 	}
 	return *comment, nil
+}
+
+func validateGlobalIndexWithGeneratedColumns(ec errctx.Context, tblInfo *model.TableInfo, indexName string, indexColumns []*model.IndexColumn) {
+	// Auto analyze is not effective when a global index contains prefix columns or virtual generated columns.
+	for _, col := range indexColumns {
+		colInfo := tblInfo.Columns[col.Offset]
+		isPrefixCol := col.Length != types.UnspecifiedLength
+		if colInfo.IsVirtualGenerated() || isPrefixCol {
+			ec.AppendWarning(dbterror.ErrWarnGlobalIndexNeedManuallyAnalyze.FastGenByArgs(indexName))
+			return
+		}
+	}
 }
 
 // BuildAddedPartitionInfo build alter table add partition info
