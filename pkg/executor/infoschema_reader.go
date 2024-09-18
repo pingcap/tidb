@@ -3718,9 +3718,16 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		// convert background settings
 		bgBuilder := new(strings.Builder)
 		if setting := group.BackgroundSettings; setting != nil {
-			fmt.Fprintf(bgBuilder, "TASK_TYPES='%s'", strings.Join(setting.JobTypes, ","))
+			first := true
+			if len(setting.JobTypes) > 0 {
+				fmt.Fprintf(bgBuilder, "TASK_TYPES='%s'", strings.Join(setting.JobTypes, ","))
+				first = false
+			}
 			if setting.UtilizationLimit > 0 {
-				fmt.Fprintf(bgBuilder, ", UTILIZATION_LIMIT=%d", setting.UtilizationLimit)
+				if !first {
+					bgBuilder.WriteString(", ")
+				}
+				fmt.Fprintf(bgBuilder, "UTILIZATION_LIMIT=%d", setting.UtilizationLimit)
 			}
 		}
 		background := bgBuilder.String()
