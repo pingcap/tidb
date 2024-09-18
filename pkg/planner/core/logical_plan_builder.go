@@ -5395,6 +5395,13 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	// Fix the column offset of handle columns.
 	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
 		col := colPosInfo.HandleCols.GetCol(i)
+		// If the row id the hidden extra row id, it can not be in deletableCols.
+		// It will be appended to the end of the row.
+		// So we use originalStart + tblLen to get the tail, then minus the pruned to the its new offset of the whole mixed row.
+		if col.Index-originalStart >= tblLen {
+			col.Index = originalStart + tblLen - pruned
+			continue
+		}
 		// Its index is the offset in the original mixed row.
 		// col.Index-originalStart is the offset in the table.
 		// Then we use its offset in the table to find the new offset in the pruned row by fixedPos[col.Index-originalStart].
