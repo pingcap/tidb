@@ -14,7 +14,6 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/variable",
-        "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/statistics/handle/autoanalyze/priorityqueue",
         "//pkg/statistics/handle/lockstats",
@@ -23,8 +22,6 @@ go_library(
         "//pkg/statistics/handle/util",
         "//pkg/util",
         "//pkg/util/intest",
-        "//pkg/util/timeutil",
-        "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -38,10 +35,9 @@ go_test(
         "worker_test.go",
     ],
     flaky = True,
-    shard_count = 15,
+    shard_count = 9,
     deps = [
         ":refresher",
-        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
@@ -51,7 +47,6 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_goleak//:goleak",
     ],
 )

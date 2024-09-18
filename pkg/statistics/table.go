@@ -148,6 +148,11 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 	return len(m.colInfoMap)+len(m.idxInfoMap) == 0
 }
 
+// ColNum returns the number of columns in the map.
+func (m *ColAndIdxExistenceMap) ColNum() int {
+	return len(m.colInfoMap)
+}
+
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))

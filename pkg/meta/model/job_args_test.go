@@ -228,6 +228,55 @@ func TestTruncateTableArgs(t *testing.T) {
 	}
 }
 
+func TestRenameTableArgs(t *testing.T) {
+	inArgs := &RenameTableArgs{
+		OldSchemaID:   9527,
+		OldSchemaName: model.NewCIStr("old_schema_name"),
+		NewTableName:  model.NewCIStr("new_table_name"),
+	}
+
+	jobvers := []JobVersion{JobVersion1, JobVersion2}
+	for _, jobver := range jobvers {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, jobver, ActionRenameTable)))
+
+		// get the args after decode
+		args, err := GetRenameTableArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestUpdateRenameTableArgs(t *testing.T) {
+	inArgs := &RenameTableArgs{
+		OldSchemaID:   9527,
+		OldSchemaName: model.NewCIStr("old_schema_name"),
+		NewTableName:  model.NewCIStr("new_table_name"),
+	}
+
+	jobvers := []JobVersion{JobVersion1, JobVersion2}
+	for _, jobver := range jobvers {
+		job := &Job{
+			SchemaID: 9528,
+			Version:  jobver,
+			Type:     ActionRenameTable,
+		}
+		job.FillArgs(inArgs)
+
+		err := UpdateRenameTableArgs(job)
+		require.NoError(t, err)
+
+		args, err := GetRenameTableArgs(job)
+		require.NoError(t, err)
+		require.Equal(t, &RenameTableArgs{
+			OldSchemaID:   9528,
+			OldSchemaName: model.NewCIStr("old_schema_name"),
+			NewTableName:  model.NewCIStr("new_table_name"),
+		}, args)
+	}
+}
+
+
 func TestDropColumnArgs(t *testing.T) {
 	inArgs := &DropColumnArgs{
 		ColName:      model.NewCIStr("col_name"),
