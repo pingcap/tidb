@@ -105,7 +105,6 @@ func TestShowIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int, abclmn int);")
 
-	defer tk.MustExec("drop table t;")
 	tk.MustExec("create index idx on t(abclmn);")
 	tk.MustQuery("show index from t").Check(testkit.Rows("t 1 idx 1 abclmn A 0 <nil> <nil> YES BTREE   YES <nil> NO NO"))
 }
@@ -121,7 +120,6 @@ func TestShowIndexWithGlobalIndex(t *testing.T) {
 
 	tk.MustExec("create table test_t1 (a int, b int) partition by range (b) (partition p0 values less than (10),  partition p1 values less than (maxvalue));")
 
-	defer tk.MustExec("drop table test_t1;")
 	tk.MustExec("insert test_t1 values (1, 1);")
 	tk.MustExec("alter table test_t1 add unique index p_a (a) GLOBAL;")
 	tk.MustQuery("show index from test_t1").Check(testkit.Rows("test_t1 0 p_a 1 a A 0 <nil> <nil> YES BTREE   YES <nil> NO YES"))

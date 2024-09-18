@@ -792,8 +792,6 @@ func (e *ShowExec) fetchShowIndex() error {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
-	isGlobalIndex := "NO"
-
 	if tb.Meta().PKIsHandle {
 		var pkCol *table.Column
 		for _, col := range tb.Cols() {
@@ -807,14 +805,6 @@ func (e *ShowExec) fetchShowIndex() error {
 		if colStats != nil {
 			ndv = colStats.NDV
 		}
-
-		pi := tb.Meta().GetPartitionInfo()
-		isPartitioned := pi != nil && pi.Type != pmodel.PartitionTypeNone
-
-		if isPartitioned && e.Ctx().GetSessionVars().EnableGlobalIndex {
-			isGlobalIndex = "YES"
-		}
-
 		e.appendRow([]any{
 			tb.Meta().Name.O, // Table
 			0,                // Non_unique
@@ -832,7 +822,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			"YES",            // Index_visible
 			nil,              // Expression
 			"YES",            // Clustered
-			isGlobalIndex,    // Global_index
+			"NO",             // Global_index
 		})
 	}
 	for _, idx := range tb.Indices() {
@@ -845,7 +835,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			isClustered = "YES"
 		}
 
-		isGlobalIndex = "NO"
+		isGlobalIndex := "NO"
 		if idxInfo.Global {
 			isGlobalIndex = "YES"
 		}
