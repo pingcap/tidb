@@ -28,16 +28,7 @@ import (
 // check the GetType of SchemaChange and call the corresponding getter function
 // to retrieve the needed information.
 type SchemaChangeEvent struct {
-	tableInfo       *model.TableInfo
-	oldTableInfo    *model.TableInfo
-	addedPartInfo   *model.PartitionInfo
-	droppedPartInfo *model.PartitionInfo
-	columnInfos     []*model.ColumnInfo
-	// oldTableID4Partition is used to store the table ID when a table transitions from being partitioned to non-partitioned,
-	// or vice versa.
-	oldTableID4Partition int64
-
-	tp model.ActionType
+	inner *jsonSchemaChangeEvent
 }
 
 // String implements fmt.Stringer interface.
@@ -47,33 +38,33 @@ func (s *SchemaChangeEvent) String() string {
 	}
 
 	var sb strings.Builder
-	_, _ = fmt.Fprintf(&sb, "(Event Type: %s", s.tp)
-	if s.tableInfo != nil {
-		_, _ = fmt.Fprintf(&sb, ", Table ID: %d, Table Name: %s", s.tableInfo.ID, s.tableInfo.Name)
+	_, _ = fmt.Fprintf(&sb, "(Event Type: %s", s.inner.Tp)
+	if s.inner.TableInfo != nil {
+		_, _ = fmt.Fprintf(&sb, ", Table ID: %d, Table Name: %s", s.inner.TableInfo.ID, s.inner.TableInfo.Name)
 	}
-	if s.oldTableInfo != nil {
-		_, _ = fmt.Fprintf(&sb, ", Old Table ID: %d, Old Table Name: %s", s.oldTableInfo.ID, s.oldTableInfo.Name)
+	if s.inner.OldTableInfo != nil {
+		_, _ = fmt.Fprintf(&sb, ", Old Table ID: %d, Old Table Name: %s", s.inner.OldTableInfo.ID, s.inner.OldTableInfo.Name)
 	}
-	if s.oldTableID4Partition != 0 {
-		_, _ = fmt.Fprintf(&sb, ", Old Table ID for Partition: %d", s.oldTableID4Partition)
+	if s.inner.OldTableID4Partition != 0 {
+		_, _ = fmt.Fprintf(&sb, ", Old Table ID for Partition: %d", s.inner.OldTableID4Partition)
 	}
-	if s.addedPartInfo != nil {
-		for _, partDef := range s.addedPartInfo.Definitions {
+	if s.inner.AddedPartInfo != nil {
+		for _, partDef := range s.inner.AddedPartInfo.Definitions {
 			if partDef.Name.L != "" {
 				_, _ = fmt.Fprintf(&sb, ", Partition Name: %s", partDef.Name)
 			}
 			_, _ = fmt.Fprintf(&sb, ", Partition ID: %d", partDef.ID)
 		}
 	}
-	if s.droppedPartInfo != nil {
-		for _, partDef := range s.droppedPartInfo.Definitions {
+	if s.inner.DroppedPartInfo != nil {
+		for _, partDef := range s.inner.DroppedPartInfo.Definitions {
 			if partDef.Name.L != "" {
 				_, _ = fmt.Fprintf(&sb, ", Dropped Partition Name: %s", partDef.Name)
 			}
 			_, _ = fmt.Fprintf(&sb, ", Dropped Partition ID: %d", partDef.ID)
 		}
 	}
-	for _, columnInfo := range s.columnInfos {
+	for _, columnInfo := range s.inner.ColumnInfos {
 		_, _ = fmt.Fprintf(&sb, ", Column ID: %d, Column Name: %s", columnInfo.ID, columnInfo.Name)
 	}
 	sb.WriteString(")")
@@ -86,7 +77,7 @@ func (s *SchemaChangeEvent) GetType() model.ActionType {
 	if s == nil {
 		return model.ActionNone
 	}
-	return s.tp
+	return s.inner.Tp
 }
 
 // NewCreateTableEvent creates a SchemaChangeEvent whose type is
@@ -95,16 +86,18 @@ func NewCreateTableEvent(
 	newTableInfo *model.TableInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:        model.ActionCreateTable,
-		tableInfo: newTableInfo,
+		inner: &jsonSchemaChangeEvent{
+			Tp:        model.ActionCreateTable,
+			TableInfo: newTableInfo,
+		},
 	}
 }
 
 // GetCreateTableInfo returns the table info of the SchemaChangeEvent whose type
 // is ActionCreateTable.
 func (s *SchemaChangeEvent) GetCreateTableInfo() *model.TableInfo {
-	intest.Assert(s.tp == model.ActionCreateTable)
-	return s.tableInfo
+	intest.Assert(s.inner.Tp == model.ActionCreateTable)
+	return s.inner.TableInfo
 }
 
 // NewTruncateTableEvent creates a SchemaChangeEvent whose type is
@@ -114,9 +107,11 @@ func NewTruncateTableEvent(
 	droppedTableInfo *model.TableInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:           model.ActionTruncateTable,
-		tableInfo:    newTableInfo,
-		oldTableInfo: droppedTableInfo,
+		inner: &jsonSchemaChangeEvent{
+			Tp:           model.ActionTruncateTable,
+			TableInfo:    newTableInfo,
+			OldTableInfo: droppedTableInfo,
+		},
 	}
 }
 
@@ -126,8 +121,8 @@ func (s *SchemaChangeEvent) GetTruncateTableInfo() (
 	newTableInfo *model.TableInfo,
 	droppedTableInfo *model.TableInfo,
 ) {
-	intest.Assert(s.tp == model.ActionTruncateTable)
-	return s.tableInfo, s.oldTableInfo
+	intest.Assert(s.inner.Tp == model.ActionTruncateTable)
+	return s.inner.TableInfo, s.inner.OldTableInfo
 }
 
 // NewDropTableEvent creates a SchemaChangeEvent whose type is ActionDropTable.
@@ -135,16 +130,18 @@ func NewDropTableEvent(
 	droppedTableInfo *model.TableInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:           model.ActionDropTable,
-		oldTableInfo: droppedTableInfo,
+		inner: &jsonSchemaChangeEvent{
+			Tp:           model.ActionDropTable,
+			OldTableInfo: droppedTableInfo,
+		},
 	}
 }
 
 // GetDropTableInfo returns the table info of the SchemaChangeEvent whose type is
 // ActionDropTable.
 func (s *SchemaChangeEvent) GetDropTableInfo() (droppedTableInfo *model.TableInfo) {
-	intest.Assert(s.tp == model.ActionDropTable)
-	return s.oldTableInfo
+	intest.Assert(s.inner.Tp == model.ActionDropTable)
+	return s.inner.OldTableInfo
 }
 
 // NewAddColumnEvent creates a SchemaChangeEvent whose type is ActionAddColumn.
@@ -153,9 +150,11 @@ func NewAddColumnEvent(
 	newColumnInfos []*model.ColumnInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:          model.ActionAddColumn,
-		tableInfo:   tableInfo,
-		columnInfos: newColumnInfos,
+		inner: &jsonSchemaChangeEvent{
+			Tp:          model.ActionAddColumn,
+			TableInfo:   tableInfo,
+			ColumnInfos: newColumnInfos,
+		},
 	}
 }
 
@@ -165,8 +164,8 @@ func (s *SchemaChangeEvent) GetAddColumnInfo() (
 	tableInfo *model.TableInfo,
 	columnInfos []*model.ColumnInfo,
 ) {
-	intest.Assert(s.tp == model.ActionAddColumn)
-	return s.tableInfo, s.columnInfos
+	intest.Assert(s.inner.Tp == model.ActionAddColumn)
+	return s.inner.TableInfo, s.inner.ColumnInfos
 }
 
 // NewModifyColumnEvent creates a SchemaChangeEvent whose type is
@@ -176,9 +175,11 @@ func NewModifyColumnEvent(
 	modifiedColumnInfo []*model.ColumnInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:          model.ActionModifyColumn,
-		tableInfo:   tableInfo,
-		columnInfos: modifiedColumnInfo,
+		inner: &jsonSchemaChangeEvent{
+			Tp:          model.ActionModifyColumn,
+			TableInfo:   tableInfo,
+			ColumnInfos: modifiedColumnInfo,
+		},
 	}
 }
 
@@ -188,8 +189,8 @@ func (s *SchemaChangeEvent) GetModifyColumnInfo() (
 	newTableInfo *model.TableInfo,
 	modifiedColumnInfo []*model.ColumnInfo,
 ) {
-	intest.Assert(s.tp == model.ActionModifyColumn)
-	return s.tableInfo, s.columnInfos
+	intest.Assert(s.inner.Tp == model.ActionModifyColumn)
+	return s.inner.TableInfo, s.inner.ColumnInfos
 }
 
 // NewAddPartitionEvent creates a SchemaChangeEvent whose type is
@@ -199,9 +200,11 @@ func NewAddPartitionEvent(
 	addedPartInfo *model.PartitionInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:            model.ActionAddTablePartition,
-		tableInfo:     globalTableInfo,
-		addedPartInfo: addedPartInfo,
+		inner: &jsonSchemaChangeEvent{
+			Tp:            model.ActionAddTablePartition,
+			TableInfo:     globalTableInfo,
+			AddedPartInfo: addedPartInfo,
+		},
 	}
 }
 
@@ -211,8 +214,8 @@ func (s *SchemaChangeEvent) GetAddPartitionInfo() (
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 ) {
-	intest.Assert(s.tp == model.ActionAddTablePartition)
-	return s.tableInfo, s.addedPartInfo
+	intest.Assert(s.inner.Tp == model.ActionAddTablePartition)
+	return s.inner.TableInfo, s.inner.AddedPartInfo
 }
 
 // NewTruncatePartitionEvent creates a SchemaChangeEvent whose type is
@@ -223,10 +226,12 @@ func NewTruncatePartitionEvent(
 	droppedPartInfo *model.PartitionInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:              model.ActionTruncateTablePartition,
-		tableInfo:       globalTableInfo,
-		addedPartInfo:   addedPartInfo,
-		droppedPartInfo: droppedPartInfo,
+		inner: &jsonSchemaChangeEvent{
+			Tp:              model.ActionTruncateTablePartition,
+			TableInfo:       globalTableInfo,
+			AddedPartInfo:   addedPartInfo,
+			DroppedPartInfo: droppedPartInfo,
+		},
 	}
 }
 
@@ -238,8 +243,8 @@ func (s *SchemaChangeEvent) GetTruncatePartitionInfo() (
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) {
-	intest.Assert(s.tp == model.ActionTruncateTablePartition)
-	return s.tableInfo, s.addedPartInfo, s.droppedPartInfo
+	intest.Assert(s.inner.Tp == model.ActionTruncateTablePartition)
+	return s.inner.TableInfo, s.inner.AddedPartInfo, s.inner.DroppedPartInfo
 }
 
 // NewDropPartitionEvent creates a SchemaChangeEvent whose type is
@@ -249,9 +254,11 @@ func NewDropPartitionEvent(
 	droppedPartInfo *model.PartitionInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:              model.ActionDropTablePartition,
-		tableInfo:       globalTableInfo,
-		droppedPartInfo: droppedPartInfo,
+		inner: &jsonSchemaChangeEvent{
+			Tp:              model.ActionDropTablePartition,
+			TableInfo:       globalTableInfo,
+			DroppedPartInfo: droppedPartInfo,
+		},
 	}
 }
 
@@ -261,8 +268,8 @@ func (s *SchemaChangeEvent) GetDropPartitionInfo() (
 	globalTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) {
-	intest.Assert(s.tp == model.ActionDropTablePartition)
-	return s.tableInfo, s.droppedPartInfo
+	intest.Assert(s.inner.Tp == model.ActionDropTablePartition)
+	return s.inner.TableInfo, s.inner.DroppedPartInfo
 }
 
 // NewExchangePartitionEvent creates a SchemaChangeEvent whose type is
@@ -273,10 +280,12 @@ func NewExchangePartitionEvent(
 	nonPartTableInfo *model.TableInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:            model.ActionExchangeTablePartition,
-		tableInfo:     globalTableInfo,
-		addedPartInfo: partInfo,
-		oldTableInfo:  nonPartTableInfo,
+		inner: &jsonSchemaChangeEvent{
+			Tp:            model.ActionExchangeTablePartition,
+			TableInfo:     globalTableInfo,
+			AddedPartInfo: partInfo,
+			OldTableInfo:  nonPartTableInfo,
+		},
 	}
 }
 
@@ -288,8 +297,8 @@ func (s *SchemaChangeEvent) GetExchangePartitionInfo() (
 	partInfo *model.PartitionInfo,
 	nonPartTableInfo *model.TableInfo,
 ) {
-	intest.Assert(s.tp == model.ActionExchangeTablePartition)
-	return s.tableInfo, s.addedPartInfo, s.oldTableInfo
+	intest.Assert(s.inner.Tp == model.ActionExchangeTablePartition)
+	return s.inner.TableInfo, s.inner.AddedPartInfo, s.inner.OldTableInfo
 }
 
 // NewReorganizePartitionEvent creates a SchemaChangeEvent whose type is
@@ -300,10 +309,12 @@ func NewReorganizePartitionEvent(
 	droppedPartInfo *model.PartitionInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:              model.ActionReorganizePartition,
-		tableInfo:       globalTableInfo,
-		addedPartInfo:   addedPartInfo,
-		droppedPartInfo: droppedPartInfo,
+		inner: &jsonSchemaChangeEvent{
+			Tp:              model.ActionReorganizePartition,
+			TableInfo:       globalTableInfo,
+			AddedPartInfo:   addedPartInfo,
+			DroppedPartInfo: droppedPartInfo,
+		},
 	}
 }
 
@@ -315,8 +326,8 @@ func (s *SchemaChangeEvent) GetReorganizePartitionInfo() (
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) {
-	intest.Assert(s.tp == model.ActionReorganizePartition)
-	return s.tableInfo, s.addedPartInfo, s.droppedPartInfo
+	intest.Assert(s.inner.Tp == model.ActionReorganizePartition)
+	return s.inner.TableInfo, s.inner.AddedPartInfo, s.inner.DroppedPartInfo
 }
 
 // NewAddPartitioningEvent creates a SchemaChangeEvent whose type is
@@ -329,10 +340,12 @@ func NewAddPartitioningEvent(
 	addedPartInfo *model.PartitionInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:                   model.ActionAlterTablePartitioning,
-		oldTableID4Partition: nonPartTableID,
-		tableInfo:            newGlobalTableInfo,
-		addedPartInfo:        addedPartInfo,
+		inner: &jsonSchemaChangeEvent{
+			Tp:                   model.ActionAlterTablePartitioning,
+			OldTableID4Partition: nonPartTableID,
+			TableInfo:            newGlobalTableInfo,
+			AddedPartInfo:        addedPartInfo,
+		},
 	}
 }
 
@@ -344,8 +357,8 @@ func (s *SchemaChangeEvent) GetAddPartitioningInfo() (
 	newGlobalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 ) {
-	intest.Assert(s.tp == model.ActionAlterTablePartitioning)
-	return s.oldTableID4Partition, s.tableInfo, s.addedPartInfo
+	intest.Assert(s.inner.Tp == model.ActionAlterTablePartitioning)
+	return s.inner.OldTableID4Partition, s.inner.TableInfo, s.inner.AddedPartInfo
 }
 
 // NewRemovePartitioningEvent creates a schema change event whose type is
@@ -356,10 +369,12 @@ func NewRemovePartitioningEvent(
 	droppedPartInfo *model.PartitionInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp:                   model.ActionRemovePartitioning,
-		oldTableID4Partition: oldPartitionedTableID,
-		tableInfo:            nonPartitionTableInfo,
-		droppedPartInfo:      droppedPartInfo,
+		inner: &jsonSchemaChangeEvent{
+			Tp:                   model.ActionRemovePartitioning,
+			OldTableID4Partition: oldPartitionedTableID,
+			TableInfo:            nonPartitionTableInfo,
+			DroppedPartInfo:      droppedPartInfo,
+		},
 	}
 }
 
@@ -370,24 +385,28 @@ func (s *SchemaChangeEvent) GetRemovePartitioningInfo() (
 	newSingleTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) {
-	intest.Assert(s.tp == model.ActionRemovePartitioning)
-	return s.oldTableID4Partition, s.tableInfo, s.droppedPartInfo
+	intest.Assert(s.inner.Tp == model.ActionRemovePartitioning)
+	return s.inner.OldTableID4Partition, s.inner.TableInfo, s.inner.DroppedPartInfo
 }
 
 // NewFlashbackClusterEvent creates a schema change event whose type is
 // ActionFlashbackCluster.
 func NewFlashbackClusterEvent() *SchemaChangeEvent {
 	return &SchemaChangeEvent{
-		tp: model.ActionFlashbackCluster,
+		inner: &jsonSchemaChangeEvent{
+			Tp: model.ActionFlashbackCluster,
+		},
 	}
 }
 
 type jsonSchemaChangeEvent struct {
-	TableInfo            *model.TableInfo
-	OldTableInfo         *model.TableInfo
-	AddedPartInfo        *model.PartitionInfo
-	DroppedPartInfo      *model.PartitionInfo
-	ColumnInfos          []*model.ColumnInfo
+	TableInfo       *model.TableInfo
+	OldTableInfo    *model.TableInfo
+	AddedPartInfo   *model.PartitionInfo
+	DroppedPartInfo *model.PartitionInfo
+	ColumnInfos     []*model.ColumnInfo
+	// OldTableID4Partition is used to store the table ID when a table transitions from being partitioned to non-partitioned,
+	// or vice versa.
 	OldTableID4Partition int64
 
 	Tp model.ActionType
@@ -395,16 +414,7 @@ type jsonSchemaChangeEvent struct {
 
 // MarshalJSON implements the json.Marshaler interface.
 func (s *SchemaChangeEvent) MarshalJSON() ([]byte, error) {
-	j := jsonSchemaChangeEvent{
-		TableInfo:            s.tableInfo,
-		OldTableInfo:         s.oldTableInfo,
-		AddedPartInfo:        s.addedPartInfo,
-		DroppedPartInfo:      s.droppedPartInfo,
-		ColumnInfos:          s.columnInfos,
-		OldTableID4Partition: s.oldTableID4Partition,
-		Tp:                   s.tp,
-	}
-	return json.Marshal(j)
+	return json.Marshal(s.inner)
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
@@ -412,13 +422,7 @@ func (s *SchemaChangeEvent) UnmarshalJSON(b []byte) error {
 	var j jsonSchemaChangeEvent
 	err := json.Unmarshal(b, &j)
 	if err != nil {
-		s.tableInfo = j.TableInfo
-		s.oldTableInfo = j.OldTableInfo
-		s.addedPartInfo = j.AddedPartInfo
-		s.droppedPartInfo = j.DroppedPartInfo
-		s.columnInfos = j.ColumnInfos
-		s.oldTableID4Partition = j.OldTableID4Partition
-		s.tp = j.Tp
+		s.inner = &j
 	}
 	return err
 }
