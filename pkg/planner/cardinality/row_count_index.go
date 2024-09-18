@@ -251,10 +251,14 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 			if fullLen {
 				// At most 1 in this case.
 				if idx.Info.Unique {
-					totalCount++
-					if debugTrace {
-						debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
+					if !indexRange.IsOnlyNull() {
+						totalCount++
+						if debugTrace {
+							debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
+						}
+						continue
 					}
+					totalCount = float64(idx.NullCount)
 					continue
 				}
 				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount, modifyCount)

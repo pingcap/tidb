@@ -296,9 +296,13 @@ func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) 
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
 func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if ds.StatsInfo() != nil && len(colGroups) == 0 {
 		return ds.StatsInfo(), nil
 	}
+
 	ds.initStats(colGroups)
 	if ds.StatsInfo() != nil {
 		// Just reload the GroupNDVs.
