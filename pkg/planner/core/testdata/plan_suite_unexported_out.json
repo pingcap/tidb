@@ -1131,7 +1131,7 @@
           ],
           [
             "tid: 4, [start, end]: [9, 9] ",
-            "handle cols: test.t3._tidb_rowid:12"
+            "handle cols: test.t3._tidb_rowid:9"
           ]
         ]
       }

@@ -236,6 +236,7 @@ func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
 	return opt.indexesLayoutOffset[indexID]
 }
 
+// GetColumnSizeOpt returns the ColumnSizeOption of the RemoveRecordOpt.
 func (opt *RemoveRecordOpt) GetColumnSizeOpt() *ColumnSizeOption {
 	return opt.columnSize
 }
@@ -277,8 +278,8 @@ func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
 // If the column is not pruned, we can calculate its acurate size by the real data.
 // Otherwise, we use the estimated avg size given by table statistics and field type information.
 type ColumnSizeOption struct {
-	NotPruned *bitset.BitSet
-	AvgSizes  []float64
+	NotPruned        *bitset.BitSet
+	AvgSizes         []float64
 	PublicColsLayout []int
 }
 

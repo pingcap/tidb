@@ -5279,7 +5279,7 @@ func pruneAndBuildColPositionInfoForDelete(
 	var nonPruned *bitset.BitSet
 	// If there is foreign key, we can't prune the columns.
 	if !hasFK {
-		nonPruned := bitset.New(uint(len(names)))
+		nonPruned = bitset.New(uint(len(names)))
 		nonPruned.SetAll()
 	}
 	cols2PosInfos := make(TblColPosInfoSlice, 0, len(tblID2Handle))
