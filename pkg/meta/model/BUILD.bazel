@@ -44,7 +44,7 @@ go_test(
     ],
     embed = [":model"],
     flaky = True,
-    shard_count = 30,
+    shard_count = 32,
     deps = [
         "//pkg/parser/charset",
         "//pkg/parser/model",

@@ -91,10 +91,12 @@ func SetSchemaDiffForCreateView(diff *model.SchemaDiff, job *model.Job) error {
 
 // SetSchemaDiffForRenameTable set SchemaDiff for ActionRenameTable.
 func SetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job) error {
-	err := job.DecodeArgs(&diff.OldSchemaID)
+	args, err := model.GetRenameTableArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	diff.OldSchemaID = args.OldSchemaID
 	diff.TableID = job.TableID
 	return nil
 }

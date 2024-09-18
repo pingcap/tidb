@@ -709,11 +709,16 @@ func job2UniqueIDs(jobW *JobWrapper, schema bool) string {
 	switch jobW.Type {
 	case model.ActionExchangeTablePartition, model.ActionRenameTables, model.ActionRenameTable:
 		var ids []int64
-		if schema {
-			ids = jobW.CtxVars[0].([]int64)
+		if jobW.Type == model.ActionRenameTable {
+			ids = getRenameTableUniqueIDs(jobW, schema)
 		} else {
-			ids = jobW.CtxVars[1].([]int64)
+			if schema {
+				ids = jobW.CtxVars[0].([]int64)
+			} else {
+				ids = jobW.CtxVars[1].([]int64)
+			}
 		}
+
 		set := make(map[int64]struct{}, len(ids))
 		for _, id := range ids {
 			set[id] = struct{}{}
