@@ -799,13 +799,13 @@ func onRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64
 		}
 		ver, err := checkAndRenameTables(
 			t, job, tblInfo, info.OldSchemaID,
-			info.NewSchemaID, info.OldSchemaName, info.NewTableName)
+			info.NewSchemaID, &info.OldSchemaName, &info.NewTableName)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		err = adjustForeignKeyChildTableInfoAfterRenameTable(
 			jobCtx.infoCache, t, job, &fkh, tblInfo,
-			*info.OldSchemaName, *info.OldTableName, *info.NewTableName, info.NewSchemaID)
+			info.OldSchemaName, info.OldTableName, info.NewTableName, info.NewSchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

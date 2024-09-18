@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -273,5 +274,31 @@ func TestUpdateRenameTableArgs(t *testing.T) {
 			OldSchemaName: model.NewCIStr("old_schema_name"),
 			NewTableName:  model.NewCIStr("new_table_name"),
 		}, args)
+	}
+}
+
+func TestGetRenameTablesArgs(t *testing.T) {
+	inArgs := &RenameTablesArgs{
+		RenameTableInfos: []*RenameTableArgs{
+			{1, pmodel.CIStr{O: "db1", L: "db1"}, pmodel.CIStr{O: "tb3", L: "tb3"}, pmodel.CIStr{O: "tb1", L: "tb1"}, 3, 100},
+			{2, pmodel.CIStr{O: "db2", L: "db2"}, pmodel.CIStr{O: "tb2", L: "tb2"}, pmodel.CIStr{O: "tb4", L: "tb4"}, 3, 101},
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		job := &Job{
+			Version: v,
+			Type:    ActionRenameTables,
+		}
+		job.FillArgs(inArgs)
+		bytes, err := job.Encode(true)
+		require.NoError(t, err)
+
+		j2 := &Job{}
+		err = j2.Decode(bytes)
+		require.NoError(t, err)
+		args, err := GetRenameTablesArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs.RenameTableInfos[0], args.RenameTableInfos[0])
+		require.Equal(t, inArgs.RenameTableInfos[1], args.RenameTableInfos[1])
 	}
 }

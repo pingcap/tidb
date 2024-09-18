@@ -4296,7 +4296,7 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 	var err error
 
 	tables := make(map[string]int64)
-	infos := make([]*model.RenameTableInfo, 0, len(oldIdents))
+	infos := make([]*model.RenameTableArgs, 0, len(oldIdents))
 	for i := 0; i < len(oldIdents); i++ {
 		schemas, tableID, err = ExtractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable, tables)
 		if err != nil {
@@ -4309,12 +4309,12 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			}
 		}
 
-		infos = append(infos, &model.RenameTableInfo{
+		infos = append(infos, &model.RenameTableArgs{
 			OldSchemaID:   schemas[0].ID,
-			OldSchemaName: &schemas[0].Name,
-			OldTableName:  &oldIdents[i].Name,
+			OldSchemaName: schemas[0].Name,
+			OldTableName:  oldIdents[i].Name,
 			NewSchemaID:   schemas[1].ID,
-			NewTableName:  &newIdents[i].Name,
+			NewTableName:  newIdents[i].Name,
 			TableID:       tableID,
 		})
 
