@@ -220,7 +220,7 @@ func TestOrderedIndexWithIsNull(t *testing.T) {
 		"└─IndexReader_12 10.00 root  index:IndexRangeScan_11",
 		"  └─IndexRangeScan_11 10.00 cop[tikv] table:t1, index:b(b, c) range:[NULL,NULL], keep order:true, stats:pseudo",
 	))
-	// issue
+	// https://github.com/pingcap/tidb/issues/56116
 	tk.MustExec("create table t2(id bigint(20) DEFAULT NULL, UNIQUE KEY index_on_id (id))")
 	tk.MustExec("insert into t2 values (), (), ()")
 	tk.MustExec("analyze table t2")
