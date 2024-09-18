@@ -1103,6 +1103,7 @@ func BuildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInf
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
+	tblInfo.TableCacheStatusType = model.TableCacheStatusDisable
 	// Ignore TiFlash replicas for temporary tables.
 	if s.TemporaryKeyword != ast.TemporaryNone {
 		tblInfo.TiFlashReplica = nil
