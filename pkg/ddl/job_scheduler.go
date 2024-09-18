@@ -675,6 +675,11 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	var sql bytes.Buffer
 	sql.WriteString(addDDLJobSQL)
 	for i, jobW := range jobWs {
+		// TODO remove this check when all job type pass args in this way.
+		if jobW.JobArgs != nil {
+			jobW.FillArgs(jobW.JobArgs)
+		}
+		injectModifyJobArgFailPoint(jobWs)
 		b, err := jobW.Encode(true)
 		if err != nil {
 			return err
@@ -683,7 +688,7 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 			sql.WriteString(",")
 		}
 		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", jobW.ID, jobW.MayNeedReorg(),
-			strconv.Quote(job2SchemaIDs(jobW.Job)), strconv.Quote(job2TableIDs(jobW.Job)),
+			strconv.Quote(job2SchemaIDs(jobW)), strconv.Quote(job2TableIDs(jobW)),
 			util.WrapKey2String(b), jobW.Type, jobW.Started())
 	}
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
@@ -706,14 +711,14 @@ func makeStringForIDs(ids []int64) string {
 	return strings.Join(s, ",")
 }
 
-func job2SchemaIDs(job *model.Job) string {
-	switch job.Type {
+func job2SchemaIDs(jobW *JobWrapper) string {
+	switch jobW.Type {
 	case model.ActionRenameTables:
 		var ids []int64
-		if job.Version == model.JobVersion1 {
-			ids = append(job.Args[0].([]int64), job.Args[1].([]int64)...)
+		if jobW.Version == model.JobVersion1 {
+			ids = append(jobW.Args[0].([]int64), jobW.Args[1].([]int64)...)
 		} else {
-			arg := job.Args[0].(*model.RenameTablesArgs)
+			arg := jobW.Args[0].(*model.RenameTablesArgs)
 			ids = make([]int64, 0, len(arg.RenameTableInfos)*2)
 			for _, info := range arg.RenameTableInfos {
 				ids = append(ids, info.OldSchemaID, info.NewSchemaID)
@@ -721,25 +726,20 @@ func job2SchemaIDs(job *model.Job) string {
 		}
 		return makeStringForIDs(ids)
 	case model.ActionExchangeTablePartition, model.ActionRenameTable:
-		ids := job.CtxVars[0].([]int64)
+		ids := jobW.CtxVars[0].([]int64)
 		return makeStringForIDs(ids)
 	default:
-		return strconv.FormatInt(job.SchemaID, 10)
+		return strconv.FormatInt(jobW.SchemaID, 10)
 	}
 }
 
-func job2TableIDs(job *model.Job) string {
-	switch job.Type {
+func job2TableIDs(jobW *JobWrapper) string {
+	switch jobW.Type {
 	case model.ActionRenameTables:
-		if job.Version == model.JobVersion1 {
-			// After json.Marshal and json.Unmarshall, the type is changed to pointer
-			if _, ok := job.Args[0].([]int64); ok {
-				return makeStringForIDs(job.Args[3].([]int64))
-			} else {
-				return makeStringForIDs(*job.Args[3].(*[]int64))
-			}
+		if jobW.Version == model.JobVersion1 {
+			return makeStringForIDs(jobW.Args[3].([]int64))
 		} else {
-			arg := job.Args[0].(*model.RenameTablesArgs)
+			arg := jobW.Args[0].(*model.RenameTablesArgs)
 			ids := make([]int64, 0, len(arg.RenameTableInfos))
 			for _, info := range arg.RenameTableInfos {
 				ids = append(ids, info.TableID)
@@ -747,13 +747,13 @@ func job2TableIDs(job *model.Job) string {
 			return makeStringForIDs(ids)
 		}
 	case model.ActionExchangeTablePartition, model.ActionRenameTable:
-		ids := job.CtxVars[1].([]int64)
+		ids := jobW.CtxVars[1].([]int64)
 		return makeStringForIDs(ids)
 	case model.ActionTruncateTable:
-		newTableID := getTruncateTableNewTableID(job)
-		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
+		newTableID := jobW.JobArgs.(*model.TruncateTableArgs).NewTableID
+		return strconv.FormatInt(jobW.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
 	default:
-		return strconv.FormatInt(job.TableID, 10)
+		return strconv.FormatInt(jobW.TableID, 10)
 	}
 }
 
