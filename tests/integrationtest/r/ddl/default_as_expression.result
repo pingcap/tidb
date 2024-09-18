@@ -378,7 +378,7 @@ c	c1	c2
 3	1980-01-01	NULL
 4	1980-01-01	NULL
 alter table t0 drop column c1;
-Error 8200 (HY000): can't drop column c1 with composite index covered or Primary Key covered now
+Error 8200 (HY000): can't drop column c1 with composite index covered or Primary Key or Vector Key covered now
 alter table t0 drop column c2;
 show create table t0;
 Table	Create Table

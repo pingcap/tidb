@@ -410,7 +410,7 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 	}
 	colInfo := findColumnByName(colExpr.Name.Name.L, tblInfo)
 	if colInfo == nil {
-		return nil, "", infoschema.ErrColumnNotExists.GenWithStackByArgs(colExpr.Name.Name.String())
+		return nil, "", infoschema.ErrColumnNotExists.GenWithStackByArgs(colExpr.Name.Name, tblInfo.Name)
 	}
 
 	// check duplicated function on the same column
@@ -542,6 +542,9 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName pmodel.CIStr
 		if idx.Invisible == invisible {
 			return true, nil
 		}
+	}
+	if idx.VectorInfo != nil {
+		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
 	}
 	return false, nil
 }
