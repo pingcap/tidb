@@ -736,13 +736,15 @@ func job2SchemaIDs(jobW *JobWrapper) string {
 func job2TableIDs(jobW *JobWrapper) string {
 	switch jobW.Type {
 	case model.ActionRenameTables:
+		var ids []int64
 		if jobW.Version == model.JobVersion1 {
-			return makeStringForIDs(jobW.Args[3].([]int64))
-		}
-		arg := jobW.Args[0].(*model.RenameTablesArgs)
-		ids := make([]int64, 0, len(arg.RenameTableInfos))
-		for _, info := range arg.RenameTableInfos {
-			ids = append(ids, info.TableID)
+			ids = jobW.Args[3].([]int64)
+		} else {
+			arg := jobW.Args[0].(*model.RenameTablesArgs)
+			ids = make([]int64, 0, len(arg.RenameTableInfos))
+			for _, info := range arg.RenameTableInfos {
+				ids = append(ids, info.TableID)
+			}
 		}
 		return makeStringForIDs(ids)
 	case model.ActionExchangeTablePartition, model.ActionRenameTable:

@@ -948,10 +948,12 @@ func finishJobRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int
 
 func finishJobRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job, args *model.RenameTablesArgs) (int64, error) {
 	infos := args.RenameTableInfos
-	tblInfos := make([]*model.TableInfo, 0, len(infos))
 	tblSchemaIDs := make(map[int64]int64, len(infos))
 	for _, info := range infos {
 		tblSchemaIDs[info.TableID] = info.NewSchemaID
+	}
+	tblInfos := make([]*model.TableInfo, 0, len(infos))
+	for _, info := range infos {
 		tblID := info.TableID
 		tblInfo, err := getTableInfo(t, tblID, tblSchemaIDs[tblID])
 		if err != nil {
