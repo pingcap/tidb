@@ -102,7 +102,10 @@ func (p *ResourceGroupSettings) String() string {
 		sb.WriteString(")")
 	}
 	if p.Background != nil {
-		fmt.Fprintf(sb, ", BACKGROUND=(TASK_TYPES='%s'", strings.Join(p.Background.JobTypes, ","))
+		sb.WriteString(", BACKGROUND=(")
+		if len(p.Background.JobTypes) > 0 {
+			fmt.Fprintf(sb, "TASK_TYPES='%s'", strings.Join(p.Background.JobTypes, ","))
+		}
 		if p.Background.ResourceUtilLimit > 0 {
 			fmt.Fprintf(sb, ", UTILIZATION_LIMIT=%d", p.Background.ResourceUtilLimit)
 		}
