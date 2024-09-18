@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2031,4 +2032,88 @@ func TestMppAggShouldAlignFinalMode(t *testing.T) {
 
 	err = failpoint.Disable("github.com/pingcap/tidb/pkg/expression/aggregation/show-agg-mode")
 	require.Nil(t, err)
+}
+
+func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, primary key(a))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tk.MustExec("create table t2(a int, b int) partition by hash(b) partitions 4")
+	tk.MustExec("alter table t2 set tiflash replica 1")
+	tb = external.GetTableByName(t, tk, "test", "t2")
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("insert into t values(2, 2)")
+	tk.MustExec("insert into t values(3, 3)")
+	tk.MustExec("insert into t values(4, 4)")
+	tk.MustExec("insert into t values(5, 5)")
+
+	tk.MustExec("insert into t2 values(1, 1)")
+	tk.MustExec("insert into t2 values(2, 2)")
+	tk.MustExec("insert into t2 values(3, 3)")
+	tk.MustExec("insert into t2 values(4, 4)")
+	tk.MustExec("insert into t2 values(5, 5)")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustExec("set @@session.tidb_max_chunk_size=32")
+
+	// Test TableReader cache for single SQL.
+	type testCase struct {
+		sql           string
+		expectHitNum  int32
+		expectMissNum int32
+	}
+
+	testCases := []testCase{
+		// Non-Partition
+		// Cache hit
+		{"select * from t", 0, 1},
+		{"select * from t union select * from t", 1, 1},
+		{"select * from t union select * from t t1 union select * from t t2", 2, 1},
+		{"select * from t where b <= 3 union select * from t where b > 3", 1, 1},  // both full range
+		{"select * from t where a <= 3 union select * from t where a <= 3", 1, 1}, // same range
+		{"select * from t t1 join t t2 on t1.b=t2.b", 1, 1},
+
+		// Cache miss
+		{"select * from t union all select * from t", 0, 2},                      // different mpp task root
+		{"select * from t where a <= 3 union select * from t where a > 3", 0, 2}, // different range
+
+		// Partition
+		// Cache hit
+		{"select * from t2 union select * from t2", 1, 1},
+		{"select * from t2 where b = 1 union select * from t2 where b = 5", 1, 1},                     // same partition, full range
+		{"select * from t2 where b = 1 and a < 3 union select * from t2 where b = 5 and a < 3", 1, 1}, // same partition, same range
+		{"select * from t2 t1 join t2 t2 on t1.b=t2.b", 1, 1},
+		{"select * from t2 t1 join t2 t2 on t1.b=t2.b where t1.a = 2 and t2.a = 2", 1, 1},
+
+		// Cache miss
+		{"select * from t2 union select * from t2 where b = 1", 0, 2},             // different partition
+		{"select * from t2 where b = 2 union select * from t2 where b = 1", 0, 2}, // different partition
+	}
+
+	var hitNum, missNum atomic.Int32
+	hitFunc := func() {
+		hitNum.Add(1)
+	}
+	missFunc := func() {
+		missNum.Add(1)
+	}
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheHit", hitFunc)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheMiss", missFunc)
+	for _, tc := range testCases {
+		hitNum.Store(0)
+		missNum.Store(0)
+		tk.MustQuery(tc.sql)
+		require.Equal(t, tc.expectHitNum, hitNum.Load())
+		require.Equal(t, tc.expectMissNum, missNum.Load())
+	}
 }

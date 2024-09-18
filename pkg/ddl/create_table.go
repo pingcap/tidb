@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -41,7 +41,6 @@ import (
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -182,9 +181,7 @@ func onCreateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-	createTableEvent := &statsutil.DDLEvent{
-		SchemaChangeEvent: util.NewCreateTableEvent(tbInfo),
-	}
+	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
 	asyncNotifyEvent(jobCtx, createTableEvent, job)
 	return ver, errors.Trace(err)
 }
@@ -213,9 +210,7 @@ func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Meta, job *model.Job
 			return ver, errors.Trace(err)
 		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		createTableEvent := &statsutil.DDLEvent{
-			SchemaChangeEvent: util.NewCreateTableEvent(tbInfo),
-		}
+		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
 		asyncNotifyEvent(jobCtx, createTableEvent, job)
 		return ver, nil
 	default:
@@ -270,9 +265,7 @@ func onCreateTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, er
 	job.SchemaState = model.StatePublic
 	job.BinlogInfo.SetTableInfos(ver, args)
 	for i := range args {
-		createTableEvent := &statsutil.DDLEvent{
-			SchemaChangeEvent: util.NewCreateTableEvent(args[i]),
-		}
+		createTableEvent := notifier.NewCreateTableEvent(args[i])
 		asyncNotifyEvent(jobCtx, createTableEvent, job)
 	}
 
@@ -681,6 +674,12 @@ func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
+	// set default shard row id bits and pre-split regions for table.
+	if !tbInfo.HasClusteredIndex() && tbInfo.TempTableType == model.TempTableNone {
+		tbInfo.ShardRowIDBits = ctx.GetSessionVars().ShardRowIDBits
+		tbInfo.PreSplitRegions = ctx.GetSessionVars().PreSplitRegions
+	}
+
 	if err = handleTableOptions(s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -806,8 +805,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				return dbterror.ErrUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
-			if tbInfo.ShardRowIDBits > shardRowIDBitsMax {
-				tbInfo.ShardRowIDBits = shardRowIDBitsMax
+			if tbInfo.ShardRowIDBits > variable.MaxShardRowIDBits {
+				tbInfo.ShardRowIDBits = variable.MaxShardRowIDBits
 			}
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:

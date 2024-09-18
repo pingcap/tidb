@@ -109,7 +109,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20240821073530-75e3705e58f1
+	github.com/tikv/client-go/v2 v2.0.8-0.20240911041506-e7894a7b27ba
 	github.com/tikv/pd/client v0.0.0-20240805092608-838ee7983b78
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
@@ -135,8 +135,8 @@ require (
 	golang.org/x/oauth2 v0.21.0
 	golang.org/x/sync v0.8.0
 	golang.org/x/sys v0.25.0
-	golang.org/x/term v0.23.0
-	golang.org/x/text v0.17.0
+	golang.org/x/term v0.24.0
+	golang.org/x/text v0.18.0
 	golang.org/x/time v0.5.0
 	golang.org/x/tools v0.24.0
 	google.golang.org/api v0.169.0
@@ -308,7 +308,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.24.0 // indirect
 	go.opentelemetry.io/otel/trace v1.24.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
-	golang.org/x/crypto v0.26.0 // indirect
+	golang.org/x/crypto v0.27.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20240314144324-c7f7c6466f7f // indirect
 	golang.org/x/mod v0.20.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect

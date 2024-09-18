@@ -1848,8 +1848,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			for i, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
-					if opt.UintValue > shardRowIDBitsMax {
-						opt.UintValue = shardRowIDBitsMax
+					if opt.UintValue > variable.MaxShardRowIDBits {
+						opt.UintValue = variable.MaxShardRowIDBits
 					}
 					err = e.ShardRowID(sctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:

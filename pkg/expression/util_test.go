@@ -650,6 +650,8 @@ func (m *MockExpr) Coercibility() Coercibility                          { return
 func (m *MockExpr) SetCoercibility(Coercibility)                        {}
 func (m *MockExpr) Repertoire() Repertoire                              { return UNICODE }
 func (m *MockExpr) SetRepertoire(Repertoire)                            {}
+func (m *MockExpr) IsExplicitCharset() bool                             { return false }
+func (m *MockExpr) SetExplicitCharset(bool)                             {}
 
 func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""

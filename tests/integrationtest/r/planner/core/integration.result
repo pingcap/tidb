@@ -3393,10 +3393,12 @@ drop table if exists t;
 create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a));
 explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_11	33.33	65346.12	root		
-├─IndexRangeScan_8(Build)	33.33	9127.55	cop[tikv]	table:t, index:idx1(a, b)	range:("ab" 4,"ab" +inf], keep order:false, stats:pseudo
-└─Selection_10(Probe)	33.33	11066.03	cop[tikv]		eq(planner__core__integration.t.a, "abcdefghijk")
-  └─TableRowIDScan_9	33.33	9402.70	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_8	33.33	65346.12	root		
+├─IndexRangeScan_5(Build)	33.33	9127.55	cop[tikv]	table:t, index:idx1(a, b)	range:("ab" 4,"ab" +inf], keep order:false, stats:pseudo
+└─Selection_7(Probe)	33.33	11066.03	cop[tikv]		eq(planner__core__integration.t.a, "abcdefghijk")
+  └─TableRowIDScan_6	33.33	9402.70	cop[tikv]	table:t	keep order:false, stats:pseudo
+Level	Code	Message
+Note	1105	[idx1,idx2] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 drop table if exists t30094;
 create table t30094(a varchar(10));
 explain format = 'brief' select * from t30094 where cast(a as float) and cast(a as char);
