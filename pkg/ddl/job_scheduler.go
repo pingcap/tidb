@@ -738,14 +738,13 @@ func job2TableIDs(jobW *JobWrapper) string {
 	case model.ActionRenameTables:
 		if jobW.Version == model.JobVersion1 {
 			return makeStringForIDs(jobW.Args[3].([]int64))
-		} else {
-			arg := jobW.Args[0].(*model.RenameTablesArgs)
-			ids := make([]int64, 0, len(arg.RenameTableInfos))
-			for _, info := range arg.RenameTableInfos {
-				ids = append(ids, info.TableID)
-			}
-			return makeStringForIDs(ids)
 		}
+		arg := jobW.Args[0].(*model.RenameTablesArgs)
+		ids := make([]int64, 0, len(arg.RenameTableInfos))
+		for _, info := range arg.RenameTableInfos {
+			ids = append(ids, info.TableID)
+		}
+		return makeStringForIDs(ids)
 	case model.ActionExchangeTablePartition, model.ActionRenameTable:
 		ids := jobW.CtxVars[1].([]int64)
 		return makeStringForIDs(ids)
