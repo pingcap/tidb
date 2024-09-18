@@ -1040,6 +1040,10 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 
 	lastRound := 0
 	for {
+		if e.finished.Load() {
+			return
+		}
+
 		e.spillHelper.setCanSpillFlag(true)
 		e.buildFinished = make(chan error, 1)
 		e.resetProbeStatus()
@@ -1048,10 +1052,6 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		e.fetchAndProbeHashTable(ctx)
 
 		e.waiterWg.Wait()
-
-		if e.finished.Load() {
-			return
-		}
 
 		e.releaseDisk()
 
@@ -1334,6 +1334,10 @@ func (e *HashJoinV2Exec) controlWorkersForRestore(chunkNum int, syncCh chan *chu
 	}
 
 	for i := 0; i < chunkNum; i++ {
+		if e.finished.Load() {
+			return
+		}
+
 		err := checkAndSpillRowTableIfNeeded(fetcherAndWorkerSyncer, e.spillHelper)
 		if err != nil {
 			errCh <- err
