@@ -395,7 +395,7 @@ func TestStoreBalancerPick(t *testing.T) {
 	}()
 	b.innerJobFromWorkerCh <- job
 	<-gotCh
-	b.storeLoadMap.Range(func(_, value interface{}) bool {
+	b.storeLoadMap.Range(func(_, value any) bool {
 		require.Equal(t, 0, value.(int))
 		return true
 	})
