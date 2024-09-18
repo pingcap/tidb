@@ -276,7 +276,6 @@ func TestUpdateRenameTableArgs(t *testing.T) {
 	}
 }
 
-
 func TestDropColumnArgs(t *testing.T) {
 	inArgs := &DropColumnArgs{
 		ColName:      model.NewCIStr("col_name"),
