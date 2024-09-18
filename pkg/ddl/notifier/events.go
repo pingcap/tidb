@@ -399,6 +399,8 @@ func NewFlashbackClusterEvent() *SchemaChangeEvent {
 	}
 }
 
+// jsonSchemaChangeEvent is used by SchemaChangeEvent when needed to (un)marshal data,
+// we want to hide the details to subscribers, so SchemaChangeEvent contain this struct.
 type jsonSchemaChangeEvent struct {
 	TableInfo       *model.TableInfo
 	OldTableInfo    *model.TableInfo
