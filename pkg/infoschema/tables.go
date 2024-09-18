@@ -858,8 +858,8 @@ var tableProcesslistCols = []columnInfo{
 	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "SESSION_ALIAS", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "ROWS_AFFECTED", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
-	{name: "TIDB_CPU", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag, deflt: 0},
-	{name: "TIKV_CPU", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "TIDB_CPU", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "TIKV_CPU", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, deflt: 0},
 }
 
 var tableTiDBIndexesCols = []columnInfo{

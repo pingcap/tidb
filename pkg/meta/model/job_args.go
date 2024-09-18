@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -26,6 +27,7 @@ import (
 func getOrDecodeArgsV2[T JobArgs](job *Job) (T, error) {
 	intest.Assert(job.Version == JobVersion2, "job version is not v2")
 	if len(job.Args) > 0 {
+		intest.Assert(len(job.Args) == 1, "job args length is not 1")
 		return job.Args[0].(T), nil
 	}
 	var v T
@@ -183,6 +185,100 @@ func GetModifySchemaArgs(job *Job) (*ModifySchemaArgs, error) {
 	return getOrDecodeArgsV2[*ModifySchemaArgs](job)
 }
 
+// CreateTableArgs is the arguments for create table/view/sequence job.
+type CreateTableArgs struct {
+	TableInfo *TableInfo `json:"table_info,omitempty"`
+	// below 2 are used for create view.
+	OnExistReplace bool  `json:"on_exist_replace,omitempty"`
+	OldViewTblID   int64 `json:"old_view_tbl_id,omitempty"`
+	// used for create table.
+	FKCheck bool `json:"fk_check,omitempty"`
+}
+
+func (a *CreateTableArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		switch job.Type {
+		case ActionCreateTable:
+			job.Args = []any{a.TableInfo, a.FKCheck}
+		case ActionCreateView:
+			job.Args = []any{a.TableInfo, a.OnExistReplace, a.OldViewTblID}
+		case ActionCreateSequence:
+			job.Args = []any{a.TableInfo}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetCreateTableArgs gets the create-table args.
+func GetCreateTableArgs(job *Job) (*CreateTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			tableInfo      = &TableInfo{}
+			onExistReplace bool
+			oldViewTblID   int64
+			fkCheck        bool
+		)
+		switch job.Type {
+		case ActionCreateTable:
+			if err := job.DecodeArgs(tableInfo, &fkCheck); err != nil {
+				return nil, errors.Trace(err)
+			}
+		case ActionCreateView:
+			if err := job.DecodeArgs(tableInfo, &onExistReplace, &oldViewTblID); err != nil {
+				return nil, errors.Trace(err)
+			}
+		case ActionCreateSequence:
+			if err := job.DecodeArgs(tableInfo); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		return &CreateTableArgs{
+			TableInfo:      tableInfo,
+			OnExistReplace: onExistReplace,
+			OldViewTblID:   oldViewTblID,
+			FKCheck:        fkCheck,
+		}, nil
+	}
+	return getOrDecodeArgsV2[*CreateTableArgs](job)
+}
+
+// BatchCreateTableArgs is the arguments for batch create table job.
+type BatchCreateTableArgs struct {
+	Tables []*CreateTableArgs `json:"tables,omitempty"`
+}
+
+func (a *BatchCreateTableArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		infos := make([]*TableInfo, 0, len(a.Tables))
+		for _, info := range a.Tables {
+			infos = append(infos, info.TableInfo)
+		}
+		job.Args = []any{infos, a.Tables[0].FKCheck}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetBatchCreateTableArgs gets the batch create-table args.
+func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			tableInfos []*TableInfo
+			fkCheck    bool
+		)
+		if err := job.DecodeArgs(&tableInfos, &fkCheck); err != nil {
+			return nil, errors.Trace(err)
+		}
+		args := &BatchCreateTableArgs{Tables: make([]*CreateTableArgs, 0, len(tableInfos))}
+		for _, info := range tableInfos {
+			args.Tables = append(args.Tables, &CreateTableArgs{TableInfo: info, FKCheck: fkCheck})
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*BatchCreateTableArgs](job)
+}
+
 // TruncateTableArgs is the arguments for truncate table job.
 type TruncateTableArgs struct {
 	FKCheck         bool    `json:"fk_check,omitempty"`
@@ -256,4 +352,76 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 	}
 
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
+}
+
+// RenameTableArgs is the arguments for rename table DDL job.
+type RenameTableArgs struct {
+	// for Args
+	OldSchemaID   int64        `json:"old_schema_id,omitempty"`
+	OldSchemaName pmodel.CIStr `json:"old_schema_name,omitempty"`
+	NewTableName  pmodel.CIStr `json:"new_table_name,omitempty"`
+}
+
+func (rt *RenameTableArgs) fillJob(job *Job) {
+	if job.Version <= JobVersion1 {
+		job.Args = []any{rt.OldSchemaID, rt.NewTableName, rt.OldSchemaName}
+	} else {
+		job.Args = []any{rt}
+	}
+}
+
+// GetRenameTableArgs get the arguments from job.
+func GetRenameTableArgs(job *Job) (*RenameTableArgs, error) {
+	var (
+		oldSchemaID   int64
+		oldSchemaName pmodel.CIStr
+		newTableName  pmodel.CIStr
+	)
+
+	if job.Version == JobVersion1 {
+		// decode args and cache in args.
+		err := job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		args := RenameTableArgs{
+			OldSchemaID:   oldSchemaID,
+			OldSchemaName: oldSchemaName,
+			NewTableName:  newTableName,
+		}
+		return &args, nil
+	}
+
+	// for version V2
+	return getOrDecodeArgsV2[*RenameTableArgs](job)
+}
+
+// UpdateRenameTableArgs updates the rename table args.
+// need to reset the old schema ID to new schema ID.
+func UpdateRenameTableArgs(job *Job) error {
+	var err error
+
+	// for job version1
+	if job.Version == JobVersion1 {
+		// update schemaID and marshal()
+		job.Args[0] = job.SchemaID
+		job.RawArgs, err = json.Marshal(job.Args)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		argsV2, err := getOrDecodeArgsV2[*RenameTableArgs](job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// update schemaID and marshal()
+		argsV2.OldSchemaID = job.SchemaID
+		job.Args = []any{argsV2}
+		job.RawArgs, err = json.Marshal(job.Args[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }

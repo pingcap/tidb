@@ -3331,9 +3331,9 @@ const (
 	// SlowLogWaitRUDuration is the total duration for kv requests to wait available request-units.
 	SlowLogWaitRUDuration = "Time_queued_by_rc"
 	// SlowLogTidbCPUUsageDuration is the total tidb cpu usages.
-	SlowLogTidbCPUUsageDuration = "Tidb_cpu_usage"
+	SlowLogTidbCPUUsageDuration = "Tidb_cpu_time"
 	// SlowLogTikvCPUUsageDuration is the total tikv cpu usages.
-	SlowLogTikvCPUUsageDuration = "Tikv_cpu_usage"
+	SlowLogTikvCPUUsageDuration = "Tikv_cpu_time"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
