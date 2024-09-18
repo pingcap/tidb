@@ -369,32 +369,33 @@ func compareIndexData(
 	extraIndexLayout table.IndexRowLayoutOption,
 ) error {
 	for i := range indexData {
-		offset := indexInfo.Columns[i].Offset
+		offsetInIndex := indexInfo.Columns[i].Offset
 		if extraIndexLayout != nil {
-			offset = extraIndexLayout[i]
+			offsetInIndex = extraIndexLayout[i]
 		}
+		offsetInTable := indexInfo.Columns[i].Offset
 		decodedMutationDatum := indexData[i]
-		expectedDatum := input[offset]
+		expectedDatum := input[offsetInIndex]
 
 		tablecodec.TruncateIndexValue(
 			&expectedDatum, indexInfo.Columns[i],
-			cols[offset].ColumnInfo,
+			cols[offsetInTable].ColumnInfo,
 		)
 		tablecodec.TruncateIndexValue(
 			&decodedMutationDatum, indexInfo.Columns[i],
-			cols[offset].ColumnInfo,
+			cols[offsetInTable].ColumnInfo,
 		)
 
 		comparison, err := CompareIndexAndVal(tc, expectedDatum, decodedMutationDatum,
 			collate.GetCollator(decodedMutationDatum.Collation()),
-			cols[offset].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
+			cols[offsetInTable].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		if comparison != 0 {
 			err = ErrInconsistentIndexedValue.GenWithStackByArgs(
-				tableInfo.Name.O, indexInfo.Name.O, cols[offset].ColumnInfo.Name.O,
+				tableInfo.Name.O, indexInfo.Name.O, cols[offsetInTable].ColumnInfo.Name.O,
 				decodedMutationDatum.String(), expectedDatum.String(),
 			)
 			logutil.BgLogger().Error("inconsistent indexed value in index insertion", zap.Error(err))

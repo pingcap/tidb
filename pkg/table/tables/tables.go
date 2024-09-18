@@ -1256,7 +1256,7 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 		colSizeBuffer := ctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
 		pruned, notPruned := 0, 0
 		columnSizeOpt := opt.GetColumnSizeOpt()
-		var size int = 0
+		var size int
 		for id, col := range t.Cols() {
 			columnOffset := id
 			if columnSizeOpt != nil {
