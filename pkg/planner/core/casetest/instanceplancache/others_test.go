@@ -15,7 +15,9 @@
 package instanceplancache
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/testkit"
 )
@@ -131,4 +133,101 @@ func TestInstancePlanCacheReason(t *testing.T) {
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(
 		"Warning 1105 skip prepared plan-cache: '123' may be converted to INT"))
+}
+
+func TestInstancePlanCacheStaleRead(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t (a int)`)
+	time.Sleep(time.Second)
+	ts0 := tk.MustQuery(`select now()`).Rows()[0][0].(string)
+	time.Sleep(time.Second)
+	tk.MustExec(`insert into t values (1)`)
+	time.Sleep(time.Second)
+	ts1 := tk.MustQuery(`select now()`).Rows()[0][0].(string)
+	time.Sleep(time.Second)
+	tk.MustExec(`insert into t values (2), (3)`)
+	time.Sleep(time.Second)
+	ts2 := tk.MustQuery(`select now()`).Rows()[0][0].(string)
+
+	// as-of-timestamp statements
+	tk.MustExecToErr(`prepare st from 'select * from t as of timestamp ?'`) // not supported yet
+
+	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from t as of timestamp "%v"'`, ts0))
+	tk.MustQuery(`execute st`).Sort().Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute st`).Sort().Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from t as of timestamp "%v"'`, ts1))
+	tk.MustQuery(`execute st`).Sort().Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute st`).Sort().Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from t as of timestamp "%v"'`, ts2))
+	tk.MustQuery(`execute st`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute st`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestInstancePlanCacheInTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`prepare st from 'select * from t'`)
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`begin`)
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't hit
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // dirty-data
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`rollback`)
+
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`begin`)
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`rollback`)
+}
+
+func TestInstancePlanCacheSchemaChange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`prepare st from 'select * from t'`)
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`alter table t add column b int`)
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // due to DDL
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`alter table t drop column b`)
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // due to DDL
+	tk.MustExec(`execute st`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
