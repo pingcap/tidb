@@ -327,4 +327,3 @@ func IsSpecialGlobalIndex(idx *model.IndexInfo, tblInfo *model.TableInfo) bool {
 	}
 	return false
 }
-
