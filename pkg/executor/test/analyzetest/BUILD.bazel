@@ -9,11 +9,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 50,
-=======
-    shard_count = 49,
->>>>>>> db54a3bb273 (*: fix cannot get column info from generate column (#55447))
     deps = [
         "//pkg/config",
         "//pkg/domain",
