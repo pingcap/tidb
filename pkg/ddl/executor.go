@@ -4285,7 +4285,7 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 	}
 	job.FillArgs(args)
 
-	err = e.DoDDLJob(ctx, job)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -6441,19 +6441,13 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	}
 }
 
-func getRenameTableUniqueIDs(job *model.Job, schema bool) []int64 {
+func getRenameTableUniqueIDs(jobW *JobWrapper, schema bool) []int64 {
 	if !schema {
-		return []int64{job.TableID}
+		return []int64{jobW.TableID}
 	}
 
-	var oldSchemaID int64
-	if job.Version <= model.JobVersion1 {
-		oldSchemaID = job.Args[0].(int64)
-	} else {
-		args := job.Args[0].(*model.RenameTableArgs)
-		oldSchemaID = args.OldSchemaID
-	}
-	return []int64{oldSchemaID, job.SchemaID}
+	oldSchemaID := jobW.JobArgs.(*model.RenameTableArgs).OldSchemaID
+	return []int64{oldSchemaID, jobW.SchemaID}
 }
 
 // HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted
