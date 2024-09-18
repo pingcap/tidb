@@ -2475,12 +2475,12 @@ func TestPruneColumnsForDelete(t *testing.T) {
 		require.NoError(t, err)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
 		require.NoError(t, err)
-		delete, ok := p.(*Delete)
+		deletePlan, ok := p.(*Delete)
 		require.True(t, ok, comment)
 		var sb strings.Builder
 
 		outputNames := func() string {
-			for i, names := range delete.OutputNames() {
+			for i, names := range deletePlan.OutputNames() {
 				if i > 0 {
 					sb.WriteString(", ")
 				}
@@ -2490,8 +2490,8 @@ func TestPruneColumnsForDelete(t *testing.T) {
 		}()
 
 		fullLayout := func() [][]string {
-			ret := make([][]string, 0, len(delete.TblColPosInfos))
-			for _, colsLayout := range delete.TblColPosInfos {
+			ret := make([][]string, 0, len(deletePlan.TblColPosInfos))
+			for _, colsLayout := range deletePlan.TblColPosInfos {
 				innerRet := make([]string, 0, len(colsLayout.IndexesForDelete)*2+2)
 				sb.Reset()
 				fmt.Fprintf(&sb, "tid: %d, [start, end]: [%d, %d] ", colsLayout.TblID, colsLayout.Start, colsLayout.End)

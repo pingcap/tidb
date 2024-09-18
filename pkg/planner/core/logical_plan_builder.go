@@ -6041,17 +6041,17 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	)
 	// Use a very relax check for foreign key cascades and checks.
 	// It should be strict in the future or just support pruning column when there is foreign key.
-	if nonPruned == nil {
-		finalProjCols = make([]*expression.Column, oldLen)
-		copy(finalProjCols, p.Schema().Columns[:oldLen])
-		finalProjNames = preProjNames.Shallow()
-	} else {
+	if nonPruned != nil {
 		finalProjCols = make([]*expression.Column, 0, oldLen/2)
 		finalProjNames = make(types.NameSlice, 0, oldLen/2)
 		for i, found := nonPruned.NextSet(0); found; i, found = nonPruned.NextSet(i + 1) {
 			finalProjCols = append(finalProjCols, p.Schema().Columns[i])
 			finalProjNames = append(finalProjNames, p.OutputNames()[i])
 		}
+	} else {
+		finalProjCols = make([]*expression.Column, oldLen)
+		copy(finalProjCols, p.Schema().Columns[:oldLen])
+		finalProjNames = preProjNames.Shallow()
 	}
 	proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(finalProjCols)}.Init(b.ctx, b.getSelectOffset())
 	proj.SetChildren(p)
