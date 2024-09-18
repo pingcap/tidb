@@ -711,20 +711,12 @@ func job2SchemaIDs(job *model.Job) string {
 	case model.ActionRenameTables:
 		var ids []int64
 		if job.Version == model.JobVersion1 {
-			// After json.Marshal and json.Unmarshall, the type is changed to pointer
-			if _, ok := job.Args[0].([]int64); ok {
-				ids = append(job.Args[0].([]int64), job.Args[1].([]int64)...)
-			} else {
-				ids = append(*job.Args[0].(*[]int64), *job.Args[1].(*[]int64)...)
-			}
+			ids = append(job.Args[0].([]int64), job.Args[1].([]int64)...)
 		} else {
 			arg := job.Args[0].(*model.RenameTablesArgs)
 			ids = make([]int64, 0, len(arg.RenameTableInfos)*2)
 			for _, info := range arg.RenameTableInfos {
-				ids = append(ids, info.OldSchemaID)
-			}
-			for _, info := range arg.RenameTableInfos {
-				ids = append(ids, info.NewSchemaID)
+				ids = append(ids, info.OldSchemaID, info.NewSchemaID)
 			}
 		}
 		return makeStringForIDs(ids)
