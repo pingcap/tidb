@@ -263,6 +263,7 @@ type IndexRowLayoutOption []int
 // It's mapping from index ID to the layout of the index.
 type IndexesLayout map[int64]IndexRowLayoutOption
 
+// GetIndexLayout returns the layout of the specified index.
 func (idx IndexesLayout) GetIndexLayout(idxID int64) IndexRowLayoutOption {
 	if idx == nil {
 		return nil
