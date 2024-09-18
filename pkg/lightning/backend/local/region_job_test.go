@@ -347,11 +347,9 @@ func mockWorkerReadJob(
 ) []*regionJob {
 	ret := make([]*regionJob, len(jobs))
 
-	go func() {
-		for _, job := range jobs {
-			jobToWorkerCh <- job
-		}
-	}()
+	for _, job := range jobs {
+		jobToWorkerCh <- job
+	}
 	for i := range ret {
 		got := <-b.innerJobToWorkerCh
 		ret[i] = got

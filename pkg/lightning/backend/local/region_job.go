@@ -1068,6 +1068,7 @@ func (b *storeBalancer) interceptToWorker(workerCtx context.Context) {
 	}()
 
 	wg.Wait()
+	// TODO(lance6716): all job should be done
 }
 
 func (b *storeBalancer) runReadToWorkerCh(workerCtx context.Context) {
