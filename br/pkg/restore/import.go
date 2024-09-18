@@ -630,6 +630,7 @@ func (importer *FileImporter) downloadSST(
 	rule := import_sstpb.RewriteRule{
 		OldKeyPrefix: encodeKeyPrefix(fileRule.GetOldKeyPrefix()),
 		NewKeyPrefix: encodeKeyPrefix(fileRule.GetNewKeyPrefix()),
+		NewTimestamp: fileRule.NewTimestamp,
 	}
 	sstMeta := GetSSTMetaFromFile(id, file, regionInfo.Region, &rule)
 
