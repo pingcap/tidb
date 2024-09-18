@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -63,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/slice"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -503,13 +503,13 @@ func checkListPartitions(defs []*ast.PartitionDefinition) error {
 }
 
 // buildTablePartitionInfo builds partition info and checks for some errors.
-func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tbInfo *model.TableInfo) error {
+func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tbInfo *model.TableInfo) error {
 	if s == nil {
 		return nil
 	}
 
-	if strings.EqualFold(ctx.GetSessionVars().EnableTablePartition, "OFF") {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTablePartitionDisabled)
+	if strings.EqualFold(ctx.GetEnableTablePartitionMode(), "OFF") {
+		ctx.AppendWarning(dbterror.ErrTablePartitionDisabled)
 		return nil
 	}
 
@@ -519,7 +519,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		enable = true
 	case pmodel.PartitionTypeList:
 		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
-		enable = ctx.GetSessionVars().EnableListTablePartition
+		enable = ctx.EnableListTablePartition()
 		if enable {
 			err := checkListPartitions(s.Definitions)
 			if err != nil {
@@ -534,7 +534,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		}
 		// Note that linear hash is simply ignored, and creates non-linear hash/key.
 		if s.Linear {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
+			ctx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
 		}
 		if s.Tp == pmodel.PartitionTypeHash || len(s.ColumnNames) != 0 {
 			enable = true
@@ -545,11 +545,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
+		ctx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
 	}
 	if s.Sub != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
+		ctx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
 	}
 
 	pi := &model.PartitionInfo{
@@ -644,7 +644,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 			}
 			if !ck {
 				indexTp := ""
-				if !ctx.GetSessionVars().EnableGlobalIndex {
+				if !ctx.EnableGlobalIndex() {
 					if index.Primary {
 						indexTp = "PRIMARY KEY"
 						if tbInfo.IsCommonHandle {
@@ -1809,20 +1809,22 @@ func checkResultOK(ok bool) error {
 }
 
 // checkPartitionFuncType checks partition function return type.
-func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, schema string, tblInfo *model.TableInfo) error {
+func checkPartitionFuncType(ctx *metabuild.Context, expr ast.ExprNode, schema string, tblInfo *model.TableInfo) error {
 	if expr == nil {
 		return nil
 	}
 
+	exprCtx := ctx.GetExprCtx()
+	evalCtx := exprCtx.GetEvalCtx()
 	if schema == "" {
-		schema = ctx.GetSessionVars().CurrentDB
+		schema = evalCtx.CurrentDB()
 	}
 
-	e, err := expression.BuildSimpleExpr(ctx.GetExprCtx(), expr, expression.WithTableInfo(schema, tblInfo))
+	e, err := expression.BuildSimpleExpr(exprCtx, expr, expression.WithTableInfo(schema, tblInfo))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if e.GetType(ctx.GetExprCtx().GetEvalCtx()).EvalType() == types.ETInt {
+	if e.GetType(evalCtx).EvalType() == types.ETInt {
 		return nil
 	}
 
@@ -1835,7 +1837,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, schema st
 
 // checkRangePartitionValue checks whether `less than value` is strictly increasing for each partition.
 // Side effect: it may simplify the partition range definition from a constant expression to an integer.
-func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+func checkRangePartitionValue(ctx expression.BuildContext, tblInfo *model.TableInfo) error {
 	pi := tblInfo.Partition
 	defs := pi.Definitions
 	if len(defs) == 0 {
@@ -1845,14 +1847,14 @@ func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	isUnsigned := isPartExprUnsigned(ctx.GetExprCtx().GetEvalCtx(), tblInfo)
+	isUnsigned := isPartExprUnsigned(ctx.GetEvalCtx(), tblInfo)
 	var prevRangeValue any
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
 			return errors.Trace(dbterror.ErrPartitionMaxvalue)
 		}
 
-		currentRangeValue, fromExpr, err := getRangeValue(ctx.GetExprCtx(), defs[i].LessThan[0], isUnsigned)
+		currentRangeValue, fromExpr, err := getRangeValue(ctx, defs[i].LessThan[0], isUnsigned)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4266,7 +4268,7 @@ func checkPartitionColumnsUnique(tbInfo *model.TableInfo) error {
 	return nil
 }
 
-func checkNoHashPartitions(_ sessionctx.Context, partitionNum uint64) error {
+func checkNoHashPartitions(partitionNum uint64) error {
 	if partitionNum == 0 {
 		return ast.ErrNoParts.GenWithStackByArgs("partitions")
 	}
@@ -4296,13 +4298,13 @@ func getPartitionRuleIDs(dbName string, table *model.TableInfo) []string {
 }
 
 // checkPartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
-func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
+func checkPartitioningKeysConstraints(ctx *metabuild.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
 	// Returns directly if there are no unique keys in the table.
 	if len(tblInfo.Indices) == 0 && !tblInfo.PKIsHandle {
 		return nil
 	}
 
-	partCols, err := getPartitionColSlices(sctx.GetExprCtx(), tblInfo, s.Partition)
+	partCols, err := getPartitionColSlices(ctx.GetExprCtx(), tblInfo, s.Partition)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4317,11 +4319,11 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 				if tblInfo.IsCommonHandle {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 				}
-				if !sctx.GetSessionVars().EnableGlobalIndex {
+				if !ctx.EnableGlobalIndex() {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 				}
 			}
-			if !sctx.GetSessionVars().EnableGlobalIndex {
+			if !ctx.EnableGlobalIndex() {
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 		}
@@ -4872,7 +4874,7 @@ func generatePartValuesWithTp(partVal types.Datum, tp types.FieldType) (string, 
 	return "", dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 }
 
-func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+func checkPartitionDefinitionConstraints(ctx expression.BuildContext, tbInfo *model.TableInfo) error {
 	var err error
 	if err = checkPartitionNameUnique(tbInfo.Partition); err != nil {
 		return errors.Trace(err)
@@ -4889,25 +4891,24 @@ func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.T
 
 	switch tbInfo.Partition.Type {
 	case pmodel.PartitionTypeRange:
+		failpoint.Inject("CheckPartitionByRangeErr", func() {
+			panic("mockCheckPartitionByRangeErr")
+		})
 		err = checkPartitionByRange(ctx, tbInfo)
 	case pmodel.PartitionTypeHash, pmodel.PartitionTypeKey:
-		err = checkPartitionByHash(ctx, tbInfo)
+		err = checkPartitionByHash(tbInfo)
 	case pmodel.PartitionTypeList:
 		err = checkPartitionByList(ctx, tbInfo)
 	}
 	return errors.Trace(err)
 }
 
-func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	return checkNoHashPartitions(ctx, tbInfo.Partition.Num)
+func checkPartitionByHash(tbInfo *model.TableInfo) error {
+	return checkNoHashPartitions(tbInfo.Partition.Num)
 }
 
 // checkPartitionByRange checks validity of a "BY RANGE" partition.
-func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	failpoint.Inject("CheckPartitionByRangeErr", func() {
-		ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryMemoryExceeded)
-		panic(ctx.GetSessionVars().SQLKiller.HandleSignal())
-	})
+func checkPartitionByRange(ctx expression.BuildContext, tbInfo *model.TableInfo) error {
 	pi := tbInfo.Partition
 
 	if len(pi.Columns) == 0 {
@@ -4917,7 +4918,7 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 	return checkRangeColumnsPartitionValue(ctx, tbInfo)
 }
 
-func checkRangeColumnsPartitionValue(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+func checkRangeColumnsPartitionValue(ctx expression.BuildContext, tbInfo *model.TableInfo) error {
 	// Range columns partition key supports multiple data types with integer、datetime、string.
 	pi := tbInfo.Partition
 	defs := pi.Definitions
@@ -4943,7 +4944,7 @@ func checkRangeColumnsPartitionValue(ctx sessionctx.Context, tbInfo *model.Table
 	return nil
 }
 
-func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDefinition, pi *model.PartitionInfo, tbInfo *model.TableInfo) (bool, error) {
+func checkTwoRangeColumns(ctx expression.BuildContext, curr, prev *model.PartitionDefinition, pi *model.PartitionInfo, tbInfo *model.TableInfo) (bool, error) {
 	if len(curr.LessThan) != len(pi.Columns) {
 		return false, errors.Trace(ast.ErrPartitionColumnList)
 	}
@@ -4963,7 +4964,7 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 		// PARTITION p1 VALUES LESS THAN (10,20,'mmm')
 		// PARTITION p2 VALUES LESS THAN (15,30,'sss')
 		colInfo := findColumnByName(pi.Columns[i].L, tbInfo)
-		cmp, err := parseAndEvalBoolExpr(ctx.GetExprCtx(), curr.LessThan[i], prev.LessThan[i], colInfo, tbInfo)
+		cmp, err := parseAndEvalBoolExpr(ctx, curr.LessThan[i], prev.LessThan[i], colInfo, tbInfo)
 		if err != nil {
 			return false, err
 		}
@@ -5021,6 +5022,6 @@ func parseAndEvalBoolExpr(ctx expression.BuildContext, l, r string, colInfo *mod
 }
 
 // checkPartitionByList checks validity of a "BY LIST" partition.
-func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	return checkListPartitionValue(ctx.GetExprCtx(), tbInfo)
+func checkPartitionByList(ctx expression.BuildContext, tbInfo *model.TableInfo) error {
+	return checkListPartitionValue(ctx, tbInfo)
 }

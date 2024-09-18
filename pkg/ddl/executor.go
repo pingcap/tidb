@@ -244,16 +244,13 @@ func (e *executor) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabase
 		}
 	}
 	if !explicitCollation && explicitCharset {
-		coll, err := getDefaultCollationForUTF8MB4(ctx.GetSessionVars(), charsetOpt.Chs)
-		if err != nil {
-			return err
-		}
+		coll := getDefaultCollationForUTF8MB4(charsetOpt.Chs, ctx.GetSessionVars().DefaultCollationForUTF8MB4)
 		if len(coll) != 0 {
 			charsetOpt.Col = coll
 		}
 	}
 	dbInfo := &model.DBInfo{Name: stmt.Name}
-	chs, coll, err := ResolveCharsetCollation(ctx.GetSessionVars(), charsetOpt)
+	chs, coll, err := ResolveCharsetCollation([]ast.CharsetOpt{charsetOpt}, ctx.GetSessionVars().DefaultCollationForUTF8MB4)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -334,7 +331,7 @@ func (e *executor) CreateSchemaWithInfo(
 
 func (e *executor) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, toCharset, toCollate string) (err error) {
 	if toCollate == "" {
-		if toCollate, err = GetDefaultCollation(ctx.GetSessionVars(), toCharset); err != nil {
+		if toCollate, err = GetDefaultCollation(toCharset, ctx.GetSessionVars().DefaultCollationForUTF8MB4); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -856,28 +853,21 @@ func checkTooLongForeignKey(fk pmodel.CIStr) error {
 	return nil
 }
 
-func getDefaultCollationForUTF8MB4(sessVars *variable.SessionVars, cs string) (string, error) {
-	if sessVars == nil || cs != charset.CharsetUTF8MB4 {
-		return "", nil
+func getDefaultCollationForUTF8MB4(cs string, defaultUTF8MB4Coll string) string {
+	if cs == charset.CharsetUTF8MB4 {
+		return defaultUTF8MB4Coll
 	}
-	defaultCollation, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), variable.DefaultCollationForUTF8MB4)
-	if err != nil {
-		return "", err
-	}
-	return defaultCollation, nil
+	return ""
 }
 
 // GetDefaultCollation returns the default collation for charset and handle the default collation for UTF8MB4.
-func GetDefaultCollation(sessVars *variable.SessionVars, cs string) (string, error) {
-	coll, err := getDefaultCollationForUTF8MB4(sessVars, cs)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
+func GetDefaultCollation(cs string, defaultUTF8MB4Collation string) (string, error) {
+	coll := getDefaultCollationForUTF8MB4(cs, defaultUTF8MB4Collation)
 	if coll != "" {
 		return coll, nil
 	}
 
-	coll, err = charset.GetDefaultCollation(cs)
+	coll, err := charset.GetDefaultCollation(cs)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -887,7 +877,7 @@ func GetDefaultCollation(sessVars *variable.SessionVars, cs string) (string, err
 // ResolveCharsetCollation will resolve the charset and collate by the order of parameters:
 // * If any given ast.CharsetOpt is not empty, the resolved charset and collate will be returned.
 // * If all ast.CharsetOpts are empty, the default charset and collate will be returned.
-func ResolveCharsetCollation(sessVars *variable.SessionVars, charsetOpts ...ast.CharsetOpt) (chs string, coll string, err error) {
+func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl string) (chs string, coll string, err error) {
 	for _, v := range charsetOpts {
 		if v.Col != "" {
 			collation, err := collate.GetCollationByName(v.Col)
@@ -900,7 +890,7 @@ func ResolveCharsetCollation(sessVars *variable.SessionVars, charsetOpts ...ast.
 			return collation.CharsetName, v.Col, nil
 		}
 		if v.Chs != "" {
-			coll, err := GetDefaultCollation(sessVars, v.Chs)
+			coll, err := GetDefaultCollation(v.Chs, utf8MB4DefaultColl)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
@@ -908,10 +898,7 @@ func ResolveCharsetCollation(sessVars *variable.SessionVars, charsetOpts ...ast.
 		}
 	}
 	chs, coll = charset.GetDefaultCharsetAndCollate()
-	utf8mb4Coll, err := getDefaultCollationForUTF8MB4(sessVars, chs)
-	if err != nil {
-		return "", "", errors.Trace(err)
-	}
+	utf8mb4Coll := getDefaultCollationForUTF8MB4(chs, utf8MB4DefaultColl)
 	if utf8mb4Coll != "" {
 		return chs, utf8mb4Coll, nil
 	}
@@ -952,7 +939,7 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 }
 
 // checkGlobalIndex check if the index is allowed to have global index
-func checkGlobalIndex(ctx sessionctx.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+func checkGlobalIndex(tblInfo *model.TableInfo, indexInfo *model.IndexInfo, enableGlobalIndex bool) error {
 	pi := tblInfo.GetPartitionInfo()
 	isPartitioned := pi != nil && pi.Type != pmodel.PartitionTypeNone
 	if indexInfo.Global {
@@ -961,7 +948,7 @@ func checkGlobalIndex(ctx sessionctx.Context, tblInfo *model.TableInfo, indexInf
 			// partitioning an index differently from the table partitioning.
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
 		}
-		if !ctx.GetSessionVars().EnableGlobalIndex {
+		if !enableGlobalIndex {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption when tidb_enable_global_index is disabled")
 		}
 		// TODO: remove limitation
@@ -982,9 +969,9 @@ func checkGlobalIndex(ctx sessionctx.Context, tblInfo *model.TableInfo, indexInf
 }
 
 // checkGlobalIndexes check if global index is supported.
-func checkGlobalIndexes(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+func checkGlobalIndexes(tblInfo *model.TableInfo, enableGlobalIndex bool) error {
 	for _, indexInfo := range tblInfo.Indices {
-		err := checkGlobalIndex(ctx, tblInfo, indexInfo)
+		err := checkGlobalIndex(tblInfo, indexInfo, enableGlobalIndex)
 		if err != nil {
 			return err
 		}
@@ -1022,11 +1009,12 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	}
 
 	// build tableInfo
+	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
 	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
-		tbInfo, err = BuildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
+		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = BuildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate, schema.PlacementPolicyRef)
+		tbInfo, err = BuildTableInfoWithStmt(metaBuildCtx, s, schema.Charset, schema.Collate, schema.PlacementPolicyRef)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -1036,7 +1024,7 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		rewritePartitionQueryString(ctx, s.Partition, tbInfo)
 	}
 
-	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
 		return err
 	}
 	if err = checkTableForeignKeysValid(ctx, is, schema.Name.L, tbInfo); err != nil {
@@ -1093,7 +1081,7 @@ func (e *executor) createTableWithInfoJob(
 		}
 	}
 
-	if err := checkTableInfoValidExtra(ctx, tbInfo); err != nil {
+	if err := checkTableInfoValidExtra(NewMetaBuildContextWithSctx(ctx), tbInfo); err != nil {
 		return nil, err
 	}
 
@@ -1508,7 +1496,7 @@ func (e *executor) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (er
 		tblCollate = v
 	}
 
-	tbInfo, err := BuildTableInfo(ctx, s.ViewName.Name, cols, nil, tblCharset, tblCollate)
+	tbInfo, err := BuildTableInfo(NewMetaBuildContextWithSctx(ctx), s.ViewName.Name, cols, nil, tblCharset, tblCollate)
 	if err != nil {
 		return err
 	}
@@ -1571,7 +1559,7 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // GetCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func GetCharsetAndCollateInTableOption(sessVars *variable.SessionVars, startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
+func GetCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption, defaultUTF8MB4Coll string) (chs, coll string, err error) {
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
@@ -1588,10 +1576,7 @@ func GetCharsetAndCollateInTableOption(sessVars *variable.SessionVars, startIdx 
 				return "", "", dbterror.ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
 			}
 			if len(coll) == 0 {
-				defaultColl, err := getDefaultCollationForUTF8MB4(sessVars, chs)
-				if err != nil {
-					return "", "", errors.Trace(err)
-				}
+				defaultColl := getDefaultCollationForUTF8MB4(chs, defaultUTF8MB4Coll)
 				if len(defaultColl) == 0 {
 					coll = info.DefaultCollation
 				} else {
@@ -1870,7 +1855,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(sctx.GetSessionVars(), i, spec.Options)
+					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(i, spec.Options, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
 					if err != nil {
 						return err
 					}
@@ -2314,7 +2299,7 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 	tmp := *partInfo
 	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
 	clonedMeta.Partition = &tmp
-	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
+	if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), clonedMeta); err != nil {
 		if dbterror.ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
@@ -2467,7 +2452,7 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 	newMeta := meta.Clone()
 
-	err = buildTablePartitionInfo(ctx, spec.Partition, newMeta)
+	err = buildTablePartitionInfo(NewMetaBuildContextWithSctx(ctx), spec.Partition, newMeta)
 	if err != nil {
 		return err
 	}
@@ -2650,7 +2635,7 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 	default:
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
 	}
-	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
+	if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), clonedMeta); err != nil {
 		return errors.Trace(err)
 	}
 	if action == model.ActionReorganizePartition {
@@ -2664,14 +2649,14 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 			lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
 			lastOldPartition := pi.Definitions[lastPartIdx]
 			if len(pi.Columns) > 0 {
-				newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+				newGtOld, err := checkTwoRangeColumns(ctx.GetExprCtx(), &lastAddingPartition, &lastOldPartition, pi, tblInfo)
 				if err != nil {
 					return errors.Trace(err)
 				}
 				if newGtOld {
 					return errors.Trace(dbterror.ErrRangeNotIncreasing)
 				}
-				oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+				oldGtNew, err := checkTwoRangeColumns(ctx.GetExprCtx(), &lastOldPartition, &lastAddingPartition, pi, tblInfo)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -3482,7 +3467,7 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 		if IsAutoRandomColumnID(t.Meta(), col.ID) {
 			return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 		}
-		hasDefaultValue, err := SetDefaultValue(ctx, col, specNewColumn.Options[0])
+		hasDefaultValue, err := SetDefaultValue(ctx.GetExprCtx(), col, specNewColumn.Options[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3593,7 +3578,7 @@ func (e *executor) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast
 
 	if toCollate == "" {
 		// Get the default collation of the charset.
-		toCollate, err = GetDefaultCollation(ctx.GetSessionVars(), toCharset)
+		toCollate, err = GetDefaultCollation(toCharset, ctx.GetSessionVars().DefaultCollationForUTF8MB4)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3718,7 +3703,7 @@ func (e *executor) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.I
 	var job *model.Job
 	if ttlInfo != nil {
 		tblInfo.TTLInfo = ttlInfo
-		err = checkTTLInfoValid(ctx, ident.Schema, tblInfo)
+		err = checkTTLInfoValid(is, ident.Schema, tblInfo)
 		if err != nil {
 			return err
 		}
@@ -3943,10 +3928,10 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 	}
 
 	// This DDL will update the table charset to default charset.
-	origCharset, origCollate, err = ResolveCharsetCollation(nil,
-		ast.CharsetOpt{Chs: origCharset, Col: origCollate},
-		ast.CharsetOpt{Chs: dbInfo.Charset, Col: dbInfo.Collate},
-	)
+	origCharset, origCollate, err = ResolveCharsetCollation([]ast.CharsetOpt{
+		{Chs: origCharset, Col: origCollate},
+		{Chs: dbInfo.Charset, Col: dbInfo.Collate},
+	}, "")
 	if err != nil {
 		return doNothing, err
 	}
@@ -4520,7 +4505,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(ctx, tblInfo.Columns, indexPartSpecifications)
+	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4654,8 +4639,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 
 	tblInfo := t.Meta()
 
+	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
 	// Build hidden columns if necessary.
-	hiddenCols, err := buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
+	hiddenCols, err := buildHiddenColumnInfoWithCheck(metaBuildCtx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
 	if err != nil {
 		return err
 	}
@@ -4672,7 +4658,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(ctx, finalColumns, indexPartSpecifications)
+	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4717,7 +4703,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	if indexOption != nil && indexOption.Tp == pmodel.IndexTypeHypo { // for hypo-index
-		indexInfo, err := BuildIndexInfo(ctx, tblInfo.Columns, indexName, false, unique,
+		indexInfo, err := BuildIndexInfo(metaBuildCtx, tblInfo.Columns, indexName, false, unique,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err
@@ -5441,7 +5427,7 @@ func (e *executor) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTab
 	}
 
 	// It is necessary to specify the table.ID and partition.ID manually.
-	newTableInfo, err := buildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate, oldTableInfo.PlacementPolicyRef)
+	newTableInfo, err := buildTableInfoWithCheck(NewMetaBuildContextWithSctx(ctx), createStmt, oldTableInfo.Charset, oldTableInfo.Collate, oldTableInfo.PlacementPolicyRef)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5525,7 +5511,7 @@ func (e *executor) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequen
 		return err
 	}
 	// TiDB describe the sequence within a tableInfo, as a same-level object of a table and view.
-	tbInfo, err := BuildTableInfo(ctx, ident.Name, nil, nil, "", "")
+	tbInfo, err := BuildTableInfo(NewMetaBuildContextWithSctx(ctx), ident.Name, nil, nil, "", "")
 	if err != nil {
 		return err
 	}

@@ -300,6 +300,13 @@ func (ctx *EvalContext) AppendWarning(err error) {
 	}
 }
 
+// AppendNote appends notes to the context.
+func (ctx *EvalContext) AppendNote(err error) {
+	if h := ctx.warnHandler; h != nil {
+		h.AppendNote(err)
+	}
+}
+
 // WarningCount gets warning count.
 func (ctx *EvalContext) WarningCount() int {
 	if h := ctx.warnHandler; h != nil {
