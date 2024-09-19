@@ -310,6 +310,6 @@ func TestCheckConstraintArgs(t *testing.T) {
 		args, err := GetCheckConstraintArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, "c1", args.ConstraintName.O)
-		require.Equal(t, true, args.Enforced)
+		require.True(t, args.Enforced)
 	}
 }

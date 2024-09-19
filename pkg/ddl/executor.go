@@ -6172,11 +6172,10 @@ func (e *executor) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, c
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	job.FillArgs(&model.AddCheckConstraintArgs{
+	args := &model.AddCheckConstraintArgs{
 		Constraint: constraintInfo,
-	})
-
-	err = e.DoDDLJob(ctx, job)
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -6206,15 +6205,13 @@ func (e *executor) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, con
 		Type:           model.ActionDropCheckConstraint,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		Args:           []any{constrName},
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	job.FillArgs(&model.CheckConstraintArgs{
+	args := &model.CheckConstraintArgs{
 		ConstraintName: constrName,
-	})
-
-	err = e.DoDDLJob(ctx, job)
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -6247,12 +6244,11 @@ func (e *executor) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, co
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	job.FillArgs(&model.CheckConstraintArgs{
+	args := &model.CheckConstraintArgs{
 		ConstraintName: constrName,
 		Enforced:       enforced,
-	})
-
-	err = e.DoDDLJob(ctx, job)
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
