@@ -530,7 +530,7 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 					continue
 				}
 
-				sub.RawArgs, err = marshalArgs(sub.Version, sub.Args)
+				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -874,7 +874,6 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Version     JobVersion      `json:"version"`
 	Type        ActionType      `json:"type"`
 	Args        []any           `json:"-"`
 	RawArgs     json.RawMessage `json:"raw_args"`
@@ -911,17 +910,6 @@ func (sub *SubJob) IsFinished() bool {
 
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
-	var jobVer JobVersion
-	// because in mock test case. the version = V1 in ActionMultiSchemaChange, but maybe the version = v2 in subjob.
-	// we should retain the version from subjob.
-	// to do:
-	// 		 we should set Version = sub.Version, after refactor all of DDL type.
-	if sub.Version == JobVersion2 {
-		jobVer = JobVersion2
-	} else {
-		jobVer = parentJob.Version
-	}
-
 	return Job{
 		ID:              parentJob.ID,
 		Type:            sub.Type,
@@ -944,7 +932,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		Version:         jobVer,
+		Version:         parentJob.Version,
 		ReorgMeta:       parentJob.ReorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,

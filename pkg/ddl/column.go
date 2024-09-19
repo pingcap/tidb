@@ -241,30 +241,6 @@ func checkDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (*model.T
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	// to do: we should refactor the interface to get arguments, after refactor all of DDL type.
-	/*
-		the interface:
-			func (job *Job) DecodeArgs()(args any, err error){
-				// return different args with given job type in job.
-				switch job.Type {
-				case ActionDropColumn:
-					//...
-					return &mode.DropColumnArgs{}
-				case ...
-				}
-			}
-
-		the caller:
-			args, err := job.DecodeArgs()
-			if err != nil {
-				return errors.trace(err)
-			}
-
-			dropColumnArgs, ok := args.(*mode.DropColumnArgs)
-			if !ok (){
-				return error.new(...)
-			}
-	*/
 	dropColumnArgs, err := model.GetDropColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
