@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/partialjson"
+	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 var (
@@ -1574,7 +1575,7 @@ type LastJobIterator interface {
 	GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error)
 }
 
-// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
+// GetLastHistoryDDLJobsIterator gets latest history ddl jobs iterator.
 func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
 	if err != nil {
@@ -1582,6 +1583,23 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	}
 	return &HLastJobIterator{
 		iter: iter,
+	}, nil
+}
+
+// GetLastHistoryDDLJobsIteratorWithFilter returns a iterator for getting latest history ddl jobs.
+// This iterator will also filter jobs using given schemaNames and tableNames
+func (m *Meta) GetLastHistoryDDLJobsIteratorWithFilter(
+	schemaNames set.StringSet,
+	tableNames set.StringSet,
+) (LastJobIterator, error) {
+	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
+	if err != nil {
+		return nil, err
+	}
+	return &HLastJobIterator{
+		iter:        iter,
+		schemaNames: schemaNames,
+		tableNames:  tableNames,
 	}, nil
 }
 
@@ -1599,7 +1617,53 @@ func (m *Meta) GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, err
 
 // HLastJobIterator is the iterator for gets the latest history.
 type HLastJobIterator struct {
-	iter *structure.ReverseHashIterator
+	iter        *structure.ReverseHashIterator
+	schemaNames set.StringSet
+	tableNames  set.StringSet
+}
+
+var jobExtractFields = []string{"schema_name", "table_name"}
+
+// ExtractSchemaAndTableNameFromJob extract schema_name and table_name from encoded Job structure
+// Note, here we strongly rely on the order of fields in marshalled string, just like checkSubstringsInOrder
+// Exported for test
+func ExtractSchemaAndTableNameFromJob(data []byte) (schemaName, tableName string, err error) {
+	m, err := partialjson.ExtractTopLevelMembers(data, jobExtractFields)
+
+	schemaNameToken, ok := m["schema_name"]
+	if !ok || len(schemaNameToken) != 1 {
+		return "", "", errors.New("name field not found in JSON")
+	}
+	schemaName, ok = schemaNameToken[0].(string)
+	if !ok {
+		return "", "", errors.Errorf("unexpected name field in JSON, %v", schemaNameToken)
+	}
+
+	tableNameToken, ok := m["table_name"]
+	if !ok || len(tableNameToken) != 1 {
+		return "", "", errors.New("name field not found in JSON")
+	}
+	tableName, ok = tableNameToken[0].(string)
+	if !ok {
+		return "", "", errors.Errorf("unexpected name field in JSON, %v", tableNameToken)
+	}
+	return
+}
+
+// IsJobMatch examines whether given job's table/schema name matches.
+func IsJobMatch(job []byte, schemaNames, tableNames set.StringSet) (match bool, err error) {
+	if schemaNames.Count() == 0 && tableNames.Count() == 0 {
+		return true, nil
+	}
+	schemaName, tableName, err := ExtractSchemaAndTableNameFromJob(job)
+	if err != nil {
+		return
+	}
+	if (schemaNames.Count() == 0 || schemaNames.Exist(schemaName)) &&
+		tableNames.Count() == 0 || tableNames.Exist(tableName) {
+		match = true
+	}
+	return
 }
 
 // GetLastJobs gets last several jobs.
@@ -1610,8 +1674,21 @@ func (i *HLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job
 	jobs = jobs[:0]
 	iter := i.iter
 	for iter.Valid() && len(jobs) < num {
+		match, err := IsJobMatch(iter.Value(), i.schemaNames, i.tableNames)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if !match {
+			err := iter.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			continue
+		}
+
 		job := &model.Job{}
-		err := job.Decode(iter.Value())
+		err = job.Decode(iter.Value())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

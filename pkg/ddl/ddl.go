@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -57,14 +58,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -77,8 +76,6 @@ const (
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
 	ddlPrompt          = "ddl"
-
-	shardRowIDBitsMax = 15
 
 	batchAddingJobs = 100
 
@@ -204,6 +201,7 @@ type JobWrapper struct {
 	// IDAllocated see config of same name in CreateTableConfig.
 	// exported for test.
 	IDAllocated bool
+	JobArgs     model.JobArgs
 	// job submission is run in async, we use this channel to notify the caller.
 	// when fast create table enabled, we might combine multiple jobs into one, and
 	// append the channel to this slice.
@@ -217,6 +215,17 @@ func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {
 	return &JobWrapper{
 		Job:         job,
 		IDAllocated: idAllocated,
+		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
+	}
+}
+
+// NewJobWrapperWithArgs creates a new JobWrapper with job args.
+// TODO: merge with NewJobWrapper later.
+func NewJobWrapperWithArgs(job *model.Job, args model.JobArgs, idAllocated bool) *JobWrapper {
+	return &JobWrapper{
+		Job:         job,
+		IDAllocated: idAllocated,
+		JobArgs:     args,
 		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
 	}
 }
@@ -314,7 +323,7 @@ type ddlCtx struct {
 	schemaVerSyncer   schemaver.Syncer
 	serverStateSyncer serverstate.Syncer
 
-	ddlEventCh   chan<- *statsutil.DDLEvent
+	ddlEventCh   chan<- *notifier.SchemaChangeEvent
 	lease        time.Duration        // lease is schema lease, default 45s, see config.Lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoCache    *infoschema.InfoCache
@@ -427,7 +436,7 @@ func (dc *ddlCtx) setDDLSourceForDiagnosis(jobID int64, jobType model.ActionType
 	ctx.setDDLLabelForDiagnosis(jobType)
 }
 
-func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) tikvrpc.ResourceGroupTagger {
+func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) *kv.ResourceGroupTagBuilder {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
@@ -556,7 +565,7 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *statsutil.DDLEvent, job *model.Job) {
+func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job) {
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.

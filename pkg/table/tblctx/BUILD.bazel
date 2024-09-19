@@ -1,0 +1,48 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tblctx",
+    srcs = [
+        "buffers.go",
+        "table.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/table/tblctx",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/errctx",
+        "//pkg/expression/exprctx",
+        "//pkg/infoschema/context",
+        "//pkg/kv",
+        "//pkg/meta/autoid",
+        "//pkg/meta/model",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/tablecodec",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/intest",
+        "//pkg/util/rowcodec",
+        "//pkg/util/tableutil",
+        "@com_github_pingcap_tipb//go-binlog",
+    ],
+)
+
+go_test(
+    name = "tblctx_test",
+    timeout = "short",
+    srcs = ["buffers_test.go"],
+    embed = [":tblctx"],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        "//pkg/errctx",
+        "//pkg/kv",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
+        "//pkg/tablecodec",
+        "//pkg/types",
+        "//pkg/util/rowcodec",
+        "@com_github_stretchr_testify//mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

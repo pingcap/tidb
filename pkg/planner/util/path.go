@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -145,7 +145,7 @@ func (path *AccessPath) IsTablePath() bool {
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
-func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx context.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
+func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	// The plan cache do not support subquery now. So we skip this function when
 	// 'MaybeOverOptimized4PlanCache' function return true .
 	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
@@ -356,7 +356,7 @@ func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 }
 
 // GetCol2LenFromAccessConds returns columns with lengths from path.AccessConds.
-func (path *AccessPath) GetCol2LenFromAccessConds(ctx context.PlanContext) Col2Len {
+func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2Len {
 	if path.IsTablePath() {
 		return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	}

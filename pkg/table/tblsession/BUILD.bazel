@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tblsession",
+    srcs = ["table.go"],
+    importpath = "github.com/pingcap/tidb/pkg/table/tblsession",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression/exprctx",
+        "//pkg/infoschema/context",
+        "//pkg/meta/autoid",
+        "//pkg/meta/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/table/tblctx",
+        "//pkg/util/intest",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-binlog",
+    ],
+)
+
+go_test(
+    name = "tblsession_test",
+    timeout = "short",
+    srcs = ["table_test.go"],
+    flaky = True,
+    deps = [
+        ":tblsession",
+        "//pkg/meta/model",
+        "//pkg/sessionctx/binloginfo",
+        "//pkg/sessionctx/variable",
+        "//pkg/table",
+        "//pkg/testkit",
+        "//pkg/util/mock",
+        "@com_github_pingcap_tipb//go-binlog",
+        "@com_github_stretchr_testify//require",
+    ],
+)
