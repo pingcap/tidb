@@ -1421,18 +1421,16 @@ func findBestTask4DS(ds *DataSource, prop *property.PhysicalProperty, planCounte
 			}
 			if canConvertPointGet && len(path.Ranges) > 1 {
 				// TODO: This is now implemented, but to decrease
-				// the impact of supporting plan cache for partitioning,
+				// the impact of supporting plan cache for patitioning,
 				// this is not yet enabled.
 				// TODO: just remove this if block and update/add tests...
 				// We can only build batch point get for hash partitions on a simple column now. This is
 				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
 				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
 				// BatchPointGet plan for more cases.
-				if canConvertPointGet {
-					hashPartColName := getHashOrKeyPartitionColumnName(ds.SCtx(), ds.table.Meta())
-					if hashPartColName == nil {
-						canConvertPointGet = false
-					}
+				hashPartColName := getHashOrKeyPartitionColumnName(ds.SCtx(), ds.table.Meta())
+				if hashPartColName == nil {
+					canConvertPointGet = false
 				}
 			}
 			// Partition table can't use `_tidb_rowid` to generate PointGet Plan unless one partition is explicitly specified.
@@ -2728,6 +2726,7 @@ func convertToBatchPointGet(ds *DataSource, prop *property.PhysicalProperty, can
 		if !found {
 			return base.InvalidTask
 		}
+
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			batchPointGetPlan.Init(ds.SCtx(), ds.TableStats.ScaleByExpectCnt(accessCnt), ds.Schema().Clone(), ds.OutputNames(), ds.QueryBlockOffset())
