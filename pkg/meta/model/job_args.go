@@ -382,24 +382,32 @@ func GetRenameTableArgs(job *Job) (*RenameTableArgs, error) {
 		oldSchemaID   int64
 		oldSchemaName pmodel.CIStr
 		newTableName  pmodel.CIStr
+		args          *RenameTableArgs
+		err           error
 	)
 
 	if job.Version == JobVersion1 {
 		// decode args and cache in args.
-		err := job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
+		err = job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		args := RenameTableArgs{
+		args = &RenameTableArgs{
 			OldSchemaID:   oldSchemaID,
 			OldSchemaName: oldSchemaName,
 			NewTableName:  newTableName,
 		}
-		return &args, nil
+	} else {
+		// for version V2
+		args, err = getOrDecodeArgsV2[*RenameTableArgs](job)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
-	// for version V2
-	return getOrDecodeArgsV2[*RenameTableArgs](job)
+	// NewSchemaID is used for checkAndRenameTables, which is not set for rename table.
+	args.NewSchemaID = job.SchemaID
+	return args, nil
 }
 
 // UpdateRenameTableArgs updates the rename table args.

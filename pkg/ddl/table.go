@@ -963,6 +963,7 @@ func finishJobRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job, arg
 	// Before updating the schema version, we need to reset the old schema ID to new schema ID, so that
 	// the table info can be dropped normally in `ApplyDiff`. This is because renaming table requires two
 	// schema versions to complete.
+	// TODO(joechenrh): set the old schemaID in Args is a bit hacky. Maybe we need a better solution.
 	var err error
 	oldRawArgs := job.RawArgs
 	for _, info := range infos {
