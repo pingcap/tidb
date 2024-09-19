@@ -29,7 +29,7 @@ import (
 )
 
 func TestWrapCastForAggFuncs(t *testing.T) {
-	ctx := exprstatic.NewStaticEvalContext()
+	ctx := exprstatic.NewEvalContext()
 
 	aggNames := []string{ast.AggFuncSum}
 	modes := []aggregation.AggFunctionMode{aggregation.CompleteMode,

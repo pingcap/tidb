@@ -35,7 +35,7 @@ func TestDetachExecutor(t *testing.T) {
 	// call `Detach` on a TableReaderExecutor will succeed
 	oldExec := &TableReaderExecutor{
 		tableReaderExecutorContext: tableReaderExecutorContext{
-			ectx: exprstatic.NewStaticExprContext(),
+			ectx: exprstatic.NewExprContext(),
 		},
 	}
 	newExec, ok := Detach(oldExec)
@@ -46,7 +46,7 @@ func TestDetachExecutor(t *testing.T) {
 	sess := mock.NewContext()
 	oldExec = &TableReaderExecutor{
 		tableReaderExecutorContext: tableReaderExecutorContext{
-			ectx: exprstatic.NewStaticExprContext(),
+			ectx: exprstatic.NewExprContext(),
 		},
 		BaseExecutorV2: exec.NewBaseExecutorV2(sess.GetSessionVars(), nil, 0, &mockSimpleExecutor{}),
 	}
@@ -56,12 +56,12 @@ func TestDetachExecutor(t *testing.T) {
 	// call `Detach` on a `TableReaderExecutor` with another `TableReaderExecutor` as child will succeed
 	child := &TableReaderExecutor{
 		tableReaderExecutorContext: tableReaderExecutorContext{
-			ectx: exprstatic.NewStaticExprContext(),
+			ectx: exprstatic.NewExprContext(),
 		},
 	}
 	parent := &TableReaderExecutor{
 		tableReaderExecutorContext: tableReaderExecutorContext{
-			ectx: exprstatic.NewStaticExprContext(),
+			ectx: exprstatic.NewExprContext(),
 		},
 		BaseExecutorV2: exec.NewBaseExecutorV2(sess.GetSessionVars(), nil, 0, child),
 	}

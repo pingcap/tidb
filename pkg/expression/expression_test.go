@@ -135,7 +135,7 @@ func TestIsBinaryLiteral(t *testing.T) {
 func TestConstLevel(t *testing.T) {
 	ctxConst := NewZero()
 	ctxConst.DeferredExpr = newFunctionWithMockCtx(ast.UnixTimestamp)
-	ctx := exprstatic.NewStaticEvalContext()
+	ctx := exprstatic.NewEvalContext()
 	for _, c := range []struct {
 		exp   Expression
 		level ConstLevel

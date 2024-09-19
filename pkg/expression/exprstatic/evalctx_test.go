@@ -37,14 +37,14 @@ import (
 func TestNewStaticEvalCtx(t *testing.T) {
 	// default context
 	prevID := contextutil.GenContextID()
-	ctx := NewStaticEvalContext()
+	ctx := NewEvalContext()
 	require.Equal(t, prevID+1, ctx.CtxID())
 	checkDefaultStaticEvalCtx(t, ctx)
 
 	// with options
 	prevID = ctx.CtxID()
 	options, stateForTest := getEvalCtxOptionsForTest(t)
-	ctx = NewStaticEvalContext(options...)
+	ctx = NewEvalContext(options...)
 	require.Equal(t, prevID+1, ctx.CtxID())
 	checkOptionsStaticEvalCtx(t, ctx, stateForTest)
 }
@@ -91,7 +91,7 @@ type evalCtxOptionsTestState struct {
 	privRet       bool
 }
 
-func getEvalCtxOptionsForTest(t *testing.T) ([]StaticEvalCtxOption, *evalCtxOptionsTestState) {
+func getEvalCtxOptionsForTest(t *testing.T) ([]EvalCtxOption, *evalCtxOptionsTestState) {
 	loc, err := time.LoadLocation("US/Eastern")
 	require.NoError(t, err)
 	s := &evalCtxOptionsTestState{
@@ -110,7 +110,7 @@ func getEvalCtxOptionsForTest(t *testing.T) ([]StaticEvalCtxOption, *evalCtxOpti
 		return s.ddlOwner
 	})
 
-	return []StaticEvalCtxOption{
+	return []EvalCtxOption{
 		WithWarnHandler(s.warnHandler),
 		WithSQLMode(mysql.ModeNoZeroDate | mysql.ModeStrictTransTables),
 		WithTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck),
@@ -217,7 +217,7 @@ func TestStaticEvalCtxCurrentTime(t *testing.T) {
 		return time.Time{}, errors.NewNoStackError("should not reach here")
 	}
 
-	ctx := NewStaticEvalContext(WithCurrentTime(getTime))
+	ctx := NewEvalContext(WithCurrentTime(getTime))
 
 	// get time for the first two times should fail
 	got, err := ctx.CurrentTime()
@@ -245,7 +245,7 @@ func TestStaticEvalCtxCurrentTime(t *testing.T) {
 	// CurrentTime should have the same location with `ctx.Location()`
 	loc2, err := time.LoadLocation("Australia/Sydney")
 	require.NoError(t, err)
-	ctx = NewStaticEvalContext(
+	ctx = NewEvalContext(
 		WithLocation(loc2),
 		WithCurrentTime(func() (time.Time, error) {
 			return tm, nil
@@ -294,19 +294,19 @@ func TestStaticEvalCtxCurrentTime(t *testing.T) {
 
 func TestStaticEvalCtxWarnings(t *testing.T) {
 	// default context should have a empty StaticWarningsHandler
-	ctx := NewStaticEvalContext()
+	ctx := NewEvalContext()
 	h, ok := ctx.warnHandler.(*contextutil.StaticWarnHandler)
 	require.True(t, ok)
 	require.Equal(t, 0, h.WarningCount())
 
 	// WithWarnHandler should work
 	ignoreHandler := contextutil.IgnoreWarn
-	ctx = NewStaticEvalContext(WithWarnHandler(ignoreHandler))
+	ctx = NewEvalContext(WithWarnHandler(ignoreHandler))
 	require.True(t, ctx.warnHandler == ignoreHandler)
 
 	// All contexts should use the same warning handler
 	h = contextutil.NewStaticWarnHandler(8)
-	ctx = NewStaticEvalContext(WithWarnHandler(h))
+	ctx = NewEvalContext(WithWarnHandler(h))
 	tc, ec := ctx.TypeCtx(), ctx.ErrCtx()
 	h.AppendWarning(errors.NewNoStackError("warn0"))
 	ctx.AppendWarning(errors.NewNoStackError("warn1"))
@@ -371,7 +371,7 @@ func TestStaticEvalCtxWarnings(t *testing.T) {
 }
 
 func TestStaticEvalContextOptionalProps(t *testing.T) {
-	ctx := NewStaticEvalContext()
+	ctx := NewEvalContext()
 	require.True(t, ctx.GetOptionalPropSet().IsEmpty())
 
 	ctx2 := ctx.Apply(WithOptionalProperty(
@@ -395,7 +395,7 @@ func TestStaticEvalContextOptionalProps(t *testing.T) {
 }
 
 func TestUpdateStaticEvalContext(t *testing.T) {
-	oldCtx := NewStaticEvalContext()
+	oldCtx := NewEvalContext()
 	ctx := oldCtx.Apply()
 
 	// Should return a different instance
@@ -405,17 +405,17 @@ func TestUpdateStaticEvalContext(t *testing.T) {
 	require.Greater(t, ctx.CtxID(), oldCtx.CtxID())
 
 	// inner state should not be the same address
-	require.NotSame(t, &oldCtx.staticEvalCtxState, &ctx.staticEvalCtxState)
+	require.NotSame(t, &oldCtx.evalCtxState, &ctx.evalCtxState)
 
 	// compare a state object by excluding some changed fields
-	excludeChangedFields := func(s *staticEvalCtxState) staticEvalCtxState {
+	excludeChangedFields := func(s *evalCtxState) evalCtxState {
 		state := *s
 		state.typeCtx = types.DefaultStmtNoWarningContext
 		state.errCtx = errctx.StrictNoWarningContext
 		state.currentTime = nil
 		return state
 	}
-	require.Equal(t, excludeChangedFields(&oldCtx.staticEvalCtxState), excludeChangedFields(&ctx.staticEvalCtxState))
+	require.Equal(t, excludeChangedFields(&oldCtx.evalCtxState), excludeChangedFields(&ctx.evalCtxState))
 
 	// check fields
 	checkDefaultStaticEvalCtx(t, ctx)
@@ -431,7 +431,7 @@ func TestUpdateStaticEvalContext(t *testing.T) {
 
 	// create with options
 	opts, optState = getEvalCtxOptionsForTest(t)
-	ctx3 := NewStaticEvalContext(opts...)
+	ctx3 := NewEvalContext(opts...)
 	require.Greater(t, ctx3.CtxID(), ctx2.CtxID())
 	checkOptionsStaticEvalCtx(t, ctx3, optState)
 }
@@ -441,7 +441,7 @@ func TestParamList(t *testing.T) {
 	paramList.Append(types.NewDatum(1))
 	paramList.Append(types.NewDatum(2))
 	paramList.Append(types.NewDatum(3))
-	ctx := NewStaticEvalContext(
+	ctx := NewEvalContext(
 		WithParamList(paramList),
 	)
 	for i := 0; i < 3; i++ {
@@ -477,7 +477,7 @@ func TestMakeEvalContextStatic(t *testing.T) {
 		return true
 	})
 
-	obj := NewStaticEvalContext(
+	obj := NewEvalContext(
 		WithWarnHandler(contextutil.NewStaticWarnHandler(16)),
 		WithSQLMode(mysql.ModeNoZeroDate|mysql.ModeStrictTransTables),
 		WithTypeFlags(types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck),
@@ -504,19 +504,19 @@ func TestMakeEvalContextStatic(t *testing.T) {
 	obj.AppendWarning(errors.New("test warning"))
 
 	ignorePath := []string{
-		"$.staticEvalCtxState.warnHandler.**",
-		"$.staticEvalCtxState.typeCtx.**",
-		"$.staticEvalCtxState.errCtx.**",
-		"$.staticEvalCtxState.currentTime.**",
-		"$.staticEvalCtxState.userVars.lock",
-		"$.staticEvalCtxState.props",
+		"$.evalCtxState.warnHandler.**",
+		"$.evalCtxState.typeCtx.**",
+		"$.evalCtxState.errCtx.**",
+		"$.evalCtxState.currentTime.**",
+		"$.evalCtxState.userVars.lock",
+		"$.evalCtxState.props",
 		"$.id",
 	}
-	deeptest.AssertRecursivelyNotEqual(t, obj, NewStaticEvalContext(),
+	deeptest.AssertRecursivelyNotEqual(t, obj, NewEvalContext(),
 		deeptest.WithIgnorePath(ignorePath),
 		deeptest.WithPointerComparePath([]string{
-			"$.staticEvalCtxState.requestVerificationFn",
-			"$.staticEvalCtxState.requestDynamicVerificationFn",
+			"$.evalCtxState.requestVerificationFn",
+			"$.evalCtxState.requestDynamicVerificationFn",
 		}))
 
 	staticObj := MakeEvalContextStatic(obj)
@@ -524,10 +524,10 @@ func TestMakeEvalContextStatic(t *testing.T) {
 	deeptest.AssertDeepClonedEqual(t, obj, staticObj,
 		deeptest.WithIgnorePath(ignorePath),
 		deeptest.WithPointerComparePath([]string{
-			"$.staticEvalCtxState.warnHandler",
-			"$.staticEvalCtxState.paramList*.b",
-			"$.staticEvalCtxState.requestVerificationFn",
-			"$.staticEvalCtxState.requestDynamicVerificationFn",
+			"$.evalCtxState.warnHandler",
+			"$.evalCtxState.paramList*.b",
+			"$.evalCtxState.requestVerificationFn",
+			"$.evalCtxState.requestDynamicVerificationFn",
 		}),
 	)
 
@@ -650,7 +650,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
 	}
 
-	defaultEvalCtx := NewStaticEvalContext()
+	defaultEvalCtx := NewEvalContext()
 	ctx, err := defaultEvalCtx.LoadSystemVars(varsMap)
 	require.NoError(t, err)
 	require.Greater(t, ctx.CtxID(), defaultEvalCtx.CtxID())
@@ -659,8 +659,8 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 	// all system variables related fields are covered in the test list.
 	deeptest.AssertRecursivelyNotEqual(
 		t,
-		defaultEvalCtx.staticEvalCtxState,
-		ctx.staticEvalCtxState,
+		defaultEvalCtx.evalCtxState,
+		ctx.evalCtxState,
 		deeptest.WithIgnorePath(nonVarRelatedFields),
 		deeptest.WithPointerComparePath([]string{"$.currentTime"}),
 	)
@@ -669,8 +669,8 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 	// not inherited from the empty go value.
 	deeptest.AssertRecursivelyNotEqual(
 		t,
-		staticEvalCtxState{},
-		ctx.staticEvalCtxState,
+		evalCtxState{},
+		ctx.evalCtxState,
 		deeptest.WithIgnorePath(nonVarRelatedFields),
 		deeptest.WithPointerComparePath([]string{"$.currentTime"}),
 	)
@@ -678,8 +678,8 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 	// Check all system vars unrelated fields are not changed after `LoadSystemVars`.
 	deeptest.AssertDeepClonedEqual(
 		t,
-		defaultEvalCtx.staticEvalCtxState,
-		ctx.staticEvalCtxState,
+		defaultEvalCtx.evalCtxState,
+		ctx.evalCtxState,
 		deeptest.WithIgnorePath(append(
 			varsRelatedFields,
 			// Do not check warnHandler in `typeCtx` and `errCtx` because they should be changed to even if

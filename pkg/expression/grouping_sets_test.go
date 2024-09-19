@@ -312,7 +312,7 @@ func TestGroupingSetsMergeUnitTest(t *testing.T) {
 
 func TestDistinctGroupingSets(t *testing.T) {
 	defer view.Stop()
-	ctx := exprstatic.NewStaticEvalContext()
+	ctx := exprstatic.NewEvalContext()
 
 	// premise: every grouping item in grouping sets should be a col.
 	a := &Column{

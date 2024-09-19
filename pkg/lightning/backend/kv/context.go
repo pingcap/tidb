@@ -61,7 +61,7 @@ func newLitExprContext(sqlMode mysql.SQLMode, sysVars map[string]string, timesta
 		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
 
 	userVars := variable.NewUserVars()
-	evalCtx := exprstatic.NewStaticEvalContext(
+	evalCtx := exprstatic.NewEvalContext(
 		exprstatic.WithSQLMode(sqlMode),
 		exprstatic.WithTypeFlags(flags),
 		exprstatic.WithLocation(timeutil.SystemLocation()),
@@ -72,7 +72,7 @@ func newLitExprContext(sqlMode mysql.SQLMode, sysVars map[string]string, timesta
 	// no need to build as plan cache.
 	planCacheTracker := contextutil.NewPlanCacheTracker(contextutil.IgnoreWarn)
 	intest.Assert(!planCacheTracker.UseCache())
-	ctx := exprstatic.NewStaticExprContext(
+	ctx := exprstatic.NewExprContext(
 		exprstatic.WithEvalCtx(evalCtx),
 		exprstatic.WithPlanCacheTracker(&planCacheTracker),
 	)

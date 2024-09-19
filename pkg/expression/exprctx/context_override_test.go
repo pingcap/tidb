@@ -47,14 +47,14 @@ func TestCtxWithHandleTruncateErrLevel(t *testing.T) {
 			require.FailNow(t, "unexpected level")
 		}
 
-		evalCtx := exprstatic.NewStaticEvalContext(
+		evalCtx := exprstatic.NewEvalContext(
 			exprstatic.WithTypeFlags(originalFlags),
 			exprstatic.WithLocation(originalLoc),
 			exprstatic.WithErrLevelMap(errctx.LevelMap{errctx.ErrGroupTruncate: level}),
 		)
 
 		tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
-		ctx := exprstatic.NewStaticExprContext(
+		ctx := exprstatic.NewExprContext(
 			exprstatic.WithEvalCtx(evalCtx),
 			exprstatic.WithConnectionID(1234),
 		)

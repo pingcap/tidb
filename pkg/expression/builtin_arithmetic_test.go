@@ -30,7 +30,7 @@ import (
 )
 
 func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
-	ctx := exprstatic.NewStaticEvalContext()
+	ctx := exprstatic.NewEvalContext()
 	ret := &types.FieldType{}
 	a := &types.FieldType{}
 	a.SetDecimal(1)

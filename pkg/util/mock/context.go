@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
-	"github.com/pingcap/tidb/pkg/expression/exprsession"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -63,7 +63,7 @@ var (
 // Context represents mocked sessionctx.Context.
 type Context struct {
 	planctx.EmptyPlanContextExtended
-	*exprsession.ExprContext
+	*sessionexpr.ExprContext
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
@@ -636,7 +636,7 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
-	sctx.ExprContext = exprsession.NewExprContext(sctx)
+	sctx.ExprContext = sessionexpr.NewExprContext(sctx)
 	sctx.tblctx = tblsession.NewMutateContext(sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32

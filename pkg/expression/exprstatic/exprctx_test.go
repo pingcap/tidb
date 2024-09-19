@@ -31,17 +31,17 @@ import (
 
 func TestNewStaticExprCtx(t *testing.T) {
 	prevID := contextutil.GenContextID()
-	ctx := NewStaticExprContext()
+	ctx := NewExprContext()
 	require.Equal(t, ctx.GetEvalCtx().CtxID(), prevID+1)
 	checkDefaultStaticExprCtx(t, ctx)
 
 	opts, s := getExprCtxOptionsForTest()
-	ctx = NewStaticExprContext(opts...)
+	ctx = NewExprContext(opts...)
 	checkOptionsStaticExprCtx(t, ctx, s)
 }
 
 func TestStaticExprCtxApplyOptions(t *testing.T) {
-	ctx := NewStaticExprContext()
+	ctx := NewExprContext()
 	oldEvalCtx := ctx.evalCtx
 	oldColumnIDAllocator := ctx.columnIDAllocator
 
@@ -88,15 +88,15 @@ type exprCtxOptionsTestState struct {
 	skipCacheArgs []any
 }
 
-func getExprCtxOptionsForTest() ([]StaticExprCtxOption, *exprCtxOptionsTestState) {
+func getExprCtxOptionsForTest() ([]ExprCtxOption, *exprCtxOptionsTestState) {
 	s := &exprCtxOptionsTestState{
-		evalCtx:    NewStaticEvalContext(WithLocation(time.FixedZone("UTC+11", 11*3600))),
+		evalCtx:    NewEvalContext(WithLocation(time.FixedZone("UTC+11", 11*3600))),
 		colIDAlloc: exprctx.NewSimplePlanColumnIDAllocator(1024),
 		rng:        mathutil.NewWithSeed(12345678),
 	}
 	planCacheTracker := contextutil.NewPlanCacheTracker(s.evalCtx)
 
-	return []StaticExprCtxOption{
+	return []ExprCtxOption{
 		WithEvalCtx(s.evalCtx),
 		WithCharset("gbk", "gbk_bin"),
 		WithDefaultCollationForUTF8MB4("utf8mb4_0900_ai_ci"),
@@ -133,7 +133,7 @@ func checkOptionsStaticExprCtx(t *testing.T, ctx *ExprContext, s *exprCtxOptions
 
 func TestExprCtxColumnIDAllocator(t *testing.T) {
 	// default
-	ctx := NewStaticExprContext()
+	ctx := NewExprContext()
 	alloc := ctx.columnIDAllocator
 	require.NotNil(t, alloc)
 	_, ok := ctx.columnIDAllocator.(*exprctx.SimplePlanColumnIDAllocator)
@@ -156,15 +156,15 @@ func TestExprCtxColumnIDAllocator(t *testing.T) {
 
 	// New context with allocator
 	alloc = exprctx.NewSimplePlanColumnIDAllocator(2048)
-	ctx4 := NewStaticExprContext(WithColumnIDAllocator(alloc))
+	ctx4 := NewExprContext(WithColumnIDAllocator(alloc))
 	require.Same(t, alloc, ctx4.columnIDAllocator)
 	require.Equal(t, int64(2049), ctx4.AllocPlanColumnID())
 }
 
 func TestMakeExprContextStatic(t *testing.T) {
-	evalCtx := NewStaticEvalContext()
+	evalCtx := NewEvalContext()
 	planCacheTracker := contextutil.NewPlanCacheTracker(evalCtx.warnHandler)
-	obj := NewStaticExprContext(
+	obj := NewExprContext(
 		WithEvalCtx(evalCtx),
 		WithCharset("a", "b"),
 		WithDefaultCollationForUTF8MB4("c"),
@@ -180,13 +180,13 @@ func TestMakeExprContextStatic(t *testing.T) {
 	)
 
 	ignorePath := []string{
-		"$.staticExprCtxState.evalCtx**",
+		"$.exprCtxState.evalCtx**",
 	}
-	deeptest.AssertRecursivelyNotEqual(t, obj, NewStaticExprContext(),
+	deeptest.AssertRecursivelyNotEqual(t, obj, NewExprContext(),
 		deeptest.WithIgnorePath(ignorePath),
 		deeptest.WithPointerComparePath([]string{
-			"$.staticExprCtxState.rng",
-			"$.staticExprCtxState.planCacheTracker",
+			"$.exprCtxState.rng",
+			"$.exprCtxState.planCacheTracker",
 		}),
 	)
 
@@ -194,8 +194,8 @@ func TestMakeExprContextStatic(t *testing.T) {
 	deeptest.AssertDeepClonedEqual(t, obj, staticObj,
 		deeptest.WithIgnorePath(ignorePath),
 		deeptest.WithPointerComparePath([]string{
-			"$.staticExprCtxState.rng",
-			"$.staticExprCtxState.planCacheTracker",
+			"$.exprCtxState.rng",
+			"$.exprCtxState.planCacheTracker",
 		}))
 
 	require.NotSame(t, obj.GetEvalCtx(), staticObj.GetEvalCtx())
@@ -309,7 +309,7 @@ func TestExprCtxLoadSystemVars(t *testing.T) {
 		require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
 	}
 
-	defaultCtx := NewStaticExprContext()
+	defaultCtx := NewExprContext()
 	ctx, err := defaultCtx.LoadSystemVars(varsMap)
 	require.NoError(t, err)
 
@@ -317,8 +317,8 @@ func TestExprCtxLoadSystemVars(t *testing.T) {
 	// all system variables related fields are covered in the test list.
 	deeptest.AssertRecursivelyNotEqual(
 		t,
-		defaultCtx.staticExprCtxState,
-		ctx.staticExprCtxState,
+		defaultCtx.exprCtxState,
+		ctx.exprCtxState,
 		// ignore `evalCtx` because we'll test it standalone.
 		deeptest.WithIgnorePath(append(nonVarRelatedFields, "$.evalCtx")),
 	)
@@ -327,8 +327,8 @@ func TestExprCtxLoadSystemVars(t *testing.T) {
 	// not inherited from the empty go value.
 	deeptest.AssertRecursivelyNotEqual(
 		t,
-		staticExprCtxState{},
-		ctx.staticExprCtxState,
+		exprCtxState{},
+		ctx.exprCtxState,
 		// ignore `windowingUseHighPrecision` because we set it to `false` in test case.
 		deeptest.WithIgnorePath(append(nonVarRelatedFields, "$.evalCtx", "$.windowingUseHighPrecision")),
 	)
@@ -336,8 +336,8 @@ func TestExprCtxLoadSystemVars(t *testing.T) {
 	// Check all system vars unrelated fields are not changed after `LoadSystemVars`.
 	deeptest.AssertDeepClonedEqual(
 		t,
-		defaultCtx.staticExprCtxState,
-		ctx.staticExprCtxState,
+		defaultCtx.exprCtxState,
+		ctx.exprCtxState,
 		deeptest.WithIgnorePath(append(varsRelatedFields, "$.evalCtx")),
 		// LoadSystemVars only does shallow copy for `EvalContext` so we just need to compare the pointers.
 		deeptest.WithPointerComparePath(nonVarRelatedFields),

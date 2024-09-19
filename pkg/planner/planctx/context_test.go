@@ -26,7 +26,7 @@ import (
 func TestContextDetach(t *testing.T) {
 	warnHandler := contextutil.NewStaticWarnHandler(5)
 	obj := &BuildPBContext{
-		ExprCtx:                            exprstatic.NewStaticExprContext(),
+		ExprCtx:                            exprstatic.NewExprContext(),
 		TiFlashFastScan:                    true,
 		TiFlashFineGrainedShuffleBatchSize: 1,
 		GroupConcatMaxLen:                  1,

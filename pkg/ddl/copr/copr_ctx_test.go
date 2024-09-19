@@ -202,7 +202,7 @@ func TestCollectVirtualColumnOffsetsAndTypes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := exprstatic.NewStaticEvalContext()
+			ctx := exprstatic.NewEvalContext()
 			gotOffsets, gotFt := collectVirtualColumnOffsetsAndTypes(ctx, tt.cols)
 			require.Equal(t, gotOffsets, tt.offsets)
 			require.Equal(t, len(gotFt), len(tt.fieldTp))

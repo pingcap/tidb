@@ -32,7 +32,7 @@ func TestContextDetach(t *testing.T) {
 	obj := &RangerContext{
 		TypeCtx:                  types.DefaultStmtNoWarningContext,
 		ErrCtx:                   errctx.StrictNoWarningContext,
-		ExprCtx:                  exprstatic.NewStaticExprContext(),
+		ExprCtx:                  exprstatic.NewExprContext(),
 		RangeFallbackHandler:     &rangeFallbackHandler,
 		PlanCacheTracker:         &planCacheTracker,
 		OptimizerFixControl:      map[uint64]string{1: "a"},

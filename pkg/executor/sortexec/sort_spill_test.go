@@ -100,7 +100,7 @@ func (r *resultChecker) initRowPtrs() {
 }
 
 func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count int64) bool {
-	ctx := exprstatic.NewStaticEvalContext()
+	ctx := exprstatic.NewEvalContext()
 
 	if r.rowPtrs == nil {
 		r.initRowPtrs()

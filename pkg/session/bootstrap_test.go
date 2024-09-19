@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/expression/exprsession"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -154,7 +154,7 @@ func TestBootstrapWithError(t *testing.T) {
 			store:       store,
 			sessionVars: variable.NewSessionVars(nil),
 		}
-		se.exprctx = exprsession.NewExprContext(se)
+		se.exprctx = sessionexpr.NewExprContext(se)
 		se.pctx = newPlanContextImpl(se)
 		se.tblctx = tblsession.NewMutateContext(se)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()

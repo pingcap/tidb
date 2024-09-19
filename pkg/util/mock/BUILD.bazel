@@ -14,7 +14,7 @@ go_library(
     deps = [
         "//pkg/distsql/context",
         "//pkg/expression/exprctx",
-        "//pkg/expression/exprsession",
+        "//pkg/expression/sessionexpr",
         "//pkg/extension",
         "//pkg/infoschema/context",
         "//pkg/kv",

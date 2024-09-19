@@ -209,7 +209,7 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 	ignoreFields := make([]string, 0, len(exprCtxManualCheckFields))
 	for _, f := range exprCtxManualCheckFields {
 		f.check(exprCtx)
-		ignoreFields = append(ignoreFields, "$.staticExprCtxState."+f.field)
+		ignoreFields = append(ignoreFields, "$.exprCtxState."+f.field)
 	}
 	deeptest.AssertDeepClonedEqual(t, expected, exprCtx, deeptest.WithIgnorePath(ignoreFields))
 
@@ -218,7 +218,7 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 	ignoreFields = append(ignoreFields, "$.id")
 	for _, f := range evalCtxManualCheckFields {
 		f.check(exprCtx.GetStaticEvalCtx())
-		ignoreFields = append(ignoreFields, "$.staticEvalCtxState."+f.field)
+		ignoreFields = append(ignoreFields, "$.evalCtxState."+f.field)
 	}
 	deeptest.AssertDeepClonedEqual(
 		t,
@@ -298,7 +298,7 @@ func TestReorgTableMutateContext(t *testing.T) {
 	originalRowFmt := variable.GetDDLReorgRowFormat()
 	defer variable.SetDDLReorgRowFormat(originalRowFmt)
 
-	exprCtx := exprstatic.NewStaticExprContext()
+	exprCtx := exprstatic.NewExprContext()
 
 	assertTblCtxMatchSessionCtx := func(ctx table.MutateContext, sctx sessionctx.Context) {
 		sctxTblCtx := sctx.GetTableCtx()

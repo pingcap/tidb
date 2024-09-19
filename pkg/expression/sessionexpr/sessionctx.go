@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package exprsession
+package sessionexpr
 
 import (
 	"context"
@@ -46,20 +46,20 @@ var _ exprctx.ExprContext = &ExprContext{}
 // ExprContext implements `ExprContext`
 type ExprContext struct {
 	sctx sessionctx.Context
-	*SessionEvalContext
+	*EvalContext
 }
 
 // NewExprContext creates a new ExprContext.
 func NewExprContext(sctx sessionctx.Context) *ExprContext {
 	return &ExprContext{
-		sctx:               sctx,
-		SessionEvalContext: NewSessionEvalContext(sctx),
+		sctx:        sctx,
+		EvalContext: NewEvalContext(sctx),
 	}
 }
 
 // GetEvalCtx returns the EvalContext.
 func (ctx *ExprContext) GetEvalCtx() exprctx.EvalContext {
-	return ctx.SessionEvalContext
+	return ctx.EvalContext
 }
 
 // GetCharsetInfo gets charset and collation for current context.
@@ -142,15 +142,15 @@ func (ctx *ExprContext) IntoStatic() *exprstatic.ExprContext {
 	return exprstatic.MakeExprContextStatic(ctx)
 }
 
-// SessionEvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
-type SessionEvalContext struct {
+// EvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
+type EvalContext struct {
 	sctx  sessionctx.Context
 	props expropt.OptionalEvalPropProviders
 }
 
-// NewSessionEvalContext creates a new SessionEvalContext.
-func NewSessionEvalContext(sctx sessionctx.Context) *SessionEvalContext {
-	ctx := &SessionEvalContext{sctx: sctx}
+// NewEvalContext creates a new EvalContext.
+func NewEvalContext(sctx sessionctx.Context) *EvalContext {
+	ctx := &EvalContext{sctx: sctx}
 	// set all optional properties
 	ctx.setOptionalProp(currentUserProp(sctx))
 	ctx.setOptionalProp(expropt.NewSessionVarsProvider(sctx))
@@ -165,7 +165,7 @@ func NewSessionEvalContext(sctx sessionctx.Context) *SessionEvalContext {
 	return ctx
 }
 
-func (ctx *SessionEvalContext) setOptionalProp(prop exprctx.OptionalEvalPropProvider) {
+func (ctx *EvalContext) setOptionalProp(prop exprctx.OptionalEvalPropProvider) {
 	intest.AssertFunc(func() bool {
 		return !ctx.props.Contains(prop.Desc().Key())
 	})
@@ -173,22 +173,22 @@ func (ctx *SessionEvalContext) setOptionalProp(prop exprctx.OptionalEvalPropProv
 }
 
 // Sctx returns the innert session context
-func (ctx *SessionEvalContext) Sctx() sessionctx.Context {
+func (ctx *EvalContext) Sctx() sessionctx.Context {
 	return ctx.sctx
 }
 
 // CtxID returns the context id.
-func (ctx *SessionEvalContext) CtxID() uint64 {
+func (ctx *EvalContext) CtxID() uint64 {
 	return ctx.sctx.GetSessionVars().StmtCtx.CtxID()
 }
 
 // SQLMode returns the sql mode
-func (ctx *SessionEvalContext) SQLMode() mysql.SQLMode {
+func (ctx *EvalContext) SQLMode() mysql.SQLMode {
 	return ctx.sctx.GetSessionVars().SQLMode
 }
 
 // TypeCtx returns the types.Context
-func (ctx *SessionEvalContext) TypeCtx() (tc types.Context) {
+func (ctx *EvalContext) TypeCtx() (tc types.Context) {
 	tc = ctx.sctx.GetSessionVars().StmtCtx.TypeCtx()
 	if intest.InTest {
 		exprctx.AssertLocationWithSessionVars(tc.Location(), ctx.sctx.GetSessionVars())
@@ -197,58 +197,58 @@ func (ctx *SessionEvalContext) TypeCtx() (tc types.Context) {
 }
 
 // ErrCtx returns the errctx.Context
-func (ctx *SessionEvalContext) ErrCtx() errctx.Context {
+func (ctx *EvalContext) ErrCtx() errctx.Context {
 	return ctx.sctx.GetSessionVars().StmtCtx.ErrCtx()
 }
 
 // Location returns the timezone info
-func (ctx *SessionEvalContext) Location() *time.Location {
+func (ctx *EvalContext) Location() *time.Location {
 	tc := ctx.TypeCtx()
 	return tc.Location()
 }
 
 // AppendWarning append warnings to the context.
-func (ctx *SessionEvalContext) AppendWarning(err error) {
+func (ctx *EvalContext) AppendWarning(err error) {
 	ctx.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 }
 
 // WarningCount gets warning count.
-func (ctx *SessionEvalContext) WarningCount() int {
+func (ctx *EvalContext) WarningCount() int {
 	return int(ctx.sctx.GetSessionVars().StmtCtx.WarningCount())
 }
 
 // TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
-func (ctx *SessionEvalContext) TruncateWarnings(start int) []contextutil.SQLWarn {
+func (ctx *EvalContext) TruncateWarnings(start int) []contextutil.SQLWarn {
 	return ctx.sctx.GetSessionVars().StmtCtx.TruncateWarnings(start)
 }
 
 // CopyWarnings copies the warnings to dst
-func (ctx *SessionEvalContext) CopyWarnings(dst []contextutil.SQLWarn) []contextutil.SQLWarn {
+func (ctx *EvalContext) CopyWarnings(dst []contextutil.SQLWarn) []contextutil.SQLWarn {
 	return ctx.sctx.GetSessionVars().StmtCtx.CopyWarnings(dst)
 }
 
 // CurrentDB returns the current database name
-func (ctx *SessionEvalContext) CurrentDB() string {
+func (ctx *EvalContext) CurrentDB() string {
 	return ctx.sctx.GetSessionVars().CurrentDB
 }
 
 // CurrentTime returns the current time
-func (ctx *SessionEvalContext) CurrentTime() (time.Time, error) {
+func (ctx *EvalContext) CurrentTime() (time.Time, error) {
 	return getStmtTimestamp(ctx.sctx)
 }
 
 // GetMaxAllowedPacket returns the value of the 'max_allowed_packet' system variable.
-func (ctx *SessionEvalContext) GetMaxAllowedPacket() uint64 {
+func (ctx *EvalContext) GetMaxAllowedPacket() uint64 {
 	return ctx.sctx.GetSessionVars().MaxAllowedPacket
 }
 
 // GetTiDBRedactLog returns the value of the 'tidb_redact_log' system variable.
-func (ctx *SessionEvalContext) GetTiDBRedactLog() string {
+func (ctx *EvalContext) GetTiDBRedactLog() string {
 	return ctx.sctx.GetSessionVars().EnableRedactLog
 }
 
 // GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
-func (ctx *SessionEvalContext) GetDefaultWeekFormatMode() string {
+func (ctx *EvalContext) GetDefaultWeekFormatMode() string {
 	mode, ok := ctx.sctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
 	if !ok || mode == "" {
 		return "0"
@@ -257,22 +257,22 @@ func (ctx *SessionEvalContext) GetDefaultWeekFormatMode() string {
 }
 
 // GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
-func (ctx *SessionEvalContext) GetDivPrecisionIncrement() int {
+func (ctx *EvalContext) GetDivPrecisionIncrement() int {
 	return ctx.sctx.GetSessionVars().GetDivPrecisionIncrement()
 }
 
 // GetOptionalPropSet gets the optional property set from context
-func (ctx *SessionEvalContext) GetOptionalPropSet() exprctx.OptionalEvalPropKeySet {
+func (ctx *EvalContext) GetOptionalPropSet() exprctx.OptionalEvalPropKeySet {
 	return ctx.props.PropKeySet()
 }
 
 // GetOptionalPropProvider gets the optional property provider by key
-func (ctx *SessionEvalContext) GetOptionalPropProvider(key exprctx.OptionalEvalPropKey) (exprctx.OptionalEvalPropProvider, bool) {
+func (ctx *EvalContext) GetOptionalPropProvider(key exprctx.OptionalEvalPropKey) (exprctx.OptionalEvalPropProvider, bool) {
 	return ctx.props.Get(key)
 }
 
 // RequestVerification verifies user privilege
-func (ctx *SessionEvalContext) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
+func (ctx *EvalContext) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
 	checker := privilege.GetPrivilegeManager(ctx.sctx)
 	if checker == nil {
 		return true
@@ -281,7 +281,7 @@ func (ctx *SessionEvalContext) RequestVerification(db, table, column string, pri
 }
 
 // RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
-func (ctx *SessionEvalContext) RequestDynamicVerification(privName string, grantable bool) bool {
+func (ctx *EvalContext) RequestDynamicVerification(privName string, grantable bool) bool {
 	checker := privilege.GetPrivilegeManager(ctx.sctx)
 	if checker == nil {
 		return true
@@ -290,7 +290,7 @@ func (ctx *SessionEvalContext) RequestDynamicVerification(privName string, grant
 }
 
 // GetParamValue returns the value of the parameter by index.
-func (ctx *SessionEvalContext) GetParamValue(idx int) (types.Datum, error) {
+func (ctx *EvalContext) GetParamValue(idx int) (types.Datum, error) {
 	params := ctx.sctx.GetSessionVars().PlanCacheParams.AllParamValues()
 	if idx >= len(params) {
 		return types.Datum{}, exprctx.ErrParamIndexExceedParamCounts
@@ -299,12 +299,12 @@ func (ctx *SessionEvalContext) GetParamValue(idx int) (types.Datum, error) {
 }
 
 // GetUserVarsReader returns the user variables.
-func (ctx *SessionEvalContext) GetUserVarsReader() variable.UserVarsReader {
+func (ctx *EvalContext) GetUserVarsReader() variable.UserVarsReader {
 	return ctx.sctx.GetSessionVars().UserVars
 }
 
-// IntoStatic turns the SessionEvalContext into a EvalContext.
-func (ctx *SessionEvalContext) IntoStatic() *exprstatic.EvalContext {
+// IntoStatic turns the EvalContext into a EvalContext.
+func (ctx *EvalContext) IntoStatic() *exprstatic.EvalContext {
 	return exprstatic.MakeEvalContextStatic(ctx)
 }
 
@@ -393,7 +393,7 @@ var _ exprctx.StaticConvertibleExprContext = &ExprContext{}
 
 // GetStaticConvertibleEvalContext implements context.StaticConvertibleExprContext.
 func (ctx *ExprContext) GetStaticConvertibleEvalContext() exprctx.StaticConvertibleEvalContext {
-	return ctx.SessionEvalContext
+	return ctx.EvalContext
 }
 
 // GetPlanCacheTracker implements context.StaticConvertibleExprContext.
@@ -406,15 +406,15 @@ func (ctx *ExprContext) GetLastPlanColumnID() int64 {
 	return ctx.sctx.GetSessionVars().PlanColumnID.Load()
 }
 
-var _ exprctx.StaticConvertibleEvalContext = &SessionEvalContext{}
+var _ exprctx.StaticConvertibleEvalContext = &EvalContext{}
 
 // AllParamValues implements context.StaticConvertibleEvalContext.
-func (ctx *SessionEvalContext) AllParamValues() []types.Datum {
+func (ctx *EvalContext) AllParamValues() []types.Datum {
 	return ctx.sctx.GetSessionVars().PlanCacheParams.AllParamValues()
 }
 
 // GetDynamicPrivCheckFn implements context.StaticConvertibleEvalContext.
-func (ctx *SessionEvalContext) GetDynamicPrivCheckFn() func(privName string, grantable bool) bool {
+func (ctx *EvalContext) GetDynamicPrivCheckFn() func(privName string, grantable bool) bool {
 	checker := privilege.GetPrivilegeManager(ctx.sctx)
 	activeRoles := make([]*auth.RoleIdentity, len(ctx.sctx.GetSessionVars().ActiveRoles))
 	copy(activeRoles, ctx.sctx.GetSessionVars().ActiveRoles)
@@ -429,7 +429,7 @@ func (ctx *SessionEvalContext) GetDynamicPrivCheckFn() func(privName string, gra
 }
 
 // GetRequestVerificationFn implements context.StaticConvertibleEvalContext.
-func (ctx *SessionEvalContext) GetRequestVerificationFn() func(db string, table string, column string, priv mysql.PrivilegeType) bool {
+func (ctx *EvalContext) GetRequestVerificationFn() func(db string, table string, column string, priv mysql.PrivilegeType) bool {
 	checker := privilege.GetPrivilegeManager(ctx.sctx)
 	activeRoles := make([]*auth.RoleIdentity, len(ctx.sctx.GetSessionVars().ActiveRoles))
 	copy(activeRoles, ctx.sctx.GetSessionVars().ActiveRoles)
@@ -444,6 +444,6 @@ func (ctx *SessionEvalContext) GetRequestVerificationFn() func(db string, table 
 }
 
 // GetWarnHandler implements context.StaticConvertibleEvalContext.
-func (ctx *SessionEvalContext) GetWarnHandler() contextutil.WarnHandler {
+func (ctx *EvalContext) GetWarnHandler() contextutil.WarnHandler {
 	return ctx.sctx.GetSessionVars().StmtCtx.WarnHandler
 }

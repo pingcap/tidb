@@ -241,8 +241,8 @@ func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partiti
 
 // NewPartitionExprBuildCtx returns a context to build partition expression.
 func NewPartitionExprBuildCtx() expression.BuildContext {
-	return exprstatic.NewStaticExprContext(
-		exprstatic.WithEvalCtx(exprstatic.NewStaticEvalContext(
+	return exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(exprstatic.NewEvalContext(
 			// Set a non-strict SQL mode and allow all date values if possible to make sure constant fold can work to
 			// estimate some undetermined result when locating a row to a partition.
 			// See issue: https://github.com/pingcap/tidb/issues/54271 for details.

@@ -209,7 +209,7 @@ func EvalExpireTime(now time.Time, interval string, unit ast.TimeUnitType) (time
 		now.Nanosecond(), time.UTC,
 	)
 
-	exprCtx := exprstatic.NewStaticExprContext()
+	exprCtx := exprstatic.NewExprContext()
 	// we need to set the location to UTC to make sure the time is in the same timezone as the start time.
 	intest.Assert(exprCtx.GetEvalCtx().Location() == time.UTC)
 	expr, err := expression.ParseSimpleExpr(

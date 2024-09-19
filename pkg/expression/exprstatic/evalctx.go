@@ -67,9 +67,9 @@ func (t *timeOnce) getTime(loc *time.Location) (tm time.Time, err error) {
 	return
 }
 
-// staticEvalCtxState is the internal state for `EvalContext`.
-// We make it as a standalone private struct here to make sure `StaticEvalCtxOption` can only be called in constructor.
-type staticEvalCtxState struct {
+// evalCtxState is the internal state for `EvalContext`.
+// We make it as a standalone private struct here to make sure `EvalCtxOption` can only be called in constructor.
+type evalCtxState struct {
 	warnHandler                  contextutil.WarnHandler
 	sqlMode                      mysql.SQLMode
 	typeCtx                      types.Context
@@ -87,108 +87,108 @@ type staticEvalCtxState struct {
 	props                        expropt.OptionalEvalPropProviders
 }
 
-// StaticEvalCtxOption is the option to set `EvalContext`.
-type StaticEvalCtxOption func(*staticEvalCtxState)
+// EvalCtxOption is the option to set `EvalContext`.
+type EvalCtxOption func(*evalCtxState)
 
 // WithWarnHandler sets the warn handler for the `EvalContext`.
-func WithWarnHandler(h contextutil.WarnHandler) StaticEvalCtxOption {
+func WithWarnHandler(h contextutil.WarnHandler) EvalCtxOption {
 	intest.AssertNotNil(h)
 	if h == nil {
 		// this should not happen, just to keep code safe
 		h = contextutil.IgnoreWarn
 	}
 
-	return func(s *staticEvalCtxState) {
+	return func(s *evalCtxState) {
 		s.warnHandler = h
 	}
 }
 
 // WithSQLMode sets the sql mode for the `EvalContext`.
-func WithSQLMode(sqlMode mysql.SQLMode) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithSQLMode(sqlMode mysql.SQLMode) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.sqlMode = sqlMode
 	}
 }
 
 // WithTypeFlags sets the type flags for the `EvalContext`.
-func WithTypeFlags(flags types.Flags) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithTypeFlags(flags types.Flags) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.typeCtx = s.typeCtx.WithFlags(flags)
 	}
 }
 
 // WithLocation sets the timezone info for the `EvalContext`.
-func WithLocation(loc *time.Location) StaticEvalCtxOption {
+func WithLocation(loc *time.Location) EvalCtxOption {
 	intest.AssertNotNil(loc)
 	if loc == nil {
 		// this should not happen, just to keep code safe
 		loc = time.UTC
 	}
-	return func(s *staticEvalCtxState) {
+	return func(s *evalCtxState) {
 		s.typeCtx = s.typeCtx.WithLocation(loc)
 	}
 }
 
 // WithErrLevelMap sets the error level map for the `EvalContext`.
-func WithErrLevelMap(level errctx.LevelMap) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithErrLevelMap(level errctx.LevelMap) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.errCtx = s.errCtx.WithErrGroupLevels(level)
 	}
 }
 
 // WithCurrentDB sets the current database name for the `EvalContext`.
-func WithCurrentDB(db string) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithCurrentDB(db string) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.currentDB = db
 	}
 }
 
 // WithCurrentTime sets the current time for the `EvalContext`.
-func WithCurrentTime(fn func() (time.Time, error)) StaticEvalCtxOption {
+func WithCurrentTime(fn func() (time.Time, error)) EvalCtxOption {
 	intest.AssertNotNil(fn)
-	return func(s *staticEvalCtxState) {
+	return func(s *evalCtxState) {
 		s.currentTime = &timeOnce{timeFn: fn}
 	}
 }
 
 // WithMaxAllowedPacket sets the value of the 'max_allowed_packet' system variable.
-func WithMaxAllowedPacket(size uint64) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithMaxAllowedPacket(size uint64) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.maxAllowedPacket = size
 	}
 }
 
 // WithDefaultWeekFormatMode sets the value of the 'default_week_format' system variable.
-func WithDefaultWeekFormatMode(mode string) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithDefaultWeekFormatMode(mode string) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.defaultWeekFormatMode = mode
 	}
 }
 
 // WithDivPrecisionIncrement sets the value of the 'div_precision_increment' system variable.
-func WithDivPrecisionIncrement(inc int) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithDivPrecisionIncrement(inc int) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.divPrecisionIncrement = inc
 	}
 }
 
 // WithPrivCheck sets the requestVerificationFn
-func WithPrivCheck(fn func(db, table, column string, priv mysql.PrivilegeType) bool) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithPrivCheck(fn func(db, table, column string, priv mysql.PrivilegeType) bool) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.requestVerificationFn = fn
 	}
 }
 
 // WithDynamicPrivCheck sets the requestDynamicVerificationFn
-func WithDynamicPrivCheck(fn func(privName string, grantable bool) bool) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithDynamicPrivCheck(fn func(privName string, grantable bool) bool) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.requestDynamicVerificationFn = fn
 	}
 }
 
 // WithOptionalProperty sets the optional property providers
-func WithOptionalProperty(providers ...exprctx.OptionalEvalPropProvider) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithOptionalProperty(providers ...exprctx.OptionalEvalPropProvider) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.props = expropt.OptionalEvalPropProviders{}
 		for _, p := range providers {
 			s.props.Add(p)
@@ -197,8 +197,8 @@ func WithOptionalProperty(providers ...exprctx.OptionalEvalPropProvider) StaticE
 }
 
 // WithParamList sets the param list for the `EvalContext`.
-func WithParamList(params *variable.PlanCacheParamList) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithParamList(params *variable.PlanCacheParamList) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.paramList = make([]types.Datum, len(params.AllParamValues()))
 		for i, v := range params.AllParamValues() {
 			s.paramList[i] = v
@@ -207,15 +207,15 @@ func WithParamList(params *variable.PlanCacheParamList) StaticEvalCtxOption {
 }
 
 // WithEnableRedactLog sets the value of the 'tidb_redact_log' system variable.
-func WithEnableRedactLog(enableRedactLog string) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithEnableRedactLog(enableRedactLog string) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.enableRedactLog = enableRedactLog
 	}
 }
 
 // WithUserVarsReader set the user variables reader for the `EvalContext`.
-func WithUserVarsReader(vars variable.UserVarsReader) StaticEvalCtxOption {
-	return func(s *staticEvalCtxState) {
+func WithUserVarsReader(vars variable.UserVarsReader) EvalCtxOption {
+	return func(s *evalCtxState) {
 		s.userVars = vars
 	}
 }
@@ -229,18 +229,18 @@ var defaultSQLMode = func() mysql.SQLMode {
 }()
 
 // EvalContext implements `EvalContext` to provide a static context for expression evaluation.
-// The "static" means comparing with `SessionEvalContext`, its internal state does not relay on the session or other
+// The "static" means comparing with `EvalContext`, its internal state does not relay on the session or other
 // complex contexts that keeps immutable for most fields.
 type EvalContext struct {
 	id uint64
-	staticEvalCtxState
+	evalCtxState
 }
 
-// NewStaticEvalContext creates a new `EvalContext` with the given options.
-func NewStaticEvalContext(opt ...StaticEvalCtxOption) *EvalContext {
+// NewEvalContext creates a new `EvalContext` with the given options.
+func NewEvalContext(opt ...EvalCtxOption) *EvalContext {
 	ctx := &EvalContext{
 		id: contextutil.GenContextID(),
-		staticEvalCtxState: staticEvalCtxState{
+		evalCtxState: evalCtxState{
 			currentTime:           &timeOnce{},
 			sqlMode:               defaultSQLMode,
 			maxAllowedPacket:      variable.DefMaxAllowedPacket,
@@ -254,7 +254,7 @@ func NewStaticEvalContext(opt ...StaticEvalCtxOption) *EvalContext {
 	ctx.errCtx = errctx.NewContext(ctx)
 
 	for _, o := range opt {
-		o(&ctx.staticEvalCtxState)
+		o(&ctx.evalCtxState)
 	}
 
 	if ctx.warnHandler == nil {
@@ -386,10 +386,10 @@ func (ctx *EvalContext) GetOptionalPropProvider(key exprctx.OptionalEvalPropKey)
 }
 
 // Apply returns a new `EvalContext` with the fields updated according to the given options.
-func (ctx *EvalContext) Apply(opt ...StaticEvalCtxOption) *EvalContext {
+func (ctx *EvalContext) Apply(opt ...EvalCtxOption) *EvalContext {
 	newCtx := &EvalContext{
-		id:                 contextutil.GenContextID(),
-		staticEvalCtxState: ctx.staticEvalCtxState,
+		id:           contextutil.GenContextID(),
+		evalCtxState: ctx.evalCtxState,
 	}
 
 	// current time should use the previous one by default
@@ -401,7 +401,7 @@ func (ctx *EvalContext) Apply(opt ...StaticEvalCtxOption) *EvalContext {
 
 	// Apply options
 	for _, o := range opt {
-		o(&newCtx.staticEvalCtxState)
+		o(&newCtx.evalCtxState)
 	}
 
 	return newCtx
@@ -449,7 +449,7 @@ func (ctx *EvalContext) LoadSystemVars(sysVars map[string]string) (*EvalContext,
 func (ctx *EvalContext) loadSessionVarsInternal(
 	sessionVars *variable.SessionVars, sysVars map[string]string,
 ) *EvalContext {
-	opts := make([]StaticEvalCtxOption, 0, 8)
+	opts := make([]EvalCtxOption, 0, 8)
 	for name, val := range sysVars {
 		name = strings.ToLower(name)
 		switch name {
@@ -513,7 +513,7 @@ func MakeEvalContextStatic(ctx exprctx.StaticConvertibleEvalContext) *EvalContex
 	// TODO: use a more structural way to replace the closure.
 	// These closure makes sure the fields which may be changed in the execution of the next statement will not be embedded into them, to make
 	// sure it's safe to call them after the session continues to execute other statements.
-	staticCtx := NewStaticEvalContext(
+	staticCtx := NewEvalContext(
 		WithWarnHandler(ctx.GetWarnHandler()),
 		WithSQLMode(ctx.SQLMode()),
 		WithTypeFlags(typeCtx.Flags()),

@@ -409,7 +409,7 @@ func TestBuildExpression(t *testing.T) {
 		},
 	}
 
-	ctx := exprstatic.NewStaticExprContext()
+	ctx := exprstatic.NewExprContext()
 	evalCtx := ctx.GetStaticEvalCtx()
 	cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, pmodel.NewCIStr(""), tbl.Name, tbl.Cols(), tbl)
 	require.NoError(t, err)

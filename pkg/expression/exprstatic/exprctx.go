@@ -29,9 +29,9 @@ import (
 // ExprContext implements the `exprctx.ExprContext` interface.
 var _ exprctx.ExprContext = &ExprContext{}
 
-// staticExprCtxState is the internal state for `ExprContext`.
-// We make it as a standalone private struct here to make sure `StaticExprCtxOption` can only be called in constructor.
-type staticExprCtxState struct {
+// exprCtxState is the internal state for `ExprContext`.
+// We make it as a standalone private struct here to make sure `ExprCtxOption` can only be called in constructor.
+type exprCtxState struct {
 	evalCtx                    *EvalContext
 	charset                    string
 	collation                  string
@@ -47,95 +47,95 @@ type staticExprCtxState struct {
 	groupConcatMaxLen          uint64
 }
 
-// StaticExprCtxOption is the option to create or update the `ExprContext`
-type StaticExprCtxOption func(*staticExprCtxState)
+// ExprCtxOption is the option to create or update the `ExprContext`
+type ExprCtxOption func(*exprCtxState)
 
 // WithEvalCtx sets the `EvalContext` for `ExprContext`.
-func WithEvalCtx(ctx *EvalContext) StaticExprCtxOption {
+func WithEvalCtx(ctx *EvalContext) ExprCtxOption {
 	intest.AssertNotNil(ctx)
-	return func(s *staticExprCtxState) {
+	return func(s *exprCtxState) {
 		s.evalCtx = ctx
 	}
 }
 
 // WithCharset sets the charset and collation for `ExprContext`.
-func WithCharset(charset, collation string) StaticExprCtxOption {
-	return func(s *staticExprCtxState) {
+func WithCharset(charset, collation string) ExprCtxOption {
+	return func(s *exprCtxState) {
 		s.charset = charset
 		s.collation = collation
 	}
 }
 
 // WithDefaultCollationForUTF8MB4 sets the default collation for utf8mb4 for `ExprContext`.
-func WithDefaultCollationForUTF8MB4(collation string) StaticExprCtxOption {
-	return func(s *staticExprCtxState) {
+func WithDefaultCollationForUTF8MB4(collation string) ExprCtxOption {
+	return func(s *exprCtxState) {
 		s.defaultCollationForUTF8MB4 = collation
 	}
 }
 
 // WithBlockEncryptionMode sets the block encryption mode for `ExprContext`.
-func WithBlockEncryptionMode(mode string) StaticExprCtxOption {
-	return func(s *staticExprCtxState) {
+func WithBlockEncryptionMode(mode string) ExprCtxOption {
+	return func(s *exprCtxState) {
 		s.blockEncryptionMode = mode
 	}
 }
 
 // WithSysDateIsNow sets the sysdate is now for `ExprContext`.
-func WithSysDateIsNow(now bool) StaticExprCtxOption {
-	return func(s *staticExprCtxState) {
+func WithSysDateIsNow(now bool) ExprCtxOption {
+	return func(s *exprCtxState) {
 		s.sysDateIsNow = now
 	}
 }
 
 // WithNoopFuncsMode sets the noop funcs mode for `ExprContext`.
-func WithNoopFuncsMode(mode int) StaticExprCtxOption {
+func WithNoopFuncsMode(mode int) ExprCtxOption {
 	intest.Assert(mode == variable.OnInt || mode == variable.OffInt || mode == variable.WarnInt)
-	return func(s *staticExprCtxState) {
+	return func(s *exprCtxState) {
 		s.noopFuncsMode = mode
 	}
 }
 
 // WithRng sets the rng for `ExprContext`.
-func WithRng(rng *mathutil.MysqlRng) StaticExprCtxOption {
+func WithRng(rng *mathutil.MysqlRng) ExprCtxOption {
 	intest.AssertNotNil(rng)
-	return func(s *staticExprCtxState) {
+	return func(s *exprCtxState) {
 		s.rng = rng
 	}
 }
 
 // WithPlanCacheTracker sets the plan cache tracker for `ExprContext`.
-func WithPlanCacheTracker(tracker *contextutil.PlanCacheTracker) StaticExprCtxOption {
+func WithPlanCacheTracker(tracker *contextutil.PlanCacheTracker) ExprCtxOption {
 	intest.AssertNotNil(tracker)
-	return func(s *staticExprCtxState) {
+	return func(s *exprCtxState) {
 		s.planCacheTracker = tracker
 	}
 }
 
 // WithColumnIDAllocator sets the column id allocator for `ExprContext`.
-func WithColumnIDAllocator(allocator exprctx.PlanColumnIDAllocator) StaticExprCtxOption {
+func WithColumnIDAllocator(allocator exprctx.PlanColumnIDAllocator) ExprCtxOption {
 	intest.AssertNotNil(allocator)
-	return func(s *staticExprCtxState) {
+	return func(s *exprCtxState) {
 		s.columnIDAllocator = allocator
 	}
 }
 
 // WithConnectionID sets the connection id for `ExprContext`.
-func WithConnectionID(id uint64) StaticExprCtxOption {
-	return func(s *staticExprCtxState) {
+func WithConnectionID(id uint64) ExprCtxOption {
+	return func(s *exprCtxState) {
 		s.connectionID = id
 	}
 }
 
 // WithWindowingUseHighPrecision sets the windowing use high precision for `ExprContext`.
-func WithWindowingUseHighPrecision(useHighPrecision bool) StaticExprCtxOption {
-	return func(s *staticExprCtxState) {
+func WithWindowingUseHighPrecision(useHighPrecision bool) ExprCtxOption {
+	return func(s *exprCtxState) {
 		s.windowingUseHighPrecision = useHighPrecision
 	}
 }
 
 // WithGroupConcatMaxLen sets the group concat max len for `ExprContext`.
-func WithGroupConcatMaxLen(maxLen uint64) StaticExprCtxOption {
-	return func(s *staticExprCtxState) {
+func WithGroupConcatMaxLen(maxLen uint64) ExprCtxOption {
+	return func(s *exprCtxState) {
 		s.groupConcatMaxLen = maxLen
 	}
 }
@@ -144,16 +144,16 @@ func WithGroupConcatMaxLen(maxLen uint64) StaticExprCtxOption {
 // The "static" means comparing with `ExprContext`, its internal state does not relay on the session or other
 // complex contexts that keeps immutable for most fields.
 type ExprContext struct {
-	staticExprCtxState
+	exprCtxState
 }
 
-// NewStaticExprContext creates a new ExprContext
-func NewStaticExprContext(opts ...StaticExprCtxOption) *ExprContext {
+// NewExprContext creates a new ExprContext
+func NewExprContext(opts ...ExprCtxOption) *ExprContext {
 	cs, err := charset.GetCharsetInfo(mysql.DefaultCharset)
 	intest.AssertNoError(err)
 
 	ctx := &ExprContext{
-		staticExprCtxState: staticExprCtxState{
+		exprCtxState: exprCtxState{
 			charset:                    cs.Name,
 			collation:                  cs.DefaultCollation,
 			defaultCollationForUTF8MB4: mysql.DefaultCollationName,
@@ -165,11 +165,11 @@ func NewStaticExprContext(opts ...StaticExprCtxOption) *ExprContext {
 		},
 	}
 	for _, opt := range opts {
-		opt(&ctx.staticExprCtxState)
+		opt(&ctx.exprCtxState)
 	}
 
 	if ctx.evalCtx == nil {
-		ctx.evalCtx = NewStaticEvalContext()
+		ctx.evalCtx = NewEvalContext()
 	}
 
 	if ctx.rng == nil {
@@ -190,13 +190,13 @@ func NewStaticExprContext(opts ...StaticExprCtxOption) *ExprContext {
 }
 
 // Apply returns a new `ExprContext` with the fields updated according to the given options.
-func (ctx *ExprContext) Apply(opts ...StaticExprCtxOption) *ExprContext {
+func (ctx *ExprContext) Apply(opts ...ExprCtxOption) *ExprContext {
 	newCtx := &ExprContext{
-		staticExprCtxState: ctx.staticExprCtxState,
+		exprCtxState: ctx.exprCtxState,
 	}
 
 	for _, opt := range opts {
-		opt(&newCtx.staticExprCtxState)
+		opt(&newCtx.exprCtxState)
 	}
 
 	return newCtx
@@ -303,7 +303,7 @@ func (ctx *ExprContext) GetStaticConvertibleEvalContext() exprctx.StaticConverti
 func MakeExprContextStatic(ctx exprctx.StaticConvertibleExprContext) *ExprContext {
 	staticEvalContext := MakeEvalContextStatic(ctx.GetStaticConvertibleEvalContext())
 
-	return NewStaticExprContext(
+	return NewExprContext(
 		WithEvalCtx(staticEvalContext),
 		WithCharset(ctx.GetCharsetInfo()),
 		WithDefaultCollationForUTF8MB4(ctx.GetDefaultCollationForUTF8MB4()),
@@ -332,7 +332,7 @@ func (ctx *ExprContext) LoadSystemVars(sysVars map[string]string) (*ExprContext,
 func (ctx *ExprContext) loadSessionVarsInternal(
 	sessionVars *variable.SessionVars, sysVars map[string]string,
 ) *ExprContext {
-	opts := make([]StaticExprCtxOption, 0, 8)
+	opts := make([]ExprCtxOption, 0, 8)
 	opts = append(opts, WithEvalCtx(ctx.evalCtx.loadSessionVarsInternal(sessionVars, sysVars)))
 	for name := range sysVars {
 		name = strings.ToLower(name)

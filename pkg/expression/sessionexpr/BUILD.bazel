@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "exprsession",
+    name = "sessionexpr",
     srcs = ["sessionctx.go"],
-    importpath = "github.com/pingcap/tidb/pkg/expression/exprsession",
+    importpath = "github.com/pingcap/tidb/pkg/expression/sessionexpr",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/errctx",
@@ -29,13 +29,13 @@ go_library(
 )
 
 go_test(
-    name = "exprsession_test",
+    name = "sessionexpr_test",
     timeout = "short",
     srcs = ["sessionctx_test.go"],
     flaky = True,
     shard_count = 5,
     deps = [
-        ":exprsession",
+        ":sessionexpr",
         "//pkg/errctx",
         "//pkg/expression/exprctx",
         "//pkg/expression/expropt",

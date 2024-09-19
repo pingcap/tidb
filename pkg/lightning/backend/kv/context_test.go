@@ -148,16 +148,16 @@ func TestLitExprContext(t *testing.T) {
 		se := newSession(opts, log.L())
 		seCtx := exprstatic.MakeExprContextStatic(se.exprCtx.ExprContext)
 		deeptest.AssertDeepClonedEqual(t, seCtx, ctx.ExprContext, deeptest.WithIgnorePath([]string{
-			"$.staticExprCtxState.evalCtx.id",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.typeCtx.loc",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.warnHandler",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.typeCtx.warnHandler",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.errCtx.warnHandler",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.currentTime",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.requestVerificationFn",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.requestDynamicVerificationFn",
-			"$.staticExprCtxState.rng",
-			"$.staticExprCtxState.planCacheTracker",
+			"$.exprCtxState.evalCtx.id",
+			"$.exprCtxState.evalCtx.evalCtxState.typeCtx.loc",
+			"$.exprCtxState.evalCtx.evalCtxState.warnHandler",
+			"$.exprCtxState.evalCtx.evalCtxState.typeCtx.warnHandler",
+			"$.exprCtxState.evalCtx.evalCtxState.errCtx.warnHandler",
+			"$.exprCtxState.evalCtx.evalCtxState.currentTime",
+			"$.exprCtxState.evalCtx.evalCtxState.requestVerificationFn",
+			"$.exprCtxState.evalCtx.evalCtxState.requestDynamicVerificationFn",
+			"$.exprCtxState.rng",
+			"$.exprCtxState.planCacheTracker",
 		}))
 		currentTime, err := seCtx.GetEvalCtx().CurrentTime()
 		require.NoError(t, err)

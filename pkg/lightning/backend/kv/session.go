@@ -26,7 +26,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
-	"github.com/pingcap/tidb/pkg/expression/exprsession"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -285,7 +285,7 @@ func (*transaction) MayFlush() error {
 // sessExprContext implements the ExprContext interface
 // It embedded an `ExprContext` and a `sessEvalContext` to provide no optional properties.
 type sessExprContext struct {
-	*exprsession.ExprContext
+	*sessionexpr.ExprContext
 	evalCtx *sessEvalContext
 }
 
@@ -378,7 +378,7 @@ func newSession(options *encode.SessionOptions, logger log.Logger) *session {
 	}
 	vars.TxnCtx = nil
 	s.Vars = vars
-	exprCtx := exprsession.NewExprContext(s)
+	exprCtx := sessionexpr.NewExprContext(s)
 	// The exprCtx should be an expression context providing no optional properties in `EvalContext`.
 	// That is to make sure it only allows expressions that require basic context.
 	s.exprCtx = &sessExprContext{
