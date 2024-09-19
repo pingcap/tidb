@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -1118,7 +1118,7 @@ func buildPartialPathUp4MVIndex(
 // The accessFilters must be corresponding to these idxCols.
 // OK indicates whether it builds successfully. These partial paths should be ignored if ok==false.
 func buildPartialPaths4MVIndex(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	accessFilters []expression.Expression,
 	idxCols []*expression.Column,
 	mvIndex *model.IndexInfo,
@@ -1247,7 +1247,7 @@ func isSafeTypeConversion4MVIndexRange(valType, mvIndexType *types.FieldType) (s
 
 // buildPartialPath4MVIndex builds a partial path on this MVIndex with these accessFilters.
 func buildPartialPath4MVIndex(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	accessFilters []expression.Expression,
 	idxCols []*expression.Column,
 	mvIndex *model.IndexInfo,
@@ -1323,7 +1323,7 @@ func PrepareIdxColsAndUnwrapArrayType(
 // For idx(x, cast(a as array), z), `x=1 and (2 member of a) and z=1 and x+z>0` is split to:
 // accessFilters: `x=1 and (2 member of a) and z=1`, remaining: `x+z>0`.
 func collectFilters4MVIndex(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	filters []expression.Expression,
 	idxCols []*expression.Column,
 ) (accessFilters, remainingFilters []expression.Expression, accessTp int) {

@@ -739,20 +739,28 @@ func CutIndexPrefix(key kv.Key) []byte {
 	return key[prefixLen+idLen:]
 }
 
-// CutIndexKeyNew cuts encoded index key into colIDs to bytes slices.
-// The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
-// if it is non-unique index.
-func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err error) {
+// CutIndexKeyTo cuts encoded index key into colIDs to bytes slices.
+// The caller should prepare the memory of the result values.
+func CutIndexKeyTo(key kv.Key, values [][]byte) (b []byte, err error) {
 	b = key[prefixLen+idLen:]
-	values = make([][]byte, 0, length)
+	length := len(values)
 	for i := 0; i < length; i++ {
 		var val []byte
 		val, b, err = codec.CutOne(b)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-		values = append(values, val)
+		values[i] = val
 	}
+	return
+}
+
+// CutIndexKeyNew cuts encoded index key into colIDs to bytes slices.
+// The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
+// if it is non-unique index.
+func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err error) {
+	values = make([][]byte, length)
+	b, err = CutIndexKeyTo(key, values)
 	return
 }
 
@@ -789,20 +797,29 @@ const (
 // If it is common handle, it returns the encoded column values.
 // If it is int handle, it is encoded as int Datum or uint Datum decided by the unsigned.
 func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
+	handleColLen := 1
+	if !handle.IsInt() {
+		handleColLen = handle.NumCols()
+	}
+	result := make([][]byte, 0, handleColLen)
+	return reEncodeHandleTo(handle, unsigned, nil, result)
+}
+
+func reEncodeHandleTo(handle kv.Handle, unsigned bool, buf []byte, result [][]byte) ([][]byte, error) {
 	if !handle.IsInt() {
 		handleColLen := handle.NumCols()
-		cHandleBytes := make([][]byte, 0, handleColLen)
 		for i := 0; i < handleColLen; i++ {
-			cHandleBytes = append(cHandleBytes, handle.EncodedCol(i))
+			result = append(result, handle.EncodedCol(i))
 		}
-		return cHandleBytes, nil
+		return result, nil
 	}
 	handleDatum := types.NewIntDatum(handle.IntValue())
 	if unsigned {
 		handleDatum.SetUint64(handleDatum.GetUint64())
 	}
-	intHandleBytes, err := codec.EncodeValue(time.UTC, nil, handleDatum)
-	return [][]byte{intHandleBytes}, err
+	intHandleBytes, err := codec.EncodeValue(time.UTC, buf, handleDatum)
+	result = append(result, intHandleBytes)
+	return result, err
 }
 
 // reEncodeHandleConsiderNewCollation encodes the handle as a Datum so it can be properly decoded later.
@@ -908,8 +925,8 @@ func buildRestoredColumn(allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
 	return restoredColumns
 }
 
-func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleStatus) ([][]byte, error) {
-	resultValues, b, err := CutIndexKeyNew(key, colsLen)
+func decodeIndexKvOldCollation(key, value []byte, hdStatus HandleStatus, buf []byte, resultValues [][]byte) ([][]byte, error) {
+	b, err := CutIndexKeyTo(key, resultValues)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -923,19 +940,17 @@ func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleSt
 		if err != nil {
 			return nil, err
 		}
-		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
+		resultValues, err = reEncodeHandleTo(handle, hdStatus == HandleIsUnsigned, buf, resultValues)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resultValues = append(resultValues, handleBytes...)
 	} else {
 		// In unique int handle index.
 		handle = decodeIntHandleInIndexValue(value)
-		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
+		resultValues, err = reEncodeHandleTo(handle, hdStatus == HandleIsUnsigned, buf, resultValues)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resultValues = append(resultValues, handleBytes...)
 	}
 	return resultValues, nil
 }
@@ -951,13 +966,25 @@ func getIndexVersion(value []byte) int {
 	return 0
 }
 
+// DecodeIndexKVEx looks like DecodeIndexKV, the difference is that it tries to reduce allocations.
+func DecodeIndexKVEx(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo, buf []byte, preAlloc [][]byte) ([][]byte, error) {
+	if len(value) <= MaxOldEncodeValueLen {
+		return decodeIndexKvOldCollation(key, value, hdStatus, buf, preAlloc)
+	}
+	if getIndexVersion(value) == 1 {
+		return decodeIndexKvForClusteredIndexVersion1(key, value, colsLen, hdStatus, columns)
+	}
+	return decodeIndexKvGeneral(key, value, colsLen, hdStatus, columns)
+}
+
 // DecodeIndexKV uses to decode index key values.
 //
 //	`colsLen` is expected to be index columns count.
 //	`columns` is expected to be index columns + handle columns(if hdStatus is not HandleNotNeeded).
 func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
 	if len(value) <= MaxOldEncodeValueLen {
-		return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
+		preAlloc := make([][]byte, colsLen, colsLen+len(columns))
+		return decodeIndexKvOldCollation(key, value, hdStatus, nil, preAlloc)
 	}
 	if getIndexVersion(value) == 1 {
 		return decodeIndexKvForClusteredIndexVersion1(key, value, colsLen, hdStatus, columns)

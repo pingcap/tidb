@@ -858,8 +858,8 @@ var tableProcesslistCols = []columnInfo{
 	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "SESSION_ALIAS", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "ROWS_AFFECTED", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
-	{name: "TIDB_CPU", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag, deflt: 0},
-	{name: "TIKV_CPU", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "TIDB_CPU", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "TIKV_CPU", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, deflt: 0},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -2423,6 +2423,11 @@ func (it *infoschemaTable) Indices() []table.Index {
 	return nil
 }
 
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (it *infoschemaTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 // WritableConstraint implements table.Table WritableConstraint interface.
 func (it *infoschemaTable) WritableConstraint() []*table.Constraint {
 	return nil
@@ -2444,7 +2449,7 @@ func (it *infoschemaTable) AddRecord(ctx table.MutateContext, txn kv.Transaction
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
+func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -2516,6 +2521,11 @@ func (vt *VirtualTable) Indices() []table.Index {
 	return nil
 }
 
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (vt *VirtualTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 // WritableConstraint implements table.Table WritableConstraint interface.
 func (vt *VirtualTable) WritableConstraint() []*table.Constraint {
 	return nil
@@ -2537,7 +2547,7 @@ func (vt *VirtualTable) AddRecord(ctx table.MutateContext, txn kv.Transaction, r
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
+func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
 	return table.ErrUnsupportedOp
 }
 

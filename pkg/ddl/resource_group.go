@@ -44,11 +44,12 @@ const (
 )
 
 func onCreateResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	groupInfo := &model.ResourceGroupInfo{}
-	if err := job.DecodeArgs(groupInfo); err != nil {
+	args, err := model.GetResourceGroupArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	groupInfo := args.RGInfo
 	groupInfo.State = model.StateNone
 
 	// check if resource group value is valid and convert to proto format.
@@ -93,11 +94,12 @@ func onCreateResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ve
 }
 
 func onAlterResourceGroup(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	alterGroupInfo := &model.ResourceGroupInfo{}
-	if err := job.DecodeArgs(alterGroupInfo); err != nil {
+	args, err := model.GetResourceGroupArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	alterGroupInfo := args.RGInfo
 	// check if resource group value is valid and convert to proto format.
 	protoGroup, err := resourcegroup.NewGroupFromOptions(alterGroupInfo.Name.L, alterGroupInfo.ResourceGroupSettings)
 	if err != nil {
