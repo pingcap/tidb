@@ -25,8 +25,8 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/errctx"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextsession"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -34,11 +34,11 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/manual"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
+	planctx "github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
-	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
+	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
@@ -285,7 +285,7 @@ func (*transaction) MayFlush() error {
 // sessExprContext implements the ExprContext interface
 // It embedded an `ExprContext` and a `sessEvalContext` to provide no optional properties.
 type sessExprContext struct {
-	*exprctximpl.SessionExprContext
+	*sessionexpr.ExprContext
 	evalCtx *sessEvalContext
 }
 
@@ -322,7 +322,7 @@ type session struct {
 	txn     transaction
 	Vars    *variable.SessionVars
 	exprCtx *sessExprContext
-	tblctx  *tbctximpl.TableContextImpl
+	tblctx  *tblsession.MutateContext
 	// currently, we only set `CommonAddRecordCtx`
 	values map[fmt.Stringer]any
 }
@@ -378,16 +378,16 @@ func newSession(options *encode.SessionOptions, logger log.Logger) *session {
 	}
 	vars.TxnCtx = nil
 	s.Vars = vars
-	exprCtx := exprctximpl.NewSessionExprContext(s)
+	exprCtx := sessionexpr.NewExprContext(s)
 	// The exprCtx should be an expression context providing no optional properties in `EvalContext`.
 	// That is to make sure it only allows expressions that require basic context.
 	s.exprCtx = &sessExprContext{
-		SessionExprContext: exprCtx,
+		ExprContext: exprCtx,
 		evalCtx: &sessEvalContext{
 			EvalContext: exprCtx.GetEvalCtx(),
 		},
 	}
-	s.tblctx = tbctximpl.NewTableContextImpl(s)
+	s.tblctx = tblsession.NewMutateContext(s)
 	s.txn.kvPairs = &Pairs{}
 
 	return s
@@ -409,7 +409,7 @@ func (se *session) GetExprCtx() exprctx.ExprContext {
 }
 
 // GetTableCtx returns the table.MutateContext
-func (se *session) GetTableCtx() tbctx.MutateContext {
+func (se *session) GetTableCtx() tblctx.MutateContext {
 	return se.tblctx
 }
 
@@ -500,7 +500,7 @@ func (s *Session) Txn() kv.Transaction {
 }
 
 // GetTableCtx returns the table MutateContext.
-func (s *Session) GetTableCtx() tbctx.MutateContext {
+func (s *Session) GetTableCtx() tblctx.MutateContext {
 	return s.tblCtx
 }
 
