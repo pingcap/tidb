@@ -28,7 +28,6 @@ import (
 )
 
 func TestMultiSchemaDropRangePartition(t *testing.T) {
-	testkit.SkipIfFailpointDisabled(t)
 	createSQL := `create table t (a int primary key, b varchar(255)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1),(2,2),(101,101),(102,102)`)
@@ -101,7 +100,6 @@ func TestMultiSchemaDropRangePartition(t *testing.T) {
 }
 
 func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
-	testkit.SkipIfFailpointDisabled(t)
 	createSQL := `create table t (a int primary key, b varchar(255)) partition by list (a) (partition p0 values in (1,2,3), partition p1 values in (100,101,102,DEFAULT))`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1),(2,2),(101,101),(102,102)`)
@@ -175,7 +173,6 @@ func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
 }
 
 func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
-	testkit.SkipIfFailpointDisabled(t)
 	createSQL := `create table t (a int, b varchar(255), c varchar (255), primary key (a,b)) partition by list columns (a,b) (partition p0 values in ((1,"1"),(2,"2"),(3,"3")), partition p1 values in ((100,"100"),(101,"101"),(102,"102"),DEFAULT))`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1,1),(2,2,2),(101,101,101),(102,102,102)`)

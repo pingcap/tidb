@@ -510,7 +510,6 @@ func TestReorgPartitionFailInject(t *testing.T) {
 }
 
 func TestReorgPartitionRollback(t *testing.T) {
-	testkit.SkipIfFailpointDisabled(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "ReorgPartRollback"

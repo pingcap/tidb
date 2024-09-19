@@ -793,19 +793,3 @@ func MockTiDBStatusPort(ctx context.Context, b *testing.B, port string) *util.Wa
 
 	return &wg
 }
-
-// SkipIfFailpointDisabled will skip the current test if failpoint is not enabled
-func SkipIfFailpointDisabled(t *testing.T) {
-	if failpoint.Enable("github.com/pingcap/tidb/pkg/testkit/SkipIfFailpointDisabled", "return(true)") != nil {
-		t.Skip("Enable SkipIfFailpointDisabled failed")
-	}
-	isEnabled := false
-	failpoint.Inject("SkipIfFailpointDisabled", func(val failpoint.Value) {
-		if val.(bool) {
-			isEnabled = true
-		}
-	})
-	if !isEnabled {
-		t.Skip("Failpoint is not enabled")
-	}
-}
