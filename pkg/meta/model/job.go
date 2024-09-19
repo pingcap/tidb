@@ -490,52 +490,49 @@ func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 	args.fillFinishedJob(job)
 }
 
+func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
+	if jobVer <= JobVersion1 {
+		rawArgs, err := json.Marshal(args)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return rawArgs, nil
+	}
+
+	intest.Assert(jobVer == JobVersion2, "job version is not v2")
+	var arg any
+	if len(args) > 0 {
+		intest.Assert(len(args) == 1, "Job.Args should have only one element")
+		arg = args[0]
+	}
+
+	rawArgs, err := json.Marshal(arg)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return rawArgs, nil
+}
+
 // Encode encodes job with json format.
 // updateRawArgs is used to determine whether to update the raw args.
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
 	if updateRawArgs {
-		if job.Version == JobVersion1 {
-			job.RawArgs, err = json.Marshal(job.Args)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if job.MultiSchemaInfo != nil {
-				for _, sub := range job.MultiSchemaInfo.SubJobs {
-					// Only update the args of executing sub-jobs.
-					if sub.Args == nil {
-						continue
-					}
+		job.RawArgs, err = marshalArgs(job.Version, job.Args)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 
-					sub.RawArgs, err = json.Marshal(sub.Args)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
+		if job.MultiSchemaInfo != nil {
+			for _, sub := range job.MultiSchemaInfo.SubJobs {
+				// Only update the args of executing sub-jobs.
+				if sub.Args == nil {
+					continue
 				}
-			}
-		} else {
-			var arg any
-			if len(job.Args) > 0 {
-				intest.Assert(len(job.Args) == 1, "Job.Args should have only one element")
-				arg = job.Args[0]
-			}
-			job.RawArgs, err = json.Marshal(arg)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			// TODO remember update sub-jobs' RawArgs when we do it.
-			if job.MultiSchemaInfo != nil {
-				for _, sub := range job.MultiSchemaInfo.SubJobs {
-					// Only update the args of executing sub-jobs.
-					var subArg any
-					if len(sub.Args) > 0 {
-						subArg = sub.Args[0]
-					}
 
-					sub.RawArgs, err = json.Marshal(subArg)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
+				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
+				if err != nil {
+					return nil, errors.Trace(err)
 				}
 			}
 		}
@@ -545,7 +542,6 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	job.Mu.Lock()
 	defer job.Mu.Unlock()
 	b, err = json.Marshal(job)
-
 	return b, errors.Trace(err)
 }
 

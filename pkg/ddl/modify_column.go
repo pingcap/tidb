@@ -455,7 +455,14 @@ func (w *worker) doModifyColumnTypeWithData(
 		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
-		job.Args = append(job.Args, changingCol, changingIdxs, rmIdxIDs)
+		args, err := model.GetModifyColumnArgs(job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		args.ChangingCol = changingCol
+		args.ChangingIdxs = changingIdxs
+		args.RemovedIdxs = rmIdxIDs
+		job.FillArgs(args)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
@@ -519,7 +526,10 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
-		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
+		job.FillFinishedArgs(&model.ModifyColumnArgs{
+			IndexIDs:     rmIdxIDs,
+			PartitionIDs: getPartitionIDs(tblInfo),
+		})
 		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
 		asyncNotifyEvent(jobCtx, modifyColumnEvent, job)
 	default:
