@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
@@ -357,8 +358,12 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 		}
 	})
 
+	var sqlkiller *sqlkiller.SQLKiller = nil
+	if req.MemTracker != nil {
+		sqlkiller = req.MemTracker.Killer
+	}
 	// TODO(youjiali1995): is there any request type that needn't be splitted by buckets?
-	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges)
+	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges, sqlkiller)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
