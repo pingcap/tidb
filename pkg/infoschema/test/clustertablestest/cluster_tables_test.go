@@ -911,7 +911,8 @@ func TestMDLView(t *testing.T) {
 	}
 }
 
-func TestMDLViewPrivilege1(t *testing.T) {
+func TestMDLViewWithNoPrivilege(t *testing.T) {
+	// It's with TestMDLViewWithPrivilege. Split to two tests just because it runs too much time.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
@@ -920,10 +921,9 @@ func TestMDLViewPrivilege1(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
 	_, err := tk.Exec("select * from mysql.tidb_mdl_view;")
 	require.ErrorContains(t, err, "view lack rights")
-
 }
 
-func TestMDLViewPrivilege2(t *testing.T) {
+func TestMDLViewWithPrivilege(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// grant all privileges to test user.
