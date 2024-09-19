@@ -851,7 +851,6 @@ func TestGlobalStats(t *testing.T) {
 }
 
 func TestGlobalIndexStatistics(t *testing.T) {
-	t.Skip("wangweizhen skip tmp")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
 	originLease := h.Lease()
