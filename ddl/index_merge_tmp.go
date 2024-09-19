@@ -66,7 +66,6 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, idxR
 			// so we need to backfill the not found key into `batchVals` map.
 			batchVals[keyStr] = idxRecords[i].vals
 		}
-
 	}
 	return nil
 }
