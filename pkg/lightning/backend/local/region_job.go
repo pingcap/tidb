@@ -1212,7 +1212,7 @@ func (b *storeBalancer) pickJob() *regionJob {
 	if best.region == nil || best.region.Region == nil {
 		return best
 	}
-	
+
 	for _, p := range best.region.Region.Peers {
 	retry:
 		if val, ok := b.storeLoadMap.Load(p.StoreId); !ok {
@@ -1240,23 +1240,26 @@ func (b *storeBalancer) runReadFromWorker(workerCtx context.Context) {
 				close(b.jobFromWorkerCh)
 				return
 			}
-			for _, p := range job.region.Region.Peers {
-			retry:
-				val, ok2 := b.storeLoadMap.Load(p.StoreId)
-				if !ok2 {
-					intest.Assert(false,
-						"missing key in storeLoadMap. key: %d, job: %+v",
-						p.StoreId, job,
-					)
-					log.L().Error("missing key in storeLoadMap",
-						zap.Uint64("storeID", p.StoreId),
-						zap.Any("job", job))
-					continue
-				}
+			// in unit tests, the fields of job may not set
+			if job.region != nil && job.region.Region != nil {
+				for _, p := range job.region.Region.Peers {
+				retry:
+					val, ok2 := b.storeLoadMap.Load(p.StoreId)
+					if !ok2 {
+						intest.Assert(false,
+							"missing key in storeLoadMap. key: %d, job: %+v",
+							p.StoreId, job,
+						)
+						log.L().Error("missing key in storeLoadMap",
+							zap.Uint64("storeID", p.StoreId),
+							zap.Any("job", job))
+						continue
+					}
 
-				old := val.(int)
-				if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old-1) {
-					goto retry
+					old := val.(int)
+					if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old-1) {
+						goto retry
+					}
 				}
 			}
 
