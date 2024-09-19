@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -430,6 +431,12 @@ func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprReques
 // SetConnID sets connection id for the builder.
 func (builder *RequestBuilder) SetConnID(connID uint64) *RequestBuilder {
 	builder.ConnID = connID
+	return builder
+}
+
+// SetSQLKiller sets sqlkiller for the builder.
+func (builder *RequestBuilder) SetSQLKiller(killer *sqlkiller.SQLKiller) *RequestBuilder {
+	builder.SQLKiller = killer
 	return builder
 }
 
