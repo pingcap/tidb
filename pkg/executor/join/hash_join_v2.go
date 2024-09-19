@@ -17,6 +17,7 @@ package join
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"math/rand"
 	"runtime/trace"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1038,14 +1040,19 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		close(e.joinResultCh)
 	}()
 
+	i := -1
+
 	lastRound := 0
 	for {
+		i++
+		log.Info(fmt.Sprintf("Spill round %d", i))
 		if e.finished.Load() {
 			return
 		}
 
 		e.spillHelper.setCanSpillFlag(true)
 		e.buildFinished = make(chan error, 1)
+		// TODO merge resetProbeStatus and releaseDisk
 		e.resetProbeStatus()
 
 		e.fetchAndBuildHashTable(ctx)

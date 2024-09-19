@@ -368,9 +368,10 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		newHashVal := hash.Sum64()
 		j.matchedRowsHashValue[idx] = newHashVal
 		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
+		serializedKeysBytes := serializedKeysCol.GetBytes(idx)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
 			j.spillTmpChk[partIndex].AppendInt64(0, int64(newHashVal))
-			j.spillTmpChk[partIndex].AppendBytes(1, serializedKeysCol.GetBytes(idx))
+			j.spillTmpChk[partIndex].AppendBytes(1, serializedKeysBytes)
 			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(idx))
 
 			j.spilledIdx = append(j.spilledIdx, idx)
@@ -386,18 +387,12 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 			j.matchedRowsHeaders[idx] = 0
 		} else {
 			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: newHashVal, pos: idx})
+			j.serializedKeys[idx] = append(j.serializedKeys[idx], serializedKeysBytes...)
+			j.matchedRowsHeaders[idx] = j.ctx.hashTableContext.lookup(int(partIndex), newHashVal)
 		}
 	}
 
 	j.currentProbeRow = 0
-	for i := 0; i < int(j.ctx.partitionNumber); i++ {
-		for index := range j.hashValues[i] {
-			pos := j.hashValues[i][index].pos
-			physicalPos := j.usedRows[j.hashValues[i][index].pos]
-			j.serializedKeys[pos] = append(j.serializedKeys[pos], serializedKeysCol.GetBytes(physicalPos)...)
-			j.matchedRowsHeaders[pos] = j.ctx.hashTableContext.lookup(i, j.hashValues[i][index].hashValue)
-		}
-	}
 	return nil
 }
 
