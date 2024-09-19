@@ -324,3 +324,18 @@ func TestGetModifyTableCommentArgs(t *testing.T) {
 		require.Equal(t, inArgs, args)
 	}
 }
+
+func TestGetAlterIndexVisibilityArgs(t *testing.T) {
+	inArgs := &AlterIndexVisibilityArgs{
+		IndexName: model.NewCIStr("index-name"),
+		Invisible: true,
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterIndexVisibility)))
+		args, err := GetAlterIndexVisibilityArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
