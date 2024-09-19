@@ -294,3 +294,19 @@ func TestResourceGroupArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestGetRebaseAutoIDArgs(t *testing.T) {
+	inArgs := &RebaseAutoIDArgs{
+		NewBase: 9527,
+		Force:   true,
+	}
+	for _, tp := range []ActionType{ActionRebaseAutoID, ActionRebaseAutoRandomBase} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			args, err := GetRebaseAutoIDArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, inArgs, args)
+		}
+	}
+}

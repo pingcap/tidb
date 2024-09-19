@@ -467,3 +467,39 @@ func GetResourceGroupArgs(job *Job) (*ResourceGroupArgs, error) {
 	}
 	return getOrDecodeArgsV2[*ResourceGroupArgs](job)
 }
+
+// RebaseAutoIDArgs is the arguments for ActionRebaseAutoID DDL.
+// It is also for ActionRebaseAutoRandomBase.
+type RebaseAutoIDArgs struct {
+	NewBase int64 `json:"new_base,omitempty"`
+	Force   bool  `json:"force,omitempty"`
+}
+
+func (a *RebaseAutoIDArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.NewBase, a.Force}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetRebaseAutoIDArgs the args for ActionRebaseAutoID/ActionRebaseAutoRandomBase ddl.
+func GetRebaseAutoIDArgs(job *Job) (*RebaseAutoIDArgs, error) {
+	var (
+		newBase int64
+		force   bool
+	)
+
+	if job.Version == JobVersion1 {
+		if err := job.DecodeArgs(&newBase, &force); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &RebaseAutoIDArgs{
+			NewBase: newBase,
+			Force:   force,
+		}, nil
+	}
+
+	// for version V2
+	return getOrDecodeArgsV2[*RebaseAutoIDArgs](job)
+}

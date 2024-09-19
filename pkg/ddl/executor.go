@@ -2132,6 +2132,7 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 		newBase = newBaseTemp
 	}
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tbInfo.ID,
 		SchemaName:     schema.Name.L,
@@ -2142,6 +2143,10 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+	job.FillArgs(&model.RebaseAutoIDArgs{
+		NewBase: newBase,
+		Force:   force,
+	})
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }

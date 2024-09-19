@@ -588,16 +588,14 @@ func onRebaseAutoRandomType(jobCtx *jobContext, t *meta.Meta, job *model.Job) (v
 }
 
 func onRebaseAutoID(jobCtx *jobContext, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
-	schemaID := job.SchemaID
-	var (
-		newBase int64
-		force   bool
-	)
-	err := job.DecodeArgs(&newBase, &force)
+	args, err := model.GetRebaseAutoIDArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	schemaID := job.SchemaID
+	newBase, force := args.NewBase, args.Force
 
 	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
