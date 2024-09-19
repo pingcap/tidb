@@ -803,6 +803,30 @@ func NewInfoSchemaColumnsExtractor() *InfoSchemaColumnsExtractor {
 	return e
 }
 
+// ListTables lists related tables for given schema from predicate.
+// If no table found in predicate, it return all tables.
+// TODO(tangenta): remove this after streaming interface is supported.
+func (e *InfoSchemaColumnsExtractor) ListTables(
+	ctx context.Context,
+	s pmodel.CIStr,
+	is infoschema.InfoSchema,
+) ([]*model.TableInfo, error) {
+	ec := e.extractableColumns
+	base := e.GetBase()
+	schemas := []pmodel.CIStr{s}
+	var tableNames []pmodel.CIStr
+	if ec.table != "" {
+		tableNames = e.getSchemaObjectNames(ec.table)
+	}
+	if len(tableNames) > 0 {
+		tableNames = filterSchemaObjectByRegexp(base, ec.table, tableNames, extractStrCIStr)
+		_, tblInfos, err := findTableAndSchemaByName(ctx, is, schemas, tableNames)
+		return tblInfos, err
+	}
+	_, tblInfos, err := listTablesForEachSchema(ctx, base, is, schemas)
+	return tblInfos, err
+}
+
 // ListColumns lists unhidden columns and corresponding ordinal positions for given table from predicates.
 // If no column found in predicate, it return all visible columns.
 func (e *InfoSchemaColumnsExtractor) ListColumns(
