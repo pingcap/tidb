@@ -5391,6 +5391,8 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 		}
 		fixedPos[i] = i - pruned
 	}
+
+	// Fill in the ColumnSizes.
 	colPosInfo.ColumnSizes = &table.ColumnSizeOption{
 		NotPruned:        bitset.New(uint(len(publicCols))),
 		AvgSizes:         make([]float64, 0, len(publicCols)),
@@ -5398,10 +5400,14 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	}
 	colPosInfo.ColumnSizes.NotPruned.SetAll()
 	for i, col := range publicCols {
+		// If the column is not pruned, we can use the column data to get a more accurate size.
+		// We just need to record its position info.
 		if _, ok := visitedCols[col.Offset]; ok {
 			colPosInfo.ColumnSizes.PublicColsLayout = append(colPosInfo.ColumnSizes.PublicColsLayout, fixedPos[col.Offset])
 			continue
 		}
+		// Otherwise we need to get the average size of the column by its field type.
+		// TODO: use statistics to get a maybe more accurate size.
 		colPosInfo.ColumnSizes.NotPruned.Clear(uint(i))
 		colPosInfo.ColumnSizes.AvgSizes = append(colPosInfo.ColumnSizes.AvgSizes, float64(chunk.EstimateTypeWidth(&col.FieldType)))
 	}
