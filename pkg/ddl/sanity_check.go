@@ -136,7 +136,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return ret, nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		args, err := model.GetDropIndexArgs(job)
+		args, err := model.GetFinishedDropIndexArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

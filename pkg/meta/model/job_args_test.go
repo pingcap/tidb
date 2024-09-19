@@ -446,22 +446,39 @@ func TestAddIndexArgs(t *testing.T) {
 }
 
 func TestDropIndex(t *testing.T) {
+	checkFunc := func(t *testing.T, inArgs *DropIndexArgs) {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropIndex)))
+			args, err := GetDropIndexArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.IndexNames, args.IndexNames)
+			require.EqualValues(t, inArgs.IfExists, args.IfExists)
+
+			require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionDropIndex)))
+			args2, err := GetFinishedDropIndexArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.IndexNames, args2.IndexNames)
+			require.EqualValues(t, inArgs.IfExists, args2.IfExists)
+			require.EqualValues(t, inArgs.IndexIDs, args2.IndexIDs)
+			require.EqualValues(t, inArgs.PartitionIDs, args2.PartitionIDs)
+		}
+	}
+
 	inArgs := &DropIndexArgs{
-		IndexNames:   []model.CIStr{model.NewCIStr("i1"), model.NewCIStr("i2")},
-		IfExists:     []bool{false, false},
+		IndexNames:   []model.CIStr{model.NewCIStr("i2")},
+		IfExists:     []bool{false},
 		IndexIDs:     []int64{1, 2, 3},
 		PartitionIDs: []int64{100, 101, 102, 103},
 	}
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropIndex)))
-		args, err := GetDropIndexArgs(j2)
-		require.NoError(t, err)
-		require.EqualValues(t, inArgs.IndexNames, args.IndexNames)
-		require.EqualValues(t, inArgs.IfExists, args.IfExists)
-		require.EqualValues(t, inArgs.IndexIDs, args.IndexIDs)
-		require.EqualValues(t, inArgs.PartitionIDs, args.PartitionIDs)
+
+	inArgs = &DropIndexArgs{
+		IndexNames:   []model.CIStr{model.NewCIStr("i1"), model.NewCIStr("i2")},
+		IfExists:     []bool{false, false},
+		IndexIDs:     []int64{1},
+		PartitionIDs: []int64{100, 101, 102, 103},
 	}
+	checkFunc(t, inArgs)
 }
 
 func TestRenameTableArgs(t *testing.T) {

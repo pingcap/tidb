@@ -437,11 +437,23 @@ func UpdateRenameTableArgs(job *Job) error {
 type DropIndexArgs struct {
 	IndexNames   []model.CIStr `json:"index_names,omitempty"`
 	IfExists     []bool        `json:"if_exists,omitempty"`
-	IndexIDs     []int64       `json:"index_ids,omitempty"`
-	PartitionIDs []int64       `json:"partition_ids,omitempty"`
+	IndexIDs     []int64       `json:"index_ids"`
+	PartitionIDs []int64       `json:"partition_ids "`
 }
 
 func (a *DropIndexArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if len(a.IndexNames) == 1 {
+			job.Args = []any{a.IndexNames[0], a.IfExists[0]}
+		} else {
+			job.Args = []any{a.IndexNames, a.IfExists}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *DropIndexArgs) fillFinishedJob(job *Job) {
 	if job.Version == JobVersion1 {
 		// This is to make the args compatible with old logic:
 		// 1. For drop index, the first and second args are CIStr and bool.
@@ -469,6 +481,38 @@ func GetDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 			job.RawArgs = b
 		}
 
+		// This is to make the args compatible with v1 logic:
+		// 1. For drop index, the first and second args are CIStr and bool.
+		// 2. For rollback add index, these args are slices.
+		indexNames := make([]model.CIStr, 1)
+		ifExists := make([]bool, 1)
+		if err := job.DecodeArgs(&indexNames[0], &ifExists[0]); err != nil {
+			if err := job.DecodeArgs(&indexNames, &ifExists); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		return &DropIndexArgs{
+			IndexNames: indexNames,
+			IfExists:   ifExists,
+		}, nil
+	}
+	return getOrDecodeArgsV2[*DropIndexArgs](job)
+}
+
+// GetFinishedDropIndexArgs gets the drop index args.
+// It's used for both drop index and rollback add index.
+func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
+	if job.Version == JobVersion1 {
+		// A temp workaround
+		if len(job.Args) > 0 && len(job.RawArgs) == 0 {
+			b, err := json.Marshal(job.Args)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			job.RawArgs = b
+		}
+
 		indexNames := make([]model.CIStr, 1)
 		ifExists := make([]bool, 1)
 		indexIDs := make([]int64, 1)
@@ -479,9 +523,30 @@ func GetDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 			return nil, errors.Trace(err)
 		}
 
-		// idxNames can be slice or single CIStr
-		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs, &partitionIDs); err != nil {
-			if err = job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs, &partitionIDs); err != nil {
+		// IndexName
+		if err := json.Unmarshal(rawArgs[0], &indexNames[0]); err != nil {
+			if err := json.Unmarshal(rawArgs[0], &indexNames); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		// IfExists
+		if err := json.Unmarshal(rawArgs[1], &ifExists[0]); err != nil {
+			if err := json.Unmarshal(rawArgs[1], &ifExists); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		// IndexIDs
+		if err := json.Unmarshal(rawArgs[2], &indexIDs[0]); err != nil {
+			if err := json.Unmarshal(rawArgs[2], &indexIDs); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		// PartitionIDs
+		if len(rawArgs) > 3 {
+			if err := json.Unmarshal(rawArgs[3], &partitionIDs); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}

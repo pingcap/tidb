@@ -220,7 +220,6 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		if err != nil {
 			return errors.Trace(err)
 		}
-		intest.Assert(len(args.IndexNames) == 1, "len(args.IndexNames) != 1")
 		info.DropIndexes = append(info.DropIndexes, args.IndexNames[0])
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		args, err := model.GetAddIndexArgs(job)

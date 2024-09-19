@@ -370,7 +370,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			}
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		args, err := model.GetDropIndexArgs(job)
+		args, err := model.GetFinishedDropIndexArgs(job)
 		if err != nil {
 			return errors.Trace(err)
 		}

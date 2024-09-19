@@ -1131,33 +1131,35 @@ func onDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 
-			// Convert drop index args to add index args, only indexID is needed.
-			args := &model.AddIndexArgs{}
-			for _, indexID := range indexIDs {
-				args.IndexArgs = append(args.IndexArgs, &model.IndexArg{AddIndexID: indexID})
+			// Convert drop index args to finished add index args again.
+			dropArgs, err := model.GetFinishedDropIndexArgs(job)
+			if err != nil {
+				return ver, errors.Trace(err)
 			}
-			job.FillArgs(args)
+			addIndexArgs := &model.AddIndexArgs{PartitionIDs: dropArgs.PartitionIDs}
+			for i, indexID := range indexIDs {
+				addIndexArgs.IndexArgs = append(addIndexArgs.IndexArgs,
+					&model.IndexArg{
+						AddIndexID: indexID,
+						IfExist:    dropArgs.IfExists[i],
+					})
+			}
+			job.FillFinishedArgs(addIndexArgs)
 		} else {
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 			// Global index key has t{tableID}_ prefix.
 			// Assign partitionIDs empty to guarantee correct prefix in insertJobIntoDeleteRangeTable.
-			// TODO(joechenrh): remove these codes after totally switched to V2
-			if job.Version == model.JobVersion1 {
-				job.Args[2] = []int64{indexIDs[0]}
-				if allIndexInfos[0].Global {
-					job.Args[3] = []int64{}
-				} else {
-					job.Args[3] = getPartitionIDs(tblInfo)
-				}
-			} else {
-				args := job.Args[0].(*model.DropIndexArgs)
-				args.IndexIDs = indexIDs
-				if !allIndexInfos[0].Global {
-					args.PartitionIDs = getPartitionIDs(tblInfo)
-				}
+			dropArgs, err := model.GetDropIndexArgs(job)
+			if err != nil {
+				return ver, errors.Trace(err)
 			}
+			dropArgs.IndexIDs = []int64{indexIDs[0]}
+			if !allIndexInfos[0].Global {
+				dropArgs.PartitionIDs = getPartitionIDs(tblInfo)
+			}
+			job.FillFinishedArgs(dropArgs)
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", allIndexInfos[0].State))
