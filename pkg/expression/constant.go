@@ -163,26 +163,6 @@ func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 	return "?"
 }
 
-// StringifyWithoutTruncate implements Expression interface.
-func (c *Constant) StringifyWithoutTruncate(ctx ParamValues, redact string) string {
-	if c.ParamMarker != nil {
-		dt, err := c.ParamMarker.GetUserVar(ctx)
-		intest.AssertNoError(err, "fail to get param")
-		if err != nil {
-			return "?"
-		}
-		c.Value.SetValue(dt.GetValue(), c.RetType)
-	} else if c.DeferredExpr != nil {
-		return c.DeferredExpr.StringWithCtx(ctx, redact)
-	}
-	if redact == perrors.RedactLogDisable {
-		return fmt.Sprintf("%v", c.Value.GetValue())
-	} else if redact == perrors.RedactLogMarker {
-		return fmt.Sprintf("‹%v›", c.Value.GetValue())
-	}
-	return "?"
-}
-
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
 	con := *c

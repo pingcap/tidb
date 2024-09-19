@@ -564,8 +564,6 @@ func (m *MockExpr) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 
 func (m *MockExpr) StringWithCtx(ParamValues, string) string { return "" }
 
-func (m *MockExpr) StringifyWithoutTruncate(ParamValues, string) string { return "" }
-
 func (m *MockExpr) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return types.NewDatum(m.i), m.err
 }

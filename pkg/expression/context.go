@@ -123,10 +123,3 @@ type StringerWithCtx interface {
 	// NOTE: any implementation of `StringWithCtx` should not panic if the context is nil.
 	StringWithCtx(ctx ParamValues, redact string) string
 }
-
-// StringifyWithoutTruncate is the interface for expressions that can be stringified with context for Import sql to parse parameters.
-type StringifyWithoutTruncate interface {
-	// StringifyWithoutTruncate returns the string representation of the expression with context (without truncate).
-	// NOTE: any implementation of `StringifyWithoutTruncate` should not panic if the context is nil.
-	StringifyWithoutTruncate(ctx ParamValues, redact string) string
-}

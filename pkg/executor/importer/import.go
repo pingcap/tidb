@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"net/url"
@@ -51,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -816,7 +818,23 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	}
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			val := opt.Value.StringifyWithoutTruncate(evalCtx, errors.RedactLogDisable)
+			var val string
+			if constValue, ok := opt.Value.(*expression.Constant); ok {
+				// we can stringify 'constant' directly because
+				// redact is set to 'RedactLogDisable' by default
+				switch constValue.Value.Kind() {
+				case types.KindString, types.KindBytes:
+					val = constValue.Value.GetString()
+				case types.KindMysqlJSON:
+					val = constValue.Value.GetMysqlJSON().String()
+				case types.KindVectorFloat32:
+					val = constValue.Value.GetVectorFloat32().TruncatedString()
+				default:
+					val = fmt.Sprintf("%v", constValue.Value.GetValue())
+				}
+			} else {
+				val = opt.Value.StringWithCtx(evalCtx, errors.RedactLogDisable)
+			}
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
