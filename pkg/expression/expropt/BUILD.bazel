@@ -1,0 +1,47 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "expropt",
+    srcs = [
+        "advisory_lock.go",
+        "current_user.go",
+        "ddlowner.go",
+        "infoschema.go",
+        "kvstore.go",
+        "optional.go",
+        "sequence.go",
+        "sessionvars.go",
+        "sqlexec.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/expression/expropt",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression/exprctx",
+        "//pkg/infoschema/context",
+        "//pkg/kv",
+        "//pkg/parser/auth",
+        "//pkg/planner/core/resolve",
+        "//pkg/sessionctx/variable",
+        "//pkg/util/chunk",
+        "//pkg/util/intest",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "expropt_test",
+    timeout = "short",
+    srcs = ["optional_test.go"],
+    embed = [":expropt"],
+    flaky = True,
+    deps = [
+        "//pkg/expression/exprctx",
+        "//pkg/infoschema/context",
+        "//pkg/kv",
+        "//pkg/parser/auth",
+        "//pkg/sessionctx/variable",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)
