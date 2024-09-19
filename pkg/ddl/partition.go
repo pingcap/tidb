@@ -2167,11 +2167,6 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 		return ver, errors.Trace(err)
 	}
 	if job.Type != model.ActionDropTablePartition {
-		if partInfo == nil {
-			// if the job is ActionAddTablePartition, there is no PartitionInfo.
-			// see convertAddTablePartitionJob2RollbackJob
-			partInfo = &model.PartitionInfo{}
-		}
 		// If rollback from reorganize partition, remove DroppingDefinitions from tableInfo
 		tblInfo.Partition.DroppingDefinitions = nil
 		// If rollback from adding table partition, remove addingDefinitions from tableInfo.

@@ -396,27 +396,43 @@ func (a *TablePartitionArgs) fillFinishedJob(job *Job) {
 	job.Args = []any{a}
 }
 
+func (a *TablePartitionArgs) decodeV1(job *Job) error {
+	var (
+		partNames []string
+		partInfo  = &PartitionInfo{}
+	)
+	if job.Type == ActionAddTablePartition {
+		if job.State == JobStateRollingback {
+			if err := job.DecodeArgs(&partNames); err != nil {
+				return err
+			}
+		} else {
+			if err := job.DecodeArgs(partInfo); err != nil {
+				return err
+			}
+		}
+	} else if job.Type == ActionDropTablePartition {
+		if err := job.DecodeArgs(&partNames); err != nil {
+			return err
+		}
+	} else {
+		if err := job.DecodeArgs(&partNames, partInfo); err != nil {
+			return err
+		}
+	}
+	a.PartNames = partNames
+	a.PartInfo = partInfo
+	return nil
+}
+
 // GetTablePartitionArgs gets the table partition args.
 func GetTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 	if job.Version == JobVersion1 {
-		var (
-			partNames []string
-			partInfo  = &PartitionInfo{}
-		)
-		if job.Type == ActionAddTablePartition {
-			if err := job.DecodeArgs(partInfo); err != nil {
-				return nil, errors.Trace(err)
-			}
-		} else if job.Type == ActionDropTablePartition {
-			if err := job.DecodeArgs(&partNames); err != nil {
-				return nil, errors.Trace(err)
-			}
-		} else {
-			if err := job.DecodeArgs(&partNames, partInfo); err != nil {
-				return nil, errors.Trace(err)
-			}
+		args := &TablePartitionArgs{}
+		if err := args.decodeV1(job); err != nil {
+			return nil, errors.Trace(err)
 		}
-		return &TablePartitionArgs{PartNames: partNames, PartInfo: partInfo}, nil
+		return args, nil
 	}
 	return getOrDecodeArgsV2[*TablePartitionArgs](job)
 }

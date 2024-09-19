@@ -1609,9 +1609,9 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 		physicalTableIDs = append(args.OldPartitionIDs, historyJob.TableID)
 	case model.ActionDropTablePartition, model.ActionReorganizePartition,
 		model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
-		args, err := model.GetFinishedTablePartitionArgs(historyJob)
-		if err != nil {
-			return
+		args, err2 := model.GetFinishedTablePartitionArgs(historyJob)
+		if err2 != nil {
+			return err2
 		}
 		physicalTableIDs = args.OldPhysicalTblIDs
 	case model.ActionTruncateTablePartition:
