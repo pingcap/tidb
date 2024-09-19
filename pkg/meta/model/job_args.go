@@ -388,7 +388,7 @@ func (a *TablePartitionArgs) fillJob(job *Job) {
 
 func (a *TablePartitionArgs) fillFinishedJob(job *Job) {
 	if job.Version == JobVersion1 {
-		intest.Assert(job.Type != ActionAddTablePartition || job.State == JobStateRollingback,
+		intest.Assert(job.Type != ActionAddTablePartition || job.State == JobStateRollbackDone,
 			"add table partition job should not call fillFinishedJob if not rollback")
 		job.Args = []any{a.OldPhysicalTblIDs}
 		return
@@ -456,7 +456,11 @@ func FillDropArgsForAddPartition(job *Job, args *TablePartitionArgs) {
 		Version: job.Version,
 		Type:    ActionDropTablePartition,
 	}
-	fake.FillArgs(args)
+	// PartInfo cannot be saved, onDropTablePartition expects that PartInfo is empty
+	// in this case
+	fake.FillArgs(&TablePartitionArgs{
+		PartNames: args.PartNames,
+	})
 	job.Args = fake.Args
 }
 
