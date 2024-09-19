@@ -530,7 +530,7 @@ func evaluateIndexSetCost(
 	return IndexSetCost{workloadCost, totCols, strings.Join(keys, ",")}, nil
 }
 
-func exec(sctx sessionctx.Context, sql string) ([]chunk.Row, error) {
+func exec(sctx sessionctx.Context, sql string) (ret []chunk.Row, err error) {
 	executor := sctx.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	result, err := executor.ExecuteInternal(ctx, sql)
@@ -540,6 +540,11 @@ func exec(sctx sessionctx.Context, sql string) ([]chunk.Row, error) {
 	if result == nil {
 		return nil, nil
 	}
-	defer result.Close()
+	defer func() {
+		closeErr := result.Close()
+		if err == nil {
+			err = closeErr
+		}
+	}()
 	return sqlexec.DrainRecordSet(context.Background(), result, 64)
 }
