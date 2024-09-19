@@ -91,7 +91,7 @@ echo "restart a services"
 restart_services
 
 # PITR but failed in the snapshot restore stage
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/snapclient/corrupt-files=return(\"corrupt-last-table-files\")"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/snap_client/corrupt-files=return(\"corrupt-last-table-files\")"
 restore_fail=0
 run_br --pd $PD_ADDR restore point --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -s "local://$TEST_DIR/$PREFIX/log" || restore_fail=1
 export GO_FAILPOINTS=""
@@ -101,7 +101,7 @@ if [ $restore_fail -ne 1 ]; then
 fi
 
 # PITR with checkpoint but failed in the log restore metakv stage
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/snapclient/corrupt-files=return(\"only-last-table-files\");\
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/snap_client/corrupt-files=return(\"only-last-table-files\");\
 github.com/pingcap/tidb/br/pkg/restore/logclient/failed-after-id-maps-saved=return(true)"
 restore_fail=0
 run_br --pd $PD_ADDR restore point --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -s "local://$TEST_DIR/$PREFIX/log" || restore_fail=1
