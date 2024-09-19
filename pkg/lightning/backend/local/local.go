@@ -1394,10 +1394,12 @@ func (local *Backend) doImport(
 	// components to exit. Component exit order in happy path is:
 	//
 	// 1. prepareAndSendJob is finished, its goroutine will wait all jobs are
-	// finished by jobWg.Wait(). Then it will exit and close jobFromWorkerCh (or TODO: store balancer's ch).
+	// finished by jobWg.Wait(). Then it will exit and close the output channel of
+	// workers.
 	//
 	// 2. one-by-one, when every component see its input channel is closed, it knows
-	// the workflow is finished. It will exit and close the output channel.
+	// the workflow is finished. It will exit and (except for workers) close the
+	// output channel which is the input channel of the next component.
 	//
 	// 3. Now all components are exited, the main goroutine can exit after
 	// workGroup.Wait().
@@ -1406,29 +1408,35 @@ func (local *Backend) doImport(
 	//
 	// 1. The error component exits and causes workGroup's context to be canceled.
 	//
-	// 2. All other components will exit because of the canceled context.
+	// 2. All other components will exit because of the canceled context. No need to
+	// close channels.
 	//
 	// 3. the main goroutine can see the error and exit after workGroup.Wait().
 	var (
 		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
-		//firstErr             common.OnceError
 		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
 		// owned by them.
 		jobToWorkerCh   = make(chan *regionJob)
 		jobFromWorkerCh = make(chan *regionJob)
-		// jobWg tracks the number of jobs in this workflow.
-		// prepareAndSendJob, workers and regionJobRetryer TODO: storeBalancer can own jobs.
-		// When cancel on error, the goroutine of above three components have
-		// responsibility to Done jobWg of their owning jobs.
-		jobWg sync.WaitGroup
+		jobWg           sync.WaitGroup
+		balancer        *storeBalancer
 	)
+
+	// storeBalancer does not have backpressure, it should not be used with external
+	// engine to avoid OOM.
+	if _, ok := engine.(*Engine); ok {
+		balancer = newStoreBalancer(jobToWorkerCh, jobFromWorkerCh, &jobWg)
+		workGroup.Go(func() error {
+			balancer.run(workerCtx)
+			return nil
+		})
+	}
 
 	failpoint.Inject("injectVariables", func() {
 		jobToWorkerCh = testJobToWorkerCh
 		testJobWg = &jobWg
 	})
 
-	// TODO(lance6716): add happy path close to retryer
 	retryer := newRegionJobRetryer(jobToWorkerCh, &jobWg)
 	workGroup.Go(func() error {
 		retryer.run(workerCtx)
@@ -1488,8 +1496,11 @@ func (local *Backend) doImport(
 
 	for i := 0; i < local.WorkerConcurrency; i++ {
 		workGroup.Go(func() error {
-			// TODO(lance6716): here replace the ch
-			return local.startWorker(workerCtx, jobToWorkerCh, jobFromWorkerCh, &jobWg)
+			toCh, fromCh := jobToWorkerCh, jobFromWorkerCh
+			if balancer != nil {
+				toCh, fromCh = balancer.innerJobToWorkerCh, balancer.innerJobFromWorkerCh
+			}
+			return local.startWorker(workerCtx, toCh, fromCh, &jobWg)
 		})
 	}
 
@@ -1510,8 +1521,11 @@ func (local *Backend) doImport(
 		}
 
 		jobWg.Wait()
-		// TODO(lance6716): consider storeBalancer
-		close(jobFromWorkerCh)
+		firstCloseCh := jobFromWorkerCh
+		if balancer != nil {
+			firstCloseCh = balancer.innerJobFromWorkerCh
+		}
+		close(firstCloseCh)
 		return nil
 	})
 

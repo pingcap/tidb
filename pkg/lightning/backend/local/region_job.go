@@ -1058,6 +1058,7 @@ type storeBalancer struct {
 	innerJobFromWorkerCh chan *regionJob
 
 	wakeSendToWorker chan struct{}
+	done             chan struct{}
 
 	// map[uint64]int. 0 can appear in the map after it's decremented to 0.
 	storeLoadMap sync.Map
@@ -1074,15 +1075,14 @@ func newStoreBalancer(
 		innerJobToWorkerCh:   make(chan *regionJob),
 		innerJobFromWorkerCh: make(chan *regionJob),
 		wakeSendToWorker:     make(chan struct{}, 1),
+		done:                 make(chan struct{}),
 		jobWg:                jobWg,
 	}
 }
 
-// interceptToWorker should be called in a separate goroutine with the workers'
-// context to have a correct exit time.
-func (b *storeBalancer) interceptToWorker(workerCtx context.Context) {
+func (b *storeBalancer) run(workerCtx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		b.runReadToWorkerCh(workerCtx)
@@ -1090,6 +1090,10 @@ func (b *storeBalancer) interceptToWorker(workerCtx context.Context) {
 	go func() {
 		defer wg.Done()
 		b.runSendToWorker(workerCtx)
+	}()
+	go func() {
+		defer wg.Done()
+		b.runReadFromWorker(workerCtx)
 	}()
 
 	wg.Wait()
@@ -1105,7 +1109,12 @@ func (b *storeBalancer) runReadToWorkerCh(workerCtx context.Context) {
 		select {
 		case <-workerCtx.Done():
 			return
-		case job := <-b.jobToWorkerCh:
+		case job, ok := <-b.jobToWorkerCh:
+			if !ok {
+				close(b.done)
+				close(b.innerJobToWorkerCh)
+				return
+			}
 			b.jobs.Store(b.jobIdx, job)
 			b.jobIdx++
 
@@ -1130,6 +1139,8 @@ func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
 	for {
 		select {
 		case <-workerCtx.Done():
+			return
+		case <-b.done:
 			return
 		case <-b.wakeSendToWorker:
 		}
@@ -1207,30 +1218,42 @@ func (b *storeBalancer) pickJob() *regionJob {
 	return best
 }
 
-func (b *storeBalancer) interceptFromWorker() {
-	defer close(b.jobFromWorkerCh)
+func (b *storeBalancer) runReadFromWorker(workerCtx context.Context) {
+	for {
+		select {
+		case <-workerCtx.Done():
+			return
+		case job, ok := <-b.innerJobFromWorkerCh:
+			if !ok {
+				close(b.jobFromWorkerCh)
+				return
+			}
+			for _, p := range job.region.Region.Peers {
+			retry:
+				val, ok2 := b.storeLoadMap.Load(p.StoreId)
+				if !ok2 {
+					intest.Assert(false,
+						"missing key in storeLoadMap. key: %d, job: %+v",
+						p.StoreId, job,
+					)
+					log.L().Error("missing key in storeLoadMap",
+						zap.Uint64("storeID", p.StoreId),
+						zap.Any("job", job))
+					continue
+				}
 
-	for job := range b.innerJobFromWorkerCh {
-		for _, p := range job.region.Region.Peers {
-		retry:
-			val, ok2 := b.storeLoadMap.Load(p.StoreId)
-			if !ok2 {
-				intest.Assert(false,
-					"missing key in storeLoadMap. key: %d, job: %+v",
-					p.StoreId, job,
-				)
-				log.L().Error("missing key in storeLoadMap",
-					zap.Uint64("storeID", p.StoreId),
-					zap.Any("job", job))
-				continue
+				old := val.(int)
+				if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old-1) {
+					goto retry
+				}
 			}
 
-			old := val.(int)
-			if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old-1) {
-				goto retry
+			select {
+			case <-workerCtx.Done():
+				job.done(b.jobWg)
+				return
+			case b.jobFromWorkerCh <- job:
 			}
 		}
-
-		b.jobFromWorkerCh <- job
 	}
 }
