@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -868,12 +867,8 @@ func getRegionSplitKeys(
 	return keys, err
 }
 
-// prepareAndSendJob will read the engine to get estimated key range,
-// then split and scatter regions for these range and send region jobs to jobToWorkerCh.
-// NOTE when ctx is Done, this function will NOT return error even if it hasn't sent
-// all the jobs to jobToWorkerCh. This is because the "first error" can only be
-// found by checking the work group LATER, we don't want to return an error to
-// seize the "first" error.
+// prepareAndSendJob will read the engine to get estimated key range, then split
+// and scatter regions for these range and send region jobs to jobToWorkerCh.
 func (local *Backend) prepareAndSendJob(
 	ctx context.Context,
 	engine common.Engine,
@@ -983,9 +978,7 @@ func (local *Backend) generateAndSendJob(
 						case <-egCtx.Done():
 							// this job is not put into jobToWorkerCh
 							job.done(jobWg)
-							// if the context is canceled, it means worker has error, the first error can be
-							// found by worker's error group LATER. if this function returns an error it will
-							// seize the "first error".
+							// if the context is canceled, it means worker has error.
 							return nil
 						case jobToWorkerCh <- job:
 						}
@@ -1078,9 +1071,10 @@ func (local *Backend) generateJobForRange(
 }
 
 // startWorker creates a worker that reads from the job channel and processes.
-// startWorker will return nil if it's expected to stop, where the only case is
-// the context canceled. It will return not nil error when it actively stops.
-// startWorker must Done the jobWg if it does not put the job into jobOutCh.
+// startWorker will return nil if it's expected to stop, where the cases are all
+// jobs are finished or the context canceled because other components report
+// error. It will return not nil error when it actively stops. startWorker must
+// call job.done() if it does not put the job into jobOutCh.
 func (local *Backend) startWorker(
 	ctx context.Context,
 	jobInCh, jobOutCh chan *regionJob,
@@ -1093,9 +1087,6 @@ func (local *Backend) startWorker(
 			return nil
 		case job, ok := <-jobInCh:
 			if !ok {
-				// In fact we don't use close input channel to notify worker to
-				// exit, because there's a cycle in workflow.
-				intest.Assert(false, "jobInCh should not be closed")
 				return nil
 			}
 
@@ -1104,7 +1095,12 @@ func (local *Backend) startWorker(
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
 			switch job.stage {
 			case regionScanned, wrote, ingested:
-				jobOutCh <- job
+				select {
+				case <-ctx.Done():
+					job.done(jobWg)
+					return nil
+				case jobOutCh <- job:
+				}
 			case needRescan:
 				jobs, err2 := local.generateJobForRange(
 					ctx,
@@ -1128,7 +1124,12 @@ func (local *Backend) startWorker(
 				}
 				for _, j := range jobs {
 					j.lastRetryableErr = job.lastRetryableErr
-					jobOutCh <- j
+					select {
+					case <-ctx.Done():
+						j.done(jobWg)
+						// don't exit here, we mark done for each job and exit in the outer loop
+					case jobOutCh <- j:
+					}
 				}
 			}
 
@@ -1389,66 +1390,73 @@ func (local *Backend) doImport(
 	// next components. The exit order is important because if the next component is
 	// exited before the owner component, deadlock will happen.
 	//
-	// Component exit order in happy path is:
+	// All components is spawned by workGroup so the main goroutine can wait all
+	// components to exit. Component exit order in happy path is:
 	//
 	// 1. prepareAndSendJob is finished, its goroutine will wait all jobs are
-	// finished by jobWg.Wait(). Then it will call workerCancel().
+	// finished by jobWg.Wait(). Then it will exit and close jobFromWorkerCh (or TODO: store balancer's ch).
 	//
-	// 2. The cancellation will cause all components using workerCtx start to exit,
-	// which are prepareAndSendJob, regionJobRetryer, storeBalancer and workers.
+	// 2. one-by-one, when every component see its input channel is closed, it knows
+	// the workflow is finished. It will exit and close the output channel.
 	//
-	// 3.
-
+	// 3. Now all components are exited, the main goroutine can exit after
+	// workGroup.Wait().
+	//
+	// Component exit order in error case is:
+	//
+	// 1. The error component exits and causes workGroup's context to be canceled.
+	//
+	// 2. All other components will exit because of the canceled context.
+	//
+	// 3. the main goroutine can see the error and exit after workGroup.Wait().
 	var (
-		ctx2, workerCancel = context.WithCancel(ctx)
-		// workerCtx.Done() means workflow is canceled by error. It may be caused
-		// by calling workerCancel() or workers in workGroup meets error.
-		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx2)
-		firstErr             common.OnceError
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
+		//firstErr             common.OnceError
 		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
 		// owned by them.
 		jobToWorkerCh   = make(chan *regionJob)
 		jobFromWorkerCh = make(chan *regionJob)
 		// jobWg tracks the number of jobs in this workflow.
-		// prepareAndSendJob, workers and regionJobRetryer can own jobs.
+		// prepareAndSendJob, workers and regionJobRetryer TODO: storeBalancer can own jobs.
 		// When cancel on error, the goroutine of above three components have
 		// responsibility to Done jobWg of their owning jobs.
-		jobWg                sync.WaitGroup
-		dispatchJobGoroutine = make(chan struct{})
+		jobWg sync.WaitGroup
 	)
-	defer workerCancel()
 
 	failpoint.Inject("injectVariables", func() {
 		jobToWorkerCh = testJobToWorkerCh
 		testJobWg = &jobWg
 	})
 
-	retryer := startRegionJobRetryer(workerCtx, jobToWorkerCh, &jobWg)
+	// TODO(lance6716): add happy path close to retryer
+	retryer := newRegionJobRetryer(jobToWorkerCh, &jobWg)
+	workGroup.Go(func() error {
+		retryer.run(workerCtx)
+		return nil
+	})
 
-	// dispatchJobGoroutine handles processed job from worker, it will only exit
-	// when jobFromWorkerCh is closed to avoid worker is blocked on sending to
-	// jobFromWorkerCh.
-	defer func() {
-		// use defer to close jobFromWorkerCh after all workers are exited
-		close(jobFromWorkerCh)
-		<-dispatchJobGoroutine
-		// TODO(lance6716): wait balancer exit
-	}()
-	go func() {
-		defer close(dispatchJobGoroutine)
+	// dispatchJobGoroutine
+	workGroup.Go(func() error {
+		var (
+			job *regionJob
+			ok  bool
+		)
 		for {
-			job, ok := <-jobFromWorkerCh
+			select {
+			case <-workerCtx.Done():
+				return nil
+			case job, ok = <-jobFromWorkerCh:
+			}
 			if !ok {
-				return
+				retryer.close()
+				return nil
 			}
 			switch job.stage {
 			case regionScanned, wrote:
 				job.retryCount++
 				if job.retryCount > maxWriteAndIngestRetryTimes {
-					firstErr.Set(job.lastRetryableErr)
-					workerCancel()
 					job.done(&jobWg)
-					continue
+					return job.lastRetryableErr
 				}
 				// max retry backoff time: 2+4+8+16+30*26=810s
 				sleepSecond := math.Pow(2, float64(job.retryCount))
@@ -1472,7 +1480,7 @@ func (local *Backend) doImport(
 				panic("should not reach here")
 			}
 		}
-	}()
+	})
 
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
@@ -1502,16 +1510,16 @@ func (local *Backend) doImport(
 		}
 
 		jobWg.Wait()
-		workerCancel()
+		// TODO(lance6716): consider storeBalancer
+		close(jobFromWorkerCh)
 		return nil
 	})
-	if err := workGroup.Wait(); err != nil {
-		if !common.IsContextCanceledError(err) {
-			log.FromContext(ctx).Error("do import meets error", zap.Error(err))
-		}
-		firstErr.Set(err)
+
+	err := workGroup.Wait()
+	if err != nil && !common.IsContextCanceledError(err) {
+		log.FromContext(ctx).Error("do import meets error", zap.Error(err))
 	}
-	return firstErr.Get()
+	return err
 }
 
 // GetImportedKVCount returns the number of imported KV pairs of some engine.

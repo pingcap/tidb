@@ -915,14 +915,13 @@ type regionJobRetryer struct {
 	putBackCh chan<- *regionJob
 	reload    chan struct{}
 	jobWg     *sync.WaitGroup
+
+	done chan struct{}
 }
 
-// startRegionJobRetryer starts a new regionJobRetryer and it will run in
-// background to put the job back to `putBackCh` when job's waitUntil is reached.
-// Cancel the `ctx` will stop retryer and `jobWg.Done` will be trigger for jobs
-// that are not put back yet.
-func startRegionJobRetryer(
-	ctx context.Context,
+// newRegionJobRetryer creates a regionJobRetryer. regionJobRetryer.run is
+// expected to be called soon.
+func newRegionJobRetryer(
 	putBackCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) *regionJobRetryer {
@@ -930,15 +929,17 @@ func startRegionJobRetryer(
 		putBackCh: putBackCh,
 		reload:    make(chan struct{}, 1),
 		jobWg:     jobWg,
+		done:      make(chan struct{}),
 	}
 	ret.protectedQueue.q = make(regionJobRetryHeap, 0, 16)
-	go ret.run(ctx)
 	return ret
 }
 
-// run is only internally used, caller should not use it.
+// run occupies the goroutine and starts the retry loop. Cancel the `ctx` will
+// stop retryer and `jobWg.Done` will be trigger for jobs that are not put back
+// yet. It should only be used in error case.
 func (q *regionJobRetryer) run(ctx context.Context) {
-	defer q.close()
+	defer q.internalClose()
 
 	for {
 		var front *regionJob
@@ -952,6 +953,8 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 		case front != nil:
 			select {
 			case <-ctx.Done():
+				return
+			case <-q.done:
 				return
 			case <-q.reload:
 			case <-time.After(time.Until(front.waitUntil)):
@@ -967,6 +970,9 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 				case <-ctx.Done():
 					q.protectedToPutBack.mu.Unlock()
 					return
+				case <-q.done:
+					q.protectedToPutBack.mu.Unlock()
+					return
 				case q.putBackCh <- q.protectedToPutBack.toPutBack:
 					q.protectedToPutBack.toPutBack = nil
 					q.protectedToPutBack.mu.Unlock()
@@ -977,14 +983,31 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
+			case <-q.done:
+				return
 			case <-q.reload:
 			}
 		}
 	}
 }
 
-// close is only internally used, caller should not use it.
+// close stops the retryer. It should only be used in the happy path where all
+// jobs are finished.
 func (q *regionJobRetryer) close() {
+	close(q.done)
+	close(q.putBackCh)
+	intest.Assert(
+		q.protectedToPutBack.toPutBack == nil,
+		"toPutBack should be nil considering it's happy path",
+	)
+	intest.Assert(
+		len(q.protectedQueue.q) == 0,
+		"queue should be empty considering it's happy path",
+	)
+}
+
+// internalClose is only internally used, caller should not use it.
+func (q *regionJobRetryer) internalClose() {
 	q.protectedClosed.mu.Lock()
 	defer q.protectedClosed.mu.Unlock()
 	q.protectedClosed.closed = true

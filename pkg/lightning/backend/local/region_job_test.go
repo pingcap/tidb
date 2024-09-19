@@ -189,7 +189,7 @@ func TestRegionJobRetryer(t *testing.T) {
 		jobWg       sync.WaitGroup
 		ctx, cancel = context.WithCancel(context.Background())
 	)
-	retryer := startRegionJobRetryer(ctx, putBackCh, &jobWg)
+	retryer := newRegionJobRetryer(ctx, putBackCh, &jobWg)
 	require.Len(t, putBackCh, 0)
 
 	for i := 0; i < 8; i++ {
@@ -235,7 +235,7 @@ func TestRegionJobRetryer(t *testing.T) {
 
 	ctx, cancel = context.WithCancel(context.Background())
 	putBackCh = make(chan *regionJob)
-	retryer = startRegionJobRetryer(ctx, putBackCh, &jobWg)
+	retryer = newRegionJobRetryer(ctx, putBackCh, &jobWg)
 
 	job = &regionJob{
 		keyRange: common.Range{
