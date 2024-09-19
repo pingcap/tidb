@@ -39,6 +39,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
+	"golang.org/x/text/number"
 )
 
 var (
@@ -3377,11 +3380,17 @@ func (b *builtinFormatWithLocaleSig) evalString(ctx EvalContext, row chunk.Row) 
 	tc := typeCtx(ctx)
 	if isNull {
 		tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-	} else if !strings.EqualFold(locale, "en_US") { // TODO: support other locales.
-		tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 	}
-	locale = "en_US"
-	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
+
+	lang, err := language.Parse(locale)
+	if err != nil {
+		return "", false, err
+	}
+	p := message.NewPrinter(lang)
+	xint, _ := strconv.ParseFloat(x, 64)
+	dint, _ := strconv.Atoi(d)
+	formatString := p.Sprintf("%v", number.Decimal(xint, number.Scale(dint)))
+
 	return formatString, false, err
 }
 

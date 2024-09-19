@@ -1,0 +1,24 @@
+SELECT FORMAT('1.234',1,'id_ID');
+FORMAT('1.234',1,'id_ID')
+1,2
+SELECT FORMAT('1.234',2,'id_ID');
+FORMAT('1.234',2,'id_ID')
+1,23
+SELECT FORMAT('1.234',3,'id_ID');
+FORMAT('1.234',3,'id_ID')
+1,234
+SELECT FORMAT('1.234',4,'id_ID');
+FORMAT('1.234',4,'id_ID')
+1,2340
+SELECT FORMAT('1.234',1,'xxxxxx');
+FORMAT('1.234',1,'xxxxxx')
+1.2
+SELECT FORMAT('1.234',1,'nl_NL');
+FORMAT('1.234',1,'nl_NL')
+1,2
+SELECT FORMAT('1.234',1,'en_US');
+FORMAT('1.234',1,'en_US')
+1.2
+SELECT FORMAT('1.234',1,'zh');
+FORMAT('1.234',1,'zh')
+1.2
