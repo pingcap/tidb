@@ -1133,11 +1133,15 @@ const (
 	// version 213
 	//   create `mysql.tidb_pitr_id_map` table
 	version213 = 213
+
+	// version 214
+	//   changes variable `tidb_scatter_region` value from ON to "table" and OFF to "".
+	version214 = 214
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version213
+var currentBootstrapVersion int64 = version214
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1306,6 +1310,7 @@ var (
 		upgradeToVer211,
 		upgradeToVer212,
 		upgradeToVer213,
+		upgradeToVer214,
 	}
 )
 
@@ -3139,6 +3144,15 @@ func upgradeToVer213(s sessiontypes.Session, ver int64) {
 	}
 
 	mustExecute(s, CreatePITRIDMap)
+}
+
+func upgradeToVer214(s sessiontypes.Session, ver int64) {
+	if ver >= version213 {
+		return
+	}
+
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'OFF'")
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='table' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'ON'")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
