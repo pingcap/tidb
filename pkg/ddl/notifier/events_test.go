@@ -25,30 +25,32 @@ import (
 func TestEventString(t *testing.T) {
 	// Create an Event object
 	e := &SchemaChangeEvent{
-		tp: model.ActionAddColumn,
-		tableInfo: &model.TableInfo{
-			ID:   1,
-			Name: pmodel.NewCIStr("Table1"),
-		},
-		addedPartInfo: &model.PartitionInfo{
-			Definitions: []model.PartitionDefinition{
-				{ID: 2},
-				{ID: 3},
+		inner: &jsonSchemaChangeEvent{
+			Tp: model.ActionAddColumn,
+			TableInfo: &model.TableInfo{
+				ID:   1,
+				Name: pmodel.NewCIStr("Table1"),
 			},
-		},
-		oldTableInfo: &model.TableInfo{
-			ID:   4,
-			Name: pmodel.NewCIStr("Table2"),
-		},
-		droppedPartInfo: &model.PartitionInfo{
-			Definitions: []model.PartitionDefinition{
-				{ID: 5},
-				{ID: 6},
+			AddedPartInfo: &model.PartitionInfo{
+				Definitions: []model.PartitionDefinition{
+					{ID: 2},
+					{ID: 3},
+				},
 			},
-		},
-		columnInfos: []*model.ColumnInfo{
-			{ID: 7, Name: pmodel.NewCIStr("Column1")},
-			{ID: 8, Name: pmodel.NewCIStr("Column2")},
+			OldTableInfo: &model.TableInfo{
+				ID:   4,
+				Name: pmodel.NewCIStr("Table2"),
+			},
+			DroppedPartInfo: &model.PartitionInfo{
+				Definitions: []model.PartitionDefinition{
+					{ID: 5},
+					{ID: 6},
+				},
+			},
+			ColumnInfos: []*model.ColumnInfo{
+				{ID: 7, Name: pmodel.NewCIStr("Column1")},
+				{ID: 8, Name: pmodel.NewCIStr("Column2")},
+			},
 		},
 	}
 
