@@ -508,7 +508,10 @@ func (a *RenameTablesArgs) fillJob(job *Job) {
 
 		// To make it compatible with previous create metas
 		job.Args = []any{oldSchemaIDs, newSchemaIDs, newTableNames, tableIDs, oldSchemaNames, oldTableNames}
+		return
 	}
+
+	job.Args = []any{a}
 }
 
 // GetRenameTablesArgsFromV1 get v2 args from v1
