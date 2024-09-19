@@ -309,18 +309,11 @@ func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok
 }
 
 func (is *infoSchema) SchemaNameByTableID(tableID int64) (schemaName pmodel.CIStr, ok bool) {
-	if !tableIDIsValid(tableID) {
+	tbl, ok := is.TableByID(stdctx.Background(), tableID)
+	if !ok {
 		return
 	}
-
-	slice := is.sortedTablesBuckets[tableBucketIdx(tableID)]
-	idx := slice.searchTable(tableID)
-	if idx == -1 {
-		return
-	}
-
-	dbID := slice[idx].Meta().DBID
-	db, ok := is.SchemaByID(dbID)
+	db, ok := is.SchemaByID(tbl.Meta().DBID)
 	if !ok {
 		return
 	}
