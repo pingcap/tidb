@@ -342,6 +342,7 @@ func TestNewRegionJobs(t *testing.T) {
 }
 
 func mockWorkerReadJob(
+	t *testing.T,
 	b *storeBalancer,
 	jobs []*regionJob,
 	jobToWorkerCh chan<- *regionJob,
@@ -351,11 +352,22 @@ func mockWorkerReadJob(
 	for _, job := range jobs {
 		jobToWorkerCh <- job
 	}
+	require.Eventually(t, func() bool {
+		// 1 job is picked, rest are waiting to be picked
+		return b.jobLen()+1 == len(jobs)
+	}, time.Second, 10*time.Millisecond)
 	for i := range ret {
 		got := <-b.innerJobToWorkerCh
 		ret[i] = got
 	}
 	return ret
+}
+
+func checkStoreScoreZero(t *testing.T, b *storeBalancer) {
+	b.storeLoadMap.Range(func(_, value any) bool {
+		require.Equal(t, 0, value.(int))
+		return true
+	})
 }
 
 func TestStoreBalancerPick(t *testing.T) {
@@ -385,9 +397,11 @@ func TestStoreBalancerPick(t *testing.T) {
 		},
 	}
 
-	got := mockWorkerReadJob(b, []*regionJob{job}, jobToWorkerCh)
+	// the worker can get the job just sent to storeBalancer
+	got := mockWorkerReadJob(t, b, []*regionJob{job}, jobToWorkerCh)
 	require.Equal(t, []*regionJob{job}, got)
 
+	// mimic the worker is handled the job and send back to storeBalancer
 	gotCh := make(chan *regionJob)
 	go func() {
 		close(gotCh)
@@ -395,10 +409,7 @@ func TestStoreBalancerPick(t *testing.T) {
 	}()
 	b.innerJobFromWorkerCh <- job
 	<-gotCh
-	b.storeLoadMap.Range(func(_, value any) bool {
-		require.Equal(t, 0, value.(int))
-		return true
-	})
+	checkStoreScoreZero(t, b)
 
 	busyStoreJob := &regionJob{
 		region: &split.RegionInfo{
@@ -421,8 +432,21 @@ func TestStoreBalancerPick(t *testing.T) {
 		},
 	}
 
-	got = mockWorkerReadJob(b, []*regionJob{job, busyStoreJob, idleStoreJob}, jobToWorkerCh)
+	// now the worker should get the job in specific order. The first job is already
+	// picked and can't be dynamically changed by design, so the order is job,
+	// idleStoreJob, busyStoreJob
+	got = mockWorkerReadJob(t, b, []*regionJob{job, busyStoreJob, idleStoreJob}, jobToWorkerCh)
 	require.Equal(t, []*regionJob{job, idleStoreJob, busyStoreJob}, got)
+	// mimic the worker finished the job in different order
+	go func() {
+		b.innerJobFromWorkerCh <- idleStoreJob
+		b.innerJobFromWorkerCh <- job
+		b.innerJobFromWorkerCh <- busyStoreJob
+	}()
+	for i := 0; i < 3; i++ {
+		<-jobFromWorkerCh
+	}
+	checkStoreScoreZero(t, b)
 
 	cancel()
 	<-done
@@ -492,12 +516,6 @@ func TestStoreBalancerNoRace(t *testing.T) {
 
 	cnt := 200
 	done2 := make(chan struct{})
-	go func() {
-		for j := range jobFromWorkerCh {
-			j.done(&jobWg)
-		}
-		close(done2)
-	}()
 
 	jobs := mockRegionJob4Balance(t, cnt)
 	for _, job := range jobs {
@@ -505,9 +523,25 @@ func TestStoreBalancerNoRace(t *testing.T) {
 		jobToWorkerCh <- job
 	}
 
+	go func() {
+		// mimic that worker handles the job and send back to storeBalancer concurrently
+		for j := range b.innerJobToWorkerCh {
+			j := j
+			go func() { b.innerJobFromWorkerCh <- j }()
+		}
+		close(done2)
+	}()
+
+	for i := 0; i < cnt; i++ {
+		j := <-jobFromWorkerCh
+		j.done(&jobWg)
+	}
+	checkStoreScoreZero(t, b)
+	jobWg.Wait()
+
 	cancel()
 	<-done
-	jobWg.Wait()
+	close(b.innerJobToWorkerCh)
 	close(b.innerJobFromWorkerCh)
 	<-done2
 	require.Len(t, jobFromWorkerCh, 0)

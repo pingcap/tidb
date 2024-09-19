@@ -1092,6 +1092,15 @@ func (b *storeBalancer) runReadToWorkerCh(workerCtx context.Context) {
 	}
 }
 
+func (b *storeBalancer) jobLen() int {
+	cnt := 0
+	b.jobs.Range(func(_, _ any) bool {
+		cnt++
+		return true
+	})
+	return cnt
+}
+
 func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
 	for {
 		select {
@@ -1100,18 +1109,13 @@ func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
 		case <-b.wakeSendToWorker:
 		}
 
-		jobCnt := 0
-		b.jobs.Range(func(_, _ any) bool {
-			jobCnt++
-			return true
-		})
-
-		for i := 0; i < jobCnt; i++ {
+		remainJobCnt := b.jobLen()
+		for i := 0; i < remainJobCnt; i++ {
 			j := b.pickJob()
 			if j == nil {
 				// j can be nil if it's executed after the jobs.Store of runReadToWorkerCh
 				// and before the sending to wakeSendToWorker of runReadToWorkerCh.
-				continue
+				break
 			}
 
 			// after the job is picked and before the job is sent to worker, the score may
