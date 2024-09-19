@@ -167,22 +167,6 @@ func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...
 	}
 }
 
-// SkipIfFailpointDisabled will skip the current test if failpoint is not enabled
-func SkipIfFailpointDisabled(t *testing.T) {
-	if failpoint.Enable("github.com/pingcap/tidb/pkg/testkit/SkipIfFailpointDisabled", "return(true)") != nil {
-		t.Skip("Enable SkipIfFailpointDisabled failed")
-	}
-	isEnabled := false
-	failpoint.Inject("SkipIfFailpointDisabled", func(val failpoint.Value) {
-		if val.(bool) {
-			isEnabled = true
-		}
-	})
-	if !isEnabled {
-		t.Skip("Failpoint is not enabled")
-	}
-}
-
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...any) *Result {

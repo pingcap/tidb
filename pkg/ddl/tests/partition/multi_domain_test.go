@@ -31,7 +31,6 @@ import (
 // TestMultiSchemaDropUniqueIndex to show behavior when
 // dropping a unique index
 func TestMultiSchemaDropUniqueIndex(t *testing.T) {
-	testkit.SkipIfFailpointDisabled(t)
 	createSQL := `create table t (a int primary key, b varchar(255), unique key uk_b (b))`
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9)`)
@@ -197,7 +196,6 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn
 // TestMultiSchemaTruncatePartitionWithGlobalIndex to show behavior when
 // truncating a partition with a global index
 func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
-	testkit.SkipIfFailpointDisabled(t)
 	// TODO: Also test non-int PK, multi-column PK
 	createSQL := `create table t (a int primary key, b varchar(255), c varchar(255) default 'Filler', unique key uk_b (b) global) partition by hash (a) partitions 2`
 	initFn := func(tkO *testkit.TestKit) {
@@ -366,7 +364,6 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
-	testkit.SkipIfFailpointDisabled(t)
 	// TODO: Also test non-int PK, multi-column PK
 	createSQL := `create table t (a int primary key nonclustered global, b int, c varchar(255) default 'Filler', unique key uk_b (b)) partition by hash (b) partitions 2`
 	initFn := func(tkO *testkit.TestKit) {
