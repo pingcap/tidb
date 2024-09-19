@@ -35,8 +35,8 @@ import (
 
 // Constants for test thresholds and file names
 const (
-	inputDataFile = "testdata/data.csv"
-	goldenFile    = "testdata/calculated_priorities.golden.csv"
+	inputDataFile = "data.csv"
+	goldenFile    = "calculated_priorities.golden.csv"
 )
 
 // Constants for generating test data
@@ -58,10 +58,6 @@ var update = flag.Bool("update", false, "update .golden files")
 // Please read README.md for more details.
 // To update golden file, run the test with -update flag.
 func TestPriorityCalculatorWithCSVData(t *testing.T) {
-	// Create testdata directory if it doesn't exist
-	err := os.MkdirAll("testdata", os.ModePerm)
-	require.NoError(t, err, "Failed to create testdata directory")
-
 	generateTestData(t)
 	jobs, err := loadTestData(inputDataFile)
 	require.NoError(t, err, "Failed to load test data")
