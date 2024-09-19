@@ -323,7 +323,6 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 		SetKeepOrder(false).
 		SetFromSessionVars(DefaultDistSQLContext).
 		SetMemTracker(memory.NewTracker(-1, -1)).
-		SetSQLKiller(&ctx.GetSessionVars().SQLKiller).
 		Build()
 
 	// 4 int64 types.
@@ -393,7 +392,6 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 		SetKeepOrder(false).
 		SetFromSessionVars(DefaultDistSQLContext).
 		SetMemTracker(memory.NewTracker(-1, -1)).
-		SetSQLKiller(&sctx.GetSessionVars().SQLKiller).
 		Build()
 	require.NoError(t, err)
 
