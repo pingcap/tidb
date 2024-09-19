@@ -1208,6 +1208,11 @@ func (b *storeBalancer) pickJob() *regionJob {
 	}
 
 	b.jobs.Delete(bestIdx)
+	// in unit tests, the fields of job may not set
+	if best.region == nil || best.region.Region == nil {
+		return best
+	}
+	
 	for _, p := range best.region.Region.Peers {
 	retry:
 		if val, ok := b.storeLoadMap.Load(p.StoreId); !ok {
