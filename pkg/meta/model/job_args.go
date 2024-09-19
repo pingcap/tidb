@@ -354,6 +354,96 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
 }
 
+// TablePartitionArgs is the arguments for table partition related jobs, including:
+//   - ActionAlterTablePartitioning
+//   - ActionRemovePartitioning
+//   - ActionReorganizePartition
+//   - ActionAddTablePartition: don't have finished args if success.
+//   - ActionDropTablePartition
+//
+// when rolling back, args of ActionAddTablePartition will be changed to be the same
+// as ActionDropTablePartition, and it will have finished args, but not used anywhere,
+// for other types, their args will be decoded as if its args is the same of ActionDropTablePartition.
+type TablePartitionArgs struct {
+	PartNames []string       `json:"part_names,omitempty"`
+	PartInfo  *PartitionInfo `json:"part_info,omitempty"`
+
+	// set on finished
+	OldPhysicalTblIDs []int64 `json:"old_physical_tbl_ids,omitempty"`
+}
+
+func (a *TablePartitionArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionAddTablePartition {
+			job.Args = []any{a.PartInfo}
+		} else if job.Type == ActionDropTablePartition {
+			job.Args = []any{a.PartNames}
+		} else {
+			job.Args = []any{a.PartNames, a.PartInfo}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *TablePartitionArgs) fillFinishedJob(job *Job) {
+	if job.Version == JobVersion1 {
+		intest.Assert(job.Type != ActionAddTablePartition || job.State == JobStateRollingback,
+			"add table partition job should not call fillFinishedJob if not rollback")
+		job.Args = []any{a.OldPhysicalTblIDs}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetTablePartitionArgs gets the table partition args.
+func GetTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			partNames []string
+			partInfo  = &PartitionInfo{}
+		)
+		if job.Type == ActionAddTablePartition {
+			if err := job.DecodeArgs(partInfo); err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else if job.Type == ActionDropTablePartition {
+			if err := job.DecodeArgs(&partNames); err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			if err := job.DecodeArgs(&partNames, partInfo); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		return &TablePartitionArgs{PartNames: partNames, PartInfo: partInfo}, nil
+	}
+	return getOrDecodeArgsV2[*TablePartitionArgs](job)
+}
+
+// GetFinishedTablePartitionArgs gets the table partition args after the job is finished.
+func GetFinishedTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
+	if job.Version == JobVersion1 {
+		var oldPhysicalTblIDs []int64
+		if err := job.DecodeArgs(&oldPhysicalTblIDs); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &TablePartitionArgs{OldPhysicalTblIDs: oldPhysicalTblIDs}, nil
+	}
+	return getOrDecodeArgsV2[*TablePartitionArgs](job)
+}
+
+// FillDropArgsForAddPartition fills the drop args for add partition job.
+// see details in TablePartitionArgs.
+func FillDropArgsForAddPartition(job *Job, args *TablePartitionArgs) {
+	fake := &Job{
+		Version: job.Version,
+		Type:    ActionDropTablePartition,
+	}
+	fake.FillArgs(args)
+	job.Args = fake.Args
+}
+
 // RenameTableArgs is the arguments for rename table DDL job.
 type RenameTableArgs struct {
 	// for Args
