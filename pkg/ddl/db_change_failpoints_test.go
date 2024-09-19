@@ -25,8 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util"
@@ -67,7 +68,7 @@ func TestModifyColumnTypeArgs(t *testing.T) {
 
 	var (
 		_newCol                *model.ColumnInfo
-		_oldColName            *model.CIStr
+		_oldColName            *pmodel.CIStr
 		_modifyColumnTp        byte
 		_updatedAutoRandomBits uint64
 		changingCol            *model.ColumnInfo
@@ -86,7 +87,7 @@ func TestParallelUpdateTableReplica(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
 	}()
 
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
@@ -95,8 +96,7 @@ func TestParallelUpdateTableReplica(t *testing.T) {
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
 
-	tk1, tk2, ch, originalCallback := prepareTestControlParallelExecSQL(t, store, dom)
-	defer dom.DDL().SetHook(originalCallback)
+	tk1, tk2, ch := prepareTestControlParallelExecSQL(t, store)
 
 	t1 := external.GetTableByName(t, tk, "test_db_state", "t1")
 

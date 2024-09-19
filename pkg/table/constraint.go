@@ -17,8 +17,9 @@ package table
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -174,7 +175,7 @@ func (checker *checkConstraintChecker) Leave(in ast.Node) (out ast.Node, ok bool
 }
 
 // ContainsAutoIncrementCol checks if there is auto-increment col in given cols
-func ContainsAutoIncrementCol(cols []model.CIStr, tblInfo *model.TableInfo) bool {
+func ContainsAutoIncrementCol(cols []pmodel.CIStr, tblInfo *model.TableInfo) bool {
 	if autoIncCol := tblInfo.GetAutoIncrementColInfo(); autoIncCol != nil {
 		for _, col := range cols {
 			if col.L == autoIncCol.Name.L {
@@ -186,7 +187,7 @@ func ContainsAutoIncrementCol(cols []model.CIStr, tblInfo *model.TableInfo) bool
 }
 
 // HasForeignKeyRefAction checks if there is foreign key with referential action in check constraints
-func HasForeignKeyRefAction(fkInfos []*model.FKInfo, constraints []*ast.Constraint, checkConstr *ast.Constraint, dependedCols []model.CIStr) error {
+func HasForeignKeyRefAction(fkInfos []*model.FKInfo, constraints []*ast.Constraint, checkConstr *ast.Constraint, dependedCols []pmodel.CIStr) error {
 	if fkInfos != nil {
 		return checkForeignKeyRefActionByFKInfo(fkInfos, checkConstr, dependedCols)
 	}
@@ -195,8 +196,8 @@ func HasForeignKeyRefAction(fkInfos []*model.FKInfo, constraints []*ast.Constrai
 			continue
 		}
 		refCol := cons.Refer
-		if refCol.OnDelete.ReferOpt != model.ReferOptionNoOption || refCol.OnUpdate.ReferOpt != model.ReferOptionNoOption {
-			var fkCols []model.CIStr
+		if refCol.OnDelete.ReferOpt != pmodel.ReferOptionNoOption || refCol.OnUpdate.ReferOpt != pmodel.ReferOptionNoOption {
+			var fkCols []pmodel.CIStr
 			for _, key := range cons.Keys {
 				fkCols = append(fkCols, key.Column.Name)
 			}
@@ -210,7 +211,7 @@ func HasForeignKeyRefAction(fkInfos []*model.FKInfo, constraints []*ast.Constrai
 	return nil
 }
 
-func checkForeignKeyRefActionByFKInfo(fkInfos []*model.FKInfo, checkConstr *ast.Constraint, dependedCols []model.CIStr) error {
+func checkForeignKeyRefActionByFKInfo(fkInfos []*model.FKInfo, checkConstr *ast.Constraint, dependedCols []pmodel.CIStr) error {
 	for _, fkInfo := range fkInfos {
 		if fkInfo.OnDelete != 0 || fkInfo.OnUpdate != 0 {
 			for _, col := range dependedCols {
@@ -223,7 +224,7 @@ func checkForeignKeyRefActionByFKInfo(fkInfos []*model.FKInfo, checkConstr *ast.
 	return nil
 }
 
-func hasSpecifiedCol(cols []model.CIStr, col model.CIStr) bool {
+func hasSpecifiedCol(cols []pmodel.CIStr, col pmodel.CIStr) bool {
 	for _, c := range cols {
 		if c.L == col.L {
 			return true

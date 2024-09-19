@@ -29,15 +29,18 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/partialjson"
+	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 var (
@@ -98,10 +101,10 @@ var (
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate:     math.MaxInt32,
 			BurstLimit: -1,
-			Priority:   model.MediumPriorityValue,
+			Priority:   pmodel.MediumPriorityValue,
 		},
 		ID:    defaultGroupID,
-		Name:  model.NewCIStr(resourcegroup.DefaultResourceGroupName),
+		Name:  pmodel.NewCIStr(resourcegroup.DefaultResourceGroupName),
 		State: model.StatePublic,
 	}
 )
@@ -764,7 +767,7 @@ func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	}
 	db := model.DBInfo{
 		ID:      id,
-		Name:    model.NewCIStr(mysql.SystemDB),
+		Name:    pmodel.NewCIStr(mysql.SystemDB),
 		Charset: mysql.UTF8MB4Charset,
 		Collate: mysql.UTF8MB4DefaultCollation,
 		State:   model.StatePublic,
@@ -1012,7 +1015,7 @@ func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
-var checkSubstringsInOrder = [7]string{
+var checkAttributesInOrder = []string{
 	`"fk_info":null`,
 	`"partition":null`,
 	`"Lock":null`,
@@ -1022,15 +1025,14 @@ var checkSubstringsInOrder = [7]string{
 	`"ttl_info":null`,
 }
 
-// IsTableInfoMustLoad checks the above substrings in a table info's json representing.
-// When a table contains one of them, tidb must load the table info during schema full load.
-// hasSpecialAttributes() is a subset of it, the difference is that:
-// If a table need to be resident in-memory, its table info MUST be loaded.
-// If a table info is loaded, it's NOT NECESSARILY to be keep in-memory.
-// Exported for testing.
-func IsTableInfoMustLoad(json []byte) bool {
+// isTableInfoMustLoad checks whether the table info needs to be loaded.
+// If the byte representation contains all the given attributes,
+// then it does not need to be loaded and this function will return false.
+// Otherwise, it will return true, indicating that the table info should be loaded.
+// Since attributes are checked in sequence, it's important to choose the order carefully.
+func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
 	idx := 0
-	for _, substr := range checkSubstringsInOrder {
+	for _, substr := range filterAttrs {
 		idx = bytes.Index(json, hack.Slice(substr))
 		if idx == -1 {
 			return true
@@ -1040,8 +1042,14 @@ func IsTableInfoMustLoad(json []byte) bool {
 	return false
 }
 
+// IsTableInfoMustLoad checks whether the table info needs to be loaded.
+// Exported for testing.
+func IsTableInfoMustLoad(json []byte) bool {
+	return isTableInfoMustLoad(json, checkAttributesInOrder...)
+}
+
 // NameExtractRegexp is exported for testing.
-const NameExtractRegexp = `"L":"([^"\\]*(?:\\.[^"\\]*)*)"}`
+const NameExtractRegexp = `"O":"([^"\\]*(?:\\.[^"\\]*)*)",`
 
 // Unescape is exported for testing.
 func Unescape(s string) string {
@@ -1052,6 +1060,10 @@ func Unescape(s string) string {
 
 // GetAllNameToIDAndTheMustLoadedTableInfo gets all the fields and values and table info for special attributes in a hash.
 // It's used to get some infos for information schema cache in a faster way.
+// If a table contains any of the attributes listed in checkSubstringsInOrder, it must be loaded during schema full load.
+// hasSpecialAttributes() is a subset of it, the difference is that:
+// If a table need to be resident in-memory, its table info MUST be loaded.
+// If a table info is loaded, it's NOT NECESSARILY to be keep in-memory.
 func GetAllNameToIDAndTheMustLoadedTableInfo(m *Meta, dbID int64) (map[string]int64, []*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -1078,7 +1090,7 @@ func GetAllNameToIDAndTheMustLoadedTableInfo(m *Meta, dbID int64) (map[string]in
 
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
-		if IsTableInfoMustLoad(value) {
+		if isTableInfoMustLoad(value, checkAttributesInOrder...) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1091,6 +1103,35 @@ func GetAllNameToIDAndTheMustLoadedTableInfo(m *Meta, dbID int64) (map[string]in
 	})
 
 	return res, tableInfos, errors.Trace(err)
+}
+
+// GetTableInfoWithAttributes retrieves all the table infos for a given db.
+// The filterAttrs are used to filter out any table that is not needed.
+func GetTableInfoWithAttributes(m *Meta, dbID int64, filterAttrs ...string) ([]*model.TableInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tableInfos := make([]*model.TableInfo, 0)
+	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
+		if !strings.HasPrefix(string(hack.String(field)), "Table") {
+			return nil
+		}
+
+		if isTableInfoMustLoad(value, filterAttrs...) {
+			tbInfo := &model.TableInfo{}
+			err := json.Unmarshal(value, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tbInfo.DBID = dbID
+			tableInfos = append(tableInfos, tbInfo)
+		}
+		return nil
+	})
+
+	return tableInfos, errors.Trace(err)
 }
 
 // ListTables shows all tables in database.
@@ -1136,16 +1177,61 @@ func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
 			continue
 		}
 
-		tbInfo := &model.TableNameInfo{}
-		err = json.Unmarshal(r.Value, tbInfo)
-		if err != nil {
-			return nil, errors.Trace(err)
+		tbInfo, err2 := FastUnmarshalTableNameInfo(r.Value)
+		if err2 != nil {
+			return nil, errors.Trace(err2)
 		}
 
 		tables = append(tables, tbInfo)
 	}
 
 	return tables, nil
+}
+
+var tableNameInfoFields = []string{"id", "name"}
+
+// FastUnmarshalTableNameInfo is exported for testing.
+func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
+	m, err := partialjson.ExtractTopLevelMembers(data, tableNameInfoFields)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	idTokens, ok := m["id"]
+	if !ok {
+		return nil, errors.New("id field not found in JSON")
+	}
+	if len(idTokens) != 1 {
+		return nil, errors.Errorf("unexpected id field in JSON, %v", idTokens)
+	}
+	num, ok := idTokens[0].(json.Number)
+	if !ok {
+		return nil, errors.Errorf(
+			"id field is not a number, got %T %v", idTokens[0], idTokens[0],
+		)
+	}
+	id, err := num.Int64()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	nameTokens, ok := m["name"]
+	if !ok {
+		return nil, errors.New("name field not found in JSON")
+	}
+	// 6 tokens; {, O, ..., L, ..., }, the data looks like this {123,"O","t","L","t",125}
+	if len(nameTokens) != 6 {
+		return nil, errors.Errorf("unexpected name field in JSON, %v", nameTokens)
+	}
+	name, ok := nameTokens[2].(string)
+	if !ok {
+		return nil, errors.Errorf("unexpected name field in JSON, %v", nameTokens)
+	}
+
+	return &model.TableNameInfo{
+		ID:   id,
+		Name: pmodel.NewCIStr(name),
+	}, nil
 }
 
 // ListDatabases shows all databases.
@@ -1373,8 +1459,8 @@ var (
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
 )
 
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
-	b, err := job.Encode(updateRawArgs)
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
+	b, err := job.Encode(true)
 	if err == nil {
 		err = m.txn.RPush(key, b)
 	}
@@ -1388,7 +1474,7 @@ func (m *Meta) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) erro
 		listKey = jobListKeys[0]
 	}
 
-	return m.enQueueDDLJob(listKey, job, true)
+	return m.enQueueDDLJob(listKey, job)
 }
 
 // JobListKeyType is a key type of the DDL job queue.
@@ -1489,7 +1575,7 @@ type LastJobIterator interface {
 	GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error)
 }
 
-// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
+// GetLastHistoryDDLJobsIterator gets latest history ddl jobs iterator.
 func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
 	if err != nil {
@@ -1497,6 +1583,23 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	}
 	return &HLastJobIterator{
 		iter: iter,
+	}, nil
+}
+
+// GetLastHistoryDDLJobsIteratorWithFilter returns a iterator for getting latest history ddl jobs.
+// This iterator will also filter jobs using given schemaNames and tableNames
+func (m *Meta) GetLastHistoryDDLJobsIteratorWithFilter(
+	schemaNames set.StringSet,
+	tableNames set.StringSet,
+) (LastJobIterator, error) {
+	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
+	if err != nil {
+		return nil, err
+	}
+	return &HLastJobIterator{
+		iter:        iter,
+		schemaNames: schemaNames,
+		tableNames:  tableNames,
 	}, nil
 }
 
@@ -1514,7 +1617,53 @@ func (m *Meta) GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, err
 
 // HLastJobIterator is the iterator for gets the latest history.
 type HLastJobIterator struct {
-	iter *structure.ReverseHashIterator
+	iter        *structure.ReverseHashIterator
+	schemaNames set.StringSet
+	tableNames  set.StringSet
+}
+
+var jobExtractFields = []string{"schema_name", "table_name"}
+
+// ExtractSchemaAndTableNameFromJob extract schema_name and table_name from encoded Job structure
+// Note, here we strongly rely on the order of fields in marshalled string, just like checkSubstringsInOrder
+// Exported for test
+func ExtractSchemaAndTableNameFromJob(data []byte) (schemaName, tableName string, err error) {
+	m, err := partialjson.ExtractTopLevelMembers(data, jobExtractFields)
+
+	schemaNameToken, ok := m["schema_name"]
+	if !ok || len(schemaNameToken) != 1 {
+		return "", "", errors.New("name field not found in JSON")
+	}
+	schemaName, ok = schemaNameToken[0].(string)
+	if !ok {
+		return "", "", errors.Errorf("unexpected name field in JSON, %v", schemaNameToken)
+	}
+
+	tableNameToken, ok := m["table_name"]
+	if !ok || len(tableNameToken) != 1 {
+		return "", "", errors.New("name field not found in JSON")
+	}
+	tableName, ok = tableNameToken[0].(string)
+	if !ok {
+		return "", "", errors.Errorf("unexpected name field in JSON, %v", tableNameToken)
+	}
+	return
+}
+
+// IsJobMatch examines whether given job's table/schema name matches.
+func IsJobMatch(job []byte, schemaNames, tableNames set.StringSet) (match bool, err error) {
+	if schemaNames.Count() == 0 && tableNames.Count() == 0 {
+		return true, nil
+	}
+	schemaName, tableName, err := ExtractSchemaAndTableNameFromJob(job)
+	if err != nil {
+		return
+	}
+	if (schemaNames.Count() == 0 || schemaNames.Exist(schemaName)) &&
+		tableNames.Count() == 0 || tableNames.Exist(tableName) {
+		match = true
+	}
+	return
 }
 
 // GetLastJobs gets last several jobs.
@@ -1525,8 +1674,21 @@ func (i *HLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job
 	jobs = jobs[:0]
 	iter := i.iter
 	for iter.Valid() && len(jobs) < num {
+		match, err := IsJobMatch(iter.Value(), i.schemaNames, i.tableNames)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if !match {
+			err := iter.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			continue
+		}
+
 		job := &model.Job{}
-		err := job.Decode(iter.Value())
+		err = job.Decode(iter.Value())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

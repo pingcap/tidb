@@ -34,7 +34,7 @@ go_library(
     ],
     deps = [
         "//pkg/expression",
-        "//pkg/expression/context",
+        "//pkg/expression/exprctx",
         "//pkg/kv",
         "//pkg/parser/ast",
         "//pkg/parser/charset",

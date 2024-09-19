@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/client"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -97,7 +98,7 @@ type JobManager struct {
 	// `scanWorkers` and `delWorkers` can be modified by setting variables at any time
 	baseWorker
 
-	sessPool sessionPool
+	sessPool util.SessionPool
 
 	// id is the ddl id of this instance
 	id string
@@ -125,7 +126,7 @@ type JobManager struct {
 }
 
 // NewJobManager creates a new ttl job manager
-func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
+func NewJobManager(id string, sessPool util.SessionPool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
 	manager = &JobManager{}
 	manager.id = id
 	manager.store = store
@@ -1081,7 +1082,7 @@ GROUP BY
 			if err != nil {
 				logutil.Logger(ctx).Error("failed to get table's job interval",
 					zap.Error(err),
-					zap.String("db", v.DBName),
+					zap.String("db", v.DBName.O),
 					zap.String("table", tblInfo.Name.String()),
 				)
 				interval = time.Hour
@@ -1141,12 +1142,12 @@ type SubmitTTLManagerJobRequest struct {
 
 type managerJobAdapter struct {
 	store     kv.Storage
-	sessPool  sessionPool
+	sessPool  util.SessionPool
 	requestCh chan<- *SubmitTTLManagerJobRequest
 }
 
 // NewManagerJobAdapter creates a managerJobAdapter
-func NewManagerJobAdapter(store kv.Storage, sessPool sessionPool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
+func NewManagerJobAdapter(store kv.Storage, sessPool util.SessionPool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
 	return &managerJobAdapter{store: store, sessPool: sessPool, requestCh: requestCh}
 }
 
@@ -1159,7 +1160,7 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
 	defer se.Close()
 
 	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
-	tbl, ok := is.TableByID(tableID)
+	tbl, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
 		return false
 	}

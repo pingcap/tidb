@@ -36,11 +36,10 @@ func TestPlanCacheClone(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	tk1.Session().GetSessionVars().EnableInstancePlanCache = true
-	tk2.Session().GetSessionVars().EnableInstancePlanCache = true
 	tk1.MustExec(`use test`)
 	tk2.MustExec(`use test`)
 	tk1.MustExec(`create table t (a int, b int, c int, d int, primary key(a), key(b), unique key(d))`)
+	tk1.MustExec(`create table t1 (a int, b int, c int, d int)`)
 
 	for i := -20; i < 20; i++ {
 		tk1.MustExec(fmt.Sprintf("insert into t values (%v,%v,%v,%v)", i, rand.Intn(20), rand.Intn(20), -i))
@@ -128,15 +127,21 @@ func TestPlanCacheClone(t *testing.T) {
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ merge_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.a=t2.a and t2.b<t3.b and t1.a<?'`,
 		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 
-	// TODO: IndexJoin
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b=t2.b and t1.a<?'`,
-	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b<t2.b and t1.a<?'`,
-	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b=t3.b and t1.a<?'`,
-	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
-	//testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b<t3.b and t1.a<?'`,
-	//	`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	// IndexJoin
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b=t2.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.b<t2.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b=t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+
+	// IndexHashJoin
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_hash_join(t1, t2) */ * from t t1, t t2 where t1.b=t2.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_hash_join(t1, t2) */ * from t t1, t t2 where t1.b<t2.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select /*+ inl_hash_join(t1, t2, t3) */ * from t t1, t t2, t t3 where t1.b=t2.b and t2.b=t3.b and t1.a<?'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 
 	// Limit
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? limit 1'`,
@@ -177,23 +182,62 @@ func TestPlanCacheClone(t *testing.T) {
 		`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
 	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where d in (?,?)'`,
 		`set @a1=1,@b1=1, @a2=2,@b2=2`, `execute st using @a1,@b1`, `execute st using @a2,@b2`)
+
+	// Insert
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'insert into t1 values (?, ?, ?, ?)'`,
+		`set @a=1, @b=2`, `execute st using @a, @a, @a, @a`, `execute st using @b, @b, @b, @b`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'insert into t1 select * from t where a<?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'insert into t1 select * from t where a=?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+
+	// Delete
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'delete from t1 where a<?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'delete from t1 where a=?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+
+	// Update
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'update t1 set a=a+1 where a<?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'update t1 set a=a+1 where a=?'`,
+		`set @a=1, @b=2`, `execute st using @a`, `execute st using @b`)
+
+	// Lock
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a<? for update'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
+	testCachedPlanClone(t, tk1, tk2, `prepare st from 'select * from t where a=? for update'`,
+		`set @a1=1, @a2=2`, `execute st using @a1`, `execute st using @a2`)
 }
 
 func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exec1, exec2 string) {
-	tk1.MustExec(prep)
-	tk1.MustExec(set)
-	tk1.MustQuery(exec1) // generate the first cached plan
+	isDML := false
+	if strings.Contains(prep, "insert") || strings.Contains(prep, "update") || strings.Contains(prep, "delete") {
+		isDML = true
+	}
+	ctx := context.WithValue(context.Background(), core.PlanCacheKeyEnableInstancePlanCache{}, true)
+	tk1.MustExecWithContext(ctx, prep)
+	tk1.MustExecWithContext(ctx, set)
+	if isDML {
+		tk1.MustExecWithContext(ctx, exec1)
+	} else {
+		tk1.MustQueryWithContext(ctx, exec1) // generate the first cached plan
+	}
 
-	tk2.MustExec(prep)
-	tk2.MustExec(set)
+	tk2.MustExecWithContext(ctx, prep)
+	tk2.MustExecWithContext(ctx, set)
 	checked := false
-	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
+	ctx = context.WithValue(ctx, core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
 		checked = true
 		require.NoError(t, checkUnclearPlanCacheClone(plan, cloned,
 			".ctx",
 			"*collate"))
 	})
-	tk2.MustQueryWithContext(ctx, exec2)
+	if isDML {
+		tk2.MustExecWithContext(ctx, exec2)
+	} else {
+		tk2.MustQueryWithContext(ctx, exec2)
+	}
 	require.True(t, checked)
 }
 
@@ -214,12 +258,6 @@ func TestCheckPlanClone(t *testing.T) {
 	ts1.AccessCondition[0] = expr
 	ts2.AccessCondition[0] = expr
 	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.AccessCondition[0](*expression.Column)")
-
-	// same interface
-	child := &core.PhysicalTableScan{}
-	ts1.SetProbeParents([]base.PhysicalPlan{child})
-	ts2.SetProbeParents([]base.PhysicalPlan{child})
-	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.physicalSchemaProducer.basePhysicalPlan.probeParents[0](*core.PhysicalTableScan)")
 
 	// same map
 	l1 := &core.PhysicalLock{}
@@ -242,7 +280,7 @@ func TestCheckPlanClone(t *testing.T) {
 	defer ctx.Close()
 	l1.SetSCtx(ctx)
 	l2.SetSCtx(ctx)
-	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same pointer, path *core.PhysicalLock.basePhysicalPlan.Plan.ctx(*mock.Context)")
+	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same pointer, path *core.PhysicalLock.BasePhysicalPlan.Plan.ctx(*mock.Context)")
 
 	// test tag
 	type S struct {

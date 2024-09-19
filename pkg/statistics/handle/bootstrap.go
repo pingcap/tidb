@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -42,8 +42,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// initStatsStep is the step to load stats by paging.
-const initStatsStep = int64(500)
+const (
+	// initStatsStep is the step to load stats by paging.
+	initStatsStep = int64(500)
+	// initStatsPercentageInterval is the interval to print the percentage of loading stats.
+	initStatsPercentageInterval = float64(33)
+)
 
 var maxTidRecord MaxTidRecord
 
@@ -379,7 +383,7 @@ func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache 
 	tid := int64(0)
 	ls := initstats.NewRangeWorker("histogram", func(task initstats.Task) error {
 		return h.initStatsHistogramsByPaging(is, cache, task, totalMemory)
-	}, uint64(maxTid), uint64(initStatsStep))
+	}, uint64(maxTid), uint64(initStatsStep), initStatsPercentageInterval)
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -498,7 +502,7 @@ func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache, totalMemo
 			return nil
 		}
 		return h.initStatsTopNByPaging(cache, task, totalMemory)
-	}, uint64(maxTid), uint64(initStatsStep))
+	}, uint64(maxTid), uint64(initStatsStep), initStatsPercentageInterval)
 	ls.LoadStats()
 	for tid <= maxTid {
 		if isFullCache(cache, totalMemory) {
@@ -566,6 +570,12 @@ func (h *Handle) initStatsFMSketch(cache statstypes.StatsCache) error {
 
 func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
+	unspecifiedLengthTp := types.NewFieldType(mysql.TypeBlob)
+	var (
+		hasErr        bool
+		failedTableID int64
+		failedHistID  int64
+	)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		if table == nil || table.PhysicalID != tableID {
@@ -600,16 +610,35 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			hist = &column.Histogram
 			d := types.NewBytesDatum(row.GetBytes(5))
 			var err error
-			lower, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
+			if column.Info.FieldType.EvalType() == types.ETString && column.Info.FieldType.GetType() != mysql.TypeEnum && column.Info.FieldType.GetType() != mysql.TypeSet {
+				// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
+				// original value.
+				// But there's additional conversion logic for new collation data, and the collate key might be longer than
+				// the FieldType.flen.
+				// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
+				// or "Data too long".
+				// So we change it to TypeBlob to bypass those logics here.
+				lower, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, unspecifiedLengthTp)
+			} else {
+				lower, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
+			}
 			if err != nil {
-				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
+				hasErr = true
+				failedTableID = tableID
+				failedHistID = histID
 				table.DelCol(histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
-			upper, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
+			if column.Info.FieldType.EvalType() == types.ETString && column.Info.FieldType.GetType() != mysql.TypeEnum && column.Info.FieldType.GetType() != mysql.TypeSet {
+				upper, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, unspecifiedLengthTp)
+			} else {
+				upper, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
+			}
 			if err != nil {
-				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
+				hasErr = true
+				failedTableID = tableID
+				failedHistID = histID
 				table.DelCol(histID)
 				continue
 			}
@@ -618,6 +647,9 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 	}
 	if table != nil {
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
+	}
+	if hasErr {
+		logutil.BgLogger().Error("failed to convert datum for at least one histogram bucket", zap.Int64("table ID", failedTableID), zap.Int64("column ID", failedHistID))
 	}
 }
 
@@ -703,7 +735,7 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalM
 			return nil
 		}
 		return h.initStatsBucketsByPaging(cache, task)
-	}, uint64(maxTid), uint64(initStatsStep))
+	}, uint64(maxTid), uint64(initStatsStep), initStatsPercentageInterval)
 	ls.LoadStats()
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
@@ -775,6 +807,7 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("complete to load the meta")
+	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		err = h.initStatsHistogramsConcurrency(is, cache, totalMemory)
 	} else {
@@ -789,6 +822,7 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	} else {
 		err = h.initStatsTopN(cache, totalMemory)
 	}
+	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
 	statslogutil.StatsLogger().Info("complete to load the topn")
 	if err != nil {
 		return err

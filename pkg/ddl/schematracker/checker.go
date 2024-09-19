@@ -18,28 +18,28 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/syncer"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/table"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 )
 
 var (
@@ -89,7 +89,7 @@ func (d *Checker) CreateTestDB(ctx sessionctx.Context) {
 	d.tracker.CreateTestDB(ctx)
 }
 
-func (d *Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
+func (d *Checker) checkDBInfo(ctx sessionctx.Context, dbName pmodel.CIStr) {
 	if d.closed.Load() {
 		return
 	}
@@ -122,7 +122,7 @@ func (d *Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 	}
 }
 
-func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.CIStr) {
+func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName pmodel.CIStr) {
 	if d.closed.Load() {
 		return
 	}
@@ -165,8 +165,24 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model
 	s1 := removeClusteredIndexComment(result.String())
 	s2 := removeClusteredIndexComment(result2.String())
 
+	// Remove shard_row_id_bits and pre_split_regions comments.
+	if ctx.GetSessionVars().ShardRowIDBits != 0 || ctx.GetSessionVars().PreSplitRegions != 0 {
+		removeShardPreSplitComment := func(s string) string {
+			pattern := ` \/\*T! SHARD_ROW_ID_BITS=.*?\*\/`
+			re := regexp.MustCompile(pattern)
+			ret := re.ReplaceAllString(s, "")
+			pattern = ` \/\*T! PRE_SPLIT_REGIONS=.*?\*\/`
+			re = regexp.MustCompile(pattern)
+			ret = re.ReplaceAllString(ret, "")
+			return ret
+		}
+
+		s1 = removeShardPreSplitComment(s1)
+		s2 = removeShardPreSplitComment(s2)
+	}
+
 	if s1 != s2 {
-		errStr := fmt.Sprintf("%s != %s", s1, s2)
+		errStr := fmt.Sprintf("%s\n!=\n%s", s1, s2)
 		panic(errStr)
 	}
 }
@@ -224,7 +240,7 @@ func (*Checker) RecoverSchema(_ sessionctx.Context, _ *ddl.RecoverSchemaInfo) (e
 // CreateTable implements the DDL interface.
 func (d *Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error {
 	err := d.realExecutor.CreateTable(ctx, stmt)
-	if err != nil {
+	if err != nil || d.closed.Load() {
 		return err
 	}
 
@@ -333,7 +349,7 @@ func (d *Checker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) err
 // AlterTable implements the DDL interface.
 func (d *Checker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
 	err := d.realExecutor.AlterTable(ctx, sctx, stmt)
-	if err != nil {
+	if err != nil || d.closed.Load() {
 		return err
 	}
 
@@ -468,13 +484,13 @@ func (d *Checker) CreateSchemaWithInfo(ctx sessionctx.Context, info *model.DBInf
 }
 
 // CreateTableWithInfo implements the DDL interface.
-func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ *model.TableInfo, _ []model.InvolvingSchemaInfo, _ ...ddl.CreateTableOption) error {
+func (*Checker) CreateTableWithInfo(_ sessionctx.Context, _ pmodel.CIStr, _ *model.TableInfo, _ []model.InvolvingSchemaInfo, _ ...ddl.CreateTableOption) error {
 	//TODO implement me
 	panic("implement me")
 }
 
 // BatchCreateTableWithInfo implements the DDL interface.
-func (*Checker) BatchCreateTableWithInfo(_ sessionctx.Context, _ model.CIStr, _ []*model.TableInfo, _ ...ddl.CreateTableOption) error {
+func (*Checker) BatchCreateTableWithInfo(_ sessionctx.Context, _ pmodel.CIStr, _ []*model.TableInfo, _ ...ddl.CreateTableOption) error {
 	//TODO implement me
 	panic("implement me")
 }
@@ -488,11 +504,6 @@ func (*Checker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *model.Pol
 // Start implements the DDL interface.
 func (d *Checker) Start(ctxPool *pools.ResourcePool) error {
 	return d.realDDL.Start(ctxPool)
-}
-
-// GetLease implements the DDL interface.
-func (d *Checker) GetLease() time.Duration {
-	return d.realDDL.GetLease()
 }
 
 // Stats implements the DDL interface.
@@ -516,12 +527,12 @@ func (d *Checker) RegisterStatsHandle(h *handle.Handle) {
 }
 
 // SchemaSyncer implements the DDL interface.
-func (d *Checker) SchemaSyncer() syncer.SchemaSyncer {
+func (d *Checker) SchemaSyncer() schemaver.Syncer {
 	return d.realDDL.SchemaSyncer()
 }
 
 // StateSyncer implements the DDL interface.
-func (d *Checker) StateSyncer() syncer.StateSyncer {
+func (d *Checker) StateSyncer() serverstate.Syncer {
 	return d.realDDL.StateSyncer()
 }
 
@@ -533,26 +544,6 @@ func (d *Checker) OwnerManager() owner.Manager {
 // GetID implements the DDL interface.
 func (d *Checker) GetID() string {
 	return d.realDDL.GetID()
-}
-
-// GetTableMaxHandle implements the DDL interface.
-func (d *Checker) GetTableMaxHandle(ctx *ddl.JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error) {
-	return d.realDDL.GetTableMaxHandle(ctx, startTS, tbl)
-}
-
-// SetBinlogClient implements the DDL interface.
-func (d *Checker) SetBinlogClient(client *pumpcli.PumpsClient) {
-	d.realDDL.SetBinlogClient(client)
-}
-
-// GetHook implements the DDL interface.
-func (d *Checker) GetHook() ddl.Callback {
-	return d.realDDL.GetHook()
-}
-
-// SetHook implements the DDL interface.
-func (d *Checker) SetHook(h ddl.Callback) {
-	d.realDDL.SetHook(h)
 }
 
 // DoDDLJob implements the DDL interface.

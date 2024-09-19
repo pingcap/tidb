@@ -19,6 +19,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"maps"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -46,7 +47,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 var (
@@ -546,6 +546,9 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		if err = execdetails.MergeTiFlashRUConsumption(r.selectResp.GetExecutionSummaries(), ruDetailsRaw.(*clientutil.RUDetails)); err != nil {
 			return err
 		}
+	}
+	if copStats.TimeDetail.ProcessTime > 0 {
+		r.ctx.CPUUsage.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
 	}
 	if hasExecutor {
 		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), callee, r.storeType.Name(), r.copPlanIDs)

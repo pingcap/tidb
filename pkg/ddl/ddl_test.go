@@ -22,10 +22,11 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -62,6 +64,17 @@ func (d *ddl) GetReorgCtx(jobID int64) *reorgCtx {
 // RemoveReorgCtx exports for testing.
 func (d *ddl) RemoveReorgCtx(id int64) {
 	d.removeReorgCtx(id)
+}
+
+func NewJobSubmitterForTest() *JobSubmitter {
+	syncMap := generic.NewSyncMap[int64, chan struct{}](8)
+	return &JobSubmitter{
+		ddlJobDoneChMap: &syncMap,
+	}
+}
+
+func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
+	return s.ddlJobDoneChMap
 }
 
 func createMockStore(t *testing.T) kv.Storage {
@@ -154,7 +167,7 @@ func TestFieldCase(t *testing.T) {
 	colObjects := make([]*model.ColumnInfo, len(fields))
 	for i, name := range fields {
 		colObjects[i] = &model.ColumnInfo{
-			Name: model.NewCIStr(name),
+			Name: pmodel.NewCIStr(name),
 		}
 	}
 	err := checkDuplicateColumn(colObjects)
@@ -201,7 +214,7 @@ func TestBuildJobDependence(t *testing.T) {
 	job6 := &model.Job{ID: 6, TableID: 1, Type: model.ActionDropTable}
 	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
 	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
-	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []any{int64(111), "old db name"}}
+	job11 := &model.Job{Version: model.JobVersion1, ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []any{int64(111), "old db name"}}
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		require.NoError(t, m.EnQueueDDLJob(job1))

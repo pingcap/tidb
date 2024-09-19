@@ -54,7 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
@@ -434,18 +434,6 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context) error {
 		m.ClusterId = s.bc.GetClusterID()
 		m.ClusterVersion = clusterVersion
 	})
-
-	schemas := backup.NewBackupSchemas(func(storage kv.Storage, fn func(*model.DBInfo, *model.TableInfo)) error {
-		return backup.BuildFullSchema(storage, s.cfg.StartTS, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
-			fn(dbInfo, tableInfo)
-		})
-	}, 0)
-
-	err = schemas.BackupSchemas(ctx, metaWriter, nil, s.mgr.GetStorage(), nil,
-		s.cfg.StartTS, backup.DefaultSchemaConcurrency, 0, true, nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	if err = metaWriter.FlushBackupMeta(ctx); err != nil {
 		return errors.Trace(err)
@@ -1153,6 +1141,7 @@ func RunStreamRestore(
 	if cfg.RestoreTS == 0 {
 		cfg.RestoreTS = logInfo.logMaxTS
 	}
+	cfg.upstreamClusterID = logInfo.clusterID
 
 	if len(cfg.FullBackupStorage) > 0 {
 		startTS, fullClusterID, err := getFullBackupTS(ctx, cfg)
@@ -1364,7 +1353,6 @@ func restoreStream(
 	// get the schemas ID replace information.
 	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &logclient.InitSchemaConfig{
 		IsNewTask:         newTask,
-		HasFullRestore:    len(cfg.FullBackupStorage) > 0,
 		TableFilter:       cfg.TableFilter,
 		TiFlashRecorder:   cfg.tiflashRecorder,
 		FullBackupStorage: fullBackupStorage,
@@ -1519,6 +1507,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	}
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetUpstreamClusterID(cfg.upstreamClusterID)
 	client.InitClients(ctx, u)
 
 	err = client.SetRawKVBatchClient(ctx, cfg.PD, cfg.TLS.ToKVSecurity())
@@ -1686,13 +1675,11 @@ func getFullBackupTS(
 func parseFullBackupTablesStorage(
 	cfg *RestoreConfig,
 ) (*logclient.FullBackupStorageConfig, error) {
-	var storageName string
-	if len(cfg.FullBackupStorage) > 0 {
-		storageName = cfg.FullBackupStorage
-	} else {
-		storageName = cfg.Storage
+	if len(cfg.FullBackupStorage) == 0 {
+		log.Info("the full backup path is not specified, so BR will try to get id maps")
+		return nil, nil
 	}
-	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
+	u, err := storage.ParseBackend(cfg.FullBackupStorage, &cfg.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

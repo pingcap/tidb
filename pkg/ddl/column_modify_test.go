@@ -24,12 +24,12 @@ import (
 
 	"github.com/pingcap/errors"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -161,7 +161,7 @@ AddLoop:
 	defer tk.MustExec("drop table test_on_update_c;")
 	tk.MustExec("alter table test_on_update_c add column c3 timestamp null default '2017-02-11' on update current_timestamp;")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("test_on_update_c"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_on_update_c"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colC := tblInfo.Columns[2]
@@ -171,7 +171,7 @@ AddLoop:
 	tk.MustExec("create table test_on_update_d (c1 int, c2 datetime);")
 	tk.MustExec("alter table test_on_update_d add column c3 datetime on update current_timestamp;")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("test_on_update_d"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_on_update_d"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC = tblInfo.Columns[2]
@@ -306,7 +306,7 @@ func TestChangeColumn(t *testing.T) {
 	// for no default flag
 	tk.MustExec("alter table t3 change d dd bigint not null")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colD := tblInfo.Columns[2]
@@ -314,7 +314,7 @@ func TestChangeColumn(t *testing.T) {
 	// for the following definitions: 'not null', 'null', 'default value' and 'comment'
 	tk.MustExec("alter table t3 change b b varchar(20) null default 'c' comment 'my comment'")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colB := tblInfo.Columns[1]
@@ -326,7 +326,7 @@ func TestChangeColumn(t *testing.T) {
 	tk.MustExec("alter table t3 add column c timestamp not null")
 	tk.MustExec("alter table t3 change c c timestamp null default '2017-02-11' comment 'col c comment' on update current_timestamp")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[3]
@@ -340,7 +340,7 @@ func TestChangeColumn(t *testing.T) {
 	tk.MustExec("create table t (k char(10), v int, INDEX(k(7)));")
 	tk.MustExec("alter table t change column k k tinytext")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 
 	// for failing tests
@@ -382,7 +382,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
 	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
 		generatedExprString string
@@ -406,7 +406,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 	// for local temporary table
 	tk.MustExec(`create temporary table test_local_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("test_local_gv_ddl"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_local_gv_ddl"))
 	require.NoError(t, err)
 	for i, column := range tbl.Meta().Columns {
 		require.Equal(t, testCases[i].generatedExprString, column.GeneratedExprString)
@@ -422,7 +422,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 }
 
 func TestTransactionWithWriteOnlyColumn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -437,9 +437,8 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 		},
 	}
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -457,8 +456,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 				}
 			}
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	done := make(chan error, 1)
 	// test transaction on add column.
 	go backgroundExec(store, "test", "alter table t1 add column c int not null", done)
@@ -536,7 +534,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 		if job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			var (
 				_newCol                *model.ColumnInfo
-				_oldColName            *model.CIStr
+				_oldColName            *pmodel.CIStr
 				_pos                   = &ast.ColumnPosition{}
 				_modifyColumnTp        byte
 				_updatedAutoRandomBits uint64
@@ -590,7 +588,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 		if (job.Query == query1 || job.Query == query2) && job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			var (
 				_newCol                *model.ColumnInfo
-				_oldColName            *model.CIStr
+				_oldColName            *pmodel.CIStr
 				_pos                   = &ast.ColumnPosition{}
 				_modifyColumnTp        byte
 				_updatedAutoRandomBits uint64

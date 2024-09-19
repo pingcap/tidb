@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"context"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -23,25 +22,27 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
 // SetSchemaDiffForCreateTables set SchemaDiff for ActionCreateTables.
 func SetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error {
-	var tableInfos []*model.TableInfo
-	err := job.DecodeArgs(&tableInfos)
+	args, err := model.GetBatchCreateTableArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	diff.AffectedOpts = make([]*model.AffectedOption, len(tableInfos))
-	for i := range tableInfos {
+	diff.AffectedOpts = make([]*model.AffectedOption, len(args.Tables))
+	for i := range args.Tables {
+		tblInfo := args.Tables[i].TableInfo
 		diff.AffectedOpts[i] = &model.AffectedOption{
 			SchemaID:    job.SchemaID,
 			OldSchemaID: job.SchemaID,
-			TableID:     tableInfos[i].ID,
-			OldTableID:  tableInfos[i].ID,
+			TableID:     tblInfo.ID,
+			OldTableID:  tblInfo.ID,
 		}
 	}
 	return nil
@@ -50,29 +51,35 @@ func SetSchemaDiffForCreateTables(diff *model.SchemaDiff, job *model.Job) error 
 // SetSchemaDiffForTruncateTable set SchemaDiff for ActionTruncateTable.
 func SetSchemaDiffForTruncateTable(diff *model.SchemaDiff, job *model.Job) error {
 	// Truncate table has two table ID, should be handled differently.
-	err := job.DecodeArgs(&diff.TableID)
+	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	diff.TableID = args.NewTableID
 	diff.OldTableID = job.TableID
 
 	// affects are used to update placement rule cache
-	if len(job.CtxVars) > 0 {
-		oldIDs := job.CtxVars[0].([]int64)
-		newIDs := job.CtxVars[1].([]int64)
-		diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+	if job.Version == model.JobVersion1 {
+		if len(job.CtxVars) > 0 {
+			oldIDs := job.CtxVars[0].([]int64)
+			newIDs := job.CtxVars[1].([]int64)
+			diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+		}
+	} else {
+		if len(args.OldPartIDsWithPolicy) > 0 {
+			diff.AffectedOpts = buildPlacementAffects(args.OldPartIDsWithPolicy, args.NewPartIDsWithPolicy)
+		}
 	}
 	return nil
 }
 
 // SetSchemaDiffForCreateView set SchemaDiff for ActionCreateView.
 func SetSchemaDiffForCreateView(diff *model.SchemaDiff, job *model.Job) error {
-	tbInfo := &model.TableInfo{}
-	var orReplace bool
-	var oldTbInfoID int64
-	if err := job.DecodeArgs(tbInfo, &orReplace, &oldTbInfoID); err != nil {
+	args, err := model.GetCreateTableArgs(job)
+	if err != nil {
 		return errors.Trace(err)
 	}
+	tbInfo, orReplace, oldTbInfoID := args.TableInfo, args.OnExistReplace, args.OldViewTblID
 	// When the statement is "create or replace view " and we need to drop the old view,
 	// it has two table IDs and should be handled differently.
 	if oldTbInfoID > 0 && orReplace {
@@ -84,10 +91,12 @@ func SetSchemaDiffForCreateView(diff *model.SchemaDiff, job *model.Job) error {
 
 // SetSchemaDiffForRenameTable set SchemaDiff for ActionRenameTable.
 func SetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job) error {
-	err := job.DecodeArgs(&diff.OldSchemaID)
+	args, err := model.GetRenameTableArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	diff.OldSchemaID = args.OldSchemaID
 	diff.TableID = job.TableID
 	return nil
 }
@@ -96,7 +105,7 @@ func SetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job) error {
 func SetSchemaDiffForRenameTables(diff *model.SchemaDiff, job *model.Job) error {
 	var (
 		oldSchemaIDs, newSchemaIDs, tableIDs []int64
-		tableNames, oldSchemaNames           []*model.CIStr
+		tableNames, oldSchemaNames           []*pmodel.CIStr
 	)
 	err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames)
 	if err != nil {
@@ -239,19 +248,26 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) err
 }
 
 // SetSchemaDiffForCreateTable set SchemaDiff for ActionCreateTable.
-func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) {
+func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) error {
 	diff.TableID = job.TableID
-	if len(job.Args) > 0 {
-		tbInfo, _ := job.Args[0].(*model.TableInfo)
-		// When create table with foreign key, there are two schema status change:
-		// 1. none -> write-only
-		// 2. write-only -> public
-		// In the second status change write-only -> public, infoschema loader should apply drop old table first, then
-		// apply create new table. So need to set diff.OldTableID here to make sure it.
-		if tbInfo != nil && tbInfo.State == model.StatePublic && len(tbInfo.ForeignKeys) > 0 {
-			diff.OldTableID = job.TableID
-		}
+	var tbInfo *model.TableInfo
+	// create table with foreign key will update tableInfo in the job args, so we
+	// must reuse already decoded ones.
+	// TODO make DecodeArgs can reuse already decoded args, so we can use GetCreateTableArgs.
+	if job.Version == model.JobVersion1 {
+		tbInfo, _ = job.Args[0].(*model.TableInfo)
+	} else {
+		tbInfo = job.Args[0].(*model.CreateTableArgs).TableInfo
 	}
+	// When create table with foreign key, there are two schema status change:
+	// 1. none -> write-only
+	// 2. write-only -> public
+	// In the second status change write-only -> public, infoschema loader should apply drop old table first, then
+	// apply create new table. So need to set diff.OldTableID here to make sure it.
+	if tbInfo.State == model.StatePublic && len(tbInfo.ForeignKeys) > 0 {
+		diff.OldTableID = job.TableID
+	}
+	return nil
 }
 
 // SetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.
@@ -313,8 +329,8 @@ func SetSchemaDiffForMultiInfos(diff *model.SchemaDiff, multiInfos ...schemaIDAn
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
-func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
-	schemaVersion, err := d.setSchemaVersion(job, d.store)
+func updateSchemaVersion(jobCtx *jobContext, t *meta.Meta, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
+	schemaVersion, err := jobCtx.setSchemaVersion(job)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -345,7 +361,7 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		err = SetSchemaDiffForPartitionModify(diff, job)
 	case model.ActionCreateTable:
-		SetSchemaDiffForCreateTable(diff, job)
+		err = SetSchemaDiffForCreateTable(diff, job)
 	case model.ActionRecoverSchema:
 		err = SetSchemaDiffForRecoverSchema(diff, job)
 	case model.ActionFlashbackCluster:
@@ -361,7 +377,7 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 	return schemaVersion, errors.Trace(err)
 }
 
-func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSchemaVersion int64, timeStart time.Time) error {
+func waitVersionSynced(jobCtx *jobContext, job *model.Job, latestSchemaVersion int64) (err error) {
 	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
@@ -370,9 +386,12 @@ func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSche
 			mockDDLErrOnce = -1
 		}
 	})
-
-	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err := d.schemaSyncer.OwnerCheckAllVersions(ctx, job.ID, latestSchemaVersion)
+	timeStart := time.Now()
+	defer func() {
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+	}()
+	// WaitVersionSynced returns only when all TiDB schemas are synced(exclude the isolated TiDB).
+	err = jobCtx.schemaVerSyncer.WaitVersionSynced(jobCtx.ctx, job.ID, latestSchemaVersion)
 	if err != nil {
 		logutil.DDLLogger().Info("wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion),
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
@@ -385,19 +404,19 @@ func checkAllVersions(ctx context.Context, d *ddlCtx, job *model.Job, latestSche
 	return nil
 }
 
-// waitSchemaSynced handles the following situation:
+// waitVersionSyncedWithoutMDL handles the following situation:
 // If the job enters a new state, and the worker crash when it's in the process of
 // version sync, then the worker restarts quickly, we may run the job immediately again,
 // but schema version might not sync.
 // So here we get the latest schema version to make sure all servers' schema version
 // update to the latest schema version in a cluster.
-func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job) error {
+func waitVersionSyncedWithoutMDL(jobCtx *jobContext, job *model.Job) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return nil
 	}
 
-	ver, _ := d.store.CurrentVersion(kv.GlobalTxnScope)
-	snapshot := d.store.GetSnapshot(ver)
+	ver, _ := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
+	snapshot := jobCtx.store.GetSnapshot(ver)
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
@@ -414,5 +433,5 @@ func waitSchemaSynced(ctx context.Context, d *ddlCtx, job *model.Job) error {
 		}
 	})
 
-	return waitSchemaChanged(ctx, d, latestSchemaVersion, job)
+	return updateGlobalVersionAndWaitSynced(jobCtx, latestSchemaVersion, job)
 }

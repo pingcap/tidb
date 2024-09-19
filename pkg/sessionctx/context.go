@@ -20,20 +20,20 @@ import (
 
 	"github.com/pingcap/errors"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
@@ -71,9 +71,15 @@ type InstancePlanCache interface {
 	// Put puts the key and value into the cache.
 	Put(key string, value, paramTypes any) (succ bool)
 	// Evict evicts some cached values.
-	Evict() (evicted bool)
+	Evict() (detailInfo string, numEvicted int)
+	// Size returns the number of cached values.
+	Size() int64
 	// MemUsage returns the total memory usage of this plan cache.
 	MemUsage() int64
+	// GetLimits returns the soft and hard memory limits of this plan cache.
+	GetLimits() (softLimit, hardLimit int64)
+	// SetLimits sets the soft and hard memory limits of this plan cache.
+	SetLimits(softLimit, hardLimit int64)
 }
 
 // Context is an interface for transaction and executive args environment.
@@ -120,7 +126,7 @@ type Context interface {
 	GetExprCtx() exprctx.ExprContext
 
 	// GetTableCtx returns the table.MutateContext
-	GetTableCtx() tbctx.MutateContext
+	GetTableCtx() tblctx.MutateContext
 
 	// GetPlanCtx gets the plan context of the current session.
 	GetPlanCtx() planctx.PlanContext

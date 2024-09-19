@@ -17,13 +17,14 @@ package statistics
 import (
 	"cmp"
 	"fmt"
+	stdmaps "maps"
 	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
@@ -50,13 +51,13 @@ var (
 	// Note: all functions below will be removed after finishing moving all estimation functions into the cardinality package.
 
 	// GetRowCountByIndexRanges is a function type to get row count by index ranges.
-	GetRowCountByIndexRanges func(sctx context.PlanContext, coll *HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error)
+	GetRowCountByIndexRanges func(sctx planctx.PlanContext, coll *HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error)
 
 	// GetRowCountByIntColumnRanges is a function type to get row count by int column ranges.
-	GetRowCountByIntColumnRanges func(sctx context.PlanContext, coll *HistColl, colID int64, intRanges []*ranger.Range) (result float64, err error)
+	GetRowCountByIntColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, intRanges []*ranger.Range) (result float64, err error)
 
 	// GetRowCountByColumnRanges is a function type to get row count by column ranges.
-	GetRowCountByColumnRanges func(sctx context.PlanContext, coll *HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error)
+	GetRowCountByColumnRanges func(sctx planctx.PlanContext, coll *HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error)
 )
 
 // Table represents statistics for a table.
@@ -89,25 +90,6 @@ type ColAndIdxExistenceMap struct {
 	colAnalyzed map[int64]bool
 	idxInfoMap  map[int64]*model.IndexInfo
 	idxAnalyzed map[int64]bool
-}
-
-// SomeAnalyzed checks whether some part of the table is analyzed.
-// The newly added column/index might not have its stats.
-func (m *ColAndIdxExistenceMap) SomeAnalyzed() bool {
-	if m == nil {
-		return false
-	}
-	for _, v := range m.colAnalyzed {
-		if v {
-			return true
-		}
-	}
-	for _, v := range m.idxAnalyzed {
-		if v {
-			return true
-		}
-	}
-	return false
 }
 
 // Has checks whether a column/index stats exists.
@@ -166,13 +148,18 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 	return len(m.colInfoMap)+len(m.idxInfoMap) == 0
 }
 
+// ColNum returns the number of columns in the map.
+func (m *ColAndIdxExistenceMap) ColNum() int {
+	return len(m.colInfoMap)
+}
+
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
-	mm.colInfoMap = maps.Clone(m.colInfoMap)
-	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
-	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
-	mm.idxInfoMap = maps.Clone(m.idxInfoMap)
+	mm.colInfoMap = stdmaps.Clone(m.colInfoMap)
+	mm.colAnalyzed = stdmaps.Clone(m.colAnalyzed)
+	mm.idxAnalyzed = stdmaps.Clone(m.idxAnalyzed)
+	mm.idxInfoMap = stdmaps.Clone(m.idxInfoMap)
 	return mm
 }
 
@@ -773,7 +760,11 @@ func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCn
 	if analyzeRowCount <= 0 {
 		return coll.RealtimeCount, coll.ModifyCount
 	}
-	scale := idxStats.TotalRowCount() / analyzeRowCount
+	idxTotalRowCount := idxStats.TotalRowCount()
+	if idxTotalRowCount <= 0 {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
+	scale := idxTotalRowCount / analyzeRowCount
 	return int64(float64(coll.RealtimeCount) * scale), int64(float64(coll.ModifyCount) * scale)
 }
 
@@ -808,20 +799,23 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if t.Pseudo {
 		return nil, false, false
 	}
+	// when we use non-lite init stats, it cannot init the stats for common columns.
+	// so we need to foce to load the stats.
 	col, ok := t.columns[id]
+	if !ok {
+		return nil, true, true
+	}
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
 	if !hasAnalyzed {
 		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
-		if !ok {
-			// If we don't have this column. We skip it.
-			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
-			// We need to find a way to maintain it more correctly.
-			return nil, t.ColAndIdxExistenceMap.Has(id, false), false
-		}
+		// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
+		// We need to find a way to maintain it more correctly.
 		// Otherwise we don't need to load it.
-		return nil, false, false
+		result := t.ColAndIdxExistenceMap.Has(id, false)
+		// If the column is not in the ColAndIdxExistenceMap, we need to load it.
+		return nil, !result, !result
 	}
 
 	// Restore the condition from the simplified form:

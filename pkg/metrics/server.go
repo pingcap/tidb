@@ -27,15 +27,16 @@ var (
 
 // Metrics
 var (
-	PacketIOCounter        *prometheus.CounterVec
-	QueryDurationHistogram *prometheus.HistogramVec
-	QueryTotalCounter      *prometheus.CounterVec
-	AffectedRowsCounter    *prometheus.CounterVec
-	ConnGauge              *prometheus.GaugeVec
-	DisconnectionCounter   *prometheus.CounterVec
-	PreparedStmtGauge      prometheus.Gauge
-	ExecuteErrorCounter    *prometheus.CounterVec
-	CriticalErrorCounter   prometheus.Counter
+	PacketIOCounter            *prometheus.CounterVec
+	QueryDurationHistogram     *prometheus.HistogramVec
+	QueryRPCHistogram          *prometheus.HistogramVec
+	QueryProcessedKeyHistogram *prometheus.HistogramVec
+	QueryTotalCounter          *prometheus.CounterVec
+	ConnGauge                  *prometheus.GaugeVec
+	DisconnectionCounter       *prometheus.CounterVec
+	PreparedStmtGauge          prometheus.Gauge
+	ExecuteErrorCounter        *prometheus.CounterVec
+	CriticalErrorCounter       prometheus.Counter
 
 	ServerStart = "server-start"
 	ServerStop  = "server-stop"
@@ -92,6 +93,24 @@ func InitServerMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblSQLType, LblDb, LblResourceGroup})
 
+	QueryRPCHistogram = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "query_statement_rpc_count",
+			Help:      "Bucketed histogram of execution rpc count of handled query statements.",
+			Buckets:   prometheus.ExponentialBuckets(1, 1.5, 23), // 1 ~ 8388608
+		}, []string{LblSQLType, LblDb})
+
+	QueryProcessedKeyHistogram = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "query_statement_processed_keys",
+			Help:      "Bucketed histogram of processed key count during the scan of handled query statements.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 32),
+		}, []string{LblSQLType, LblDb})
+
 	QueryTotalCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -99,14 +118,6 @@ func InitServerMetrics() {
 			Name:      "query_total",
 			Help:      "Counter of queries.",
 		}, []string{LblType, LblResult, LblResourceGroup})
-
-	AffectedRowsCounter = NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "affected_rows",
-			Help:      "Counters of server affected rows.",
-		}, []string{LblSQLType})
 
 	ConnGauge = NewGaugeVec(
 		prometheus.GaugeOpts{

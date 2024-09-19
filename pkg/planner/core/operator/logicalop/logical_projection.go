@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -44,13 +45,6 @@ type LogicalProjection struct {
 	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
 	CalculateNoDelay bool
 
-	// AvoidColumnEvaluator is a temporary variable which is ONLY used to avoid
-	// building columnEvaluator for the expressions of Projection which is
-	// built by buildProjection4Union.
-	// This can be removed after column pool being supported.
-	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
-	AvoidColumnEvaluator bool
-
 	// Proj4Expand is used for expand to project same column reference, while these
 	// col may be filled with null so we couldn't just eliminate this projection itself.
 	Proj4Expand bool
@@ -62,7 +56,44 @@ func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProj
 	return &p
 }
 
-// *************************** start implementation of Plan interface ***************************
+// *************************** start implementation of HashEquals interface ****************************
+
+// Hash64 implements the base.Hash64.<0th> interface.
+func (p *LogicalProjection) Hash64(h base2.Hasher) {
+	h.HashInt(len(p.Exprs))
+	for _, one := range p.Exprs {
+		one.Hash64(h)
+	}
+	h.HashBool(p.CalculateNoDelay)
+	h.HashBool(p.Proj4Expand)
+}
+
+// Equals implements the base.HashEquals.<1st> interface.
+func (p *LogicalProjection) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var p2 *LogicalProjection
+	switch x := other.(type) {
+	case *LogicalProjection:
+		p2 = x
+	case LogicalProjection:
+		p2 = &x
+	default:
+		return false
+	}
+	if len(p.Exprs) != len(p2.Exprs) {
+		return false
+	}
+	for i, one := range p.Exprs {
+		if !one.Equals(p2.Exprs[i]) {
+			return false
+		}
+	}
+	return p.CalculateNoDelay == p2.CalculateNoDelay && p.Proj4Expand == p2.Proj4Expand
+}
+
+// *************************** start implementation of Plan interface **********************************
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalProjection) ExplainInfo() string {
@@ -78,7 +109,7 @@ func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Co
 	}
 }
 
-// *************************** end implementation of Plan interface ***************************
+// *************************** end implementation of Plan interface ************************************
 
 // *************************** start implementation of logicalPlan interface ***************************
 

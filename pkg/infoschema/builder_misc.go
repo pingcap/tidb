@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 func applyCreatePolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
@@ -118,7 +118,7 @@ func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo
 		rs := b.ListTablesWithSpecialAttribute(ForeignKeysAttribute)
 		for _, db := range rs {
 			for _, tbl := range db.TableInfos {
-				info.addReferredForeignKeys(model.NewCIStr(db.DBName), tbl)
+				info.addReferredForeignKeys(db.DBName, tbl)
 			}
 		}
 		return

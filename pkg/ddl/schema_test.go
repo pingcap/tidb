@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -40,16 +40,17 @@ import (
 
 func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{tblInfo},
 	}
+	args := &model.CreateTableArgs{TableInfo: tblInfo}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -80,7 +81,7 @@ func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, t
 // testTableInfo creates a test table with num int columns and with no index.
 func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, error) {
 	tblInfo := &model.TableInfo{
-		Name: model.NewCIStr(name),
+		Name: pmodel.NewCIStr(name),
 	}
 	genIDs, err := genGlobalIDs(store, 1)
 
@@ -92,7 +93,7 @@ func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, er
 	cols := make([]*model.ColumnInfo, num)
 	for i := range cols {
 		col := &model.ColumnInfo{
-			Name:         model.NewCIStr(fmt.Sprintf("c%d", i+1)),
+			Name:         pmodel.NewCIStr(fmt.Sprintf("c%d", i+1)),
 			Offset:       i,
 			DefaultValue: i + 1,
 			State:        model.StatePublic,
@@ -123,7 +124,7 @@ func genGlobalIDs(store kv.Storage, count int) ([]int64, error) {
 
 func testSchemaInfo(store kv.Storage, name string) (*model.DBInfo, error) {
 	dbInfo := &model.DBInfo{
-		Name: model.NewCIStr(name),
+		Name: pmodel.NewCIStr(name),
 	}
 
 	genIDs, err := genGlobalIDs(store, 1)
@@ -136,15 +137,16 @@ func testSchemaInfo(store kv.Storage, name string) (*model.DBInfo, error) {
 
 func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{dbInfo},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: dbInfo.Name.L,
 			Table:    model.InvolvingAll,
 		}},
 	}
+	job.FillArgs(&model.CreateSchemaArgs{DBInfo: dbInfo})
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
 
@@ -156,16 +158,18 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTes
 }
 
 func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
-	return &model.Job{
+	j := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{true},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: dbInfo.Name.L,
 			Table:    model.InvolvingAll,
 		}},
 	}
+	j.FillArgs(&model.DropSchemaArgs{FKCheck: true})
+	return j
 }
 
 func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) (*model.Job, int64) {
@@ -240,10 +244,10 @@ func TestSchema(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(t, store, tJob1.ID, true)
 	tbl1 := testGetTable(t, domain, tblInfo1.ID)
-	err = sessiontxn.NewTxn(context.Background(), tk.Session())
+	txn, err := newTxn(tk.Session())
 	require.NoError(t, err)
 	for i := 1; i <= 100; i++ {
-		_, err := tbl1.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(i, i, i))
+		_, err := tbl1.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
 	// create table t1 with 1034 records.
@@ -254,10 +258,10 @@ func TestSchema(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(t, store, tJob2.ID, true)
 	tbl2 := testGetTable(t, domain, tblInfo2.ID)
-	err = sessiontxn.NewTxn(context.Background(), tk2.Session())
+	txn, err = newTxn(tk.Session())
 	require.NoError(t, err)
 	for i := 1; i <= 1034; i++ {
-		_, err := tbl2.AddRecord(tk2.Session().GetTableCtx(), types.MakeDatums(i, i, i))
+		_, err := tbl2.AddRecord(tk2.Session().GetTableCtx(), txn, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
 	tk3 := testkit.NewTestKit(t, store)
@@ -270,6 +274,7 @@ func TestSchema(t *testing.T) {
 
 	// Drop a non-existent database.
 	job = &model.Job{
+		Version:    model.JobVersion1,
 		SchemaID:   dbInfo.ID,
 		SchemaName: "test_schema",
 		Type:       model.ActionDropSchema,
@@ -333,7 +338,10 @@ func TestSchemaWaitJob(t *testing.T) {
 	require.NoError(t, err)
 	schemaID := genIDs[0]
 	doDDLJobErr(t, schemaID, 0, "test_schema", "", model.ActionCreateSchema,
-		[]any{dbInfo}, testkit.NewTestKit(t, store).Session(), det2, store)
+		testkit.NewTestKit(t, store).Session(), det2, store, func(job *model.Job) model.JobArgs {
+			job.FillArgs(&model.CreateSchemaArgs{DBInfo: dbInfo})
+			return nil
+		})
 }
 
 func doDDLJobErr(
@@ -341,23 +349,24 @@ func doDDLJobErr(
 	schemaID, tableID int64,
 	schemaName, tableName string,
 	tp model.ActionType,
-	args []any,
 	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	store kv.Storage,
+	handler func(job *model.Job) model.JobArgs,
 ) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   schemaID,
 		SchemaName: schemaName,
 		TableID:    tableID,
 		TableName:  tableName,
 		Type:       tp,
-		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}
+	args := handler(job)
 	// TODO: check error detail
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.Error(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.Error(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 	testCheckJobCancelled(t, store, job, nil)
 
 	return job

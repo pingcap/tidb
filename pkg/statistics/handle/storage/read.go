@@ -22,9 +22,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -42,7 +43,20 @@ import (
 
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, isNull bool, err error) {
-	rows, _, err := util.ExecRows(sctx, "select count, modify_count from mysql.stats_meta where table_id = %?", tableID)
+	return statsMetaCountAndModifyCount(sctx, tableID, false)
+}
+
+// StatsMetaCountAndModifyCountForUpdate reads count and modify_count for the given table from mysql.stats_meta with lock.
+func StatsMetaCountAndModifyCountForUpdate(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, isNull bool, err error) {
+	return statsMetaCountAndModifyCount(sctx, tableID, true)
+}
+
+func statsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64, forUpdate bool) (count, modifyCount int64, isNull bool, err error) {
+	sql := "select count, modify_count from mysql.stats_meta where table_id = %?"
+	if forUpdate {
+		sql += " for update"
+	}
+	rows, _, err := util.ExecRows(sctx, sql, tableID)
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -559,14 +573,14 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, loadFMSketch bool) (err error) {
+func LoadNeededHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, loadFMSketch bool) (err error) {
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
-			err = loadNeededColumnHistograms(sctx, statsCache, item.TableItemID, loadFMSketch, item.FullLoad)
+			err = loadNeededColumnHistograms(sctx, statsHandle, item.TableItemID, loadFMSketch, item.FullLoad)
 		} else {
 			// Index is always full load.
-			err = loadNeededIndexHistograms(sctx, statsCache, item.TableItemID, loadFMSketch)
+			err = loadNeededIndexHistograms(sctx, statsHandle, item.TableItemID, loadFMSketch)
 		}
 		if err != nil {
 			return err
@@ -602,8 +616,8 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 	return reallyNeeded
 }
 
-func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
-	tbl, ok := statsCache.Get(col.TableID)
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
+	tbl, ok := statsHandle.Get(col.TableID)
 	if !ok {
 		return nil
 	}
@@ -613,7 +627,23 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
+	isUpdateColAndIdxExistenceMap := false
 	colInfo = tbl.ColAndIdxExistenceMap.GetCol(col.ID)
+	if colInfo == nil {
+		// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
+		// so we have to get the column info from the domain.
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		tblInfo, ok := statsHandle.TableInfoByID(is, col.TableID)
+		if !ok {
+			return nil
+		}
+		colInfo = tblInfo.Meta().GetColumnByID(col.ID)
+		if colInfo == nil {
+			asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+			return nil
+		}
+		isUpdateColAndIdxExistenceMap = true
+	}
 	hg, _, statsVer, _, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
 	if hg == nil || err != nil {
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
@@ -652,7 +682,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	tbl, ok = statsCache.Get(col.TableID)
+	tbl, ok = statsHandle.Get(col.TableID)
 	if !ok {
 		return nil
 	}
@@ -667,9 +697,14 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		if statsVer != statistics.Version0 {
 			tbl.StatsVer = int(statsVer)
 		}
+		if isUpdateColAndIdxExistenceMap {
+			tbl.ColAndIdxExistenceMap.InsertCol(col.ID, colInfo, true)
+		}
+	} else if isUpdateColAndIdxExistenceMap {
+		tbl.ColAndIdxExistenceMap.InsertCol(col.ID, colInfo, false)
 	}
 	tbl.SetCol(col.ID, colHist)
-	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 	if col.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",

@@ -26,18 +26,18 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	tidb_util "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -102,6 +102,12 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 	if ver <= 195 {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
 		session.MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
+	}
+	if ver < 212 && ver >= 172 {
+		// for version < version212, revert column changes related to function `upgradeToVer212`.
+		// related tables created after version172.
+		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `start_time` TO `time`")
+		session.MustExec(t, se, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `sample_sql` TO `original_sql`")
 	}
 }
 
@@ -420,16 +426,14 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	session.MustExec(t, seV, "create table test.upgrade_tbl(a int)")
 	ch := make(chan struct{})
 	var jobID int64
-	hook := &callback.TestDDLCallback{}
-	hook.OnJobRunAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			se := session.CreateSessionAndSetID(t, store)
 			session.MustExec(t, se, fmt.Sprintf("admin pause ddl jobs %d", job.ID))
 			ch <- struct{}{}
 			jobID = job.ID
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	go func() {
 		_, err = execute(context.Background(), seV, "alter table test.upgrade_tbl add index idx(a)")
 	}()
@@ -438,6 +442,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	// Make sure upgrade is successful.
 	startUpgrade(store)
 	dom.Close()
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -502,8 +507,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	session.MustExec(t, seV, "create table mysql.upgrade_tbl(a int)")
 	ch := make(chan struct{})
 	var jobID int64
-	hook := &callback.TestDDLCallback{}
-	hook.OnJobRunAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly {
 			se := session.CreateSessionAndSetID(t, store)
 			session.MustExec(t, se, fmt.Sprintf("admin pause ddl jobs %d", job.ID))
@@ -513,8 +517,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 			job.AdminOperator = model.AdminCommandBySystem
 			jobID = job.ID
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	var once sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.Job) {
 		if job != nil && job.ID == jobID {
@@ -529,6 +532,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	// Make sure upgrade is successful.
 	startUpgrade(store)
 	dom.Close()
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -620,7 +624,8 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 			idxFinishTS = runJob.BinlogInfo.FinishedTS
 		} else {
 			// The second add index op.
-			if strings.Contains(runJob.TableName, "upgrade_tbl") {
+			// notice: upgrade `tidb_runaway_queries` table will happened in `upgradeToVer212` function which is before the second add index op.
+			if strings.Contains(runJob.TableName, "upgrade_tbl") || strings.Contains(runJob.TableName, "tidb_runaway_queries") {
 				require.Greater(t, runJob.BinlogInfo.FinishedTS, idxFinishTS)
 			} else {
 				// The upgrade DDL ops. These jobs' finishedTS must less than add index ops.
@@ -720,7 +725,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			require.NoError(t, err)
 			cmt := fmt.Sprintf("job: %s", runJob.String())
 			isPause := runJob.IsPausedBySystem() || runJob.IsPausing()
-			if tidb_util.IsSysDB(runJob.SchemaName) {
+			if tidbutil.IsSysDB(runJob.SchemaName) {
 				require.False(t, isPause, cmt)
 			} else {
 				require.True(t, isPause, cmt)
@@ -854,4 +859,20 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			" PARTITION `p2` VALUES LESS THAN (3072),\n" +
 			" PARTITION `p3` VALUES LESS THAN (4096),\n" +
 			" PARTITION `p4` VALUES LESS THAN (7096))"))
+}
+
+func TestUpgradeWithCrossJoinDisabled(t *testing.T) {
+	session.SupportUpgradeHTTPOpVer--
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
+	backup := plannercore.AllowCartesianProduct.Load()
+	t.Cleanup(func() {
+		plannercore.AllowCartesianProduct.Store(backup)
+	})
+	plannercore.AllowCartesianProduct.Store(false)
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
 }

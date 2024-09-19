@@ -1084,6 +1084,7 @@ const (
 	ErrBRJobNotFound                       = 8174
 	ErrMemoryExceedForQuery                = 8175
 	ErrMemoryExceedForInstance             = 8176
+	ErrDeleteNotFoundColumn                = 8177
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1139,6 +1140,8 @@ const (
 	ErrCannotResumeDDLJob = 8261
 	ErrPausedDDLJob       = 8262
 	ErrBDRRestrictedDDL   = 8263
+
+	ErrGlobalIndexNotExplicitlySet = 8264
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248

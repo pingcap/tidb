@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
@@ -275,7 +275,12 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 	case kv.ResourceGroupTag:
 		txn.KVTxn.SetResourceGroupTag(val.([]byte))
 	case kv.ResourceGroupTagger:
-		txn.KVTxn.SetResourceGroupTagger(val.(tikvrpc.ResourceGroupTagger))
+		switch tagger := val.(type) {
+		case tikvrpc.ResourceGroupTagger:
+			txn.KVTxn.SetResourceGroupTagger(tagger)
+		case *kv.ResourceGroupTagBuilder:
+			txn.KVTxn.SetResourceGroupTagger(tagger.BuildProtoTagger())
+		}
 	case kv.KVFilter:
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
 	case kv.SnapInterceptor:
