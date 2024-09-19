@@ -22,13 +22,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
@@ -853,7 +853,7 @@ type pushDownJoin struct {
 }
 
 func (*pushDownJoin) predicatePushDown(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	predicates []expression.Expression,
 	join *logicalop.LogicalJoin,
 	leftSchema *expression.Schema,
@@ -975,7 +975,7 @@ func (r *PushSelDownJoin) Match(expr *memo.ExprIter) bool {
 
 // buildChildSelectionGroup builds a new childGroup if the pushed down condition is not empty.
 func buildChildSelectionGroup(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	qbOffset int,
 	conditions []expression.Expression,
 	childGroup *memo.Group) *memo.Group {

@@ -33,8 +33,8 @@ import (
 func TestInsertOnDuplicateKeyWithBinlog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/table/contextimpl/forceWriteBinlog", "return")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/table/contextimpl/forceWriteBinlog")
+	failpoint.Enable("github.com/pingcap/tidb/pkg/table/tblsession/forceWriteBinlog", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/table/tblsession/forceWriteBinlog")
 	testInsertOnDuplicateKey(t, tk)
 }
 

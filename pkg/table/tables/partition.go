@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -241,19 +241,19 @@ func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partiti
 
 // NewPartitionExprBuildCtx returns a context to build partition expression.
 func NewPartitionExprBuildCtx() expression.BuildContext {
-	return contextstatic.NewStaticExprContext(
-		contextstatic.WithEvalCtx(contextstatic.NewStaticEvalContext(
+	return exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(exprstatic.NewEvalContext(
 			// Set a non-strict SQL mode and allow all date values if possible to make sure constant fold can work to
 			// estimate some undetermined result when locating a row to a partition.
 			// See issue: https://github.com/pingcap/tidb/issues/54271 for details.
-			contextstatic.WithSQLMode(mysql.ModeAllowInvalidDates),
-			contextstatic.WithTypeFlags(types.StrictFlags.
+			exprstatic.WithSQLMode(mysql.ModeAllowInvalidDates),
+			exprstatic.WithTypeFlags(types.StrictFlags.
 				WithIgnoreTruncateErr(true).
 				WithIgnoreZeroDateErr(true).
 				WithIgnoreZeroInDate(true).
 				WithIgnoreInvalidDateErr(true),
 			),
-			contextstatic.WithErrLevelMap(errctx.LevelMap{
+			exprstatic.WithErrLevelMap(errctx.LevelMap{
 				errctx.ErrGroupTruncate: errctx.LevelIgnore,
 			}),
 		)),

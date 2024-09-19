@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -96,21 +96,21 @@ func TestPickBackfillType(t *testing.T) {
 	require.Equal(t, tp, model.ReorgTypeLitMerge)
 }
 
-func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *contextstatic.StaticExprContext, warnHandler contextutil.WarnHandler) {
+func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {
 	exprCtxManualCheckFields := []struct {
 		field string
-		check func(*contextstatic.StaticExprContext)
+		check func(*exprstatic.ExprContext)
 	}{
 		{
 			field: "evalCtx",
-			check: func(ctx *contextstatic.StaticExprContext) {
+			check: func(ctx *exprstatic.ExprContext) {
 				require.NotZero(t, ctx.GetEvalCtx().CtxID())
 				require.NotEqual(t, sctx.GetExprCtx().GetEvalCtx().CtxID(), ctx.GetEvalCtx().CtxID())
 			},
 		},
 		{
 			field: "blockEncryptionMode",
-			check: func(context *contextstatic.StaticExprContext) {
+			check: func(context *exprstatic.ExprContext) {
 				m := sctx.GetExprCtx().GetBlockEncryptionMode()
 				if m == "" {
 					// Empty string is not a valid encryption mode, so we expect the exprCtx.GetBlockEncryptionMode()
@@ -123,13 +123,13 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 		},
 		{
 			field: "rng",
-			check: func(ctx *contextstatic.StaticExprContext) {
+			check: func(ctx *exprstatic.ExprContext) {
 				require.NotNil(t, ctx.Rng())
 			},
 		},
 		{
 			field: "planCacheTracker",
-			check: func(ctx *contextstatic.StaticExprContext) {
+			check: func(ctx *exprstatic.ExprContext) {
 				require.Equal(t, sctx.GetExprCtx().IsUseCache(), ctx.IsUseCache())
 				ctx.SetSkipPlanCache("test reason")
 				require.False(t, ctx.IsUseCache())
@@ -139,24 +139,24 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 
 	evalCtxManualCheckFields := []struct {
 		field string
-		check func(*contextstatic.StaticEvalContext)
+		check func(*exprstatic.EvalContext)
 	}{
 		{
 			field: "warnHandler",
-			check: func(ctx *contextstatic.StaticEvalContext) {
+			check: func(ctx *exprstatic.EvalContext) {
 				require.Same(t, warnHandler, ctx.GetWarnHandler())
 			},
 		},
 		{
 			field: "typeCtx.warnHandler",
-			check: func(ctx *contextstatic.StaticEvalContext) {
+			check: func(ctx *exprstatic.EvalContext) {
 				ec := ctx.ErrCtx()
 				require.Equal(t, errctx.NewContextWithLevels(ec.LevelMap(), ctx), ec)
 			},
 		},
 		{
 			field: "typeCtx.loc",
-			check: func(ctx *contextstatic.StaticEvalContext) {
+			check: func(ctx *exprstatic.EvalContext) {
 				tc := ctx.TypeCtx()
 				require.Same(t, tc.Location(), ctx.Location())
 				require.Equal(t, sctx.GetSessionVars().Location().String(), tc.Location().String())
@@ -165,14 +165,14 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 		},
 		{
 			field: "errCtx.warnHandler",
-			check: func(ctx *contextstatic.StaticEvalContext) {
+			check: func(ctx *exprstatic.EvalContext) {
 				tc := ctx.TypeCtx()
 				require.Equal(t, types.NewContext(tc.Flags(), tc.Location(), ctx), tc)
 			},
 		},
 		{
 			field: "currentTime",
-			check: func(ctx *contextstatic.StaticEvalContext) {
+			check: func(ctx *exprstatic.EvalContext) {
 				tm1, err := sctx.GetExprCtx().GetEvalCtx().CurrentTime()
 				require.NoError(t, err)
 
@@ -184,7 +184,7 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 		},
 		{
 			field: "requestVerificationFn",
-			check: func(ctx *contextstatic.StaticEvalContext) {
+			check: func(ctx *exprstatic.EvalContext) {
 				// RequestVerification should allow all privileges
 				// that is the same with input session context (GetPrivilegeManager returns nil).
 				require.Nil(t, privilege.GetPrivilegeManager(sctx))
@@ -194,7 +194,7 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 		},
 		{
 			field: "requestDynamicVerificationFn",
-			check: func(ctx *contextstatic.StaticEvalContext) {
+			check: func(ctx *exprstatic.EvalContext) {
 				// RequestDynamicVerification should allow all privileges
 				// that is the same with input session context (GetPrivilegeManager returns nil).
 				require.Nil(t, privilege.GetPrivilegeManager(sctx))
@@ -204,21 +204,21 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 		},
 	}
 
-	// check StaticExprContext except StaticEvalContext
+	// check ExprContext except EvalContext
 	expected := sctx.GetExprCtx().(*mock.Context).IntoStatic()
 	ignoreFields := make([]string, 0, len(exprCtxManualCheckFields))
 	for _, f := range exprCtxManualCheckFields {
 		f.check(exprCtx)
-		ignoreFields = append(ignoreFields, "$.staticExprCtxState."+f.field)
+		ignoreFields = append(ignoreFields, "$.exprCtxState."+f.field)
 	}
 	deeptest.AssertDeepClonedEqual(t, expected, exprCtx, deeptest.WithIgnorePath(ignoreFields))
 
-	// check StaticEvalContext
+	// check EvalContext
 	ignoreFields = make([]string, 0, len(evalCtxManualCheckFields))
 	ignoreFields = append(ignoreFields, "$.id")
 	for _, f := range evalCtxManualCheckFields {
 		f.check(exprCtx.GetStaticEvalCtx())
-		ignoreFields = append(ignoreFields, "$.staticEvalCtxState."+f.field)
+		ignoreFields = append(ignoreFields, "$.evalCtxState."+f.field)
 	}
 	deeptest.AssertDeepClonedEqual(
 		t,
@@ -298,7 +298,7 @@ func TestReorgTableMutateContext(t *testing.T) {
 	originalRowFmt := variable.GetDDLReorgRowFormat()
 	defer variable.SetDDLReorgRowFormat(originalRowFmt)
 
-	exprCtx := contextstatic.NewStaticExprContext()
+	exprCtx := exprstatic.NewExprContext()
 
 	assertTblCtxMatchSessionCtx := func(ctx table.MutateContext, sctx sessionctx.Context) {
 		sctxTblCtx := sctx.GetTableCtx()

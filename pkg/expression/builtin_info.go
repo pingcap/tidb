@@ -28,7 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -151,7 +151,7 @@ func (c *foundRowsFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinFoundRowsSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinFoundRowsSig) Clone() builtinFunc {
@@ -197,7 +197,7 @@ func (c *currentUserFunctionClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinCurrentUserSig struct {
 	baseBuiltinFunc
-	contextopt.CurrentUserPropReader
+	expropt.CurrentUserPropReader
 }
 
 func (b *builtinCurrentUserSig) Clone() builtinFunc {
@@ -243,7 +243,7 @@ func (c *currentRoleFunctionClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinCurrentRoleSig struct {
 	baseBuiltinFunc
-	contextopt.CurrentUserPropReader
+	expropt.CurrentUserPropReader
 }
 
 func (b *builtinCurrentRoleSig) Clone() builtinFunc {
@@ -303,7 +303,7 @@ func (c *currentResourceGroupFunctionClass) getFunction(ctx BuildContext, args [
 
 type builtinCurrentResourceGroupSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinCurrentResourceGroupSig) Clone() builtinFunc {
@@ -359,7 +359,7 @@ func (c *userFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 
 type builtinUserSig struct {
 	baseBuiltinFunc
-	contextopt.CurrentUserPropReader
+	expropt.CurrentUserPropReader
 }
 
 func (b *builtinUserSig) Clone() builtinFunc {
@@ -405,7 +405,7 @@ func (c *connectionIDFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinConnectionIDSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinConnectionIDSig) Clone() builtinFunc {
@@ -461,7 +461,7 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinLastInsertIDSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinLastInsertIDSig) Clone() builtinFunc {
@@ -487,7 +487,7 @@ func (b *builtinLastInsertIDSig) evalInt(ctx EvalContext, row chunk.Row) (res in
 
 type builtinLastInsertIDWithIDSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinLastInsertIDWithIDSig) Clone() builtinFunc {
@@ -601,7 +601,7 @@ func (c *tidbIsDDLOwnerFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinTiDBIsDDLOwnerSig struct {
 	baseBuiltinFunc
-	contextopt.DDLOwnerPropReader
+	expropt.DDLOwnerPropReader
 }
 
 func (b *builtinTiDBIsDDLOwnerSig) Clone() builtinFunc {
@@ -879,7 +879,7 @@ func (c *rowCountFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinRowCountSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinRowCountSig) Clone() builtinFunc {
@@ -918,7 +918,7 @@ func (c *tidbMVCCInfoFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinTiDBMVCCInfoSig struct {
 	baseBuiltinFunc
-	contextopt.KVStorePropReader
+	expropt.KVStorePropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
@@ -1004,8 +1004,8 @@ func (c *tidbEncodeRecordKeyClass) getFunction(ctx BuildContext, args []Expressi
 
 type builtinTiDBEncodeRecordKeySig struct {
 	baseBuiltinFunc
-	contextopt.InfoSchemaPropReader
-	contextopt.SessionVarsPropReader
+	expropt.InfoSchemaPropReader
+	expropt.SessionVarsPropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
@@ -1070,8 +1070,8 @@ func (c *tidbEncodeIndexKeyClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinTiDBEncodeIndexKeySig struct {
 	baseBuiltinFunc
-	contextopt.InfoSchemaPropReader
-	contextopt.SessionVarsPropReader
+	expropt.InfoSchemaPropReader
+	expropt.SessionVarsPropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
@@ -1140,7 +1140,7 @@ var EncodeIndexKeyFromRow func(ctx EvalContext, is infoschema.MetaOnlyInfoSchema
 
 type builtinTiDBDecodeKeySig struct {
 	baseBuiltinFunc
-	contextopt.InfoSchemaPropReader
+	expropt.InfoSchemaPropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
@@ -1200,8 +1200,8 @@ func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx BuildContext, args [
 
 type builtinTiDBDecodeSQLDigestsSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
-	contextopt.SQLExecutorPropReader
+	expropt.SessionVarsPropReader
+	expropt.SQLExecutorPropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
@@ -1441,8 +1441,8 @@ func (c *nextValFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinNextValSig struct {
 	baseBuiltinFunc
-	contextopt.SequenceOperatorPropReader
-	contextopt.SessionVarsPropReader
+	expropt.SequenceOperatorPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinNextValSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
@@ -1508,8 +1508,8 @@ func (c *lastValFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 
 type builtinLastValSig struct {
 	baseBuiltinFunc
-	contextopt.SequenceOperatorPropReader
-	contextopt.SessionVarsPropReader
+	expropt.SequenceOperatorPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinLastValSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
@@ -1569,8 +1569,8 @@ func (c *setValFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinSetValSig struct {
 	baseBuiltinFunc
-	contextopt.SequenceOperatorPropReader
-	contextopt.SessionVarsPropReader
+	expropt.SequenceOperatorPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinSetValSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {

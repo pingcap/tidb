@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -312,7 +312,7 @@ func TestGroupingSetsMergeUnitTest(t *testing.T) {
 
 func TestDistinctGroupingSets(t *testing.T) {
 	defer view.Stop()
-	ctx := contextstatic.NewStaticEvalContext()
+	ctx := exprstatic.NewEvalContext()
 
 	// premise: every grouping item in grouping sets should be a col.
 	a := &Column{
