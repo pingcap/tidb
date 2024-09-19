@@ -3010,3 +3010,20 @@ func TestQueryWithKill(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+func TestIssue55957(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d)", i))
+	}
+	tk.Session().GetSessionVars().ConnectionID = 123456
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/SplitRangesHangCausedKill", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/SplitRangesHangCausedKill"))
+	}()
+	err := tk.QueryToErr("select /*+ MAX_EXECUTION_TIME(1000) */ * from t where a < 30 and a > 3 order by a")
+	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+}
