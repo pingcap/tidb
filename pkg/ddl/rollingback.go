@@ -351,7 +351,7 @@ func convertAddTablePartitionJob2RollbackJob(jobCtx *jobContext, t *meta.Meta, j
 		job.FillArgs(args)
 	} else {
 		args.PartNames = partNames
-		model.FillDropArgsForAddPartition(job, args)
+		model.FillRollbackArgsForAddPartition(job, args)
 	}
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {

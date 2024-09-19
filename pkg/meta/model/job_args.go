@@ -449,9 +449,10 @@ func GetFinishedTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 	return getOrDecodeArgsV2[*TablePartitionArgs](job)
 }
 
-// FillDropArgsForAddPartition fills the drop args for add partition job.
+// FillRollbackArgsForAddPartition fills the rollback args for add partition job.
 // see details in TablePartitionArgs.
-func FillDropArgsForAddPartition(job *Job, args *TablePartitionArgs) {
+func FillRollbackArgsForAddPartition(job *Job, args *TablePartitionArgs) {
+	intest.Assert(job.Type == ActionAddTablePartition, "only for add partition job")
 	fake := &Job{
 		Version: job.Version,
 		Type:    ActionDropTablePartition,
