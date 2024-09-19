@@ -351,7 +351,7 @@ func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.
 				}
 			}
 
-			h.tmpSpillBuildSideChunks[workerID].AppendInt64(0, int64(seg.hashValues[i]))
+			h.tmpSpillBuildSideChunks[workerID].AppendUint64(0, seg.hashValues[i])
 			h.tmpSpillBuildSideChunks[workerID].AppendBytes(1, h.validJoinKeysBuffer[workerID][i:i+1])
 			h.tmpSpillBuildSideChunks[workerID].AppendBytes(2, row)
 		}

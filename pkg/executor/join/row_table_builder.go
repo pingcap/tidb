@@ -15,8 +15,6 @@
 package join
 
 import (
-	"bytes"
-	"encoding/binary"
 	"hash"
 	"hash/fnv"
 	"unsafe"
@@ -25,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/serialization"
 )
 
 type rowTableBuilder struct {
@@ -49,7 +48,7 @@ type rowTableBuilder struct {
 	// When respilling a row, we need to recalculate the row's hash value.
 	// These are auxiliary utility for rehash.
 	hash      hash.Hash64
-	rehashBuf *bytes.Buffer
+	rehashBuf []byte
 }
 
 func createRowTableBuilder(buildKeyIndex []int, buildKeyTypes []*types.FieldType, partitionNumber uint, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
@@ -159,7 +158,7 @@ func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
 func (b *rowTableBuilder) initRehashUtil() {
 	if b.rehashBuf == nil {
 		b.hash = fnv.New64()
-		b.rehashBuf = new(bytes.Buffer)
+		b.rehashBuf = make([]byte, serialization.Uint64Len)
 	}
 }
 
@@ -182,7 +181,7 @@ func (b *rowTableBuilder) processOneRestoredChunk(chk *chunk.Chunk, hashJoinCtx 
 
 		row := chk.GetRow(i)
 		validJoinKey := row.GetBytes(1)
-		oldHashValue := row.GetInt64(0)
+		oldHashValue := row.GetUint64(0)
 		rowData := row.GetBytes(2)
 
 		var hasValidJoinKey uint64
@@ -194,7 +193,7 @@ func (b *rowTableBuilder) processOneRestoredChunk(chk *chunk.Chunk, hashJoinCtx 
 
 		var seg *rowTableSegment
 		if hasValidJoinKey != 0 {
-			newHashValue, partID, err = b.regenerateHashValueAndPartIndex(uint64(oldHashValue), hashJoinCtx.partitionMaskOffset)
+			newHashValue, partID, err = b.regenerateHashValueAndPartIndex(oldHashValue, hashJoinCtx.partitionMaskOffset)
 			if err != nil {
 				return err
 			}
@@ -220,15 +219,7 @@ func (b *rowTableBuilder) processOneRestoredChunk(chk *chunk.Chunk, hashJoinCtx 
 }
 
 func (b *rowTableBuilder) regenerateHashValueAndPartIndex(hashValue uint64, partitionMaskOffset int) (uint64, int, error) {
-	b.rehashBuf.Reset()
-	err := binary.Write(b.rehashBuf, binary.LittleEndian, hashValue)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	b.hash.Reset()
-	b.hash.Write(b.rehashBuf.Bytes())
-	newHashVal := b.hash.Sum64()
+	newHashVal := rehash(hashValue, b.rehashBuf, b.hash)
 	return newHashVal, int(generatePartitionIndex(newHashVal, partitionMaskOffset)), nil
 }
 

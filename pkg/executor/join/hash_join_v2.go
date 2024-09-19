@@ -17,7 +17,7 @@ package join
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"hash"
 	"math"
 	"math/rand"
 	"runtime/trace"
@@ -25,10 +25,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -696,7 +696,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 
-	if e.RuntimeStats() != nil {
+	if e.RuntimeStats() != nil && e.stats == nil {
 		e.stats = &hashJoinRuntimeStatsV2{}
 		e.stats.concurrent = int(e.Concurrency)
 	}
@@ -1035,32 +1035,30 @@ func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {
 	return ok, joinResult
 }
 
+func (e *HashJoinV2Exec) reset() {
+	e.spillHelper.setCanSpillFlag(true)
+	e.resetProbeStatus()
+	e.releaseDisk()
+}
+
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 	defer func() {
 		close(e.joinResultCh)
 	}()
 
-	i := -1
-
 	lastRound := 0
 	for {
-		i++
-		log.Info(fmt.Sprintf("Spill round %d", i))
 		if e.finished.Load() {
 			return
 		}
 
-		e.spillHelper.setCanSpillFlag(true)
 		e.buildFinished = make(chan error, 1)
-		// TODO merge resetProbeStatus and releaseDisk
-		e.resetProbeStatus()
 
 		e.fetchAndBuildHashTable(ctx)
 		e.fetchAndProbeHashTable(ctx)
 
 		e.waiterWg.Wait()
-
-		e.releaseDisk()
+		e.reset()
 
 		e.spillHelper.spillRoundForTest = max(e.spillHelper.spillRoundForTest, lastRound)
 		err := e.spillHelper.prepareForRestoring(lastRound)
@@ -1089,7 +1087,7 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 
 func (e *HashJoinV2Exec) resetProbeStatus() {
 	for _, probe := range e.ProbeWorkers {
-		probe.JoinProbe.ResetProbeStatus()
+		probe.JoinProbe.ResetProbe()
 	}
 }
 
@@ -1117,6 +1115,8 @@ func (e *HashJoinV2Exec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	if !e.prepared {
 		e.initHashTableContext()
 		e.initializeForProbe()
+		e.spillHelper.setCanSpillFlag(true)
+		e.buildFinished = make(chan error, 1)
 		e.hashTableContext.memoryTracker.AttachTo(e.memTracker)
 		go e.startBuildAndProbe(ctx)
 		e.prepared = true
@@ -1572,6 +1572,14 @@ func getProbeSpillChunkFieldTypes(probeFieldTypes []*types.FieldType) []*types.F
 	ret = append(ret, types.NewFieldType(mysql.TypeBit))      // serialized key
 	ret = append(ret, probeFieldTypes...)                     // row data
 	return ret
+}
+
+func rehash(oldHashValue uint64, rehashBuf []byte, hash hash.Hash64) uint64 {
+	*(*uint64)(unsafe.Pointer(&rehashBuf[0])) = oldHashValue
+
+	hash.Reset()
+	hash.Write(rehashBuf)
+	return hash.Sum64()
 }
 
 func triggerIntest(errProbability int) error {

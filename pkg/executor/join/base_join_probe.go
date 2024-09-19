@@ -16,7 +16,7 @@ package join
 
 import (
 	"bytes"
-	"encoding/binary"
+	"hash"
 	"hash/fnv"
 	"unsafe"
 
@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/serialization"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
@@ -75,8 +76,8 @@ type ProbeV2 interface {
 	GetProbeCollision() uint64
 	// Reset probe collsion
 	ResetProbeCollision()
-	// Reset probe status
-	ResetProbeStatus()
+	// Reset some probe variables
+	ResetProbe()
 }
 
 type offsetAndLength struct {
@@ -143,6 +144,9 @@ type baseJoinProbe struct {
 	// This marks which columns are probe columns, and it is used only in spill
 	usedColIdx  []int
 	spillTmpChk []*chunk.Chunk
+
+	hash      hash.Hash64
+	rehashBuf []byte
 
 	spilledIdx []int
 
@@ -269,7 +273,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		j.matchedRowsHashValue[logicalRowIndex] = hashValue
 		partIndex := generatePartitionIndex(hashValue, j.ctx.partitionMaskOffset)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
-			j.spillTmpChk[partIndex].AppendInt64(0, int64(hashValue))
+			j.spillTmpChk[partIndex].AppendUint64(0, hashValue)
 			j.spillTmpChk[partIndex].AppendBytes(1, j.serializedKeys[logicalRowIndex])
 			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(logicalRowIndex))
 
@@ -351,21 +355,10 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 
 	j.spilledIdx = j.spilledIdx[:0]
 
-	hash := fnv.New64()
-	rehashBuf := new(bytes.Buffer)
-
 	// rehash all rows
 	for _, idx := range j.usedRows {
-		oldHashValue := uint64(hashValueCol.GetInt64(idx))
-		rehashBuf.Reset()
-		err := binary.Write(rehashBuf, binary.LittleEndian, oldHashValue)
-		if err != nil {
-			return err
-		}
-
-		hash.Reset()
-		hash.Write(rehashBuf.Bytes())
-		newHashVal := hash.Sum64()
+		oldHashValue := hashValueCol.GetUint64(idx)
+		newHashVal := rehash(oldHashValue, j.rehashBuf, j.hash)
 		j.matchedRowsHashValue[idx] = newHashVal
 		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
 		serializedKeysBytes := serializedKeysCol.GetBytes(idx)
@@ -420,7 +413,10 @@ func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
 	j.matchedRowsForCurrentProbeRow = 0
 }
 
-func (j *baseJoinProbe) ResetProbeStatus() {
+func (j *baseJoinProbe) ResetProbe() {
+	// We must reset this variable or gc will raise error.
+	// However, we can't explain it so far.
+	j.cachedBuildRows = make([]matchedRowInfo, batchBuildRowSize)
 }
 
 func checkSQLKiller(killer *sqlkiller.SQLKiller, fpName string) error {
@@ -692,6 +688,8 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		lUsedInOtherCondition: ctx.LUsedInOtherCondition,
 		rUsedInOtherCondition: ctx.RUsedInOtherCondition,
 		rightAsBuildSide:      rightAsBuildSide,
+		hash:                  fnv.New64(),
+		rehashBuf:             make([]byte, serialization.Uint64Len),
 	}
 
 	base.probeSpillChkFieldTypes = getProbeSpillChunkFieldTypes(probeChkFieldTypes)

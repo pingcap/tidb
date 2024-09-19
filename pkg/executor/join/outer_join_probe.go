@@ -392,6 +392,7 @@ func (j *outerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlk
 	return true, joinResult
 }
 
-func (j *outerJoinProbe) ResetProbeStatus() {
+func (j *outerJoinProbe) ResetProbe() {
 	j.rowIter = nil
+	j.baseJoinProbe.ResetProbe()
 }
