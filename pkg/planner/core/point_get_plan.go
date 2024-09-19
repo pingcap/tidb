@@ -399,12 +399,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		dVal.Copy(&row[p.HandleColOffset])
 	}
 	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), row)
-	if err != nil && partIdx >= 0 {
-		partIdx = pt.Meta().Partition.GetOverlappingDroppingPartitionIdx(partIdx)
-		if partIdx >= 0 {
-			err = nil
-		}
-	}
+	partIdx, err = pt.Meta().Partition.ReplaceWithOverlappingPartitionIdx(partIdx, err)
 	if err != nil || !isInExplicitPartitions(pi, partIdx, p.PartitionNames) {
 		partIdx = -1
 		p.PartitionIdx = &partIdx
@@ -673,12 +668,7 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 			rows[i][j].Copy(&r[p.IndexInfo.Columns[j].Offset])
 		}
 		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
-		if err != nil && pIdx >= 0 {
-			pIdx = pTbl.Meta().Partition.GetOverlappingDroppingPartitionIdx(pIdx)
-			if pIdx >= 0 {
-				err = nil
-			}
-		}
+		pIdx, err = pTbl.Meta().Partition.ReplaceWithOverlappingPartitionIdx(pIdx, err)
 		if err != nil {
 			// Skip on any error, like:
 			// No matching partition, overflow etc.
@@ -777,12 +767,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				}
 				d.Copy(&r[p.HandleColOffset])
 				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
-				if err != nil && pIdx >= 0 {
-					pIdx = pi.GetOverlappingDroppingPartitionIdx(pIdx)
-					if pIdx >= 0 {
-						err = nil
-					}
-				}
+				pIdx, err = pi.ReplaceWithOverlappingPartitionIdx(pIdx, err)
 				if err != nil ||
 					!isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
 					(p.SinglePartition &&

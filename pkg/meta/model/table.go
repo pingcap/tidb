@@ -890,6 +890,18 @@ func (pi *PartitionInfo) CanHaveOverlappingDroppingPartition() bool {
 	return false
 }
 
+// ReplaceWithOverlappingPartitionIdx returns the overlapping partition
+// if
+func (pi *PartitionInfo) ReplaceWithOverlappingPartitionIdx(idx int, err error) (int, error) {
+	if err != nil && idx >= 0 {
+		idx = pi.GetOverlappingDroppingPartitionIdx(idx)
+		if idx >= 0 {
+			err = nil
+		}
+	}
+	return idx, err
+}
+
 // GetOverlappingDroppingPartitionIdx takes the index of Definitions
 // and returns possible overlapping partition to use instead.
 // Only used during DROP PARTITION!
