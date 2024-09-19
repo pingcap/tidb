@@ -1348,19 +1348,18 @@ var defaultSysVars = []*SysVar{
 			EnableInstancePlanCache.Store(TiDBOptOn(val))
 			return nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheTargetMemSize, Value: strconv.Itoa(int(DefTiDBInstancePlanCacheTargetMemSize)), Type: TypeStr,
+	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheReservedPercentage,
+		Value: strconv.FormatFloat(DefTiDBInstancePlanCacheReservedPercentage, 'f', -1, 64),
+		Type:  TypeFloat, MinValue: 0, MaxValue: 1,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-			return strconv.FormatInt(InstancePlanCacheTargetMemSize.Load(), 10), nil
+			return strconv.FormatFloat(InstancePlanCacheReservedPercentage.Load(), 'f', -1, 64), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-			v, str := parseByteSize(val)
-			if str == "" {
-				v = uint64(TidbOptInt64(val, int64(DefTiDBInstancePlanCacheTargetMemSize)))
+			v := tidbOptFloat64(val, DefTiDBInstancePlanCacheReservedPercentage)
+			if v < 0 || v > 1 {
+				return errors.Errorf("invalid tidb_instance_plan_cache_reserved_percentage value %s", val)
 			}
-			if v > uint64(InstancePlanCacheMaxMemSize.Load()) {
-				return errors.New("tidb_instance_plan_cache_target_mem_size must be less than tidb_instance_plan_cache_max_mem_size")
-			}
-			InstancePlanCacheTargetMemSize.Store(int64(v))
+			InstancePlanCacheReservedPercentage.Store(v)
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBInstancePlanCacheMaxMemSize, Value: strconv.Itoa(int(DefTiDBInstancePlanCacheMaxMemSize)), Type: TypeStr,
@@ -1369,11 +1368,8 @@ var defaultSysVars = []*SysVar{
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			v, str := parseByteSize(val)
-			if str == "" {
-				v = uint64(TidbOptInt64(val, int64(DefTiDBInstancePlanCacheTargetMemSize)))
-			}
-			if v < uint64(InstancePlanCacheTargetMemSize.Load()) {
-				return errors.New("tidb_instance_plan_cache_max_mem_size must be greater than tidb_instance_plan_cache_target_mem_size")
+			if str == "" || v < 0 {
+				return errors.Errorf("invalid tidb_instance_plan_cache_max_mem_size value %s", val)
 			}
 			InstancePlanCacheMaxMemSize.Store(int64(v))
 			return nil

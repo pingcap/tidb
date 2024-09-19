@@ -64,6 +64,10 @@ type memIndexReader struct {
 	physTblIDIdx   int
 	partitionIDMap map[int64]struct{}
 	compareExec
+
+	buf        [16]byte
+	decodeBuff [][]byte
+	resultRows []types.Datum
 }
 
 func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
@@ -89,6 +93,7 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 		compareExec:    us.compareExec,
 		physTblIDIdx:   us.physTblIDIdx,
 		partitionIDMap: us.partitionIDMap,
+		resultRows:     make([]types.Datum, 0, len(outputOffset)),
 	}
 }
 
@@ -162,6 +167,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 			return err
 		}
 		m.addedRows = append(m.addedRows, data)
+		m.resultRows = make([]types.Datum, 0, len(data))
 		return nil
 	})
 
@@ -188,7 +194,15 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 	if mysql.HasUnsignedFlag(tps[len(m.index.Columns)].GetFlag()) {
 		hdStatus = tablecodec.HandleIsUnsigned
 	}
-	values, err := tablecodec.DecodeIndexKV(key, value, len(m.index.Columns), hdStatus, colInfos)
+
+	colsLen := len(m.index.Columns)
+	if m.decodeBuff == nil {
+		m.decodeBuff = make([][]byte, colsLen, colsLen+len(colInfos))
+	} else {
+		m.decodeBuff = m.decodeBuff[: colsLen : colsLen+len(colInfos)]
+	}
+	buf := m.buf[:0]
+	values, err := tablecodec.DecodeIndexKVEx(key, value, colsLen, hdStatus, colInfos, buf, m.decodeBuff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -198,7 +212,7 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 		physTblIDColumnIdx = m.outputOffset[m.physTblIDIdx]
 	}
 
-	ds := make([]types.Datum, 0, len(m.outputOffset))
+	ds := m.resultRows[:0]
 	for i, offset := range m.outputOffset {
 		// The `value` slice doesn't contain the value of `physTblID`, it fills by `tablecodec.DecodeKeyHead` function.
 		// For example, the schema is `[a, b, physTblID, c]`, `value` is `[v_a, v_b, v_c]`, `outputOffset` is `[0, 1, 2, 3]`
@@ -704,6 +718,7 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 		outputOffset:   outputOffset,
 		cacheTable:     us.cacheTable,
 		partitionIDMap: us.partitionIDMap,
+		resultRows:     make([]types.Datum, 0, len(outputOffset)),
 	}
 
 	return &memIndexLookUpReader{
@@ -841,6 +856,7 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 				retFieldTypes:  exec.RetTypes(us),
 				outputOffset:   outputOffset,
 				partitionIDMap: indexMergeReader.partitionIDMap,
+				resultRows:     make([]types.Datum, 0, len(outputOffset)),
 			})
 		}
 	}

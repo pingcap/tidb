@@ -54,9 +54,9 @@ import (
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(jobCtx *jobContext, t *meta.Meta, job *model.Job, fkCheck bool) (*model.TableInfo, error) {
+func createTable(jobCtx *jobContext, t *meta.Meta, job *model.Job, args *model.CreateTableArgs) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
-	tbInfo := job.Args[0].(*model.TableInfo)
+	tbInfo, fkCheck := args.TableInfo, args.FKCheck
 
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(jobCtx.infoCache, schemaID, tbInfo.Name.L)
@@ -156,20 +156,19 @@ func onCreateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 		}
 	})
 
-	// just decode, createTable will use it as Args[0]
-	tbInfo := &model.TableInfo{}
-	fkCheck := false
-	if err := job.DecodeArgs(tbInfo, &fkCheck); err != nil {
+	args, err := model.GetCreateTableArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	tbInfo := args.TableInfo
 
 	if len(tbInfo.ForeignKeys) > 0 {
-		return createTableWithForeignKeys(jobCtx, t, job, tbInfo, fkCheck)
+		return createTableWithForeignKeys(jobCtx, t, job, args)
 	}
 
-	tbInfo, err := createTable(jobCtx, t, job, fkCheck)
+	tbInfo, err = createTable(jobCtx, t, job, args)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -186,14 +185,15 @@ func onCreateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 	return ver, errors.Trace(err)
 }
 
-func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (ver int64, err error) {
+func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Meta, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
+	tbInfo := args.TableInfo
 	switch tbInfo.State {
 	case model.StateNone, model.StatePublic:
 		// create table in non-public or public state. The function `createTable` will always reset
 		// the `tbInfo.State` with `model.StateNone`, so it's fine to just call the `createTable` with
 		// public state.
 		// when `br` restores table, the state of `tbInfo` will be public.
-		tbInfo, err = createTable(jobCtx, t, job, fkCheck)
+		tbInfo, err = createTable(jobCtx, t, job, args)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -222,37 +222,38 @@ func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Meta, job *model.Job
 func onCreateTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
 
-	var args []*model.TableInfo
-	fkCheck := false
-	err := job.DecodeArgs(&args, &fkCheck)
+	args, err := model.GetBatchCreateTableArgs(job)
 	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
+	tableInfos := make([]*model.TableInfo, 0, len(args.Tables))
 	// We don't construct jobs for every table, but only tableInfo
 	// The following loop creates a stub job for every table
 	//
 	// it clones a stub job from the ActionCreateTables job
 	stubJob := job.Clone()
 	stubJob.Args = make([]any, 1)
-	for i := range args {
-		stubJob.TableID = args[i].ID
-		stubJob.Args[0] = args[i]
-		if args[i].Sequence != nil {
-			err := createSequenceWithCheck(t, stubJob, args[i])
+	for i := range args.Tables {
+		tblArgs := args.Tables[i]
+		tableInfo := tblArgs.TableInfo
+		stubJob.TableID = tableInfo.ID
+		if tableInfo.Sequence != nil {
+			err := createSequenceWithCheck(t, stubJob, tableInfo)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
+			tableInfos = append(tableInfos, tableInfo)
 		} else {
-			tbInfo, err := createTable(jobCtx, t, stubJob, fkCheck)
+			tbInfo, err := createTable(jobCtx, t, stubJob, tblArgs)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			args[i] = tbInfo
+			tableInfos = append(tableInfos, tbInfo)
 		}
 	}
 
@@ -263,9 +264,9 @@ func onCreateTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, er
 
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
-	job.BinlogInfo.SetTableInfos(ver, args)
-	for i := range args {
-		createTableEvent := notifier.NewCreateTableEvent(args[i])
+	job.BinlogInfo.SetTableInfos(ver, tableInfos)
+	for i := range tableInfos {
+		createTableEvent := notifier.NewCreateTableEvent(tableInfos[i])
 		asyncNotifyEvent(jobCtx, createTableEvent, job)
 	}
 
@@ -283,14 +284,13 @@ func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tb
 
 func onCreateView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
-	tbInfo := &model.TableInfo{}
-	var orReplace bool
-	var _placeholder int64 // oldTblInfoID
-	if err := job.DecodeArgs(tbInfo, &orReplace, &_placeholder); err != nil {
+	args, err := model.GetCreateTableArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	tbInfo, orReplace := args.TableInfo, args.OnExistReplace
 	tbInfo.State = model.StateNone
 
 	oldTableID, err := findTableIDByName(jobCtx.infoCache, t, schemaID, tbInfo.Name.L)

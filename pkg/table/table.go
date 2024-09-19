@@ -24,14 +24,14 @@ import (
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -396,10 +396,10 @@ type columnAPI interface {
 }
 
 // MutateContext is used to when mutating a table.
-type MutateContext = tbctx.MutateContext
+type MutateContext = tblctx.MutateContext
 
 // AllocatorContext is used to provide context for method `table.Allocators`.
-type AllocatorContext = tbctx.AllocatorContext
+type AllocatorContext = tblctx.AllocatorContext
 
 // Table is used to retrieve and modify rows in table.
 type Table interface {

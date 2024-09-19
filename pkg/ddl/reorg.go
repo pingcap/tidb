@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -47,8 +47,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -93,22 +93,22 @@ type reorgFnResult struct {
 	err     error
 }
 
-func newReorgExprCtx() *contextstatic.StaticExprContext {
-	evalCtx := contextstatic.NewStaticEvalContext(
-		contextstatic.WithSQLMode(mysql.ModeNone),
-		contextstatic.WithTypeFlags(types.DefaultStmtFlags),
-		contextstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
+func newReorgExprCtx() *exprstatic.ExprContext {
+	evalCtx := exprstatic.NewEvalContext(
+		exprstatic.WithSQLMode(mysql.ModeNone),
+		exprstatic.WithTypeFlags(types.DefaultStmtFlags),
+		exprstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
 	)
 
 	planCacheTracker := contextutil.NewPlanCacheTracker(contextutil.IgnoreWarn)
 
-	return contextstatic.NewStaticExprContext(
-		contextstatic.WithEvalCtx(evalCtx),
-		contextstatic.WithPlanCacheTracker(&planCacheTracker),
+	return exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(evalCtx),
+		exprstatic.WithPlanCacheTracker(&planCacheTracker),
 	)
 }
 
-func newReorgExprCtxWithReorgMeta(reorgMeta *model.DDLReorgMeta, warnHandler contextutil.WarnHandler) (*contextstatic.StaticExprContext, error) {
+func newReorgExprCtxWithReorgMeta(reorgMeta *model.DDLReorgMeta, warnHandler contextutil.WarnHandler) (*exprstatic.ExprContext, error) {
 	intest.AssertNotNil(reorgMeta)
 	intest.AssertNotNil(warnHandler)
 	loc, err := reorgTimeZoneWithTzLoc(reorgMeta.Location)
@@ -118,20 +118,20 @@ func newReorgExprCtxWithReorgMeta(reorgMeta *model.DDLReorgMeta, warnHandler con
 
 	ctx := newReorgExprCtx()
 	evalCtx := ctx.GetStaticEvalCtx().Apply(
-		contextstatic.WithSQLMode(reorgMeta.SQLMode),
-		contextstatic.WithLocation(loc),
-		contextstatic.WithTypeFlags(reorgTypeFlagsWithSQLMode(reorgMeta.SQLMode)),
-		contextstatic.WithErrLevelMap(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode)),
-		contextstatic.WithWarnHandler(warnHandler),
+		exprstatic.WithSQLMode(reorgMeta.SQLMode),
+		exprstatic.WithLocation(loc),
+		exprstatic.WithTypeFlags(reorgTypeFlagsWithSQLMode(reorgMeta.SQLMode)),
+		exprstatic.WithErrLevelMap(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode)),
+		exprstatic.WithWarnHandler(warnHandler),
 	)
-	return ctx.Apply(contextstatic.WithEvalCtx(evalCtx)), nil
+	return ctx.Apply(exprstatic.WithEvalCtx(evalCtx)), nil
 }
 
 // reorgTableMutateContext implements table.MutateContext for reorganization.
 type reorgTableMutateContext struct {
 	exprCtx            exprctx.ExprContext
-	encodingConfig     tbctx.RowEncodingConfig
-	mutateBuffers      *tbctx.MutateBuffers
+	encodingConfig     tblctx.RowEncodingConfig
+	mutateBuffers      *tblctx.MutateBuffers
 	shardID            *variable.RowIDShardGenerator
 	reservedRowIDAlloc stmtctx.ReservedRowIDAlloc
 }
@@ -173,12 +173,12 @@ func (*reorgTableMutateContext) EnableMutationChecker() bool {
 }
 
 // GetRowEncodingConfig implements table.MutateContext.GetRowEncodingConfig.
-func (ctx *reorgTableMutateContext) GetRowEncodingConfig() tbctx.RowEncodingConfig {
+func (ctx *reorgTableMutateContext) GetRowEncodingConfig() tblctx.RowEncodingConfig {
 	return ctx.encodingConfig
 }
 
 // GetMutateBuffers implements table.MutateContext.GetMutateBuffers.
-func (ctx *reorgTableMutateContext) GetMutateBuffers() *tbctx.MutateBuffers {
+func (ctx *reorgTableMutateContext) GetMutateBuffers() *tblctx.MutateBuffers {
 	return ctx.mutateBuffers
 }
 
@@ -193,7 +193,7 @@ func (ctx *reorgTableMutateContext) GetReservedRowIDAlloc() (*stmtctx.ReservedRo
 }
 
 // GetBinlogSupport implements table.MutateContext.GetBinlogSupport.
-func (*reorgTableMutateContext) GetBinlogSupport() (tbctx.BinlogSupport, bool) {
+func (*reorgTableMutateContext) GetBinlogSupport() (tblctx.BinlogSupport, bool) {
 	// We can just return `(nil, false)` because:
 	// - Only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method.
 	// - Data change in DDL reorganization should not write binlog.
@@ -201,7 +201,7 @@ func (*reorgTableMutateContext) GetBinlogSupport() (tbctx.BinlogSupport, bool) {
 }
 
 // GetStatisticsSupport implements table.MutateContext.GetStatisticsSupport.
-func (*reorgTableMutateContext) GetStatisticsSupport() (tbctx.StatisticsSupport, bool) {
+func (*reorgTableMutateContext) GetStatisticsSupport() (tblctx.StatisticsSupport, bool) {
 	// We can just return `(nil, false)` because:
 	// - Only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method.
 	// - DDL reorg do need to collect statistics in this way.
@@ -209,7 +209,7 @@ func (*reorgTableMutateContext) GetStatisticsSupport() (tbctx.StatisticsSupport,
 }
 
 // GetCachedTableSupport implements table.MutateContext.GetCachedTableSupport.
-func (*reorgTableMutateContext) GetCachedTableSupport() (tbctx.CachedTableSupport, bool) {
+func (*reorgTableMutateContext) GetCachedTableSupport() (tblctx.CachedTableSupport, bool) {
 	// We can just return `(nil, false)` because:
 	// - Only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method.
 	// - It is not allowed to execute DDL on a cached table.
@@ -217,7 +217,7 @@ func (*reorgTableMutateContext) GetCachedTableSupport() (tbctx.CachedTableSuppor
 }
 
 // GetTemporaryTableSupport implements table.MutateContext.GetTemporaryTableSupport.
-func (*reorgTableMutateContext) GetTemporaryTableSupport() (tbctx.TemporaryTableSupport, bool) {
+func (*reorgTableMutateContext) GetTemporaryTableSupport() (tblctx.TemporaryTableSupport, bool) {
 	// We can just return `(nil, false)` because:
 	// - Only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method.
 	// - Temporary tables do not have any data in TiKV.
@@ -225,7 +225,7 @@ func (*reorgTableMutateContext) GetTemporaryTableSupport() (tbctx.TemporaryTable
 }
 
 // GetExchangePartitionDMLSupport implements table.MutateContext.GetExchangePartitionDMLSupport.
-func (*reorgTableMutateContext) GetExchangePartitionDMLSupport() (tbctx.ExchangePartitionDMLSupport, bool) {
+func (*reorgTableMutateContext) GetExchangePartitionDMLSupport() (tblctx.ExchangePartitionDMLSupport, bool) {
 	// We can just return `(nil, false)` because:
 	// - Only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method.
 	return nil, false
@@ -237,7 +237,7 @@ func newReorgTableMutateContext(exprCtx exprctx.ExprContext) table.MutateContext
 		Enable: variable.GetDDLReorgRowFormat() != variable.DefTiDBRowFormatV1,
 	}
 
-	encodingConfig := tbctx.RowEncodingConfig{
+	encodingConfig := tblctx.RowEncodingConfig{
 		IsRowLevelChecksumEnabled: rowEncoder.Enable,
 		RowEncoder:                rowEncoder,
 	}
@@ -245,7 +245,7 @@ func newReorgTableMutateContext(exprCtx exprctx.ExprContext) table.MutateContext
 	return &reorgTableMutateContext{
 		exprCtx:        exprCtx,
 		encodingConfig: encodingConfig,
-		mutateBuffers:  tbctx.NewMutateBuffers(&variable.WriteStmtBufs{}),
+		mutateBuffers:  tblctx.NewMutateBuffers(&variable.WriteStmtBufs{}),
 		// Though currently, `RowIDShardGenerator` is not required in DDL reorg,
 		// we still provide a valid one to keep the context complete and to avoid panic if it is used in the future.
 		shardID: variable.NewRowIDShardGenerator(
