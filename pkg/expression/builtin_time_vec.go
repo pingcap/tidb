@@ -1090,7 +1090,7 @@ func (b *builtinExtractDurationSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	i64s := result.Int64s()
 	durIs := dur.GoDurations()
 	var duration types.Duration
-	duration.Fsp = b.args[1].GetType().GetDecimal()
+	duration.Fsp = b.args[1].GetType(ctx).GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1447,7 +1447,7 @@ func (b *builtinTimeToSecSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	fsp := b.args[0].GetType().GetDecimal()
+	fsp := b.args[0].GetType(ctx).GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -2048,7 +2048,7 @@ func (b *builtinMakeTimeSig) vectorized() bool {
 }
 
 func (b *builtinMakeTimeSig) getVecIntParam(ctx EvalContext, arg Expression, input *chunk.Chunk, col *chunk.Column) (err error) {
-	if arg.GetType().EvalType() == types.ETReal {
+	if arg.GetType(ctx).EvalType() == types.ETReal {
 		err = arg.VecEvalReal(ctx, input, col)
 		if err != nil {
 			return err
@@ -2094,7 +2094,7 @@ func (b *builtinMakeTimeSig) vecEvalDuration(ctx EvalContext, input *chunk.Chunk
 	seconds := secondsBuf.Float64s()
 	durs := result.GoDurations()
 	result.MergeNulls(minutesBuf, secondsBuf)
-	hourUnsignedFlag := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	hourUnsignedFlag := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue

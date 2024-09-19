@@ -41,7 +41,7 @@ type mockManager struct {
 	ctx          context.Context
 	wg           sync.WaitGroup
 	cancel       context.CancelFunc
-	beOwnerHook  func()
+	listener     Listener
 	retireHook   func()
 	campaignDone chan struct{}
 	resignDone   chan struct{}
@@ -78,33 +78,40 @@ func (m *mockManager) ID() string {
 
 // IsOwner implements Manager.IsOwner interface.
 func (m *mockManager) IsOwner() bool {
-	logutil.BgLogger().Debug("owner manager checks owner", zap.String("category", "ddl"),
-		zap.String("ID", m.id), zap.String("ownerKey", m.key))
+	logutil.BgLogger().Debug("owner manager checks owner",
+		zap.String("ownerKey", m.key), zap.String("ID", m.id))
 	return util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).IsOwner(m.id)
 }
 
 func (m *mockManager) toBeOwner() {
 	ok := util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).SetOwner(m.id)
 	if ok {
-		logutil.BgLogger().Debug("owner manager gets owner", zap.String("category", "ddl"),
-			zap.String("ID", m.id), zap.String("ownerKey", m.key))
-		if m.beOwnerHook != nil {
-			m.beOwnerHook()
+		logutil.BgLogger().Info("owner manager gets owner",
+			zap.String("ownerKey", m.key), zap.String("ID", m.id))
+		if m.listener != nil {
+			m.listener.OnBecomeOwner()
 		}
 	}
 }
 
 // RetireOwner implements Manager.RetireOwner interface.
 func (m *mockManager) RetireOwner() {
-	util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).UnsetOwner(m.id)
+	ok := util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).UnsetOwner(m.id)
+	if ok {
+		logutil.BgLogger().Info("owner manager retire owner",
+			zap.String("ownerKey", m.key), zap.String("ID", m.id))
+		if m.listener != nil {
+			m.listener.OnRetireOwner()
+		}
+	}
 }
 
 // Cancel implements Manager.Cancel interface.
 func (m *mockManager) Cancel() {
 	m.cancel()
 	m.wg.Wait()
-	logutil.BgLogger().Info("owner manager is canceled", zap.String("category", "ddl"),
-		zap.String("ID", m.id), zap.String("ownerKey", m.key))
+	logutil.BgLogger().Info("owner manager is canceled",
+		zap.String("ownerKey", m.key), zap.String("ID", m.id))
 }
 
 // GetOwnerID implements Manager.GetOwnerID interface.
@@ -129,18 +136,18 @@ func (*mockManager) SetOwnerOpValue(_ context.Context, op OpType) error {
 func (m *mockManager) CampaignOwner(_ ...int) error {
 	m.wg.Add(1)
 	go func() {
-		logutil.BgLogger().Debug("owner manager campaign owner", zap.String("category", "ddl"),
-			zap.String("ID", m.id), zap.String("ownerKey", m.key))
+		logutil.BgLogger().Debug("owner manager campaign owner",
+			zap.String("ownerKey", m.key), zap.String("ID", m.id))
 		defer m.wg.Done()
 		for {
 			select {
 			case <-m.campaignDone:
 				m.RetireOwner()
-				logutil.BgLogger().Debug("owner manager campaign done", zap.String("category", "ddl"), zap.String("ID", m.id))
+				logutil.BgLogger().Debug("owner manager campaign done", zap.String("ID", m.id))
 				return
 			case <-m.ctx.Done():
 				m.RetireOwner()
-				logutil.BgLogger().Debug("owner manager is cancelled", zap.String("category", "ddl"), zap.String("ID", m.id))
+				logutil.BgLogger().Debug("owner manager is cancelled", zap.String("ID", m.id))
 				return
 			case <-m.resignDone:
 				m.RetireOwner()
@@ -150,7 +157,7 @@ func (m *mockManager) CampaignOwner(_ ...int) error {
 				m.toBeOwner()
 				//nolint: errcheck
 				timeutil.Sleep(m.ctx, 1*time.Second) // Speed up domain.Close()
-				logutil.BgLogger().Debug("owner manager tick", zap.String("category", "ddl"), zap.String("ID", m.id),
+				logutil.BgLogger().Debug("owner manager tick", zap.String("ID", m.id),
 					zap.String("ownerKey", m.key), zap.String("currentOwner", util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).GetOwner()))
 			}
 		}
@@ -169,9 +176,9 @@ func (*mockManager) RequireOwner(context.Context) error {
 	return nil
 }
 
-// SetBeOwnerHook implements Manager.SetBeOwnerHook interface.
-func (m *mockManager) SetBeOwnerHook(hook func()) {
-	m.beOwnerHook = hook
+// SetListener implements Manager.SetListener interface.
+func (m *mockManager) SetListener(listener Listener) {
+	m.listener = listener
 }
 
 // CampaignCancel implements Manager.CampaignCancel interface

@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "logicalop_test_test",
+    timeout = "short",
+    srcs = ["logical_mem_table_predicate_extractor_test.go"],
+    flaky = True,
+    shard_count = 13,
+    deps = [
+        "//pkg/domain",
+        "//pkg/expression",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/planner",
+        "//pkg/planner/core",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/resolve",
+        "//pkg/planner/util",
+        "//pkg/session",
+        "//pkg/session/types",
+        "//pkg/testkit",
+        "//pkg/types",
+        "//pkg/util/hint",
+        "//pkg/util/set",
+        "@com_github_stretchr_testify//require",
+    ],
+)

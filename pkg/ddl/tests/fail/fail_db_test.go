@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"go.opencensus.io/stats/view"
@@ -47,6 +49,10 @@ type failedSuite struct {
 }
 
 func createFailDBSuite(t *testing.T) (s *failedSuite) {
+	return createFailDBSuiteWithLease(t, 200*time.Millisecond)
+}
+
+func createFailDBSuiteWithLease(t *testing.T, lease time.Duration) (s *failedSuite) {
 	s = new(failedSuite)
 	var err error
 	s.store, err = mockstore.NewMockStore(
@@ -56,7 +62,7 @@ func createFailDBSuite(t *testing.T) (s *failedSuite) {
 		}),
 	)
 	require.NoError(t, err)
-	session.SetSchemaLease(200 * time.Millisecond)
+	session.SetSchemaLease(lease)
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)
 
@@ -90,8 +96,6 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 	// Execute ddl statement reload schema
 	tk.MustExec("alter table t comment 'test1'")
-	err = s.dom.DDL().GetHook().OnChanged(nil)
-	require.NoError(t, err)
 
 	tk = testkit.NewTestKit(t, s.store)
 	tk.MustExec("use cancel_job_db")
@@ -119,8 +123,6 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustQuery("select * from tx").Check(testkit.Rows("1"))
 	// Execute ddl statement reload schema.
 	tk.MustExec("alter table tx comment 'tx'")
-	err = s.dom.DDL().GetHook().OnChanged(nil)
-	require.NoError(t, err)
 
 	tk = testkit.NewTestKit(t, s.store)
 	tk.MustExec("use cancel_job_db")
@@ -146,8 +148,6 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustQuery("select * from nt").Check(testkit.Rows("7"))
 	// Execute ddl statement reload schema.
 	tk.MustExec("alter table pt comment 'pt'")
-	err = s.dom.DDL().GetHook().OnChanged(nil)
-	require.NoError(t, err)
 
 	tk = testkit.NewTestKit(t, s.store)
 	tk.MustExec("use cancel_job_db")
@@ -158,7 +158,7 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustExec("drop database cancel_job_db")
 }
 
-// TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of ddl_api.go when
+// TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of executor.go when
 // doing the operation of 'modify column'.
 func TestInitializeOffsetAndState(t *testing.T) {
 	s := createFailDBSuite(t)
@@ -209,7 +209,7 @@ func TestAddIndexFailed(t *testing.T) {
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -225,7 +225,7 @@ func TestAddIndexFailed(t *testing.T) {
 // TestFailSchemaSyncer test when the schema syncer is done,
 // should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
 func TestFailSchemaSyncer(t *testing.T) {
-	s := createFailDBSuite(t)
+	s := createFailDBSuiteWithLease(t, 10*time.Second)
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -237,7 +237,7 @@ func TestFailSchemaSyncer(t *testing.T) {
 		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTimes)
 	}()
 	require.True(t, s.dom.SchemaValidator.IsStarted())
-	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
+	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*schemaver.MemSyncer)
 	require.True(t, ok)
 
 	// make reload failed.
@@ -334,6 +334,19 @@ func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
 	})
 }
 
+// TestRunDDLJobPanicEnableFastCreateTable tests recover panic with fast create table when run ddl job panic.
+func TestRunDDLJobPanicEnableFastCreateTable(t *testing.T) {
+	s := createFailDBSuite(t)
+	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set global tidb_enable_fast_create_table=ON")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`)
+	_, err := tk.Exec("create table t(c1 int, c2 int)")
+	require.Error(t, err)
+	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
+}
+
 func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.TestKit)) {
 	if variable.EnableDistTask.Load() {
 		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
@@ -365,7 +378,7 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.Test
 	is := s.dom.InfoSchema()
 	schemaName := model.NewCIStr("test_db")
 	tableName := model.NewCIStr("test_add_index")
-	tbl, err := is.TableByName(schemaName, tableName)
+	tbl, err := is.TableByName(context.Background(), schemaName, tableName)
 	require.NoError(t, err)
 
 	splitCount := 100
@@ -465,7 +478,7 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("alter table t change column b bb mediumint first")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	cols := tbl.Meta().Columns
 	colsStr := ""

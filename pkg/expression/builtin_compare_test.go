@@ -73,7 +73,7 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 	for _, test := range tests {
 		f, err := ParseSimpleExpr(ctx, test.exprStr, WithTableInfo("", tblInfo))
 		require.NoError(t, err)
-		require.Equal(t, test.result, f.String())
+		require.Equal(t, test.result, f.StringWithCtx(ctx, errors.RedactLogDisable))
 	}
 }
 
@@ -137,8 +137,8 @@ func TestCompare(t *testing.T) {
 		bf, err := funcs[test.funcName].getFunction(ctx, primitiveValsToConstants(ctx, []any{test.arg0, test.arg1}))
 		require.NoError(t, err)
 		args := bf.getArgs()
-		require.Equal(t, test.tp, args[0].GetType().GetType())
-		require.Equal(t, test.tp, args[1].GetType().GetType())
+		require.Equal(t, test.tp, args[0].GetType(ctx).GetType())
+		require.Equal(t, test.tp, args[1].GetType(ctx).GetType())
 		res, err := evalBuiltinFunc(bf, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.False(t, res.IsNull())
@@ -151,24 +151,24 @@ func TestCompare(t *testing.T) {
 	bf, err := funcs[ast.LT].getFunction(ctx, []Expression{decimalCol, stringCon})
 	require.NoError(t, err)
 	args := bf.getArgs()
-	require.Equal(t, mysql.TypeNewDecimal, args[0].GetType().GetType())
-	require.Equal(t, mysql.TypeNewDecimal, args[1].GetType().GetType())
+	require.Equal(t, mysql.TypeNewDecimal, args[0].GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeNewDecimal, args[1].GetType(ctx).GetType())
 
 	// test <time column> <cmp> <non-time const>
 	timeCol := &Column{RetType: types.NewFieldType(mysql.TypeDatetime)}
 	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{timeCol, stringCon})
 	require.NoError(t, err)
 	args = bf.getArgs()
-	require.Equal(t, mysql.TypeDatetime, args[0].GetType().GetType())
-	require.Equal(t, mysql.TypeDatetime, args[1].GetType().GetType())
+	require.Equal(t, mysql.TypeDatetime, args[0].GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeDatetime, args[1].GetType(ctx).GetType())
 
 	// test <json column> <cmp> <const int expression>
 	jsonCol, intCon := &Column{RetType: types.NewFieldType(mysql.TypeJSON)}, &Constant{RetType: types.NewFieldType(mysql.TypeLong)}
 	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{jsonCol, intCon})
 	require.NoError(t, err)
 	args = bf.getArgs()
-	require.Equal(t, mysql.TypeJSON, args[0].GetType().GetType())
-	require.Equal(t, mysql.TypeJSON, args[1].GetType().GetType())
+	require.Equal(t, mysql.TypeJSON, args[0].GetType(ctx).GetType())
+	require.Equal(t, mysql.TypeJSON, args[1].GetType(ctx).GetType())
 }
 
 func TestCoalesce(t *testing.T) {
@@ -213,7 +213,7 @@ func TestCoalesce(t *testing.T) {
 			if test.isNil {
 				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				if f.GetType().EvalType() == types.ETDuration {
+				if f.GetType(ctx).EvalType() == types.ETDuration {
 					require.Equal(t, test.expected.(types.Duration).String(), d.GetValue().(types.Duration).String())
 				} else {
 					require.Equal(t, test.expected, d.GetValue())
@@ -425,5 +425,5 @@ func TestIssue46475(t *testing.T) {
 
 	f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, args)...)
 	require.NoError(t, err)
-	require.Equal(t, f.GetType().GetType(), mysql.TypeDate)
+	require.Equal(t, f.GetType(ctx).GetType(), mysql.TypeDate)
 }

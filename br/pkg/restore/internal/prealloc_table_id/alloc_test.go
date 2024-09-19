@@ -8,7 +8,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,6 +31,7 @@ func TestAllocator(t *testing.T) {
 		hasAllocatedTo        int64
 		successfullyAllocated []int64
 		shouldAllocatedTo     int64
+		msg                   string
 	}
 
 	cases := []Case{
@@ -39,24 +40,28 @@ func TestAllocator(t *testing.T) {
 			hasAllocatedTo:        6,
 			successfullyAllocated: []int64{6, 7},
 			shouldAllocatedTo:     8,
+			msg:                   "ID:[6,8)",
 		},
 		{
 			tableIDs:              []int64{4, 6, 9, 2},
 			hasAllocatedTo:        1,
 			successfullyAllocated: []int64{2, 4, 6, 9},
 			shouldAllocatedTo:     10,
+			msg:                   "ID:[1,10)",
 		},
 		{
 			tableIDs:              []int64{1, 2, 3, 4},
 			hasAllocatedTo:        5,
 			successfullyAllocated: []int64{},
 			shouldAllocatedTo:     5,
+			msg:                   "ID:empty(end=5)",
 		},
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 1 << 50, 1<<50 + 2479},
 			hasAllocatedTo:        3,
 			successfullyAllocated: []int64{5, 6},
 			shouldAllocatedTo:     7,
+			msg:                   "ID:[3,7)",
 		},
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 7},
@@ -66,6 +71,7 @@ func TestAllocator(t *testing.T) {
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
 			},
+			msg: "ID:[6,13)",
 		},
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 7, 13},
@@ -75,6 +81,7 @@ func TestAllocator(t *testing.T) {
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
 			},
+			msg: "ID:[9,14)",
 		},
 	}
 
@@ -98,6 +105,7 @@ func TestAllocator(t *testing.T) {
 		ids := prealloctableid.New(tables)
 		allocator := testAllocator(c.hasAllocatedTo)
 		require.NoError(t, ids.Alloc(&allocator))
+		require.Equal(t, c.msg, ids.String())
 
 		allocated := make([]int64, 0, len(c.successfullyAllocated))
 		for _, t := range tables {

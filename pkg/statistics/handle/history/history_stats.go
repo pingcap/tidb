@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
@@ -136,10 +136,7 @@ func RecordHistoricalStatsToStorage(sctx sessionctx.Context, physicalID int64, j
 		version = js.Version
 	} else {
 		for _, p := range js.Partitions {
-			version = p.Version
-			if version != 0 {
-				break
-			}
+			version = max(version, p.Version)
 		}
 	}
 	blocks, err := storage.JSONTableToBlocks(js, maxColumnSize)
@@ -148,9 +145,10 @@ func RecordHistoricalStatsToStorage(sctx sessionctx.Context, physicalID int64, j
 	}
 
 	ts := time.Now().Format("2006-01-02 15:04:05.999999")
-	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
+	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)" +
+		"ON DUPLICATE KEY UPDATE stats_data=%?, create_time=%?"
 	for i := 0; i < len(blocks); i++ {
-		if _, err := util.Exec(sctx, sql, physicalID, blocks[i], i, version, ts); err != nil {
+		if _, err = util.Exec(sctx, sql, physicalID, blocks[i], i, version, ts, blocks[i], ts); err != nil {
 			return 0, errors.Trace(err)
 		}
 	}

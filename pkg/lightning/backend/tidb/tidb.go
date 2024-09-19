@@ -37,9 +37,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
@@ -83,7 +83,6 @@ func (rows tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 type tidbEncoder struct {
 	mode mysql.SQLMode
 	tbl  table.Table
-	se   sessionctx.Context
 	// the index of table columns for each data field.
 	// index == len(table.columns) means this field is `_tidb_rowid`
 	columnIdx []int
@@ -105,17 +104,10 @@ func NewEncodingBuilder() encode.EncodingBuilder {
 
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
-func (*encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	se := kv.NewSessionCtx(&config.SessionOptions, log.FromContext(ctx))
-	if config.SQLMode.HasStrictMode() {
-		se.GetSessionVars().SkipUTF8Check = false
-		se.GetSessionVars().SkipASCIICheck = false
-	}
-
+func (*encodingBuilder) NewEncoder(_ context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
 	return &tidbEncoder{
 		mode:   config.SQLMode,
 		tbl:    config.Table,
-		se:     se,
 		path:   config.Path,
 		logger: config.Logger,
 	}, nil
@@ -161,7 +153,7 @@ func (b *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DB
 				return e
 			}
 			dbInfo := &model.DBInfo{
-				Name: model.NewCIStr(dbName),
+				Name: pmodel.NewCIStr(dbName),
 			}
 			results = append(results, dbInfo)
 		}
@@ -213,7 +205,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 			}
 			if tableName != curTableName {
 				curTable = &model.TableInfo{
-					Name:       model.NewCIStr(tableName),
+					Name:       pmodel.NewCIStr(tableName),
 					State:      model.StatePublic,
 					PKIsHandle: true,
 				}
@@ -234,7 +226,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 			ft := types.FieldType{}
 			ft.SetFlag(flag)
 			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
-				Name:                model.NewCIStr(columnName),
+				Name:                pmodel.NewCIStr(columnName),
 				Offset:              curColOffset,
 				State:               model.StatePublic,
 				FieldType:           ft,
@@ -873,7 +865,7 @@ func (be *tidbBackend) LocalWriter(
 	cfg *backend.LocalWriterConfig,
 	_ uuid.UUID,
 ) (backend.EngineWriter, error) {
-	return &Writer{be: be, tableName: cfg.TableName}, nil
+	return &Writer{be: be, tableName: cfg.TiDB.TableName}, nil
 }
 
 // Writer is a writer that writes data to local storage.

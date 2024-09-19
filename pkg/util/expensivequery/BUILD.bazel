@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/metrics",
         "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/util",
         "//pkg/util",
         "//pkg/util/logutil",
         "@com_github_pingcap_log//:log",

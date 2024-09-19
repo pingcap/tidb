@@ -1589,6 +1589,7 @@ const (
 	PasswordLockTimeUnbounded
 	UserCommentType
 	UserAttributeType
+	PasswordRequireCurrentDefault
 
 	UserResourceGroupName
 )
@@ -1970,6 +1971,88 @@ func (n *DropUserStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type StringOrUserVar struct {
+	node
+	StringLit string
+	UserVar   *VariableExpr
+}
+
+func (n *StringOrUserVar) Restore(ctx *format.RestoreCtx) error {
+	if len(n.StringLit) > 0 {
+		ctx.WriteString(n.StringLit)
+	}
+	if n.UserVar != nil {
+		if err := n.UserVar.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ColumnNameOrUserVar.UserVar")
+		}
+	}
+	return nil
+}
+
+func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
+	newNode, skipChild := v.Enter(n)
+	if skipChild {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*StringOrUserVar)
+	if n.UserVar != nil {
+		node, ok = n.UserVar.Accept(v)
+		if !ok {
+			return node, false
+		}
+		n.UserVar = node.(*VariableExpr)
+	}
+	return v.Leave(n)
+}
+
+// RecommendIndexStmt is a statement to recommend index.
+type RecommendIndexStmt struct {
+	stmtNode
+
+	Action string
+	SQL    string
+	ID     int64
+	Option string
+	Value  ValueExpr
+}
+
+func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RECOMMEND INDEX")
+	switch n.Action {
+	case "run":
+		ctx.WriteKeyWord(" RUN")
+		if n.SQL != "" {
+			ctx.WriteKeyWord(" FOR ")
+			ctx.WriteString(n.SQL)
+		}
+	case "show":
+		ctx.WriteKeyWord(" SHOW")
+	case "apply":
+		ctx.WriteKeyWord(" APPLY ")
+		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
+	case "ignore":
+		ctx.WriteKeyWord(" IGNORE ")
+		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
+	case "set":
+		ctx.WriteKeyWord(" SET ")
+		ctx.WriteKeyWord(n.Option)
+		ctx.WritePlain(" = ")
+		if err := n.Value.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore RecommendIndexStmt.Value")
+		}
+	}
+	return nil
+}
+
+func (n *RecommendIndexStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RecommendIndexStmt)
+	return v.Leave(n)
+}
+
 // CreateBindingStmt creates sql binding hint.
 type CreateBindingStmt struct {
 	stmtNode
@@ -1977,7 +2060,7 @@ type CreateBindingStmt struct {
 	GlobalScope bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
-	PlanDigest  string
+	PlanDigests []*StringOrUserVar
 }
 
 func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
@@ -1989,7 +2072,14 @@ func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	if n.OriginNode == nil {
 		ctx.WriteKeyWord("BINDING FROM HISTORY USING PLAN DIGEST ")
-		ctx.WriteString(n.PlanDigest)
+		for i, v := range n.PlanDigests {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore CreateBindingStmt.PlanDigests[%d]", i)
+			}
+		}
 	} else {
 		ctx.WriteKeyWord("BINDING FOR ")
 		if err := n.OriginNode.Restore(ctx); err != nil {
@@ -2020,6 +2110,14 @@ func (n *CreateBindingStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.HintedNode = hintedNode.(StmtNode)
+	} else {
+		for i, digest := range n.PlanDigests {
+			newDigest, ok := digest.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.PlanDigests[i] = newDigest.(*StringOrUserVar)
+		}
 	}
 	return v.Leave(n)
 }
@@ -2031,7 +2129,7 @@ type DropBindingStmt struct {
 	GlobalScope bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
-	SQLDigest   string
+	SQLDigests  []*StringOrUserVar
 }
 
 func (n *DropBindingStmt) Restore(ctx *format.RestoreCtx) error {
@@ -2044,7 +2142,14 @@ func (n *DropBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("BINDING FOR ")
 	if n.OriginNode == nil {
 		ctx.WriteKeyWord("SQL DIGEST ")
-		ctx.WriteString(n.SQLDigest)
+		for i, v := range n.SQLDigests {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore CreateBindingStmt.PlanDigests[%d]", i)
+			}
+		}
 	} else {
 		if err := n.OriginNode.Restore(ctx); err != nil {
 			return errors.Trace(err)
@@ -2078,6 +2183,14 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 				return n, false
 			}
 			n.HintedNode = hintedNode.(StmtNode)
+		}
+	} else {
+		for i, digest := range n.SQLDigests {
+			newDigest, ok := digest.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.SQLDigests[i] = newDigest.(*StringOrUserVar)
 		}
 	}
 	return v.Leave(n)
@@ -2352,40 +2465,6 @@ const (
 	BDRRoleSecondary BDRRole = "secondary"
 	BDRRoleNone      BDRRole = ""
 )
-
-// DeniedByBDR checks whether the DDL is denied by BDR.
-func DeniedByBDR(role BDRRole, action model.ActionType, job *model.Job) (denied bool) {
-	ddlType, ok := model.ActionBDRMap[action]
-	switch role {
-	case BDRRolePrimary:
-		if !ok {
-			return true
-		}
-
-		// Can't add unique index on primary role.
-		if job != nil && (action == model.ActionAddIndex || action == model.ActionAddPrimaryKey) &&
-			len(job.Args) >= 1 && job.Args[0].(bool) {
-			// job.Args[0] is unique when job.Type is ActionAddIndex or ActionAddPrimaryKey.
-			return true
-		}
-
-		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
-			return false
-		}
-	case BDRRoleSecondary:
-		if !ok {
-			return true
-		}
-		if ddlType == model.UnmanagementDDL {
-			return false
-		}
-	default:
-		// if user do not set bdr role, we will not deny any ddl as `none`
-		return false
-	}
-
-	return true
-}
 
 type StatementScope int
 
@@ -3686,12 +3765,12 @@ type TableOptimizerHint struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html#optimizer-hints-execution-time
 	// - MAX_EXECUTION_TIME  => uint64
 	// - MEMORY_QUOTA        => int64
-	// - QUERY_TYPE          => model.CIStr
+	// - QUERY_TYPE          => CIStr
 	//
 	// Time Range is used to hint the time range of inspection tables
 	// e.g: select /*+ time_range('','') */ * from information_schema.inspection_result.
 	// - TIME_RANGE          => ast.HintTimeRange
-	// - READ_FROM_STORAGE   => model.CIStr
+	// - READ_FROM_STORAGE   => CIStr
 	// - USE_TOJA            => bool
 	// - NTH_PLAN            => int64
 	HintData interface{}
@@ -4085,44 +4164,21 @@ const (
 // QueryWatchOption is used for parsing manual management of watching runaway queries option.
 type QueryWatchOption struct {
 	stmtNode
-	Tp        QueryWatchOptionType
-	StrValue  model.CIStr
-	IntValue  int32
-	ExprValue ExprNode
-	BoolValue bool
+	Tp                  QueryWatchOptionType
+	ResourceGroupOption *QueryWatchResourceGroupOption
+	ActionOption        *ResourceGroupRunawayActionOption
+	TextOption          *QueryWatchTextOption
 }
 
+// Restore implements Node interface.
 func (n *QueryWatchOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case QueryWatchResourceGroup:
-		ctx.WriteKeyWord("RESOURCE GROUP ")
-		if n.ExprValue != nil {
-			if err := n.ExprValue.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.ExprValue)
-			}
-		} else {
-			ctx.WriteName(n.StrValue.O)
-		}
+		return n.ResourceGroupOption.restore(ctx)
 	case QueryWatchAction:
-		ctx.WriteKeyWord("ACTION ")
-		ctx.WritePlain("= ")
-		ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
+		return n.ActionOption.Restore(ctx)
 	case QueryWatchType:
-		if n.BoolValue {
-			ctx.WriteKeyWord("SQL TEXT ")
-			ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
-			ctx.WriteKeyWord(" TO ")
-		} else {
-			switch n.IntValue {
-			case int32(model.WatchSimilar):
-				ctx.WriteKeyWord("SQL DIGEST ")
-			case int32(model.WatchPlan):
-				ctx.WriteKeyWord("PLAN DIGEST ")
-			}
-		}
-		if err := n.ExprValue.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.ExprValue)
-		}
+		return n.TextOption.Restore(ctx)
 	}
 	return nil
 }
@@ -4134,12 +4190,26 @@ func (n *QueryWatchOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*QueryWatchOption)
-	if n.ExprValue != nil {
-		node, ok := n.ExprValue.Accept(v)
+	if n.ResourceGroupOption != nil && n.ResourceGroupOption.GroupNameExpr != nil {
+		node, ok := n.ResourceGroupOption.GroupNameExpr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.ExprValue = node.(ExprNode)
+		n.ResourceGroupOption.GroupNameExpr = node.(ExprNode)
+	}
+	if n.ActionOption != nil {
+		node, ok := n.ActionOption.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ActionOption = node.(*ResourceGroupRunawayActionOption)
+	}
+	if n.TextOption != nil {
+		node, ok := n.TextOption.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.TextOption = node.(*QueryWatchTextOption)
 	}
 	return v.Leave(n)
 }
@@ -4151,4 +4221,67 @@ func CheckQueryWatchAppend(ops []*QueryWatchOption, newOp *QueryWatchOption) boo
 		}
 	}
 	return true
+}
+
+// QueryWatchResourceGroupOption is used for parsing the query watch resource group name.
+type QueryWatchResourceGroupOption struct {
+	GroupNameStr  model.CIStr
+	GroupNameExpr ExprNode
+}
+
+func (n *QueryWatchResourceGroupOption) restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RESOURCE GROUP ")
+	if n.GroupNameExpr != nil {
+		if err := n.GroupNameExpr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.GroupNameExpr)
+		}
+	} else {
+		ctx.WriteName(n.GroupNameStr.String())
+	}
+	return nil
+}
+
+// QueryWatchTextOption is used for parsing the query watch text option.
+type QueryWatchTextOption struct {
+	node
+	Type          model.RunawayWatchType
+	PatternExpr   ExprNode
+	TypeSpecified bool
+}
+
+// Restore implements Node interface.
+func (n *QueryWatchTextOption) Restore(ctx *format.RestoreCtx) error {
+	if n.TypeSpecified {
+		ctx.WriteKeyWord("SQL TEXT ")
+		ctx.WriteKeyWord(n.Type.String())
+		ctx.WriteKeyWord(" TO ")
+	} else {
+		switch n.Type {
+		case model.WatchSimilar:
+			ctx.WriteKeyWord("SQL DIGEST ")
+		case model.WatchPlan:
+			ctx.WriteKeyWord("PLAN DIGEST ")
+		}
+	}
+	if err := n.PatternExpr.Restore(ctx); err != nil {
+		return errors.Annotatef(err, "An error occurred while splicing ExprValue: [%v]", n.PatternExpr)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *QueryWatchTextOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*QueryWatchTextOption)
+	if n.PatternExpr != nil {
+		node, ok := n.PatternExpr.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.PatternExpr = node.(ExprNode)
+	}
+	return v.Leave(n)
 }

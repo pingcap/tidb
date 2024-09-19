@@ -15,13 +15,14 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tipb/go-tipb"
@@ -380,7 +381,7 @@ func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 	if ok {
 		res.Database = db.Name.O
 	}
-	tmp, ok := is.TableByID(tblInfo.ID)
+	tmp, ok := is.TableByID(context.Background(), tblInfo.ID)
 	if !ok {
 		res.err = "partition table not found:" + strconv.FormatInt(tblInfo.ID, 10)
 		return res
@@ -417,7 +418,7 @@ func (p *PhysicalTableReader) accessObject(sctx base.PlanContext) base.AccessObj
 		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
 			asName = ts.TableAsName.O
 		}
-		res := getDynamicAccessPartition(sctx, ts.Table, &p.PlanPartInfo, asName)
+		res := getDynamicAccessPartition(sctx, ts.Table, p.PlanPartInfo, asName)
 		if res == nil {
 			return DynamicPartitionAccessObjects(nil)
 		}
@@ -430,7 +431,7 @@ func (p *PhysicalTableReader) accessObject(sctx base.PlanContext) base.AccessObj
 		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
 			asName = ts.TableAsName.O
 		}
-		res := getDynamicAccessPartition(sctx, ts.Table, &tp.physPlanPartInfo, asName)
+		res := getDynamicAccessPartition(sctx, ts.Table, tp.physPlanPartInfo, asName)
 		if res == nil {
 			return DynamicPartitionAccessObjects(nil)
 		}
@@ -447,7 +448,7 @@ func (p *PhysicalTableReader) accessObject(sctx base.PlanContext) base.AccessObj
 		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
 			asName = ts.TableAsName.O
 		}
-		accessObj := getDynamicAccessPartition(sctx, ts.Table, &info.physPlanPartInfo, asName)
+		accessObj := getDynamicAccessPartition(sctx, ts.Table, info.physPlanPartInfo, asName)
 		if accessObj != nil {
 			res = append(res, accessObj)
 		}
@@ -474,11 +475,11 @@ func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, 
 }
 
 func (p *PhysicalIndexReader) accessObject(sctx base.PlanContext) base.AccessObject {
-	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), &p.PlanPartInfo)
+	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
 }
 
 func (p *PhysicalIndexLookUpReader) accessObject(sctx base.PlanContext) base.AccessObject {
-	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), &p.PlanPartInfo)
+	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
 }
 
 func (p *PhysicalIndexMergeReader) accessObject(sctx base.PlanContext) base.AccessObject {
@@ -490,7 +491,7 @@ func (p *PhysicalIndexMergeReader) accessObject(sctx base.PlanContext) base.Acce
 	if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
 		asName = ts.TableAsName.O
 	}
-	res := getDynamicAccessPartition(sctx, ts.Table, &p.PlanPartInfo, asName)
+	res := getDynamicAccessPartition(sctx, ts.Table, p.PlanPartInfo, asName)
 	if res == nil {
 		return DynamicPartitionAccessObjects(nil)
 	}

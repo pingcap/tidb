@@ -858,6 +858,46 @@ func TestPasswordExpiredAndTacking(t *testing.T) {
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password("!@#HASHhs123"), nil, nil))
 }
 
+// TestPasswordMySQLCompatibility is to test compatibility with the output of what MySQL outputs on SHOW CREATE USER.
+func TestPasswordMySQLCompatibility(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// MySQL 8.0.37
+	//
+	// This is using mysql_native_password as that's common with this version, however it is not the default.
+	//
+	// CREATE USER 'test80037'@'%' IDENTIFIED WITH 'mysql_native_password' BY 'secret';
+	// SHOW CREATE USER 'test80037'@'%';
+	tk.MustExec(
+		"CREATE USER `test80037`@`%` " +
+			"IDENTIFIED WITH 'mysql_native_password' AS '*14E65567ABDB5135D0CFD9A70B3032C179A49EE7' " +
+			"REQUIRE NONE " +
+			"PASSWORD EXPIRE DEFAULT " +
+			"ACCOUNT UNLOCK " +
+			"PASSWORD HISTORY DEFAULT " +
+			"PASSWORD REUSE INTERVAL DEFAULT " +
+			"PASSWORD REQUIRE CURRENT DEFAULT",
+	)
+
+	// MySQL 8.4.0
+	//
+	// NOT using mysql_native_password here as that is disabled by default in this version.
+	//
+	// CREATE USER 'test80400'@'%';
+	// SHOW CREATE USER 'test80400'@'%';
+	tk.MustExec(
+		"CREATE USER `test80400`@`%` " +
+			"IDENTIFIED WITH 'caching_sha2_password' " +
+			"REQUIRE NONE " +
+			"PASSWORD EXPIRE DEFAULT " +
+			"ACCOUNT UNLOCK " +
+			"PASSWORD HISTORY DEFAULT " +
+			"PASSWORD REUSE INTERVAL DEFAULT " +
+			"PASSWORD REQUIRE CURRENT DEFAULT",
+	)
+}
+
 func loginFailedAncCheck(t *testing.T, store kv.Storage, user, host, password string, failedLoginCount int64, autoAccountLocked string) {
 	tk := testkit.NewTestKit(t, store)
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: user, Hostname: host}, sha1Password(password), nil, nil))

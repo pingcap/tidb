@@ -50,8 +50,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -262,8 +262,14 @@ type targetInfoGetter struct {
 	pdHTTPCli pdhttp.Client
 }
 
-// NewTargetInfoGetter creates an TargetInfoGetter with local backend implementation.
-func NewTargetInfoGetter(tls *common.TLS, db *sql.DB, pdHTTPCli pdhttp.Client) backend.TargetInfoGetter {
+// NewTargetInfoGetter creates an TargetInfoGetter with local backend
+// implementation. `pdHTTPCli` should not be nil when need to check component
+// versions in CheckRequirements.
+func NewTargetInfoGetter(
+	tls *common.TLS,
+	db *sql.DB,
+	pdHTTPCli pdhttp.Client,
+) backend.TargetInfoGetter {
 	return &targetInfoGetter{
 		tls:       tls,
 		targetDB:  db,
@@ -292,6 +298,9 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	}
 	if err := checkTiDBVersion(ctx, versionStr, localMinTiDBVersion, localMaxTiDBVersion); err != nil {
 		return err
+	}
+	if g.pdHTTPCli == nil {
+		return common.ErrUnknown.GenWithStack("pd HTTP client is required for component version check in local backend")
 	}
 	if err := tikv.CheckPDVersion(ctx, g.pdHTTPCli, localMinPDVersion, localMaxPDVersion); err != nil {
 		return err
@@ -399,7 +408,12 @@ type BackendConfig struct {
 	CheckpointEnabled      bool
 	// memory table size of pebble. since pebble can have multiple mem tables, the max memory used is
 	// MemTableSize * MemTableStopWritesThreshold, see pebble.Options for more details.
-	MemTableSize            int
+	MemTableSize int
+	// LocalWriterMemCacheSize is the memory threshold for one local writer of
+	// engines. If the KV payload size exceeds LocalWriterMemCacheSize, local writer
+	// will flush them into the engine.
+	//
+	// It has lower priority than LocalWriterConfig.Local.MemCacheSize.
 	LocalWriterMemCacheSize int64
 	// whether check TiKV capacity before write & ingest.
 	ShouldCheckTiKV    bool
@@ -507,6 +521,43 @@ func NewBackend(
 	config BackendConfig,
 	pdSvcDiscovery pd.ServiceDiscovery,
 ) (b *Backend, err error) {
+	var (
+		pdCli                pd.Client
+		spkv                 *tikvclient.EtcdSafePointKV
+		pdCliForTiKV         *tikvclient.CodecPDClient
+		rpcCli               tikvclient.Client
+		tikvCli              *tikvclient.KVStore
+		pdHTTPCli            pdhttp.Client
+		importClientFactory  *importClientFactoryImpl
+		multiIngestSupported bool
+	)
+	defer func() {
+		if err == nil {
+			return
+		}
+		if importClientFactory != nil {
+			importClientFactory.Close()
+		}
+		if pdHTTPCli != nil {
+			pdHTTPCli.Close()
+		}
+		if tikvCli != nil {
+			// tikvCli uses pdCliForTiKV(which wraps pdCli) , spkv and rpcCli, so
+			// close tikvCli will close all of them.
+			_ = tikvCli.Close()
+		} else {
+			if rpcCli != nil {
+				_ = rpcCli.Close()
+			}
+			if spkv != nil {
+				_ = spkv.Close()
+			}
+			// pdCliForTiKV wraps pdCli, so we only need close pdCli
+			if pdCli != nil {
+				pdCli.Close()
+			}
+		}
+	}()
 	config.adjust()
 	var pdAddrs []string
 	if pdSvcDiscovery != nil {
@@ -516,7 +567,7 @@ func NewBackend(
 	} else {
 		pdAddrs = strings.Split(config.PDAddr, ",")
 	}
-	pdCli, err := pd.NewClientWithContext(
+	pdCli, err = pd.NewClientWithContext(
 		ctx, pdAddrs, tls.ToPDSecurityOption(),
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
@@ -528,12 +579,11 @@ func NewBackend(
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
+	spkv, err = tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 
-	var pdCliForTiKV *tikvclient.CodecPDClient
 	if config.KeyspaceName == "" {
 		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCli)
 	} else {
@@ -544,18 +594,24 @@ func NewBackend(
 	}
 
 	tikvCodec := pdCliForTiKV.GetCodec()
-	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
-	tikvCli, err := tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
+	rpcCli = tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
+	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	pdHTTPCli := pdhttp.NewClientWithServiceDiscovery(
+	pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
 		"lightning",
 		pdCli.GetServiceDiscovery(),
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
-	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
+	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
+
+	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCli, importClientFactory)
+	if err != nil {
+		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
+	}
+
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
 		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
@@ -572,20 +628,17 @@ func NewBackend(
 
 		BackendConfig: config,
 
+		supportMultiIngest:  multiIngestSupported,
 		importClientFactory: importClientFactory,
 		writeLimiter:        writeLimiter,
 		logger:              log.FromContext(ctx),
 	}
-	engineMgr, err := newEngineManager(config, local, local.logger)
+	local.engineMgr, err = newEngineManager(config, local, local.logger)
 	if err != nil {
 		return nil, err
 	}
-	local.engineMgr = engineMgr
 	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
-	}
-	if err = local.checkMultiIngestSupport(ctx); err != nil {
-		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 	local.tikvSideCheckFreeSpace(ctx)
 
@@ -618,10 +671,10 @@ func (local *Backend) TotalMemoryConsume() int64 {
 	return local.engineMgr.totalMemoryConsume()
 }
 
-func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
-	stores, err := local.pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, importClientFactory ImportClientFactory) (bool, error) {
+	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
 	hasTiFlash := false
@@ -643,10 +696,10 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 				select {
 				case <-time.After(100 * time.Millisecond):
 				case <-ctx.Done():
-					return ctx.Err()
+					return false, ctx.Err()
 				}
 			}
-			client, err1 := local.getImportClient(ctx, s.Id)
+			client, err1 := importClientFactory.Create(ctx, s.Id)
 			if err1 != nil {
 				err = err1
 				log.FromContext(ctx).Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
@@ -659,8 +712,7 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 			if st, ok := status.FromError(err); ok {
 				if st.Code() == codes.Unimplemented {
 					log.FromContext(ctx).Info("multi ingest not support", zap.Any("unsupported store", s))
-					local.supportMultiIngest = false
-					return nil
+					return false, nil
 				}
 			}
 			log.FromContext(ctx).Warn("check multi ingest support failed", zap.Error(err), zap.String("store", s.Address),
@@ -670,17 +722,15 @@ func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
 			// if the cluster contains no TiFlash store, we don't need the multi-ingest feature,
 			// so in this condition, downgrade the logic instead of return an error.
 			if hasTiFlash {
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 			log.FromContext(ctx).Warn("check multi failed all retry, fallback to false", log.ShortError(err))
-			local.supportMultiIngest = false
-			return nil
+			return false, nil
 		}
 	}
 
-	local.supportMultiIngest = true
 	log.FromContext(ctx).Info("multi ingest support")
-	return nil
+	return true, nil
 }
 
 func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
@@ -787,12 +837,12 @@ func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, si
 	return ranges
 }
 
-func readAndSplitIntoRange(
+func getRegionSplitKeys(
 	ctx context.Context,
 	engine common.Engine,
 	sizeLimit int64,
 	keysLimit int64,
-) ([]common.Range, error) {
+) ([][]byte, error) {
 	startKey, endKey, err := engine.GetKeyRange()
 	if err != nil {
 		return nil, err
@@ -804,17 +854,17 @@ func readAndSplitIntoRange(
 	engineFileTotalSize, engineFileLength := engine.KVStatistics()
 
 	if engineFileTotalSize <= sizeLimit && engineFileLength <= keysLimit {
-		ranges := []common.Range{{Start: startKey, End: endKey}}
-		return ranges, nil
+		return [][]byte{startKey, endKey}, nil
 	}
 
 	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
-	ranges, err := engine.SplitRanges(startKey, endKey, sizeLimit, keysLimit, logger)
+	keys, err := engine.GetRegionSplitKeys()
 	logger.Info("split engine key ranges",
-		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
+		zap.Int64("totalSize", engineFileTotalSize),
+		zap.Int64("totalCount", engineFileLength),
 		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey),
-		zap.Int("ranges", len(ranges)), zap.Error(err))
-	return ranges, err
+		zap.Int("len(keys)", len(keys)), zap.Error(err))
+	return keys, err
 }
 
 // prepareAndSendJob will read the engine to get estimated key range,
@@ -826,20 +876,17 @@ func readAndSplitIntoRange(
 func (local *Backend) prepareAndSendJob(
 	ctx context.Context,
 	engine common.Engine,
-	initialSplitRanges []common.Range,
-	regionSplitSize, regionSplitKeys int64,
+	regionSplitKeys [][]byte,
+	regionSplitSize, regionSplitKeyCnt int64,
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
 	lfTotalSize, lfLength := engine.KVStatistics()
-	log.FromContext(ctx).Info("import engine ranges", zap.Int("count", len(initialSplitRanges)))
-	if len(initialSplitRanges) == 0 {
-		return nil
-	}
+	log.FromContext(ctx).Info("import engine ranges", zap.Int("len(regionSplitKeyCnt)", len(regionSplitKeys)))
 
 	// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 	// the table when table is created.
-	needSplit := len(initialSplitRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
+	needSplit := len(regionSplitKeys) > 2 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeyCnt
 	// split region by given ranges
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		needSplit = true
@@ -854,7 +901,7 @@ func (local *Backend) prepareAndSendJob(
 				failpoint.Break()
 			})
 
-			err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, maxBatchSplitRanges)
+			err = local.splitAndScatterRegionInBatches(ctx, regionSplitKeys, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
@@ -880,9 +927,8 @@ func (local *Backend) prepareAndSendJob(
 	return local.generateAndSendJob(
 		ctx,
 		engine,
-		initialSplitRanges,
 		regionSplitSize,
-		regionSplitKeys,
+		regionSplitKeyCnt,
 		jobToWorkerCh,
 		jobWg,
 	)
@@ -892,34 +938,13 @@ func (local *Backend) prepareAndSendJob(
 func (local *Backend) generateAndSendJob(
 	ctx context.Context,
 	engine common.Engine,
-	jobRanges []common.Range,
 	regionSplitSize, regionSplitKeys int64,
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
-	logger := log.FromContext(ctx)
-	// for external engine, it will split into smaller data inside LoadIngestData
-	if localEngine, ok := engine.(*Engine); ok {
-		// when use dynamic region feature, the region may be very big, we need
-		// to split to smaller ranges to increase the concurrency.
-		if regionSplitSize > 2*int64(config.SplitRegionSize) {
-			start := jobRanges[0].Start
-			end := jobRanges[len(jobRanges)-1].End
-			sizeLimit := int64(config.SplitRegionSize)
-			keysLimit := int64(config.SplitRegionKeys)
-			jrs, err := localEngine.SplitRanges(start, end, sizeLimit, keysLimit, logger)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			jobRanges = jrs
-		}
-	}
-
-	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
-
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
-	dataAndRangeCh := make(chan common.DataAndRange)
+	dataAndRangeCh := make(chan common.DataAndRanges)
 	conn := local.WorkerConcurrency
 	if _, ok := engine.(*external.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
@@ -944,7 +969,7 @@ func (local *Backend) generateAndSendJob(
 						jobToWorkerCh <- &regionJob{}
 						time.Sleep(5 * time.Second)
 					})
-					jobs, err := local.generateJobForRange(egCtx, p.Data, p.Range, regionSplitSize, regionSplitKeys)
+					jobs, err := local.generateJobForRange(egCtx, p.Data, p.SortedRanges, regionSplitSize, regionSplitKeys)
 					if err != nil {
 						if common.IsContextCanceledError(err) {
 							return nil
@@ -970,7 +995,7 @@ func (local *Backend) generateAndSendJob(
 	}
 
 	eg.Go(func() error {
-		err := engine.LoadIngestData(egCtx, jobRanges, dataAndRangeCh)
+		err := engine.LoadIngestData(egCtx, dataAndRangeCh)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -992,16 +1017,18 @@ var fakeRegionJobs map[[2]string]struct {
 func (local *Backend) generateJobForRange(
 	ctx context.Context,
 	data common.IngestData,
-	keyRange common.Range,
+	sortedJobRanges []common.Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
+	startOfAllRanges, endOfAllRanges := sortedJobRanges[0].Start, sortedJobRanges[len(sortedJobRanges)-1].End
+
 	failpoint.Inject("fakeRegionJobs", func() {
 		if ctx.Err() != nil {
 			failpoint.Return(nil, ctx.Err())
 		}
-		key := [2]string{string(keyRange.Start), string(keyRange.End)}
+		key := [2]string{string(startOfAllRanges), string(endOfAllRanges)}
 		injected := fakeRegionJobs[key]
-		// overwrite the stage to regionScanned, because some time same keyRange
+		// overwrite the stage to regionScanned, because some time same sortedJobRanges
 		// will be generated more than once.
 		for _, job := range injected.jobs {
 			job.stage = regionScanned
@@ -1009,8 +1036,7 @@ func (local *Backend) generateJobForRange(
 		failpoint.Return(injected.jobs, injected.err)
 	})
 
-	start, end := keyRange.Start, keyRange.End
-	pairStart, pairEnd, err := data.GetFirstAndLastKey(start, end)
+	pairStart, pairEnd, err := data.GetFirstAndLastKey(startOfAllRanges, endOfAllRanges)
 	if err != nil {
 		return nil, err
 	}
@@ -1020,8 +1046,8 @@ func (local *Backend) generateJobForRange(
 			logFn = log.FromContext(ctx).Warn
 		}
 		logFn("There is no pairs in range",
-			logutil.Key("start", start),
-			logutil.Key("end", end))
+			logutil.Key("startOfAllRanges", startOfAllRanges),
+			logutil.Key("endOfAllRanges", endOfAllRanges))
 		// trigger cleanup
 		data.IncRef()
 		data.DecRef()
@@ -1039,27 +1065,14 @@ func (local *Backend) generateJobForRange(
 		return nil, err
 	}
 
-	jobs := make([]*regionJob, 0, len(regions))
-	for _, region := range regions {
-		log.FromContext(ctx).Debug("get region",
-			zap.Binary("startKey", startKey),
-			zap.Binary("endKey", endKey),
-			zap.Uint64("id", region.Region.GetId()),
-			zap.Stringer("epoch", region.Region.GetRegionEpoch()),
-			zap.Binary("start", region.Region.GetStartKey()),
-			zap.Binary("end", region.Region.GetEndKey()),
-			zap.Reflect("peers", region.Region.GetPeers()))
-
-		jobs = append(jobs, &regionJob{
-			keyRange:        intersectRange(region.Region, common.Range{Start: start, End: end}),
-			region:          region,
-			stage:           regionScanned,
-			ingestData:      data,
-			regionSplitSize: regionSplitSize,
-			regionSplitKeys: regionSplitKeys,
-			metrics:         local.metrics,
-		})
-	}
+	jobs := newRegionJobs(regions, data, sortedJobRanges, regionSplitSize, regionSplitKeys, local.metrics)
+	log.FromContext(ctx).Info("generate region jobs",
+		zap.Int("len(jobs)", len(jobs)),
+		zap.String("startOfAllRanges", hex.EncodeToString(startOfAllRanges)),
+		zap.String("endOfAllRanges", hex.EncodeToString(endOfAllRanges)),
+		zap.String("startKeyOfFirstRegion", hex.EncodeToString(regions[0].Region.GetStartKey())),
+		zap.String("endKeyOfLastRegion", hex.EncodeToString(regions[len(regions)-1].Region.GetEndKey())),
+	)
 	return jobs, nil
 }
 
@@ -1094,7 +1107,7 @@ func (local *Backend) startWorker(
 				jobs, err2 := local.generateJobForRange(
 					ctx,
 					job.ingestData,
-					job.keyRange,
+					[]common.Range{job.keyRange},
 					job.regionSplitSize,
 					job.regionSplitKeys,
 				)
@@ -1184,7 +1197,7 @@ func (local *Backend) executeJob(
 		for _, peer := range job.region.Region.GetPeers() {
 			store, err := local.pdHTTPCli.GetStore(ctx, peer.StoreId)
 			if err != nil {
-				log.FromContext(ctx).Error("failed to get StoreInfo from pd http api", zap.Error(err))
+				log.FromContext(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
 				continue
 			}
 			err = checkDiskAvail(ctx, store)
@@ -1239,25 +1252,6 @@ func (local *Backend) ImportEngine(
 	engineUUID uuid.UUID,
 	regionSplitSize, regionSplitKeys int64,
 ) error {
-	var e common.Engine
-	if externalEngine, ok := local.engineMgr.getExternalEngine(engineUUID); ok {
-		e = externalEngine
-	} else {
-		localEngine := local.engineMgr.lockEngine(engineUUID, importMutexStateImport)
-		if localEngine == nil {
-			// skip if engine not exist. See the comment of `CloseEngine` for more detail.
-			return nil
-		}
-		defer localEngine.unlock()
-		e = localEngine
-	}
-
-	lfTotalSize, lfLength := e.KVStatistics()
-	if lfTotalSize == 0 {
-		// engine is empty, this is likes because it's a index engine but the table contains no index
-		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
-		return nil
-	}
 	kvRegionSplitSize, kvRegionSplitKeys, err := GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)
 	if err == nil {
 		if kvRegionSplitSize > regionSplitSize {
@@ -1270,23 +1264,44 @@ func (local *Backend) ImportEngine(
 		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
 
+	var e common.Engine
+	if externalEngine, ok := local.engineMgr.getExternalEngine(engineUUID); ok {
+		e = externalEngine
+	} else {
+		localEngine := local.engineMgr.lockEngine(engineUUID, importMutexStateImport)
+		if localEngine == nil {
+			// skip if engine not exist. See the comment of `CloseEngine` for more detail.
+			return nil
+		}
+		defer localEngine.unlock()
+		localEngine.regionSplitSize = regionSplitSize
+		localEngine.regionSplitKeyCnt = regionSplitKeys
+		e = localEngine
+	}
+	lfTotalSize, lfLength := e.KVStatistics()
+	if lfTotalSize == 0 {
+		// engine is empty, this is likes because it's a index engine but the table contains no index
+		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
+		return nil
+	}
+
 	// split sorted file into range about regionSplitSize per file
-	regionRanges, err := readAndSplitIntoRange(ctx, e, regionSplitSize, regionSplitKeys)
+	splitKeys, err := getRegionSplitKeys(ctx, e, regionSplitSize, regionSplitKeys)
 	if err != nil {
 		return err
 	}
 
-	if len(regionRanges) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+	if len(splitKeys) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
 		log.FromContext(ctx).Info("pause pd scheduler of table scope")
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
 		var startKey, endKey []byte
-		if len(regionRanges[0].Start) > 0 {
-			startKey = codec.EncodeBytes(nil, regionRanges[0].Start)
+		if len(splitKeys[0]) > 0 {
+			startKey = codec.EncodeBytes(nil, splitKeys[0])
 		}
-		if len(regionRanges[len(regionRanges)-1].End) > 0 {
-			endKey = codec.EncodeBytes(nil, regionRanges[len(regionRanges)-1].End)
+		if len(splitKeys[len(splitKeys)-1]) > 0 {
+			endKey = codec.EncodeBytes(nil, splitKeys[len(splitKeys)-1])
 		}
 		done, err := pdutil.PauseSchedulersByKeyRange(subCtx, local.pdHTTPCli, startKey, endKey)
 		if err != nil {
@@ -1298,14 +1313,14 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
-	if len(regionRanges) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
+	if len(splitKeys) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
 		log.FromContext(ctx).Info("switch import mode of ranges",
-			zap.String("startKey", hex.EncodeToString(regionRanges[0].Start)),
-			zap.String("endKey", hex.EncodeToString(regionRanges[len(regionRanges)-1].End)))
+			zap.String("startKey", hex.EncodeToString(splitKeys[0])),
+			zap.String("endKey", hex.EncodeToString(splitKeys[len(splitKeys)-1])))
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
-		done, err := local.SwitchModeByKeyRanges(subCtx, regionRanges)
+		done, err := local.switchModeBySplitKeys(subCtx, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1317,13 +1332,13 @@ func (local *Backend) ImportEngine(
 
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
-		zap.Int("region ranges", len(regionRanges)),
+		zap.Int("region ranges", len(splitKeys)),
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize))
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
-	err = local.doImport(ctx, e, regionRanges, regionSplitSize, regionSplitKeys)
+	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys)
 	if err == nil {
 		importedSize, importedLength := e.ImportedStatistics()
 		log.FromContext(ctx).Info("import engine success",
@@ -1342,7 +1357,12 @@ var (
 	testJobWg         *sync.WaitGroup
 )
 
-func (local *Backend) doImport(ctx context.Context, engine common.Engine, regionRanges []common.Range, regionSplitSize, regionSplitKeys int64) error {
+func (local *Backend) doImport(
+	ctx context.Context,
+	engine common.Engine,
+	regionSplitKeys [][]byte,
+	regionSplitSize, regionSplitKeyCnt int64,
+) error {
 	/*
 	   [prepareAndSendJob]-----jobToWorkerCh--->[workers]
 	                        ^                       |
@@ -1442,9 +1462,9 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 		err := local.prepareAndSendJob(
 			workerCtx,
 			engine,
-			regionRanges,
-			regionSplitSize,
 			regionSplitKeys,
+			regionSplitSize,
+			regionSplitKeyCnt,
 			jobToWorkerCh,
 			&jobWg,
 		)
@@ -1536,64 +1556,67 @@ func (local *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterC
 	return local.engineMgr.localWriter(ctx, cfg, engineUUID)
 }
 
-// SwitchModeByKeyRanges will switch tikv mode for regions in the specific key range for multirocksdb.
-// This function will spawn a goroutine to keep switch mode periodically until the context is done.
-// The return done channel is used to notify the caller that the background goroutine is exited.
-func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common.Range) (<-chan struct{}, error) {
+// switchModeBySplitKeys will switch tikv mode for regions in the specific keys
+// for multirocksdb. This function will spawn a goroutine to keep switch mode
+// periodically until the context is done. The return done channel is used to
+// notify the caller that the background goroutine is exited.
+func (local *Backend) switchModeBySplitKeys(
+	ctx context.Context,
+	splitKeys [][]byte,
+) (<-chan struct{}, error) {
 	switcher := NewTiKVModeSwitcher(local.tls.TLSConfig(), local.pdHTTPCli, log.FromContext(ctx).Logger)
 	done := make(chan struct{})
 
-	keyRanges := make([]*sst.Range, 0, len(ranges))
-	for _, r := range ranges {
-		startKey := r.Start
-		if len(r.Start) > 0 {
-			startKey = codec.EncodeBytes(nil, r.Start)
-		}
-		endKey := r.End
-		if len(r.End) > 0 {
-			endKey = codec.EncodeBytes(nil, r.End)
-		}
-		keyRanges = append(keyRanges, &sst.Range{
-			Start: startKey,
-			End:   endKey,
-		})
+	keyRange := &sst.Range{}
+	if len(splitKeys[0]) > 0 {
+		keyRange.Start = codec.EncodeBytes(nil, splitKeys[0])
+	}
+	if len(splitKeys[len(splitKeys)-1]) > 0 {
+		keyRange.End = codec.EncodeBytes(nil, splitKeys[len(splitKeys)-1])
 	}
 
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(local.BackendConfig.RaftKV2SwitchModeDuration)
 		defer ticker.Stop()
-		switcher.ToImportMode(ctx, keyRanges...)
+		switcher.ToImportMode(ctx, keyRange)
 	loop:
 		for {
 			select {
 			case <-ctx.Done():
 				break loop
 			case <-ticker.C:
-				switcher.ToImportMode(ctx, keyRanges...)
+				switcher.ToImportMode(ctx, keyRange)
 			}
 		}
 		// Use a new context to avoid the context is canceled by the caller.
 		recoverCtx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 		defer cancel()
-		switcher.ToNormalMode(recoverCtx, keyRanges...)
+		switcher.ToNormalMode(recoverCtx, keyRange)
 	}()
 	return done, nil
 }
 
 func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec tikvclient.Codec, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
+	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
+	// this can help save about 3% of CPU.
+	var preAllocWriteBatch []common.KvPair
+	if !cfg.Local.IsKVSorted {
+		preAllocWriteBatch = make([]common.KvPair, units.MiB)
+		// we want to keep the cacheSize as the whole limit of this local writer, but the
+		// main memory usage comes from two member: kvBuffer and writeBatch, so we split
+		// ~10% to writeBatch for !IsKVSorted, which means we estimate the average length
+		// of KV pairs are 9 times than the size of common.KvPair (9*72B = 648B).
+		cacheSize = cacheSize * 9 / 10
+	}
 	w := &Writer{
 		engine:             engine,
 		memtableSizeLimit:  cacheSize,
 		kvBuffer:           kvBuffer,
-		isKVSorted:         cfg.IsKVSorted,
+		isKVSorted:         cfg.Local.IsKVSorted,
 		isWriteBatchSorted: true,
 		tikvCodec:          tikvCodec,
-	}
-	// pre-allocate a long enough buffer to avoid a lot of runtime.growslice
-	// this can help save about 3% of CPU.
-	if !w.isKVSorted {
-		w.writeBatch = make([]common.KvPair, units.MiB)
+		writeBatch:         preAllocWriteBatch,
 	}
 	engine.localWriters.Store(w, nil)
 	return w, nil

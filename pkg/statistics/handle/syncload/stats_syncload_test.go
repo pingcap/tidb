@@ -15,17 +15,20 @@
 package syncload_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
@@ -59,7 +62,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("set @@session.tidb_analyze_version=2")
-	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b,c))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
 	oriLease := dom.StatsHandle().Lease()
@@ -70,15 +73,15 @@ func TestConcurrentLoadHist(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 	stat := h.GetTableStats(tableInfo)
-	col, ok := stat.Columns[tableInfo.Columns[0].ID]
-	require.True(t, !ok || col.Histogram.Len()+col.TopN.Num() == 0)
-	col, ok = stat.Columns[tableInfo.Columns[2].ID]
-	require.True(t, !ok || col.Histogram.Len()+col.TopN.Num() == 0)
+	col := stat.GetCol(tableInfo.Columns[0].ID)
+	require.True(t, col == nil || col.Histogram.Len()+col.TopN.Num() == 0)
+	col = stat.GetCol(tableInfo.Columns[2].ID)
+	require.True(t, col == nil || col.Histogram.Len()+col.TopN.Num() == 0)
 	stmtCtx := stmtctx.NewStmtCtx()
 	neededColumns := make([]model.StatsLoadItem, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
@@ -89,8 +92,8 @@ func TestConcurrentLoadHist(t *testing.T) {
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	require.Nil(t, rs)
 	stat = h.GetTableStats(tableInfo)
-	hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
-	topn := stat.Columns[tableInfo.Columns[2].ID].TopN
+	hg := stat.GetCol(tableInfo.Columns[2].ID).Histogram
+	topn := stat.GetCol(tableInfo.Columns[2].ID).TopN
 	require.Greater(t, hg.Len()+topn.Num(), 0)
 }
 
@@ -113,19 +116,19 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 	stat := h.GetTableStats(tableInfo)
 	// TODO: They may need to be empty. Depending on how we operate newly analyzed tables.
-	// require.Nil(t, stat.Columns[tableInfo.Columns[0].ID])
-	// require.Nil(t, stat.Columns[tableInfo.Columns[2].ID])
-	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
-	topn := stat.Columns[tableInfo.Columns[0].ID].TopN
+	// require.Nil(t, stat.GetCol(tableInfo.Columns[0].ID))
+	// require.Nil(t, stat.GetCol(tableInfo.Columns[2].ID))
+	hg := stat.GetCol(tableInfo.Columns[0].ID).Histogram
+	topn := stat.GetCol(tableInfo.Columns[0].ID).TopN
 	require.Equal(t, 0, hg.Len()+topn.Num())
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
+	hg = stat.GetCol(tableInfo.Columns[2].ID).Histogram
+	topn = stat.GetCol(tableInfo.Columns[2].ID).TopN
 	require.Equal(t, 0, hg.Len()+topn.Num())
 	stmtCtx := stmtctx.NewStmtCtx()
 	neededColumns := make([]model.StatsLoadItem, 0, len(tableInfo.Columns))
@@ -136,8 +139,8 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	require.Error(t, rs)
 	stat = h.GetTableStats(tableInfo)
-	// require.Nil(t, stat.Columns[tableInfo.Columns[2].ID])
-	require.NotNil(t, stat.Columns[tableInfo.Columns[2].ID])
+	// require.Nil(t, stat.GetCol(tableInfo.Columns[2].ID))
+	require.NotNil(t, stat.GetCol(tableInfo.Columns[2].ID))
 	require.Equal(t, 0, hg.Len()+topn.Num())
 }
 
@@ -155,6 +158,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c")
 
 	oriLease := dom.StatsHandle().Lease()
 	dom.StatsHandle().SetLease(1)
@@ -164,7 +168,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -190,12 +194,12 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	for _, fp := range failpoints {
 		// clear statsCache
 		h.Clear()
-		require.NoError(t, dom.StatsHandle().Update(is))
+		require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 
 		// no stats at beginning
 		stat := h.GetTableStats(tableInfo)
-		c, ok := stat.Columns[tableInfo.Columns[2].ID]
-		require.True(t, !ok || (c.Histogram.Len()+c.TopN.Num() == 0))
+		c := stat.GetCol(tableInfo.Columns[2].ID)
+		require.True(t, c == nil || (c.Histogram.Len()+c.TopN.Num() == 0))
 
 		stmtCtx1 := stmtctx.NewStmtCtx()
 		h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
@@ -249,8 +253,8 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		}
 
 		stat = h.GetTableStats(tableInfo)
-		hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
-		topn := stat.Columns[tableInfo.Columns[2].ID].TopN
+		hg := stat.GetCol(tableInfo.Columns[2].ID).Histogram
+		topn := stat.GetCol(tableInfo.Columns[2].ID).TopN
 		require.Greater(t, hg.Len()+topn.Num(), 0)
 	}
 }
@@ -269,6 +273,7 @@ func TestRetry(t *testing.T) {
 	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c")
 
 	oriLease := dom.StatsHandle().Lease()
 	dom.StatsHandle().SetLease(1)
@@ -278,7 +283,7 @@ func TestRetry(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 
@@ -290,12 +295,12 @@ func TestRetry(t *testing.T) {
 
 	// clear statsCache
 	h.Clear()
-	require.NoError(t, dom.StatsHandle().Update(is))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
 
 	// no stats at beginning
 	stat := h.GetTableStats(tableInfo)
-	c, ok := stat.Columns[tableInfo.Columns[2].ID]
-	require.True(t, !ok || (c.Histogram.Len()+c.TopN.Num() == 0))
+	c := stat.GetCol(tableInfo.Columns[2].ID)
+	require.True(t, c == nil || (c.Histogram.Len()+c.TopN.Num() == 0))
 
 	stmtCtx1 := stmtctx.NewStmtCtx()
 	h.SendLoadRequests(stmtCtx1, neededColumns, timeout)

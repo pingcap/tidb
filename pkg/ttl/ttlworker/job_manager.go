@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/client"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -97,7 +98,7 @@ type JobManager struct {
 	// `scanWorkers` and `delWorkers` can be modified by setting variables at any time
 	baseWorker
 
-	sessPool sessionPool
+	sessPool util.SessionPool
 
 	// id is the ddl id of this instance
 	id string
@@ -125,7 +126,7 @@ type JobManager struct {
 }
 
 // NewJobManager creates a new ttl job manager
-func NewJobManager(id string, sessPool sessionPool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
+func NewJobManager(id string, sessPool util.SessionPool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
 	manager = &JobManager{}
 	manager.id = id
 	manager.store = store
@@ -572,12 +573,23 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		now = now.In(tz)
 	}
 
-	if !variable.EnableTTLJob.Load() || !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
+	cancelJobs := false
+	cancelReason := ""
+	switch {
+	case !variable.EnableTTLJob.Load():
+		cancelJobs = true
+		cancelReason = "tidb_ttl_job_enable turned off"
+	case !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now):
+		cancelJobs = true
+		cancelReason = "out of TTL job schedule window"
+	}
+
+	if cancelJobs {
 		if len(m.runningJobs) > 0 {
 			for _, job := range m.runningJobs {
-				logutil.Logger(m.ctx).Info("cancel job because tidb_ttl_job_enable turned off", zap.String("jobID", job.id))
+				logutil.Logger(m.ctx).Info(fmt.Sprintf("cancel job because %s", cancelReason), zap.String("jobID", job.id))
 
-				summary, err := summarizeErr(errors.New("ttl job is disabled"))
+				summary, err := summarizeErr(errors.New(cancelReason))
 				if err != nil {
 					logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
 				}
@@ -1063,17 +1075,14 @@ GROUP BY
 	}
 
 	noRecordTables := make([]string, 0)
-	for _, dbName := range is.AllSchemaNames() {
-		for _, tblInfo := range is.SchemaTableInfos(dbName) {
-			if tblInfo.TTLInfo == nil {
-				continue
-			}
-
+	ch := is.ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	for _, v := range ch {
+		for _, tblInfo := range v.TableInfos {
 			interval, err := tblInfo.TTLInfo.GetJobInterval()
 			if err != nil {
 				logutil.Logger(ctx).Error("failed to get table's job interval",
 					zap.Error(err),
-					zap.String("db", dbName.String()),
+					zap.String("db", v.DBName.O),
 					zap.String("table", tblInfo.Name.String()),
 				)
 				interval = time.Hour
@@ -1133,12 +1142,12 @@ type SubmitTTLManagerJobRequest struct {
 
 type managerJobAdapter struct {
 	store     kv.Storage
-	sessPool  sessionPool
+	sessPool  util.SessionPool
 	requestCh chan<- *SubmitTTLManagerJobRequest
 }
 
 // NewManagerJobAdapter creates a managerJobAdapter
-func NewManagerJobAdapter(store kv.Storage, sessPool sessionPool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
+func NewManagerJobAdapter(store kv.Storage, sessPool util.SessionPool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
 	return &managerJobAdapter{store: store, sessPool: sessPool, requestCh: requestCh}
 }
 
@@ -1151,7 +1160,7 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
 	defer se.Close()
 
 	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
-	tbl, ok := is.TableByID(tableID)
+	tbl, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
 		return false
 	}

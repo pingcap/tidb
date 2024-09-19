@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var _ exec.Executor = &CTEExec{}
@@ -110,7 +111,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.producer.resTbl.Lock()
 	defer e.producer.resTbl.Unlock()
 	if !e.producer.resTbl.Done() {
-		if err = e.producer.produce(ctx, e); err != nil {
+		if err = e.producer.produce(ctx); err != nil {
 			return err
 		}
 	}
@@ -338,15 +339,15 @@ func (p *cteProducer) nextChunkLimit(cteExec *CTEExec, req *chunk.Chunk) error {
 	return nil
 }
 
-func (p *cteProducer) produce(ctx context.Context, cteExec *CTEExec) (err error) {
+func (p *cteProducer) produce(ctx context.Context) (err error) {
 	if p.resTbl.Error() != nil {
 		return p.resTbl.Error()
 	}
-	resAction := setupCTEStorageTracker(p.resTbl, cteExec.Ctx(), p.memTracker, p.diskTracker)
-	iterInAction := setupCTEStorageTracker(p.iterInTbl, cteExec.Ctx(), p.memTracker, p.diskTracker)
+	resAction := setupCTEStorageTracker(p.resTbl, p.ctx, p.memTracker, p.diskTracker)
+	iterInAction := setupCTEStorageTracker(p.iterInTbl, p.ctx, p.memTracker, p.diskTracker)
 	var iterOutAction *chunk.SpillDiskAction
 	if p.iterOutTbl != nil {
-		iterOutAction = setupCTEStorageTracker(p.iterOutTbl, cteExec.Ctx(), p.memTracker, p.diskTracker)
+		iterOutAction = setupCTEStorageTracker(p.iterOutTbl, p.ctx, p.memTracker, p.diskTracker)
 	}
 
 	failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
@@ -429,12 +430,27 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 		return
 	}
 
+	var iterNum uint64
 	for {
 		chk := exec.TryNewCacheChunk(p.recursiveExec)
 		if err = exec.Next(ctx, p.recursiveExec, chk); err != nil {
 			return
 		}
 		if chk.NumRows() == 0 {
+			if iterNum%1000 == 0 {
+				// To avoid too many logs.
+				p.logTbls(ctx, err, iterNum, zapcore.DebugLevel)
+			}
+			iterNum++
+			failpoint.Inject("assertIterTableSpillToDisk", func(maxIter failpoint.Value) {
+				if iterNum > 0 && iterNum < uint64(maxIter.(int)) && err == nil {
+					if p.iterInTbl.GetDiskBytes() == 0 && p.iterOutTbl.GetDiskBytes() == 0 && p.resTbl.GetDiskBytes() == 0 {
+						p.logTbls(ctx, err, iterNum, zapcore.InfoLevel)
+						panic("assert row container spill disk failed")
+					}
+				}
+			})
+
 			if err = p.setupTblsForNewIteration(); err != nil {
 				return
 			}
@@ -493,6 +509,8 @@ func (p *cteProducer) setupTblsForNewIteration() (err error) {
 	if err = p.iterInTbl.Reopen(); err != nil {
 		return err
 	}
+	setupCTEStorageTracker(p.iterInTbl, p.ctx, p.memTracker, p.diskTracker)
+
 	if p.isDistinct {
 		// Already deduplicated by resTbl, adding directly is ok.
 		for _, chk := range chks {
@@ -507,7 +525,11 @@ func (p *cteProducer) setupTblsForNewIteration() (err error) {
 	}
 
 	// Clear data in iterOutTbl.
-	return p.iterOutTbl.Reopen()
+	if err = p.iterOutTbl.Reopen(); err != nil {
+		return err
+	}
+	setupCTEStorageTracker(p.iterOutTbl, p.ctx, p.memTracker, p.diskTracker)
+	return nil
 }
 
 func (p *cteProducer) reset() {
@@ -535,6 +557,8 @@ func (p *cteProducer) reopenTbls() (err error) {
 	if p.isDistinct {
 		p.hashTbl = join.NewConcurrentMapHashTable()
 	}
+	// Normally we need to setup tracker after calling Reopen(),
+	// But reopen resTbl means we need to call produce() again, it will setup tracker.
 	if err := p.resTbl.Reopen(); err != nil {
 		return err
 	}
@@ -735,4 +759,12 @@ func (p *cteProducer) checkAndUpdateCorColHashCode() bool {
 		}
 	}
 	return changed
+}
+
+func (p *cteProducer) logTbls(ctx context.Context, err error, iterNum uint64, lvl zapcore.Level) {
+	logutil.Logger(ctx).Log(lvl, "cte iteration info",
+		zap.Any("iterInTbl mem usage", p.iterInTbl.GetMemBytes()), zap.Any("iterInTbl disk usage", p.iterInTbl.GetDiskBytes()),
+		zap.Any("iterOutTbl mem usage", p.iterOutTbl.GetMemBytes()), zap.Any("iterOutTbl disk usage", p.iterOutTbl.GetDiskBytes()),
+		zap.Any("resTbl mem usage", p.resTbl.GetMemBytes()), zap.Any("resTbl disk usage", p.resTbl.GetDiskBytes()),
+		zap.Any("resTbl rows", p.resTbl.NumRows()), zap.Any("iteration num", iterNum), zap.Error(err))
 }

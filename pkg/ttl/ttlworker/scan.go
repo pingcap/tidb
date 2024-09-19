@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -81,12 +82,13 @@ type ttlScanTask struct {
 }
 
 type ttlScanTaskExecResult struct {
+	time time.Time
 	task *ttlScanTask
 	err  error
 }
 
 func (t *ttlScanTask) result(err error) *ttlScanTaskExecResult {
-	return &ttlScanTaskExecResult{task: t, err: err}
+	return &ttlScanTaskExecResult{time: time.Now(), task: t, err: err}
 }
 
 func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
@@ -97,7 +99,7 @@ func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
 	return datums
 }
 
-func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, sessPool sessionPool) *ttlScanTaskExecResult {
+func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, sessPool util.SessionPool) *ttlScanTaskExecResult {
 	// TODO: merge the ctx and the taskCtx in ttl scan task, to allow both "cancel" and gracefully stop workers
 	// now, the taskCtx is only check at the beginning of every loop
 	taskCtx := t.ctx
@@ -240,10 +242,10 @@ type ttlScanWorker struct {
 	curTaskResult *ttlScanTaskExecResult
 	delCh         chan<- *ttlDeleteTask
 	notifyStateCh chan<- any
-	sessionPool   sessionPool
+	sessionPool   util.SessionPool
 }
 
-func newScanWorker(delCh chan<- *ttlDeleteTask, notifyStateCh chan<- any, sessPool sessionPool) *ttlScanWorker {
+func newScanWorker(delCh chan<- *ttlDeleteTask, notifyStateCh chan<- any, sessPool util.SessionPool) *ttlScanWorker {
 	w := &ttlScanWorker{
 		delCh:         delCh,
 		notifyStateCh: notifyStateCh,

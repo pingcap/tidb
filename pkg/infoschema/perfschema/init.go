@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
 )
@@ -68,8 +68,8 @@ func Init() {
 			Name:    util.PerformanceSchemaName,
 			Charset: mysql.DefaultCharset,
 			Collate: mysql.DefaultCollationName,
-			Tables:  tbls,
 		}
+		dbInfo.Deprecated.Tables = tbls
 		infoschema.RegisterVirtualTable(dbInfo, tableFromMeta)
 	}
 	if expression.EvalSimpleAst != nil {

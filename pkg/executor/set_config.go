@@ -49,11 +49,14 @@ type SetConfigExec struct {
 func (s *SetConfigExec) Open(context.Context) error {
 	if s.p.Type != "" {
 		s.p.Type = strings.ToLower(s.p.Type)
-		if s.p.Type != "tikv" && s.p.Type != "tidb" && s.p.Type != "pd" && s.p.Type != "tiflash" {
+		if s.p.Type != "tikv" && s.p.Type != "tidb" && s.p.Type != "pd" && s.p.Type != "tiflash" && s.p.Type != "tso" && s.p.Type != "scheduling" {
 			return errors.Errorf("unknown type %v", s.p.Type)
 		}
 		if s.p.Type == "tidb" {
 			return errors.Errorf("TiDB doesn't support to change configs online, please use SQL variables")
+		}
+		if s.p.Type == "tso" || s.p.Type == "scheduling" {
+			return errors.Errorf("%s doesn't support to change configs online", s.p.Type)
 		}
 	}
 	if s.p.Instance != "" {
@@ -67,7 +70,7 @@ func (s *SetConfigExec) Open(context.Context) error {
 	if s.p.Type == "tiflash" {
 		if !strings.HasPrefix(s.p.Name, "raftstore-proxy.") {
 			errorBody := "This command can only change config items begin with 'raftstore-proxy'. For other TiFlash config items, please update the config file directly. Your change to the config file will take effect immediately without a restart."
-			return errors.Errorf(errorBody)
+			return errors.New(errorBody)
 		}
 		s.p.Name = strings.TrimPrefix(s.p.Name, "raftstore-proxy.")
 	}
@@ -187,7 +190,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 	}
 	isNull := false
 	str := ""
-	switch val.GetType().EvalType() {
+	switch val.GetType(ctx.GetExprCtx().GetEvalCtx()).EvalType() {
 	case types.ETString:
 		var s string
 		s, isNull, err = val.EvalString(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
@@ -198,7 +201,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		var i int64
 		i, isNull, err = val.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err == nil && !isNull {
-			if mysql.HasIsBooleanFlag(val.GetType().GetFlag()) {
+			if mysql.HasIsBooleanFlag(val.GetType(ctx.GetExprCtx().GetEvalCtx()).GetFlag()) {
 				str = "true"
 				if i == 0 {
 					str = "false"

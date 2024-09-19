@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	autoid1 "github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -334,17 +334,9 @@ func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Servic
 		leaderShip: l,
 		store:      store,
 	}
-	l.SetBeOwnerHook(func() {
-		// Reset the map to avoid a case that a node lose leadership and regain it, then
-		// improperly use the stale map to serve the autoid requests.
-		// See https://github.com/pingcap/tidb/issues/52600
-		service.autoIDLock.Lock()
-		clear(service.autoIDMap)
-		service.autoIDLock.Unlock()
-
-		logutil.BgLogger().Info("leader change of autoid service, this node become owner",
-			zap.String("addr", selfAddr),
-			zap.String("category", "autoid service"))
+	l.SetListener(&ownerListener{
+		Service:  service,
+		selfAddr: selfAddr,
 	})
 	// 10 means that autoid service's etcd lease is 10s.
 	err := l.CampaignOwner(10)
@@ -590,6 +582,29 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 		return &autoid.RebaseResponse{Errmsg: []byte(err.Error())}, nil
 	}
 	return &autoid.RebaseResponse{}, nil
+}
+
+type ownerListener struct {
+	*Service
+	selfAddr string
+}
+
+var _ owner.Listener = (*ownerListener)(nil)
+
+func (l *ownerListener) OnBecomeOwner() {
+	// Reset the map to avoid a case that a node lose leadership and regain it, then
+	// improperly use the stale map to serve the autoid requests.
+	// See https://github.com/pingcap/tidb/issues/52600
+	l.autoIDLock.Lock()
+	clear(l.autoIDMap)
+	l.autoIDLock.Unlock()
+
+	logutil.BgLogger().Info("leader change of autoid service, this node become owner",
+		zap.String("addr", l.selfAddr),
+		zap.String("category", "autoid service"))
+}
+
+func (*ownerListener) OnRetireOwner() {
 }
 
 func init() {

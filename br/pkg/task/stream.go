@@ -54,7 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
@@ -434,18 +434,6 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context) error {
 		m.ClusterId = s.bc.GetClusterID()
 		m.ClusterVersion = clusterVersion
 	})
-
-	schemas := backup.NewBackupSchemas(func(storage kv.Storage, fn func(*model.DBInfo, *model.TableInfo)) error {
-		return backup.BuildFullSchema(storage, s.cfg.StartTS, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
-			fn(dbInfo, tableInfo)
-		})
-	}, 0)
-
-	err = schemas.BackupSchemas(ctx, metaWriter, nil, s.mgr.GetStorage(), nil,
-		s.cfg.StartTS, backup.DefaultSchemaConcurrency, 0, true, nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	if err = metaWriter.FlushBackupMeta(ctx); err != nil {
 		return errors.Trace(err)
@@ -1153,6 +1141,7 @@ func RunStreamRestore(
 	if cfg.RestoreTS == 0 {
 		cfg.RestoreTS = logInfo.logMaxTS
 	}
+	cfg.upstreamClusterID = logInfo.clusterID
 
 	if len(cfg.FullBackupStorage) > 0 {
 		startTS, fullClusterID, err := getFullBackupTS(ctx, cfg)
@@ -1181,7 +1170,7 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	curTaskInfo, doFullRestore, err := checkPiTRTaskInfo(ctx, g, s, cfg)
+	checkInfo, err := checkPiTRTaskInfo(ctx, g, s, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1193,11 +1182,11 @@ func RunStreamRestore(
 	recorder := tiflashrec.New()
 	cfg.tiflashRecorder = recorder
 	// restore full snapshot.
-	if doFullRestore {
+	if checkInfo.NeedFullRestore {
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
-		if err = runRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
+		if err = runRestore(ctx, g, FullRestoreCmd, cfg, checkInfo); err != nil {
 			return errors.Trace(err)
 		}
 		cfg.Config.Storage = logStorage
@@ -1206,17 +1195,17 @@ func RunStreamRestore(
 		if _, err := glue.GetConsole(g).Out().Write(skipMsg); err != nil {
 			return errors.Trace(err)
 		}
-		if curTaskInfo != nil && curTaskInfo.TiFlashItems != nil {
+		if checkInfo.CheckpointInfo != nil && checkInfo.CheckpointInfo.TiFlashItems != nil {
 			log.Info("load tiflash records of snapshot restore from checkpoint")
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cfg.tiflashRecorder.Load(curTaskInfo.TiFlashItems)
+			cfg.tiflashRecorder.Load(checkInfo.CheckpointInfo.TiFlashItems)
 		}
 	}
 	// restore log.
 	cfg.adjustRestoreConfigForStreamRestore()
-	if err := restoreStream(ctx, g, cfg, curTaskInfo); err != nil {
+	if err := restoreStream(ctx, g, cfg, checkInfo.CheckpointInfo); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1234,6 +1223,7 @@ func restoreStream(
 		totalSize              uint64
 		checkpointTotalKVCount uint64
 		checkpointTotalSize    uint64
+		currentTS              uint64
 		mu                     sync.Mutex
 		startTime              = time.Now()
 	)
@@ -1243,9 +1233,12 @@ func restoreStream(
 		} else {
 			totalDureTime := time.Since(startTime)
 			summary.Log("restore log success summary", zap.Duration("total-take", totalDureTime),
-				zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS),
-				zap.String("restore-from", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
-				zap.String("restore-to", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
+				zap.Uint64("source-start-point", cfg.StartTS),
+				zap.Uint64("source-end-point", cfg.RestoreTS),
+				zap.Uint64("target-end-point", currentTS),
+				zap.String("source-start", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
+				zap.String("source-end", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
+				zap.String("target-end", stream.FormatDate(oracle.GetTimeFromTS(currentTS))),
 				zap.Uint64("total-kv-count", totalKVCount),
 				zap.Uint64("skipped-kv-count-by-checkpoint", checkpointTotalKVCount),
 				zap.String("total-size", units.HumanSize(float64(totalSize))),
@@ -1280,7 +1273,6 @@ func restoreStream(
 	}
 	defer client.Close()
 
-	var currentTS uint64
 	if taskInfo != nil && taskInfo.RewriteTS > 0 {
 		// reuse the task's rewrite ts
 		log.Info("reuse the task's rewrite ts", zap.Uint64("rewrite-ts", taskInfo.RewriteTS))
@@ -1361,7 +1353,6 @@ func restoreStream(
 	// get the schemas ID replace information.
 	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &logclient.InitSchemaConfig{
 		IsNewTask:         newTask,
-		HasFullRestore:    len(cfg.FullBackupStorage) > 0,
 		TableFilter:       cfg.TableFilter,
 		TiFlashRecorder:   cfg.tiflashRecorder,
 		FullBackupStorage: fullBackupStorage,
@@ -1516,6 +1507,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	}
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetUpstreamClusterID(cfg.upstreamClusterID)
 	client.InitClients(ctx, u)
 
 	err = client.SetRawKVBatchClient(ctx, cfg.PD, cfg.TLS.ToKVSecurity())
@@ -1683,13 +1675,11 @@ func getFullBackupTS(
 func parseFullBackupTablesStorage(
 	cfg *RestoreConfig,
 ) (*logclient.FullBackupStorageConfig, error) {
-	var storageName string
-	if len(cfg.FullBackupStorage) > 0 {
-		storageName = cfg.FullBackupStorage
-	} else {
-		storageName = cfg.Storage
+	if len(cfg.FullBackupStorage) == 0 {
+		log.Info("the full backup path is not specified, so BR will try to get id maps")
+		return nil, nil
 	}
-	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
+	u, err := storage.ParseBackend(cfg.FullBackupStorage, &cfg.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1752,18 +1742,13 @@ func buildPauseSafePointName(taskName string) string {
 }
 
 func checkPiTRRequirements(mgr *conn.Mgr) error {
-	userDBs := restore.GetExistedUserDBs(mgr.GetDomain())
-	if len(userDBs) > 0 {
-		userDBNames := make([]string, 0, len(userDBs))
-		for _, db := range userDBs {
-			userDBNames = append(userDBNames, db.Name.O)
-		}
-		return errors.Annotatef(berrors.ErrDatabasesAlreadyExisted,
-			"databases %s existed in restored cluster, please drop them before execute PiTR",
-			strings.Join(userDBNames, ","))
-	}
+	return restore.AssertUserDBsEmpty(mgr.GetDomain())
+}
 
-	return nil
+type PiTRTaskInfo struct {
+	CheckpointInfo      *checkpoint.CheckpointTaskInfoForLogRestore
+	NeedFullRestore     bool
+	FullRestoreCheckErr error
 }
 
 func checkPiTRTaskInfo(
@@ -1771,18 +1756,18 @@ func checkPiTRTaskInfo(
 	g glue.Glue,
 	s storage.ExternalStorage,
 	cfg *RestoreConfig,
-) (*checkpoint.CheckpointTaskInfoForLogRestore, bool, error) {
+) (*PiTRTaskInfo, error) {
 	var (
 		doFullRestore = (len(cfg.FullBackupStorage) > 0)
-
-		curTaskInfo *checkpoint.CheckpointTaskInfoForLogRestore
-
-		errTaskMsg string
+		curTaskInfo   *checkpoint.CheckpointTaskInfoForLogRestore
+		errTaskMsg    string
 	)
+	checkInfo := &PiTRTaskInfo{}
+
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, true, conn.StreamVersionChecker)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return checkInfo, errors.Trace(err)
 	}
 	defer mgr.Close()
 
@@ -1790,12 +1775,12 @@ func checkPiTRTaskInfo(
 	if cfg.UseCheckpoint {
 		exists, err := checkpoint.ExistsCheckpointTaskInfo(ctx, s, clusterID)
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return checkInfo, errors.Trace(err)
 		}
 		if exists {
 			curTaskInfo, err = checkpoint.LoadCheckpointTaskInfoForLogRestore(ctx, s, clusterID)
 			if err != nil {
-				return nil, false, errors.Trace(err)
+				return checkInfo, errors.Trace(err)
 			}
 			// TODO: check whether user has manually modified the cluster(ddl). If so, regard the behavior
 			//       as restore from scratch. (update `curTaskInfo.RewriteTs` to 0 as an uninitial value)
@@ -1821,7 +1806,8 @@ func checkPiTRTaskInfo(
 			}
 		}
 	}
-
+	checkInfo.CheckpointInfo = curTaskInfo
+	checkInfo.NeedFullRestore = doFullRestore
 	// restore full snapshot precheck.
 	if doFullRestore {
 		if !(cfg.UseCheckpoint && curTaskInfo != nil) {
@@ -1835,7 +1821,11 @@ func checkPiTRTaskInfo(
 						"you can adjust the `start-ts` or `restored-ts` to continue with the previous execution. "+
 						"Otherwise, if you want to restore from scratch, please clean the cluster at first", errTaskMsg)
 				}
-				return nil, false, errors.Trace(err)
+				// delay cluster checks after we get the backupmeta.
+				// for the case that the restore inc + log backup,
+				// we can still restore them.
+				checkInfo.FullRestoreCheckErr = err
+				return checkInfo, nil
 			}
 		}
 	}
@@ -1851,9 +1841,8 @@ func checkPiTRTaskInfo(
 			RewriteTS:    0,
 			TiFlashItems: nil,
 		}, clusterID); err != nil {
-			return nil, false, errors.Trace(err)
+			return checkInfo, errors.Trace(err)
 		}
 	}
-
-	return curTaskInfo, doFullRestore, nil
+	return checkInfo, nil
 }

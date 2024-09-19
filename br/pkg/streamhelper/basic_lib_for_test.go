@@ -639,10 +639,12 @@ func (f *fakeCluster) String() string {
 
 type testEnv struct {
 	*fakeCluster
-	checkpoint uint64
-	testCtx    *testing.T
-	ranges     []kv.KeyRange
-	taskCh     chan<- streamhelper.TaskEvent
+	checkpoint     uint64
+	pdDisconnected atomic.Bool
+	testCtx        *testing.T
+	ranges         []kv.KeyRange
+	taskCh         chan<- streamhelper.TaskEvent
+	task           streamhelper.TaskEvent
 
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 
@@ -650,12 +652,16 @@ type testEnv struct {
 	pd.Client
 }
 
-func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
-	rngs := t.ranges
+func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
+	env := &testEnv{
+		fakeCluster: c,
+		testCtx:     t,
+	}
+	rngs := env.ranges
 	if len(rngs) == 0 {
 		rngs = []kv.KeyRange{{}}
 	}
-	tsk := streamhelper.TaskEvent{
+	env.task = streamhelper.TaskEvent{
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
@@ -663,7 +669,11 @@ func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) e
 		},
 		Ranges: rngs,
 	}
-	ch <- tsk
+	return env
+}
+
+func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
+	ch <- t.task
 	t.taskCh = ch
 	return nil
 }
@@ -677,6 +687,25 @@ func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string,
 	}
 	t.checkpoint = checkpoint
 	return nil
+}
+
+func (t *testEnv) mockPDConnectionError() {
+	t.pdDisconnected.Store(true)
+}
+
+func (t *testEnv) connectPD() bool {
+	if !t.pdDisconnected.Load() {
+		return true
+	}
+	t.pdDisconnected.Store(false)
+	return false
+}
+
+func (t *testEnv) GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error) {
+	if !t.connectPD() {
+		return 0, status.Error(codes.Unavailable, "pd disconnected")
+	}
+	return t.checkpoint, nil
 }
 
 func (t *testEnv) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error {
@@ -708,6 +737,13 @@ func (t *testEnv) getCheckpoint() uint64 {
 	defer t.mu.Unlock()
 
 	return t.checkpoint
+}
+
+func (t *testEnv) advanceCheckpointBy(duration time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.checkpoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(t.checkpoint).Add(duration))
 }
 
 func (t *testEnv) unregisterTask() {

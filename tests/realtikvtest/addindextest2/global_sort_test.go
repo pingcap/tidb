@@ -26,15 +26,15 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -83,9 +83,9 @@ func TestGlobalSortBasic(t *testing.T) {
 	require.NoError(t, err)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()"))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -111,20 +111,16 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec(sb.String())
 
 	var jobID int64
-	origin := dom.DDL().GetHook()
-	onJobUpdated := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		jobID = job.ID
-	}
-	hook := &callback.TestDDLCallback{}
-	hook.OnJobUpdatedExported.Store(&onJobUpdated)
-	dom.DDL().SetHook(hook)
+	})
 
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("admin check table t;")
 	<-scheduler.WaitCleanUpFinished
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	tk.MustExec("alter table t add index idx1(a);")
 	tk.MustExec("admin check table t;")
 	<-scheduler.WaitCleanUpFinished
@@ -134,14 +130,11 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	<-scheduler.WaitCleanUpFinished
 	checkFileCleaned(t, jobID, cloudStorageURI)
-
-	dom.DDL().SetHook(origin)
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", `return(1)`)
+
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
 		Scheme:     "http",
@@ -170,6 +163,12 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t_common_handle values (%d, %d, '%d');", i, i, i))
 		tk.MustExec(fmt.Sprintf("insert into t_partition values (%d, %d, '%d');", i, i, i))
 	}
+	tk.MustExec("create table t_dup (a int, b bigint);")
+	tk.MustExec(fmt.Sprintf("insert into t_dup values (%d, %d), (%d, %d);", 1, 2, 2, 2))
+	tk.MustExec("create table t_dup_2 (a int primary key, b bigint);")
+	tk.MustQuery("split table t_dup_2 between (0) and (80000) regions 7;").Check(testkit.Rows("6 1"))
+	tk.MustExec(fmt.Sprintf("insert into t_dup_2 values (%d, %d), (%d, %d);", 1, 2, 79999, 2))
+
 	tableNames := []string{"t_rowid", "t_int_handle", "t_common_handle", "t_partition"}
 
 	testCases := []struct {
@@ -194,6 +193,15 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 				tk.MustExec("admin check table " + tn + ";")
 				tk.MustExec("alter table " + tn + " drop index idx_1, drop index idx_2;")
 			}
+
+			tk.MustContainErrMsg(
+				"alter table t_dup add index idx(a), add unique index idx2(b);",
+				"Duplicate entry '2' for key 't_dup.idx2'",
+			)
+			tk.MustContainErrMsg(
+				"alter table t_dup_2 add unique index idx2(b);",
+				"Duplicate entry '2' for key 't_dup_2.idx2'",
+			)
 		})
 	}
 
@@ -287,18 +295,16 @@ func TestIngestUseGivenTS(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	var tblInfo *model.TableInfo
 	var idxInfo *model.IndexInfo
-	cb := &callback.TestDDLCallback{}
-	interceptFn := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if idxInfo == nil {
-			tbl, _ := dom.InfoSchema().TableByID(job.TableID)
+			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 			tblInfo = tbl.Meta()
 			if len(tblInfo.Indices) == 0 {
 				return
 			}
 			idxInfo = tblInfo.Indices[0]
 		}
-	}
-	cb.OnJobUpdatedExported.Store(&interceptFn)
+	})
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -318,7 +324,6 @@ func TestIngestUseGivenTS(t *testing.T) {
 
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1), (2), (3);")
-	dom.DDL().SetHook(cb)
 	tk.MustExec("alter table t add index idx(a);")
 
 	err = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort")

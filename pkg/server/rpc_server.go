@@ -244,6 +244,7 @@ func (s *rpcServer) createSession() (sessiontypes.Session, error) {
 	if err = vars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10)); err != nil {
 		return nil, err
 	}
+	se.SetExtensions(extensions.NewSessionExtensions())
 	se.SetSessionManager(s.sm)
 	return se, nil
 }

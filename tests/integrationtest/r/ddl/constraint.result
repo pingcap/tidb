@@ -7,8 +7,8 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `b` int(11) DEFAULT NULL,
   `c` int(11) DEFAULT NULL,
-CONSTRAINT `t_chk_1` CHECK ((`c` > 0)),
-CONSTRAINT `t_chk_2` CHECK ((`b` > `c`))
+  CONSTRAINT `t_chk_1` CHECK ((`c` > 0)),
+  CONSTRAINT `t_chk_2` CHECK ((`b` > `c`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t drop column b;
 Error 3959 (HY000): Check constraint 't_chk_2' uses column 'b', hence column cannot be dropped or renamed.
@@ -216,9 +216,9 @@ s	CREATE TABLE `s` (
   `a` int(11) DEFAULT NULL,
   `b` int(11) DEFAULT NULL,
   `c` int(11) DEFAULT NULL,
-CONSTRAINT `s_chk_1` CHECK ((`c` < 0)),
-CONSTRAINT `s_chk_2` CHECK ((`a` > 10)),
-CONSTRAINT `s_chk_3` CHECK ((`b` > 5))
+  CONSTRAINT `s_chk_1` CHECK ((`c` < 0)),
+  CONSTRAINT `s_chk_2` CHECK ((`a` > 10)),
+  CONSTRAINT `s_chk_3` CHECK ((`b` > 5))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 insert into s(a) values(1);
 Error 3819 (HY000): Check constraint 's_chk_2' is violated.
@@ -234,11 +234,11 @@ s	CREATE TABLE `s` (
   `a` int(11) DEFAULT NULL,
   `b` int(11) DEFAULT NULL,
   `c` int(11) DEFAULT NULL,
-CONSTRAINT `s_chk_1` CHECK ((`c` < 0)),
-CONSTRAINT `s_chk_2` CHECK ((`a` > 10)),
-CONSTRAINT `s_chk_3` CHECK ((`b` > 5)),
-CONSTRAINT `s_chk_4` CHECK ((`a` > 0)),
-CONSTRAINT `aaa` CHECK ((`a` > 0))
+  CONSTRAINT `s_chk_1` CHECK ((`c` < 0)),
+  CONSTRAINT `s_chk_2` CHECK ((`a` > 10)),
+  CONSTRAINT `s_chk_3` CHECK ((`b` > 5)),
+  CONSTRAINT `s_chk_4` CHECK ((`a` > 0)),
+  CONSTRAINT `aaa` CHECK ((`a` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
 create table t(a int check(a > 10));
@@ -418,7 +418,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
   `b` int(11) GENERATED ALWAYS AS (`a` + 1) VIRTUAL,
-CONSTRAINT `t_chk_1` CHECK ((`b` > 0))
+  CONSTRAINT `t_chk_1` CHECK ((`b` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t alter constraint t_chk_1 not enforced;
 insert into t(a) values(-2);
@@ -540,8 +540,8 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
   `b` int(11) DEFAULT NULL,
-CONSTRAINT `my_constr` CHECK ((`a` < 10)),
-CONSTRAINT `t_chk_1` CHECK ((`a` > 1))
+  CONSTRAINT `my_constr` CHECK ((`a` < 10)),
+  CONSTRAINT `t_chk_1` CHECK ((`a` > 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t add constraint my_constr2 check (a<b) not enforced;
 show create table t;
@@ -549,9 +549,9 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
   `b` int(11) DEFAULT NULL,
-CONSTRAINT `my_constr` CHECK ((`a` < 10)),
-CONSTRAINT `t_chk_1` CHECK ((`a` > 1)),
-CONSTRAINT `my_constr2` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */
+  CONSTRAINT `my_constr` CHECK ((`a` < 10)),
+  CONSTRAINT `t_chk_1` CHECK ((`a` > 1)),
+  CONSTRAINT `my_constr2` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t drop constraint t_chk_1;
 show create table t;
@@ -559,8 +559,8 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
   `b` int(11) DEFAULT NULL,
-CONSTRAINT `my_constr` CHECK ((`a` < 10)),
-CONSTRAINT `my_constr2` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */
+  CONSTRAINT `my_constr` CHECK ((`a` < 10)),
+  CONSTRAINT `my_constr2` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
 DROP TABLE IF EXISTS t0, t1, t2;
@@ -580,7 +580,7 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
-CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
+  CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 set @@global.tidb_enable_check_constraint = 1;
@@ -591,7 +591,7 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
-CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
+  CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t add constraint chk check(true);
 show warnings;
@@ -615,7 +615,7 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
-CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
+  CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 set @@global.tidb_enable_check_constraint = 1;
 drop table if exists t;
@@ -624,7 +624,7 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) NOT NULL,
-CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
+  CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 create table t(a bigint key constraint my_constr check(a<10), b int constraint check(b > 1) not enforced);
@@ -634,8 +634,8 @@ t	CREATE TABLE `t` (
   `a` bigint(20) NOT NULL,
   `b` int(11) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
-CONSTRAINT `my_constr` CHECK ((`a` < 10)),
-CONSTRAINT `t_chk_1` CHECK ((`b` > 1)) /*!80016 NOT ENFORCED */
+  CONSTRAINT `my_constr` CHECK ((`a` < 10)),
+  CONSTRAINT `t_chk_1` CHECK ((`b` > 1)) /*!80016 NOT ENFORCED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 create table t(a int constraint check(a > 1) not enforced, constraint my_constr check(a < 10));
@@ -643,8 +643,8 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
-CONSTRAINT `my_constr` CHECK ((`a` < 10)),
-CONSTRAINT `t_chk_1` CHECK ((`a` > 1)) /*!80016 NOT ENFORCED */
+  CONSTRAINT `my_constr` CHECK ((`a` < 10)),
+  CONSTRAINT `t_chk_1` CHECK ((`a` > 1)) /*!80016 NOT ENFORCED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 create table t(a int not null check(b>0));
@@ -659,8 +659,8 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) NOT NULL,
   `b` int(11) DEFAULT NULL,
-CONSTRAINT `t_chk_1` CHECK ((`a` > `b`)),
-CONSTRAINT `t_chk_2` CHECK ((`a` > 0))
+  CONSTRAINT `t_chk_1` CHECK ((`a` > `b`)),
+  CONSTRAINT `t_chk_2` CHECK ((`a` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 create table t(a int not null check(a > '12345'));
@@ -668,7 +668,7 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) NOT NULL,
-CONSTRAINT `t_chk_1` CHECK ((`a` > _utf8mb4'12345'))
+  CONSTRAINT `t_chk_1` CHECK ((`a` > _utf8mb4'12345'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 create table t(a int not null primary key check(a > '12345'));
@@ -677,7 +677,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) NOT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
-CONSTRAINT `t_chk_1` CHECK ((`a` > _utf8mb4'12345'))
+  CONSTRAINT `t_chk_1` CHECK ((`a` > _utf8mb4'12345'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 create table t(a varchar(10) not null primary key check(a > '12345'));
@@ -686,7 +686,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` varchar(10) NOT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,
-CONSTRAINT `t_chk_1` CHECK ((`a` > _utf8mb4'12345'))
+  CONSTRAINT `t_chk_1` CHECK ((`a` > _utf8mb4'12345'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 drop table if exists t;
@@ -696,17 +696,17 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) NOT NULL,
-CONSTRAINT `t_chk_1` CHECK ((`a` > 0)),
-CONSTRAINT `haha` CHECK ((`a` < 10))
+  CONSTRAINT `t_chk_1` CHECK ((`a` > 0)),
+  CONSTRAINT `haha` CHECK ((`a` < 10))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t add constraint check(a<11) not enforced;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) NOT NULL,
-CONSTRAINT `t_chk_1` CHECK ((`a` > 0)),
-CONSTRAINT `haha` CHECK ((`a` < 10)),
-CONSTRAINT `t_chk_2` CHECK ((`a` < 11)) /*!80016 NOT ENFORCED */
+  CONSTRAINT `t_chk_1` CHECK ((`a` > 0)),
+  CONSTRAINT `haha` CHECK ((`a` < 10)),
+  CONSTRAINT `t_chk_2` CHECK ((`a` < 11)) /*!80016 NOT ENFORCED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t add constraint haha check(a);
 Error 3822 (HY000): Duplicate check constraint name 'haha'.
@@ -727,9 +727,9 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) NOT NULL,
   `b` int(11) DEFAULT NULL,
-CONSTRAINT `haha` CHECK ((`a` < `b`)),
-CONSTRAINT `t_chk_1` CHECK ((`a` < `b` + 1)),
-CONSTRAINT `t_chk_2` CHECK ((`a` > 0))
+  CONSTRAINT `haha` CHECK ((`a` < `b`)),
+  CONSTRAINT `t_chk_1` CHECK ((`a` < `b` + 1)),
+  CONSTRAINT `t_chk_2` CHECK ((`a` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t drop constraint not_exist_constraint;
 Error 3940 (HY000): Constraint 'not_exist_constraint' does not exist.
@@ -739,8 +739,8 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) NOT NULL,
   `b` int(11) DEFAULT NULL,
-CONSTRAINT `t_chk_1` CHECK ((`a` < `b` + 1)),
-CONSTRAINT `t_chk_2` CHECK ((`a` > 0))
+  CONSTRAINT `t_chk_1` CHECK ((`a` < `b` + 1)),
+  CONSTRAINT `t_chk_2` CHECK ((`a` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t drop constraint t_chk_2;
 show create table t;
@@ -748,7 +748,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) NOT NULL,
   `b` int(11) DEFAULT NULL,
-CONSTRAINT `t_chk_1` CHECK ((`a` < `b` + 1))
+  CONSTRAINT `t_chk_1` CHECK ((`a` < `b` + 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 create table t(a int check(a > 0));
@@ -764,8 +764,8 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) NOT NULL,
   `b` int(11) DEFAULT NULL,
-CONSTRAINT `haha` CHECK ((`a` < `b`)),
-CONSTRAINT `t_chk_1` CHECK ((`a` > 0)) /*!80016 NOT ENFORCED */
+  CONSTRAINT `haha` CHECK ((`a` < `b`)),
+  CONSTRAINT `t_chk_1` CHECK ((`a` > 0)) /*!80016 NOT ENFORCED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t alter constraint unknown not enforced;
 Error 3940 (HY000): Constraint 'unknown' does not exist.
@@ -775,8 +775,8 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) NOT NULL,
   `b` int(11) DEFAULT NULL,
-CONSTRAINT `haha` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */,
-CONSTRAINT `t_chk_1` CHECK ((`a` > 0)) /*!80016 NOT ENFORCED */
+  CONSTRAINT `haha` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */,
+  CONSTRAINT `t_chk_1` CHECK ((`a` > 0)) /*!80016 NOT ENFORCED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t alter constraint t_chk_1 enforced;
 show create table t;
@@ -784,8 +784,8 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) NOT NULL,
   `b` int(11) DEFAULT NULL,
-CONSTRAINT `haha` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */,
-CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
+  CONSTRAINT `haha` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */,
+  CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 insert into t values(1, 0);
 alter table t alter constraint haha enforced;
@@ -813,7 +813,7 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
-CONSTRAINT `chk` CHECK ((`a` > 1)) /*!80016 NOT ENFORCED */
+  CONSTRAINT `chk` CHECK ((`a` > 1)) /*!80016 NOT ENFORCED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t drop CONSTRAINT chk;
 show create table t;
@@ -828,15 +828,15 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
-CONSTRAINT `t_chk_1` CHECK (((`a` > 1)))
+  CONSTRAINT `t_chk_1` CHECK (((`a` > 1)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t add constraint chk check((test.t.a < 100));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
-CONSTRAINT `t_chk_1` CHECK (((`a` > 1))),
-CONSTRAINT `chk` CHECK (((`a` < 100)))
+  CONSTRAINT `t_chk_1` CHECK (((`a` > 1))),
+  CONSTRAINT `chk` CHECK (((`a` < 100)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
 set @@global.tidb_enable_check_constraint = 0;

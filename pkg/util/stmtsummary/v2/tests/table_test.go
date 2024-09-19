@@ -118,9 +118,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10           \troot     \t100    \t\n" +
-		"\t├─IndexRangeScan_8(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_9(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_7            \troot     \t100    \t\n" +
+		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -140,9 +140,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"Select test test.t t:k 2 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-			"\tIndexLookUp_10           \troot     \t100    \t\n" +
-			"\t├─IndexRangeScan_8(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-			"\t└─TableRowIDScan_9(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+			"\tIndexLookUp_7            \troot     \t100    \t\n" +
+			"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+			"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -188,9 +188,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_10           \troot     \t1000   \t\n" +
-		"\t├─IndexRangeScan_8(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_9(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_7            \troot     \t1000   \t\n" +
+		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -517,14 +517,14 @@ func TestPlanCacheUnqualified2(t *testing.T) {
 	tk.MustExec(`create table t_gen_unqualified_test (id int, addr json, city VARCHAR(64) AS (JSON_UNQUOTE(JSON_EXTRACT(addr, '$.city'))))`)
 	tk.MustExec(`prepare st from 'select * from t1, t_temp_unqualified_test where t1.a > 10'`)
 	tk.MustExec(`execute st`)
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%select%from%t_temp_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select * from `t1` , `t_temp_unqualified_test` where `t1` . `a` > ? 1 1 query accesses temporary tables is un-cacheable"))
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45798:off"`)
 	tk.MustExec(`prepare st from 'select * from t1, t_gen_unqualified_test where t1.a > 10'`)
 	tk.MustExec(`execute st`)
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%select%from%t_gen_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select * from `t1` , `t_gen_unqualified_test` where `t1` . `a` > ? 1 1 query accesses generated columns is un-cacheable"))
 
@@ -532,7 +532,7 @@ func TestPlanCacheUnqualified2(t *testing.T) {
 	tk.MustExec(`create table t_subquery_unqualified_test (a int, b int)`)
 	tk.MustExec(`prepare st from 'select * from t1 where t1.a > (select max(a) from t_subquery_unqualified_test)'`)
 	tk.MustExec(`execute st`)
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%select%from%t_subquery_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select * from `t1` where `t1` . `a` > ( select max ( `a` ) from `t_subquery_unqualified_test` ) 1 1 query has uncorrelated sub-queries is un-cacheable"))
 
@@ -540,7 +540,7 @@ func TestPlanCacheUnqualified2(t *testing.T) {
 	tk.MustExec(`create table t_apply_unqualified_test (a int, b int)`)
 	tk.MustExec(`prepare st from 'select * from t1 where t1.a > (select a from t_apply_unqualified_test where t1.b > t_apply_unqualified_test.b)'`)
 	tk.MustExec(`execute st`)
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%select%from%t_apply_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select * from `t1` where `t1` . `a` > ( select `a` from `t_apply_unqualified_test` where `t1` . `b` > `t_apply_unqualified_test` . `b` ) 1 1 PhysicalApply plan is un-cacheable"))
 
@@ -548,14 +548,14 @@ func TestPlanCacheUnqualified2(t *testing.T) {
 	tk.MustExec(`create table t_ignore_unqualified_test (a int, b int)`)
 	tk.MustExec(`prepare st from 'select /*+ ignore_plan_cache() */ * from t_ignore_unqualified_test'`)
 	tk.MustExec(`execute st`)
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%select%from%t_ignore_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select * from `t_ignore_unqualified_test` 1 1 ignore plan cache by hint"))
 
 	tk.MustExec(`create table t_setvar_unqualified_test (a int, b int)`)
 	tk.MustExec(`prepare st from 'select /*+ set_var(max_execution_time=10000) */ * from t_setvar_unqualified_test'`)
 	tk.MustExec(`execute st`)
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%select%from%t_setvar_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select * from `t_setvar_unqualified_test` 1 1 SET_VAR is used in the SQL"))
 
@@ -563,14 +563,14 @@ func TestPlanCacheUnqualified2(t *testing.T) {
 	tk.MustExec(`create table t_non_deterministic_1_unqualified_test (a int, b int)`)
 	tk.MustExec(`prepare st from 'select user() from t_non_deterministic_1_unqualified_test'`)
 	tk.MustExec(`execute st`)
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%select%from%t_non_deterministic_1_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select user ( ) from `t_non_deterministic_1_unqualified_test` 1 1 query has 'user' is un-cacheable"))
 
 	tk.MustExec(`create table t_non_deterministic_2_unqualified_test (a int, b int)`)
 	tk.MustExec(`prepare st from 'select version() from t_non_deterministic_2_unqualified_test'`)
 	tk.MustExec(`execute st`)
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%select%from%t_non_deterministic_2_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select `version` ( ) from `t_non_deterministic_2_unqualified_test` 1 1 query has 'version' is un-cacheable"))
 
@@ -579,7 +579,7 @@ func TestPlanCacheUnqualified2(t *testing.T) {
 	tk.MustExec(`prepare st from 'select * from t_limit_unqualified_test limit ?'`)
 	tk.MustExec(`set @x=1000000`)
 	tk.MustExec(`execute st using @x`)
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%select%from%t_limit_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select * from `t_limit_unqualified_test` limit ? 1 1 limit count is too large"))
 
@@ -587,7 +587,7 @@ func TestPlanCacheUnqualified2(t *testing.T) {
 	tk.MustExec(`create table t_system_unqualified_test (a int, b int)`)
 	tk.MustExec(`prepare st from 'select 1 from t_system_unqualified_test, information_schema.tables'`)
 	tk.MustExec(`execute st`)
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%select%from%t_system_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select ? from `t_system_unqualified_test` , `information_schema` . `tables` 1 1 PhysicalMemTable plan is un-cacheable"))
 }
@@ -626,7 +626,7 @@ func TestPlanCacheUnqualified(t *testing.T) {
 	tk.MustExec(`execute st4`)
 	tk.MustExec(`execute st4`)
 
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where plan_cache_unqualified > 0`).Sort().Check(testkit.Rows(
 		"select * from `t1` 2 2 ignore plan cache by hint",
 		"select * from `t1` where `a` <= ? 4 4 '123' may be converted to INT",
@@ -637,7 +637,7 @@ func TestPlanCacheUnqualified(t *testing.T) {
 		tk.MustExec(`execute st3`)
 		tk.MustExec(`execute st4`)
 	}
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where plan_cache_unqualified > 0`).Sort().Check(testkit.Rows(
 		"select * from `t1` 102 102 ignore plan cache by hint",
 		"select * from `t1` where `a` <= ? 4 4 '123' may be converted to INT",
@@ -649,7 +649,7 @@ func TestPlanCacheUnqualified(t *testing.T) {
 		tk.MustExec(`execute st1 using @x1`)
 		tk.MustExec(`execute st1 using @x2`)
 	}
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%<= ?%'`).Check(
 		testkit.Rows("select * from `t1` where `a` <= ? 44 24 '123' may be converted to INT"))
 }

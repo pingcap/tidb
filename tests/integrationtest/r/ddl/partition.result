@@ -367,3 +367,37 @@ Error 1740 (HY000): Table to exchange with partition has foreign key references:
 alter table child drop foreign key fk_1;
 alter table child drop key fk_1;
 alter table child_with_partition exchange partition p1 with table child;
+drop table if exists t;
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),  PARTITION `p20240521A` VALUES LESS THAN ('A','2024-05-21 00:00:00'));
+Error 1493 (HY000): VALUES LESS THAN value must be strictly increasing for each partition
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),  PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'));
+Error 1493 (HY000): VALUES LESS THAN value must be strictly increasing for each partition
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),  PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-21 00:00:00'));
+drop table t;
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'));
+alter table t add partition (PARTITION `p20240521A` VALUES LESS THAN ('A','2024-05-21 00:00:00'));
+Error 1493 (HY000): VALUES LESS THAN value must be strictly increasing for each partition
+alter table t add partition (PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-21 00:00:00'));
+CREATE TABLE employees (id int unsigned NOT NULL) PARTITION BY RANGE (id) INTERVAL (1) FIRST PARTITION LESS THAN (1) LAST PARTITION LESS THAN (8193);
+Error 1499 (HY000): Too many partitions (including subpartitions) were defined
+CREATE TABLE employees (id int unsigned NOT NULL) PARTITION BY RANGE (id) INTERVAL (1) FIRST PARTITION LESS THAN (1) LAST PARTITION LESS THAN (8192);
+drop table if exists tp1;
+CREATE TABLE tp1 (id int) PARTITION BY RANGE (id) INTERVAL (100) FIRST PARTITION LESS THAN (100) LAST PARTITION LESS THAN (500);
+select QUERY from information_schema.ddl_jobs limit 1;
+QUERY
+CREATE TABLE tp1 (id int) PARTITION BY RANGE (id) (PARTITION `P_LT_100` VALUES LESS THAN (100),
+ PARTITION `P_LT_200` VALUES LESS THAN (200),
+ PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500));
+drop table tp1;
+create table tp1(id int);
+ALTER TABLE tp1 PARTITION BY RANGE (id) INTERVAL (100) FIRST PARTITION LESS THAN (200) LAST PARTITION LESS THAN (600);
+select QUERY from information_schema.ddl_jobs limit 1;
+QUERY
+ALTER TABLE tp1 PARTITION BY RANGE (id) (PARTITION `P_LT_200` VALUES LESS THAN (200),
+ PARTITION `P_LT_300` VALUES LESS THAN (300),
+ PARTITION `P_LT_400` VALUES LESS THAN (400),
+ PARTITION `P_LT_500` VALUES LESS THAN (500),
+ PARTITION `P_LT_600` VALUES LESS THAN (600));
+drop table tp1;

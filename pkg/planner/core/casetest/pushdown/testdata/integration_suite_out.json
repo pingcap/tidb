@@ -73,9 +73,10 @@
       {
         "SQL": "desc format = 'brief' select md5(s) from t; -- we do generate mpp plan, while the cost-cmp failed",
         "Plan": [
-          "TableReader 10000.00 root  data:Projection",
-          "└─Projection 10000.00 cop[tikv]  md5(test.t.s)->Column#13",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection 10000.00 root  md5(test.t.s)->Column#13",
+          "└─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {

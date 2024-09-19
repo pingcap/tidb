@@ -383,7 +383,7 @@ PartitionUnion_8	20000.00	root
 └─TableReader_12	10000.00	root		data:TableFullScan_11
   └─TableFullScan_11	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
 set @@session.tidb_partition_prune_mode = 'dynamic';
-analyze table th;
+analyze table th all columns;
 desc select * from th where a=-2;
 id	estRows	task	access object	operator info
 TableReader_7	1.00	root	partition:p2	data:Selection_6
@@ -528,7 +528,7 @@ create table t3(a int, b int);
 insert into t3 values (1,1),(2,3);
 drop table if exists t4;
 create table t4(a int, b int);
-analyze table t1,t2,t3;
+analyze table t1,t2,t3 all columns;
 explain format = 'brief' select * from t2 left join t1 on t2.a=t1.a left join t3 on t2.a=t3.a;
 id	estRows	task	access object	operator info
 Projection	4.00	root		select.t2.a, select.t2.b, select.t1.a, select.t1.b, select.t3.a, select.t3.b
@@ -662,3 +662,46 @@ select * from t3 where a > 0x80;
 Error 1105 (HY000): Cannot convert string '\x80' from binary to utf8mb4
 set @@tidb_enable_outer_join_reorder=false;
 set @@sql_mode=default;
+SELECT 1 FROM (SELECT 1 x) a STRAIGHT_JOIN (SELECT 1 x) b USING (x);
+1
+1
+SELECT 1 FROM (SELECT 1 x) a STRAIGHT_JOIN (SELECT 2 x) b USING (x);
+1
+SELECT 1 FROM (SELECT 1 x UNION ALL SELECT 3) a STRAIGHT_JOIN (SELECT 1 x UNION ALL SELECT 2) b USING (x);
+1
+1
+DROP TABLE IF EXISTS t1,t2,t3,t4;
+CREATE TABLE t1 (id INT PRIMARY KEY);
+CREATE TABLE t2 (id INT PRIMARY KEY);
+CREATE TABLE t3 (pk INT PRIMARY KEY);
+CREATE TABLE t4 (id INT PRIMARY KEY, v VARCHAR(255));
+INSERT INTO t1 VALUES (1),(2),(3);
+INSERT INTO t2 VALUES (2);
+INSERT INTO t4 VALUES (1,"first"),(2,"second"),(3,"third");
+SELECT * FROM t1 STRAIGHT_JOIN t2 USING(id);
+id
+2
+EXPLAIN SELECT * FROM t1 STRAIGHT_JOIN t2 USING(id);
+id	estRows	task	access object	operator info
+MergeJoin_6	12500.00	root		inner join, left key:select.t1.id, right key:select.t2.id
+├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
+│ └─TableFullScan_29	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+└─TableReader_28(Probe)	10000.00	root		data:TableFullScan_27
+  └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+SELECT * FROM t2 STRAIGHT_JOIN t1 USING(id);
+id
+2
+EXPLAIN SELECT * FROM t2 STRAIGHT_JOIN t1 USING(id);
+id	estRows	task	access object	operator info
+MergeJoin_6	12500.00	root		inner join, left key:select.t2.id, right key:select.t1.id
+├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
+│ └─TableFullScan_29	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+└─TableReader_28(Probe)	10000.00	root		data:TableFullScan_27
+  └─TableFullScan_27	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+SELECT * FROM t1 STRAIGHT_JOIN t2 USING(id) STRAIGHT_JOIN t4 USING(id);
+id	v
+2	second
+SELECT * FROM t1 STRAIGHT_JOIN t2 USING(i);
+Error 1054 (42S22): Unknown column 'i' in 'from clause'
+SELECT * FROM t1 STRAIGHT_JOIN t3 USING(id);
+Error 1054 (42S22): Unknown column 'id' in 'from clause'

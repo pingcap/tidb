@@ -899,7 +899,7 @@ create database ListDefaultPrune;
 use ListDefaultPrune;
 create table t (a int, b int) partition by list columns (a,b) (partition p1 values in ((1,1)), partition p2 values in ((2,2)), partition pDef default);
 insert into t values (1,1),(2,2),(1,2),(2,1),(3,3),(2,3),(1,4);
-analyze table t;
+analyze table t all columns;
 --sorted_result
 select * from t where a in (1,2) and b in (1,2);
 --sorted_result
@@ -917,14 +917,14 @@ explain format='brief' select * from t where a = 1 and b = 1;
 drop table t;
 create table t (a int, b int) partition by list columns (a,b) (partition p1 values in ((1,1), (1,2)), partition p2 values in ((2,2),(2,1)), partition pDef default);
 insert into t values (1,1),(2,2),(1,2),(2,1),(3,3),(2,3),(1,4);
-analyze table t;
+analyze table t all columns;
 --sorted_result
 select * from t where a in (1,2) and b in (1,2);
 explain format='brief' select * from t where a in (1,2) and b in (1,2);
 drop table t;
 create table t (a int, b int) partition by list columns (a) (partition p1 values in (1), partition p2 values in (2), partition pDef default);
 insert into t values (1,1),(2,2),(1,2),(2,1),(3,3),(2,3),(1,4);
-analyze table t;
+analyze table t all columns;
 --sorted_result
 select * from t where a in (1,2);
 explain format='brief' select * from t where a in (1,2);
@@ -942,7 +942,7 @@ CREATE TABLE t(a tinyint unsigned,  b tinyint unsigned) PARTITION BY RANGE COLUM
 			PARTITION p2 VALUES LESS THAN (30,255),
 			PARTITION p3 VALUES LESS THAN (MAXVALUE, 0));
 insert into t values(20, 30);
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a = 20;
 explain format='brief' select * from t where a > 10 and a <= 20;
 --sorted_result

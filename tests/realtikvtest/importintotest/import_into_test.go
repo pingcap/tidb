@@ -146,6 +146,39 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 	})
 	s.prepareAndUseDB("import_into")
 
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
+	s.tk.MustExec("set @v='test'")
+	// IMPORT INTO does not support column reference
+	sql := fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=a+1 FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	err := s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "COLUMN reference is not supported in IMPORT INTO column assignment, index 0")
+	// IMPORT INTO does not support some functions
+	sql = fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=tidb_is_ddl_owner() FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	err = s.tk.QueryToErr(sql)
+	require.ErrorContains(s.T(), err, "FUNCTION tidb_is_ddl_owner is not supported in IMPORT INTO column assignment, index 0")
+	// IMPORT INTO does not support reading session variables which are set outside this statement
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
+	s.tk.MustExec("set @v='test'")
+	sql = fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=@v FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	err = s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "column assignment cannot use variables set outside IMPORT INTO statement, index 0")
+	sql = fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=getvar('v') FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	err = s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "column assignment cannot use variables set outside IMPORT INTO statement, index 0")
+	// IMPORT INTO does not support subquery in SET
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t (a bigint, b varchar(100), c int);")
+	sql = fmt.Sprintf(`IMPORT INTO t(a, @, c) SET b=(SELECT 'subquery') FROM 'gs://test-multi-load/db.tbl.001.csv?endpoint=%s'
+		with thread=1`, gcsEndpoint)
+	err = s.tk.ExecToErr(sql)
+	require.ErrorContains(s.T(), err, "subquery is not supported in IMPORT INTO column assignment, index 0")
+
 	allData := []string{"1 test1 11", "2 test2 22", "3 test3 33", "4 test4 44", "5 test5 55", "6 test6 66"}
 	cases := []struct {
 		createTableSQL string
@@ -880,7 +913,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
 	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/beforeSortChunk", "sleep(3000)")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk", "return(true)")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
 
@@ -940,7 +973,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	taskRegister.EXPECT().RegisterTaskOnce(gomock.Any()).DoAndReturn(mockedRegister).Times(1)
 	taskRegister.EXPECT().Close(gomock.Any()).DoAndReturn(mockedClose).Times(1)
 	s.tk.MustExec("truncate table load_data.register_task;")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/beforeSortChunk", "sleep(3000)")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk", "return(true)")
 	err := s.tk.QueryToErr(sql)
 	s.Error(err)
@@ -953,7 +986,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	})
 	var etcdKey string
 	importinto.NewTaskRegisterWithTTL = backup
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk"))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/beforeSortChunk"))
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenSortChunk"))
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeSortChunk",
 		func() {
@@ -1189,4 +1222,20 @@ func (s *mockGCSSuite) TestZeroDateTime() {
 	s.tk.MustExec("truncate table import_into.zero_time_table")
 	err := s.tk.QueryToErr(sql)
 	s.ErrorContains(err, `Incorrect datetime value: '1990-01-00 00:00:00'`)
+}
+
+func (s *mockGCSSuite) TestBadCases() {
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/beforeSortChunk", `panic("mock panic")`)
+	s.tk.MustExec("DROP DATABASE IF EXISTS bad_cases;")
+	s.tk.MustExec("CREATE DATABASE bad_cases;")
+	s.tk.MustExec(`CREATE TABLE bad_cases.t (a INT, b INT, c INT);`)
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "bad-cases-1.csv"},
+		Content:     []byte("1,11,111\n2,22,222\n"),
+	})
+	sql := fmt.Sprintf(`IMPORT INTO bad_cases.t
+		FROM 'gs://test-load/bad-cases-1.csv?endpoint=%s'`, gcsEndpoint)
+	err := s.tk.QueryToErr(sql)
+	require.ErrorContains(s.T(), err, "panic occurred during import, please check log")
 }

@@ -22,9 +22,10 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -38,19 +39,19 @@ import (
 
 func TestEscape(t *testing.T) {
 	tb := &cache.PhysicalTable{
-		Schema: model.NewCIStr("testp;\"';123`456"),
+		Schema: pmodel.NewCIStr("testp;\"';123`456"),
 		TableInfo: &model.TableInfo{
-			Name: model.NewCIStr("tp\"';123`456"),
+			Name: pmodel.NewCIStr("tp\"';123`456"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("col1\"';123`456"), FieldType: *types.NewFieldType(mysql.TypeString)},
+			{Name: pmodel.NewCIStr("col1\"';123`456"), FieldType: *types.NewFieldType(mysql.TypeString)},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      model.NewCIStr("time\"';123`456"),
+			Name:      pmodel.NewCIStr("time\"';123`456"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 		PartitionDef: &model.PartitionDefinition{
-			Name: model.NewCIStr("p1\"';123`456"),
+			Name: pmodel.NewCIStr("p1\"';123`456"),
 		},
 	}
 
@@ -81,18 +82,18 @@ func TestEscape(t *testing.T) {
 	}{
 		{
 			tp:  "select",
-			ds:  [][]types.Datum{d("key1'\";123`456")},
-			sql: "SELECT LOW_PRIORITY SQL_NO_CACHE `col1\"';123``456` FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` > 'key1\\'\\\";123`456' AND `time\"';123``456` < FROM_UNIXTIME(0)",
+			ds:  [][]types.Datum{d("key1'\";123`456\t\n\r")},
+			sql: "SELECT LOW_PRIORITY SQL_NO_CACHE `col1\"';123``456` FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` > 'key1\\'\\\";123`456\t\\n\\r' AND `time\"';123``456` < FROM_UNIXTIME(0)",
 		},
 		{
 			tp:  "delete",
-			ds:  [][]types.Datum{d("key2'\";123`456")},
-			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key2\\'\\\";123`456') AND `time\"';123``456` < FROM_UNIXTIME(0)",
+			ds:  [][]types.Datum{d("key2'\";123`456\t\n\r")},
+			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key2\\'\\\";123`456\t\\n\\r') AND `time\"';123``456` < FROM_UNIXTIME(0)",
 		},
 		{
 			tp:  "delete",
-			ds:  [][]types.Datum{d("key3'\";123`456"), d("key4'`\"")},
-			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key3\\'\\\";123`456', 'key4\\'`\\\"') AND `time\"';123``456` < FROM_UNIXTIME(0)",
+			ds:  [][]types.Datum{d("key3'\";123`456\t\n\r"), d("key4'`\"")},
+			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key3\\'\\\";123`456\t\\n\\r', 'key4\\'`\\\"') AND `time\"';123``456` < FROM_UNIXTIME(0)",
 		},
 	}
 
@@ -356,7 +357,7 @@ func TestFormatSQLDatum(t *testing.T) {
 	sb.WriteString("\n);")
 	tk.MustExec(sb.String())
 
-	tbl, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 
 	for i, c := range cases {
@@ -403,43 +404,43 @@ func TestSQLBuilder(t *testing.T) {
 	var b *sqlbuilder.SQLBuilder
 
 	t1 := &cache.PhysicalTable{
-		Schema: model.NewCIStr("test"),
+		Schema: pmodel.NewCIStr("test"),
 		TableInfo: &model.TableInfo{
-			Name: model.NewCIStr("t1"),
+			Name: pmodel.NewCIStr("t1"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: pmodel.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      model.NewCIStr("time"),
+			Name:      pmodel.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
 
 	t2 := &cache.PhysicalTable{
-		Schema: model.NewCIStr("test2"),
+		Schema: pmodel.NewCIStr("test2"),
 		TableInfo: &model.TableInfo{
-			Name: model.NewCIStr("t2"),
+			Name: pmodel.NewCIStr("t2"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
-			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: pmodel.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: pmodel.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      model.NewCIStr("time"),
+			Name:      pmodel.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
 
 	tp := &cache.PhysicalTable{
-		Schema: model.NewCIStr("testp"),
+		Schema: pmodel.NewCIStr("testp"),
 		TableInfo: &model.TableInfo{
-			Name: model.NewCIStr("tp"),
+			Name: pmodel.NewCIStr("tp"),
 		},
 		KeyColumns: t1.KeyColumns,
 		TimeColumn: t1.TimeColumn,
 		PartitionDef: &model.PartitionDefinition{
-			Name: model.NewCIStr("p1"),
+			Name: pmodel.NewCIStr("p1"),
 		},
 	}
 
@@ -579,31 +580,31 @@ func TestSQLBuilder(t *testing.T) {
 
 func TestScanQueryGenerator(t *testing.T) {
 	t1 := &cache.PhysicalTable{
-		Schema: model.NewCIStr("test"),
+		Schema: pmodel.NewCIStr("test"),
 		TableInfo: &model.TableInfo{
-			Name: model.NewCIStr("t1"),
+			Name: pmodel.NewCIStr("t1"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: pmodel.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      model.NewCIStr("time"),
+			Name:      pmodel.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
 
 	t2 := &cache.PhysicalTable{
-		Schema: model.NewCIStr("test2"),
+		Schema: pmodel.NewCIStr("test2"),
 		TableInfo: &model.TableInfo{
-			Name: model.NewCIStr("t2"),
+			Name: pmodel.NewCIStr("t2"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
-			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
-			{Name: model.NewCIStr("c"), FieldType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).Build()},
+			{Name: pmodel.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: pmodel.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: pmodel.NewCIStr("c"), FieldType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).Build()},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      model.NewCIStr("time"),
+			Name:      pmodel.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
@@ -863,30 +864,30 @@ func TestScanQueryGenerator(t *testing.T) {
 
 func TestBuildDeleteSQL(t *testing.T) {
 	t1 := &cache.PhysicalTable{
-		Schema: model.NewCIStr("test"),
+		Schema: pmodel.NewCIStr("test"),
 		TableInfo: &model.TableInfo{
-			Name: model.NewCIStr("t1"),
+			Name: pmodel.NewCIStr("t1"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: pmodel.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      model.NewCIStr("time"),
+			Name:      pmodel.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
 
 	t2 := &cache.PhysicalTable{
-		Schema: model.NewCIStr("test2"),
+		Schema: pmodel.NewCIStr("test2"),
 		TableInfo: &model.TableInfo{
-			Name: model.NewCIStr("t2"),
+			Name: pmodel.NewCIStr("t2"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
-			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: pmodel.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: pmodel.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      model.NewCIStr("time"),
+			Name:      pmodel.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}

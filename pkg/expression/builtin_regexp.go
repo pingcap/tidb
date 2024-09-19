@@ -354,7 +354,7 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, err
 	}
 
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argType.GetFlen())
 	sig := builtinRegexpSubstrFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
@@ -986,7 +986,7 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx BuildContext, args []Expres
 		return nil, ErrRegexp.GenWithStackByArgs(err)
 	}
 
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argType.GetFlen())
 	sig := builtinRegexpReplaceFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},

@@ -22,8 +22,11 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -31,13 +34,15 @@ import (
 func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableItemID, comment string) string {
 	var tblInfo *model.TableInfo
 	var prefix string
-	if tbl, ok := is.TableByID(tblColID.TableID); ok {
+	if tbl, ok := is.TableByID(context.Background(), tblColID.TableID); ok {
 		tblInfo = tbl.Meta()
 		prefix = tblInfo.Name.L + "."
 	} else {
-		db, exists := is.SchemaByName(model.NewCIStr("test"))
+		db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
 		require.True(t, exists, comment)
-		for _, tbl := range db.Tables {
+		tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+		require.NoError(t, err)
+		for _, tbl := range tblInfos {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil {
 				continue
@@ -79,7 +84,7 @@ func getStatsLoadItem(t *testing.T, is infoschema.InfoSchema, item model.StatsLo
 
 func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
 	var tblColIDs []model.TableItemID
-	tblColIDs, _, _ = CollectColumnStatsUsage(lp, true, false)
+	tblColIDs, _, _ = CollectColumnStatsUsage(lp, false)
 	cols := make([]string, 0, len(tblColIDs))
 	for _, tblColID := range tblColIDs {
 		col := getColumnName(t, is, tblColID, comment)
@@ -91,7 +96,7 @@ func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, 
 
 func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
 	var loadItems []model.StatsLoadItem
-	_, loadItems, _ = CollectColumnStatsUsage(lp, false, true)
+	_, loadItems, _ = CollectColumnStatsUsage(lp, true)
 	cols := make([]string, 0, len(loadItems))
 	for _, item := range loadItems {
 		col := getStatsLoadItem(t, is, item, comment)
@@ -109,10 +114,11 @@ func TestSkipSystemTables(t *testing.T) {
 	ctx := context.Background()
 	stmt, err := s.p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = Preprocess(context.Background(), s.sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	require.NoError(t, err)
 	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
-	p, err := builder.Build(ctx, stmt)
+	p, err := builder.Build(ctx, nodeW)
 	require.NoError(t, err)
 	lp, ok := p.(base.LogicalPlan)
 	require.True(t, ok)
@@ -299,10 +305,11 @@ func TestCollectPredicateColumns(t *testing.T) {
 		}
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(context.Background(), s.sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)
 		lp, ok := p.(base.LogicalPlan)
 		require.True(t, ok, comment)
@@ -384,17 +391,18 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		}
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(context.Background(), s.sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)
 		lp, ok := p.(base.LogicalPlan)
 		require.True(t, ok, comment)
 		flags := builder.GetOptFlag()
 		// JoinReOrder may need columns stats so collecting hist-needed columns must happen before JoinReOrder.
 		// Hence, we disable JoinReOrder and PruneColumnsAgain here.
-		flags &= ^(flagJoinReOrder | flagPrunColumnsAgain)
+		flags &= ^(rule.FlagJoinReOrder | rule.FlagPruneColumnsAgain)
 		lp, err = logicalOptimize(ctx, flags, lp)
 		require.NoError(t, err, comment)
 		checkColumnStatsUsageForStatsLoad(t, s.is, lp, tt.res, comment)

@@ -17,8 +17,9 @@ package util
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 )
 
 // allConstants checks if only the expression has only constants.
@@ -50,7 +51,8 @@ func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 			newArgs := make([]expression.Expression, 0, 2)
 			newArgs = append(newArgs, expr.GetArgs()[0])
 			newArgs = append(newArgs, arg)
-			eQCondition, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ, expr.GetType(), newArgs...)
+			eQCondition, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ,
+				expr.GetType(ctx.GetExprCtx().GetEvalCtx()), newArgs...)
 			if err != nil {
 				return false
 			}
@@ -97,7 +99,7 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 // A condition would be null-rejected in one of following cases:
 // If it is a predicate containing a reference to an inner table (null producing side) that evaluates
 // to UNKNOWN or FALSE when one of its arguments is NULL.
-func isNullRejectedSimpleExpr(ctx context.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
+func isNullRejectedSimpleExpr(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
 	// The expression should reference at least one field in innerSchema or all constants.
 	if !expression.ExprReferenceSchema(expr, schema) && !allConstants(ctx.GetExprCtx(), expr) {
 		return false
@@ -114,4 +116,15 @@ func isNullRejectedSimpleExpr(ctx context.PlanContext, schema *expression.Schema
 		}
 	}
 	return false
+}
+
+// ResetNotNullFlag resets the not null flag of [start, end] columns in the schema.
+func ResetNotNullFlag(schema *expression.Schema, start, end int) {
+	for i := start; i < end; i++ {
+		col := *schema.Columns[i]
+		newFieldType := *col.RetType
+		newFieldType.DelFlag(mysql.NotNullFlag)
+		col.RetType = &newFieldType
+		schema.Columns[i] = &col
+	}
 }

@@ -67,7 +67,7 @@ func TestFileChunkProcess(t *testing.T) {
 	tk.MustExec(stmt)
 	do, err := session.GetDomain(store)
 	require.NoError(t, err)
-	table, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	fieldMappings := make([]*importer.FieldMapping, 0, len(table.VisibleCols()))
