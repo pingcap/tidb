@@ -937,6 +937,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	}
 	cnfExpres := make([]expression.Expression, 0)
 	useCache := b.ctx.GetSessionVars().StmtCtx.UseCache()
+	// TODO:  Implement this part of the logic with a separate rule, making it easier to extend with similar predicates in the future.
 	for _, expr := range expressions {
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
