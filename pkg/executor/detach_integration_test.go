@@ -355,17 +355,24 @@ func TestDetachProjection(t *testing.T) {
 	require.NoError(t, rs.Close())
 
 	// Projection with user variable is allowed
+	// Also test NOW() function will return right value, see issue: https://github.com/pingcap/tidb/issues/56051
 	tk.MustExec("set @a = 1")
 	tk.MustExec("set @b = 10")
-	tk.MustHavePlan("select a + b + @a + getvar('b') from t where a > 100 and a < 200", "Projection")
-	rs, err = tk.Exec("select a + b + @a + getvar('b') from t where a > ? and a < ?", 100, 200)
+	tk.MustExec("set @@timestamp=360000")
+	tk.MustHavePlan(
+		"select a + b + @a + getvar('b'), UNIX_TIMESTAMP(NOW()) from t where a > 100 and a < 200",
+		"Projection",
+	)
+	rs, err = tk.Exec(
+		"select a + b + @a + getvar('b'), UNIX_TIMESTAMP(NOW()) from t where a > ? and a < ?",
+		100, 200,
+	)
 	require.NoError(t, err)
 	drs, ok, err = rs.(sqlexec.DetachableRecordSet).TryDetach()
 	require.NoError(t, err)
 	require.True(t, ok)
-	// set user variable to another value to test the expression should not change after detaching
-	tk.MustExec("set @a=100")
-	tk.MustExec("set @b=1000")
+	// set user variable and current time to another value to test the expression should not change after detaching
+	tk.MustExec("set @a=100,@b=1000,@@timestamp=0")
 	chk = drs.NewChunk(nil)
 	expectedSelect = 101
 	for {
@@ -377,6 +384,7 @@ func TestDetachProjection(t *testing.T) {
 		}
 		for i := 0; i < chk.NumRows(); i++ {
 			require.Equal(t, float64(2*expectedSelect+11), chk.GetRow(i).GetFloat64(0))
+			require.Equal(t, int64(360000), chk.GetRow(i).GetInt64(1))
 			expectedSelect++
 		}
 	}

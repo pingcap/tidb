@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "memo",
+    srcs = [
+        "group.go",
+        "group_expr.go",
+        "group_id_generator.go",
+        "memo.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/memo",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/core/base",
+        "//pkg/planner/pattern",
+        "//pkg/planner/property",
+        "//pkg/sessionctx",
+        "//pkg/util/intest",
+    ],
+)
+
+go_test(
+    name = "memo_test",
+    timeout = "short",
+    srcs = [
+        "group_and_expr_test.go",
+        "group_id_generator_test.go",
+    ],
+    embed = [":memo"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/expression",
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/core/operator/logicalop",
+        "@com_github_stretchr_testify//require",
+    ],
+)
