@@ -1090,7 +1090,7 @@ func (e *executor) createTableWithInfoJob(
 		}
 	}
 
-	if err := checkTableInfoValidExtra(ctx, tbInfo); err != nil {
+	if err := checkTableInfoValidExtra(tbInfo); err != nil {
 		return nil, err
 	}
 
