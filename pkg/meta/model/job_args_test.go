@@ -397,8 +397,8 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
 	}
 
+	inArgs.IsFinishedArg = true
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		inArgs.IsFinishedArg = true
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionAddIndex)))
 
@@ -412,12 +412,13 @@ func TestAddIndexArgs(t *testing.T) {
 		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
 	}
 
+	inArgs.IsFinishedArg = false
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		inArgs.IsPK = true
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddPrimaryKey)))
 
-		args, err := getAddPrimaryKeyArgs(j2)
+		args, err := GetAddIndexArgs(j2)
 		require.NoError(t, err)
 
 		a := args.IndexArgs[0]
@@ -471,12 +472,20 @@ func TestDropIndex(t *testing.T) {
 		IndexIDs:     []int64{1, 2, 3},
 		PartitionIDs: []int64{100, 101, 102, 103},
 	}
+	checkFunc(t, inArgs)
 
 	inArgs = &DropIndexArgs{
 		IndexNames:   []model.CIStr{model.NewCIStr("i1"), model.NewCIStr("i2")},
 		IfExists:     []bool{false, false},
 		IndexIDs:     []int64{1},
 		PartitionIDs: []int64{100, 101, 102, 103},
+	}
+	checkFunc(t, inArgs)
+
+	inArgs = &DropIndexArgs{
+		IndexNames: []model.CIStr{model.NewCIStr("i1"), model.NewCIStr("i2")},
+		IfExists:   []bool{false, false},
+		IndexIDs:   []int64{1},
 	}
 	checkFunc(t, inArgs)
 }

@@ -47,6 +47,7 @@ type JobArgs interface {
 	fillJob(job *Job)
 }
 
+// SubJobArgs is the interface for subjob arguments.
 type SubJobArgs interface {
 	fillSubJob(subJob *SubJob)
 }
@@ -458,10 +459,17 @@ func (a *DropIndexArgs) fillFinishedJob(job *Job) {
 		// This is to make the args compatible with old logic:
 		// 1. For drop index, the first and second args are CIStr and bool.
 		// 2. For rollback add index, these args could be slices.
-		if len(a.IndexNames) == 1 {
-			job.Args = []any{a.IndexNames[0], a.IfExists[0], a.IndexIDs, a.PartitionIDs}
+		var indexIDs any
+		if len(a.IndexIDs) == 1 {
+			indexIDs = a.IndexIDs[0]
 		} else {
-			job.Args = []any{a.IndexNames, a.IfExists, a.IndexIDs, a.PartitionIDs}
+			indexIDs = a.IndexIDs
+		}
+
+		if len(a.IndexNames) == 1 {
+			job.Args = []any{a.IndexNames[0], a.IfExists[0], indexIDs, a.PartitionIDs}
+		} else {
+			job.Args = []any{a.IndexNames, a.IfExists, indexIDs, a.PartitionIDs}
 		}
 		return
 	}
@@ -481,9 +489,6 @@ func GetDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 			job.RawArgs = b
 		}
 
-		// This is to make the args compatible with v1 logic:
-		// 1. For drop index, the first and second args are CIStr and bool.
-		// 2. For rollback add index, these args are slices.
 		indexNames := make([]model.CIStr, 1)
 		ifExists := make([]bool, 1)
 		if err := job.DecodeArgs(&indexNames[0], &ifExists[0]); err != nil {
@@ -518,36 +523,12 @@ func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
 
-		var rawArgs []json.RawMessage
-		if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		// IndexName
-		if err := json.Unmarshal(rawArgs[0], &indexNames[0]); err != nil {
-			if err := json.Unmarshal(rawArgs[0], &indexNames); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-
-		// IfExists
-		if err := json.Unmarshal(rawArgs[1], &ifExists[0]); err != nil {
-			if err := json.Unmarshal(rawArgs[1], &ifExists); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-
-		// IndexIDs
-		if err := json.Unmarshal(rawArgs[2], &indexIDs[0]); err != nil {
-			if err := json.Unmarshal(rawArgs[2], &indexIDs); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-
-		// PartitionIDs
-		if len(rawArgs) > 3 {
-			if err := json.Unmarshal(rawArgs[3], &partitionIDs); err != nil {
-				return nil, errors.Trace(err)
+		if err := job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs); err != nil {
+			if err = job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs); err != nil {
+				// For jobs before refactor, args may only contains three slices.
+				if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs); err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 		}
 
@@ -634,10 +615,12 @@ func (a *AddIndexArgs) getV1Args() []any {
 	}
 }
 
-// MergeIndexArg is used to merge from
-func (a *AddIndexArgs) MergeIndexArg(Args []any, jobVersion JobVersion) {
+// MergeIndexArg is used to merge several add index args
+func (a *AddIndexArgs) MergeIndexArg(Args []any, subjobVersion JobVersion) {
 	var indexArg *IndexArg
-	if jobVersion == JobVersion1 {
+
+	// TODO(joechenrh): update logic here after refactor done.
+	if subjobVersion != JobVersion2 {
 		indexArg = &IndexArg{
 			Unique:                  *Args[0].(*bool),
 			IndexName:               *Args[1].(*model.CIStr),
@@ -656,17 +639,17 @@ func (a *AddIndexArgs) fillSubJob(job *SubJob) {
 	intest.Assert(!a.IsPK, "a should not be add primary key argument")
 	if job.Version == JobVersion1 {
 		job.Args = a.getV1Args()
-	} else {
-		job.Args = []any{a}
+		return
 	}
+	job.Args = []any{a}
 }
 
 func (a *AddIndexArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
 		job.Args = a.getV1Args()
-	} else {
-		job.Args = []any{a}
+		return
 	}
+	job.Args = []any{a}
 }
 
 func (a *AddIndexArgs) fillFinishedJob(job *Job) {

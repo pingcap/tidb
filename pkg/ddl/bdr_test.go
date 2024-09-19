@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -485,8 +486,9 @@ func TestDeniedByBDR(t *testing.T) {
 			role:   ast.BDRRolePrimary,
 			action: model.ActionAddPrimaryKey,
 			job: &model.Job{
-				Type: model.ActionAddPrimaryKey,
-				Args: []any{true},
+				Version: model.JobVersion1,
+				Type:    model.ActionAddPrimaryKey,
+				Args:    []any{true, pmodel.NewCIStr("idx"), nil, nil, mysql.ModeMySQL40, "", false},
 			},
 			expected: true,
 		},
@@ -494,8 +496,9 @@ func TestDeniedByBDR(t *testing.T) {
 			role:   ast.BDRRolePrimary,
 			action: model.ActionAddIndex,
 			job: &model.Job{
-				Type: model.ActionAddIndex,
-				Args: []any{true},
+				Version: model.JobVersion1,
+				Type:    model.ActionAddIndex,
+				Args:    []any{true, pmodel.NewCIStr("idx"), nil, nil, nil, false},
 			},
 			expected: true,
 		},
@@ -503,8 +506,9 @@ func TestDeniedByBDR(t *testing.T) {
 			role:   ast.BDRRolePrimary,
 			action: model.ActionAddIndex,
 			job: &model.Job{
-				Type: model.ActionAddIndex,
-				Args: []any{false},
+				Version: model.JobVersion1,
+				Type:    model.ActionAddIndex,
+				Args:    []any{false, pmodel.NewCIStr("idx"), nil, nil, nil, false},
 			},
 			expected: false,
 		},

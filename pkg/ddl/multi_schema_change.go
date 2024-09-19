@@ -186,7 +186,8 @@ func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
 		reorgTp = job.ReorgMeta.ReorgTp
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
-		Version:     job.Version,
+		// TODO(joechenrh): revert this after refactor done
+		Version:     model.JobVersion1,
 		Type:        job.Type,
 		Args:        job.Args,
 		RawArgs:     job.RawArgs,
@@ -364,6 +365,7 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 			newSubJobs = append(newSubJobs, subJob)
 		}
 	}
+
 	mergedSubJob.FillArgs(newAddIndexesArgs)
 
 	// place the merged add index job at the end of the sub-jobs.

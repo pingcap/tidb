@@ -500,18 +500,6 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if job.MultiSchemaInfo != nil {
-				for _, sub := range job.MultiSchemaInfo.SubJobs {
-					// Only update the args of executing sub-jobs.
-					if sub.Args == nil {
-						continue
-					}
-					sub.RawArgs, err = json.Marshal(sub.Args)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-				}
-			}
 		} else {
 			var arg any
 			if len(job.Args) > 0 {
@@ -522,16 +510,17 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// TODO remember update sub-jobs' RawArgs when we do it.
-			if job.MultiSchemaInfo != nil {
-				for _, sub := range job.MultiSchemaInfo.SubJobs {
-					if len(sub.Args) == 0 {
-						continue
-					}
-					sub.RawArgs, err = json.Marshal(sub.Args[0])
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
+		}
+		// TODO(joechenrh): update this after refactor done.
+		if job.MultiSchemaInfo != nil {
+			for _, sub := range job.MultiSchemaInfo.SubJobs {
+				// Only update the args of executing sub-jobs.
+				if sub.Args == nil {
+					continue
+				}
+				sub.RawArgs, err = json.Marshal(sub.Args)
+				if err != nil {
+					return nil, errors.Trace(err)
 				}
 			}
 		}
@@ -891,8 +880,8 @@ type SubJob struct {
 }
 
 // FillArgs fills args for subjob.
-func (subJob *SubJob) FillArgs(args SubJobArgs) {
-	args.fillSubJob(subJob)
+func (sub *SubJob) FillArgs(args SubJobArgs) {
+	args.fillSubJob(sub)
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -937,7 +926,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		Version:         parentJob.Version,
+		Version:         JobVersion1, // TODO(joechenrh): revert this after refactor done.
 		ReorgMeta:       parentJob.ReorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,

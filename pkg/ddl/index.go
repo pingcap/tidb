@@ -1136,7 +1136,7 @@ func onDropIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			addIndexArgs := &model.AddIndexArgs{PartitionIDs: dropArgs.PartitionIDs}
+			addIndexArgs := &model.AddIndexArgs{PartitionIDs: dropArgs.PartitionIDs, IsFinishedArg: true}
 			for i, indexID := range indexIDs {
 				addIndexArgs.IndexArgs = append(addIndexArgs.IndexArgs,
 					&model.IndexArg{

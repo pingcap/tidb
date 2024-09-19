@@ -4735,7 +4735,12 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	job.FillArgs(&model.AddIndexArgs{
+	// TODO(joechenrh): force use Version1 if is MultiSchemaChange
+	if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+		job.Version = model.JobVersion1
+	}
+
+	args := &model.AddIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			Unique:                  unique,
 			IndexName:               indexName,
@@ -4744,7 +4749,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			HiddenCols:              hiddenCols,
 			Global:                  global,
 		}},
-	})
+	}
 
 	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
 	if err != nil {
@@ -4752,7 +4757,8 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 	job.ReorgMeta = reorgMeta
 
-	err = e.DoDDLJob(ctx, job)
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
 	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -5094,12 +5100,17 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	job.FillArgs(&model.DropIndexArgs{
+	// TODO(joechenrh): force use Version1 if is MultiSchemaChange
+	if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+		job.Version = model.JobVersion1
+	}
+
+	args := &model.DropIndexArgs{
 		IndexNames: []pmodel.CIStr{indexName},
 		IfExists:   []bool{ifExists},
-	})
-
-	err = e.DoDDLJob(ctx, job)
+	}
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
