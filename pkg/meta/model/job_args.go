@@ -440,6 +440,48 @@ func UpdateRenameTableArgs(job *Job) error {
 	return nil
 }
 
+// ResourceGroupArgs is the arguments for resource group job.
+type ResourceGroupArgs struct {
+	// for DropResourceGroup we only use it to store the name, other fields are invalid.
+	RGInfo *ResourceGroupInfo `json:"rg_info,omitempty"`
+}
+
+func (a *ResourceGroupArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionCreateResourceGroup {
+			// what's the second parameter for? we keep it for compatibility.
+			job.Args = []any{a.RGInfo, false}
+		} else if job.Type == ActionAlterResourceGroup {
+			job.Args = []any{a.RGInfo}
+		} else if job.Type == ActionDropResourceGroup {
+			// it's not used anywhere.
+			job.Args = []any{a.RGInfo.Name}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetResourceGroupArgs gets the resource group args.
+func GetResourceGroupArgs(job *Job) (*ResourceGroupArgs, error) {
+	if job.Version == JobVersion1 {
+		rgInfo := ResourceGroupInfo{}
+		if job.Type == ActionCreateResourceGroup || job.Type == ActionAlterResourceGroup {
+			if err := job.DecodeArgs(&rgInfo); err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else if job.Type == ActionDropResourceGroup {
+			var rgName pmodel.CIStr
+			if err := job.DecodeArgs(&rgName); err != nil {
+				return nil, errors.Trace(err)
+			}
+			rgInfo.Name = rgName
+		}
+		return &ResourceGroupArgs{RGInfo: &rgInfo}, nil
+	}
+	return getOrDecodeArgsV2[*ResourceGroupArgs](job)
+}
+
 // RenameTablesArgs is the arguments for rename tables job.
 type RenameTablesArgs struct {
 	RenameTableInfos []*RenameTableArgs `json:"rename_table_infos,omitempty"`
@@ -466,9 +508,7 @@ func (a *RenameTablesArgs) fillJob(job *Job) {
 
 		// To make it compatible with previous create metas
 		job.Args = []any{oldSchemaIDs, newSchemaIDs, newTableNames, tableIDs, oldSchemaNames, oldTableNames}
-		return
 	}
-	job.Args = []any{a}
 }
 
 // GetRenameTablesArgsFromV1 get v2 args from v1

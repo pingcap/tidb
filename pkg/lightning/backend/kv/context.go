@@ -21,15 +21,15 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -42,11 +42,11 @@ var _ exprctx.ExprContext = &litExprContext{}
 // It provides the context to build and evaluate expressions, furthermore, it allows to set user variables
 // for `IMPORT INTO ...` statements.
 type litExprContext struct {
-	*contextstatic.StaticExprContext
+	*exprstatic.ExprContext
 	userVars *variable.UserVars
 }
 
-// NewExpressionContext creates a new `*StaticExprContext` for lightning import.
+// NewExpressionContext creates a new `*ExprContext` for lightning import.
 func newLitExprContext(sqlMode mysql.SQLMode, sysVars map[string]string, timestamp int64) (*litExprContext, error) {
 	flags := types.DefaultStmtFlags.
 		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
@@ -61,20 +61,20 @@ func newLitExprContext(sqlMode mysql.SQLMode, sysVars map[string]string, timesta
 		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
 
 	userVars := variable.NewUserVars()
-	evalCtx := contextstatic.NewStaticEvalContext(
-		contextstatic.WithSQLMode(sqlMode),
-		contextstatic.WithTypeFlags(flags),
-		contextstatic.WithLocation(timeutil.SystemLocation()),
-		contextstatic.WithErrLevelMap(errLevels),
-		contextstatic.WithUserVarsReader(userVars),
+	evalCtx := exprstatic.NewEvalContext(
+		exprstatic.WithSQLMode(sqlMode),
+		exprstatic.WithTypeFlags(flags),
+		exprstatic.WithLocation(timeutil.SystemLocation()),
+		exprstatic.WithErrLevelMap(errLevels),
+		exprstatic.WithUserVarsReader(userVars),
 	)
 
 	// no need to build as plan cache.
 	planCacheTracker := contextutil.NewPlanCacheTracker(contextutil.IgnoreWarn)
 	intest.Assert(!planCacheTracker.UseCache())
-	ctx := contextstatic.NewStaticExprContext(
-		contextstatic.WithEvalCtx(evalCtx),
-		contextstatic.WithPlanCacheTracker(&planCacheTracker),
+	ctx := exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(evalCtx),
+		exprstatic.WithPlanCacheTracker(&planCacheTracker),
 	)
 
 	if len(sysVars) > 0 {
@@ -91,12 +91,12 @@ func newLitExprContext(sqlMode mysql.SQLMode, sysVars map[string]string, timesta
 		currentTime = func() (time.Time, error) { return time.Unix(timestamp, 0), nil }
 	}
 
-	evalCtx = evalCtx.Apply(contextstatic.WithCurrentTime(currentTime))
-	ctx = ctx.Apply(contextstatic.WithEvalCtx(evalCtx))
+	evalCtx = evalCtx.Apply(exprstatic.WithCurrentTime(currentTime))
+	ctx = ctx.Apply(exprstatic.WithEvalCtx(evalCtx))
 
 	return &litExprContext{
-		StaticExprContext: ctx,
-		userVars:          userVars,
+		ExprContext: ctx,
+		userVars:    userVars,
 	}, nil
 }
 
@@ -115,8 +115,8 @@ var _ table.MutateContext = &litTableMutateContext{}
 // litTableMutateContext implements the `table.MutateContext` interface for lightning import.
 type litTableMutateContext struct {
 	exprCtx               *litExprContext
-	encodingConfig        tbctx.RowEncodingConfig
-	mutateBuffers         *tbctx.MutateBuffers
+	encodingConfig        tblctx.RowEncodingConfig
+	mutateBuffers         *tblctx.MutateBuffers
 	shardID               *variable.RowIDShardGenerator
 	reservedRowIDAlloc    stmtctx.ReservedRowIDAlloc
 	enableMutationChecker bool
@@ -162,12 +162,12 @@ func (ctx *litTableMutateContext) EnableMutationChecker() bool {
 }
 
 // GetRowEncodingConfig implements the `table.MutateContext` interface.
-func (ctx *litTableMutateContext) GetRowEncodingConfig() tbctx.RowEncodingConfig {
+func (ctx *litTableMutateContext) GetRowEncodingConfig() tblctx.RowEncodingConfig {
 	return ctx.encodingConfig
 }
 
 // GetMutateBuffers implements the `table.MutateContext` interface.
-func (ctx *litTableMutateContext) GetMutateBuffers() *tbctx.MutateBuffers {
+func (ctx *litTableMutateContext) GetMutateBuffers() *tblctx.MutateBuffers {
 	return ctx.mutateBuffers
 }
 
@@ -182,13 +182,13 @@ func (ctx *litTableMutateContext) GetReservedRowIDAlloc() (*stmtctx.ReservedRowI
 }
 
 // GetBinlogSupport implements the `table.MutateContext` interface.
-func (*litTableMutateContext) GetBinlogSupport() (tbctx.BinlogSupport, bool) {
+func (*litTableMutateContext) GetBinlogSupport() (tblctx.BinlogSupport, bool) {
 	// lightning import does not support binlog.
 	return nil, false
 }
 
 // GetStatisticsSupport implements the `table.MutateContext` interface.
-func (ctx *litTableMutateContext) GetStatisticsSupport() (tbctx.StatisticsSupport, bool) {
+func (ctx *litTableMutateContext) GetStatisticsSupport() (tblctx.StatisticsSupport, bool) {
 	return ctx, true
 }
 
@@ -215,17 +215,17 @@ func (ctx *litTableMutateContext) GetColumnSize(tblID int64) (ret map[int64]int6
 }
 
 // GetCachedTableSupport implements the `table.MutateContext` interface.
-func (*litTableMutateContext) GetCachedTableSupport() (tbctx.CachedTableSupport, bool) {
+func (*litTableMutateContext) GetCachedTableSupport() (tblctx.CachedTableSupport, bool) {
 	// lightning import does not support cached table.
 	return nil, false
 }
 
-func (*litTableMutateContext) GetTemporaryTableSupport() (tbctx.TemporaryTableSupport, bool) {
+func (*litTableMutateContext) GetTemporaryTableSupport() (tblctx.TemporaryTableSupport, bool) {
 	// lightning import does not support temporary table.
 	return nil, false
 }
 
-func (*litTableMutateContext) GetExchangePartitionDMLSupport() (tbctx.ExchangePartitionDMLSupport, bool) {
+func (*litTableMutateContext) GetExchangePartitionDMLSupport() (tblctx.ExchangePartitionDMLSupport, bool) {
 	// lightning import is not in a DML query, we do not need to support it.
 	return nil, false
 }
@@ -242,11 +242,11 @@ func newLitTableMutateContext(exprCtx *litExprContext, sysVars map[string]string
 
 	return &litTableMutateContext{
 		exprCtx: exprCtx,
-		encodingConfig: tbctx.RowEncodingConfig{
+		encodingConfig: tblctx.RowEncodingConfig{
 			IsRowLevelChecksumEnabled: sessVars.IsRowLevelChecksumEnabled(),
 			RowEncoder:                &sessVars.RowEncoder,
 		},
-		mutateBuffers: tbctx.NewMutateBuffers(sessVars.GetWriteStmtBufs()),
+		mutateBuffers: tblctx.NewMutateBuffers(sessVars.GetWriteStmtBufs()),
 		// Though the row ID is generated by lightning itself, and `GetRowIDShardGenerator` is useless,
 		// still return a valid object to make the context complete and avoid some potential panic
 		// if there are some changes in the future.

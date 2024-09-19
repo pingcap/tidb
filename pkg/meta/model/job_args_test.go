@@ -294,3 +294,22 @@ func TestGetRenameTablesArgs(t *testing.T) {
 		require.Equal(t, inArgs.RenameTableInfos[1], args.RenameTableInfos[1])
 	}
 }
+
+func TestResourceGroupArgs(t *testing.T) {
+	inArgs := &ResourceGroupArgs{
+		RGInfo: &ResourceGroupInfo{ID: 100, Name: model.NewCIStr("rg_name")},
+	}
+	for _, tp := range []ActionType{ActionCreateResourceGroup, ActionAlterResourceGroup, ActionDropResourceGroup} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			args, err := GetResourceGroupArgs(j2)
+			require.NoError(t, err)
+			if tp == ActionDropResourceGroup {
+				require.EqualValues(t, inArgs.RGInfo.Name, args.RGInfo.Name)
+			} else {
+				require.EqualValues(t, inArgs, args)
+			}
+		}
+	}
+}

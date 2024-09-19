@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -38,7 +38,7 @@ import (
 )
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
-func GetRowCountByIndexRanges(sctx context.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error) {
+func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -90,7 +90,7 @@ func GetRowCountByIndexRanges(sctx context.PlanContext, coll *statistics.HistCol
 	return result, errors.Trace(err)
 }
 
-func getIndexRowCountForStatsV1(sctx context.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (float64, error) {
+func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -215,7 +215,7 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 }
 
 // It uses the modifyCount to adjust the influence of modifications on the table.
-func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
+func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -251,9 +251,16 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 			if fullLen {
 				// At most 1 in this case.
 				if idx.Info.Unique {
-					totalCount++
+					if !indexRange.IsOnlyNull() {
+						totalCount++
+						if debugTrace {
+							debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
+						}
+						continue
+					}
+					totalCount = float64(idx.NullCount)
 					if debugTrace {
-						debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
+						debugTraceEndEstimateRange(sctx, float64(idx.NullCount), debugTraceUniquePoint)
 					}
 					continue
 				}
@@ -367,7 +374,7 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 
 var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 
-func equalRowCountOnIndex(sctx context.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result float64) {
+func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result float64) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)
@@ -418,7 +425,7 @@ func equalRowCountOnIndex(sctx context.PlanContext, idx *statistics.Index, b []b
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
-func expBackoffEstimation(sctx context.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range) (sel float64, success bool, err error) {
+func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRange *ranger.Range) (sel float64, success bool, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -553,7 +560,7 @@ func matchPrefix(row chunk.Row, colIdx int, ad *types.Datum) bool {
 
 // betweenRowCountOnIndex estimates the row count for interval [l, r).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func betweenRowCountOnIndex(sctx context.PlanContext, idx *statistics.Index, l, r types.Datum) float64 {
+func betweenRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, l, r types.Datum) float64 {
 	histBetweenCnt := idx.Histogram.BetweenRowCount(sctx, l, r)
 	if idx.StatsVer == statistics.Version1 {
 		return histBetweenCnt
