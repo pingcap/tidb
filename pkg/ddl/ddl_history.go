@@ -22,11 +22,8 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
-=======
 	"github.com/pingcap/failpoint"
->>>>>>> f2856e3521f (ddl: limit the count of getting ddlhistory jobs (#55590))
+	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
