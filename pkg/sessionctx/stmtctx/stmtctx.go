@@ -27,6 +27,7 @@ import (
 
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -44,10 +45,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/nocopy"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
 	"golang.org/x/sync/singleflight"
@@ -686,20 +685,14 @@ func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
 	sc.binaryPlan = binaryPlan
 }
 
-// GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
-func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger {
+// GetResourceGroupTagger returns the implementation of kv.ResourceGroupTagBuilder related to self.
+func (sc *StatementContext) GetResourceGroupTagger() *kv.ResourceGroupTagBuilder {
+	tagger := kv.NewResourceGroupTagBuilder().SetPlanDigest(sc.planDigest)
 	normalized, digest := sc.SQLDigest()
-	planDigest := sc.planDigest
-	return func(req *tikvrpc.Request) {
-		if req == nil {
-			return
-		}
-		if len(normalized) == 0 {
-			return
-		}
-		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, planDigest,
-			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
+	if len(normalized) > 0 {
+		tagger.SetSQLDigest(digest)
 	}
+	return tagger
 }
 
 // SetUseChunkAlloc set use chunk alloc status
@@ -1027,8 +1020,8 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 
 // PushDownFlags converts StatementContext to tipb.SelectRequest.Flags.
 func (sc *StatementContext) PushDownFlags() uint64 {
-	var flags uint64
 	ec := sc.ErrCtx()
+	flags := PushDownFlagsWithTypeFlagsAndErrLevels(sc.TypeFlags(), ec.LevelMap())
 	if sc.InInsertStmt {
 		flags |= model.FlagInInsertStmt
 	} else if sc.InUpdateStmt || sc.InDeleteStmt {
@@ -1036,24 +1029,31 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	} else if sc.InSelectStmt {
 		flags |= model.FlagInSelectStmt
 	}
-	if sc.TypeFlags().IgnoreTruncateErr() {
-		flags |= model.FlagIgnoreTruncate
-	} else if sc.TypeFlags().TruncateAsWarning() {
-		flags |= model.FlagTruncateAsWarning
-		// TODO: remove this flag from TiKV.
-		flags |= model.FlagOverflowAsWarning
-	}
-	if sc.TypeFlags().IgnoreZeroInDate() {
-		flags |= model.FlagIgnoreZeroInDate
-	}
-	if ec.LevelForGroup(errctx.ErrGroupDividedByZero) != errctx.LevelError {
-		flags |= model.FlagDividedByZeroAsWarning
-	}
 	if sc.InLoadDataStmt {
 		flags |= model.FlagInLoadDataStmt
 	}
 	if sc.InRestrictedSQL {
 		flags |= model.FlagInRestrictedSQL
+	}
+	return flags
+}
+
+// PushDownFlagsWithTypeFlagsAndErrLevels applies gets the related bits to push down flags
+// with `type.Flags` and `errctx.LevelMap`
+func PushDownFlagsWithTypeFlagsAndErrLevels(tcFlags types.Flags, errLevels errctx.LevelMap) uint64 {
+	var flags uint64
+	if tcFlags.IgnoreTruncateErr() {
+		flags |= model.FlagIgnoreTruncate
+	} else if tcFlags.TruncateAsWarning() {
+		flags |= model.FlagTruncateAsWarning
+		// TODO: remove this flag from TiKV.
+		flags |= model.FlagOverflowAsWarning
+	}
+	if tcFlags.IgnoreZeroInDate() {
+		flags |= model.FlagIgnoreZeroInDate
+	}
+	if errLevels[errctx.ErrGroupDividedByZero] != errctx.LevelError {
+		flags |= model.FlagDividedByZeroAsWarning
 	}
 	return flags
 }

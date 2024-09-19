@@ -157,6 +157,9 @@ func (h *staticTestHelper) assertDeepClonedEqual(t require.TestingT, valA, valB 
 			h.assertDeepClonedEqual(t, valA.Elem(), valB.Elem(), path)
 		}
 	case reflect.Slice:
+		if valA.IsNil() && valB.IsNil() {
+			return
+		}
 		require.Equal(t, valA.Len(), valB.Len(), path+" should have the same length")
 
 		if h.shouldComparePointer(path) {
@@ -183,6 +186,9 @@ func (h *staticTestHelper) assertDeepClonedEqual(t require.TestingT, valA, valB 
 	case reflect.String:
 		require.Equal(t, valA.String(), valB.String(), path+" should be the same")
 	case reflect.Map:
+		if valA.IsNil() && valB.IsNil() {
+			return
+		}
 		require.Equal(t, valA.Len(), valB.Len(), path+" should have the same length")
 
 		if h.shouldComparePointer(path) {
@@ -199,6 +205,9 @@ func (h *staticTestHelper) assertDeepClonedEqual(t require.TestingT, valA, valB 
 		}
 		h.assertDeepClonedEqual(t, valA.Elem(), valB.Elem(), path)
 	case reflect.Func:
+		if valA.IsNil() && valB.IsNil() {
+			return
+		}
 		if h.shouldComparePointer(path) {
 			require.Equal(t, valA.Pointer(), valB.Pointer(), path+" should be the same")
 		} else {

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 )
 
@@ -156,6 +157,7 @@ type MutateBuffers struct {
 
 // NewMutateBuffers creates a new `MutateBuffers`.
 func NewMutateBuffers(stmtBufs *variable.WriteStmtBufs) *MutateBuffers {
+	intest.AssertNotNil(stmtBufs)
 	return &MutateBuffers{
 		stmtBufs: stmtBufs,
 		encodeRow: &EncodeRowBuffer{

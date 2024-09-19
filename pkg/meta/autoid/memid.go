@@ -154,6 +154,10 @@ func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64
 	return min, alloc.base, nil
 }
 
+func (*inMemoryAllocator) Transfer(_, _ int64) error {
+	return nil
+}
+
 func (*inMemoryAllocator) AllocSeqCache() (base int64, end int64, round int64, err error) {
 	return 0, 0, 0, errNotImplemented.GenWithStackByArgs()
 }

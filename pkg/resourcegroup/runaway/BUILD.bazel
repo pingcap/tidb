@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "runaway",
@@ -37,4 +37,13 @@ go_library(
         "@com_github_tikv_pd_client//resource_group/controller",
         "@org_uber_go_zap//:zap",
     ],
+)
+
+go_test(
+    name = "runaway_test",
+    timeout = "short",
+    srcs = ["record_test.go"],
+    embed = [":runaway"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//assert"],
 )

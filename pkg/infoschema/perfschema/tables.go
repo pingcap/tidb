@@ -207,6 +207,11 @@ func (vt *perfSchemaTable) Indices() []table.Index {
 	return vt.indices
 }
 
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (vt *perfSchemaTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 // GetPartitionedTable implements table.Table GetPartitionedTable interface.
 func (vt *perfSchemaTable) GetPartitionedTable() table.PartitionedTable {
 	return nil

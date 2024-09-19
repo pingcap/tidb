@@ -45,6 +45,7 @@ go_library(
         "//pkg/util/execdetails",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "//pkg/util/ppcpuusage",
         "//pkg/util/tls",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
