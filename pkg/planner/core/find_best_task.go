@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -1137,13 +1137,20 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 		}
 	}
 
-	if ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
-		// If a candidate path is TiFlash-path or forced-path, we just keep them. For other candidate paths, if there exists
+	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() && (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1)
+	// If we've forced an index merge - we want to keep these plans
+	preferMerge := len(ds.IndexMergeHints) > 0 || fixcontrol.GetBoolWithDefault(
+		ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
+		fixcontrol.Fix52869,
+		false,
+	)
+	if preferRange && len(candidates) > 1 {
+		// If a candidate path is TiFlash-path or forced-path or MV index, we just keep them. For other candidate paths, if there exists
 		// any range scan path, we remove full scan paths and keep range scan paths.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath bool
 		for _, c := range candidates {
-			if c.path.Forced || c.path.StoreType == kv.TiFlash {
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && c.path.Index.MVIndex) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
@@ -1154,8 +1161,13 @@ func skylinePruning(ds *DataSource, prop *property.PhysicalProperty) []*candidat
 				}
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
-				preferredPaths = append(preferredPaths, c)
-				hasRangeScanPath = true
+				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
+				equalPlan := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0
+				indexFilters := len(c.path.TableFilters) < len(c.path.IndexFilters)
+				if preferMerge || (((equalPlan || indexFilters) && prop.IsSortItemEmpty()) || c.isMatchProp) {
+					preferredPaths = append(preferredPaths, c)
+					hasRangeScanPath = true
+				}
 			}
 		}
 		if hasRangeScanPath {
@@ -2178,7 +2190,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 				RetType:  types.NewFieldType(mysql.TypeLonglong),
 				ID:       model.ExtraPhysTblID,
 				UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
-				OrigName: model.ExtraPhysTblIdName.O,
+				OrigName: model.ExtraPhysTblIDName.O,
 			})
 		}
 	}
@@ -2203,7 +2215,7 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *DataSource, 
 	}
 
 	if len(args) != 1 {
-		return nil, errors.Errorf("Can't find column %s in schema %s", model.ExtraPhysTblIdName.O, is.schema)
+		return nil, errors.Errorf("Can't find column %s in schema %s", model.ExtraPhysTblIDName.O, is.schema)
 	}
 
 	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
@@ -2900,7 +2912,8 @@ func getOriginalPhysicalIndexScan(ds *DataSource, prop *property.PhysicalPropert
 	return is
 }
 
-func findBestTask4LogicalCTE(p *LogicalCTE, prop *property.PhysicalProperty, counter *base.PlanCounterTp, pop *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
+func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalProperty, counter *base.PlanCounterTp, pop *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
+	p := lp.(*logicalop.LogicalCTE)
 	if p.ChildLen() > 0 {
 		return p.BaseLogicalPlan.FindBestTask(prop, counter, pop)
 	}

@@ -71,6 +71,7 @@ func TestSessionEvalContextBasic(t *testing.T) {
 	require.Equal(t, "0", impl.GetDefaultWeekFormatMode())
 	require.NoError(t, ctx.GetSessionVars().SetSystemVar("default_week_format", "5"))
 	require.Equal(t, "5", impl.GetDefaultWeekFormatMode())
+	require.Same(t, vars.UserVars, impl.GetUserVarsReader())
 
 	// handle warnings
 	require.Equal(t, 0, impl.WarningCount())

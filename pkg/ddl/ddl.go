@@ -21,6 +21,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -46,38 +48,34 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 const (
-	// currentVersion is for all new DDL jobs.
-	currentVersion = 1
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey             = "/tidb/ddl/fg/owner"
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
 	ddlPrompt          = "ddl"
-
-	shardRowIDBitsMax = 15
 
 	batchAddingJobs = 100
 
@@ -157,6 +155,9 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = uint32(0)
+	// GetPumpClient is used to get the pump client.
+	// It's exported for testing.
+	GetPumpClient = binloginfo.GetPumpsClient
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -180,8 +181,6 @@ type DDL interface {
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
 	GetID() string
-	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
-	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
 }
@@ -202,6 +201,7 @@ type JobWrapper struct {
 	// IDAllocated see config of same name in CreateTableConfig.
 	// exported for test.
 	IDAllocated bool
+	JobArgs     model.JobArgs
 	// job submission is run in async, we use this channel to notify the caller.
 	// when fast create table enabled, we might combine multiple jobs into one, and
 	// append the channel to this slice.
@@ -215,6 +215,17 @@ func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {
 	return &JobWrapper{
 		Job:         job,
 		IDAllocated: idAllocated,
+		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
+	}
+}
+
+// NewJobWrapperWithArgs creates a new JobWrapper with job args.
+// TODO: merge with NewJobWrapper later.
+func NewJobWrapperWithArgs(job *model.Job, args model.JobArgs, idAllocated bool) *JobWrapper {
+	return &JobWrapper{
+		Job:         job,
+		IDAllocated: idAllocated,
+		JobArgs:     args,
 		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
 	}
 }
@@ -233,22 +244,18 @@ func (t *JobWrapper) NotifyResult(err error) {
 
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m          sync.RWMutex
-	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
-	limitJobCh chan *JobWrapper
+	m  sync.RWMutex
+	wg tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 
 	*ddlCtx
 	sessPool          *sess.Pool
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
-	// get notification if any DDL job submitted or finished.
-	ddlJobNotifyCh    chan struct{}
 	sysTblMgr         systable.Manager
 	minJobIDRefresher *systable.MinJobIDRefresher
 
-	// globalIDLock locks global id to reduce write conflict.
-	globalIDLock sync.Mutex
 	executor     *executor
+	jobSubmitter *JobSubmitter
 }
 
 // unSyncedJobTracker is to track whether changes of a DDL job are synced to all
@@ -315,18 +322,16 @@ type ddlCtx struct {
 	ownerManager      owner.Manager
 	schemaVerSyncer   schemaver.Syncer
 	serverStateSyncer serverstate.Syncer
-	// ddlJobDoneChMap is used to notify the session that the DDL job is finished.
-	// jobID -> chan struct{}
-	ddlJobDoneChMap generic.SyncMap[int64, chan struct{}]
-	ddlEventCh      chan<- *statsutil.DDLEvent
-	lease           time.Duration        // lease is schema lease, default 45s, see config.Lease.
-	binlogCli       *pumpcli.PumpsClient // binlogCli is used for Binlog.
-	infoCache       *infoschema.InfoCache
-	statsHandle     *handle.Handle
-	tableLockCkr    util.DeadTableLockChecker
-	etcdCli         *clientv3.Client
-	autoidCli       *autoid.ClientDiscover
-	schemaLoader    SchemaLoader
+
+	ddlEventCh   chan<- *notifier.SchemaChangeEvent
+	lease        time.Duration        // lease is schema lease, default 45s, see config.Lease.
+	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	infoCache    *infoschema.InfoCache
+	statsHandle  *handle.Handle
+	tableLockCkr util.DeadTableLockChecker
+	etcdCli      *clientv3.Client
+	autoidCli    *autoid.ClientDiscover
+	schemaLoader SchemaLoader
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
@@ -431,7 +436,7 @@ func (dc *ddlCtx) setDDLSourceForDiagnosis(jobID int64, jobType model.ActionType
 	ctx.setDDLLabelForDiagnosis(jobType)
 }
 
-func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) tikvrpc.ResourceGroupTagger {
+func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) *kv.ResourceGroupTagBuilder {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
@@ -530,14 +535,6 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 	rc.notifyJobState(job.State)
 }
 
-func (dc *ddlCtx) notifyJobDone(jobID int64) {
-	if ch, ok := dc.ddlJobDoneChMap.Delete(jobID); ok {
-		// broadcast done event as we might merge multiple jobs into one when fast
-		// create table is enabled.
-		close(ch)
-	}
-}
-
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
 func EnableTiFlashPoll(d any) {
 	if dd, ok := d.(*ddl); ok {
@@ -568,7 +565,14 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *statsutil.DDLEvent) {
+func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job) {
+	// skip notify for system databases, system databases are expected to change at
+	// bootstrap and other nodes can also handle the changing in its bootstrap rather
+	// than be notified.
+	if tidbutil.IsMemOrSysDB(job.SchemaName) {
+		return
+	}
+
 	ch := jobCtx.oldDDLCtx.ddlEventCh
 	if ch != nil {
 		for i := 0; i < 10; i++ {
@@ -626,11 +630,10 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		uuid:              id,
 		store:             opt.Store,
 		lease:             opt.Lease,
-		ddlJobDoneChMap:   generic.NewSyncMap[int64, chan struct{}](10),
 		ownerManager:      manager,
 		schemaVerSyncer:   schemaVerSyncer,
 		serverStateSyncer: serverStateSyncer,
-		binlogCli:         binloginfo.GetPumpsClient(),
+		binlogCli:         GetPumpClient(),
 		infoCache:         opt.InfoCache,
 		tableLockCkr:      deadLockCkr,
 		etcdCli:           opt.EtcdCli,
@@ -644,9 +647,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
-		limitJobCh:        make(chan *JobWrapper, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
-		ddlJobNotifyCh:    make(chan struct{}, 100),
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
@@ -665,20 +666,31 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	variable.DisableDDL = d.DisableDDL
 	variable.SwitchMDL = d.SwitchMDL
 
+	ddlJobDoneChMap := generic.NewSyncMap[int64, chan struct{}](10)
+	limitJobCh := make(chan *JobWrapper, batchAddingJobs)
+
+	submitter := &JobSubmitter{
+		ctx:               d.ctx,
+		etcdCli:           d.etcdCli,
+		ownerManager:      d.ownerManager,
+		store:             d.store,
+		serverStateSyncer: d.serverStateSyncer,
+		ddlJobDoneChMap:   &ddlJobDoneChMap,
+
+		limitJobCh:     limitJobCh,
+		ddlJobNotifyCh: make(chan struct{}, 100),
+	}
+	d.jobSubmitter = submitter
+
 	e := &executor{
 		ctx:             d.ctx,
 		uuid:            d.uuid,
 		store:           d.store,
-		etcdCli:         d.etcdCli,
 		autoidCli:       d.autoidCli,
 		infoCache:       d.infoCache,
-		limitJobCh:      d.limitJobCh,
-		schemaLoader:    d.schemaLoader,
+		limitJobCh:      limitJobCh,
 		lease:           d.lease,
-		ownerManager:    d.ownerManager,
-		ddlJobDoneChMap: &d.ddlJobDoneChMap,
-		ddlJobNotifyCh:  d.ddlJobNotifyCh,
-		globalIDLock:    &d.globalIDLock,
+		ddlJobDoneChMap: &ddlJobDoneChMap,
 	}
 	d.executor = e
 
@@ -710,14 +722,30 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
-	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
+	// if we are running in test, random choose a job version to run with.
+	// TODO add a separate CI flow to run with different job version, so we can cover
+	// more cases in a single run.
+	if intest.InTest || config.GetGlobalConfig().Store == "unistore" {
+		jobVer := model.JobVersion1
+		// 50% percent to use JobVersion2 in test.
+		rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+		if rnd.Intn(2) == 0 {
+			jobVer = model.JobVersion2
+		}
+		model.SetJobVerInUse(jobVer)
+	}
+	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid),
+		zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()),
+		zap.Stringer("jobVersion", model.GetJobVerInUse()))
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
-	d.executor.sessPool = d.sessPool
+	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool
 	d.sysTblMgr = systable.NewManager(d.sessPool)
 	d.minJobIDRefresher = systable.NewMinJobIDRefresher(d.sysTblMgr)
+	d.jobSubmitter.sysTblMgr = d.sysTblMgr
+	d.jobSubmitter.minJobIDRefresher = d.minJobIDRefresher
 	d.wg.Run(func() {
-		d.limitDDLJobs()
+		d.jobSubmitter.submitLoop()
 	})
 	d.wg.Run(func() {
 		d.minJobIDRefresher.Start(d.ctx)
@@ -730,7 +758,9 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		return errors.Trace(err)
 	}
 	d.ownerManager.SetListener(&ownerListener{
-		ddl: d,
+		ddl:          d,
+		jobSubmitter: d.jobSubmitter,
+		ddlExecutor:  d.executor,
 	})
 
 	if config.TableLockEnabled() {
@@ -859,11 +889,6 @@ func (d *ddl) OwnerManager() owner.Manager {
 // GetID implements DDL.GetID interface.
 func (d *ddl) GetID() string {
 	return d.uuid
-}
-
-// SetBinlogClient implements DDL.SetBinlogClient interface.
-func (d *ddl) SetBinlogClient(binlogCli *pumpcli.PumpsClient) {
-	d.binlogCli = binlogCli
 }
 
 func (d *ddl) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
@@ -995,7 +1020,7 @@ type RecoverSchemaInfo struct {
 	LoadTablesOnExecute bool
 	DropJobID           int64
 	SnapshotTS          uint64
-	OldSchemaName       model.CIStr
+	OldSchemaName       pmodel.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.

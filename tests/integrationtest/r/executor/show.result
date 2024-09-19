@@ -145,9 +145,6 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
-show histograms_in_flight;
-HistogramsInFlight
-0
 show open tables;
 Database	Table	In_use	Name_locked
 show open tables in executor__show;
@@ -842,8 +839,11 @@ tidb_decode_binary_plan
 tidb_decode_key
 tidb_decode_plan
 tidb_decode_sql_digests
+tidb_encode_index_key
+tidb_encode_record_key
 tidb_encode_sql_digest
 tidb_is_ddl_owner
+tidb_mvcc_info
 tidb_parse_tso
 tidb_parse_tso_logical
 tidb_row_checksum
@@ -877,6 +877,14 @@ uuid
 uuid_short
 uuid_to_bin
 validate_password_strength
+vec_as_text
+vec_cosine_distance
+vec_dims
+vec_from_text
+vec_l1_distance
+vec_l2_distance
+vec_l2_norm
+vec_negative_inner_product
 version
 vitess_hash
 week

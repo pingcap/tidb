@@ -25,22 +25,23 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -131,12 +132,8 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		addColumnEvent := statsutil.NewAddColumnEvent(
-			job.SchemaID,
-			tblInfo,
-			[]*model.ColumnInfo{columnInfo},
-		)
-		asyncNotifyEvent(jobCtx, addColumnEvent)
+		addColumnEvent := notifier.NewAddColumnEvent(tblInfo, []*model.ColumnInfo{columnInfo})
+		asyncNotifyEvent(jobCtx, addColumnEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
 	}
@@ -542,7 +539,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				}
 				col.GeneratedExprString = sb.String()
 				col.GeneratedStored = v.Stored
-				_, dependColNames, err := findDependedColumnNames(model.NewCIStr(""), model.NewCIStr(""), colDef)
+				_, dependColNames, err := findDependedColumnNames(pmodel.NewCIStr(""), pmodel.NewCIStr(""), colDef)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -819,7 +816,7 @@ func getDefaultValue(ctx exprctx.BuildContext, col *table.Column, option *ast.Co
 	}
 
 	if v.Kind() == types.KindBinaryLiteral || v.Kind() == types.KindMysqlBit {
-		if types.IsTypeBlob(tp) || tp == mysql.TypeJSON {
+		if types.IsTypeBlob(tp) || tp == mysql.TypeJSON || tp == mysql.TypeTiDBVectorFloat32 {
 			// BLOB/TEXT/JSON column cannot have a default value.
 			// Skip the unnecessary decode procedure.
 			return v.GetString(), false, err

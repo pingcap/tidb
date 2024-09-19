@@ -320,6 +320,7 @@ import (
 	algorithm             "ALGORITHM"
 	always                "ALWAYS"
 	any                   "ANY"
+	apply                 "APPLY"
 	ascii                 "ASCII"
 	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
@@ -561,6 +562,7 @@ import (
 	quick                 "QUICK"
 	rateLimit             "RATE_LIMIT"
 	rebuild               "REBUILD"
+	recommend             "RECOMMEND"
 	recover               "RECOVER"
 	redundant             "REDUNDANT"
 	reload                "RELOAD"
@@ -781,6 +783,7 @@ import (
 	substring             "SUBSTRING"
 	sum                   "SUM"
 	survivalPreferences   "SURVIVAL_PREFERENCES"
+	switchGroup           "SWITCH_GROUP"
 	target                "TARGET"
 	taskTypes             "TASK_TYPES"
 	tidbJson              "TIDB_JSON"
@@ -1010,7 +1013,6 @@ import (
 	GrantRoleStmt              "Grant role statement"
 	InsertIntoStmt             "INSERT INTO statement"
 	CallStmt                   "CALL statement"
-	IndexAdviseStmt            "INDEX ADVISE statement"
 	ImportIntoStmt             "IMPORT INTO statement"
 	ImportFromSelectStmt       "SELECT statement of IMPORT INTO"
 	KillStmt                   "Kill statement"
@@ -1055,6 +1057,7 @@ import (
 	UseStmt                    "USE statement"
 	ShutdownStmt               "SHUTDOWN statement"
 	RestartStmt                "RESTART statement"
+	RecommendIndexStmt         "RECOMMEND INDEX statement"
 	CreateViewSelectOpt        "Select/Union/Except/Intersect statement in CREATE VIEW ... AS SELECT"
 	BindableStmt               "Statement that can be created binding on"
 	UpdateStmtNoWith           "Update statement without CTE clause"
@@ -1466,10 +1469,6 @@ import (
 	EnforcedOrNotOrNotNullOpt              "{[ENFORCED|NOT ENFORCED|NOT NULL]}"
 	Match                                  "[MATCH FULL | MATCH PARTIAL | MATCH SIMPLE]"
 	MatchOpt                               "optional MATCH clause"
-	MaxMinutesOpt                          "MAX_MINUTES num(int)"
-	MaxIndexNumOpt                         "MAX_IDXNUM clause"
-	PerTable                               "Max index number PER_TABLE"
-	PerDB                                  "Max index number PER_DB"
 	BRIETables                             "List of tables or databases for BRIE statements"
 	DBNameList                             "List of database names"
 	BRIEOption                             "Single BRIE option"
@@ -1824,6 +1823,13 @@ ResourceGroupRunawayActionOption:
 	{
 		$$ = &ast.ResourceGroupRunawayActionOption{Type: model.RunawayActionKill}
 	}
+|	"SWITCH_GROUP" '(' ResourceGroupName ')'
+	{
+		$$ = &ast.ResourceGroupRunawayActionOption{
+			Type:            model.RunawayActionSwitchGroup,
+			SwitchGroupName: model.NewCIStr($3),
+		}
+	}
 
 DirectResourceGroupRunawayOption:
 	"EXEC_ELAPSED" EqOpt stringLit
@@ -1834,7 +1840,7 @@ DirectResourceGroupRunawayOption:
 			return 1
 		}
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp: ast.RunawayRule,
+			Tp: model.RunawayRule,
 			RuleOption: &ast.ResourceGroupRunawayRuleOption{
 				ExecElapsed: $3,
 			},
@@ -1843,7 +1849,7 @@ DirectResourceGroupRunawayOption:
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
 	{
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp:           ast.RunawayAction,
+			Tp:           model.RunawayAction,
 			ActionOption: $3.(*ast.ResourceGroupRunawayActionOption),
 		}
 	}
@@ -1861,7 +1867,7 @@ DirectResourceGroupRunawayOption:
 			}
 		}
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp: ast.RunawayWatch,
+			Tp: model.RunawayWatch,
 			WatchOption: &ast.ResourceGroupRunawayWatchOption{
 				Type:     $3.(model.RunawayWatchType),
 				Duration: dur,
@@ -5002,8 +5008,8 @@ CreateViewStmt:
 	"CREATE" OrReplace ViewAlgorithm ViewDefiner ViewSQLSecurity "VIEW" ViewName ViewFieldList "AS" CreateViewSelectOpt ViewCheckOption
 	{
 		startOffset := parser.startOffset(&yyS[yypt-1])
+		endOffset := parser.yylval.offset
 		selStmt := $10.(ast.StmtNode)
-		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 		x := &ast.CreateViewStmt{
 			OrReplace: $2.(bool),
 			ViewName:  $7.(*ast.TableName),
@@ -5017,11 +5023,11 @@ CreateViewStmt:
 		}
 		if $11 != nil {
 			x.CheckOption = $11.(model.ViewCheckOption)
-			endOffset := parser.startOffset(&yyS[yypt])
-			selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+			endOffset = parser.startOffset(&yyS[yypt])
 		} else {
 			x.CheckOption = model.CheckOptionCascaded
 		}
+		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 		$$ = x
 	}
 
@@ -6680,6 +6686,7 @@ UnReservedKeyword:
 	"ACTION"
 |	"ADVISE"
 |	"ASCII"
+|	"APPLY"
 |	"ATTRIBUTE"
 |	"ATTRIBUTES"
 |	"BINDING_CACHE"
@@ -6762,6 +6769,7 @@ UnReservedKeyword:
 |	"PROXY"
 |	"QUICK"
 |	"REBUILD"
+|	"RECOMMEND"
 |	"REDUNDANT"
 |	"REORGANIZE"
 |	"RESOURCE"
@@ -7214,6 +7222,7 @@ NotKeywordToken:
 |	"EXEC_ELAPSED"
 |	"DRYRUN"
 |	"COOLDOWN"
+|	"SWITCH_GROUP"
 |	"WATCH"
 |	"SIMILAR"
 |	"QUERY_LIMIT"
@@ -12193,7 +12202,6 @@ Statement:
 |	CallStmt
 |	ImportIntoStmt
 |	InsertIntoStmt
-|	IndexAdviseStmt
 |	KillStmt
 |	LoadDataStmt
 |	LoadStatsStmt
@@ -12240,6 +12248,7 @@ Statement:
 |	LockTablesStmt
 |	ShutdownStmt
 |	RestartStmt
+|	RecommendIndexStmt
 |	HelpStmt
 |	NonTransactionalDMLStmt
 |	OptimizeTableStmt
@@ -14033,7 +14042,7 @@ CreateBindingStmt:
 	{
 		x := &ast.CreateBindingStmt{
 			GlobalScope: $2.(bool),
-			PlanDigests:  $9.([]*ast.StringOrUserVar),
+			PlanDigests: $9.([]*ast.StringOrUserVar),
 		}
 
 		$$ = x
@@ -14147,6 +14156,61 @@ SetBindingStmt:
 		x := &ast.SetBindingStmt{
 			BindingStatusType: $3.(ast.BindingStatusType),
 			SQLDigest:         $7,
+		}
+
+		$$ = x
+	}
+
+RecommendIndexStmt:
+	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "run",
+			SQL:    $5,
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "RUN"
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "run",
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "SHOW"
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "show",
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "APPLY" NUM
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "apply",
+			ID:     $4.(int64),
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "IGNORE" NUM
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "ignore",
+			ID:     $4.(int64),
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "SET" Identifier "=" Literal
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "set",
+			Option: $4,
+			Value:  ast.NewValueExpr($6, parser.charset, parser.collation),
 		}
 
 		$$ = x
@@ -15353,80 +15417,6 @@ AlterSequenceOption:
 |	"RESTART" "WITH" SignedNum
 	{
 		$$ = &ast.SequenceOption{Tp: ast.SequenceRestartWith, IntValue: $3.(int64)}
-	}
-
-/********************************************************************
- * Index Advisor Statement
- *
- * INDEX ADVISE
- * 	[LOCAL]
- *	INFILE 'file_name'
- *	[MAX_MINUTES number]
- *	[MAX_IDXNUM
- *  	[PER_TABLE number]
- *  	[PER_DB number]
- *	]
- *	[LINES
- *  	[STARTING BY 'string']
- *  	[TERMINATED BY 'string']
- *	]
- *******************************************************************/
-IndexAdviseStmt:
-	"INDEX" "ADVISE" LocalOpt "INFILE" stringLit MaxMinutesOpt MaxIndexNumOpt Lines
-	{
-		x := &ast.IndexAdviseStmt{
-			Path:       $5,
-			MaxMinutes: $6.(uint64),
-		}
-		if $3 != nil {
-			x.IsLocal = true
-		}
-		if $7 != nil {
-			x.MaxIndexNum = $7.(*ast.MaxIndexNumClause)
-		}
-		if $8 != nil {
-			x.LinesInfo = $8.(*ast.LinesClause)
-		}
-		$$ = x
-	}
-
-MaxMinutesOpt:
-	{
-		$$ = uint64(ast.UnspecifiedSize)
-	}
-|	"MAX_MINUTES" NUM
-	{
-		$$ = getUint64FromNUM($2)
-	}
-
-MaxIndexNumOpt:
-	{
-		$$ = nil
-	}
-|	"MAX_IDXNUM" PerTable PerDB
-	{
-		$$ = &ast.MaxIndexNumClause{
-			PerTable: $2.(uint64),
-			PerDB:    $3.(uint64),
-		}
-	}
-
-PerTable:
-	{
-		$$ = uint64(ast.UnspecifiedSize)
-	}
-|	"PER_TABLE" NUM
-	{
-		$$ = getUint64FromNUM($2)
-	}
-
-PerDB:
-	{
-		$$ = uint64(ast.UnspecifiedSize)
-	}
-|	"PER_DB" NUM
-	{
-		$$ = getUint64FromNUM($2)
 	}
 
 EncryptionOpt:

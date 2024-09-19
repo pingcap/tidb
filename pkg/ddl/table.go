@@ -26,22 +26,23 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	tidb_util "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"go.uber.org/zap"
@@ -122,11 +123,8 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver in
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
-			dropTableEvent := statsutil.NewDropTableEvent(
-				job.SchemaID,
-				tblInfo,
-			)
-			asyncNotifyEvent(jobCtx, dropTableEvent)
+			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
+			asyncNotifyEvent(jobCtx, dropTableEvent, job)
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
@@ -425,11 +423,7 @@ func getTableInfo(t *meta.Meta, tableID, schemaID int64) (*model.TableInfo, erro
 // A background job will be created to delete old data.
 func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
-	tableID := job.TableID
-	var newTableID int64
-	var fkCheck bool
-	var newPartitionIDs []int64
-	err := job.DecodeArgs(&newTableID, &fkCheck, &newPartitionIDs)
+	args, err := model.GetTruncateTableArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -444,7 +438,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 	}
 	// Copy the old tableInfo for later usage.
 	oldTblInfo := tblInfo.Clone()
-	err = checkTruncateTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job, tblInfo, fkCheck)
+	err = checkTruncateTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job, tblInfo, args.FKCheck)
 	if err != nil {
 		return ver, err
 	}
@@ -473,11 +467,14 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		}
 	}
 
-	var oldPartitionIDs []int64
+	var (
+		oldPartitionIDs []int64
+		newPartitionIDs = args.NewPartitionIDs
+	)
 	if tblInfo.GetPartitionInfo() != nil {
 		oldPartitionIDs = getPartitionIDs(tblInfo)
 		// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
-		err = truncateTableByReassignPartitionIDs(t, tblInfo, newPartitionIDs)
+		newPartitionIDs, err = truncateTableByReassignPartitionIDs(t, tblInfo, newPartitionIDs)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -495,7 +492,12 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 				newIDs = append(newIDs, newID)
 			}
 		}
-		job.CtxVars = []any{oldIDs, newIDs}
+		if job.Version == model.JobVersion1 {
+			job.CtxVars = []any{oldIDs, newIDs}
+		} else {
+			args.OldPartIDsWithPolicy = oldIDs
+			args.NewPartIDsWithPolicy = newIDs
+		}
 	}
 
 	tableRuleID, partRuleIDs, _, oldRules, err := getOldLabelRules(tblInfo, job.SchemaName, tblInfo.Name.L)
@@ -504,7 +506,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		return 0, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 
-	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, []string{}, newTableID)
+	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, []string{}, args.NewTableID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to update the label rule to PD")
@@ -520,7 +522,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 				return ver, errors.Trace(e)
 			}
 		} else {
-			if e := infosync.ConfigureTiFlashPDForTable(newTableID, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
+			if e := infosync.ConfigureTiFlashPDForTable(args.NewTableID, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
 				logutil.DDLLogger().Error("ConfigureTiFlashPDForTable fails", zap.Error(err))
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(e)
@@ -530,7 +532,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		tblInfo.TiFlashReplica.Available = false
 	}
 
-	tblInfo.ID = newTableID
+	tblInfo.ID = args.NewTableID
 
 	// build table & partition bundles if any.
 	bundles, err := placement.NewFullTableBundles(t, tblInfo)
@@ -568,14 +570,12 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	truncateTableEvent := statsutil.NewTruncateTableEvent(
-		job.SchemaID,
-		tblInfo,
-		oldTblInfo,
-	)
-	asyncNotifyEvent(jobCtx, truncateTableEvent)
-	startKey := tablecodec.EncodeTablePrefix(tableID)
-	job.Args = []any{startKey, oldPartitionIDs}
+	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
+	asyncNotifyEvent(jobCtx, truncateTableEvent, job)
+	// see truncateTableByReassignPartitionIDs for why they might change.
+	args.OldPartitionIDs = oldPartitionIDs
+	args.NewPartitionIDs = newPartitionIDs
+	job.FillFinishedArgs(args)
 	return ver, nil
 }
 
@@ -668,7 +668,7 @@ func onModifyTableAutoIDCache(jobCtx *jobContext, t *meta.Meta, job *model.Job) 
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo.AutoIdCache = cache
+	tblInfo.AutoIDCache = cache
 	ver, err := updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -735,20 +735,19 @@ func verifyNoOverflowShardBits(s *sess.Pool, tbl table.Table, shardRowIDBits uin
 }
 
 func onRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var oldSchemaID int64
-	var oldSchemaName model.CIStr
-	var tableName model.CIStr
-	if err := job.DecodeArgs(&oldSchemaID, &tableName, &oldSchemaName); err != nil {
+	args, err := model.GetRenameTableArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
+	oldSchemaID, oldSchemaName, tableName := args.OldSchemaID, args.OldSchemaName, args.NewTableName
 	if job.SchemaState == model.StatePublic {
 		return finishJobRenameTable(jobCtx, t, job)
 	}
 	newSchemaID := job.SchemaID
-	err := checkTableNotExists(jobCtx.infoCache, newSchemaID, tableName.L)
+	err = checkTableNotExists(jobCtx.infoCache, newSchemaID, tableName.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -766,7 +765,8 @@ func onRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 	fkh := newForeignKeyHelper()
-	err = adjustForeignKeyChildTableInfoAfterRenameTable(jobCtx.infoCache, t, job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
+	err = adjustForeignKeyChildTableInfoAfterRenameTable(jobCtx.infoCache, t,
+		job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -781,10 +781,10 @@ func onRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 func onRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	oldSchemaIDs := []int64{}
 	newSchemaIDs := []int64{}
-	tableNames := []*model.CIStr{}
+	tableNames := []*pmodel.CIStr{}
 	tableIDs := []int64{}
-	oldSchemaNames := []*model.CIStr{}
-	oldTableNames := []*model.CIStr{}
+	oldSchemaNames := []*pmodel.CIStr{}
+	oldTableNames := []*pmodel.CIStr{}
 	if err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames, &oldTableNames); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -821,7 +821,7 @@ func onRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64
 	return ver, nil
 }
 
-func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldSchemaID, newSchemaID int64, oldSchemaName, tableName *model.CIStr) (ver int64, _ error) {
+func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldSchemaID, newSchemaID int64, oldSchemaName, tableName *pmodel.CIStr) (ver int64, _ error) {
 	err := t.DropTableOrView(oldSchemaID, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -872,7 +872,7 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 	return ver, nil
 }
 
-func adjustForeignKeyChildTableInfoAfterRenameTable(infoCache *infoschema.InfoCache, t *meta.Meta, job *model.Job, fkh *foreignKeyHelper, tblInfo *model.TableInfo, oldSchemaName, oldTableName, newTableName model.CIStr, newSchemaID int64) error {
+func adjustForeignKeyChildTableInfoAfterRenameTable(infoCache *infoschema.InfoCache, t *meta.Meta, job *model.Job, fkh *foreignKeyHelper, tblInfo *model.TableInfo, oldSchemaName, oldTableName, newTableName pmodel.CIStr, newSchemaID int64) error {
 	if !variable.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
 		return nil
 	}
@@ -931,11 +931,10 @@ func finishJobRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int
 	// the table info can be dropped normally in `ApplyDiff`. This is because renaming table requires two
 	// schema versions to complete.
 	oldRawArgs := job.RawArgs
-	job.Args[0] = job.SchemaID
-	job.RawArgs, err = json.Marshal(job.Args)
-	if err != nil {
+	if err = model.UpdateRenameTableArgs(job); err != nil {
 		return 0, errors.Trace(err)
 	}
+
 	ver, err := updateSchemaVersion(jobCtx, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -946,7 +945,7 @@ func finishJobRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int
 }
 
 func finishJobRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job,
-	tableNames []*model.CIStr, tableIDs, newSchemaIDs []int64) (int64, error) {
+	tableNames []*pmodel.CIStr, tableIDs, newSchemaIDs []int64) (int64, error) {
 	tblSchemaIDs := make(map[int64]int64, len(tableIDs))
 	for i := range tableIDs {
 		tblSchemaIDs[tableIDs[i]] = newSchemaIDs[i]
@@ -1073,7 +1072,7 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, t *meta.Meta, job *m
 	}
 
 	// Ban setting replica count for tables in system database.
-	if tidb_util.IsMemOrSysDB(job.SchemaName) {
+	if tidbutil.IsMemOrSysDB(job.SchemaName) {
 		return ver, errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
@@ -1260,7 +1259,7 @@ func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64,
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 	}
-	if is.TableExists(schema.Name, model.NewCIStr(tableName)) {
+	if is.TableExists(schema.Name, pmodel.NewCIStr(tableName)) {
 		return infoschema.ErrTableExists.GenWithStackByArgs(tableName)
 	}
 	return nil

@@ -42,18 +42,20 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	parserformat "github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/tidb"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
@@ -93,12 +95,12 @@ type ShowExec struct {
 	exec.BaseExecutor
 
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName            model.CIStr
-	Table             *ast.TableName       // Used for showing columns.
-	Partition         model.CIStr          // Used for showing partition
+	DBName            pmodel.CIStr
+	Table             *resolve.TableNameW  // Used for showing columns.
+	Partition         pmodel.CIStr         // Used for showing partition
 	Column            *ast.ColumnName      // Used for `desc table column`.
-	IndexName         model.CIStr          // Used for show table regions.
-	ResourceGroupName model.CIStr          // Used for showing resource group
+	IndexName         pmodel.CIStr         // Used for show table regions.
+	ResourceGroupName pmodel.CIStr         // Used for showing resource group
 	Flag              int                  // Some flag parsed from sql, such as FULL.
 	Roles             []*auth.RoleIdentity // Used for show grants.
 	User              *auth.UserIdentity   // Used by show grants, show create user.
@@ -307,7 +309,7 @@ func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if schema == "" {
 			schema = v.defaultDB
 		}
-		if !v.is.TableExists(model.NewCIStr(schema), x.Name) {
+		if !v.is.TableExists(pmodel.NewCIStr(schema), x.Name) {
 			return in, true
 		}
 		activeRoles := v.ctx.GetSessionVars().ActiveRoles
@@ -496,7 +498,7 @@ func (*ShowExec) fetchShowOpenTables() error {
 
 // showInfo represents the result of `SHOW TABLES`.
 type showInfo struct {
-	Name model.CIStr
+	Name pmodel.CIStr
 	// only used for show full tables
 	TableType string
 }
@@ -517,13 +519,16 @@ func (e *ShowExec) getTableType(tb *model.TableInfo) string {
 
 // fetchShowInfoByName fetches the show info for `SHOW <FULL> TABLES like 'xxx'`
 func (e *ShowExec) fetchShowInfoByName(ctx context.Context, name string) ([]*showInfo, error) {
-	tb, err := e.is.TableByName(ctx, e.DBName, model.NewCIStr(name))
+	tb, err := e.is.TableByName(ctx, e.DBName, pmodel.NewCIStr(name))
 	if err != nil {
 		// do nothing if table not exists
 		if infoschema.ErrTableNotExists.Equal(err) {
 			return nil, nil
 		}
 		return nil, errors.Trace(err)
+	}
+	if tb.Meta().TempTableType == model.TempTableLocal {
+		return nil, nil
 	}
 	return []*showInfo{{Name: tb.Meta().Name, TableType: e.getTableType(tb.Meta())}}, nil
 }
@@ -1026,7 +1031,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	return constructResultOfShowCreateTable(ctx, nil, tableInfo, allocators, buf)
 }
 
-func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
+func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
@@ -1230,7 +1235,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		if idxInfo.Comment != "" {
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
-		if idxInfo.Tp == model.IndexTypeHypo {
+		if idxInfo.Tp == pmodel.IndexTypeHypo {
 			fmt.Fprintf(buf, ` /* HYPO INDEX */`)
 		}
 		if idxInfo.Primary {
@@ -1267,11 +1272,11 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
 		}
 		fmt.Fprintf(buf, "(%s)", strings.Join(refColNames, ","))
-		if model.ReferOptionType(fk.OnDelete) != 0 {
-			fmt.Fprintf(buf, " ON DELETE %s", model.ReferOptionType(fk.OnDelete).String())
+		if pmodel.ReferOptionType(fk.OnDelete) != 0 {
+			fmt.Fprintf(buf, " ON DELETE %s", pmodel.ReferOptionType(fk.OnDelete).String())
 		}
-		if model.ReferOptionType(fk.OnUpdate) != 0 {
-			fmt.Fprintf(buf, " ON UPDATE %s", model.ReferOptionType(fk.OnUpdate).String())
+		if pmodel.ReferOptionType(fk.OnUpdate) != 0 {
+			fmt.Fprintf(buf, " ON UPDATE %s", pmodel.ReferOptionType(fk.OnUpdate).String())
 		}
 		if fk.Version < model.FKVersion1 {
 			buf.WriteString(" /* FOREIGN KEY INVALID */")
@@ -1329,8 +1334,8 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		}
 	}
 
-	if tableInfo.AutoIdCache != 0 {
-		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIdCache)
+	if tableInfo.AutoIDCache != 0 {
+		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIDCache)
 	}
 
 	randomAllocator := allocators.Get(autoid.AutoRandomType)
@@ -2080,6 +2085,8 @@ func (e *ShowExec) appendRow(row []any) {
 			e.result.AppendTime(i, x)
 		case types.BinaryJSON:
 			e.result.AppendJSON(i, x)
+		case types.VectorFloat32:
+			e.result.AppendVectorFloat32(i, x)
 		case types.Duration:
 			e.result.AppendDuration(i, x)
 		case types.Enum:
@@ -2417,7 +2424,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 // tryFillViewColumnType fill the columns type info of a view.
 // Because view's underlying table's column could change or recreate, so view's column type may change over time.
 // To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName model.CIStr, tbl *model.TableInfo) error {
+func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName pmodel.CIStr, tbl *model.TableInfo) error {
 	if !tbl.IsView() {
 		return nil
 	}

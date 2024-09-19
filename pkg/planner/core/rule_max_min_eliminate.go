@@ -21,8 +21,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -217,7 +217,7 @@ func (*MaxMinEliminator) eliminateSingleMaxMin(agg *logicalop.LogicalAggregation
 // eliminateMaxMin tries to convert max/min to Limit+Sort operators.
 func (a *MaxMinEliminator) eliminateMaxMin(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	// CTE's logical optimization is indenpent.
-	if _, ok := p.(*LogicalCTE); ok {
+	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p
 	}
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))

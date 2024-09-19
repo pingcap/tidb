@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -97,6 +98,8 @@ select * from t_slim;
 # Resource_group: rg1
 # Request_unit_read: 96.66703066666668
 # Request_unit_write: 3182.424414062492
+# Tidb_cpu_time: 0.01
+# Tikv_cpu_time: 0.021
 INSERT INTO ...;
 `)
 	require.NoError(t, f.Close())
@@ -152,7 +155,7 @@ func MockDBInfo(t testing.TB, store kv.Storage, DBName string) *model.DBInfo {
 	require.NoError(t, err)
 	dbInfo := &model.DBInfo{
 		ID:    id,
-		Name:  model.NewCIStr(DBName),
+		Name:  pmodel.NewCIStr(DBName),
 		State: model.StatePublic,
 	}
 	dbInfo.Deprecated.Tables = []*model.TableInfo{}
@@ -165,7 +168,7 @@ func MockTableInfo(t testing.TB, store kv.Storage, tblName string) *model.TableI
 	require.NoError(t, err)
 	colInfo := &model.ColumnInfo{
 		ID:        colID,
-		Name:      model.NewCIStr("a"),
+		Name:      pmodel.NewCIStr("a"),
 		Offset:    0,
 		FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		State:     model.StatePublic,
@@ -176,7 +179,7 @@ func MockTableInfo(t testing.TB, store kv.Storage, tblName string) *model.TableI
 
 	return &model.TableInfo{
 		ID:      tblID,
-		Name:    model.NewCIStr(tblName),
+		Name:    pmodel.NewCIStr(tblName),
 		Columns: []*model.ColumnInfo{colInfo},
 		State:   model.StatePublic,
 	}
@@ -195,7 +198,7 @@ func MockResourceGroupInfo(t *testing.T, store kv.Storage, groupName string) *mo
 	require.NoError(t, err)
 	return &model.ResourceGroupInfo{
 		ID:   id,
-		Name: model.NewCIStr(groupName),
+		Name: pmodel.NewCIStr(groupName),
 	}
 }
 
@@ -205,7 +208,7 @@ func MockPolicyInfo(t *testing.T, store kv.Storage, policyName string) *model.Po
 	require.NoError(t, err)
 	return &model.PolicyInfo{
 		ID:   id,
-		Name: model.NewCIStr(policyName),
+		Name: pmodel.NewCIStr(policyName),
 	}
 }
 
@@ -215,7 +218,7 @@ func MockPolicyRefInfo(t *testing.T, store kv.Storage, policyName string) *model
 	require.NoError(t, err)
 	return &model.PolicyRefInfo{
 		ID:   id,
-		Name: model.NewCIStr(policyName),
+		Name: pmodel.NewCIStr(policyName),
 	}
 }
 

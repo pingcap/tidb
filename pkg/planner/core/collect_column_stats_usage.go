@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -293,7 +293,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			c.collectPredicateColumnsForUnionAll(x)
 		case *logicalop.LogicalPartitionUnionAll:
 			c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
-		case *LogicalCTE:
+		case *logicalop.LogicalCTE:
 			// Visit SeedPartLogicalPlan and RecursivePartLogicalPlan first.
 			c.collectFromPlan(x.Cte.SeedPartLogicalPlan)
 			if x.Cte.RecursivePartLogicalPlan != nil {

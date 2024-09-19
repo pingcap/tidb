@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -34,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
+
+var _ base.HashEquals = &ScalarFunction{}
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
@@ -107,6 +110,11 @@ func (sf *ScalarFunction) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, resul
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalJSON(ctx, input, result)
+}
+
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalVectorFloat32(ctx, input, result)
 }
 
 // GetArgs gets arguments of function.
@@ -456,6 +464,8 @@ func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, e
 		res, isNull, err = sf.EvalDuration(ctx, row)
 	case types.ETJson:
 		res, isNull, err = sf.EvalJSON(ctx, row)
+	case types.ETVectorFloat32:
+		res, isNull, err = sf.EvalVectorFloat32(ctx, row)
 	case types.ETString:
 		var str string
 		str, isNull, err = sf.EvalString(ctx, row)
@@ -537,6 +547,11 @@ func (sf *ScalarFunction) EvalJSON(ctx EvalContext, row chunk.Row) (types.Binary
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalJSON(ctx, row)
+}
+
+// EvalVectorFloat32 implements Expression interface.
+func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	return sf.Function.evalVectorFloat32(ctx, row)
 }
 
 // HashCode implements Expression interface.
@@ -659,6 +674,51 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 			sf.canonicalhashcode = append(sf.canonicalhashcode, byte(evalTp))
 		}
 	}
+}
+
+// Hash64 implements HashEquals.<0th> interface.
+func (sf *ScalarFunction) Hash64(h base.Hasher) {
+	h.HashByte(scalarFunctionFlag)
+	h.HashString(sf.FuncName.L)
+	if sf.RetType == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		sf.RetType.Hash64(h)
+	}
+	// hash the arg length to avoid hash collision.
+	h.HashInt(len(sf.GetArgs()))
+	for _, arg := range sf.GetArgs() {
+		arg.Hash64(h)
+	}
+}
+
+// Equals implements HashEquals.<1th> interface.
+func (sf *ScalarFunction) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var sf2 *ScalarFunction
+	switch x := other.(type) {
+	case *ScalarFunction:
+		sf2 = x
+	case ScalarFunction:
+		sf2 = &x
+	default:
+		return false
+	}
+	ok := sf.FuncName.L == sf2.FuncName.L
+	ok = ok && (sf.RetType == nil && sf2.RetType == nil || sf.RetType != nil && sf2.RetType != nil && sf.RetType.Equals(sf2.RetType))
+	if len(sf.GetArgs()) != len(sf2.GetArgs()) {
+		return false
+	}
+	for i, arg := range sf.GetArgs() {
+		ok = ok && arg.Equals(sf2.GetArgs()[i])
+		if !ok {
+			return false
+		}
+	}
+	return ok
 }
 
 // ReHashCode is used after we change the argument in place.
@@ -831,6 +891,16 @@ func (sf *ScalarFunction) Repertoire() Repertoire {
 // SetRepertoire sets a specified repertoire for this expression.
 func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
 	sf.Function.SetRepertoire(r)
+}
+
+// IsExplicitCharset return the charset is explicit set or not.
+func (sf *ScalarFunction) IsExplicitCharset() bool {
+	return sf.Function.IsExplicitCharset()
+}
+
+// SetExplicitCharset set the charset is explicit or not.
+func (sf *ScalarFunction) SetExplicitCharset(explicit bool) {
+	sf.Function.SetExplicitCharset(explicit)
 }
 
 const emptyScalarFunctionSize = int64(unsafe.Sizeof(ScalarFunction{}))

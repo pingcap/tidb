@@ -22,8 +22,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -821,9 +822,9 @@ func TestIssue29101(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use index-join
 		`StreamAgg_9 1.00 root  funcs:count(distinct test.stock.s_i_id)->Column#11`,
 		`└─IndexJoin_14 0.03 root  inner join, inner:IndexLookUp_13, outer key:test.order_line.ol_i_id, inner key:test.stock.s_i_id, equal cond:eq(test.order_line.ol_i_id, test.stock.s_i_id)`,
-		`  ├─IndexLookUp_28(Build) 0.03 root  `,
-		`  │ ├─IndexRangeScan_26(Build) 0.03 cop[tikv] table:order_line, index:PRIMARY(ol_w_id, ol_d_id, ol_o_id, ol_number) range:[391 1 3038,391 1 3058), keep order:false, stats:pseudo`,
-		`  │ └─TableRowIDScan_27(Probe) 0.03 cop[tikv] table:order_line keep order:false, stats:pseudo`,
+		`  ├─IndexLookUp_25(Build) 0.03 root  `,
+		`  │ ├─IndexRangeScan_23(Build) 0.03 cop[tikv] table:order_line, index:PRIMARY(ol_w_id, ol_d_id, ol_o_id, ol_number) range:[391 1 3038,391 1 3058), keep order:false, stats:pseudo`,
+		`  │ └─TableRowIDScan_24(Probe) 0.03 cop[tikv] table:order_line keep order:false, stats:pseudo`,
 		`  └─IndexLookUp_13(Probe) 0.03 root  `,
 		`    ├─IndexRangeScan_10(Build) 0.03 cop[tikv] table:stock, index:PRIMARY(s_w_id, s_i_id) range: decided by [eq(test.stock.s_i_id, test.order_line.ol_i_id) eq(test.stock.s_w_id, 391)], keep order:false, stats:pseudo`,
 		`    └─Selection_12(Probe) 0.03 cop[tikv]  lt(test.stock.s_quantity, 18)`,
@@ -1039,7 +1040,7 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 
 	// create virtual tiflash replica.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,

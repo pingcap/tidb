@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//pkg/infoschema/context",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/store/driver/error",
         "//pkg/tablecodec",
         "//pkg/util",
@@ -38,6 +38,7 @@ go_test(
     shard_count = 6,
     deps = [
         "//pkg/infoschema/context",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/store/mockstore",
         "//pkg/tablecodec",

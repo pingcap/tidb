@@ -18,7 +18,7 @@ import (
 	"context"
 
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
@@ -34,7 +34,7 @@ type SQLExecutor interface {
 		opts []sqlexec.OptionFuncAlias,
 		sql string,
 		args ...any,
-	) ([]chunk.Row, []*ast.ResultField, error)
+	) ([]chunk.Row, []*resolve.ResultField, error)
 }
 
 // SQLExecutorPropProvider provides the SQLExecutor

@@ -31,7 +31,8 @@ import (
 func TestInterruptedDuringSort(t *testing.T) {
 	rootTracker := memory.NewTracker(-1, -1)
 	rootTracker.IsRootTrackerOfSess = true
-	rootTracker.Killer = &sqlkiller.SQLKiller{ConnID: 1}
+	rootTracker.Killer = &sqlkiller.SQLKiller{}
+	rootTracker.Killer.ConnID.Store(1)
 
 	byItemsDesc := []bool{false}
 	keyColumns := []int{0}
@@ -81,7 +82,8 @@ func TestInterruptedDuringSort(t *testing.T) {
 func TestInterruptedDuringSpilling(t *testing.T) {
 	rootTracker := memory.NewTracker(-1, -1)
 	rootTracker.IsRootTrackerOfSess = true
-	rootTracker.Killer = &sqlkiller.SQLKiller{ConnID: 1}
+	rootTracker.Killer = &sqlkiller.SQLKiller{}
+	rootTracker.Killer.ConnID.Store(1)
 
 	byItemsDesc := []bool{false}
 	keyColumns := []int{0}

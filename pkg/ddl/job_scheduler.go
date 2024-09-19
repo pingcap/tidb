@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
@@ -40,13 +41,15 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -86,7 +89,10 @@ const (
 )
 
 type ownerListener struct {
-	ddl       *ddl
+	ddl          *ddl
+	jobSubmitter *JobSubmitter
+	ddlExecutor  *executor
+
 	scheduler *jobScheduler
 }
 
@@ -104,11 +110,15 @@ func (l *ownerListener) OnBecomeOwner() {
 		minJobIDRefresher: l.ddl.minJobIDRefresher,
 		unSyncedTracker:   newUnSyncedJobTracker(),
 		schemaVerMgr:      newSchemaVersionManager(l.ddl.store),
+		schemaVerSyncer:   l.ddl.schemaVerSyncer,
+		binlogCli:         l.ddl.binlogCli,
 
 		ddlCtx:         l.ddl.ddlCtx,
-		ddlJobNotifyCh: l.ddl.ddlJobNotifyCh,
+		ddlJobNotifyCh: l.jobSubmitter.ddlJobNotifyCh,
 		sessPool:       l.ddl.sessPool,
 		delRangeMgr:    l.ddl.delRangeMgr,
+
+		ddlJobDoneChMap: l.ddlExecutor.ddlJobDoneChMap,
 	}
 	l.ddl.reorgCtx.setOwnerTS(time.Now().Unix())
 	l.scheduler.start()
@@ -133,6 +143,8 @@ type jobScheduler struct {
 	minJobIDRefresher *systable.MinJobIDRefresher
 	unSyncedTracker   *unSyncedJobTracker
 	schemaVerMgr      *schemaVersionManager
+	schemaVerSyncer   schemaver.Syncer
+	binlogCli         *pumpcli.PumpsClient
 
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
@@ -145,6 +157,9 @@ type jobScheduler struct {
 	ddlJobNotifyCh chan struct{}
 	sessPool       *sess.Pool
 	delRangeMgr    delRangeManager
+
+	// shared with ddl executor and job submitter.
+	ddlJobDoneChMap *generic.SyncMap[int64, chan struct{}]
 }
 
 func (s *jobScheduler) start() {
@@ -387,6 +402,7 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		intest.Assert(job.Version > 0, "job version should be greater than 0")
 
 		involving := job.GetInvolvingSchemaInfo()
 		if targetPool.available() == 0 {
@@ -458,7 +474,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	jobID, involvedSchemaInfos := job.ID, job.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
 	metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-	jobCtx := s.getJobRunCtx()
+	jobCtx := s.getJobRunCtx(job.ID)
 	s.wg.Run(func() {
 		defer func() {
 			r := recover()
@@ -511,7 +527,8 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx() *jobContext {
+func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
+	ch, _ := s.ddlJobDoneChMap.Load(jobID)
 	return &jobContext{
 		ctx:                  s.schCtx,
 		unSyncedJobTracker:   s.unSyncedTracker,
@@ -519,6 +536,10 @@ func (s *jobScheduler) getJobRunCtx() *jobContext {
 		infoCache:            s.infoCache,
 		autoidCli:            s.autoidCli,
 		store:                s.store,
+		schemaVerSyncer:      s.schemaVerSyncer,
+		binlogCli:            s.binlogCli,
+
+		notifyCh: ch,
 
 		oldDDLCtx: s.ddlCtx,
 	}
@@ -538,7 +559,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		if variable.EnableMDL.Load() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err == nil {
-				err = waitSchemaSyncedForMDL(wk.ctx, s.ddlCtx, job, version)
+				err = waitVersionSynced(jobCtx, job, version)
 				if err != nil {
 					return err
 				}
@@ -548,7 +569,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 				return err
 			}
 		} else {
-			err := waitSchemaSynced(wk.ctx, s.ddlCtx, job)
+			err := waitVersionSyncedWithoutMDL(jobCtx, job)
 			if err != nil {
 				time.Sleep(time.Second)
 				return err
@@ -557,7 +578,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		jobCtx.setAlreadyRunOnce(job.ID)
 	}
 
-	schemaVer, err := wk.transitOneJobStep(s.ddlCtx, jobCtx, job)
+	schemaVer, err := wk.transitOneJobStep(jobCtx, job)
 	if err != nil {
 		tidblogutil.Logger(wk.logCtx).Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		return err
@@ -575,7 +596,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
-	if err = waitSchemaChanged(wk.ctx, s.ddlCtx, schemaVer, job); err != nil {
+	if err = updateGlobalVersionAndWaitSynced(jobCtx, schemaVer, job); err != nil {
 		return err
 	}
 	s.cleanMDLInfo(job, ownerID)
@@ -654,6 +675,11 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	var sql bytes.Buffer
 	sql.WriteString(addDDLJobSQL)
 	for i, jobW := range jobWs {
+		// TODO remove this check when all job type pass args in this way.
+		if jobW.JobArgs != nil {
+			jobW.FillArgs(jobW.JobArgs)
+		}
+		injectModifyJobArgFailPoint(jobWs)
 		b, err := jobW.Encode(true)
 		if err != nil {
 			return err
@@ -662,7 +688,7 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 			sql.WriteString(",")
 		}
 		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", jobW.ID, jobW.MayNeedReorg(),
-			strconv.Quote(job2SchemaIDs(jobW.Job)), strconv.Quote(job2TableIDs(jobW.Job)),
+			strconv.Quote(job2SchemaIDs(jobW)), strconv.Quote(job2TableIDs(jobW)),
 			util.WrapKey2String(b), jobW.Type, jobW.Started())
 	}
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
@@ -671,23 +697,28 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	return errors.Trace(err)
 }
 
-func job2SchemaIDs(job *model.Job) string {
-	return job2UniqueIDs(job, true)
+func job2SchemaIDs(jobW *JobWrapper) string {
+	return job2UniqueIDs(jobW, true)
 }
 
-func job2TableIDs(job *model.Job) string {
-	return job2UniqueIDs(job, false)
+func job2TableIDs(jobW *JobWrapper) string {
+	return job2UniqueIDs(jobW, false)
 }
 
-func job2UniqueIDs(job *model.Job, schema bool) string {
-	switch job.Type {
+func job2UniqueIDs(jobW *JobWrapper, schema bool) string {
+	switch jobW.Type {
 	case model.ActionExchangeTablePartition, model.ActionRenameTables, model.ActionRenameTable:
 		var ids []int64
-		if schema {
-			ids = job.CtxVars[0].([]int64)
+		if jobW.Type == model.ActionRenameTable {
+			ids = getRenameTableUniqueIDs(jobW, schema)
 		} else {
-			ids = job.CtxVars[1].([]int64)
+			if schema {
+				ids = jobW.CtxVars[0].([]int64)
+			} else {
+				ids = jobW.CtxVars[1].([]int64)
+			}
 		}
+
 		set := make(map[int64]struct{}, len(ids))
 		for _, id := range ids {
 			set[id] = struct{}{}
@@ -701,14 +732,15 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		return strings.Join(s, ",")
 	case model.ActionTruncateTable:
 		if schema {
-			return strconv.FormatInt(job.SchemaID, 10)
+			return strconv.FormatInt(jobW.SchemaID, 10)
 		}
-		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(job.Args[0].(int64), 10)
+		newTableID := jobW.JobArgs.(*model.TruncateTableArgs).NewTableID
+		return strconv.FormatInt(jobW.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
 	}
 	if schema {
-		return strconv.FormatInt(job.SchemaID, 10)
+		return strconv.FormatInt(jobW.SchemaID, 10)
 	}
-	return strconv.FormatInt(job.TableID, 10)
+	return strconv.FormatInt(jobW.TableID, 10)
 }
 
 func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) error {
