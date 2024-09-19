@@ -22,15 +22,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
@@ -146,18 +146,18 @@ func TestLitExprContext(t *testing.T) {
 			opts.SysVars["block_encryption_mode"] = variable.DefBlockEncryptionMode
 		}
 		se := newSession(opts, log.L())
-		seCtx := contextstatic.MakeExprContextStatic(se.exprCtx.SessionExprContext)
-		deeptest.AssertDeepClonedEqual(t, seCtx, ctx.StaticExprContext, deeptest.WithIgnorePath([]string{
-			"$.staticExprCtxState.evalCtx.id",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.typeCtx.loc",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.warnHandler",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.typeCtx.warnHandler",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.errCtx.warnHandler",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.currentTime",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.requestVerificationFn",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.requestDynamicVerificationFn",
-			"$.staticExprCtxState.rng",
-			"$.staticExprCtxState.planCacheTracker",
+		seCtx := exprstatic.MakeExprContextStatic(se.exprCtx.ExprContext)
+		deeptest.AssertDeepClonedEqual(t, seCtx, ctx.ExprContext, deeptest.WithIgnorePath([]string{
+			"$.exprCtxState.evalCtx.id",
+			"$.exprCtxState.evalCtx.evalCtxState.typeCtx.loc",
+			"$.exprCtxState.evalCtx.evalCtxState.warnHandler",
+			"$.exprCtxState.evalCtx.evalCtxState.typeCtx.warnHandler",
+			"$.exprCtxState.evalCtx.evalCtxState.errCtx.warnHandler",
+			"$.exprCtxState.evalCtx.evalCtxState.currentTime",
+			"$.exprCtxState.evalCtx.evalCtxState.requestVerificationFn",
+			"$.exprCtxState.evalCtx.evalCtxState.requestDynamicVerificationFn",
+			"$.exprCtxState.rng",
+			"$.exprCtxState.planCacheTracker",
 		}))
 		currentTime, err := seCtx.GetEvalCtx().CurrentTime()
 		require.NoError(t, err)
@@ -348,7 +348,7 @@ func TestLitTableMutateContext(t *testing.T) {
 	require.Equal(t, variable.AssertionLevelOff, tblCtx.TxnAssertionLevel())
 	require.Equal(t, variable.DefTiDBEnableMutationChecker, tblCtx.EnableMutationChecker())
 	require.False(t, tblCtx.EnableMutationChecker())
-	require.Equal(t, tbctx.RowEncodingConfig{
+	require.Equal(t, tblctx.RowEncodingConfig{
 		IsRowLevelChecksumEnabled: false,
 		RowEncoder:                &rowcodec.Encoder{Enable: false},
 	}, tblCtx.GetRowEncodingConfig())
@@ -369,7 +369,7 @@ func TestLitTableMutateContext(t *testing.T) {
 	checkCommon(t, tblCtx)
 	require.Equal(t, variable.AssertionLevelStrict, tblCtx.TxnAssertionLevel())
 	require.True(t, tblCtx.EnableMutationChecker())
-	require.Equal(t, tbctx.RowEncodingConfig{
+	require.Equal(t, tblctx.RowEncodingConfig{
 		IsRowLevelChecksumEnabled: false,
 		RowEncoder:                &rowcodec.Encoder{Enable: true},
 	}, tblCtx.GetRowEncodingConfig())
@@ -388,7 +388,7 @@ func TestLitTableMutateContext(t *testing.T) {
 	}
 	tblCtx, err = newLitTableMutateContext(exprCtx, sysVars)
 	require.NoError(t, err)
-	require.Equal(t, tbctx.RowEncodingConfig{
+	require.Equal(t, tblctx.RowEncodingConfig{
 		IsRowLevelChecksumEnabled: true,
 		RowEncoder:                &rowcodec.Encoder{Enable: true},
 	}, tblCtx.GetRowEncodingConfig())
