@@ -1164,7 +1164,7 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	checkInfo, err := checkPiTRTaskInfo(ctx, mgr, g, s, cfg)
+	checkInfo, err := checkPiTRTaskInfo(ctx, mgr, g, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1406,7 +1406,7 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(dataFileCount), !cfg.LogProgress)
-	err = withProgress(pd, func(p glue.Progress) error {
+	err = withProgress(pd, func(p glue.Progress) (pErr error) {
 		if cfg.UseCheckpoint {
 			updateStatsWithCheckpoint := func(kvCount, size uint64) {
 				mu.Lock()
@@ -1420,6 +1420,11 @@ func restoreStream(
 			if err != nil {
 				return errors.Trace(err)
 			}
+			failpoint.Inject("corrupt-files", func(v failpoint.Value) {
+				var retErr error
+				logFilesIter, retErr = logclient.WrapLogFilesIterWithCheckpointFailpoint(v, logFilesIter)
+				defer func() { pErr = retErr }()
+			})
 		}
 		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(logFilesIter, rewriteRules, g, mgr.GetStorage())
 		if err != nil {
@@ -1749,7 +1754,6 @@ func checkPiTRTaskInfo(
 	ctx context.Context,
 	mgr *conn.Mgr,
 	g glue.Glue,
-	s storage.ExternalStorage,
 	cfg *RestoreConfig,
 ) (*PiTRTaskInfo, error) {
 	var (
@@ -1802,7 +1806,7 @@ func checkPiTRTaskInfo(
 	checkInfo.NeedFullRestore = doFullRestore
 	// restore full snapshot precheck.
 	if doFullRestore {
-		if !(cfg.UseCheckpoint && curTaskInfo.Metadata != nil) {
+		if !(cfg.UseCheckpoint && (curTaskInfo.Metadata != nil || curTaskInfo.HasSnapshotMetadata)) {
 			// Only when use checkpoint and not the first execution,
 			// skip checking requirements.
 			log.Info("check pitr requirements for the first execution")

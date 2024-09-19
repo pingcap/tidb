@@ -117,6 +117,7 @@ func TestCheckpointMetaForRestore(t *testing.T) {
 	require.Equal(t, uint64(111), taskInfo.Metadata.StartTS)
 	require.Equal(t, uint64(333), taskInfo.Metadata.RewriteTS)
 	require.Equal(t, "1.0", taskInfo.Metadata.GcRatio)
+	require.Equal(t, true, taskInfo.HasSnapshotMetadata)
 	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersist, taskInfo.Progress)
 
 	exists = checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, dom)

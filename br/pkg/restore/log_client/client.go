@@ -186,7 +186,7 @@ func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBa
 
 func (rc *LogClient) SetCurrentTS(ts uint64) error {
 	if ts == 0 {
-		return errors.Errorf("set rewrite ts to an invalid ts", zap.Uint64("ts", ts))
+		return errors.Errorf("set rewrite ts to an invalid ts: %d", ts)
 	}
 	rc.currentTS = ts
 	return nil
@@ -1241,7 +1241,7 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[
 
 func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}) (*LogFilesSkipMap, error) {
 	skipMap := NewLogFilesSkipMap()
-	t, err := checkpoint.LoadCheckpointDataForSnapshotRestore(
+	t, err := checkpoint.LoadCheckpointDataForLogRestore(
 		ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor(), func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
 			for tableID, foffs := range off.Foffs {
 				// filter out the checkpoint data of dropped table
@@ -1257,6 +1257,30 @@ func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset
 	}
 	summary.AdjustStartTimeToEarlierTime(t)
 	return skipMap, nil
+}
+
+func WrapLogFilesIterWithCheckpointFailpoint(
+	v failpoint.Value,
+	logIter LogIter,
+) (LogIter, error) {
+	if cmd, ok := v.(string); ok {
+		switch cmd {
+		case "corrupt-last-table-files": // skip some files and eventually return an error to make the restore fail
+			newLogIter := iter.FilterOut(logIter, func(d *LogDataFileInfo) bool {
+				return d.OffsetInMergedGroup&1 > 0
+			})
+			return newLogIter, errors.Errorf("skip the last table files")
+		case "only-last-table-files": // check whether all the files, except files skipped before, are skipped by checkpoint
+			newLogIter := iter.FilterOut(logIter, func(d *LogDataFileInfo) bool {
+				if d.OffsetInMergedGroup&1 == 0 {
+					log.Panic("has files but not the files skipped before")
+				}
+				return false
+			})
+			return newLogIter, nil
+		}
+	}
+	return logIter, nil
 }
 
 func (rc *LogClient) WrapLogFilesIterWithCheckpoint(

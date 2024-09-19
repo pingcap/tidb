@@ -265,7 +265,8 @@ func ExistsCheckpointProgress(
 // CheckpointTaskInfo is unique information within the same cluster id. It represents the last
 // restore task executed for this cluster.
 type CheckpointTaskInfoForLogRestore struct {
-	Metadata *CheckpointMetadataForLogRestore
+	Metadata            *CheckpointMetadataForLogRestore
+	HasSnapshotMetadata bool
 	// the progress for this task
 	Progress RestoreProgress
 }
@@ -295,10 +296,12 @@ func TryToGetCheckpointTaskInfo(
 			return nil, errors.Trace(err)
 		}
 	}
+	hasSnapshotMetadata := ExistsSnapshotRestoreCheckpoint(ctx, dom)
 
 	return &CheckpointTaskInfoForLogRestore{
-		Metadata: metadata,
-		Progress: progress,
+		Metadata:            metadata,
+		HasSnapshotMetadata: hasSnapshotMetadata,
+		Progress:            progress,
 	}, nil
 }
 
