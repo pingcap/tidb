@@ -176,7 +176,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 	genRGroupJob := func(idAllocated bool) *ddl.JobWrapper {
 		info := &model.ResourceGroupInfo{}
 		job := &model.Job{
-			Version: model.JobVersion1,
+			Version: model.GetJobVerInUse(),
 			Type:    model.ActionCreateResourceGroup,
 		}
 		return ddl.NewJobWrapperWithArgs(job, &model.ResourceGroupArgs{
