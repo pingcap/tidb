@@ -2748,11 +2748,15 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return fmt.Errorf("unsupported action: %s", e.Action)
 	}
 
-	results, err := indexadvisor.AdviseIndexes(ctx, e.Ctx(), &indexadvisor.Option{
+	opt := &indexadvisor.Option{
 		MaxNumIndexes: 3,
 		MaxIndexWidth: 3,
-		SpecifiedSQLs: []string{e.SQL},
-	})
+	}
+	if e.SQL != "" {
+		opt.SpecifiedSQLs = []string{e.SQL}
+	}
+
+	results, err := indexadvisor.AdviseIndexes(ctx, e.Ctx(), opt)
 
 	for _, r := range results {
 		req.AppendString(0, r.Database)

@@ -5737,9 +5737,6 @@ func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, e
 
 	switch v.Action {
 	case "run":
-		if v.SQL == "" {
-			return nil, errors.New("recommend index SQL is empty")
-		}
 		schema := newColumnsWithNames(7)
 		schema.Append(buildColumnWithName("", "database", mysql.TypeVarchar, 64))
 		schema.Append(buildColumnWithName("", "table", mysql.TypeVarchar, 64))
