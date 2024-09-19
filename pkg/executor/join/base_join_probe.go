@@ -325,6 +325,10 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		}
 	}
 
+	if chk.Sel() != nil {
+		panic("chk.Sel() != nil")
+	}
+
 	j.usedRows = j.selRows
 
 	if cap(j.matchedRowsHeaders) >= logicalRows {
