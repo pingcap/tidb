@@ -646,6 +646,25 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	return ret, true
 }
 
+func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName pmodel.CIStr, ok bool) {
+	if !tableIDIsValid(tableID) {
+		return
+	}
+
+	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
+	itm, ok := search(
+		is.byID,
+		is.infoSchema.schemaMetaVersion,
+		tableItem{tableID: tableID, schemaVersion: math.MaxInt64},
+		eq,
+	)
+	if !ok {
+		return
+	}
+
+	return itm.dbName, true
+}
+
 // TableItem is exported from tableItem.
 type TableItem struct {
 	DBName    pmodel.CIStr
