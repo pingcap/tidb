@@ -1178,6 +1178,13 @@ func (b *storeBalancer) pickJob() *regionJob {
 		job := value.(*regionJob)
 
 		score := 0
+		// in unit tests, the fields of job may not set
+		if job.region == nil || job.region.Region == nil {
+			best = job
+			bestIdx = idx
+			return false
+		}
+
 		for _, p := range job.region.Region.Peers {
 			if v, ok := b.storeLoadMap.Load(p.StoreId); ok {
 				score += v.(int)

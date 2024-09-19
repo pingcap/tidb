@@ -962,7 +962,7 @@ func (local *Backend) generateAndSendJob(
 					failpoint.Inject("sendDummyJob", func(_ failpoint.Value) {
 						// this is used to trigger worker failure, used together
 						// with WriteToTiKVNotEnoughDiskSpace
-						jobToWorkerCh <- &regionJob{region: &split.RegionInfo{Region: &metapb.Region{}}}
+						jobToWorkerCh <- &regionJob{}
 						time.Sleep(5 * time.Second)
 					})
 					jobs, err := local.generateJobForRange(egCtx, p.Data, p.SortedRanges, regionSplitSize, regionSplitKeys)
