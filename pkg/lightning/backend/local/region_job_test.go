@@ -382,13 +382,18 @@ func mockWorkerReadJob(
 	jobToWorkerCh chan<- *regionJob,
 ) []*regionJob {
 	ret := make([]*regionJob, len(jobs))
+	jobToWorkerCh <- jobs[0]
+	require.Eventually(t, func() bool {
+		// wait runSendToWorker goroutine is blocked at sending
+		return b.jobLen() == 0
+	}, time.Second, 10*time.Millisecond)
 
-	for _, job := range jobs {
+	for _, job := range jobs[1:] {
 		jobToWorkerCh <- job
 	}
 	require.Eventually(t, func() bool {
-		// 1 job is picked, rest are waiting to be picked
-		return b.jobLen()+1 == len(jobs)
+		// rest are waiting to be picked
+		return b.jobLen() == len(jobs)-1
 	}, time.Second, 10*time.Millisecond)
 	for i := range ret {
 		got := <-b.innerJobToWorkerCh
@@ -438,8 +443,8 @@ func TestStoreBalancerPick(t *testing.T) {
 	// mimic the worker is handled the job and send back to storeBalancer
 	gotCh := make(chan *regionJob)
 	go func() {
-		close(gotCh)
 		<-jobFromWorkerCh
+		close(gotCh)
 	}()
 	b.innerJobFromWorkerCh <- job
 	<-gotCh
