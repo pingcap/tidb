@@ -1715,6 +1715,9 @@ type SessionVars struct {
 	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
 	// `select for update` statements which do acquire pessimsitic locks.
 	SharedLockPromotion bool
+
+	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
+	ScatterRegion string
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
