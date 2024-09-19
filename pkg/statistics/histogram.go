@@ -1461,7 +1461,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 
 	var sum, prevSum int64
-	r, prevR := len(buckets), 0
+	r := len(buckets)
 	bucketCount := int64(1)
 	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
 	mergeBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber)-1)/int(expBucketNumber))
@@ -1571,7 +1571,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			currentLeftMost.Copy(merged.lower)
 			currentLeftMost = nil
 			globalBuckets = append(globalBuckets, merged)
-			prevR = r
 			r = i
 			bucketCount++
 			prevSum = sum
@@ -1592,19 +1591,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			if res > 0 {
 				leftMost = b.lower
 			}
-		}
-
-		if len(globalBuckets) > 0 && bucketSum < gBucketCountThreshold { // merge them into the previous global bucket
-			r = prevR
-			lower := globalBuckets[len(globalBuckets)-1].lower
-			res, err := leftMost.Compare(sc.TypeCtx(), lower, collate.GetBinaryCollator())
-			if err != nil {
-				return nil, err
-			}
-			if res > 0 {
-				leftMost = lower
-			}
-			globalBuckets = globalBuckets[:len(globalBuckets)-1]
 		}
 
 		merged, err := mergePartitionBuckets(sc, buckets[:r])
