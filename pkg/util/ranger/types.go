@@ -127,6 +127,18 @@ func (ran *Range) isPoint(tc types.Context, regardNullAsPoint bool) bool {
 	return !ran.LowExclude && !ran.HighExclude
 }
 
+// IsOnlyNull checks if the range has [NULL, NULL] or [NULL NULL, NULL NULL] range.
+func (ran *Range) IsOnlyNull() bool {
+	for i := range ran.LowVal {
+		a := ran.LowVal[i]
+		b := ran.HighVal[i]
+		if !(a.IsNull() && b.IsNull()) {
+			return false
+		}
+	}
+	return true
+}
+
 // IsPointNonNullable returns if the range is a point without NULL.
 func (ran *Range) IsPointNonNullable(tc types.Context) bool {
 	return ran.isPoint(tc, false)
