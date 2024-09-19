@@ -503,3 +503,33 @@ func GetRebaseAutoIDArgs(job *Job) (*RebaseAutoIDArgs, error) {
 	// for version V2
 	return getOrDecodeArgsV2[*RebaseAutoIDArgs](job)
 }
+
+// ModifyTableCommentArgs is the arguments for ActionModifyTableComment ddl.
+type ModifyTableCommentArgs struct {
+	Comment string
+}
+
+func (a *ModifyTableCommentArgs) fillJob(job *Job) {
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.Comment}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetModifyTableCommentArgs gets the args for ActionModifyTableComment.
+func GetModifyTableCommentArgs(job *Job) (*ModifyTableCommentArgs, error) {
+	if job.Version == JobVersion1 {
+		var comment string
+		if err := job.DecodeArgs(&comment); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &ModifyTableCommentArgs{
+			Comment: comment,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*ModifyTableCommentArgs](job)
+}

@@ -310,3 +310,17 @@ func TestGetRebaseAutoIDArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestGetModifyTableCommentArgs(t *testing.T) {
+	inArgs := &ModifyTableCommentArgs{
+		Comment: "TiDb is great",
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifyTableComment)))
+		args, err := GetModifyTableCommentArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}

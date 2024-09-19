@@ -978,8 +978,8 @@ func finishJobRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job,
 }
 
 func onModifyTableComment(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var comment string
-	if err := job.DecodeArgs(&comment); err != nil {
+	args, err := model.GetModifyTableCommentArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -994,7 +994,7 @@ func onModifyTableComment(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver
 		return ver, nil
 	}
 
-	tblInfo.Comment = comment
+	tblInfo.Comment = args.Comment
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
