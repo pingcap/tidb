@@ -961,9 +961,6 @@ func checkGlobalIndex(ctx sessionctx.Context, tblInfo *model.TableInfo, indexInf
 			// partitioning an index differently from the table partitioning.
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
 		}
-		if !ctx.GetSessionVars().EnableGlobalIndex {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption when tidb_enable_global_index is disabled")
-		}
 		// TODO: remove limitation
 		if !indexInfo.Unique {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption on non-unique index")
@@ -4511,10 +4508,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			return err
 		}
 		if !ck {
-			if !ctx.GetSessionVars().EnableGlobalIndex {
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
-			}
-			// index columns does not contain all partition columns, must set global
+			// index columns does not contain all partition columns, must be global
 			if indexOption == nil || !indexOption.Global {
 				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs("PRIMARY")
 			}
@@ -4673,10 +4667,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			return err
 		}
 		if !ck {
-			if !ctx.GetSessionVars().EnableGlobalIndex {
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
-			}
-			// index columns does not contain all partition columns, must set global
+			// index columns does not contain all partition columns, must be global
 			if !globalIndex {
 				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName.O)
 			}

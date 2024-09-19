@@ -651,6 +651,7 @@ const (
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 
 	// TiDBEnableGlobalIndex means if we could create an global index on a partition table or not.
+	// Deprecated, will always be ON
 	TiDBEnableGlobalIndex = "tidb_enable_global_index"
 
 	// TiDBPartitionPruneMode indicates the partition prune mode used.
@@ -1354,7 +1355,6 @@ const (
 	DefTiDBEnableCollectExecutionInfo       = true
 	DefTiDBAllowAutoRandExplicitInsert      = false
 	DefTiDBEnableClusteredIndex             = ClusteredIndexDefModeOn
-	DefTiDBEnableGlobalIndex                = false
 	DefTiDBRedactLog                        = Off
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
