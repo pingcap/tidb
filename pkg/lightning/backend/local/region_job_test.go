@@ -413,7 +413,7 @@ func TestStoreBalancerPick(t *testing.T) {
 	jobToWorkerCh := make(chan *regionJob)
 	jobFromWorkerCh := make(chan *regionJob)
 	jobWg := sync.WaitGroup{}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx := context.Background()
 
 	b := newStoreBalancer(jobToWorkerCh, jobFromWorkerCh, &jobWg)
 	done := make(chan struct{})
@@ -484,9 +484,9 @@ func TestStoreBalancerPick(t *testing.T) {
 	}
 	checkStoreScoreZero(t, b)
 
-	cancel()
-	<-done
 	close(b.innerJobFromWorkerCh)
+	close(jobToWorkerCh)
+	<-done
 	<-jobFromWorkerCh
 }
 
