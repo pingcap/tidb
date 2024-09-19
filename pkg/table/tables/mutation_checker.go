@@ -369,13 +369,13 @@ func compareIndexData(
 	extraIndexLayout table.IndexRowLayoutOption,
 ) error {
 	for i := range indexData {
-		offsetInIndex := indexInfo.Columns[i].Offset
+		offsetInRow := indexInfo.Columns[i].Offset
 		if extraIndexLayout != nil {
-			offsetInIndex = extraIndexLayout[i]
+			offsetInRow = extraIndexLayout[i]
 		}
 		offsetInTable := indexInfo.Columns[i].Offset
 		decodedMutationDatum := indexData[i]
-		expectedDatum := input[offsetInIndex]
+		expectedDatum := input[offsetInRow]
 
 		tablecodec.TruncateIndexValue(
 			&expectedDatum, indexInfo.Columns[i],
