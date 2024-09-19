@@ -270,6 +270,7 @@ func TestUpdateRenameTableArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, &RenameTableArgs{
 			OldSchemaID:   9528,
+			NewSchemaID:   9528,
 			OldSchemaName: model.NewCIStr("old_schema_name"),
 			NewTableName:  model.NewCIStr("new_table_name"),
 		}, args)
