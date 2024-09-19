@@ -774,9 +774,6 @@ func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, colu
 	is := insertStmt.String()
 	stmtTasks := make([]stmtTask, 0, len(rows))
 	for _, row := range rows {
-		fmt.Printf("print each row\n")
-		fmt.Printf("row.insertStmt: %s\n", row.insertStmt)
-		fmt.Printf("row.preparedInsertStmt: %s\n", row.preparedInsertStmt)
 		var finalInsertStmt strings.Builder
 		finalInsertStmt.WriteString(is)
 		if be.stmtCache != nil {
