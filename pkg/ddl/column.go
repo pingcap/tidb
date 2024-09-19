@@ -1304,8 +1304,8 @@ func getChangingColumnOriginName(changingColumn *model.ColumnInfo) string {
 	return columnName[:pos]
 }
 
-func getExpressionIndexOriginName(expressionIdx *model.ColumnInfo) string {
-	columnName := strings.TrimPrefix(expressionIdx.Name.O, expressionIndexPrefix+"_")
+func getExpressionIndexOriginName(originalName pmodel.CIStr) string {
+	columnName := strings.TrimPrefix(originalName.O, expressionIndexPrefix+"_")
 	var pos int
 	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
 		return columnName

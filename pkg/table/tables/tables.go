@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -315,8 +315,8 @@ func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 	return nil
 }
 
-// deletableIndices implements table.Table deletableIndices interface.
-func (t *TableCommon) deletableIndices() []table.Index {
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (t *TableCommon) DeletableIndices() []table.Index {
 	// All indices are deletable because we don't need to check StateNone.
 	return t.indices
 }
@@ -608,7 +608,7 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 	h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum,
 	opt *table.UpdateRecordOpt,
 ) error {
-	for _, idx := range t.deletableIndices() {
+	for _, idx := range t.DeletableIndices() {
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
 		}
@@ -710,21 +710,21 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	return pkCols
 }
 
-func addTemporaryTable(sctx table.MutateContext, tblInfo *model.TableInfo) (tbctx.TemporaryTableHandler, int64, bool) {
+func addTemporaryTable(sctx table.MutateContext, tblInfo *model.TableInfo) (tblctx.TemporaryTableHandler, int64, bool) {
 	if s, ok := sctx.GetTemporaryTableSupport(); ok {
 		if h, ok := s.AddTemporaryTableToTxn(tblInfo); ok {
 			return h, s.GetTemporaryTableSizeLimit(), ok
 		}
 	}
-	return tbctx.TemporaryTableHandler{}, 0, false
+	return tblctx.TemporaryTableHandler{}, 0, false
 }
 
 // The size of a temporary table is calculated by accumulating the transaction size delta.
-func handleTempTableSize(t tbctx.TemporaryTableHandler, txnSizeBefore int, txn kv.Transaction) {
+func handleTempTableSize(t tblctx.TemporaryTableHandler, txnSizeBefore int, txn kv.Transaction) {
 	t.UpdateTxnDeltaSize(txn.Size() - txnSizeBefore)
 }
 
-func checkTempTableSize(tmpTable tbctx.TemporaryTableHandler, sizeLimit int64) error {
+func checkTempTableSize(tmpTable tblctx.TemporaryTableHandler, sizeLimit int64) error {
 	if tmpTable.GetCommittedSize()+tmpTable.GetDirtySize() > sizeLimit {
 		return table.ErrTempTableFull.GenWithStackByArgs(tmpTable.Meta().Name.O)
 	}
@@ -1168,7 +1168,12 @@ func GetChangingColVal(ctx exprctx.BuildContext, cols []*table.Column, col *tabl
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (t *TableCommon) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum) error {
+func (t *TableCommon) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
+	opt := table.NewRemoveRecordOpt(opts...)
+	return t.removeRecord(ctx, txn, h, r, opt)
+}
+
+func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opt *table.RemoveRecordOpt) error {
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
@@ -1188,7 +1193,11 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, 
 	}
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
-	if len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
+	// DELETE will use deletable columns, which is the same as the full columns of the table.
+	// INSERT and UPDATE will only use the writable columns. So they will not see columns under MODIFY/CHANGE state.
+	// This if block is for the INSERT and UPDATE.
+	// And, only DELETE will make opt.HasIndexesLayout() to be true currently.
+	if !opt.HasIndexesLayout() && len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
 		// The changing column datum derived from related column should be casted here.
 		// Otherwise, the existed changing indexes will not be deleted.
 		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
@@ -1200,7 +1209,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, 
 		}
 		r = append(r, value)
 	}
-	err = t.removeRowIndices(ctx, txn, h, r)
+	err = t.removeRowIndices(ctx, txn, h, r, opt)
 	if err != nil {
 		return err
 	}
@@ -1259,7 +1268,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, 
 	return err
 }
 
-func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, support tbctx.BinlogSupport, h kv.Handle, encodeRowBuffer *tbctx.EncodeRowBuffer) error {
+func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, support tblctx.BinlogSupport, h kv.Handle, encodeRowBuffer *tblctx.EncodeRowBuffer) error {
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	handleData, err := h.Data()
@@ -1282,7 +1291,7 @@ func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, support tbctx.Bin
 	return nil
 }
 
-func (t *TableCommon) addUpdateBinlog(ctx table.MutateContext, support tbctx.BinlogSupport, oldRow, newRow []types.Datum, colIDs []int64) error {
+func (t *TableCommon) addUpdateBinlog(ctx table.MutateContext, support tblctx.BinlogSupport, oldRow, newRow []types.Datum, colIDs []int64) error {
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	old, err := tablecodec.EncodeOldRow(loc, oldRow, colIDs, nil, nil)
@@ -1302,7 +1311,7 @@ func (t *TableCommon) addUpdateBinlog(ctx table.MutateContext, support tbctx.Bin
 	return nil
 }
 
-func (t *TableCommon) addDeleteBinlog(ctx table.MutateContext, support tbctx.BinlogSupport, r []types.Datum, colIDs []int64) error {
+func (t *TableCommon) addDeleteBinlog(ctx table.MutateContext, support tblctx.BinlogSupport, r []types.Datum, colIDs []int64) error {
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	data, err := tablecodec.EncodeOldRow(loc, r, colIDs, nil, nil)
@@ -1366,12 +1375,17 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 }
 
 // removeRowIndices removes all the indices of a row.
-func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, rec []types.Datum) error {
-	for _, v := range t.deletableIndices() {
+func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, rec []types.Datum, opt *table.RemoveRecordOpt) (err error) {
+	for _, v := range t.DeletableIndices() {
 		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
 			continue
 		}
-		vals, err := v.FetchValues(rec, nil)
+		var vals []types.Datum
+		if opt.HasIndexesLayout() {
+			vals, err = fetchIndexRow(v.Meta(), rec, nil, opt.GetIndexLayout(v.Meta().ID))
+		} else {
+			vals, err = fetchIndexRow(v.Meta(), rec, nil, nil)
+		}
 		if err != nil {
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
 			return err
@@ -1597,7 +1611,7 @@ func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
 }
 
-func getBinlogSupport(ctx table.MutateContext, tblInfo *model.TableInfo) (tbctx.BinlogSupport, bool) {
+func getBinlogSupport(ctx table.MutateContext, tblInfo *model.TableInfo) (tblctx.BinlogSupport, bool) {
 	if tblInfo.TempTableType != model.TempTableNone || ctx.InRestrictedSQL() {
 		return nil, false
 	}

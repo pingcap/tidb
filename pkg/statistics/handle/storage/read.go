@@ -43,7 +43,20 @@ import (
 
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, isNull bool, err error) {
-	rows, _, err := util.ExecRows(sctx, "select count, modify_count from mysql.stats_meta where table_id = %?", tableID)
+	return statsMetaCountAndModifyCount(sctx, tableID, false)
+}
+
+// StatsMetaCountAndModifyCountForUpdate reads count and modify_count for the given table from mysql.stats_meta with lock.
+func StatsMetaCountAndModifyCountForUpdate(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, isNull bool, err error) {
+	return statsMetaCountAndModifyCount(sctx, tableID, true)
+}
+
+func statsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64, forUpdate bool) (count, modifyCount int64, isNull bool, err error) {
+	sql := "select count, modify_count from mysql.stats_meta where table_id = %?"
+	if forUpdate {
+		sql += " for update"
+	}
+	rows, _, err := util.ExecRows(sctx, sql, tableID)
 	if err != nil {
 		return 0, 0, false, err
 	}

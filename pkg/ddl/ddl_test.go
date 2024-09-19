@@ -214,7 +214,7 @@ func TestBuildJobDependence(t *testing.T) {
 	job6 := &model.Job{ID: 6, TableID: 1, Type: model.ActionDropTable}
 	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
 	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
-	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []any{int64(111), "old db name"}}
+	job11 := &model.Job{Version: model.JobVersion1, ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []any{int64(111), "old db name"}}
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		require.NoError(t, m.EnQueueDDLJob(job1))
