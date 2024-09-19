@@ -1004,12 +1004,12 @@ func onModifyTableComment(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver
 }
 
 func onModifyTableCharsetAndCollate(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var toCharset, toCollate string
-	var needsOverwriteCols bool
-	if err := job.DecodeArgs(&toCharset, &toCollate, &needsOverwriteCols); err != nil {
+	args, err := model.GetModifyTableCharsetAndCollateArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	toCharset, toCollate, needsOverwriteCols := args.ToCharset, args.ToCollate, args.NeedsOverwriteCols
 
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {

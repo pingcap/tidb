@@ -2139,7 +2139,6 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 		TableName:      tbInfo.Name.L,
 		Type:           actionType,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{newBase, force},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
@@ -3590,16 +3589,22 @@ func (e *executor) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
 		TableName:      tb.Meta().Name.L,
 		Type:           model.ActionModifyTableCharsetAndCollate,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{toCharset, toCollate, needsOverwriteCols},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
+	job.FillArgs(&model.ModifyTableCharsetAndCollateArgs{
+		ToCharset:          toCharset,
+		ToCollate:          toCollate,
+		NeedsOverwriteCols: needsOverwriteCols,
+	})
 	err = e.DoDDLJob(ctx, job)
 	return errors.Trace(err)
 }

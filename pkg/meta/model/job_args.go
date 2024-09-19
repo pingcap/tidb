@@ -533,3 +533,35 @@ func GetModifyTableCommentArgs(job *Job) (*ModifyTableCommentArgs, error) {
 
 	return getOrDecodeArgsV2[*ModifyTableCommentArgs](job)
 }
+
+// ModifyTableCharsetAndCollateArgs is the arguments for ActionModifyTableCharsetAndCollate ddl.
+type ModifyTableCharsetAndCollateArgs struct {
+	ToCharset          string
+	ToCollate          string
+	NeedsOverwriteCols bool
+}
+
+func (a *ModifyTableCharsetAndCollateArgs) fillJob(job *Job) {
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.ToCharset, a.ToCollate, a.NeedsOverwriteCols}
+
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetModifyTableCharsetAndCollateArgs gets the args for ActionModifyTableCharsetAndCollate ddl.
+func GetModifyTableCharsetAndCollateArgs(job *Job) (*ModifyTableCharsetAndCollateArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &ModifyTableCharsetAndCollateArgs{}
+		err := job.DecodeArgs(&args.ToCharset, &args.ToCollate, &args.NeedsOverwriteCols)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+
+	return getOrDecodeArgsV2[*ModifyTableCharsetAndCollateArgs](job)
+}
