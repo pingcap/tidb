@@ -88,21 +88,21 @@ t	CREATE TABLE `t` (
 drop table if exists t2;
 CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));
 SHOW INDEX IN t2;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t2	0	PRIMARY	1	a	A	0	NULL	NULL		BTREE			YES	NULL	YES
-t2	0	c	1	c	A	0	NULL	NULL		BTREE			YES	NULL	NO
-t2	0	b	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t2	0	PRIMARY	1	a	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
+t2	0	c	1	c	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
+t2	0	b	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
 CREATE INDEX t2_b_c_index ON t2 (b, c);
 CREATE INDEX t2_c_b_index ON t2 (c, b);
 SHOW INDEX IN t2;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t2	0	PRIMARY	1	a	A	0	NULL	NULL		BTREE			YES	NULL	YES
-t2	0	c	1	c	A	0	NULL	NULL		BTREE			YES	NULL	NO
-t2	0	b	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
-t2	1	t2_b_c_index	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
-t2	1	t2_b_c_index	2	c	A	0	NULL	NULL		BTREE			YES	NULL	NO
-t2	1	t2_c_b_index	1	c	A	0	NULL	NULL		BTREE			YES	NULL	NO
-t2	1	t2_c_b_index	2	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t2	0	PRIMARY	1	a	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
+t2	0	c	1	c	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
+t2	0	b	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t2	1	t2_b_c_index	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t2	1	t2_b_c_index	2	c	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
+t2	1	t2_c_b_index	1	c	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
+t2	1	t2_c_b_index	2	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
 drop table if exists test1;
 CREATE TABLE `test1` (`id` int(0) NOT NULL,`num` int(0) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
 create or replace view test1_v as(select id,row_number() over (partition by num) from test1);
@@ -895,9 +895,9 @@ xor
 year
 yearweek
 SHOW INDEX FROM performance_schema.events_statements_summary_by_digest;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-events_statements_summary_by_digest	0	SCHEMA_NAME	1	SCHEMA_NAME	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
-events_statements_summary_by_digest	0	SCHEMA_NAME	2	DIGEST	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+events_statements_summary_by_digest	0	SCHEMA_NAME	1	SCHEMA_NAME	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+events_statements_summary_by_digest	0	SCHEMA_NAME	2	DIGEST	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
 drop table if exists t1, t3, t4, t5, t6, t7;
 create global temporary table t1 (id int) on commit delete rows;
 create global temporary table t3 (i int primary key, j int) on commit delete rows;
