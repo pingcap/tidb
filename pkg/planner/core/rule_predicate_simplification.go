@@ -59,8 +59,10 @@ func findPredicateType(expr expression.Expression) (*expression.Column, predicat
 		if !colOk {
 			return nil, otherPredicate
 		}
-		if _, ok := args[1].(*expression.Constant); !ok {
-			return nil, otherPredicate
+		if len(args) > 1 {
+			if _, ok := args[1].(*expression.Constant); !ok {
+				return nil, otherPredicate
+			}
 		}
 		if v.FuncName.L == ast.NE {
 			return col, notEqualPredicate
@@ -87,7 +89,6 @@ func findPredicateType(expr expression.Expression) (*expression.Column, predicat
 	default:
 		return nil, otherPredicate
 	}
-	return nil, otherPredicate
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
@@ -122,21 +123,15 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 			lastValue = value
 		}
 	}
-	specialCase := false
-	newPred := inPredicate
 	// Special case if all IN list values are prunned. Ideally, this is False condition
 	// which can be optimized with LogicalDual. But, this is already done. TODO: the false
-	// optimization and its ospropagation through query tree will be added part of predicate simplification.
+	// optimization and its propagation through query tree will be added part of predicate simplification.
+	specialCase := false
 	if len(newValues) < 2 {
 		newValues = append(newValues, lastValue)
 		specialCase = true
 	}
-	if len(newValues) == 2 {
-		// Simplify single value IN list to equal.
-		newPred = expression.NewFunctionInternal(ctx.GetExprCtx(), ast.EQ, v.RetType, newValues[0], newValues[1])
-	} else {
-		newPred = expression.NewFunctionInternal(ctx.GetExprCtx(), v.FuncName.L, v.RetType, newValues...)
-	}
+	newPred := expression.NewFunctionInternal(ctx.GetExprCtx(), v.FuncName.L, v.RetType, newValues...)
 	return newPred, specialCase
 }
 
@@ -230,10 +225,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	newPredList := make([]expression.Expression, 0, 1)
 	newPredList = append(newPredList, newPred)
 	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList)
-	if unsatisfiableExpression(ctx, newPredList[0]) {
-		return true
-	}
-	return false
+	return unsatisfiableExpression(ctx, newPredList[0])
 }
 func comparisonPred(predType predicateType) predicateType {
 	if predType == equalPredicate || predType == lessThanPredicate ||
@@ -259,7 +251,6 @@ func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expressi
 	secondCondition := v.GetArgs()[1]
 	_, firstConditionType := findPredicateType(firstCondition)
 	_, secondConditionType := findPredicateType(secondCondition)
-	newPred := orPredicateList
 	emptyFirst := false
 	emptySecond := false
 	if comparisonPred(firstConditionType) == scalarPredicate {
@@ -275,15 +266,13 @@ func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expressi
 	emptyFirst = emptyFirst || unsatisfiableExpression(ctx, firstCondition)
 	emptySecond = emptySecond || unsatisfiableExpression(ctx, secondCondition)
 	if emptyFirst && !emptySecond {
-		newPred = secondCondition
+		return secondCondition
 	} else if !emptyFirst && emptySecond {
-		newPred = firstCondition
+		return firstCondition
 	} else if emptyFirst && emptySecond {
-		newPred = &expression.Constant{Value: types.NewIntDatum(0), RetType: types.NewFieldType(mysql.TypeTiny)}
-	} else {
-		newPred = expression.NewFunctionInternal(ctx.GetExprCtx(), ast.LogicOr, v.RetType, firstCondition, secondCondition)
+		return &expression.Constant{Value: types.NewIntDatum(0), RetType: types.NewFieldType(mysql.TypeTiny)}
 	}
-	return newPred
+	return expression.NewFunctionInternal(ctx.GetExprCtx(), ast.LogicOr, v.RetType, firstCondition, secondCondition)
 }
 
 // pruneEmptyORBranches applies iteratively updateOrPredicate for each pair of OR predicate
