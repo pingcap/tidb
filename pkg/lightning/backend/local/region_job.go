@@ -996,14 +996,16 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 func (q *regionJobRetryer) close() {
 	close(q.done)
 	close(q.putBackCh)
-	intest.Assert(
-		q.protectedToPutBack.toPutBack == nil,
-		"toPutBack should be nil considering it's happy path",
-	)
-	intest.Assert(
-		len(q.protectedQueue.q) == 0,
-		"queue should be empty considering it's happy path",
-	)
+	intest.AssertFunc(func() bool {
+		q.protectedToPutBack.mu.Lock()
+		defer q.protectedToPutBack.mu.Unlock()
+		return q.protectedToPutBack.toPutBack == nil
+	}, "toPutBack should be nil considering it's happy path")
+	intest.AssertFunc(func() bool {
+		q.protectedQueue.mu.Lock()
+		defer q.protectedQueue.mu.Unlock()
+		return len(q.protectedQueue.q) == 0
+	}, "queue should be empty considering it's happy path")
 }
 
 // internalClose is only internally used, caller should not use it.

@@ -188,9 +188,14 @@ func TestRegionJobRetryer(t *testing.T) {
 		putBackCh   = make(chan *regionJob, 10)
 		jobWg       sync.WaitGroup
 		ctx, cancel = context.WithCancel(context.Background())
+		done        = make(chan struct{})
 	)
-	retryer := newRegionJobRetryer(ctx, putBackCh, &jobWg)
+	retryer := newRegionJobRetryer(putBackCh, &jobWg)
 	require.Len(t, putBackCh, 0)
+	go func() {
+		defer close(done)
+		retryer.run(ctx)
+	}()
 
 	for i := 0; i < 8; i++ {
 		go func() {
@@ -227,6 +232,7 @@ func TestRegionJobRetryer(t *testing.T) {
 
 	cancel()
 	jobWg.Wait()
+	<-done
 	ok = retryer.push(job)
 	require.False(t, ok)
 
@@ -235,7 +241,12 @@ func TestRegionJobRetryer(t *testing.T) {
 
 	ctx, cancel = context.WithCancel(context.Background())
 	putBackCh = make(chan *regionJob)
-	retryer = newRegionJobRetryer(ctx, putBackCh, &jobWg)
+	retryer = newRegionJobRetryer(putBackCh, &jobWg)
+	done = make(chan struct{})
+	go func() {
+		defer close(done)
+		retryer.run(ctx)
+	}()
 
 	job = &regionJob{
 		keyRange: common.Range{
@@ -259,6 +270,29 @@ func TestRegionJobRetryer(t *testing.T) {
 	require.True(t, ok)
 	cancel()
 	jobWg.Wait()
+	<-done
+
+	// test when close successfully, regionJobRetryer should close the putBackCh
+	ctx = context.Background()
+	putBackCh = make(chan *regionJob)
+	retryer = newRegionJobRetryer(putBackCh, &jobWg)
+	done = make(chan struct{})
+	go func() {
+		defer close(done)
+		retryer.run(ctx)
+	}()
+
+	job = &regionJob{
+		keyRange: common.Range{
+			Start: []byte("123"),
+		},
+		waitUntil: time.Now().Add(-time.Second),
+	}
+	ok = retryer.push(job)
+	require.True(t, ok)
+	<-putBackCh
+	retryer.close()
+	<-putBackCh
 }
 
 func TestNewRegionJobs(t *testing.T) {
