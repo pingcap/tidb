@@ -18,13 +18,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	s "github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
-	"math"
-	"sort"
-	"strings"
 )
 
 // TestKey is the key for test context.
