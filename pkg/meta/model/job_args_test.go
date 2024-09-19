@@ -17,6 +17,7 @@ package model
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -224,5 +225,72 @@ func TestTruncateTableArgs(t *testing.T) {
 		args, err := GetFinishedTruncateTableArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, []int64{5, 6}, args.OldPartitionIDs)
+	}
+}
+
+func TestRenameTableArgs(t *testing.T) {
+	inArgs := &RenameTableArgs{
+		OldSchemaID:   9527,
+		OldSchemaName: model.NewCIStr("old_schema_name"),
+		NewTableName:  model.NewCIStr("new_table_name"),
+	}
+
+	jobvers := []JobVersion{JobVersion1, JobVersion2}
+	for _, jobver := range jobvers {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, jobver, ActionRenameTable)))
+
+		// get the args after decode
+		args, err := GetRenameTableArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestUpdateRenameTableArgs(t *testing.T) {
+	inArgs := &RenameTableArgs{
+		OldSchemaID:   9527,
+		OldSchemaName: model.NewCIStr("old_schema_name"),
+		NewTableName:  model.NewCIStr("new_table_name"),
+	}
+
+	jobvers := []JobVersion{JobVersion1, JobVersion2}
+	for _, jobver := range jobvers {
+		job := &Job{
+			SchemaID: 9528,
+			Version:  jobver,
+			Type:     ActionRenameTable,
+		}
+		job.FillArgs(inArgs)
+
+		err := UpdateRenameTableArgs(job)
+		require.NoError(t, err)
+
+		args, err := GetRenameTableArgs(job)
+		require.NoError(t, err)
+		require.Equal(t, &RenameTableArgs{
+			OldSchemaID:   9528,
+			OldSchemaName: model.NewCIStr("old_schema_name"),
+			NewTableName:  model.NewCIStr("new_table_name"),
+		}, args)
+	}
+}
+
+func TestResourceGroupArgs(t *testing.T) {
+	inArgs := &ResourceGroupArgs{
+		RGInfo: &ResourceGroupInfo{ID: 100, Name: model.NewCIStr("rg_name")},
+	}
+	for _, tp := range []ActionType{ActionCreateResourceGroup, ActionAlterResourceGroup, ActionDropResourceGroup} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			args, err := GetResourceGroupArgs(j2)
+			require.NoError(t, err)
+			if tp == ActionDropResourceGroup {
+				require.EqualValues(t, inArgs.RGInfo.Name, args.RGInfo.Name)
+			} else {
+				require.EqualValues(t, inArgs, args)
+			}
+		}
 	}
 }

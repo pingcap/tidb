@@ -33,7 +33,7 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -528,7 +528,7 @@ type vecBuiltinFunc interface {
 
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
-	contextopt.RequireOptionalEvalProps
+	expropt.RequireOptionalEvalProps
 	vecBuiltinFunc
 
 	// evalInt evaluates int result of builtinFunc by given row.

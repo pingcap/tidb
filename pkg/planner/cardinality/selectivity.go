@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -48,7 +48,7 @@ var (
 // should be held when you call this.
 // Currently, the time complexity is o(n^2).
 func Selectivity(
-	ctx context.PlanContext,
+	ctx planctx.PlanContext,
 	coll *statistics.HistColl,
 	exprs []expression.Expression,
 	filledPaths []*planutil.AccessPath,
@@ -671,7 +671,7 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 
 // findPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
 // So it will return at once no matching column is found.
-func findPrefixOfIndexByCol(ctx context.PlanContext, cols []*expression.Column, idxColIDs []int64,
+func findPrefixOfIndexByCol(ctx planctx.PlanContext, cols []*expression.Column, idxColIDs []int64,
 	cachedPath *planutil.AccessPath) []*expression.Column {
 	if cachedPath != nil {
 		evalCtx := ctx.GetExprCtx().GetEvalCtx()
@@ -693,7 +693,7 @@ func findPrefixOfIndexByCol(ctx context.PlanContext, cols []*expression.Column, 
 	return expression.FindPrefixOfIndex(cols, idxColIDs)
 }
 
-func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, rangeType ranger.RangeType,
+func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, rangeType ranger.RangeType,
 	lengths []int, cachedPath *planutil.AccessPath, cols ...*expression.Column) (
 	mask int64, ranges []*ranger.Range, partCover bool, err error) {
 	isDNF := false
@@ -737,7 +737,7 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 }
 
 func getMaskAndSelectivityForMVIndex(
-	ctx context.PlanContext,
+	ctx planctx.PlanContext,
 	coll *statistics.HistColl,
 	id int64,
 	exprs []expression.Expression,
@@ -768,7 +768,7 @@ func getMaskAndSelectivityForMVIndex(
 
 // GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
 // Currently, this method can only handle expressions involving a single column.
-func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl, filters []expression.Expression) (ok bool, selectivity float64, err error) {
+func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters []expression.Expression) (ok bool, selectivity float64, err error) {
 	// 1. Make sure the expressions
 	//   (1) are safe to be evaluated here,
 	//   (2) involve only one column,
@@ -917,7 +917,7 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 	return true, res, err
 }
 
-func findAvailableStatsForCol(sctx context.PlanContext, coll *statistics.HistColl, uniqueID int64) (isIndex bool, idx int64) {
+func findAvailableStatsForCol(sctx planctx.PlanContext, coll *statistics.HistColl, uniqueID int64) (isIndex bool, idx int64) {
 	// try to find available stats in column stats
 	if colStats := coll.GetCol(uniqueID); !statistics.ColumnStatsIsInvalid(colStats, sctx, coll, uniqueID) && colStats.IsFullLoad() {
 		return false, uniqueID
@@ -937,7 +937,7 @@ func findAvailableStatsForCol(sctx context.PlanContext, coll *statistics.HistCol
 }
 
 // getEqualCondSelectivity gets the selectivity of the equal conditions.
-func getEqualCondSelectivity(sctx context.PlanContext, coll *statistics.HistColl, idx *statistics.Index, bytes []byte,
+func getEqualCondSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl, idx *statistics.Index, bytes []byte,
 	usedColsLen int, idxPointRange *ranger.Range) (result float64, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -1002,7 +1002,7 @@ func getEqualCondSelectivity(sctx context.PlanContext, coll *statistics.HistColl
 // and has the same distribution with analyzed rows, which means each unique value should have the
 // same number of rows(Tot/NDV) of it.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func outOfRangeEQSelectivity(sctx context.PlanContext, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
+func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -1026,7 +1026,7 @@ func outOfRangeEQSelectivity(sctx context.PlanContext, ndv, realtimeRowCount, co
 
 // crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
 func crossValidationSelectivity(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	coll *statistics.HistColl,
 	idx *statistics.Index,
 	usedColsLen int,
@@ -1093,7 +1093,7 @@ func crossValidationSelectivity(
 // defined in planner/core package and hard to move here. So we use this trick to avoid the import cycle.
 var (
 	CollectFilters4MVIndex func(
-		sctx context.PlanContext,
+		sctx planctx.PlanContext,
 		filters []expression.Expression,
 		idxCols []*expression.Column,
 	) (
@@ -1102,7 +1102,7 @@ var (
 		accessTp int,
 	)
 	BuildPartialPaths4MVIndex func(
-		sctx context.PlanContext,
+		sctx planctx.PlanContext,
 		accessFilters []expression.Expression,
 		idxCols []*expression.Column,
 		mvIndex *model.IndexInfo,

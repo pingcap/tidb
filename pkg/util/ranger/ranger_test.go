@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1877,7 +1877,7 @@ func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *l
 
 func checkDetachRangeResult(t *testing.T, res *ranger.DetachRangeResult, expectedAccessConds, expectedRemainedConds, expectedRanges string) {
 	// TODO: get the context from argument
-	ectx := contextstatic.NewStaticEvalContext()
+	ectx := exprstatic.NewEvalContext()
 	require.Equal(t, expectedAccessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
 	require.Equal(t, expectedRemainedConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
 	require.Equal(t, expectedRanges, fmt.Sprintf("%v", res.Ranges))

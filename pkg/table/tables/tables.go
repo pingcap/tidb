@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -710,21 +710,21 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	return pkCols
 }
 
-func addTemporaryTable(sctx table.MutateContext, tblInfo *model.TableInfo) (tbctx.TemporaryTableHandler, int64, bool) {
+func addTemporaryTable(sctx table.MutateContext, tblInfo *model.TableInfo) (tblctx.TemporaryTableHandler, int64, bool) {
 	if s, ok := sctx.GetTemporaryTableSupport(); ok {
 		if h, ok := s.AddTemporaryTableToTxn(tblInfo); ok {
 			return h, s.GetTemporaryTableSizeLimit(), ok
 		}
 	}
-	return tbctx.TemporaryTableHandler{}, 0, false
+	return tblctx.TemporaryTableHandler{}, 0, false
 }
 
 // The size of a temporary table is calculated by accumulating the transaction size delta.
-func handleTempTableSize(t tbctx.TemporaryTableHandler, txnSizeBefore int, txn kv.Transaction) {
+func handleTempTableSize(t tblctx.TemporaryTableHandler, txnSizeBefore int, txn kv.Transaction) {
 	t.UpdateTxnDeltaSize(txn.Size() - txnSizeBefore)
 }
 
-func checkTempTableSize(tmpTable tbctx.TemporaryTableHandler, sizeLimit int64) error {
+func checkTempTableSize(tmpTable tblctx.TemporaryTableHandler, sizeLimit int64) error {
 	if tmpTable.GetCommittedSize()+tmpTable.GetDirtySize() > sizeLimit {
 		return table.ErrTempTableFull.GenWithStackByArgs(tmpTable.Meta().Name.O)
 	}
@@ -1268,7 +1268,7 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	return err
 }
 
-func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, support tbctx.BinlogSupport, h kv.Handle, encodeRowBuffer *tbctx.EncodeRowBuffer) error {
+func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, support tblctx.BinlogSupport, h kv.Handle, encodeRowBuffer *tblctx.EncodeRowBuffer) error {
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	handleData, err := h.Data()
@@ -1291,7 +1291,7 @@ func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, support tbctx.Bin
 	return nil
 }
 
-func (t *TableCommon) addUpdateBinlog(ctx table.MutateContext, support tbctx.BinlogSupport, oldRow, newRow []types.Datum, colIDs []int64) error {
+func (t *TableCommon) addUpdateBinlog(ctx table.MutateContext, support tblctx.BinlogSupport, oldRow, newRow []types.Datum, colIDs []int64) error {
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	old, err := tablecodec.EncodeOldRow(loc, oldRow, colIDs, nil, nil)
@@ -1311,7 +1311,7 @@ func (t *TableCommon) addUpdateBinlog(ctx table.MutateContext, support tbctx.Bin
 	return nil
 }
 
-func (t *TableCommon) addDeleteBinlog(ctx table.MutateContext, support tbctx.BinlogSupport, r []types.Datum, colIDs []int64) error {
+func (t *TableCommon) addDeleteBinlog(ctx table.MutateContext, support tblctx.BinlogSupport, r []types.Datum, colIDs []int64) error {
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	data, err := tablecodec.EncodeOldRow(loc, r, colIDs, nil, nil)
@@ -1611,7 +1611,7 @@ func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
 }
 
-func getBinlogSupport(ctx table.MutateContext, tblInfo *model.TableInfo) (tbctx.BinlogSupport, bool) {
+func getBinlogSupport(ctx table.MutateContext, tblInfo *model.TableInfo) (tblctx.BinlogSupport, bool) {
 	if tblInfo.TempTableType != model.TempTableNone || ctx.InRestrictedSQL() {
 		return nil, false
 	}

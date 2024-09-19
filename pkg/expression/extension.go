@@ -20,7 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -146,7 +146,7 @@ var _ extension.FunctionContext = extensionFnContext{}
 
 type extensionFuncSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	extension.FunctionDef
 }

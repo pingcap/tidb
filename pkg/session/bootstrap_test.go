@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/expression/contextsession"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
+	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -154,9 +154,9 @@ func TestBootstrapWithError(t *testing.T) {
 			store:       store,
 			sessionVars: variable.NewSessionVars(nil),
 		}
-		se.exprctx = contextsession.NewSessionExprContext(se)
+		se.exprctx = sessionexpr.NewExprContext(se)
 		se.pctx = newPlanContextImpl(se)
-		se.tblctx = tbctximpl.NewTableContextImpl(se)
+		se.tblctx = tblsession.NewMutateContext(se)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
 		se.txn.init()

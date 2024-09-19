@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -351,4 +352,118 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 	}
 
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
+}
+
+// RenameTableArgs is the arguments for rename table DDL job.
+type RenameTableArgs struct {
+	// for Args
+	OldSchemaID   int64        `json:"old_schema_id,omitempty"`
+	OldSchemaName pmodel.CIStr `json:"old_schema_name,omitempty"`
+	NewTableName  pmodel.CIStr `json:"new_table_name,omitempty"`
+}
+
+func (rt *RenameTableArgs) fillJob(job *Job) {
+	if job.Version <= JobVersion1 {
+		job.Args = []any{rt.OldSchemaID, rt.NewTableName, rt.OldSchemaName}
+	} else {
+		job.Args = []any{rt}
+	}
+}
+
+// GetRenameTableArgs get the arguments from job.
+func GetRenameTableArgs(job *Job) (*RenameTableArgs, error) {
+	var (
+		oldSchemaID   int64
+		oldSchemaName pmodel.CIStr
+		newTableName  pmodel.CIStr
+	)
+
+	if job.Version == JobVersion1 {
+		// decode args and cache in args.
+		err := job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		args := RenameTableArgs{
+			OldSchemaID:   oldSchemaID,
+			OldSchemaName: oldSchemaName,
+			NewTableName:  newTableName,
+		}
+		return &args, nil
+	}
+
+	// for version V2
+	return getOrDecodeArgsV2[*RenameTableArgs](job)
+}
+
+// UpdateRenameTableArgs updates the rename table args.
+// need to reset the old schema ID to new schema ID.
+func UpdateRenameTableArgs(job *Job) error {
+	var err error
+
+	// for job version1
+	if job.Version == JobVersion1 {
+		// update schemaID and marshal()
+		job.Args[0] = job.SchemaID
+		job.RawArgs, err = json.Marshal(job.Args)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		argsV2, err := getOrDecodeArgsV2[*RenameTableArgs](job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// update schemaID and marshal()
+		argsV2.OldSchemaID = job.SchemaID
+		job.Args = []any{argsV2}
+		job.RawArgs, err = json.Marshal(job.Args[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// ResourceGroupArgs is the arguments for resource group job.
+type ResourceGroupArgs struct {
+	// for DropResourceGroup we only use it to store the name, other fields are invalid.
+	RGInfo *ResourceGroupInfo `json:"rg_info,omitempty"`
+}
+
+func (a *ResourceGroupArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionCreateResourceGroup {
+			// what's the second parameter for? we keep it for compatibility.
+			job.Args = []any{a.RGInfo, false}
+		} else if job.Type == ActionAlterResourceGroup {
+			job.Args = []any{a.RGInfo}
+		} else if job.Type == ActionDropResourceGroup {
+			// it's not used anywhere.
+			job.Args = []any{a.RGInfo.Name}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetResourceGroupArgs gets the resource group args.
+func GetResourceGroupArgs(job *Job) (*ResourceGroupArgs, error) {
+	if job.Version == JobVersion1 {
+		rgInfo := ResourceGroupInfo{}
+		if job.Type == ActionCreateResourceGroup || job.Type == ActionAlterResourceGroup {
+			if err := job.DecodeArgs(&rgInfo); err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else if job.Type == ActionDropResourceGroup {
+			var rgName pmodel.CIStr
+			if err := job.DecodeArgs(&rgName); err != nil {
+				return nil, errors.Trace(err)
+			}
+			rgInfo.Name = rgName
+		}
+		return &ResourceGroupArgs{RGInfo: &rgInfo}, nil
+	}
+	return getOrDecodeArgsV2[*ResourceGroupArgs](job)
 }
