@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"slices"
 	"time"
 
@@ -602,6 +603,8 @@ type Request struct {
 	ConnID uint64
 	// ConnAlias stores the session connection alias.
 	ConnAlias string
+	// SQLKiller is a flag to indicate that this query is killed.
+	SQLKiller *sqlkiller.SQLKiller
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.

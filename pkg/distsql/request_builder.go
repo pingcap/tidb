@@ -16,6 +16,7 @@ package distsql
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"math"
 	"sort"
 	"sync/atomic"
@@ -434,6 +435,12 @@ func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprReques
 func (builder *RequestBuilder) SetConnIDAndConnAlias(connID uint64, connAlias string) *RequestBuilder {
 	builder.ConnID = connID
 	builder.ConnAlias = connAlias
+	return builder
+}
+
+// SetSQLKiller sets sqlkiller for the builder.
+func (builder *RequestBuilder) SetSQLKiller(killer *sqlkiller.SQLKiller) *RequestBuilder {
+	builder.SQLKiller = killer
 	return builder
 }
 

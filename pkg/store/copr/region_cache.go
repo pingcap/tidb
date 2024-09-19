@@ -170,7 +170,7 @@ const UnspecifiedLimit = -1
 
 // SplitKeyRangesByLocationsWithBuckets splits the KeyRanges by logical info in the cache.
 // The buckets in the returned LocationKeyRanges are not empty if the region is split by bucket.
-func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges *KeyRanges, limit int, sqlkiller *sqlkiller.SQLKiller) ([]*LocationKeyRanges, error) {
+func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges *KeyRanges, limit int, killer *sqlkiller.SQLKiller) ([]*LocationKeyRanges, error) {
 	res := make([]*LocationKeyRanges, 0)
 	for ranges.Len() > 0 {
 		if limit != UnspecifiedLimit && len(res) >= limit {
@@ -180,23 +180,24 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges
 		if err != nil {
 			return res, derr.ToTiDBErr(err)
 		}
+		failpoint.Inject("SplitRangesHangCausedKill", func(val failpoint.Value) {
+			if val.(bool) {
+				if killer != nil {
+					killer.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+				}
+			}
+		})
+		if killer != nil {
+			err = killer.HandleSignal()
+			if err != nil {
+				return nil, err
+			}
+		}
 
 		isBreak := false
 		res, ranges, isBreak = c.splitKeyRangesByLocation(loc, ranges, res)
 		if isBreak {
 			break
-		}
-
-		failpoint.Inject("SplitRangesHang", func(val failpoint.Value) {
-			if val.(bool) {
-				time.Sleep(time.Second)
-			}
-		})
-		if sqlkiller != nil {
-			err = sqlkiller.HandleSignal()
-			if err != nil {
-				return nil, err
-			}
 		}
 	}
 
