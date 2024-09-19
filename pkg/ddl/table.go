@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -123,7 +123,7 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver in
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
-			dropTableEvent := util.NewDropTableEvent(tblInfo)
+			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
 			asyncNotifyEvent(jobCtx, dropTableEvent, job)
 		}
 	default:
@@ -570,7 +570,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	truncateTableEvent := util.NewTruncateTableEvent(tblInfo, oldTblInfo)
+	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
 	asyncNotifyEvent(jobCtx, truncateTableEvent, job)
 	// see truncateTableByReassignPartitionIDs for why they might change.
 	args.OldPartitionIDs = oldPartitionIDs
@@ -735,20 +735,19 @@ func verifyNoOverflowShardBits(s *sess.Pool, tbl table.Table, shardRowIDBits uin
 }
 
 func onRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var oldSchemaID int64
-	var oldSchemaName pmodel.CIStr
-	var tableName pmodel.CIStr
-	if err := job.DecodeArgs(&oldSchemaID, &tableName, &oldSchemaName); err != nil {
+	args, err := model.GetRenameTableArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
+	oldSchemaID, oldSchemaName, tableName := args.OldSchemaID, args.OldSchemaName, args.NewTableName
 	if job.SchemaState == model.StatePublic {
 		return finishJobRenameTable(jobCtx, t, job)
 	}
 	newSchemaID := job.SchemaID
-	err := checkTableNotExists(jobCtx.infoCache, newSchemaID, tableName.L)
+	err = checkTableNotExists(jobCtx.infoCache, newSchemaID, tableName.L)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -766,7 +765,8 @@ func onRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 	fkh := newForeignKeyHelper()
-	err = adjustForeignKeyChildTableInfoAfterRenameTable(jobCtx.infoCache, t, job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
+	err = adjustForeignKeyChildTableInfoAfterRenameTable(jobCtx.infoCache, t,
+		job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -931,11 +931,10 @@ func finishJobRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int
 	// the table info can be dropped normally in `ApplyDiff`. This is because renaming table requires two
 	// schema versions to complete.
 	oldRawArgs := job.RawArgs
-	job.Args[0] = job.SchemaID
-	job.RawArgs, err = json.Marshal(job.Args)
-	if err != nil {
+	if err = model.UpdateRenameTableArgs(job); err != nil {
 		return 0, errors.Trace(err)
 	}
+
 	ver, err := updateSchemaVersion(jobCtx, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)

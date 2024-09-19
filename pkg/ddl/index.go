@@ -2611,12 +2611,19 @@ func renameIndexes(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
 		}
+		for _, col := range idx.Columns {
+			originalCol := tblInfo.Columns[col.Offset]
+			if originalCol.Hidden && getExpressionIndexOriginName(col.Name) == from.O {
+				col.Name.L = strings.Replace(col.Name.L, from.L, to.L, 1)
+				col.Name.O = strings.Replace(col.Name.O, from.O, to.O, 1)
+			}
+		}
 	}
 }
 
 func renameHiddenColumns(tblInfo *model.TableInfo, from, to pmodel.CIStr) {
 	for _, col := range tblInfo.Columns {
-		if col.Hidden && getExpressionIndexOriginName(col) == from.O {
+		if col.Hidden && getExpressionIndexOriginName(col.Name) == from.O {
 			col.Name.L = strings.Replace(col.Name.L, from.L, to.L, 1)
 			col.Name.O = strings.Replace(col.Name.O, from.O, to.O, 1)
 		}
