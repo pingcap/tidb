@@ -4341,8 +4341,6 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 	}
 
 	args := &model.RenameTablesArgs{RenameTableInfos: infos}
-	// subjob still need Args filled
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }

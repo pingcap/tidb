@@ -284,17 +284,9 @@ func TestGetRenameTablesArgs(t *testing.T) {
 		},
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		job := &Job{
-			Version: v,
-			Type:    ActionRenameTables,
-		}
-		job.FillArgs(inArgs)
-		bytes, err := job.Encode(true)
-		require.NoError(t, err)
-
 		j2 := &Job{}
-		err = j2.Decode(bytes)
-		require.NoError(t, err)
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionRenameTables)))
+
 		args, err := GetRenameTablesArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, inArgs.RenameTableInfos[0], args.RenameTableInfos[0])
