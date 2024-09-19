@@ -201,6 +201,34 @@ func TestBatchCreateTableArgs(t *testing.T) {
 	require.EqualValues(t, inArgs.Tables, args.Tables)
 }
 
+func TestTruncateTableArgs(t *testing.T) {
+	inArgs := &TruncateTableArgs{
+		NewTableID:      1,
+		FKCheck:         true,
+		NewPartitionIDs: []int64{2, 3},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionTruncateTable)))
+		args, err := GetTruncateTableArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), args.NewTableID)
+		require.Equal(t, true, args.FKCheck)
+		require.Equal(t, []int64{2, 3}, args.NewPartitionIDs)
+	}
+
+	inArgs = &TruncateTableArgs{
+		OldPartitionIDs: []int64{5, 6},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionTruncateTable)))
+		args, err := GetFinishedTruncateTableArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, []int64{5, 6}, args.OldPartitionIDs)
+	}
+}
+
 func TestRenameTableArgs(t *testing.T) {
 	inArgs := &RenameTableArgs{
 		OldSchemaID:   9527,
@@ -243,260 +271,59 @@ func TestUpdateRenameTableArgs(t *testing.T) {
 	}
 }
 
-func TestTruncateTableArgs(t *testing.T) {
-	inArgs := &TruncateTableArgs{
-		NewTableID:      1,
-		FKCheck:         true,
-		NewPartitionIDs: []int64{2, 3},
-	}
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionTruncateTable)))
-		args, err := GetTruncateTableArgs(j2)
-		require.NoError(t, err)
-		require.Equal(t, int64(1), args.NewTableID)
-		require.Equal(t, true, args.FKCheck)
-		require.Equal(t, []int64{2, 3}, args.NewPartitionIDs)
-	}
-
-	inArgs = &TruncateTableArgs{
-		OldPartitionIDs: []int64{5, 6},
-	}
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionTruncateTable)))
-		args, err := GetFinishedTruncateTableArgs(j2)
-		require.NoError(t, err)
-		require.Equal(t, []int64{5, 6}, args.OldPartitionIDs)
-	}
-}
-
 func TestModifyColumnArgs(t *testing.T) {
-	var (
-		newcol = &ColumnInfo{
-			ID:   9527,
-			Name: model.NewCIStr("new_col_name"),
-		}
-		oldColName = model.NewCIStr("old_col_name")
-		pos        = &ast.ColumnPosition{
-			Tp: ast.ColumnPositionFirst,
-		}
-		modifyColumnTp               = byte('a')
-		updatedAutoRandomBits uint64 = 9527
-		changingCol                  = &ColumnInfo{
-			ID:   9528,
-			Name: model.NewCIStr("changing_col"),
-		}
-		changingIdxs = []*IndexInfo{
-			{
-				ID:   9529,
-				Name: model.NewCIStr("index_info_1"),
+	inArgs := &ModifyColumnArgs{
+		ModifyingColInfo: &ModifyingColInfo{
+			NewCol: &ColumnInfo{
+				ID:   9527,
+				Name: model.NewCIStr("new_col_name"),
 			},
-			{
-				ID:   9530,
-				Name: model.NewCIStr("index_info_2"),
+			OldColName: model.NewCIStr("old_col_name"),
+			Pos: &ast.ColumnPosition{
+				Tp: ast.ColumnPositionFirst,
 			},
-		}
-		removedIdxs       = []int64{1, 2, 3}
-		needChangeColData = true
-	)
-
-	jobvers := []JobVersion{JobVersion1, JobVersion2}
-	for _, jobver := range jobvers {
-		job := &Job{
-			Version: jobver,
-			Type:    ActionModifyColumn,
-		}
-		job.FillArgs(&ModifyColumnArgs{
-			ModifyingColInfo: &ModifyingColInfo{
-				NewCol:                newcol,
-				OldColName:            oldColName,
-				Pos:                   pos,
-				ModifyColumnTp:        modifyColumnTp,
-				UpdatedAutoRandomBits: updatedAutoRandomBits,
-				ChangingCol:           changingCol,
-				ChangingIdxs:          changingIdxs,
-				RemovedIdxs:           removedIdxs,
+			ModifyColumnTp:        byte('a'),
+			UpdatedAutoRandomBits: 9527,
+			ChangingCol: &ColumnInfo{
+				ID:   9528,
+				Name: model.NewCIStr("changing_col"),
 			},
-			NeedChangeColData: needChangeColData,
-		})
-
-		// get args before marshal args.
-		args, err := GetModifyColumnArgs(job)
-		require.NoError(t, err)
-		require.Equal(t, args.NeedChangeColData, needChangeColData)
-
-		require.Equal(t, args.NewCol, newcol)
-		require.Equal(t, args.OldColName, oldColName)
-		require.Equal(t, args.Pos, pos)
-		require.Equal(t, args.ModifyColumnTp, modifyColumnTp)
-		require.Equal(t, args.UpdatedAutoRandomBits, updatedAutoRandomBits)
-		require.Equal(t, args.ChangingCol, changingCol)
-		require.Equal(t, args.ChangingIdxs, changingIdxs)
-		require.Equal(t, args.RemovedIdxs, removedIdxs)
+			ChangingIdxs: []*IndexInfo{
+				{
+					ID:   9529,
+					Name: model.NewCIStr("index_info_1"),
+				},
+				{
+					ID:   9530,
+					Name: model.NewCIStr("index_info_2"),
+				},
+			},
+			RemovedIdxs: []int64{1, 2, 3},
+		},
 	}
-}
 
-func TestModifyColumnArgsWithPartialArgs(t *testing.T) {
-	var (
-		newcol = &ColumnInfo{
-			ID:   9527,
-			Name: model.NewCIStr("new_col_name"),
-		}
-		oldColName = model.NewCIStr("old_col_name")
-		pos        = &ast.ColumnPosition{
-			Tp: ast.ColumnPositionFirst,
-		}
-		modifyColumnTp               = byte('a')
-		updatedAutoRandomBits uint64 = 9527
-		needChangeColData            = true
-	)
-
-	jobvers := []JobVersion{JobVersion1, JobVersion2}
-	for _, jobver := range jobvers {
-		job := &Job{
-			Version: jobver,
-			Type:    ActionModifyColumn,
-		}
-		job.FillArgs(&ModifyColumnArgs{
-			ModifyingColInfo: &ModifyingColInfo{
-				NewCol:                newcol,
-				OldColName:            oldColName,
-				Pos:                   pos,
-				ModifyColumnTp:        modifyColumnTp,
-				UpdatedAutoRandomBits: updatedAutoRandomBits,
-			},
-			NeedChangeColData: needChangeColData,
-		})
-
-		// get args before marshal args.
+	jobVers := []JobVersion{JobVersion1, JobVersion2}
+	for _, jobVer := range jobVers {
+		job := &Job{}
+		require.NoError(t, job.Decode(getJobBytes(t, inArgs, jobVer, ActionModifyColumn)))
 		args, err := GetModifyColumnArgs(job)
 		require.NoError(t, err)
-		require.Equal(t, args.NeedChangeColData, needChangeColData)
-
-		require.Equal(t, args.NewCol, newcol)
-		require.Equal(t, args.OldColName, oldColName)
-		require.Equal(t, args.Pos, pos)
-		require.Equal(t, args.ModifyColumnTp, modifyColumnTp)
-		require.Equal(t, args.UpdatedAutoRandomBits, updatedAutoRandomBits)
-	}
-}
-
-func TestGetModifyColumnArgs(t *testing.T) {
-	var (
-		err    error
-		newcol = &ColumnInfo{
-			ID:   9527,
-			Name: model.NewCIStr("new_col_name"),
-		}
-		oldColName = model.NewCIStr("old_col_name")
-		pos        = &ast.ColumnPosition{
-			Tp: ast.ColumnPositionFirst,
-		}
-		modifyColumnTp               = byte('a')
-		updatedAutoRandomBits uint64 = 9527
-		changingCol                  = &ColumnInfo{
-			ID:   9528,
-			Name: model.NewCIStr("changing_col"),
-		}
-		changingIdxs = []*IndexInfo{
-			{
-				ID:   9529,
-				Name: model.NewCIStr("index_info_1"),
-			},
-			{
-				ID:   9530,
-				Name: model.NewCIStr("index_info_2"),
-			},
-		}
-		removedIdxs       = []int64{1, 2, 3}
-		needChangeColData = true
-	)
-
-	jobvers := []JobVersion{JobVersion1, JobVersion2}
-	for _, jobver := range jobvers {
-		job := &Job{
-			Version: jobver,
-			Type:    ActionModifyColumn,
-		}
-		job.FillArgs(&ModifyColumnArgs{
-			ModifyingColInfo: &ModifyingColInfo{
-				NewCol:                newcol,
-				OldColName:            oldColName,
-				Pos:                   pos,
-				ModifyColumnTp:        modifyColumnTp,
-				UpdatedAutoRandomBits: updatedAutoRandomBits,
-				ChangingCol:           changingCol,
-				ChangingIdxs:          changingIdxs,
-				RemovedIdxs:           removedIdxs,
-			},
-			NeedChangeColData: needChangeColData,
-		})
-		// Marshal args
-		_, err = job.Encode(true)
-		require.NoError(t, err)
-		job.Args = nil
-
-		// test decodeModifyColumnArgs(), it needs decode job.RawArgs.
-		args, err := GetModifyColumnArgs(job)
-		require.NoError(t, err)
-		require.Equal(t, args.NewCol, newcol)
-		require.Equal(t, args.OldColName, oldColName)
-		require.Equal(t, args.Pos, pos)
-		require.Equal(t, args.ModifyColumnTp, modifyColumnTp)
-		require.Equal(t, args.UpdatedAutoRandomBits, updatedAutoRandomBits)
-		require.Equal(t, args.ChangingCol, changingCol)
-		require.Equal(t, args.ChangingIdxs, changingIdxs)
-		require.Equal(t, args.RemovedIdxs, removedIdxs)
-
-		// test getModifyColumnArgs, don't need decode job.RawArgs.
-		require.True(t, len(job.Args) > 0)
-		args, err = GetModifyColumnArgs(job)
-		require.NoError(t, err)
-		require.Equal(t, args.NewCol, newcol)
-		require.Equal(t, args.OldColName, oldColName)
-		require.Equal(t, args.Pos, pos)
-		require.Equal(t, args.ModifyColumnTp, modifyColumnTp)
-		require.Equal(t, args.UpdatedAutoRandomBits, updatedAutoRandomBits)
-		require.Equal(t, args.ChangingCol, changingCol)
-		require.Equal(t, args.ChangingIdxs, changingIdxs)
-		require.Equal(t, args.RemovedIdxs, removedIdxs)
+		require.Equal(t, inArgs, args)
 	}
 }
 
 func TestGetFinishedModifyColumnArgs(t *testing.T) {
-	var (
-		indexIDs     = []int64{1, 2, 3}
-		partitionIDs = []int64{4, 5, 6}
-	)
+	inArgs := &ModifyColumnArgs{
+		IndexIDs:     []int64{1, 2, 3},
+		PartitionIDs: []int64{4, 5, 6},
+	}
 
-	jobvers := []JobVersion{JobVersion1, JobVersion2}
-	for _, jobver := range jobvers {
-		job := &Job{
-			Version: jobver,
-			Type:    ActionModifyColumn,
-		}
-
-		job.FillFinishedArgs(&ModifyColumnArgs{
-			IndexIDs:     indexIDs,
-			PartitionIDs: partitionIDs,
-		})
-
-		// Marshal args
-		_, err := job.Encode(true)
-		require.NoError(t, err)
-		job.Args = nil
-
-		// test GetFinishedModifyColumnArgs(), it needs decode job.RawArgs.
+	jobVers := []JobVersion{JobVersion1, JobVersion2}
+	for _, jobVer := range jobVers {
+		job := &Job{}
+		require.NoError(t, job.Decode(getFinishedJobBytes(t, inArgs, jobVer, ActionModifyColumn)))
 		args, err := GetFinishedModifyColumnArgs(job)
 		require.NoError(t, err)
-		require.Equal(t, args.IndexIDs, indexIDs)
-		require.Equal(t, args.PartitionIDs, partitionIDs)
-
-		// test GetFinishedModifyColumnArgs, don't need decode job.RawArgs.
-		args, err = GetFinishedModifyColumnArgs(job)
-		require.NoError(t, err)
-		require.Equal(t, args.IndexIDs, indexIDs)
-		require.Equal(t, args.PartitionIDs, partitionIDs)
+		require.Equal(t, inArgs, args)
 	}
 }

@@ -453,17 +453,22 @@ type ModifyColumnArgs struct {
 }
 
 func (a *ModifyColumnArgs) fillJob(job *Job) {
-	if job.Version <= JobVersion1 {
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+
+	if job.Version == JobVersion1 {
 		job.Args = []any{&a.NewCol, a.OldColName, a.Pos, a.ModifyColumnTp,
 			a.UpdatedAutoRandomBits, a.ChangingCol, a.ChangingIdxs, a.RemovedIdxs}
 		job.CtxVars = []any{a.NeedChangeColData}
 	} else {
+		intest.Assert(job.Version == JobVersion2, "job version is not v2")
 		job.Args = []any{a}
 	}
 }
 
 func (a *ModifyColumnArgs) fillFinishedJob(job *Job) {
-	if job.Version <= JobVersion1 {
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+
+	if job.Version == JobVersion1 {
 		job.Args = []any{a.IndexIDs, a.PartitionIDs}
 	} else {
 		job.Args = []any{a}
@@ -481,55 +486,17 @@ func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 }
 
 func getModifyColumnArgs(job *Job, argsOfFinished bool) (*ModifyColumnArgs, error) {
-	if len(job.Args) <= 0 {
-		return decodeModifyColumnArgs(job, argsOfFinished)
-	}
-
-	if job.Version <= JobVersion1 {
-		if argsOfFinished {
-			return &ModifyColumnArgs{
-				IndexIDs:     job.Args[0].([]int64),
-				PartitionIDs: job.Args[1].([]int64),
-			}, nil
-		}
-
-		// for argsOfFinished = false.
-		args := &ModifyColumnArgs{
-			ModifyingColInfo: &ModifyingColInfo{
-				NewCol:                *job.Args[0].(**ColumnInfo),
-				OldColName:            job.Args[1].(model.CIStr),
-				Pos:                   job.Args[2].(*ast.ColumnPosition),
-				ModifyColumnTp:        job.Args[3].(byte),
-				UpdatedAutoRandomBits: job.Args[4].(uint64),
-				ChangingCol:           job.Args[5].(*ColumnInfo),
-				ChangingIdxs:          job.Args[6].([]*IndexInfo),
-				RemovedIdxs:           job.Args[7].([]int64),
-			},
-		}
-		if len(job.CtxVars) > 0 {
-			args.NeedChangeColData = job.CtxVars[0].(bool)
-		}
-		return args, nil
-	}
-
-	// for job version2
-	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
-}
-
-func decodeModifyColumnArgs(job *Job, argsOfFinished bool) (*ModifyColumnArgs, error) {
 	var (
 		indexIDs     []int64
 		partitionIDs []int64
 		modifyInfo   ModifyingColInfo
 	)
 
-	if job.Version <= JobVersion1 {
+	if job.Version == JobVersion1 {
 		if argsOfFinished {
 			if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
 				return nil, errors.Trace(err)
 			}
-			// cache the args after decode
-			job.Args = []any{indexIDs, partitionIDs}
 
 			return &ModifyColumnArgs{
 				IndexIDs:     indexIDs,
@@ -544,11 +511,6 @@ func decodeModifyColumnArgs(job *Job, argsOfFinished bool) (*ModifyColumnArgs, e
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-
-		// cache the args after decode.
-		job.Args = []any{&modifyInfo.NewCol, modifyInfo.OldColName, modifyInfo.Pos,
-			modifyInfo.ModifyColumnTp, modifyInfo.UpdatedAutoRandomBits,
-			modifyInfo.ChangingCol, modifyInfo.ChangingIdxs, modifyInfo.RemovedIdxs}
 
 		return &ModifyColumnArgs{
 			ModifyingColInfo: &modifyInfo,
