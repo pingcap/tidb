@@ -265,7 +265,12 @@ func TestHandleLockTable(t *testing.T) {
 		require.True(t, locked)
 		require.Equal(t, tp, lockType)
 	}
-	jobW := ddl.NewJobWrapper(&model.Job{Type: model.ActionTruncateTable, TableID: 1, Args: []any{int64(2)}}, false)
+	job := &model.Job{
+		Version: model.GetJobVerInUse(),
+		Type:    model.ActionTruncateTable,
+		TableID: 1,
+	}
+	jobW := ddl.NewJobWrapperWithArgs(job, &model.TruncateTableArgs{NewTableID: 2}, false)
 
 	t.Run("target table not locked", func(t *testing.T) {
 		se.ReleaseAllTableLocks()

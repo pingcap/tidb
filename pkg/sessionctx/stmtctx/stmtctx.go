@@ -27,6 +27,7 @@ import (
 
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -44,10 +45,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/nocopy"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
 	"golang.org/x/sync/singleflight"
@@ -686,20 +685,14 @@ func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
 	sc.binaryPlan = binaryPlan
 }
 
-// GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
-func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger {
+// GetResourceGroupTagger returns the implementation of kv.ResourceGroupTagBuilder related to self.
+func (sc *StatementContext) GetResourceGroupTagger() *kv.ResourceGroupTagBuilder {
+	tagger := kv.NewResourceGroupTagBuilder().SetPlanDigest(sc.planDigest)
 	normalized, digest := sc.SQLDigest()
-	planDigest := sc.planDigest
-	return func(req *tikvrpc.Request) {
-		if req == nil {
-			return
-		}
-		if len(normalized) == 0 {
-			return
-		}
-		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, planDigest,
-			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
+	if len(normalized) > 0 {
+		tagger.SetSQLDigest(digest)
 	}
+	return tagger
 }
 
 // SetUseChunkAlloc set use chunk alloc status
