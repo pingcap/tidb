@@ -344,14 +344,6 @@ func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string, [
 	return physicalTableIDs, partNames, rollbackBundles
 }
 
-// Check if current table already contains DEFAULT list partition
-func checkAddListPartitions(tblInfo *model.TableInfo) error {
-	if tblInfo.Partition.GetDefaultListPartition() != -1 {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
-	}
-	return nil
-}
-
 // checkAddPartitionValue check add Partition Values,
 // For Range: values less than value must be strictly increasing for each partition.
 // For List: if a Default partition exists,
@@ -392,9 +384,8 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 			}
 		}
 	case pmodel.PartitionTypeList:
-		err := checkAddListPartitions(meta)
-		if err != nil {
-			return err
+		if meta.Partition.GetDefaultListPartition() != -1 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead")
 		}
 	}
 	return nil
