@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
@@ -103,30 +102,26 @@ func SetSchemaDiffForRenameTable(diff *model.SchemaDiff, job *model.Job) error {
 
 // SetSchemaDiffForRenameTables set SchemaDiff for ActionRenameTables.
 func SetSchemaDiffForRenameTables(diff *model.SchemaDiff, job *model.Job) error {
-	var (
-		oldSchemaIDs, newSchemaIDs, tableIDs []int64
-		tableNames, oldSchemaNames           []*pmodel.CIStr
-	)
-	err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames)
+	args, err := model.GetRenameTablesArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	affects := make([]*model.AffectedOption, len(newSchemaIDs)-1)
-	for i, newSchemaID := range newSchemaIDs {
+	affects := make([]*model.AffectedOption, len(args.RenameTableInfos)-1)
+	for i, info := range args.RenameTableInfos {
 		// Do not add the first table to AffectedOpts. Related issue tidb#47064.
 		if i == 0 {
 			continue
 		}
 		affects[i-1] = &model.AffectedOption{
-			SchemaID:    newSchemaID,
-			TableID:     tableIDs[i],
-			OldTableID:  tableIDs[i],
-			OldSchemaID: oldSchemaIDs[i],
+			SchemaID:    info.NewSchemaID,
+			TableID:     info.TableID,
+			OldTableID:  info.TableID,
+			OldSchemaID: info.OldSchemaID,
 		}
 	}
-	diff.TableID = tableIDs[0]
-	diff.SchemaID = newSchemaIDs[0]
-	diff.OldSchemaID = oldSchemaIDs[0]
+	diff.TableID = args.RenameTableInfos[0].TableID
+	diff.SchemaID = args.RenameTableInfos[0].NewSchemaID
+	diff.OldSchemaID = args.RenameTableInfos[0].OldSchemaID
 	diff.AffectedOpts = affects
 	return nil
 }
