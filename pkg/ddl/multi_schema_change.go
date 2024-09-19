@@ -185,6 +185,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
 		reorgTp = job.ReorgMeta.ReorgTp
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
+		Version:     job.Version,
 		Type:        job.Type,
 		Args:        job.Args,
 		RawArgs:     job.RawArgs,
