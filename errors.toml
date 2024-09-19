@@ -1936,6 +1936,11 @@ error = '''
 Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]
 '''
 
+["executor:8177"]
+error = '''
+Delete can not find column %s for table %s
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -2651,6 +2656,11 @@ error = '''
 variable %s has no effect in TiDB
 '''
 
+["planner:8177"]
+error = '''
+Delete can not find column %s for table %s
+'''
+
 ["planner:8242"]
 error = '''
 '%s' is unsupported on cache tables.
@@ -2929,6 +2939,11 @@ You must reset your password using ALTER USER statement before executing this st
 ["server:3159"]
 error = '''
 Connections using insecure transport are prohibited while --require_secure_transport=ON.
+'''
+
+["server:8051"]
+error = '''
+unknown field type
 '''
 
 ["server:8052"]
