@@ -760,7 +760,6 @@ func onRenameTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 	oldTableName := tblInfo.Name
-	args.NewSchemaID = job.SchemaID
 	ver, err = checkAndRenameTables(t, job, tblInfo, args)
 	if err != nil {
 		return ver, errors.Trace(err)
