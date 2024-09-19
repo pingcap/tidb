@@ -1373,9 +1373,20 @@ var (
 )
 
 func acquireLock(s sessiontypes.Session) bool {
-	cli := domain.GetDomain(s).GetEtcdClient()
+	dom := domain.GetDomain(s)
+	if dom == nil {
+		logutil.BgLogger().Warn("domain is nil")
+		return false
+	}
+	cli := dom.GetEtcdClient()
+	if cli == nil {
+		logutil.BgLogger().Warn("etcd client is nil")
+		return false
+	}
 	// The lock is used to make sure only one TiDB server is bootstrapping the system.
-	lease, err := cli.Grant(context.Background(), 30)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	lease, err := cli.Grant(ctx, 30)
+	cancel()
 	if err != nil {
 		return false
 	}
@@ -1389,7 +1400,16 @@ func acquireLock(s sessiontypes.Session) bool {
 }
 
 func releaseLock(s sessiontypes.Session) {
-	cli := domain.GetDomain(s).GetEtcdClient()
+	dom := domain.GetDomain(s)
+	if dom == nil {
+		logutil.BgLogger().Warn("domain is nil")
+		return
+	}
+	cli := dom.GetEtcdClient()
+	if cli == nil {
+		logutil.BgLogger().Warn("etcd client is nil")
+		return
+	}
 	etcdSession, err := concurrency.NewSession(cli)
 	if err != nil {
 		return
