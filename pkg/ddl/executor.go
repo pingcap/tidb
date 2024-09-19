@@ -952,7 +952,7 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 }
 
 // checkGlobalIndex check if the index is allowed to have global index
-func checkGlobalIndex(ctx sessionctx.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+func checkGlobalIndex(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	pi := tblInfo.GetPartitionInfo()
 	isPartitioned := pi != nil && pi.Type != pmodel.PartitionTypeNone
 	if indexInfo.Global {
@@ -979,9 +979,9 @@ func checkGlobalIndex(ctx sessionctx.Context, tblInfo *model.TableInfo, indexInf
 }
 
 // checkGlobalIndexes check if global index is supported.
-func checkGlobalIndexes(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+func checkGlobalIndexes(tblInfo *model.TableInfo) error {
 	for _, indexInfo := range tblInfo.Indices {
-		err := checkGlobalIndex(ctx, tblInfo, indexInfo)
+		err := checkGlobalIndex(tblInfo, indexInfo)
 		if err != nil {
 			return err
 		}

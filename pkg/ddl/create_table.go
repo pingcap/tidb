@@ -527,7 +527,7 @@ func checkTableInfoValidExtra(ctx sessionctx.Context, tbInfo *model.TableInfo) e
 	if err := checkColumnsAttributes(tbInfo.Columns); err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkGlobalIndexes(ctx, tbInfo); err != nil {
+	if err := checkGlobalIndexes(tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
