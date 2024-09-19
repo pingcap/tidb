@@ -3224,7 +3224,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 		// and we will soon start writing to the new partitions.
 		if s, ok := jobCtx.store.(kv.SplittableStore); ok && s != nil {
 			// partInfo only contains the AddingPartitions
-			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, true)
+			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, "table")
 		}
 
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
