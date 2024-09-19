@@ -16,13 +16,12 @@ package copr
 
 import (
 	"bytes"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"math"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
@@ -30,6 +29,7 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"

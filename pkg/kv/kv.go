@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"slices"
 	"time"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	tikvstore "github.com/tikv/client-go/v2/kv"

@@ -16,7 +16,6 @@ package distsql
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"math"
 	"sort"
 	"sync/atomic"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
