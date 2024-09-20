@@ -55,10 +55,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
@@ -155,9 +153,6 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = uint32(0)
-	// GetPumpClient is used to get the pump client.
-	// It's exported for testing.
-	GetPumpClient = binloginfo.GetPumpsClient
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -324,8 +319,7 @@ type ddlCtx struct {
 	serverStateSyncer serverstate.Syncer
 
 	ddlEventCh   chan<- *notifier.SchemaChangeEvent
-	lease        time.Duration        // lease is schema lease, default 45s, see config.Lease.
-	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	lease        time.Duration // lease is schema lease, default 45s, see config.Lease.
 	infoCache    *infoschema.InfoCache
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
@@ -633,7 +627,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		ownerManager:      manager,
 		schemaVerSyncer:   schemaVerSyncer,
 		serverStateSyncer: serverStateSyncer,
-		binlogCli:         GetPumpClient(),
 		infoCache:         opt.InfoCache,
 		tableLockCkr:      deadLockCkr,
 		etcdCli:           opt.EtcdCli,

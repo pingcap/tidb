@@ -319,7 +319,7 @@ func (r *Checker) CheckThresholds(ruDetail *util.RUDetails, processKeys int64, e
 	}
 
 	checkTime, now := NullTime, time.Now()
-	// decided to whether check time.
+	// decide whether to check the time.
 	if err != nil && strings.HasPrefix(err.Error(), "Coprocessor task terminated due to exceeding the deadline") {
 		checkTime = now
 	}

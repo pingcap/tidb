@@ -222,7 +222,7 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 	case ast.ResourceGroupRunaway:
 		if len(opt.RunawayOptionList) == 0 {
 			resourceGroupSettings.Runaway = nil
-		} else {
+		} else if resourceGroupSettings.Runaway == nil { // set default value when runaway is nil
 			resourceGroupSettings.Runaway = &model.ResourceGroupRunawaySettings{}
 		}
 		for _, opt := range opt.RunawayOptionList {
