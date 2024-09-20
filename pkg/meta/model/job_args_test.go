@@ -339,3 +339,21 @@ func TestGetAlterIndexVisibilityArgs(t *testing.T) {
 		require.Equal(t, inArgs, args)
 	}
 }
+
+func TestGetAddForeignKeyArgs(t *testing.T) {
+	inArgs := &AddForeignKeyArgs{
+		FkInfo: &FKInfo{
+			ID:   7527,
+			Name: model.NewCIStr("fk-name"),
+		},
+		FkCheck: true,
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddForeignKey)))
+		args, err := GetAddForeignKeyArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}

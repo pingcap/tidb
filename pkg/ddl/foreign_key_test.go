@@ -64,12 +64,14 @@ func testCreateForeignKey(t *testing.T, d ddl.ExecutorForTest, ctx sessionctx.Co
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionAddForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{fkInfo},
 	}
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+
+	args := &model.AddForeignKeyArgs{FkInfo: fkInfo}
+	job.FillArgs(args)
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 	return job
 }

@@ -583,6 +583,7 @@ func (a *AlterIndexVisibilityArgs) fillJob(job *Job) {
 	}
 }
 
+// GetAlterIndexVisibilityArgs gets the args for AlterIndexVisibility ddl.
 func GetAlterIndexVisibilityArgs(job *Job) (*AlterIndexVisibilityArgs, error) {
 	if job.Version == JobVersion1 {
 		var (
@@ -599,4 +600,39 @@ func GetAlterIndexVisibilityArgs(job *Job) (*AlterIndexVisibilityArgs, error) {
 	}
 
 	return getOrDecodeArgsV2[*AlterIndexVisibilityArgs](job)
+}
+
+// AddForeignKeyArgs is the arguments for ActionAddForeignKey ddl.
+type AddForeignKeyArgs struct {
+	FkInfo  *FKInfo
+	FkCheck bool
+}
+
+func (a *AddForeignKeyArgs) fillJob(job *Job) {
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.FkInfo, a.FkCheck}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAddForeignKeyArgs get the args for ActionAddForeignKey ddl.
+func GetAddForeignKeyArgs(job *Job) (*AddForeignKeyArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			fkInfo  *FKInfo
+			fkCheck bool
+		)
+		if err := job.DecodeArgs(&fkInfo, &fkCheck); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AddForeignKeyArgs{
+			FkInfo:  fkInfo,
+			FkCheck: fkCheck,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*AddForeignKeyArgs](job)
 }

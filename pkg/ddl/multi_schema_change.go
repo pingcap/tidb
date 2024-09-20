@@ -184,6 +184,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
 		reorgTp = job.ReorgMeta.ReorgTp
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
+		Version:     job.Version,
 		Type:        job.Type,
 		Args:        job.Args,
 		RawArgs:     job.RawArgs,
@@ -260,7 +261,13 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		info.AlterIndexes = append(info.AlterIndexes, idxName)
 	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
 	case model.ActionAddForeignKey:
-		fkInfo := job.Args[0].(*model.FKInfo)
+		var fkInfo *model.FKInfo
+		if job.Version == model.JobVersion1 {
+			fkInfo = job.Args[0].(*model.FKInfo)
+		} else {
+			args := job.Args[0].(*model.AddForeignKeyArgs)
+			fkInfo = args.FkInfo
+		}
 		info.AddForeignKeys = append(info.AddForeignKeys, model.AddForeignKeyInfo{
 			Name: fkInfo.Name,
 			Cols: fkInfo.Cols,

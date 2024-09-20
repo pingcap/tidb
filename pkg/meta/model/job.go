@@ -862,6 +862,7 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
+	Version     JobVersion      `json:"-"`
 	Type        ActionType      `json:"type"`
 	Args        []any           `json:"-"`
 	RawArgs     json.RawMessage `json:"raw_args"`
