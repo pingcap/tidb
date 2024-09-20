@@ -59,6 +59,7 @@ var ErrNotReadyRetryLater = errors.New("not ready, retry later")
 type HandlerID int
 
 const (
+	// TestHandlerID is used for testing only.
 	TestHandlerID HandlerID = iota
 )
 
