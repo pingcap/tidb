@@ -433,6 +433,12 @@ func (builder *RequestBuilder) SetConnID(connID uint64) *RequestBuilder {
 	return builder
 }
 
+// SetKilled sets killed flag for the builder.
+func (builder *RequestBuilder) SetKilled(killed *uint32) *RequestBuilder {
+	builder.Killed = killed
+	return builder
+}
+
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
 func TableHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range) (*kv.KeyRanges, error) {
 	if !isCommonHandle {
