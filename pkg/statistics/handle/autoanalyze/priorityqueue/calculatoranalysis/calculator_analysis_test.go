@@ -16,13 +16,13 @@ package priorityqueue_test
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/csv"
 	"flag"
 	"fmt"
 	"math"
 	"os"
-	"sort"
-	"strconv"
+	"slices"
 	"testing"
 	"time"
 
@@ -33,34 +33,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Constants for test thresholds and file names
-const (
-	inputDataFile = "data.csv"
-	goldenFile    = "calculated_priorities.golden.csv"
-)
-
-// Constants for generating test data
-const (
-	maxChangeRate       = 0.001 // 0.1% per second maximum change rate
-	maxChangePercentage = 3.0   // Maximum change capped at 300% of table size
-	minMeaningfulChange = 1000  // Minimum meaningful change amount
-)
-
-// Constants for change rate calculation
 const (
 	baseChangeRate      = 0.001  // Base change rate: 0.1% per second
 	changeRateDecayLog  = 3      // Controls how quickly the change rate decays for larger tables
 	smallTableThreshold = 100000 // Tables smaller than this use the base change rate
+	maxChangePercentage = 3.0    // Maximum change capped at 300% of table size
 )
 
 var update = flag.Bool("update", false, "update .golden files")
 
 // Please read README.md for more details.
 // To update golden file, run the test with -update flag.
-func TestPriorityCalculatorWithCSVData(t *testing.T) {
-	generateTestData(t)
-	jobs, err := loadTestData(inputDataFile)
-	require.NoError(t, err, "Failed to load test data")
+func TestPriorityCalculatorWithGeneratedData(t *testing.T) {
+	jobs := generateTestData(t)
 
 	calculator := priorityqueue.NewPriorityCalculator()
 
@@ -85,10 +70,10 @@ func TestPriorityCalculatorWithCSVData(t *testing.T) {
 	got := buf.Bytes()
 
 	// Compare with golden file
-	golden := goldenFile
+	golden := "testdata/calculated_priorities.golden.csv"
 	if *update {
 		t.Log("updating golden file")
-		err = os.WriteFile(golden, got, 0644)
+		err := os.WriteFile(golden, got, 0644)
 		require.NoError(t, err, "Failed to update golden file")
 	}
 
@@ -111,8 +96,8 @@ func calculateNewPriorities(jobs []TestJob, calculator *priorityqueue.PriorityCa
 
 // sortPrioritiesByWeight sorts jobs by priority in descending order
 func sortPrioritiesByWeight(priorities []jobWithPriority) {
-	sort.Slice(priorities, func(i, j int) bool {
-		return priorities[i].priority > priorities[j].priority
+	slices.SortStableFunc(priorities, func(i, j jobWithPriority) int {
+		return cmp.Compare(j.priority, i.priority)
 	})
 }
 
@@ -134,9 +119,6 @@ func sortPrioritiesByWeight(priorities []jobWithPriority) {
 //  4. Change Variety: Generates six different change amounts for each combination:
 //     1%, 10%, 50%, 100%, 200%, and 300% of the calculated maximum change.
 //     This variety allows testing the priority calculator under different degrees of modification.
-//
-//  5. Realistic Constraints: Only includes changes that are greater than zero and
-//     do not exceed 300% of the table size, ensuring all data points are meaningful for testing.
 //
 // This approach creates a dataset that simulates real-world scenarios by considering
 // the relationship between table size, time since last analysis, and the magnitude of changes.
@@ -192,73 +174,8 @@ func calculateMaxChange(tableSize, timeSinceLastAnalyze int64) int64 {
 	return int64(math.Min(maxChange, float64(tableSize)*maxChangePercentage))
 }
 
-// loadTestData reads test data from a CSV file and returns a slice of TestJob
-func loadTestData(filename string) ([]TestJob, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-	records, err := reader.ReadAll()
-	if err != nil {
-		return nil, err
-	}
-
-	jobs := make([]TestJob, 0, len(records)-1) // Preallocate slice, -1 for header
-	for i, record := range records {
-		if i == 0 { // Skip header
-			continue
-		}
-		id, _ := strconv.Atoi(record[0])
-		tableSize, _ := strconv.ParseFloat(record[1], 64)
-		changes, _ := strconv.ParseFloat(record[2], 64)
-		timeSinceLastAnalyze, _ := strconv.ParseFloat(record[3], 64)
-
-		jobs = append(jobs, TestJob{
-			ID:                   id,
-			TableSize:            tableSize,
-			Changes:              changes,
-			TimeSinceLastAnalyze: timeSinceLastAnalyze,
-		})
-	}
-	return jobs, nil
-}
-
-// writeToCsv writes the generated combinations to a CSV file
-func writeToCsv(combinations [][]int64, filename string) error {
-	file, err := os.Create(filename)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	err = writer.Write([]string{"id", "table size", "changes", "Time since last analyze (seconds)"})
-	if err != nil {
-		return err
-	}
-
-	for _, combo := range combinations {
-		err := writer.Write([]string{
-			strconv.FormatInt(combo[0], 10),
-			strconv.FormatInt(combo[1], 10),
-			strconv.FormatInt(combo[2], 10),
-			strconv.FormatInt(combo[3], 10),
-		})
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // generateTestData generates test data for the priority calculator
-func generateTestData(t *testing.T) {
+func generateTestData(t *testing.T) []TestJob {
 	tableSizes := []int64{
 		1000,      // 1K
 		5000,      // 5K
@@ -290,14 +207,18 @@ func generateTestData(t *testing.T) {
 
 	combinations := generateCombinations(tableSizes, analyzeTimes)
 
-	err := writeToCsv(combinations, inputDataFile)
-	require.NoError(t, err)
+	jobs := make([]TestJob, len(combinations))
+	for i, combo := range combinations {
+		jobs[i] = TestJob{
+			ID:                   int(combo[0]),
+			TableSize:            float64(combo[1]),
+			Changes:              float64(combo[2]),
+			TimeSinceLastAnalyze: float64(combo[3]),
+		}
+	}
 
-	t.Logf("Generated %d combinations and saved to %s", len(combinations), inputDataFile)
-
-	jobs, err := loadTestData(inputDataFile)
-	require.NoError(t, err)
-	require.Equal(t, len(combinations), len(jobs))
+	t.Logf("Generated %d test jobs", len(jobs))
+	return jobs
 }
 
 type jobWithPriority struct {
@@ -339,11 +260,11 @@ func (j *TestJob) String() string {
 }
 
 // GetTableID implements AnalysisJob.
-func (j TestJob) GetTableID() int64 {
+func (j *TestJob) GetTableID() int64 {
 	return int64(j.ID)
 }
 
-func (j TestJob) GetIndicators() priorityqueue.Indicators {
+func (j *TestJob) GetIndicators() priorityqueue.Indicators {
 	return priorityqueue.Indicators{
 		ChangePercentage:     j.Changes / j.TableSize,
 		TableSize:            j.TableSize,
@@ -351,6 +272,6 @@ func (j TestJob) GetIndicators() priorityqueue.Indicators {
 	}
 }
 
-func (j TestJob) HasNewlyAddedIndex() bool {
+func (j *TestJob) HasNewlyAddedIndex() bool {
 	return false
 }

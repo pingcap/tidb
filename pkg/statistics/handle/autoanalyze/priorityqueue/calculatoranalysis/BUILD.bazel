@@ -7,10 +7,7 @@ go_test(
         "calculator_analysis_test.go",
         "main_test.go",
     ],
-    data = [
-        "calculated_priorities.golden.csv",
-        "data.csv",
-    ],
+    data = glob(["testdata/**"]),
     flaky = True,
     deps = [
         "//pkg/sessionctx",
