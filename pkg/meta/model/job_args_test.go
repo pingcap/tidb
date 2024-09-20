@@ -376,3 +376,17 @@ func TestGetAddForeignKeyArgs(t *testing.T) {
 		require.Equal(t, inArgs, args)
 	}
 }
+
+func TestGetDropForeignKeyArgs(t *testing.T) {
+	inArgs := &DropForeignKeyArgs{
+		FkName: model.NewCIStr("fk-name"),
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropForeignKey)))
+		args, err := GetDropForeignKeyArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}

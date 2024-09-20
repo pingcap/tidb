@@ -629,7 +629,7 @@ func (a *AddForeignKeyArgs) fillJob(job *Job) {
 	}
 }
 
-// GetAddForeignKeyArgs get the args for ActionAddForeignKey ddl.
+// GetAddForeignKeyArgs get the args for AddForeignKey ddl.
 func GetAddForeignKeyArgs(job *Job) (*AddForeignKeyArgs, error) {
 	if job.Version == JobVersion1 {
 		var (
@@ -646,6 +646,33 @@ func GetAddForeignKeyArgs(job *Job) (*AddForeignKeyArgs, error) {
 	}
 
 	return getOrDecodeArgsV2[*AddForeignKeyArgs](job)
+}
+
+// DropForeignKeyArgs is the arguments for DropForeignKey ddl.
+type DropForeignKeyArgs struct {
+	FkName pmodel.CIStr
+}
+
+func (a *DropForeignKeyArgs) fillJob(job *Job) {
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.FkName}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetDropForeignKeyArgs gets the args for DropForeignKey ddl.
+func GetDropForeignKeyArgs(job *Job) (*DropForeignKeyArgs, error) {
+	if job.Version == JobVersion1 {
+		var fkName pmodel.CIStr
+		if err := job.DecodeArgs(&fkName); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &DropForeignKeyArgs{FkName: fkName}, nil
+	}
+
+	return getOrDecodeArgsV2[*DropForeignKeyArgs](job)
 }
 
 // RenameTablesArgs is the arguments for rename tables job.

@@ -99,13 +99,12 @@ func onDropForeignKey(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int
 		return ver, errors.Trace(err)
 	}
 
-	var fkName pmodel.CIStr
-	err = job.DecodeArgs(&fkName)
+	args, err := model.GetDropForeignKeyArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	return dropForeignKey(jobCtx, t, job, tblInfo, fkName)
+	return dropForeignKey(jobCtx, t, job, tblInfo, args.FkName)
 }
 
 func dropForeignKey(jobCtx *jobContext, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, fkName pmodel.CIStr) (ver int64, err error) {
