@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -172,8 +171,6 @@ type Context interface {
 	// before you start another batch, otherwise, the previous changes might be committed
 	// unexpectedly.
 	StmtRollback(ctx context.Context, isForPessimisticRetry bool)
-	// StmtGetMutation gets the binlog mutation for current statement.
-	StmtGetMutation(int64) *binlog.TableMutation
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
