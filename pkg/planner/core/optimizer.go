@@ -966,6 +966,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	}
 	var err error
 	var againRuleList []base.LogicalOptRule
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("start")
+	}
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
@@ -978,6 +981,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
+		}
+		if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("fuck")
 		}
 		// Compute interaction rules that should be optimized again
 		interactionRule, ok := optInteractionRuleList[rule]
@@ -994,7 +1000,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 			return nil, err
 		}
 	}
-
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("end")
+	}
 	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace)
 	return logic, err
 }

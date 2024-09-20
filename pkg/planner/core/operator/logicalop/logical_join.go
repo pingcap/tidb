@@ -1778,6 +1778,9 @@ func DeriveOtherConditions(
 // in which `col` is in specified schema. Caller guarantees that only one of `col1` or
 // `col2` is in schema.
 func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema *expression.Schema) expression.Expression {
+	if !ctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	binop, ok := expr.(*expression.ScalarFunction)
 	if !ok || len(binop.GetArgs()) != 2 {
 		return nil
