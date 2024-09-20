@@ -70,8 +70,8 @@ const (
 	ActionCreateSequence                ActionType = 34
 	ActionAlterSequence                 ActionType = 35
 	ActionDropSequence                  ActionType = 36
-	_DEPRECATEDActionAddColumns         ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
-	_DEPRECATEDActionDropColumns        ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionModifyTableAutoIDCache        ActionType = 39
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
