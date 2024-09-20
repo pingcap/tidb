@@ -574,6 +574,69 @@ func MockListPartitionTable() *model.TableInfo {
 	return tableInfo
 }
 
+// MockGlobalIndexHashPartitionTable mocks a hash partition table with global index for test
+func MockGlobalIndexHashPartitionTable() *model.TableInfo {
+	definitions := []model.PartitionDefinition{
+		{
+			ID:   51,
+			Name: pmodel.NewCIStr("p1"),
+		},
+		{
+			ID:   52,
+			Name: pmodel.NewCIStr("p2"),
+		},
+	}
+	tableInfo := MockSignedTable()
+	tableInfo.Name = pmodel.NewCIStr("pt2_global_index")
+	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
+	cols = append(cols, tableInfo.Columns...)
+	last := tableInfo.Columns[len(tableInfo.Columns)-1]
+	cols = append(cols, &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    last.Offset + 1,
+		Name:      pmodel.NewCIStr("ptn"),
+		FieldType: newLongType(),
+		ID:        last.ID + 1,
+	})
+	partition := &model.PartitionInfo{
+		Type:        pmodel.PartitionTypeHash,
+		Expr:        "ptn",
+		Enable:      true,
+		Definitions: definitions,
+		Num:         2,
+	}
+	tableInfo.Columns = cols
+	tableInfo.Partition = partition
+	// add a global index `b` and noraml index `b_1`
+	tableInfo.Indices = append(tableInfo.Indices, []*model.IndexInfo{
+		{
+			Name: pmodel.NewCIStr("b"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   pmodel.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+			},
+			State: model.StatePublic,
+			Unique: true,
+			Global: true,
+		},
+		{
+			Name: pmodel.NewCIStr("b_1"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   pmodel.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+			},
+			State:  model.StatePublic,
+		},
+	}...)
+	return tableInfo
+}
+
 // MockStateNoneColumnTable is only used for plan related tests.
 func MockStateNoneColumnTable() *model.TableInfo {
 	// column: a, b

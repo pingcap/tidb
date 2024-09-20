@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -88,6 +89,7 @@ func createPlannerSuite() (s *plannerSuite) {
 		MockHashPartitionTable(),
 		MockListPartitionTable(),
 		MockStateNoneColumnTable(),
+		MockGlobalIndexHashPartitionTable(),
 	}
 	id := int64(1)
 	for _, tblInfo := range tblInfos {
@@ -1944,6 +1946,9 @@ func pathsName(paths []*candidatePath) string {
 }
 
 func TestSkylinePruning(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+
 	tests := []struct {
 		sql    string
 		result string
@@ -2000,6 +2005,16 @@ func TestSkylinePruning(t *testing.T) {
 			sql:    "select * from t where d = 1 and f > 1 and g > 1 order by c, e",
 			result: "PRIMARY_KEY,c_d_e,g,f_g",
 		},
+		// select global index `b` instead of normal index `b_1`
+		{
+			sql:    "select * from pt2_global_index where b > 1 order by b",
+			result: "b",
+		},
+		// select global index `b` instead of normal index `b_1`
+		{
+			sql:    "select b from pt2_global_index where b > 1 order by b",
+			result: "b",
+		},
 	}
 	s := createPlannerSuite()
 	defer s.Close()
@@ -2013,6 +2028,8 @@ func TestSkylinePruning(t *testing.T) {
 		require.NoError(t, err)
 		sctx := MockContext()
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
+		builder.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = true
+		builder.ctx.GetSessionVars().PartitionPruneMode.Store("dynamic")
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, nodeW)
 		if err != nil {
