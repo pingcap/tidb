@@ -828,7 +828,7 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 				case types.KindMysqlJSON:
 					val = constValue.Value.GetMysqlJSON().String()
 				case types.KindVectorFloat32:
-					val = constValue.Value.GetVectorFloat32().TruncatedString()
+					val = constValue.Value.GetVectorFloat32().String()
 				default:
 					val = fmt.Sprintf("%v", constValue.Value.GetValue())
 				}
