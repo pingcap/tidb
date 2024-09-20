@@ -40,7 +40,6 @@ type Indicators struct {
 	// TableSize is the table size in rows * len(columns).
 	TableSize float64
 	// LastAnalysisDuration is the duration from the last analysis to now.
-	// In seconds.
 	LastAnalysisDuration time.Duration
 }
 
