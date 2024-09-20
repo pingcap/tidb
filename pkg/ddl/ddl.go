@@ -925,16 +925,16 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 	if len(unlockTables) == 0 {
 		return nil
 	}
-	arg := &LockTablesArg{
+	args := &model.LockTablesArgs{
 		UnlockTables: unlockTables,
 		SessionInfo:  se,
 	}
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   unlockTables[0].SchemaID,
 		TableID:    unlockTables[0].TableID,
 		Type:       model.ActionUnlockTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{arg},
 	}
 
 	ctx, err := d.sessPool.Get()
@@ -942,7 +942,7 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 		return err
 	}
 	defer d.sessPool.Put(ctx)
-	err = d.executor.DoDDLJob(ctx, job)
+	err = d.executor.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 

@@ -5247,24 +5247,24 @@ func (e *executor) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) 
 	}
 
 	unlockTables := ctx.GetAllTableLocks()
-	arg := &LockTablesArg{
+	args := &model.LockTablesArgs{
 		LockTables:   lockTables,
 		UnlockTables: unlockTables,
 		SessionInfo:  sessionInfo,
 	}
 	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
 		SchemaID:            lockTables[0].SchemaID,
 		TableID:             lockTables[0].TableID,
 		Type:                model.ActionLockTable,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                []any{arg},
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involveSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
 	ctx.AddTableLock(lockTables)
-	err := e.DoDDLJob(ctx, job)
+	err := e.doDDLJob2(ctx, job, args)
 	if err == nil {
 		ctx.ReleaseTableLocks(unlockTables)
 		ctx.AddTableLock(lockTables)
@@ -5277,7 +5277,7 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 	if len(unlockTables) == 0 {
 		return nil
 	}
-	arg := &LockTablesArg{
+	args := &model.LockTablesArgs{
 		UnlockTables: unlockTables,
 		SessionInfo: model.SessionInfo{
 			ServerID:  e.uuid,
@@ -5302,17 +5302,17 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 		})
 	}
 	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
 		SchemaID:            unlockTables[0].SchemaID,
 		TableID:             unlockTables[0].TableID,
 		Type:                model.ActionUnlockTable,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                []any{arg},
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involveSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
 
-	err := e.DoDDLJob(ctx, job)
+	err := e.doDDLJob2(ctx, job, args)
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
 	}
@@ -5369,35 +5369,25 @@ func (e *executor) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableN
 		return nil
 	}
 
-	arg := &LockTablesArg{
+	args := &model.LockTablesArgs{
 		UnlockTables: cleanupTables,
 		IsCleanup:    true,
 	}
 	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
 		SchemaID:            cleanupTables[0].SchemaID,
 		TableID:             cleanupTables[0].TableID,
 		Type:                model.ActionUnlockTable,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                []any{arg},
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
-	err := e.DoDDLJob(ctx, job)
+	err := e.doDDLJob2(ctx, job, args)
 	if err == nil {
 		ctx.ReleaseTableLocks(cleanupTables)
 	}
 	return errors.Trace(err)
-}
-
-// LockTablesArg is the argument for LockTables, export for test.
-type LockTablesArg struct {
-	LockTables    []model.TableLockTpInfo
-	IndexOfLock   int
-	UnlockTables  []model.TableLockTpInfo
-	IndexOfUnlock int
-	SessionInfo   model.SessionInfo
-	IsCleanup     bool
 }
 
 func (e *executor) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error {
@@ -5464,17 +5454,19 @@ func (e *executor) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTab
 	newTableInfo.State = model.StateNone
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       oldDBInfo.ID,
 		TableID:        newTableInfo.ID,
 		SchemaName:     oldDBInfo.Name.L,
 		TableName:      newTableInfo.Name.L,
 		Type:           model.ActionRepairTable,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{newTableInfo},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = e.DoDDLJob(ctx, job)
+
+	args := &model.RepairTableArgs{newTableInfo}
+	err = e.doDDLJob2(ctx, job, args)
 	if err == nil {
 		// Remove the old TableInfo from repairInfo before domain reload.
 		domainutil.RepairInfo.RemoveFromRepairInfo(oldDBInfo.Name.L, oldTableInfo.Name.L)

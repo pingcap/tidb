@@ -563,3 +563,59 @@ func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
 	}
 	return getOrDecodeArgsV2[*RenameTablesArgs](job)
 }
+
+// LockTablesArgs is the argument for LockTables.
+type LockTablesArgs struct {
+	LockTables    []TableLockTpInfo
+	IndexOfLock   int
+	UnlockTables  []TableLockTpInfo
+	IndexOfUnlock int
+	SessionInfo   SessionInfo
+	IsCleanup     bool
+}
+
+func (a *LockTablesArgs) fillJob(job *Job) {
+	job.Args = []any{a}
+}
+
+func GetLockTablesArgs(job *Job) (*LockTablesArgs, error) {
+	var args *LockTablesArgs
+	var err error
+
+	if job.Version == JobVersion1 {
+		err = job.DecodeArgs(&args)
+	} else {
+		args, err = getOrDecodeArgsV2[*LockTablesArgs](job)
+	}
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return args, nil
+}
+
+// RepairTableArgs is the argument for repair table
+type RepairTableArgs struct {
+	*TableInfo `json:"table_info"`
+}
+
+func (a *RepairTableArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.TableInfo}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetRepairTableArgs get the repair table args
+func GetRepairTableArgs(job *Job) (*RepairTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var tblInfo *TableInfo
+		if err := job.DecodeArgs(&tblInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &RepairTableArgs{tblInfo}, nil
+	}
+
+	return getOrDecodeArgsV2[*RepairTableArgs](job)
+}

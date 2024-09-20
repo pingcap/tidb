@@ -313,3 +313,37 @@ func TestResourceGroupArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestLockTableArgs(t *testing.T) {
+	inArgs := &LockTablesArgs{
+		LockTables:    []TableLockTpInfo{{1, 1, model.TableLockNone}},
+		UnlockTables:  []TableLockTpInfo{{2, 2, model.TableLockNone}},
+		IndexOfLock:   0,
+		IndexOfUnlock: 0,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		for _, tp := range []ActionType{ActionLockTable, ActionUnlockTable} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+
+			args, err := GetLockTablesArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, inArgs.LockTables, args.LockTables)
+			require.Equal(t, inArgs.UnlockTables, args.UnlockTables)
+			require.Equal(t, inArgs.IndexOfLock, args.IndexOfLock)
+			require.Equal(t, inArgs.IndexOfUnlock, args.IndexOfUnlock)
+		}
+	}
+}
+
+func TestRepairTableArgs(t *testing.T) {
+	inArgs := &RepairTableArgs{&TableInfo{ID: 1, Name: model.NewCIStr("t")}}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionRepairTable)))
+
+		args, err := GetRepairTableArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs.TableInfo, args.TableInfo)
+	}
+}

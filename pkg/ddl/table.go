@@ -1335,18 +1335,19 @@ type schemaIDAndTableInfo struct {
 
 func onRepairTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
-	tblInfo := &model.TableInfo{}
 
-	if err := job.DecodeArgs(tblInfo); err != nil {
+	args, err := model.GetRepairTableArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
+	tblInfo := args.TableInfo
 	tblInfo.State = model.StateNone
 
 	// Check the old DB and old table exist.
-	_, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	_, err = GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
