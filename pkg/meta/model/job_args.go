@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -558,10 +557,8 @@ type ModifyTableCharsetAndCollateArgs struct {
 
 func (a *ModifyTableCharsetAndCollateArgs) fillJob(job *Job) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
-
 	if job.Version == JobVersion1 {
 		job.Args = []any{a.ToCharset, a.ToCollate, a.NeedsOverwriteCols}
-
 	} else {
 		job.Args = []any{a}
 	}
@@ -583,7 +580,7 @@ func GetModifyTableCharsetAndCollateArgs(job *Job) (*ModifyTableCharsetAndCollat
 
 // AlterIndexVisibilityArgs is the arguments for ActionAlterIndexVisibility ddl.
 type AlterIndexVisibilityArgs struct {
-	IndexName model.CIStr
+	IndexName pmodel.CIStr
 	Invisible bool
 }
 
@@ -601,7 +598,7 @@ func (a *AlterIndexVisibilityArgs) fillJob(job *Job) {
 func GetAlterIndexVisibilityArgs(job *Job) (*AlterIndexVisibilityArgs, error) {
 	if job.Version == JobVersion1 {
 		var (
-			indexName model.CIStr
+			indexName pmodel.CIStr
 			invisible bool
 		)
 		if err := job.DecodeArgs(&indexName, &invisible); err != nil {

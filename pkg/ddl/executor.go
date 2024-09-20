@@ -2157,11 +2157,13 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	job.FillArgs(&model.RebaseAutoIDArgs{
+	args := &model.RebaseAutoIDArgs{
 		NewBase: newBase,
 		Force:   force,
-	})
-	err = e.DoDDLJob(ctx, job)
+	}
+	// need fill args, the job will be pushed subjob.
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -3529,11 +3531,9 @@ func (e *executor) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, sp
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-
-	job.FillArgs(&model.ModifyTableCommentArgs{
-		Comment: spec.Comment,
-	})
-	err = e.DoDDLJob(ctx, job)
+	args := &model.ModifyTableCommentArgs{Comment: spec.Comment}
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -3615,12 +3615,13 @@ func (e *executor) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	job.FillArgs(&model.ModifyTableCharsetAndCollateArgs{
+	args := &model.ModifyTableCharsetAndCollateArgs{
 		ToCharset:          toCharset,
 		ToCollate:          toCollate,
 		NeedsOverwriteCols: needsOverwriteCols,
-	})
-	err = e.DoDDLJob(ctx, job)
+	}
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -4973,12 +4974,12 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 		},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-
-	job.FillArgs(&model.AddForeignKeyArgs{
+	args := &model.AddForeignKeyArgs{
 		FkInfo:  fkInfo,
 		FkCheck: fkCheck,
-	})
-	err = e.DoDDLJob(ctx, job)
+	}
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -5625,11 +5626,12 @@ func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	job.FillArgs(&model.AlterIndexVisibilityArgs{
+	args := &model.AlterIndexVisibilityArgs{
 		IndexName: indexName,
 		Invisible: invisible,
-	})
-	err = e.DoDDLJob(ctx, job)
+	}
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
