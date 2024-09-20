@@ -17,7 +17,7 @@ package executor
 import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/contextsession"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 )
 
 // Detach detaches the current executor from the session context. After detaching, the session context
@@ -51,7 +51,7 @@ func Detach(originalExecutor exec.Executor) (exec.Executor, bool) {
 func (treCtx tableReaderExecutorContext) Detach() tableReaderExecutorContext {
 	newCtx := treCtx
 
-	if ctx, ok := treCtx.ectx.(*contextsession.SessionExprContext); ok {
+	if ctx, ok := treCtx.ectx.(*sessionexpr.ExprContext); ok {
 		staticExprCtx := ctx.IntoStatic()
 
 		newCtx.dctx = newCtx.dctx.Detach()
@@ -67,7 +67,7 @@ func (treCtx tableReaderExecutorContext) Detach() tableReaderExecutorContext {
 func (ireCtx indexReaderExecutorContext) Detach() indexReaderExecutorContext {
 	newCtx := ireCtx
 
-	if ctx, ok := ireCtx.ectx.(*contextsession.SessionExprContext); ok {
+	if ctx, ok := ireCtx.ectx.(*sessionexpr.ExprContext); ok {
 		staticExprCtx := ctx.IntoStatic()
 
 		newCtx.dctx = newCtx.dctx.Detach()
@@ -89,7 +89,7 @@ func (iluCtx indexLookUpExecutorContext) Detach() indexLookUpExecutorContext {
 
 func (pCtx projectionExecutorContext) Detach() projectionExecutorContext {
 	newCtx := pCtx
-	if ctx, ok := pCtx.evalCtx.(*contextsession.SessionEvalContext); ok {
+	if ctx, ok := pCtx.evalCtx.(*sessionexpr.EvalContext); ok {
 		newCtx.evalCtx = ctx.IntoStatic()
 	}
 
@@ -98,7 +98,7 @@ func (pCtx projectionExecutorContext) Detach() projectionExecutorContext {
 
 func (sCtx selectionExecutorContext) Detach() selectionExecutorContext {
 	newCtx := sCtx
-	if ctx, ok := sCtx.evalCtx.(*contextsession.SessionEvalContext); ok {
+	if ctx, ok := sCtx.evalCtx.(*sessionexpr.EvalContext); ok {
 		newCtx.evalCtx = ctx.IntoStatic()
 	}
 

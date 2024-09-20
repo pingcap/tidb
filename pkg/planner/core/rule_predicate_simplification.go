@@ -227,6 +227,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList)
 	return unsatisfiableExpression(ctx, newPredList[0])
 }
+
 func comparisonPred(predType predicateType) predicateType {
 	if predType == equalPredicate || predType == lessThanPredicate ||
 		predType == greaterThanPredicate || predType == lessThanOrEqualPredicate ||

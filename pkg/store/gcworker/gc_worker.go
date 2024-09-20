@@ -1574,6 +1574,7 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 			return
 		}
 		historyJob = &model.Job{
+			Version: model.JobVersion1,
 			ID:      dr.JobID,
 			Type:    model.ActionDropTable,
 			TableID: int64(v.(int)),
@@ -1593,18 +1594,36 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 	// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
 	var physicalTableIDs []int64
 	switch historyJob.Type {
-	case model.ActionDropTable, model.ActionTruncateTable:
+	case model.ActionDropTable:
 		var startKey kv.Key
 		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs); err != nil {
 			return
 		}
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
-	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition,
-		model.ActionReorganizePartition, model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning:
+	case model.ActionTruncateTable:
+		var args *model.TruncateTableArgs
+		args, err = model.GetFinishedTruncateTableArgs(historyJob)
+		if err != nil {
+			return
+		}
+		physicalTableIDs = append(args.OldPartitionIDs, historyJob.TableID)
+	case model.ActionDropTablePartition, model.ActionReorganizePartition,
+		model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		args, err2 := model.GetFinishedTablePartitionArgs(historyJob)
+		if err2 != nil {
+			return err2
+		}
+		physicalTableIDs = args.OldPhysicalTblIDs
+	case model.ActionTruncateTablePartition:
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}
+	case model.ActionDropSchema:
+		args, err2 := model.GetFinishedDropSchemaArgs(historyJob)
+		if err2 != nil {
+			return err2
+		}
+		physicalTableIDs = args.AllDroppedTableIDs
 	}
 
 	// Skip table ids that's already successfully handled.
@@ -1648,6 +1667,7 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 			return
 		}
 		historyJob = &model.Job{
+			Version: model.JobVersion1,
 			ID:      dr.JobID,
 			Type:    model.ActionDropTable,
 			RawArgs: args,

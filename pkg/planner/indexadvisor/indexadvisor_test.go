@@ -52,7 +52,7 @@ func check(ctx context.Context, t *testing.T, tk *testkit.TestKit,
 		return
 	}
 
-	var indexes []string
+	indexes := make([]string, 0, len(r))
 	for _, result := range r {
 		indexes = append(indexes, fmt.Sprintf("%v.%v.%v", result.Database, result.Table, strings.Join(result.IndexColumns, "_")))
 	}
@@ -108,6 +108,8 @@ func TestIndexAdvisorBasic1(t *testing.T) {
 	check(nil, t, tk, "test.t.a", option("select * from t where a=1"))
 	check(nil, t, tk, "test.t.a,test.t.b",
 		option("select * from t where a=1; select * from t where b=1"))
+	check(nil, t, tk, "test.t.a,test.t.b",
+		option("select a from t where a=1; select b from t where b=1"))
 }
 
 func TestIndexAdvisorBasic2(t *testing.T) {

@@ -300,7 +300,7 @@ func (r *Checker) markRunaway(matchType string, action rmpb.RunawayAction, switc
 	}
 	actionStr = strings.ToLower(actionStr)
 	metrics.RunawayCheckerCounter.WithLabelValues(r.resourceGroupName, matchType, actionStr).Inc()
-	r.manager.markRunaway(r.resourceGroupName, r.originalSQL, r.planDigest, actionStr, matchType, now)
+	r.manager.markRunaway(r, actionStr, matchType, now)
 }
 
 func (r *Checker) getSettingConvictIdentifier() string {

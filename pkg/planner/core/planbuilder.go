@@ -571,6 +571,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSplitRegion(x)
 	case *ast.CompactTableStmt:
 		return b.buildCompactTable(x)
+	case *ast.RecommendIndexStmt:
+		return b.buildRecommendIndex(x)
 	}
 	return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -4327,6 +4329,93 @@ var (
 	ImportIntoDataSource = "data source"
 )
 
+// importIntoCollAssignmentChecker implements ast.Visitor interface.
+// It is used to check the column assignment expressions in IMPORT INTO statement.
+// Currently, the import into column assignment only supports some simple expressions.
+type importIntoCollAssignmentChecker struct {
+	idx        int
+	err        error
+	neededVars map[string]int
+}
+
+func newImportIntoCollAssignmentChecker() *importIntoCollAssignmentChecker {
+	return &importIntoCollAssignmentChecker{neededVars: make(map[string]int)}
+}
+
+// checkImportIntoColAssignments checks the column assignment expressions in IMPORT INTO statement.
+func checkImportIntoColAssignments(assignments []*ast.Assignment) (map[string]int, error) {
+	checker := newImportIntoCollAssignmentChecker()
+	for i, assign := range assignments {
+		checker.idx = i
+		assign.Expr.Accept(checker)
+		if checker.err != nil {
+			break
+		}
+	}
+	return checker.neededVars, checker.err
+}
+
+// Enter implements ast.Visitor interface.
+func (*importIntoCollAssignmentChecker) Enter(node ast.Node) (ast.Node, bool) {
+	return node, false
+}
+
+// Leave implements ast.Visitor interface.
+func (v *importIntoCollAssignmentChecker) Leave(node ast.Node) (ast.Node, bool) {
+	switch n := node.(type) {
+	case *ast.ColumnNameExpr:
+		v.err = errors.Errorf("COLUMN reference is not supported in IMPORT INTO column assignment, index %d", v.idx)
+		return n, false
+	case *ast.SubqueryExpr:
+		v.err = errors.Errorf("subquery is not supported in IMPORT INTO column assignment, index %d", v.idx)
+		return n, false
+	case *ast.VariableExpr:
+		if n.IsSystem {
+			v.err = errors.Errorf("system variable is not supported in IMPORT INTO column assignment, index %d", v.idx)
+			return n, false
+		}
+		if n.Value != nil {
+			v.err = errors.Errorf("setting a variable in IMPORT INTO column assignment is not supported, index %d", v.idx)
+			return n, false
+		}
+		v.neededVars[strings.ToLower(n.Name)] = v.idx
+	case *ast.DefaultExpr:
+		v.err = errors.Errorf("FUNCTION default is not supported in IMPORT INTO column assignment, index %d", v.idx)
+		return n, false
+	case *ast.WindowFuncExpr:
+		v.err = errors.Errorf("window FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.Name, v.idx)
+		return n, false
+	case *ast.AggregateFuncExpr:
+		v.err = errors.Errorf("aggregate FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.F, v.idx)
+		return n, false
+	case *ast.FuncCallExpr:
+		fnName := n.FnName.L
+		switch fnName {
+		case ast.Grouping:
+			v.err = errors.Errorf("FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.FnName.O, v.idx)
+			return n, false
+		case ast.GetVar:
+			if len(n.Args) > 0 {
+				val, ok := n.Args[0].(*driver.ValueExpr)
+				if !ok || val.Kind() != types.KindString {
+					v.err = errors.Errorf("the argument of getvar should be a constant string in IMPORT INTO column assignment, index %d", v.idx)
+					return n, false
+				}
+				v.neededVars[strings.ToLower(val.GetString())] = v.idx
+			}
+		default:
+			if !expression.IsFunctionSupported(fnName) {
+				v.err = errors.Errorf("FUNCTION %s is not supported in IMPORT INTO column assignment, index %d", n.FnName.O, v.idx)
+				return n, false
+			}
+		}
+	case *ast.ValuesExpr:
+		v.err = errors.Errorf("VALUES is not supported in IMPORT INTO column assignment, index %d", v.idx)
+		return n, false
+	}
+	return node, v.err == nil
+}
+
 func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (base.Plan, error) {
 	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	var (
@@ -4356,24 +4445,18 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		}
 		options = append(options, &loadDataOpt)
 	}
-	// TODO(lance6716): check functions
-	neededVars := make(map[string]int)
-	for i, a := range ld.ColumnAssignments {
-		switch v := a.Expr.(type) {
-		case *ast.SubqueryExpr:
-			return nil, errors.Errorf(
-				"subquery is not supported in IMPORT INTO column assignment, index %d", i,
-			)
-		case *ast.VariableExpr:
-			neededVars[v.Name] = i
-		}
+
+	neededVars, err := checkImportIntoColAssignments(ld.ColumnAssignments)
+	if err != nil {
+		return nil, err
 	}
+
 	for _, v := range ld.ColumnsAndUserVars {
 		userVar := v.UserVar
 		if userVar == nil {
 			continue
 		}
-		delete(neededVars, userVar.Name)
+		delete(neededVars, strings.ToLower(userVar.Name))
 	}
 	if len(neededVars) > 0 {
 		valuesStr := make([]string, 0, len(neededVars))
@@ -4387,6 +4470,11 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	}
 
 	tnW := b.resolveCtx.GetTableName(ld.Table)
+	if tnW.TableInfo.TempTableType != model.TempTableNone {
+		return nil, errors.Errorf("IMPORT INTO does not support temporary table")
+	} else if tnW.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return nil, errors.Errorf("IMPORT INTO does not support cached table")
+	}
 	p := ImportInto{
 		Path:               ld.Path,
 		Format:             ld.Format,
@@ -5396,9 +5484,6 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
-	case ast.ShowDrainerStatus:
-		names = []string{"NodeID", "Address", "State", "Max_Commit_Ts", "Update_Time"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowGrants:
 		if s.User != nil {
 			names = []string{fmt.Sprintf("Grants for %s", s.User)}
@@ -5409,11 +5494,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowIndex:
 		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
 			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
-			"Null", "Index_type", "Comment", "Index_comment", "Visible", "Expression", "Clustered"}
+			"Null", "Index_type", "Comment", "Index_comment", "Visible", "Expression", "Clustered", "Global"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPlugins:
 		names = []string{"Name", "Status", "Type", "Library", "License", "Version"}
 		ftypes = []byte{
@@ -5423,9 +5508,6 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
-	case ast.ShowPumpStatus:
-		names = []string{"NodeID", "Address", "State", "Max_Commit_Ts", "Update_Time"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowStatsMeta:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Update_time", "Modify_count", "Row_count", "Last_analyze_time"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDatetime}
@@ -5634,6 +5716,32 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (base.Plan, 
 		ReplicaKind:    node.ReplicaKind,
 		TableInfo:      tblInfo,
 		PartitionNames: node.PartitionNames,
+	}
+	return p, nil
+}
+
+func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, error) {
+	p := &RecommendIndexPlan{
+		Action:   v.Action,
+		SQL:      v.SQL,
+		AdviseID: v.ID,
+		Option:   v.Option,
+		Value:    v.Value,
+	}
+
+	switch v.Action {
+	case "run":
+		schema := newColumnsWithNames(7)
+		schema.Append(buildColumnWithName("", "database", mysql.TypeVarchar, 64))
+		schema.Append(buildColumnWithName("", "table", mysql.TypeVarchar, 64))
+		schema.Append(buildColumnWithName("", "index_name", mysql.TypeVarchar, 64))
+		schema.Append(buildColumnWithName("", "index_columns", mysql.TypeVarchar, 256))
+		schema.Append(buildColumnWithName("", "index_size", mysql.TypeVarchar, 256))
+		schema.Append(buildColumnWithName("", "reason", mysql.TypeVarchar, 256))
+		schema.Append(buildColumnWithName("", "top_impacted_query", mysql.TypeBlob, -1))
+		p.setSchemaAndNames(schema.col2Schema(), schema.names)
+	default:
+		return nil, fmt.Errorf("unsupported action %s", v.Action)
 	}
 	return p, nil
 }

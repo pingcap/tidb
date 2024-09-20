@@ -32,7 +32,6 @@ explain format = 'brief' select f from t where f <> NULL  and f in (1,2,3) -- Sp
 explain format = 'brief' select f from t where f != NULL  and f in (NULL,2,3) -- Special case of NULL with no simplification.;
 
 # Test OR simplification start
-# Airbnb test case
 
 drop table if exists dt;
 drop table if exists it;
@@ -62,7 +61,7 @@ CREATE TABLE `it` (
   KEY `f` (`a`,`pk`)
 );
 
-explain SELECT
+explain format='brief' SELECT
   dt.*
 FROM
   it
@@ -83,7 +82,7 @@ LIMIT
   240;
 
 
-explain SELECT * FROM
+explain  format='brief' SELECT * FROM
  (
 SELECT
   dt.*
@@ -103,25 +102,25 @@ LIMIT
 
 drop table if exists t1;
 create table t1 (a1 int, b1 int, c1 char(2));
-explain select * from t1 where b1=1 and (b1>1 or b1 < 1);
-explain select * from t1 where a1=1 and (b1=1 or a1 < 1);
-explain select * from t1 where (b1=1 or a1 < 1) and a1=1;
-explain select * from t1 where a1 is null and (b1 = 1 or a1 > 5);
-explain select * from t1 where a1 is not null and (b1 = 1 or a1 > 5);
+explain format='brief' select * from t1 where b1=1 and (b1>1 or b1 < 1);
+explain format='brief' select * from t1 where a1=1 and (b1=1 or a1 < 1);
+explain format='brief' select * from t1 where (b1=1 or a1 < 1) and a1=1;
+explain format='brief' select * from t1 where a1 is null and (b1 = 1 or a1 > 5);
+explain format='brief' select * from t1 where a1 is not null and (b1 = 1 or a1 > 5);
 # negative tests
-explain select * from t1 where a1=1 and (b1=1 or a1 <= 1);
-explain select * from t1 where c1=1 and (b1=1 or c1 < 1);
+explain format='brief' select * from t1 where a1=1 and (b1=1 or a1 <= 1);
+explain format='brief' select * from t1 where c1=1 and (b1=1 or c1 < 1);
 
 drop table if exists t1;
 drop table if exists t2;
 CREATE TABLE t1 (code varchar(10)) charset utf8mb4;
 CREATE TABLE t2 (id varchar(10) ) charset utf8mb4;
-EXPLAIN format="brief" SELECT * FROM t1 INNER JOIN t2 ON code=id WHERE id='a12' AND (LENGTH(code)=5 OR code < 'a00');
+EXPLAIN format='brief' SELECT * FROM t1 INNER JOIN t2 ON code=id WHERE id='a12' AND (LENGTH(code)=5 OR code < 'a00');
 
 drop table if exists t;
 CREATE TABLE t (a int , b int);
-explain select a from t where (a between 2 and 1 or a < 1) and b < 1;
-explain select a from t where (a between 0 and 2 or a < 2) and b < 1;
+explain format='brief' select a from t where (a between 2 and 1 or a < 1) and b < 1;
+explain format='brief' select a from t where (a between 0 and 2 or a < 2) and b < 1;
 
 drop table if exists IDT_MC21780;
 CREATE TABLE IDT_MC21780 (

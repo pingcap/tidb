@@ -1617,7 +1617,7 @@ func (e *DDLJobsReaderExec) Next(_ context.Context, req *chunk.Chunk) error {
 	var err error
 
 	// Append history DDL jobs.
-	if count < req.Capacity() {
+	if count < req.Capacity() && e.historyJobIter != nil {
 		e.cacheJobs, err = e.historyJobIter.GetLastJobs(req.Capacity()-count, e.cacheJobs)
 		if err != nil {
 			return err
@@ -2594,7 +2594,6 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error 
 			info.Lease,           // LEASE
 			info.Version,         // VERSION
 			info.GitHash,         // GIT_HASH
-			info.BinlogStatus,    // BINLOG_STATUS
 			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
 		if sem.IsEnabled() {

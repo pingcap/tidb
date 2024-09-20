@@ -110,7 +110,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[][]*expression.Constant", "[][]types.Datum", "[][]expression.Expression":
 			structureName := strings.Split(f.Type.String(), ".")[1]
 			c.write("cloned.%v = util.Clone%v2D(op.%v)", f.Name, structureName, f.Name)
-		case "context.PlanContext":
+		case "planctx.PlanContext":
 			c.write("cloned.%v = newCtx", f.Name)
 		case "util.HandleCols":
 			c.write("if op.%v != nil {", f.Name)

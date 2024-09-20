@@ -174,30 +174,30 @@ func handleRollbackException(runJobErr error, proxyJobErr *terror.Error) error {
 	return nil
 }
 
-func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
-	err := fillMultiSchemaInfo(m, job)
+func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
+	err := fillMultiSchemaInfo(m, jobW)
 	if err != nil {
 		return err
 	}
 	var reorgTp model.ReorgType
-	if job.ReorgMeta != nil {
-		reorgTp = job.ReorgMeta.ReorgTp
+	if jobW.ReorgMeta != nil {
+		reorgTp = jobW.ReorgMeta.ReorgTp
 	}
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
-		Type:        job.Type,
-		Args:        job.Args,
-		RawArgs:     job.RawArgs,
-		SchemaState: job.SchemaState,
-		SnapshotVer: job.SnapshotVer,
+		Type:        jobW.Type,
+		Args:        jobW.Args,
+		RawArgs:     jobW.RawArgs,
+		SchemaState: jobW.SchemaState,
+		SnapshotVer: jobW.SnapshotVer,
 		Revertible:  true,
-		CtxVars:     job.CtxVars,
+		CtxVars:     jobW.CtxVars,
 		ReorgTp:     reorgTp,
 		UseCloud:    false,
 	})
 	return nil
 }
 
-func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error) {
+func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 	switch job.Type {
 	case model.ActionAddColumn:
 		col := job.Args[0].(*table.Column)
@@ -210,7 +210,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
 		}
 	case model.ActionDropColumn:
-		colName := job.Args[0].(pmodel.CIStr)
+		colName := job.JobArgs.(*model.DropColumnArgs).ColName
 		info.DropColumns = append(info.DropColumns, colName)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		indexName := job.Args[0].(pmodel.CIStr)

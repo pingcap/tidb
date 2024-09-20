@@ -542,21 +542,21 @@ select /*+ set_var(tidb_opt_prefer_range_scan=0) */ @@tidb_opt_prefer_range_scan
 0
 select @@tidb_opt_prefer_range_scan;
 @@tidb_opt_prefer_range_scan
-0
+1
 set @@tidb_opt_prefer_range_scan=default;
 select @@tidb_opt_prefer_range_scan;
 @@tidb_opt_prefer_range_scan
-0
+1
 select /*+ set_var(tidb_opt_prefer_range_scan=1) */ @@tidb_opt_prefer_range_scan;
 @@tidb_opt_prefer_range_scan
 1
 select @@tidb_opt_prefer_range_scan;
 @@tidb_opt_prefer_range_scan
-0
+1
 set @@tidb_opt_prefer_range_scan=default;
 select @@tidb_opt_prefer_range_scan;
 @@tidb_opt_prefer_range_scan
-0
+1
 select /*+ set_var(tidb_opt_enable_correlation_adjustment=0) */ @@tidb_opt_enable_correlation_adjustment;
 @@tidb_opt_enable_correlation_adjustment
 0

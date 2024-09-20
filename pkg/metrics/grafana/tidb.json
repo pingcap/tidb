@@ -727,7 +727,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_server_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (sql_type)",
+              "expr": "sum(rate(tidb_executor_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (sql_type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
@@ -737,7 +737,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_server_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "expr": "sum(rate(tidb_executor_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
               "hide": false,
               "interval": "",
               "legendFormat": "total",

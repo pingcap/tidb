@@ -270,18 +270,18 @@ func TestShow(t *testing.T) {
 	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testkit.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|YES",
-		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|<nil>|NO",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|<nil>|NO",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
-		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
-		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|<nil>|NO",
-		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>||BTREE| |YES|`id` * 2 + 1|NO",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|YES|NO",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|<nil>|NO|NO",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO|NO",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO|NO",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|<nil>|NO|NO",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO|NO",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO|NO",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO|NO",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO|NO",
+		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO|NO",
+		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|<nil>|NO|NO",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>||BTREE| |YES|`id` * 2 + 1|NO|NO",
 	))
 
 	// For show like with escape
@@ -760,6 +760,8 @@ func checkGoroutineExists(keyword string) bool {
 }
 
 func TestAdminShowNextID(t *testing.T) {
+	step := int64(10)
+	autoid.SetStep(step)
 	store := testkit.CreateMockStore(t)
 
 	HelperTestAdminShowNextID(t, store, `admin show `)
@@ -771,10 +773,6 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
-	step := int64(10)
-	autoIDStep := autoid.GetStep()
-	autoid.SetStep(step)
-	defer autoid.SetStep(autoIDStep)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,tt")
@@ -787,7 +785,7 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	r = tk.MustQuery(str + " t next_row_id")
 	r.Check(testkit.Rows("test t _tidb_rowid 11 _TIDB_ROWID"))
 	// Row ID is original + step.
-	for i := 0; i < int(step); i++ {
+	for i := 0; i < int(10); i++ {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
 	r = tk.MustQuery(str + " t next_row_id")
