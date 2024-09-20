@@ -31,7 +31,6 @@ go_test(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/util/mock",
-        "@com_github_pingcap_tipb//go-binlog",
         "@com_github_stretchr_testify//require",
     ],
 )
