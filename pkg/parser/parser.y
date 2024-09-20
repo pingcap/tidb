@@ -2393,11 +2393,12 @@ AlterTableSpec:
 	}
 |	"CONVERT" "PARTITION" Identifier "TO" "TABLE" TableName
 	{
+		to := &ast.TableOption{TableNames: []*ast.TableName{$6.(*ast.TableName)}}
 		$$ = &ast.AlterTableSpec{
 			Tp:             ast.AlterTableConvertPartitionToTable,
 			PartitionNames: []model.CIStr{model.NewCIStr($3)},
 			// NewTable will be preprocessed to make sure it exists, so use this instead.
-			Options: []*ast.TableOption{&ast.TableOption{TableNames: []*ast.TableName{$6.(*ast.TableName)}}},
+			Options: []*ast.TableOption{to},
 		}
 	}
 |	"CONVERT" "TABLE" TableName "TO" PartitionDefinitionWithoutSubPartition WithValidationOpt
