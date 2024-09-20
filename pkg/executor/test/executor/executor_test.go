@@ -18,7 +18,6 @@ import (
 	"archive/zip"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"math"
 	"path/filepath"
 	"reflect"
@@ -62,12 +61,14 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
@@ -4487,5 +4488,5 @@ func TestIssue55957(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/SplitRangesHangCausedKill"))
 	}()
 	err := tk.QueryToErr("select /*+ MAX_EXECUTION_TIME(1000) */ * from t where a < 30 and a > 3 order by a")
-	require.True(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err))
 }

@@ -36,11 +36,6 @@ go_library(
         "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/paging",
-<<<<<<< HEAD
-=======
-        "//pkg/util/size",
-        "//pkg/util/sqlkiller",
->>>>>>> af46a3fb1d3 (*: Check sqlkiller status during split region process (#56155))
         "//pkg/util/tiflash",
         "//pkg/util/tiflashcompute",
         "//pkg/util/tracing",

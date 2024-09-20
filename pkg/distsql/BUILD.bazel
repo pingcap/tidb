@@ -35,11 +35,6 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/ranger",
-<<<<<<< HEAD
-=======
-        "//pkg/util/sqlkiller",
-        "//pkg/util/topsql/stmtstats",
->>>>>>> af46a3fb1d3 (*: Check sqlkiller status during split region process (#56155))
         "//pkg/util/tracing",
         "//pkg/util/trxevents",
         "@com_github_pingcap_errors//:errors",
