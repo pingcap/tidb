@@ -460,8 +460,7 @@ func GetCheckConstraintArgs(job *Job) (*CheckConstraintArgs, error) {
 	return getOrDecodeArgsV2[*CheckConstraintArgs](job)
 }
 
-// AddCheckConstraintArgs is just a wrapper for ConstraintInfo.
-// It is used to maintain the consistency of all the arguments
+// AddCheckConstraintArgs is the arguemnt for add check constraint
 type AddCheckConstraintArgs struct {
 	Constraint *ConstraintInfo `json:"constraint_info"`
 }
