@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -6655,8 +6655,8 @@ func (c *tidbBoundedStalenessFunctionClass) getFunction(ctx BuildContext, args [
 
 type builtinTiDBBoundedStalenessSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
-	contextopt.KVStorePropReader
+	expropt.SessionVarsPropReader
+	expropt.KVStorePropReader
 }
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
@@ -6807,7 +6807,7 @@ func (c *tidbCurrentTsoFunctionClass) getFunction(ctx BuildContext, args []Expre
 
 type builtinTiDBCurrentTsoSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinTiDBCurrentTsoSig) Clone() builtinFunc {

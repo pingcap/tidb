@@ -556,8 +556,8 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 			jobW.SchemaID = dbInfo.ID
 		case model.ActionCreateResourceGroup:
 			if !jobW.IDAllocated {
-				rgInfo := jobW.Args[0].(*model.ResourceGroupInfo)
-				rgInfo.ID = alloc.next()
+				args := jobW.JobArgs.(*model.ResourceGroupArgs)
+				args.RGInfo.ID = alloc.next()
 			}
 		case model.ActionAlterTablePartitioning:
 			if !jobW.IDAllocated {

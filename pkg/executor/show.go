@@ -822,6 +822,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			"YES",            // Index_visible
 			nil,              // Expression
 			"YES",            // Clustered
+			"NO",             // Global_index
 		})
 	}
 	for _, idx := range tb.Indices() {
@@ -833,6 +834,12 @@ func (e *ShowExec) fetchShowIndex() error {
 		if tb.Meta().IsCommonHandle && idxInfo.Primary {
 			isClustered = "YES"
 		}
+
+		isGlobalIndex := "NO"
+		if idxInfo.Global {
+			isGlobalIndex = "YES"
+		}
+
 		for i, col := range idxInfo.Columns {
 			nonUniq := 1
 			if idx.Meta().Unique {
@@ -885,6 +892,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				visible,                // Index_visible
 				expression,             // Expression
 				isClustered,            // Clustered
+				isGlobalIndex,          // Global_index
 			})
 		}
 	}

@@ -20,9 +20,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -409,17 +409,17 @@ func TestBuildExpression(t *testing.T) {
 		},
 	}
 
-	ctx := contextstatic.NewStaticExprContext()
+	ctx := exprstatic.NewExprContext()
 	evalCtx := ctx.GetStaticEvalCtx()
 	cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, pmodel.NewCIStr(""), tbl.Name, tbl.Cols(), tbl)
 	require.NoError(t, err)
 	schema := expression.NewSchema(cols...)
 
 	// normal build
-	ctx = ctx.Apply(contextstatic.WithColumnIDAllocator(context.NewSimplePlanColumnIDAllocator(0)))
+	ctx = ctx.Apply(exprstatic.WithColumnIDAllocator(exprctx.NewSimplePlanColumnIDAllocator(0)))
 	expr, err := buildExpr(t, ctx, "(1+a)*(3+b)", expression.WithTableInfo("", tbl))
 	require.NoError(t, err)
-	ctx = ctx.Apply(contextstatic.WithColumnIDAllocator(context.NewSimplePlanColumnIDAllocator(0)))
+	ctx = ctx.Apply(exprstatic.WithColumnIDAllocator(exprctx.NewSimplePlanColumnIDAllocator(0)))
 	expr2, err := expression.ParseSimpleExpr(ctx, "(1+a)*(3+b)", expression.WithTableInfo("", tbl))
 	require.NoError(t, err)
 	require.True(t, expr.Equal(evalCtx, expr2))
@@ -494,8 +494,8 @@ func TestBuildExpression(t *testing.T) {
 	// param marker
 	params := variable.NewPlanCacheParamList()
 	params.Append(types.NewIntDatum(5))
-	evalCtx = evalCtx.Apply(contextstatic.WithParamList(params))
-	ctx = ctx.Apply(contextstatic.WithEvalCtx(evalCtx))
+	evalCtx = evalCtx.Apply(exprstatic.WithParamList(params))
+	ctx = ctx.Apply(exprstatic.WithEvalCtx(evalCtx))
 	expr, err = buildExpr(t, ctx, "a + ?", expression.WithTableInfo("", tbl))
 	require.NoError(t, err)
 	require.Equal(t, mysql.TypeLonglong, expr.GetType(evalCtx).GetType())
@@ -512,8 +512,8 @@ func TestBuildExpression(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
 	vars.TimeZone = evalCtx.Location()
 	vars.StmtCtx.SetTimeZone(vars.Location())
-	evalCtx = evalCtx.Apply(contextstatic.WithUserVarsReader(vars.GetSessionVars().UserVars))
-	ctx = ctx.Apply(contextstatic.WithEvalCtx(evalCtx))
+	evalCtx = evalCtx.Apply(exprstatic.WithUserVarsReader(vars.GetSessionVars().UserVars))
+	ctx = ctx.Apply(exprstatic.WithEvalCtx(evalCtx))
 	vars.SetUserVarVal("a", types.NewStringDatum("abc"))
 	getVarExpr, err := buildExpr(t, ctx, "@a")
 	require.NoError(t, err)
@@ -523,8 +523,8 @@ func TestBuildExpression(t *testing.T) {
 	require.Equal(t, "abc", v.GetString())
 
 	// writing user var
-	evalCtx = evalCtx.Apply(contextstatic.WithOptionalProperty(contextopt.NewSessionVarsProvider(vars)))
-	ctx = ctx.Apply(contextstatic.WithEvalCtx(evalCtx))
+	evalCtx = evalCtx.Apply(exprstatic.WithOptionalProperty(expropt.NewSessionVarsProvider(vars)))
+	ctx = ctx.Apply(exprstatic.WithEvalCtx(evalCtx))
 	expr, err = buildExpr(t, ctx, "@a := 'def'")
 	require.NoError(t, err)
 	v, err = expr.Eval(evalCtx, chunk.Row{})

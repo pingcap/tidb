@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -362,11 +362,17 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 }
 
 // RenameTableArgs is the arguments for rename table DDL job.
+// It's also used for rename tables.
 type RenameTableArgs struct {
 	// for Args
-	OldSchemaID   int64       `json:"old_schema_id,omitempty"`
-	OldSchemaName model.CIStr `json:"old_schema_name,omitempty"`
-	NewTableName  model.CIStr `json:"new_table_name,omitempty"`
+	OldSchemaID   int64        `json:"old_schema_id,omitempty"`
+	OldSchemaName pmodel.CIStr `json:"old_schema_name,omitempty"`
+	NewTableName  pmodel.CIStr `json:"new_table_name,omitempty"`
+
+	// for rename tables
+	OldTableName pmodel.CIStr `json:"old_table_name,omitempty"`
+	NewSchemaID  int64        `json:"new_schema_id,omitempty"`
+	TableID      int64        `json:"table_id,omitempty"`
 }
 
 func (rt *RenameTableArgs) fillJob(job *Job) {
@@ -381,26 +387,34 @@ func (rt *RenameTableArgs) fillJob(job *Job) {
 func GetRenameTableArgs(job *Job) (*RenameTableArgs, error) {
 	var (
 		oldSchemaID   int64
-		oldSchemaName model.CIStr
-		newTableName  model.CIStr
+		oldSchemaName pmodel.CIStr
+		newTableName  pmodel.CIStr
+		args          *RenameTableArgs
+		err           error
 	)
 
 	if job.Version == JobVersion1 {
 		// decode args and cache in args.
-		err := job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
+		err = job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		args := RenameTableArgs{
+		args = &RenameTableArgs{
 			OldSchemaID:   oldSchemaID,
 			OldSchemaName: oldSchemaName,
 			NewTableName:  newTableName,
 		}
-		return &args, nil
+	} else {
+		// for version V2
+		args, err = getOrDecodeArgsV2[*RenameTableArgs](job)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
-	// for version V2
-	return getOrDecodeArgsV2[*RenameTableArgs](job)
+	// NewSchemaID is used for checkAndRenameTables, which is not set for rename table.
+	args.NewSchemaID = job.SchemaID
+	return args, nil
 }
 
 // UpdateRenameTableArgs updates the rename table args.
@@ -433,13 +447,137 @@ func UpdateRenameTableArgs(job *Job) error {
 	return nil
 }
 
+// ResourceGroupArgs is the arguments for resource group job.
+type ResourceGroupArgs struct {
+	// for DropResourceGroup we only use it to store the name, other fields are invalid.
+	RGInfo *ResourceGroupInfo `json:"rg_info,omitempty"`
+}
+
+func (a *ResourceGroupArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionCreateResourceGroup {
+			// what's the second parameter for? we keep it for compatibility.
+			job.Args = []any{a.RGInfo, false}
+		} else if job.Type == ActionAlterResourceGroup {
+			job.Args = []any{a.RGInfo}
+		} else if job.Type == ActionDropResourceGroup {
+			// it's not used anywhere.
+			job.Args = []any{a.RGInfo.Name}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetResourceGroupArgs gets the resource group args.
+func GetResourceGroupArgs(job *Job) (*ResourceGroupArgs, error) {
+	if job.Version == JobVersion1 {
+		rgInfo := ResourceGroupInfo{}
+		if job.Type == ActionCreateResourceGroup || job.Type == ActionAlterResourceGroup {
+			if err := job.DecodeArgs(&rgInfo); err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else if job.Type == ActionDropResourceGroup {
+			var rgName pmodel.CIStr
+			if err := job.DecodeArgs(&rgName); err != nil {
+				return nil, errors.Trace(err)
+			}
+			rgInfo.Name = rgName
+		}
+		return &ResourceGroupArgs{RGInfo: &rgInfo}, nil
+	}
+	return getOrDecodeArgsV2[*ResourceGroupArgs](job)
+}
+
+// RenameTablesArgs is the arguments for rename tables job.
+type RenameTablesArgs struct {
+	RenameTableInfos []*RenameTableArgs `json:"rename_table_infos,omitempty"`
+}
+
+func (a *RenameTablesArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		n := len(a.RenameTableInfos)
+		oldSchemaIDs := make([]int64, n)
+		oldSchemaNames := make([]pmodel.CIStr, n)
+		oldTableNames := make([]pmodel.CIStr, n)
+		newSchemaIDs := make([]int64, n)
+		newTableNames := make([]pmodel.CIStr, n)
+		tableIDs := make([]int64, n)
+
+		for i, info := range a.RenameTableInfos {
+			oldSchemaIDs[i] = info.OldSchemaID
+			oldSchemaNames[i] = info.OldSchemaName
+			oldTableNames[i] = info.OldTableName
+			newSchemaIDs[i] = info.NewSchemaID
+			newTableNames[i] = info.NewTableName
+			tableIDs[i] = info.TableID
+		}
+
+		// To make it compatible with previous create metas
+		job.Args = []any{oldSchemaIDs, newSchemaIDs, newTableNames, tableIDs, oldSchemaNames, oldTableNames}
+		return
+	}
+
+	job.Args = []any{a}
+}
+
+// GetRenameTablesArgsFromV1 get v2 args from v1
+func GetRenameTablesArgsFromV1(
+	oldSchemaIDs []int64,
+	oldSchemaNames []pmodel.CIStr,
+	oldTableNames []pmodel.CIStr,
+	newSchemaIDs []int64,
+	newTableNames []pmodel.CIStr,
+	tableIDs []int64,
+) *RenameTablesArgs {
+	infos := make([]*RenameTableArgs, 0, len(oldSchemaIDs))
+	for i, oldSchemaID := range oldSchemaIDs {
+		infos = append(infos, &RenameTableArgs{
+			OldSchemaID:   oldSchemaID,
+			OldSchemaName: oldSchemaNames[i],
+			OldTableName:  oldTableNames[i],
+			NewSchemaID:   newSchemaIDs[i],
+			NewTableName:  newTableNames[i],
+			TableID:       tableIDs[i],
+		})
+	}
+
+	return &RenameTablesArgs{
+		RenameTableInfos: infos,
+	}
+}
+
+// GetRenameTablesArgs gets the rename tables args.
+func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			oldSchemaIDs   []int64
+			oldSchemaNames []pmodel.CIStr
+			oldTableNames  []pmodel.CIStr
+			newSchemaIDs   []int64
+			newTableNames  []pmodel.CIStr
+			tableIDs       []int64
+		)
+		if err := job.DecodeArgs(
+			&oldSchemaIDs, &newSchemaIDs, &newTableNames,
+			&tableIDs, &oldSchemaNames, &oldTableNames); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		return GetRenameTablesArgsFromV1(
+			oldSchemaIDs, oldSchemaNames, oldTableNames,
+			newSchemaIDs, newTableNames, tableIDs), nil
+	}
+	return getOrDecodeArgsV2[*RenameTablesArgs](job)
+}
+
 // DropIndexArgs is the argument for drop index.
 // IndexIDs may have different length with IndexNames and IfExists.
 type DropIndexArgs struct {
-	IndexNames   []model.CIStr `json:"index_names,omitempty"`
-	IfExists     []bool        `json:"if_exists,omitempty"`
-	IndexIDs     []int64       `json:"index_ids"`
-	PartitionIDs []int64       `json:"partition_ids "`
+	IndexNames   []pmodel.CIStr `json:"index_names,omitempty"`
+	IfExists     []bool         `json:"if_exists,omitempty"`
+	IndexIDs     []int64        `json:"index_ids"`
+	PartitionIDs []int64        `json:"partition_ids "`
 
 	// This is used to distinguish rollback add index and drop index,
 	// since they have different args for v1.
@@ -488,7 +626,7 @@ func GetDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 			job.RawArgs = b
 		}
 
-		indexNames := make([]model.CIStr, 1)
+		indexNames := make([]pmodel.CIStr, 1)
 		ifExists := make([]bool, 1)
 		if err := job.DecodeArgs(&indexNames[0], &ifExists[0]); err != nil {
 			if err := job.DecodeArgs(&indexNames, &ifExists); err != nil {
@@ -517,7 +655,7 @@ func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 			job.RawArgs = b
 		}
 
-		indexNames := make([]model.CIStr, 1)
+		indexNames := make([]pmodel.CIStr, 1)
 		ifExists := make([]bool, 1)
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
@@ -546,7 +684,7 @@ func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 type IndexArg struct {
 	Global                  bool                          `json:"global,omitempty"`
 	Unique                  bool                          `json:"unique,omitempty"`
-	IndexName               model.CIStr                   `json:"index_name,omitempty"`
+	IndexName               pmodel.CIStr                  `json:"index_name,omitempty"`
 	IndexPartSpecifications []*ast.IndexPartSpecification `json:"index_part_specifications"`
 	IndexOption             *ast.IndexOption              `json:"index_option,omitempty"`
 	HiddenCols              []*ColumnInfo                 `json:"hidden_cols"`
@@ -588,7 +726,7 @@ func (a *AddIndexArgs) getV1Args() []any {
 
 	n := len(a.IndexArgs)
 	unique := make([]bool, n)
-	indexName := make([]model.CIStr, n)
+	indexName := make([]pmodel.CIStr, n)
 	indexPartSpecification := make([][]*ast.IndexPartSpecification, n)
 	indexOption := make([]*ast.IndexOption, n)
 	hiddenCols := make([][]*ColumnInfo, n)
@@ -619,7 +757,7 @@ func (a *AddIndexArgs) MergeIndexArg(Args []any, subjobVersion JobVersion) {
 	if subjobVersion != JobVersion2 {
 		indexArg = &IndexArg{
 			Unique:                  *Args[0].(*bool),
-			IndexName:               *Args[1].(*model.CIStr),
+			IndexName:               *Args[1].(*pmodel.CIStr),
 			IndexPartSpecifications: *Args[2].(*[]*ast.IndexPartSpecification),
 			IndexOption:             *Args[3].(**ast.IndexOption),
 			HiddenCols:              *Args[4].(*[]*ColumnInfo),
@@ -732,7 +870,7 @@ func getAddPrimaryKeyArgs(job *Job) (*AddIndexArgs, error) {
 
 	var (
 		unique                  bool
-		indexName               model.CIStr
+		indexName               pmodel.CIStr
 		indexPartSpecifications []*ast.IndexPartSpecification
 		indexOption             *ast.IndexOption
 		sqlMode                 mysql.SQLMode
@@ -772,7 +910,7 @@ func getAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 	}
 
 	uniques := make([]bool, 1)
-	indexNames := make([]model.CIStr, 1)
+	indexNames := make([]pmodel.CIStr, 1)
 	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
 	indexOptions := make([]*ast.IndexOption, 1)
 	hiddenCols := make([][]*ColumnInfo, 1)
