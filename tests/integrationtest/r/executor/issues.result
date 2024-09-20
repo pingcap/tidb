@@ -1002,3 +1002,9 @@ Limit_11	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
   └─Limit_19	100.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
     └─Selection_18	100.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.pt.val, 126)	<memory>	<disk>
       └─TableFullScan_17	125.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:true, stats:partial[val:missing]	<memory>	<disk>
+CREATE TABLE test_55837 (col1 int(4) NOT NULL, col2 bigint(4) NOT NULL, KEY col2_index (col2));
+insert into test_55837 values(0,1725292800),(0,1725292800);
+select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s') as result from test_55837;
+result
+2024-09-03 00:00:00
+2024-09-03 00:00:00

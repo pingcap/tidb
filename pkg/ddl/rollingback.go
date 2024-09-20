@@ -340,11 +340,19 @@ func convertAddTablePartitionJob2RollbackJob(jobCtx *jobContext, t *meta.Meta, j
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
-	job.Args = []any{partNames}
-	_, err = job.Encode(true)
+	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	args.PartNames = partNames
+	model.FillRollbackArgsForAddPartition(job, args)
+	/*
+		_, err = job.Encode(true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+	*/
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -374,12 +382,6 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, t *meta.Meta, job 
 	partNames := make([]string, 0, len(addingDefinitions))
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
-	}
-	partInfo := &model.PartitionInfo{}
-	var pNames []string
-	err = job.DecodeArgs(&pNames, &partInfo)
-	if err != nil {
-		return ver, err
 	}
 	var dropIndices []*model.IndexInfo
 	// When Global Index is duplicated to a non Global, we later need
@@ -486,11 +488,19 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, t *meta.Meta, job 
 		}
 	}
 
-	job.Args = []any{partNames, partInfo}
-	_, err = job.Encode(true)
+	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	args.PartNames = partNames
+	job.FillArgs(args)
+	/*
+		_, err = job.Encode(true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+	*/
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)

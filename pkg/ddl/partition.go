@@ -81,12 +81,12 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	partInfo := &model.PartitionInfo{}
-	err = job.DecodeArgs(&partInfo)
+	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, errors.Trace(err)
 	}
+	partInfo := args.PartInfo
 	if len(tblInfo.Partition.AddingDefinitions) > 0 {
 		return tblInfo, partInfo, tblInfo.Partition.AddingDefinitions, nil
 	}
@@ -2156,12 +2156,12 @@ func dropLabelRules(ctx context.Context, schemaName, tableName string, partNames
 
 // onDropTablePartition deletes old partition meta.
 func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var partNames []string
-	partInfo := model.PartitionInfo{}
-	if err := job.DecodeArgs(&partNames, &partInfo); err != nil {
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	partNames, partInfo := args.PartNames, args.PartInfo
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -2219,7 +2219,8 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 			return ver, errors.Trace(err)
 		}
 		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-		job.Args = []any{physicalTableIDs}
+		args.OldPhysicalTblIDs = physicalTableIDs
+		job.FillFinishedArgs(args)
 		return ver, nil
 	}
 
@@ -2339,7 +2340,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 		droppedDefs := tblInfo.Partition.DroppingDefinitions
 		tblInfo.Partition.DroppingDefinitions = nil
 		// used by ApplyDiff in updateSchemaVersion
-		job.CtxVars = []any{physicalTableIDs}
+		job.CtxVars = []any{physicalTableIDs} // TODO remove it.
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -2352,7 +2353,8 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 		)
 		asyncNotifyEvent(jobCtx, dropPartitionEvent, job)
 		// A background job will be created to delete old partition data.
-		job.Args = []any{physicalTableIDs}
+		args.OldPhysicalTblIDs = physicalTableIDs
+		job.FillFinishedArgs(args)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
@@ -2974,13 +2976,12 @@ func getReorgPartitionInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, []st
 	if err != nil {
 		return nil, nil, nil, nil, nil, errors.Trace(err)
 	}
-	partInfo := &model.PartitionInfo{}
-	var partNames []string
-	err = job.DecodeArgs(&partNames, &partInfo)
+	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, nil, errors.Trace(err)
 	}
+	partNames, partInfo := args.PartNames, args.PartInfo
 	var addingDefs, droppingDefs []model.PartitionDefinition
 	if tblInfo.Partition != nil {
 		addingDefs = tblInfo.Partition.AddingDefinitions
@@ -3541,7 +3542,12 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 		}
 		asyncNotifyEvent(jobCtx, event, job)
 		// A background job will be created to delete old partition data.
-		job.Args = []any{physicalTableIDs}
+		args, err := model.GetTablePartitionArgs(job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		args.OldPhysicalTblIDs = physicalTableIDs
+		job.FillFinishedArgs(args)
 
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
