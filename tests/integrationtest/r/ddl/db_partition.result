@@ -1,65 +1,3 @@
-set @@session.tidb_enable_table_partition = 'AUTO';
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-Table	Create Table
-t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-alter table t add partition (
-partition p4 values in (7),
-partition p5 values in (8,9));
-Error 1505 (HY000): Partition management on a not partitioned table is not possible
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = 'OFF';
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-Table	Create Table
-t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-alter table t add partition (
-partition p4 values in (7),
-partition p5 values in (8,9));
-Error 1505 (HY000): Partition management on a not partitioned table is not possible
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = 0;
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-Table	Create Table
-t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-alter table t add partition (
-partition p4 values in (7),
-partition p5 values in (8,9));
-Error 1505 (HY000): Partition management on a not partitioned table is not possible
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = 'ON';
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
-Table	Create Table
-t	CREATE TABLE `t` (
-  `id` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-alter table t add partition (
-partition p4 values in (7),
-partition p5 values in (8,9));
-Error 1505 (HY000): Partition management on a not partitioned table is not possible
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = default;
-set @@session.tidb_enable_list_partition = default;
 drop table if exists t;
 create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) partition by range columns (a)
 (partition p0A values less than ("A"),
@@ -1850,7 +1788,6 @@ t	CREATE TABLE `t` (
   `store_id` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY KEY (`hired`) PARTITIONS 11
-set @@session.tidb_enable_table_partition = 1;
 drop database if exists test_db_with_partition_const;
 create database test_db_with_partition_const;
 use test_db_with_partition_const;
@@ -1919,7 +1856,6 @@ partition by range(day(time_recorded)) (
 partition p0 values less than (1)
 );
 Error 1486 (HY000): Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed
-set @@session.tidb_enable_table_partition = default;
 drop table if exists test_1465;
 create table test_1465 (a int)
 partition by range(a) (
@@ -3119,7 +3055,6 @@ Error 1526 (HY000): Table has no partition for value from column_list
 insert into t values ('2023-08-31', 'c', "FAIL");
 alter table rcp EXCHANGE PARTITION p20230829 WITH TABLE t;
 Error 1737 (HY000): Found a row that does not match the partition
-set @@session.tidb_enable_table_partition = 1;
 drop table if exists t1, t2, t3, t4, t5;
 create table t1 ( time_recorded datetime )
 partition by range(TO_DAYS(time_recorded)) (
@@ -3137,7 +3072,6 @@ create table t5 ( time_recorded timestamp )
 partition by range(unix_timestamp(time_recorded)) (
 partition p1 values less than (1559192604)
 );
-set @@session.tidb_enable_table_partition = default;
 set @@tidb_enable_exchange_partition=1;
 drop table if exists pt1;
 create table pt1(a int, b int, c int) PARTITION BY hash (a) partitions 1;
