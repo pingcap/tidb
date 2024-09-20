@@ -473,6 +473,7 @@ type DropColumnArgs struct {
 	ColName  model.CIStr `json:"column_name,omitempty"`
 	IfExists bool        `json:"if_exists,omitempty"`
 	// indexIDs is used to make sure we don't truncate args when decoding the rawArgs.
+	// below 2 fields are filled during running.
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
