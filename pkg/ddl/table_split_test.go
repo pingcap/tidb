@@ -45,7 +45,7 @@ func TestTableSplit(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Synced split table region.
-	tk.MustExec("set global tidb_scatter_region = 1")
+	tk.MustExec("set @@session.tidb_scatter_region = 1")
 	tk.MustExec(`create table t_part (a int key) partition by range(a) (
 		partition p0 values less than (10),
 		partition p1 values less than (20)
