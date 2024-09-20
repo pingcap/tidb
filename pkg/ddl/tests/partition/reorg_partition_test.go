@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -389,11 +388,11 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			idxID := tOrg.Meta().Indices[0].ID
 			oldCreate := tk.MustQuery(`show create table t`).Rows()
 			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
-			require.NoError(t, failpoint.Enable(name, `return(true)`))
+			testfailpoint.Enable(t, name, `return(true)`)
 			err := tk.ExecToErr(alterSQL)
 			require.Error(t, err, "failpoint reorgPart"+suffix)
 			require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
-			require.NoError(t, failpoint.Disable(name))
+			testfailpoint.Disable(t, name)
 			tk.MustQuery(`show create table t /* ` + suffix + ` */`).Check(oldCreate)
 			tt := external.GetTableByName(t, tk, "test", "t")
 			partition := tt.Meta().Partition
@@ -800,19 +799,18 @@ func TestReorgPartitionRollback(t *testing.T) {
 	// TODO: Check that there are no additional placement rules,
 	// bundles, or ranges with non-completed tableIDs
 	// (partitions used during reorg, but was dropped)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", `return(true)`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", `return(true)`)
 	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
 	tk.MustExec(`admin check table t`)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr"))
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr")
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	noNewTablesAfter(t, tk, ctx, tbl, "Reorganize rollback")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/reorgPartitionAfterDataCopy", `return(true)`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/reorgPartitionAfterDataCopy", `return(true)`)
 	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/reorgPartitionAfterDataCopy")
-		require.NoError(t, err)
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/reorgPartitionAfterDataCopy")
 	}()
 	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
 	tk.MustExec(`admin check table t`)
