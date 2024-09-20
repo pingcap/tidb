@@ -73,6 +73,9 @@ func RegisterHandler(id HandlerID, handler SchemaChangeHandler) {
 		panic(fmt.Sprintf("illegal HandlerID: %d", id))
 	}
 
+	if _, ok := globalDDLNotifier.handlers[id]; ok {
+		panic(fmt.Sprintf("HandlerID %d already registered", id))
+	}
 	globalDDLNotifier.handlers[id] = handler
 }
 
@@ -101,15 +104,24 @@ func InitDDLNotifier(
 	}
 }
 
+// ResetDDLNotifier is used for testing only.
+func ResetDDLNotifier() { globalDDLNotifier = nil }
+
+// StartDDLNotifier starts the global ddlNotifier. It will block until the
+// context is canceled.
+func StartDDLNotifier(ctx context.Context) {
+	globalDDLNotifier.Start(ctx)
+}
+
 // Start starts the ddlNotifier. It will block until the context is canceled.
-func (n *ddlNotifier) Start(ctx context.Context) error {
+func (n *ddlNotifier) Start(ctx context.Context) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDDLNotifier)
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return
 		case <-ticker.C:
 			if err := n.processEvents(ctx); err != nil {
 				log.FromContext(ctx).Error("Error processing events", zap.Error(err))
@@ -119,14 +131,22 @@ func (n *ddlNotifier) Start(ctx context.Context) error {
 }
 
 func (n *ddlNotifier) processEvents(ctx context.Context) error {
-	events, err := n.store.List(ctx, sess.NewSession(n.ownedSCtx), 100)
+	events, err := n.store.List(ctx, sess.NewSession(n.ownedSCtx))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	// we should ensure deliver order of events to a handler, so if a handler returns
+	// error for previous events it should not receive later events.
+	skipHandlers := make(map[HandlerID]struct{})
 	for _, event := range events {
 		for handlerID, handler := range n.handlers {
+			if _, ok := skipHandlers[handlerID]; ok {
+				continue
+			}
 			if err2 := n.processEventForHandler(ctx, event, handlerID, handler); err2 != nil {
+				skipHandlers[handlerID] = struct{}{}
+
 				if !goerr.Is(err2, ErrNotReadyRetryLater) {
 					log.FromContext(ctx).Error("Error processing event",
 						zap.Int64("ddlJobID", event.ddlJobID),
@@ -137,7 +157,7 @@ func (n *ddlNotifier) processEvents(ctx context.Context) error {
 				continue
 			}
 		}
-		// TODO(lance6716): remove the processed event after all handlers processed it.
+		// TODO: remove the processed event after all handlers processed it.
 	}
 
 	return nil
