@@ -1498,11 +1498,6 @@ func upgrade(s sessiontypes.Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
-	err = forceToLeader(context.Background(), s)
-	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] force to owner failed", zap.Error(err))
-	}
-
 	var ver int64
 	acquireLock(s)
 	ver, err = getBootstrapVersion(s)
@@ -1513,6 +1508,11 @@ func upgrade(s sessiontypes.Session) {
 		return
 	}
 	defer releaseLock(s)
+
+	err = forceToLeader(context.Background(), s)
+	if err != nil {
+		logutil.BgLogger().Fatal("[upgrade] force to owner failed", zap.Error(err))
+	}
 
 	checkDistTask(s, ver)
 	printClusterState(s, ver)
