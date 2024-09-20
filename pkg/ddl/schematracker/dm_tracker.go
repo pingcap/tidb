@@ -320,7 +320,7 @@ func (d *SchemaTracker) DropTable(_ sessionctx.Context, stmt *ast.DropTableStmt)
 }
 
 // RecoverTable implements the DDL interface, which is no-op in DM's case.
-func (*SchemaTracker) RecoverTable(_ sessionctx.Context, _ *ddl.RecoverInfo) (err error) {
+func (*SchemaTracker) RecoverTable(_ sessionctx.Context, _ *model.RecoverInfo) (err error) {
 	return nil
 }
 
@@ -330,7 +330,7 @@ func (*SchemaTracker) FlashbackCluster(_ sessionctx.Context, _ uint64) (err erro
 }
 
 // RecoverSchema implements the DDL interface, which is no-op in DM's case.
-func (*SchemaTracker) RecoverSchema(_ sessionctx.Context, _ *ddl.RecoverSchemaInfo) (err error) {
+func (*SchemaTracker) RecoverSchema(_ sessionctx.Context, _ *model.RecoverSchemaInfo) (err error) {
 	return nil
 }
 

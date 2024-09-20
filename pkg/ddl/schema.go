@@ -230,15 +230,14 @@ func onDropSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, 
 }
 
 func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var (
-		recoverSchemaInfo      *RecoverSchemaInfo
-		recoverSchemaCheckFlag int64
-	)
-	if err := job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag); err != nil {
+	args, err := model.GetRecoverArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	recoverSchemaInfo := args.RecoverSchemaInfo
+
 	schemaInfo := recoverSchemaInfo.DBInfo
 	// check GC and safe point
 	gcEnable, err := checkGCEnable(w)
@@ -251,10 +250,12 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		// none -> write only
 		// check GC enable and update flag.
 		if gcEnable {
-			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagEnableGC
+			args.RecoverCheckFlag = recoverCheckFlagEnableGC
 		} else {
-			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
+			args.RecoverCheckFlag = recoverCheckFlagDisableGC
 		}
+		job.FillArgs(args)
+
 		schemaInfo.State = model.StateWriteOnly
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
@@ -278,14 +279,14 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err2)
 			}
-			recoverTbls = make([]*RecoverInfo, 0, len(tables))
+			recoverTbls = make([]*model.RecoverInfo, 0, len(tables))
 			for _, tblInfo := range tables {
 				autoIDs, err3 := snapMeta.GetAutoIDAccessors(sid, tblInfo.ID).Get()
 				if err3 != nil {
 					job.State = model.JobStateCancelled
 					return ver, errors.Trace(err3)
 				}
-				recoverTbls = append(recoverTbls, &RecoverInfo{
+				recoverTbls = append(recoverTbls, &model.RecoverInfo{
 					SchemaID:      sid,
 					TableInfo:     tblInfo,
 					DropJobID:     recoverSchemaInfo.DropJobID,

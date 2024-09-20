@@ -347,3 +347,40 @@ func TestRepairTableArgs(t *testing.T) {
 		require.Equal(t, inArgs.TableInfo, args.TableInfo)
 	}
 }
+
+func TestRecoverArgs(t *testing.T) {
+	recoverInfo := &RecoverInfo{
+		SchemaID:  1,
+		DropJobID: 2,
+		TableInfo: &TableInfo{
+			ID:   100,
+			Name: model.NewCIStr("table"),
+		},
+		OldSchemaName: "old",
+		OldTableName:  "table",
+	}
+
+	inArgs := &RecoverArgs{
+		RecoverInfo: recoverInfo,
+		RecoverSchemaInfo: &RecoverSchemaInfo{
+			RecoverTabsInfo: []*RecoverInfo{recoverInfo},
+		},
+		RecoverCheckFlag: 2,
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		for _, tp := range []ActionType{ActionRecoverTable, ActionRecoverSchema} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+
+			args, err := GetRecoverArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, inArgs.RecoverCheckFlag, args.RecoverCheckFlag)
+			if tp == ActionRecoverTable {
+				require.Equal(t, inArgs.RecoverInfo, args.RecoverInfo)
+			} else {
+				require.Equal(t, inArgs.RecoverSchemaInfo, args.RecoverSchemaInfo)
+			}
+		}
+	}
+}

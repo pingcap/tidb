@@ -104,8 +104,8 @@ type Executor interface {
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
-	RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error)
-	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error
+	RecoverTable(ctx sessionctx.Context, recoverInfo *model.RecoverInfo) (err error)
+	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *model.RecoverSchemaInfo) error
 	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error
 	DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error
@@ -797,7 +797,7 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 	return nil
 }
 
-func (e *executor) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSchemaInfo) error {
+func (e *executor) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *model.RecoverSchemaInfo) error {
 	involvedSchemas := []model.InvolvingSchemaInfo{{
 		Database: recoverSchemaInfo.DBInfo.Name.L,
 		Table:    model.InvolvingAll,
@@ -810,14 +810,19 @@ func (e *executor) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *Reco
 	}
 	recoverSchemaInfo.State = model.StateNone
 	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
 		Type:                model.ActionRecoverSchema,
 		BinlogInfo:          &model.HistoryInfo{},
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
-		Args:                []any{recoverSchemaInfo, recoverCheckFlagNone},
 		InvolvingSchemaInfo: involvedSchemas,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
-	err := e.DoDDLJob(ctx, job)
+
+	args := &model.RecoverArgs{
+		RecoverSchemaInfo: recoverSchemaInfo,
+		RecoverCheckFlag:  recoverCheckFlagNone,
+	}
+	err := e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -1440,7 +1445,7 @@ func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) 
 	return errors.Trace(err)
 }
 
-func (e *executor) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
+func (e *executor) RecoverTable(ctx sessionctx.Context, recoverInfo *model.RecoverInfo) (err error) {
 	is := e.infoCache.GetLatest()
 	schemaID, tbInfo := recoverInfo.SchemaID, recoverInfo.TableInfo
 	// Check schema exist.
@@ -1467,19 +1472,22 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo
 
 	tbInfo.State = model.StateNone
 	job := &model.Job{
-		SchemaID:   schemaID,
-		TableID:    tbInfo.ID,
-		SchemaName: schema.Name.L,
-		TableName:  tbInfo.Name.L,
-
+		Version:             model.GetJobVerInUse(),
+		SchemaID:            schemaID,
+		TableID:             tbInfo.ID,
+		SchemaName:          schema.Name.L,
+		TableName:           tbInfo.Name.L,
 		Type:                model.ActionRecoverTable,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                []any{recoverInfo, recoverCheckFlagNone},
 		InvolvingSchemaInfo: involvedSchemas,
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
-	err = e.DoDDLJob(ctx, job)
+
+	args := &model.RecoverArgs{
+		RecoverInfo:      recoverInfo,
+		RecoverCheckFlag: recoverCheckFlagNone}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 

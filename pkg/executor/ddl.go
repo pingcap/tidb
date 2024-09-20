@@ -422,7 +422,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return err
 	}
 
-	recoverInfo := &ddl.RecoverInfo{
+	recoverInfo := &model.RecoverInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
@@ -579,7 +579,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 
-	recoverInfo := &ddl.RecoverInfo{
+	recoverInfo := &model.RecoverInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
@@ -620,7 +620,7 @@ func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	return err
 }
 
-func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo *ddl.RecoverSchemaInfo, err error) {
+func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo *model.RecoverSchemaInfo, err error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil, err
@@ -654,7 +654,7 @@ func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo
 			if schemaInfo.Name.L != schemaName.L {
 				continue
 			}
-			recoverSchemaInfo = &ddl.RecoverSchemaInfo{
+			recoverSchemaInfo = &model.RecoverSchemaInfo{
 				DBInfo:              schemaInfo,
 				LoadTablesOnExecute: true,
 				DropJobID:           job.ID,
