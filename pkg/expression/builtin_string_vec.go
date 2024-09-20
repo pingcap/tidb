@@ -2978,7 +2978,11 @@ func formatDecimal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result 
 		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
 			// TODO: support other locales.
 			tc := typeCtx(ctx)
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(localeBuf.GetString(i)))
+
+			// force copy of the string
+			// https://github.com/pingcap/tidb/issues/56193
+			locale := "x" + localeBuf.GetString(i)
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale[1:]))
 		}
 
 		xStr := roundFormatArgs(x.String(), int(d))
