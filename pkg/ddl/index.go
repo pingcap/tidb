@@ -882,11 +882,12 @@ func (w *worker) checkVectorIndexProcessOnTiFlash(jobCtx *jobContext, t *meta.Me
 
 func (w *worker) checkVectorIndexProcess(jobCtx *jobContext, tbl table.Table, job *model.Job, index *model.IndexInfo) error {
 	waitTimeout := ReorgWaitTimeout
+	ticker := time.Tick(waitTimeout)
 	for {
 		select {
 		case <-w.ddlCtx.ctx.Done():
 			return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
-		case <-time.After(waitTimeout):
+		case <-ticker:
 			logutil.DDLLogger().Info("[ddl] index backfill state running, check vector index process",
 				zap.Stringer("job", job), zap.Stringer("index name", index.Name), zap.Int64("index ID", index.ID),
 				zap.Duration("wait time", waitTimeout), zap.Int64("total added row count", job.RowCount))
@@ -919,7 +920,9 @@ func (w *worker) checkVectorIndexProcess(jobCtx *jobContext, tbl table.Table, jo
 func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table, indexID int64) (bool, int64, error) {
 	failpoint.Inject("MockCheckVectorIndexProcess", func(val failpoint.Value) {
 		if valInt, ok := val.(int); ok {
-			if valInt == -1 {
+			if valInt < 0 {
+				failpoint.Return(false, 0, dbterror.ErrTiFlashBackfillIndex.FastGenByArgs("mock a check error"))
+			} else if valInt == 0 {
 				failpoint.Return(false, 0, nil)
 			} else {
 				failpoint.Return(true, int64(valInt), nil)
@@ -927,19 +930,26 @@ func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table
 		}
 	})
 
-	// TODO: We need to add error_msg for to show error information.
-	sql := fmt.Sprintf("select rows_stable_not_indexed, rows_stable_indexed from information_schema.tiflash_indexes where table_id = %d and index_id = %d;",
+	sql := fmt.Sprintf("select rows_stable_not_indexed, rows_stable_indexed, error_message from information_schema.tiflash_indexes where table_id = %d and index_id = %d;",
 		tbl.Meta().ID, indexID)
 	rows, err := w.sess.Execute(jobCtx.ctx, sql, "add_vector_index_check_result")
 	if err != nil || len(rows) == 0 {
 		return false, 0, errors.Trace(err)
 	}
 
-	// handle info from multiple TiFlash nodes
-	notAddedIndexCnt, addedIndexCnt := int64(0), int64(0)
+	// Get and process info from multiple TiFlash nodes.
+	notAddedIndexCnt, addedIndexCnt, errMsg := int64(0), int64(0), ""
 	for _, row := range rows {
 		notAddedIndexCnt += row.GetInt64(0)
 		addedIndexCnt += row.GetInt64(1)
+		errMsg = row.GetString(2)
+		if len(errMsg) != 0 {
+			err = dbterror.ErrTiFlashBackfillIndex.FastGenByArgs(errMsg)
+			break
+		}
+	}
+	if err != nil {
+		return false, 0, errors.Trace(err)
 	}
 	if notAddedIndexCnt != 0 {
 		return false, 0, nil

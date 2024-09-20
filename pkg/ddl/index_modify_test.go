@@ -1396,7 +1396,7 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	var checkErr error
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(0)`)
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
@@ -1419,10 +1419,16 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	tk.MustQuery("select count(1) from t1;").Check(testkit.Rows("4"))
 	checkRollbackInfo(model.JobStateRollbackDone)
 
-	// Case3: add a vector index normally.
+	// Case3: test get error message from tiflash
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(-1)`)
+	tk.MustContainErrMsg(addIdxSQL, "[ddl:9014]TiFlash backfill index failed: TiFlash backfill index failed: mock a check error")
+	checkRollbackInfo(model.JobStateRollbackDone)
+
+	// Case4: add a vector index normally.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(4)`)
 	tk.MustExec(addIdxSQL)
+	checkRollbackInfo(model.JobStateSynced)
 	// TODO: add mock TiFlash to make sure the vector index count is equal to row count.
 	// tk.MustQuery("select count(1) from t1 use index(v_idx);").Check(testkit.Rows("4"))
 

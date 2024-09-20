@@ -1525,6 +1525,7 @@ var tableTiFlashIndexesCols = []columnInfo{
 	{name: "ROWS_STABLE_NOT_INDEXED", tp: mysql.TypeLonglong, size: 64},
 	{name: "ROWS_DELTA_INDEXED", tp: mysql.TypeLonglong, size: 64},
 	{name: "ROWS_DELTA_NOT_INDEXED", tp: mysql.TypeLonglong, size: 64},
+	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024},
 	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
 }
 
