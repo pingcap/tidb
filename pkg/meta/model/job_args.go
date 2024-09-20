@@ -710,7 +710,7 @@ type AddIndexArgs struct {
 	// We use this variable to distinguish them.
 	IsPK bool `json:"is_pk"`
 
-	// This is to dintinguish finished and running args, used for expectedDeleteRangeCnt
+	// This is to dintinguish finished and running args, see comments in expectedDeleteRangeCnt
 	IsFinishedArg bool `json:"is_finished,omitempty"`
 }
 
