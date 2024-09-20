@@ -260,6 +260,10 @@ func acquireDistributedLock(ctx context.Context, cli *clientv3.Client, jobID int
 		if err != nil {
 			logutil.Logger(ctx).Warn("close session error", zap.Error(err))
 		}
+		_, err := cli.Revoke(ctx, leaseGrantResp.ID)
+		if err != nil {
+			logutil.Logger(ctx).Warn("revoke lease error", zap.Error(err))
+		}
 	}, nil
 }
 
