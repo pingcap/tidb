@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/errors"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -125,7 +125,7 @@ func (n *ddlNotifier) Start(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := n.processEvents(ctx); err != nil {
-				log.FromContext(ctx).Error("Error processing events", zap.Error(err))
+				logutil.Logger(ctx).Error("Error processing events", zap.Error(err))
 			}
 		}
 	}
@@ -149,7 +149,7 @@ func (n *ddlNotifier) processEvents(ctx context.Context) error {
 				skipHandlers[handlerID] = struct{}{}
 
 				if !goerr.Is(err2, ErrNotReadyRetryLater) {
-					log.FromContext(ctx).Error("Error processing event",
+					logutil.Logger(ctx).Error("Error processing event",
 						zap.Int64("ddlJobID", event.ddlJobID),
 						zap.Int64("multiSchemaChangeSeq", event.multiSchemaChangeSeq),
 						zap.Int("handlerID", int(handlerID)),
