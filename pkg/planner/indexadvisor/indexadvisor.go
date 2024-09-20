@@ -245,7 +245,8 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 
 		normText, _ := NormalizeDigest(indexResult.TopImpactedQueries[0].Query)
 		indexResult.WorkloadImpact = workloadImpact
-		indexResult.IndexDetail.Reason = fmt.Sprintf(`Column %v appear in Equal or Range Predicate clause(s) in query: %v`, cols, normText)
+		indexResult.IndexDetail.Reason =
+			fmt.Sprintf(`Column %v appear in Equal or Range Predicate clause(s) in query: %v`, cols, normText)
 		results = append(results, indexResult)
 	}
 	return results, nil
