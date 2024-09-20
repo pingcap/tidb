@@ -384,7 +384,7 @@ var (
 	ErrDependentByPartitionFunctional = ClassDDL.NewStd(mysql.ErrDependentByPartitionFunctional)
 
 	// ErrUnsupportedAlterTableSpec means we don't support this alter table specification (i.e. unknown)
-	ErrUnsupportedAlterTableSpec = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "Unsupported/unknown ALTER TABLE specification"), nil))
+	ErrUnsupportedAlterTableSpec = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "or unknown ALTER TABLE specification"), nil))
 	// ErrGeneralUnsupportedDDL as a generic error to customise by argument
 	ErrGeneralUnsupportedDDL = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "%s"), nil))
 

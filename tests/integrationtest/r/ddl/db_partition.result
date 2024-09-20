@@ -1935,9 +1935,9 @@ Error 8200 (HY000): Unsupported optimize partition
 alter table test_1465 repair partition p1;
 Error 8200 (HY000): Unsupported repair partition
 alter table test_1465 import partition p1 tablespace;
-Error 8200 (HY000): Unsupported Unsupported/unknown ALTER TABLE specification
+Error 8200 (HY000): Unsupported or unknown ALTER TABLE specification
 alter table test_1465 discard partition p1 tablespace;
-Error 8200 (HY000): Unsupported Unsupported/unknown ALTER TABLE specification
+Error 8200 (HY000): Unsupported or unknown ALTER TABLE specification
 alter table test_1465 rebuild partition p1;
 Error 8200 (HY000): Unsupported rebuild partition
 alter table test_1465 coalesce partition 1;

@@ -3280,6 +3280,13 @@ func TestDDL(t *testing.T) {
 
 		{"alter table t with validation, exchange partition p with table nt without validation;", true, "ALTER TABLE `t` WITH VALIDATION, EXCHANGE PARTITION `p` WITH TABLE `nt` WITHOUT VALIDATION"},
 		{"alter table t exchange partition p with table nt with validation;", true, "ALTER TABLE `t` EXCHANGE PARTITION `p` WITH TABLE `nt`"},
+		{"alter table t convert partition p to table nt with validation;", false, "ALTER TABLE `t` CONVERT PARTITION `p` TO TABLE `nt`"},
+		{"alter table t convert partition p to table nt", true, "ALTER TABLE `t` CONVERT PARTITION `p` TO TABLE `nt`"},
+		{"alter table t convert table nt to partition p with validation", true, "ALTER TABLE `t` CONVERT TABLE `nt` TO PARTITION `p`"},
+		{"alter table t convert table nt to partition p values less than (10)", true, "ALTER TABLE `t` CONVERT TABLE `nt` TO PARTITION `p` VALUES LESS THAN (10)"},
+		{"alter table t convert table nt to partition p values in (10)", true, "ALTER TABLE `t` CONVERT TABLE `nt` TO PARTITION `p` VALUES IN (10)"},
+		{"alter table t convert table nt to partition p", true, "ALTER TABLE `t` CONVERT TABLE `nt` TO PARTITION `p`"},
+		{"alter table t convert table nt to partition p without validation", true, "ALTER TABLE `t` CONVERT TABLE `nt` TO PARTITION `p` WITHOUT VALIDATION"},
 
 		// For reorganize partition statement
 		{"alter table t reorganize partition;", true, "ALTER TABLE `t` REORGANIZE PARTITION"},
