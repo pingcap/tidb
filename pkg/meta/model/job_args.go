@@ -440,6 +440,11 @@ type DropIndexArgs struct {
 	IfExists     []bool        `json:"if_exists,omitempty"`
 	IndexIDs     []int64       `json:"index_ids"`
 	PartitionIDs []int64       `json:"partition_ids "`
+
+	// This is used to distinguish rollback add index and drop index,
+	// since they have different args for v1.
+	// TODO(joechenrh): remove this flag after totally switching to v2
+	IsRollback bool `json:"-"`
 }
 
 func (a *DropIndexArgs) fillJob(job *Job) {
@@ -457,20 +462,14 @@ func (a *DropIndexArgs) fillJob(job *Job) {
 func (a *DropIndexArgs) fillFinishedJob(job *Job) {
 	if job.Version == JobVersion1 {
 		// This is to make the args compatible with old logic:
-		// 1. For drop index, the first and second args are CIStr and bool.
-		// 2. For rollback add index, these args could be slices.
-		var indexIDs any
-		if len(a.IndexIDs) == 1 {
-			indexIDs = a.IndexIDs[0]
+		// 1. For drop index, arguments are [CIStr, bool, int64, []int64].
+		// 2. For rollback add index, arguments are [[]CIStr, []bool, []int64].
+		if a.IsRollback {
+			job.Args = []any{a.IndexNames, a.IfExists, a.IndexIDs}
 		} else {
-			indexIDs = a.IndexIDs
+			job.Args = []any{a.IndexNames[0], a.IfExists[0], a.IndexIDs[0], a.PartitionIDs}
 		}
 
-		if len(a.IndexNames) == 1 {
-			job.Args = []any{a.IndexNames[0], a.IfExists[0], indexIDs, a.PartitionIDs}
-		} else {
-			job.Args = []any{a.IndexNames, a.IfExists, indexIDs, a.PartitionIDs}
-		}
 		return
 	}
 	job.Args = []any{a}
@@ -523,12 +522,9 @@ func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
 
-		if err := job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs); err != nil {
-			if err = job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs); err != nil {
-				// For jobs before refactor, args may only contains three slices.
-				if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs); err != nil {
-					return nil, errors.Trace(err)
-				}
+		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs); err != nil {
+			if err := job.DecodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs); err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 

@@ -87,6 +87,7 @@ func convertAddIdxJob2RollbackJob(
 		IndexNames: indexNames,
 		IfExists:   ifExists,
 		IndexIDs:   getPartitionIDs(tblInfo),
+		IsRollback: true,
 	})
 
 	job.SchemaState = model.StateDeleteOnly
