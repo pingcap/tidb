@@ -173,13 +173,15 @@ func TestCombinedIDAllocation(t *testing.T) {
 		return j
 	}
 
-	genRGroupJob := func() *model.Job {
+	genRGroupJob := func(idAllocated bool) *ddl.JobWrapper {
 		info := &model.ResourceGroupInfo{}
-		return &model.Job{
-			Version: model.JobVersion1,
+		job := &model.Job{
+			Version: model.GetJobVerInUse(),
 			Type:    model.ActionCreateResourceGroup,
-			Args:    []any{info},
 		}
+		return ddl.NewJobWrapperWithArgs(job, &model.ResourceGroupArgs{
+			RGInfo: info,
+		}, idAllocated)
 	}
 
 	genAlterTblPartitioningJob := func(partCnt int) *model.Job {
@@ -284,11 +286,11 @@ func TestCombinedIDAllocation(t *testing.T) {
 			requiredIDCount: 1,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genRGroupJob(), false),
+			jobW:            genRGroupJob(false),
 			requiredIDCount: 2,
 		},
 		{
-			jobW:            ddl.NewJobWrapper(genRGroupJob(), true),
+			jobW:            genRGroupJob(true),
 			requiredIDCount: 1,
 		},
 		{
@@ -428,9 +430,9 @@ func TestCombinedIDAllocation(t *testing.T) {
 				uniqueIDs[args.DBInfo.ID] = struct{}{}
 				require.Equal(t, j.SchemaID, args.DBInfo.ID)
 			case model.ActionCreateResourceGroup:
-				info := &model.ResourceGroupInfo{}
-				require.NoError(t, j.DecodeArgs(info))
-				checkID(info.ID)
+				args, err := model.GetResourceGroupArgs(j)
+				require.NoError(t, err)
+				checkID(args.RGInfo.ID)
 			case model.ActionAlterTablePartitioning:
 				var partNames []string
 				info := &model.PartitionInfo{}

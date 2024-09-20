@@ -15,19 +15,24 @@
 package indexadvisor
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	parser2 "github.com/pingcap/tidb/pkg/util/parser"
 	s "github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -523,4 +528,23 @@ func evaluateIndexSetCost(
 	sort.Strings(keys)
 
 	return IndexSetCost{workloadCost, totCols, strings.Join(keys, ",")}, nil
+}
+
+func exec(sctx sessionctx.Context, sql string) (ret []chunk.Row, err error) {
+	executor := sctx.(sqlexec.SQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	result, err := executor.ExecuteInternal(ctx, sql)
+	if err != nil {
+		return nil, fmt.Errorf("execute %v failed: %v", sql, err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	defer func() {
+		closeErr := result.Close()
+		if err == nil {
+			err = closeErr
+		}
+	}()
+	return sqlexec.DrainRecordSet(context.Background(), result, 64)
 }
