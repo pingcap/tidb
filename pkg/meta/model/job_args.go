@@ -593,6 +593,49 @@ func GetResourceGroupArgs(job *Job) (*ResourceGroupArgs, error) {
 	return getOrDecodeArgsV2[*ResourceGroupArgs](job)
 }
 
+// DropColumnArgs is the arguments of dropping column job.
+type DropColumnArgs struct {
+	ColName  pmodel.CIStr `json:"column_name,omitempty"`
+	IfExists bool         `json:"if_exists,omitempty"`
+	// below 2 fields are filled during running.
+	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	PartitionIDs []int64 `json:"partition_ids,omitempty"`
+}
+
+func (a *DropColumnArgs) fillJob(job *Job) {
+	if job.Version <= JobVersion1 {
+		job.Args = []any{a.ColName, a.IfExists, a.IndexIDs, a.PartitionIDs}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetDropColumnArgs gets the args for drop column ddl.
+func GetDropColumnArgs(job *Job) (*DropColumnArgs, error) {
+	var (
+		colName      pmodel.CIStr
+		ifExists     bool
+		indexIDs     []int64
+		partitionIDs []int64
+	)
+
+	if job.Version <= JobVersion1 {
+		err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		return &DropColumnArgs{
+			ColName:      colName,
+			IfExists:     ifExists,
+			IndexIDs:     indexIDs,
+			PartitionIDs: partitionIDs,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*DropColumnArgs](job)
+}
+
 // RenameTablesArgs is the arguments for rename tables job.
 type RenameTablesArgs struct {
 	RenameTableInfos []*RenameTableArgs `json:"rename_table_infos,omitempty"`

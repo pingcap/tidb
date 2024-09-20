@@ -108,6 +108,8 @@ func TestIndexAdvisorBasic1(t *testing.T) {
 	check(nil, t, tk, "test.t.a", option("select * from t where a=1"))
 	check(nil, t, tk, "test.t.a,test.t.b",
 		option("select * from t where a=1; select * from t where b=1"))
+	check(nil, t, tk, "test.t.a,test.t.b",
+		option("select a from t where a=1; select b from t where b=1"))
 }
 
 func TestIndexAdvisorBasic2(t *testing.T) {

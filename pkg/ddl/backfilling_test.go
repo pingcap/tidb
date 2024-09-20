@@ -330,9 +330,6 @@ func TestReorgTableMutateContext(t *testing.T) {
 		require.Equal(t, alloc1, alloc2)
 		require.True(t, alloc2.Exhausted())
 
-		binlog, ok := ctx.GetBinlogSupport()
-		require.False(t, ok)
-		require.Nil(t, binlog)
 		statistics, ok := ctx.GetStatisticsSupport()
 		require.False(t, ok)
 		require.Nil(t, statistics)

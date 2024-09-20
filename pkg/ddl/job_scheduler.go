@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -111,7 +110,6 @@ func (l *ownerListener) OnBecomeOwner() {
 		unSyncedTracker:   newUnSyncedJobTracker(),
 		schemaVerMgr:      newSchemaVersionManager(l.ddl.store),
 		schemaVerSyncer:   l.ddl.schemaVerSyncer,
-		binlogCli:         l.ddl.binlogCli,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.jobSubmitter.ddlJobNotifyCh,
@@ -144,7 +142,6 @@ type jobScheduler struct {
 	unSyncedTracker   *unSyncedJobTracker
 	schemaVerMgr      *schemaVersionManager
 	schemaVerSyncer   schemaver.Syncer
-	binlogCli         *pumpcli.PumpsClient
 
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
@@ -537,7 +534,6 @@ func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
 		autoidCli:            s.autoidCli,
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
-		binlogCli:            s.binlogCli,
 
 		notifyCh: ch,
 

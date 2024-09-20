@@ -423,3 +423,20 @@ func TestResourceGroupArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestDropColumnArgs(t *testing.T) {
+	inArgs := &DropColumnArgs{
+		ColName:      model.NewCIStr("col_name"),
+		IfExists:     true,
+		IndexIDs:     []int64{1, 2, 3},
+		PartitionIDs: []int64{4, 5, 6},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropColumn)))
+		args, err := GetDropColumnArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}

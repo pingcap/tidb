@@ -3158,11 +3158,11 @@ InnoDB	DEFAULT	Supports transactions, row-level locking, and foreign keys	YES	YE
 drop table if exists t;
 create table t(a int primary key);
 show index in t;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t	0	PRIMARY	1	a	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t	0	PRIMARY	1	a	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t	0	PRIMARY	1	a	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t	0	PRIMARY	1	a	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show master status;
 File	Position	Binlog_Do_DB	Binlog_Ignore_DB	Executed_Gtid_Set
 tidb-binlog	0			

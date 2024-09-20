@@ -72,7 +72,6 @@ go_library(
         "//pkg/session/txninfo",
         "//pkg/session/types",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/binloginfo",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
