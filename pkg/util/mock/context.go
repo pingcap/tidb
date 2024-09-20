@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextsession"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -32,15 +32,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
-	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
+	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -63,7 +63,7 @@ var (
 // Context represents mocked sessionctx.Context.
 type Context struct {
 	planctx.EmptyPlanContextExtended
-	*exprctximpl.SessionExprContext
+	*sessionexpr.ExprContext
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
@@ -72,7 +72,7 @@ type Context struct {
 	values        map[fmt.Stringer]any
 	Mutations     map[int64]*binlog.TableMutation
 	sessionVars   *variable.SessionVars
-	tblctx        *tbctximpl.TableContextImpl
+	tblctx        *tblsession.MutateContext
 	cancel        context.CancelFunc
 	pcache        sessionctx.SessionPlanCache
 	level         kvrpcpb.DiskFullOpt
@@ -244,7 +244,7 @@ func (c *Context) GetExprCtx() exprctx.ExprContext {
 }
 
 // GetTableCtx returns the table.MutateContext
-func (c *Context) GetTableCtx() tbctx.MutateContext {
+func (c *Context) GetTableCtx() tblctx.MutateContext {
 	return c.tblctx
 }
 
@@ -636,8 +636,8 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
-	sctx.SessionExprContext = exprctximpl.NewSessionExprContext(sctx)
-	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx)
+	sctx.ExprContext = sessionexpr.NewExprContext(sctx)
+	sctx.tblctx = tblsession.NewMutateContext(sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
 	vars.TimeZone = time.UTC

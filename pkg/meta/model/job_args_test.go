@@ -270,8 +270,46 @@ func TestUpdateRenameTableArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, &RenameTableArgs{
 			OldSchemaID:   9528,
+			NewSchemaID:   9528,
 			OldSchemaName: model.NewCIStr("old_schema_name"),
 			NewTableName:  model.NewCIStr("new_table_name"),
 		}, args)
+	}
+}
+
+func TestGetRenameTablesArgs(t *testing.T) {
+	inArgs := &RenameTablesArgs{
+		RenameTableInfos: []*RenameTableArgs{
+			{1, model.CIStr{O: "db1", L: "db1"}, model.CIStr{O: "tb3", L: "tb3"}, model.CIStr{O: "tb1", L: "tb1"}, 3, 100},
+			{2, model.CIStr{O: "db2", L: "db2"}, model.CIStr{O: "tb2", L: "tb2"}, model.CIStr{O: "tb4", L: "tb4"}, 3, 101},
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionRenameTables)))
+
+		args, err := GetRenameTablesArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs.RenameTableInfos[0], args.RenameTableInfos[0])
+		require.Equal(t, inArgs.RenameTableInfos[1], args.RenameTableInfos[1])
+	}
+}
+
+func TestResourceGroupArgs(t *testing.T) {
+	inArgs := &ResourceGroupArgs{
+		RGInfo: &ResourceGroupInfo{ID: 100, Name: model.NewCIStr("rg_name")},
+	}
+	for _, tp := range []ActionType{ActionCreateResourceGroup, ActionAlterResourceGroup, ActionDropResourceGroup} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			args, err := GetResourceGroupArgs(j2)
+			require.NoError(t, err)
+			if tp == ActionDropResourceGroup {
+				require.EqualValues(t, inArgs.RGInfo.Name, args.RGInfo.Name)
+			} else {
+				require.EqualValues(t, inArgs, args)
+			}
+		}
 	}
 }
