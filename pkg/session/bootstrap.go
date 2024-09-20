@@ -621,14 +621,16 @@ const (
 	// CreateRunawayTable stores the query which is identified as runaway or quarantined because of in watch list.
 	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_queries (
 		resource_group_name varchar(32) not null,
-		time TIMESTAMP NOT NULL,
+		start_time TIMESTAMP NOT NULL,
+		repeats int default 1,
 		match_type varchar(12) NOT NULL,
 		action varchar(12) NOT NULL,
-		original_sql TEXT NOT NULL,
-		plan_digest TEXT NOT NULL,
+		sample_sql TEXT NOT NULL,
+		sql_digest varchar(64) NOT NULL,
+		plan_digest varchar(64) NOT NULL,
 		tidb_server varchar(512),
 		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when select runaway query",
-		INDEX time_index(time) COMMENT "accelerate the speed when querying with active watch"
+		INDEX time_index(start_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
@@ -691,6 +693,15 @@ const (
 		PRIMARY KEY (id),
 		KEY (created_by),
 		KEY (status));`
+
+	// CreatePITRIDMap is a table that records the id map from upstream to downstream for PITR.
+	CreatePITRIDMap = `CREATE TABLE IF NOT EXISTS mysql.tidb_pitr_id_map (
+		restored_ts BIGINT NOT NULL,
+		upstream_cluster_id BIGINT NOT NULL,
+		segment_id BIGINT NOT NULL,
+		id_map BLOB(524288) NOT NULL,
+		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id));`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
@@ -1113,13 +1124,20 @@ const (
 	// version211 add column `summary` to `mysql.tidb_background_subtask_history`.
 	version211 = 211
 
-	// version212 add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
+	// version212 changed a lots of runaway related table.
+	// 1. switchGroup: add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
+	// 2. modify column `plan_digest` type, modify column `time` to `start_time,
+	// modify column `original_sql` to `sample_sql` to `mysql.tidb_runaway_queries`.
 	version212 = 212
+
+	// version 213
+	//   create `mysql.tidb_pitr_id_map` table
+	version213 = 213
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version212
+var currentBootstrapVersion int64 = version213
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1287,6 +1305,7 @@ var (
 		upgradeToVer210,
 		upgradeToVer211,
 		upgradeToVer212,
+		upgradeToVer213,
 	}
 )
 
@@ -3090,8 +3109,36 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	if ver >= version212 {
 		return
 	}
+	// need to ensure curVersion has the column before rename.
+	// version169 created `tidb_runaway_queries` table
+	// version172 created `tidb_runaway_watch` and `tidb_runaway_watch_done` tables
+	if ver < version172 {
+		return
+	}
+	// version212 changed a lots of runaway related table.
+	// 1. switchGroup: add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD COLUMN `switch_group_name` VARCHAR(32) DEFAULT '' AFTER `action`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD COLUMN `switch_group_name` VARCHAR(32) DEFAULT '' AFTER `action`;", infoschema.ErrColumnExists)
+	// 2. modify column `plan_digest` type, modify column `time` to `start_time,
+	// modify column `original_sql` to `sample_sql` and unique union key to `mysql.tidb_runaway_queries`.
+	// add column `sql_digest`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `sql_digest` varchar(64) DEFAULT '' AFTER `original_sql`;", infoschema.ErrColumnExists)
+	// add column `repeats`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `repeats` int DEFAULT 1 AFTER `time`;", infoschema.ErrColumnExists)
+	// rename column name from `time` to `start_time`, will auto rebuild the index.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `time` TO `start_time`")
+	// rename column `original_sql` to `sample_sql`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`")
+	// modify column type of `plan_digest`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer213(s sessiontypes.Session, ver int64) {
+	if ver >= version213 {
+		return
+	}
+
+	mustExecute(s, CreatePITRIDMap)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3238,6 +3285,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateDistFrameworkMeta)
 	// create request_unit_by_group
 	mustExecute(s, CreateRequestUnitByGroupTable)
+	// create tidb_pitr_id_map
+	mustExecute(s, CreatePITRIDMap)
 	// create `sys` schema
 	mustExecute(s, CreateSysSchema)
 	// create `sys.schema_unused_indexes` view

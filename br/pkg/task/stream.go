@@ -1141,6 +1141,7 @@ func RunStreamRestore(
 	if cfg.RestoreTS == 0 {
 		cfg.RestoreTS = logInfo.logMaxTS
 	}
+	cfg.upstreamClusterID = logInfo.clusterID
 
 	if len(cfg.FullBackupStorage) > 0 {
 		startTS, fullClusterID, err := getFullBackupTS(ctx, cfg)
@@ -1506,6 +1507,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	}
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetUpstreamClusterID(cfg.upstreamClusterID)
 	client.InitClients(ctx, u)
 
 	err = client.SetRawKVBatchClient(ctx, cfg.PD, cfg.TLS.ToKVSecurity())

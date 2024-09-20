@@ -52,19 +52,25 @@ func testRenameTable(
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
-		SchemaID:   newSchemaID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionRenameTable,
+		SchemaID: newSchemaID,
+		TableID:  tblInfo.ID,
+		Type:     model.ActionRenameTable,
+		Version:  model.GetJobVerInUse(),
+
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{oldSchemaID, tblInfo.Name, oldSchemaName},
-		CtxVars:    []any{[]int64{oldSchemaID, newSchemaID}, []int64{tblInfo.ID}},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: oldSchemaName.L, Table: tblInfo.Name.L},
 			{Database: newSchemaName.L, Table: tblInfo.Name.L},
 		},
 	}
+	args := &model.RenameTableArgs{
+		OldSchemaID:   oldSchemaID,
+		OldSchemaName: oldSchemaName,
+		NewTableName:  tblInfo.Name,
+	}
+
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
 	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
@@ -73,19 +79,26 @@ func testRenameTable(
 	return job
 }
 
-func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, oldSchemaIDs, newSchemaIDs []int64, newTableNames []*pmodel.CIStr, oldTableIDs []int64, oldSchemaNames, oldTableNames []*pmodel.CIStr) *model.Job {
+func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest,
+	oldSchemaIDs, newSchemaIDs []int64,
+	newTableNames []pmodel.CIStr, oldTableIDs []int64,
+	oldSchemaNames, oldTableNames []pmodel.CIStr) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		Type:       model.ActionRenameTables,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{oldSchemaIDs, newSchemaIDs, newTableNames, oldTableIDs, oldSchemaNames, oldTableNames},
-		CtxVars:    []any{append(oldSchemaIDs, newSchemaIDs...), oldTableIDs},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: oldSchemaNames[0].L, Table: oldTableNames[0].L},
 			{Database: oldSchemaNames[0].L, Table: newTableNames[0].L},
 		},
 	}
+
+	args := model.GetRenameTablesArgsFromV1(
+		oldSchemaIDs, oldSchemaNames, oldTableNames,
+		newSchemaIDs, newTableNames, oldTableIDs)
+
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
@@ -153,16 +166,17 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, store kv.Storage, d
 	require.NoError(t, err)
 	newTableID := genIDs[0]
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionTruncateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{newTableID},
 	}
+	args := &model.TruncateTableArgs{NewTableID: newTableID}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -218,7 +232,9 @@ func TestTable(t *testing.T) {
 	newTblInfo, err := testTableInfo(store, "t", 3)
 	require.NoError(t, err)
 	doDDLJobErr(t, dbInfo.ID, newTblInfo.ID, dbInfo.Name.L, newTblInfo.Name.L, model.ActionCreateTable,
-		[]any{newTblInfo}, ctx, de, store)
+		ctx, de, store, func(job *model.Job) model.JobArgs {
+			return &model.CreateTableArgs{TableInfo: newTblInfo}
+		})
 
 	ctx = testkit.NewTestKit(t, store).Session()
 	txn, err := newTxn(ctx)
@@ -290,16 +306,17 @@ func TestCreateView(t *testing.T) {
 	newTblInfo0, err := testTableInfo(store, "v", 3)
 	require.NoError(t, err)
 	job = &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{newTblInfo0},
 	}
+	args := &model.CreateTableArgs{TableInfo: newTblInfo0}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -313,16 +330,17 @@ func TestCreateView(t *testing.T) {
 	newTblInfo1, err := testTableInfo(store, "v", 3)
 	require.NoError(t, err)
 	job = &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{newTblInfo1, true, newTblInfo0.ID},
 	}
+	args = &model.CreateTableArgs{TableInfo: newTblInfo1, OnExistReplace: true, OldViewTblID: newTblInfo0.ID}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
 	v = getSchemaVer(t, ctx)
@@ -336,16 +354,17 @@ func TestCreateView(t *testing.T) {
 	newTblInfo2, err := testTableInfo(store, "v", 3)
 	require.NoError(t, err)
 	job = &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{newTblInfo2, true, newTblInfo0.ID},
 	}
+	args = &model.CreateTableArgs{TableInfo: newTblInfo2, OnExistReplace: true, OldViewTblID: newTblInfo0.ID}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	// The non-existing table id in job args will not be considered anymore.
 	require.NoError(t, err)
 }
@@ -453,7 +472,13 @@ func TestRenameTables(t *testing.T) {
 		require.NoError(t, err)
 		newTblInfos = append(newTblInfos, tblInfo)
 	}
-	job := testRenameTables(t, ctx, de, []int64{dbInfo.ID, dbInfo.ID}, []int64{dbInfo.ID, dbInfo.ID}, []*pmodel.CIStr{&newTblInfos[0].Name, &newTblInfos[1].Name}, []int64{tblInfos[0].ID, tblInfos[1].ID}, []*pmodel.CIStr{&dbInfo.Name, &dbInfo.Name}, []*pmodel.CIStr{&tblInfos[0].Name, &tblInfos[1].Name})
+	job := testRenameTables(t, ctx, de,
+		[]int64{dbInfo.ID, dbInfo.ID},
+		[]int64{dbInfo.ID, dbInfo.ID},
+		[]pmodel.CIStr{newTblInfos[0].Name, newTblInfos[1].Name},
+		[]int64{tblInfos[0].ID, tblInfos[1].ID},
+		[]pmodel.CIStr{dbInfo.Name, dbInfo.Name},
+		[]pmodel.CIStr{tblInfos[0].Name, tblInfos[1].Name})
 
 	historyJob, err := ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
 	require.NoError(t, err)
@@ -472,28 +497,26 @@ func TestCreateTables(t *testing.T) {
 
 	ctx := testkit.NewTestKit(t, store).Session()
 
-	var infos []*model.TableInfo
 	genIDs, err := genGlobalIDs(store, 3)
 	require.NoError(t, err)
 
-	infos = append(infos, &model.TableInfo{
-		ID:   genIDs[0],
-		Name: pmodel.NewCIStr("s1"),
-	})
-	infos = append(infos, &model.TableInfo{
-		ID:   genIDs[1],
-		Name: pmodel.NewCIStr("s2"),
-	})
-	infos = append(infos, &model.TableInfo{
-		ID:   genIDs[2],
-		Name: pmodel.NewCIStr("s3"),
-	})
+	args := &model.BatchCreateTableArgs{
+		Tables: make([]*model.CreateTableArgs, 0, 3),
+	}
+	for i := 0; i < 3; i++ {
+		args.Tables = append(args.Tables, &model.CreateTableArgs{
+			TableInfo: &model.TableInfo{
+				ID:   genIDs[i],
+				Name: pmodel.NewCIStr(fmt.Sprintf("s%d", i+1)),
+			},
+		})
+	}
 
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateTables,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{infos},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: "test_table", Table: "s1"},
 			{Database: "test_table", Table: "s2"},
@@ -508,7 +531,7 @@ func TestCreateTables(t *testing.T) {
 			*errP = errors.New("mock get job by ID failed")
 		})
 	})
-	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
 	testGetTable(t, domain, genIDs[0])

@@ -182,12 +182,12 @@ LIMIT 48579914;`).Check(testkit.Rows(
 		"Limit_16 6.40 root  offset:0, count:48579914",
 		"└─HashAgg_17 6.40 root  group by:test.tcd8c2aac.col_21, funcs:group_concat(test.tcd8c2aac.col_21 order by test.tcd8c2aac.col_21 separator \",\")->Column#14",
 		"  └─HashJoin_20 80000.00 root  CARTESIAN inner join",
-		"    ├─IndexLookUp_27(Build) 8.00 root  ",
-		"    │ ├─Selection_26(Build) 8.00 cop[tikv]  isnull(test.tcd8c2aac.col_21)",
-		"    │ │ └─IndexRangeScan_24 10.00 cop[tikv] table:tcd8c2aac, index:idx_12(col_21) range:[NULL,NULL], keep order:false, stats:pseudo",
-		"    │ └─TableRowIDScan_25(Probe) 8.00 cop[tikv] table:tcd8c2aac keep order:false, stats:pseudo",
-		"    └─IndexReader_31(Probe) 10000.00 root  index:IndexFullScan_30",
-		"      └─IndexFullScan_30 10000.00 cop[tikv] table:tle50fd846, index:PRIMARY(col_48) keep order:false, stats:pseudo"))
+		"    ├─IndexLookUp_24(Build) 8.00 root  ",
+		"    │ ├─Selection_23(Build) 8.00 cop[tikv]  isnull(test.tcd8c2aac.col_21)",
+		"    │ │ └─IndexRangeScan_21 10.00 cop[tikv] table:tcd8c2aac, index:idx_12(col_21) range:[NULL,NULL], keep order:false, stats:pseudo",
+		"    │ └─TableRowIDScan_22(Probe) 8.00 cop[tikv] table:tcd8c2aac keep order:false, stats:pseudo",
+		"    └─IndexReader_28(Probe) 10000.00 root  index:IndexFullScan_27",
+		"      └─IndexFullScan_27 10000.00 cop[tikv] table:tle50fd846, index:PRIMARY(col_48) keep order:false, stats:pseudo"))
 	tk.MustQuery(`SELECT GROUP_CONCAT(tcd8c2aac.col_21 ORDER BY tcd8c2aac.col_21 SEPARATOR ',') AS r0
 FROM tcd8c2aac
 JOIN tle50fd846
