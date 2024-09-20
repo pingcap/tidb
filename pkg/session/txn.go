@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -668,18 +667,6 @@ func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	return tablecodec.IndexKVIsUnique(v)
 }
 
-func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
-	bin := binloginfo.GetPrewriteValue(ctx, true)
-	for i := range bin.Mutations {
-		if bin.Mutations[i].TableId == tableID {
-			return &bin.Mutations[i]
-		}
-	}
-	idx := len(bin.Mutations)
-	bin.Mutations = append(bin.Mutations, binlog.TableMutation{TableId: tableID})
-	return &bin.Mutations[idx]
-}
-
 func mergeToMutation(m1, m2 *binlog.TableMutation) {
 	m1.InsertedRows = append(m1.InsertedRows, m2.InsertedRows...)
 	m1.UpdatedRows = append(m1.UpdatedRows, m2.UpdatedRows...)
@@ -750,12 +737,6 @@ func (s *session) StmtCommit(ctx context.Context) {
 
 	st := &s.txn
 	st.flushStmtBuf()
-
-	// Need to flush binlog.
-	for tableID, delta := range st.mutations {
-		mutation := getBinlogMutation(s, tableID)
-		mergeToMutation(mutation, delta)
-	}
 }
 
 // StmtRollback implements the sessionctx.Context interface.

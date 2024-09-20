@@ -650,9 +650,6 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 	if !sessVars.InTxn() && sessVars.IsAutocommit() {
 		return nil
 	}
-	if sessVars.BinlogClient != nil {
-		return ErrSavepointNotSupportedWithBinlog
-	}
 	if !sessVars.ConstraintCheckInPlacePessimistic && sessVars.TxnCtx.IsPessimistic {
 		return errors.New("savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
 	}
