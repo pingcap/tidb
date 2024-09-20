@@ -266,6 +266,8 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 	}
 }
 
+// TODO check the trigger of fallback action
+
 func TestHashJoinRandomFail(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32

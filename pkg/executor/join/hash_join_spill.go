@@ -51,7 +51,13 @@ func (h *hashJoinSpillAction) Action(t *memory.Tracker) {
 	}
 
 	if t.CheckExceed() && (!hasEnoughDataToSpill(h.spillHelper.hashJoinExec.memTracker, t) || !h.spillHelper.canSpill()) {
-		h.GetFallback().Action(t)
+		h.triggerFallBackAction(t)
+	}
+}
+
+func (h *hashJoinSpillAction) triggerFallBackAction(t *memory.Tracker) {
+	if fallback := h.GetFallback(); fallback != nil {
+		fallback.Action(t)
 	}
 }
 
