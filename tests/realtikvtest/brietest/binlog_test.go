@@ -23,9 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type mockBinlogPump struct {
-}
-
 func TestForCoverage(t *testing.T) {
 	// Just for test coverage.
 	store := realtikvtest.CreateMockStoreAndSetup(t)

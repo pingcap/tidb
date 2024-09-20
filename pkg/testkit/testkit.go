@@ -681,9 +681,6 @@ func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, re
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
-// MockPumpClient is a mock pump client.
-type MockPumpClient struct{}
-
 var _ sqlexec.RecordSet = &rowsRecordSet{}
 
 type rowsRecordSet struct {
