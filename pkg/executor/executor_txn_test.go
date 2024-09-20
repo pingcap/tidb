@@ -23,8 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -673,35 +671,9 @@ func TestSavepointWithCacheTable(t *testing.T) {
 	}
 }
 
-func TestSavepointWithBinlog(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	// mock for binlog enabled.
-	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, a int, unique index idx(id))")
-
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("insert into t values (1,1)")
-	err := tk.ExecToErr("savepoint s1")
-	require.Error(t, err)
-	require.Equal(t, executor.ErrSavepointNotSupportedWithBinlog.Error(), err.Error())
-	err = tk.ExecToErr("rollback to s1")
-	require.Error(t, err)
-	require.Equal(t, "[executor:1305]SAVEPOINT s1 does not exist", err.Error())
-	err = tk.ExecToErr("release savepoint s1")
-	require.Error(t, err)
-	require.Equal(t, "[executor:1305]SAVEPOINT s1 does not exist", err.Error())
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
-	tk.MustExec("commit")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
-}
-
 func TestColumnNotMatchError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
 	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)

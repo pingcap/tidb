@@ -354,12 +354,129 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
 }
 
+// TablePartitionArgs is the arguments for table partition related jobs, including:
+//   - ActionAlterTablePartitioning
+//   - ActionRemovePartitioning
+//   - ActionReorganizePartition
+//   - ActionAddTablePartition: don't have finished args if success.
+//   - ActionDropTablePartition
+//
+// when rolling back, args of ActionAddTablePartition will be changed to be the same
+// as ActionDropTablePartition, and it will have finished args, but not used anywhere,
+// for other types, their args will be decoded as if its args is the same of ActionDropTablePartition.
+type TablePartitionArgs struct {
+	PartNames []string       `json:"part_names,omitempty"`
+	PartInfo  *PartitionInfo `json:"part_info,omitempty"`
+
+	// set on finished
+	OldPhysicalTblIDs []int64 `json:"old_physical_tbl_ids,omitempty"`
+}
+
+func (a *TablePartitionArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionAddTablePartition {
+			job.Args = []any{a.PartInfo}
+		} else if job.Type == ActionDropTablePartition {
+			job.Args = []any{a.PartNames}
+		} else {
+			job.Args = []any{a.PartNames, a.PartInfo}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *TablePartitionArgs) fillFinishedJob(job *Job) {
+	if job.Version == JobVersion1 {
+		intest.Assert(job.Type != ActionAddTablePartition || job.State == JobStateRollbackDone,
+			"add table partition job should not call fillFinishedJob if not rollback")
+		job.Args = []any{a.OldPhysicalTblIDs}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *TablePartitionArgs) decodeV1(job *Job) error {
+	var (
+		partNames []string
+		partInfo  = &PartitionInfo{}
+	)
+	if job.Type == ActionAddTablePartition {
+		if job.State == JobStateRollingback {
+			if err := job.DecodeArgs(&partNames); err != nil {
+				return err
+			}
+		} else {
+			if err := job.DecodeArgs(partInfo); err != nil {
+				return err
+			}
+		}
+	} else if job.Type == ActionDropTablePartition {
+		if err := job.DecodeArgs(&partNames); err != nil {
+			return err
+		}
+	} else {
+		if err := job.DecodeArgs(&partNames, partInfo); err != nil {
+			return err
+		}
+	}
+	a.PartNames = partNames
+	a.PartInfo = partInfo
+	return nil
+}
+
+// GetTablePartitionArgs gets the table partition args.
+func GetTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &TablePartitionArgs{}
+		if err := args.decodeV1(job); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*TablePartitionArgs](job)
+}
+
+// GetFinishedTablePartitionArgs gets the table partition args after the job is finished.
+func GetFinishedTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
+	if job.Version == JobVersion1 {
+		var oldPhysicalTblIDs []int64
+		if err := job.DecodeArgs(&oldPhysicalTblIDs); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &TablePartitionArgs{OldPhysicalTblIDs: oldPhysicalTblIDs}, nil
+	}
+	return getOrDecodeArgsV2[*TablePartitionArgs](job)
+}
+
+// FillRollbackArgsForAddPartition fills the rollback args for add partition job.
+// see details in TablePartitionArgs.
+func FillRollbackArgsForAddPartition(job *Job, args *TablePartitionArgs) {
+	intest.Assert(job.Type == ActionAddTablePartition, "only for add partition job")
+	fake := &Job{
+		Version: job.Version,
+		Type:    ActionDropTablePartition,
+	}
+	// PartInfo cannot be saved, onDropTablePartition expects that PartInfo is empty
+	// in this case
+	fake.FillArgs(&TablePartitionArgs{
+		PartNames: args.PartNames,
+	})
+	job.Args = fake.Args
+}
+
 // RenameTableArgs is the arguments for rename table DDL job.
+// It's also used for rename tables.
 type RenameTableArgs struct {
 	// for Args
 	OldSchemaID   int64        `json:"old_schema_id,omitempty"`
 	OldSchemaName pmodel.CIStr `json:"old_schema_name,omitempty"`
 	NewTableName  pmodel.CIStr `json:"new_table_name,omitempty"`
+
+	// for rename tables
+	OldTableName pmodel.CIStr `json:"old_table_name,omitempty"`
+	NewSchemaID  int64        `json:"new_schema_id,omitempty"`
+	TableID      int64        `json:"table_id,omitempty"`
 }
 
 func (rt *RenameTableArgs) fillJob(job *Job) {
@@ -376,24 +493,32 @@ func GetRenameTableArgs(job *Job) (*RenameTableArgs, error) {
 		oldSchemaID   int64
 		oldSchemaName pmodel.CIStr
 		newTableName  pmodel.CIStr
+		args          *RenameTableArgs
+		err           error
 	)
 
 	if job.Version == JobVersion1 {
 		// decode args and cache in args.
-		err := job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
+		err = job.DecodeArgs(&oldSchemaID, &newTableName, &oldSchemaName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		args := RenameTableArgs{
+		args = &RenameTableArgs{
 			OldSchemaID:   oldSchemaID,
 			OldSchemaName: oldSchemaName,
 			NewTableName:  newTableName,
 		}
-		return &args, nil
+	} else {
+		// for version V2
+		args, err = getOrDecodeArgsV2[*RenameTableArgs](job)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
-	// for version V2
-	return getOrDecodeArgsV2[*RenameTableArgs](job)
+	// NewSchemaID is used for checkAndRenameTables, which is not set for rename table.
+	args.NewSchemaID = job.SchemaID
+	return args, nil
 }
 
 // UpdateRenameTableArgs updates the rename table args.
@@ -466,4 +591,129 @@ func GetResourceGroupArgs(job *Job) (*ResourceGroupArgs, error) {
 		return &ResourceGroupArgs{RGInfo: &rgInfo}, nil
 	}
 	return getOrDecodeArgsV2[*ResourceGroupArgs](job)
+}
+
+// DropColumnArgs is the arguments of dropping column job.
+type DropColumnArgs struct {
+	ColName  pmodel.CIStr `json:"column_name,omitempty"`
+	IfExists bool         `json:"if_exists,omitempty"`
+	// below 2 fields are filled during running.
+	IndexIDs     []int64 `json:"index_ids,omitempty"`
+	PartitionIDs []int64 `json:"partition_ids,omitempty"`
+}
+
+func (a *DropColumnArgs) fillJob(job *Job) {
+	if job.Version <= JobVersion1 {
+		job.Args = []any{a.ColName, a.IfExists, a.IndexIDs, a.PartitionIDs}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetDropColumnArgs gets the args for drop column ddl.
+func GetDropColumnArgs(job *Job) (*DropColumnArgs, error) {
+	var (
+		colName      pmodel.CIStr
+		ifExists     bool
+		indexIDs     []int64
+		partitionIDs []int64
+	)
+
+	if job.Version <= JobVersion1 {
+		err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		return &DropColumnArgs{
+			ColName:      colName,
+			IfExists:     ifExists,
+			IndexIDs:     indexIDs,
+			PartitionIDs: partitionIDs,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*DropColumnArgs](job)
+}
+
+// RenameTablesArgs is the arguments for rename tables job.
+type RenameTablesArgs struct {
+	RenameTableInfos []*RenameTableArgs `json:"rename_table_infos,omitempty"`
+}
+
+func (a *RenameTablesArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		n := len(a.RenameTableInfos)
+		oldSchemaIDs := make([]int64, n)
+		oldSchemaNames := make([]pmodel.CIStr, n)
+		oldTableNames := make([]pmodel.CIStr, n)
+		newSchemaIDs := make([]int64, n)
+		newTableNames := make([]pmodel.CIStr, n)
+		tableIDs := make([]int64, n)
+
+		for i, info := range a.RenameTableInfos {
+			oldSchemaIDs[i] = info.OldSchemaID
+			oldSchemaNames[i] = info.OldSchemaName
+			oldTableNames[i] = info.OldTableName
+			newSchemaIDs[i] = info.NewSchemaID
+			newTableNames[i] = info.NewTableName
+			tableIDs[i] = info.TableID
+		}
+
+		// To make it compatible with previous create metas
+		job.Args = []any{oldSchemaIDs, newSchemaIDs, newTableNames, tableIDs, oldSchemaNames, oldTableNames}
+		return
+	}
+
+	job.Args = []any{a}
+}
+
+// GetRenameTablesArgsFromV1 get v2 args from v1
+func GetRenameTablesArgsFromV1(
+	oldSchemaIDs []int64,
+	oldSchemaNames []pmodel.CIStr,
+	oldTableNames []pmodel.CIStr,
+	newSchemaIDs []int64,
+	newTableNames []pmodel.CIStr,
+	tableIDs []int64,
+) *RenameTablesArgs {
+	infos := make([]*RenameTableArgs, 0, len(oldSchemaIDs))
+	for i, oldSchemaID := range oldSchemaIDs {
+		infos = append(infos, &RenameTableArgs{
+			OldSchemaID:   oldSchemaID,
+			OldSchemaName: oldSchemaNames[i],
+			OldTableName:  oldTableNames[i],
+			NewSchemaID:   newSchemaIDs[i],
+			NewTableName:  newTableNames[i],
+			TableID:       tableIDs[i],
+		})
+	}
+
+	return &RenameTablesArgs{
+		RenameTableInfos: infos,
+	}
+}
+
+// GetRenameTablesArgs gets the rename tables args.
+func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			oldSchemaIDs   []int64
+			oldSchemaNames []pmodel.CIStr
+			oldTableNames  []pmodel.CIStr
+			newSchemaIDs   []int64
+			newTableNames  []pmodel.CIStr
+			tableIDs       []int64
+		)
+		if err := job.DecodeArgs(
+			&oldSchemaIDs, &newSchemaIDs, &newTableNames,
+			&tableIDs, &oldSchemaNames, &oldTableNames); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		return GetRenameTablesArgsFromV1(
+			oldSchemaIDs, oldSchemaNames, oldTableNames,
+			newSchemaIDs, newTableNames, tableIDs), nil
+	}
+	return getOrDecodeArgsV2[*RenameTablesArgs](job)
 }

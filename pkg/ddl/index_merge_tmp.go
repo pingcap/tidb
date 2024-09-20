@@ -49,44 +49,54 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 	}
 
 	for i, key := range w.originIdxKeys {
-		if val, found := batchVals[string(key)]; found {
+		keyStr := string(key)
+		if val, found := batchVals[keyStr]; found {
 			// Found a value in the original index key.
-			err := checkTempIndexKey(txn, idxRecords[i], val, w.table)
+			matchDeleted, err := checkTempIndexKey(txn, idxRecords[i], val, w.table)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) {
 					return driver.ExtractKeyExistsErrFromIndex(key, val, w.table.Meta(), w.currentIndex.ID)
 				}
 				return errors.Trace(err)
 			}
+			if matchDeleted {
+				// Delete from batchVals to prevent false-positive duplicate detection.
+				delete(batchVals, keyStr)
+			}
 		} else if idxRecords[i].distinct {
 			// The keys in w.batchCheckKeys also maybe duplicate,
 			// so we need to backfill the not found key into `batchVals` map.
-			batchVals[string(key)] = idxRecords[i].vals
+			batchVals[keyStr] = idxRecords[i].vals
 		}
 	}
 	return nil
 }
 
-func checkTempIndexKey(txn kv.Transaction, tmpRec *temporaryIndexRecord, originIdxVal []byte, tblInfo table.Table) error {
+// checkTempIndexKey determines whether there is a duplicated index key entry according to value of temp index.
+// For non-delete temp record, if the index values mismatch, it is duplicated.
+// For delete temp record, we decode the handle from the origin index value and temp index value.
+//   - if the handles matche, we can delete the index key.
+//   - otherwise, we further check if the row exists in the table.
+func checkTempIndexKey(txn kv.Transaction, tmpRec *temporaryIndexRecord, originIdxVal []byte, tblInfo table.Table) (matchDelete bool, err error) {
 	if !tmpRec.delete {
 		if tmpRec.distinct && !bytes.Equal(originIdxVal, tmpRec.vals) {
-			return kv.ErrKeyExists
+			return false, kv.ErrKeyExists
 		}
 		// The key has been found in the original index, skip merging it.
 		tmpRec.skip = true
-		return nil
+		return false, nil
 	}
 	// Delete operation.
 	distinct := tablecodec.IndexKVIsUnique(originIdxVal)
 	if !distinct {
 		// For non-distinct key, it is consist of a null value and the handle.
 		// Same as the non-unique indexes, replay the delete operation on non-distinct keys.
-		return nil
+		return false, nil
 	}
 	// For distinct index key values, prevent deleting an unexpected index KV in original index.
 	hdInVal, err := tablecodec.DecodeHandleInIndexValue(originIdxVal)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	if !tmpRec.handle.Equal(hdInVal) {
 		// The inequality means multiple modifications happened in the same key.
@@ -97,16 +107,16 @@ func checkTempIndexKey(txn kv.Transaction, tmpRec *temporaryIndexRecord, originI
 			if kv.IsErrNotFound(err) {
 				// The row is deleted, so we can merge the delete operation to the origin index.
 				tmpRec.skip = false
-				return nil
+				return false, nil
 			}
 			// Unexpected errors.
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		// Don't delete the index key if the row exists.
 		tmpRec.skip = true
-		return nil
+		return false, nil
 	}
-	return nil
+	return true, nil
 }
 
 // temporaryIndexRecord is the record information of an index.

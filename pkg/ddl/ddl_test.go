@@ -208,13 +208,13 @@ func TestBuildJobDependence(t *testing.T) {
 	}()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	// Add some non-add-index jobs.
-	job1 := &model.Job{ID: 1, TableID: 1, Type: model.ActionAddColumn}
-	job2 := &model.Job{ID: 2, TableID: 1, Type: model.ActionCreateTable}
-	job3 := &model.Job{ID: 3, TableID: 2, Type: model.ActionDropColumn}
-	job6 := &model.Job{ID: 6, TableID: 1, Type: model.ActionDropTable}
-	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
-	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
-	job11 := &model.Job{Version: model.JobVersion1, ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []any{int64(111), "old db name"}}
+	job1 := &model.Job{ID: 1, TableID: 1, Version: model.JobVersion1, Type: model.ActionAddColumn}
+	job2 := &model.Job{ID: 2, TableID: 1, Version: model.JobVersion1, Type: model.ActionCreateTable}
+	job3 := &model.Job{ID: 3, TableID: 2, Version: model.JobVersion1, Type: model.ActionDropColumn}
+	job6 := &model.Job{ID: 6, TableID: 1, Version: model.JobVersion1, Type: model.ActionDropTable}
+	job7 := &model.Job{ID: 7, TableID: 2, Version: model.JobVersion1, Type: model.ActionModifyColumn}
+	job9 := &model.Job{ID: 9, SchemaID: 111, Version: model.JobVersion1, Type: model.ActionDropSchema}
+	job11 := &model.Job{ID: 11, TableID: 2, Version: model.JobVersion1, Type: model.ActionRenameTable, Args: []any{int64(111), "old db name"}}
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		require.NoError(t, m.EnQueueDDLJob(job1))

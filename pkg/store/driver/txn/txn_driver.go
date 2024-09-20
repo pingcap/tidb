@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -225,11 +224,6 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.assertCommitterNotWorking()
 	}
 	switch opt {
-	case kv.BinlogInfo:
-		txn.SetBinlogExecutor(&binlogExecutor{
-			txn:     txn.KVTxn,
-			binInfo: val.(*binloginfo.BinlogInfo), // val cannot be other type.
-		})
 	case kv.SchemaChecker:
 		txn.SetSchemaLeaseChecker(val.(tikv.SchemaLeaseChecker))
 	case kv.IsolationLevel:
