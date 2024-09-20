@@ -17,9 +17,11 @@ const (
 	SchemeAzure = "azure-kms"
 	SchemeGCP   = "gcp-kms"
 
-	AWSVendor   = "aws"
-	AWSRegion   = "REGION"
-	AWSEndpoint = "ENDPOINT"
+	AWSVendor      = "aws"
+	AWSRegion      = "REGION"
+	AWSEndpoint    = "ENDPOINT"
+	AWSAccessKeyId = "AWS_ACCESS_KEY_ID"
+	AWSSecretKey   = "AWS_SECRET_ACCESS_KEY"
 
 	AzureVendor       = "azure"
 	AzureTenantID     = "AZURE_TENANT_ID"
@@ -80,9 +82,16 @@ func parseAwsKmsConfig(u *url.URL) (encryptionpb.MasterKey, error) {
 
 	q := u.Query()
 	region := q.Get(AWSRegion)
+	accessKey := q.Get(AWSAccessKeyId)
+	secretAccessKey := q.Get(AWSSecretKey)
 
-	if region == "" {
+	if region == "" || accessKey == "" || secretAccessKey == "" {
 		return encryptionpb.MasterKey{}, errors.New("missing required AWS KMS parameters")
+	}
+
+	awsKms := &encryptionpb.AwsKms{
+		AccessKey:       accessKey,
+		SecretAccessKey: secretAccessKey,
 	}
 
 	return encryptionpb.MasterKey{
@@ -92,6 +101,7 @@ func parseAwsKmsConfig(u *url.URL) (encryptionpb.MasterKey, error) {
 				KeyId:    keyID,
 				Region:   region,
 				Endpoint: q.Get(AWSEndpoint), // Optional
+				AwsKms:   awsKms,
 			},
 		},
 	}, nil

@@ -278,11 +278,11 @@ test_aws_kms() {
 
     AWS_KMS_KEY_ID=$(echo "$KMS_RESPONSE" | jq -r '.KeyMetadata.KeyId')
     # export these two as required by aws-kms backend
-    export AWS_ACCESS_KEY_ID="TEST"
-    export AWS_SECRET_ACCESS_KEY="TEST"
+    AWS_ACCESS_KEY_ID="TEST"
+    AWS_SECRET_ACCESS_KEY="TEST"
     REGION="us-east-1"
 
-    AWS_KMS_URI="aws-kms:///${AWS_KMS_KEY_ID}?REGION=${REGION}&ENDPOINT=${ENDPOINT}"
+    AWS_KMS_URI="aws-kms:///${AWS_KMS_KEY_ID}?AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}&AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}&REGION=${REGION}&ENDPOINT=${ENDPOINT}"
 
     run_backup_restore_test "aws_kms" "--crypter.method AES256-CTR --crypter.key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" "--master-key-crypter-method AES256-CTR --master-key $AWS_KMS_URI"
 
