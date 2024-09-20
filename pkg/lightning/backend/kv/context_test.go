@@ -294,8 +294,6 @@ func TestLitTableMutateContext(t *testing.T) {
 		require.NotNil(t, alloc)
 		require.Equal(t, &stmtctx.ReservedRowIDAlloc{}, alloc)
 		require.True(t, alloc.Exhausted())
-		_, ok = tblCtx.GetBinlogSupport()
-		require.False(t, ok)
 		_, ok = tblCtx.GetCachedTableSupport()
 		require.False(t, ok)
 		_, ok = tblCtx.GetTemporaryTableSupport()

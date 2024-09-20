@@ -192,14 +192,6 @@ func (ctx *reorgTableMutateContext) GetReservedRowIDAlloc() (*stmtctx.ReservedRo
 	return &ctx.reservedRowIDAlloc, true
 }
 
-// GetBinlogSupport implements table.MutateContext.GetBinlogSupport.
-func (*reorgTableMutateContext) GetBinlogSupport() (tblctx.BinlogSupport, bool) {
-	// We can just return `(nil, false)` because:
-	// - Only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method.
-	// - Data change in DDL reorganization should not write binlog.
-	return nil, false
-}
-
 // GetStatisticsSupport implements table.MutateContext.GetStatisticsSupport.
 func (*reorgTableMutateContext) GetStatisticsSupport() (tblctx.StatisticsSupport, bool) {
 	// We can just return `(nil, false)` because:

@@ -61,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -386,74 +385,6 @@ func TestGetRegionByIDWithError(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
-}
-
-func TestBinlogRecover(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	binloginfo.EnableSkipBinlogFlag()
-	require.Equal(t, true, binloginfo.IsBinlogSkipped())
-	resp, err := ts.FetchStatus("/binlog/recover")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, false, binloginfo.IsBinlogSkipped())
-
-	// Invalid operation will use the default operation.
-	binloginfo.EnableSkipBinlogFlag()
-	require.Equal(t, true, binloginfo.IsBinlogSkipped())
-	resp, err = ts.FetchStatus("/binlog/recover?op=abc")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, false, binloginfo.IsBinlogSkipped())
-
-	binloginfo.EnableSkipBinlogFlag()
-	require.Equal(t, true, binloginfo.IsBinlogSkipped())
-	resp, err = ts.FetchStatus("/binlog/recover?op=abc&seconds=1")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, false, binloginfo.IsBinlogSkipped())
-
-	binloginfo.EnableSkipBinlogFlag()
-	require.Equal(t, true, binloginfo.IsBinlogSkipped())
-	binloginfo.AddOneSkippedCommitter()
-	resp, err = ts.FetchStatus("/binlog/recover?op=abc&seconds=1")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	require.Equal(t, false, binloginfo.IsBinlogSkipped())
-	binloginfo.RemoveOneSkippedCommitter()
-
-	binloginfo.AddOneSkippedCommitter()
-	require.Equal(t, int32(1), binloginfo.SkippedCommitterCount())
-	resp, err = ts.FetchStatus("/binlog/recover?op=reset")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, int32(0), binloginfo.SkippedCommitterCount())
-
-	binloginfo.EnableSkipBinlogFlag()
-	resp, err = ts.FetchStatus("/binlog/recover?op=nowait")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, false, binloginfo.IsBinlogSkipped())
-
-	// Only the first should work.
-	binloginfo.EnableSkipBinlogFlag()
-	resp, err = ts.FetchStatus("/binlog/recover?op=nowait&op=reset")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, false, binloginfo.IsBinlogSkipped())
-
-	resp, err = ts.FetchStatus("/binlog/recover?op=status")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
