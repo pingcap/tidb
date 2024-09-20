@@ -3159,6 +3159,9 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 	}
 
 	job := &model.Job{
+		// to do(joccau)
+		// we should  set Version = model.GetJobVerInUse() after refactor the actionMultiSchemaChange.
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3166,12 +3169,16 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionDropColumn,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{colName, spec.IfExists},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-
-	err = e.DoDDLJob(ctx, job)
+	args := &model.DropColumnArgs{
+		ColName:  colName,
+		IfExists: spec.IfExists,
+	}
+	// we need fill args here, because it will be added subjob which contains args and rawArgs from job.
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -6280,7 +6287,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.
 		// Instead, we merge all the jobs into one pending job.
-		return appendToSubJobs(mci, job)
+		return appendToSubJobs(mci, jobW)
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
