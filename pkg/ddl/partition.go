@@ -1833,6 +1833,26 @@ func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, schema st
 	return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
 }
 
+func checkPartitionFuncTypeExprString(ctx sessionctx.Context, expr, schema string, tblInfo *model.TableInfo) error {
+	if len(expr) == 0 {
+		return nil
+	}
+	if schema == "" {
+		schema = ctx.GetSessionVars().CurrentDB
+	}
+	e, err := expression.ParseSimpleExpr(ctx.GetExprCtx(), expr, expression.WithTableInfo(schema, tblInfo))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if e.GetType(ctx.GetExprCtx().GetEvalCtx()).EvalType() == types.ETInt {
+		return nil
+	}
+	if col, ok := e.(*expression.Column); ok {
+		return errors.Trace(dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.OrigName))
+	}
+	return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
+}
+
 // checkRangePartitionValue checks whether `less than value` is strictly increasing for each partition.
 // Side effect: it may simplify the partition range definition from a constant expression to an integer.
 func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
@@ -3109,6 +3129,13 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 			return ver, err
 		}
 
+		if job.Type == model.ActionAlterTablePartitioning {
+			// Also verify same things as in CREATE TABLE ... PARTITION BY
+			if err = checkPartitionFuncTypeExprString(sctx, partInfo.Expr, job.SchemaName, tblInfo); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, err
+			}
+		}
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
 		orgDefs := tblInfo.Partition.Definitions
