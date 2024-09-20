@@ -37,7 +37,6 @@ go_library(
         "//pkg/resourcegroup",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/tidb-binlog/pump_client",
         "//pkg/types",
         "//pkg/types/parser_driver",
         "//pkg/util",
