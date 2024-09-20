@@ -388,14 +388,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetMemTracker(e.memTracker).
 					SetPaging(e.paging).
 					SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-<<<<<<< HEAD
 					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &builder.Request, e.partialNetDataSizes[workID])).
-					SetConnID(e.Ctx().GetSessionVars().ConnectionID)
-=======
-					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.partialNetDataSizes[workID])).
-					SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
-					SetSQLKiller(&e.Ctx().GetSessionVars().SQLKiller)
->>>>>>> af46a3fb1d3 (*: Check sqlkiller status during split region process (#56155))
+					SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+					SetKilled(&e.Ctx().GetSessionVars().Killed)
 
 				tps := worker.getRetTpsForIndexScan(e.handleCols)
 				results := make([]distsql.SelectResult, 0, len(keyRanges))

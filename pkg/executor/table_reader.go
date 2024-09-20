@@ -369,14 +369,9 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetStoreType(e.storeType).
 			SetPaging(e.paging).
 			SetAllowBatchCop(e.batchCop).
-<<<<<<< HEAD
 			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &reqBuilder.Request, e.netDataSize)).
 			SetConnID(e.Ctx().GetSessionVars().ConnectionID).
-=======
-			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
-			SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
-			SetSQLKiller(e.dctx.SQLKiller).
->>>>>>> af46a3fb1d3 (*: Check sqlkiller status during split region process (#56155))
+			SetKilled(&e.Ctx().GetSessionVars().Killed).
 			Build()
 		if err != nil {
 			return nil, err
@@ -417,14 +412,9 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetStoreType(e.storeType).
 		SetPaging(e.paging).
 		SetAllowBatchCop(e.batchCop).
-<<<<<<< HEAD
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &reqBuilder.Request, e.netDataSize)).
 		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
-=======
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
-		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
-		SetSQLKiller(e.dctx.SQLKiller).
->>>>>>> af46a3fb1d3 (*: Check sqlkiller status during split region process (#56155))
+		SetKilled(&e.Ctx().GetSessionVars().Killed).
 		Build()
 	if err != nil {
 		return nil, err
@@ -474,12 +464,8 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetAllowBatchCop(e.batchCop).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &reqBuilder.Request, e.netDataSize)).
 		SetPaging(e.paging).
-<<<<<<< HEAD
-		SetConnID(e.Ctx().GetSessionVars().ConnectionID)
-=======
-		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
-		SetSQLKiller(e.dctx.SQLKiller)
->>>>>>> af46a3fb1d3 (*: Check sqlkiller status during split region process (#56155))
+		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetKilled(&e.Ctx().GetSessionVars().Killed)
 	return reqBuilder.Build()
 }
 

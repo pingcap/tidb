@@ -345,7 +345,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	})
 
 	// TODO(youjiali1995): is there any request type that needn't be splitted by buckets?
-	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges, req.SQLKiller)
+	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges, req.Killed)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

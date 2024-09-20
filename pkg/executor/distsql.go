@@ -307,14 +307,9 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		SetFromSessionVars(e.Ctx().GetSessionVars()).
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 		SetMemTracker(e.memTracker).
-<<<<<<< HEAD
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &builder.Request, e.netDataSize)).
-		SetConnID(e.Ctx().GetSessionVars().ConnectionID)
-=======
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx().GetDistSQLCtx(), &builder.Request, e.netDataSize)).
-		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
-		SetSQLKiller(&e.Ctx().GetSessionVars().SQLKiller)
->>>>>>> af46a3fb1d3 (*: Check sqlkiller status during split region process (#56155))
+		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetKilled(&e.Ctx().GetSessionVars().Killed)
 	kvReq, err := builder.Build()
 	return kvReq, err
 }
@@ -722,12 +717,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
 			SetMemTracker(tracker).
-<<<<<<< HEAD
-			SetConnID(e.Ctx().GetSessionVars().ConnectionID)
-=======
-			SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
-			SetSQLKiller(&e.Ctx().GetSessionVars().SQLKiller)
->>>>>>> af46a3fb1d3 (*: Check sqlkiller status during split region process (#56155))
+			SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+			SetKilled(&e.Ctx().GetSessionVars().Killed)
 
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {

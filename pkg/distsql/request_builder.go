@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -434,9 +433,9 @@ func (builder *RequestBuilder) SetConnID(connID uint64) *RequestBuilder {
 	return builder
 }
 
-// SetSQLKiller sets sqlkiller for the builder.
-func (builder *RequestBuilder) SetSQLKiller(killer *sqlkiller.SQLKiller) *RequestBuilder {
-	builder.SQLKiller = killer
+// SetKilled sets killed flag for the builder.
+func (builder *RequestBuilder) SetKilled(killed *uint32) *RequestBuilder {
+	builder.Killed = killed
 	return builder
 }
 

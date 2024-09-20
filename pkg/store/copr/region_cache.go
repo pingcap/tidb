@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"math"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,12 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-=======
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
->>>>>>> af46a3fb1d3 (*: Check sqlkiller status during split region process (#56155))
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -174,7 +172,7 @@ const UnspecifiedLimit = -1
 
 // SplitKeyRangesByLocationsWithBuckets splits the KeyRanges by logical info in the cache.
 // The buckets in the returned LocationKeyRanges are not empty if the region is split by bucket.
-func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges *KeyRanges, limit int, killer *sqlkiller.SQLKiller) ([]*LocationKeyRanges, error) {
+func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges *KeyRanges, limit int, killed *uint32) ([]*LocationKeyRanges, error) {
 	res := make([]*LocationKeyRanges, 0)
 	for ranges.Len() > 0 {
 		if limit != UnspecifiedLimit && len(res) >= limit {
@@ -186,15 +184,14 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges
 		}
 		failpoint.Inject("SplitRangesHangCausedKill", func(val failpoint.Value) {
 			if val.(bool) {
-				if killer != nil {
-					killer.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+				if killed != nil {
+					atomic.StoreUint32(killed, 1)
 				}
 			}
 		})
-		if killer != nil {
-			err = killer.HandleSignal()
-			if err != nil {
-				return nil, err
+		if killed != nil {
+			if atomic.LoadUint32(killed) == 1 {
+				return nil, errors.Trace(exeerrors.ErrQueryInterrupted)
 			}
 		}
 
@@ -300,8 +297,8 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithoutBuckets(bo *Backoffer, ran
 // it's equal to SplitKeyRangesByLocations.
 //
 // TODO(youjiali1995): Try to do it in one round and reduce allocations if bucket is not enabled.
-func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges, sqlkiller *sqlkiller.SQLKiller) ([]*LocationKeyRanges, error) {
-	locs, err := c.SplitKeyRangesByLocationsWithBuckets(bo, ranges, UnspecifiedLimit, sqlkiller)
+func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges, killed *uint32) ([]*LocationKeyRanges, error) {
+	locs, err := c.SplitKeyRangesByLocationsWithBuckets(bo, ranges, UnspecifiedLimit, killed)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}

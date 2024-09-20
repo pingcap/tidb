@@ -126,7 +126,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
-		SetSQLKiller(&e.ctx.GetSessionVars().SQLKiller).
+		SetKilled(&e.ctx.GetSessionVars().Killed).
 		Build()
 	if err != nil {
 		return nil, err
