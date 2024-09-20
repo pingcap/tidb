@@ -113,7 +113,7 @@ fi
 
 # PITR with checkpoint but failed in the log restore datakv stage
 # skip the snapshot restore stage
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/corrupt-files=return(\"corrupt-last-table-files\");"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/corrupt-files=return(\"corrupt-last-table-files\")"
 restore_fail=0
 run_br --pd $PD_ADDR restore point --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -s "local://$TEST_DIR/$PREFIX/log" || restore_fail=1
 export GO_FAILPOINTS=""
@@ -123,7 +123,7 @@ if [ $restore_fail -ne 1 ]; then
 fi
 
 # PITR with checkpoint
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/corrupt-files=return(\"only-last-table-files\");"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/corrupt-files=return(\"only-last-table-files\")"
 run_br --pd $PD_ADDR restore point --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -s "local://$TEST_DIR/$PREFIX/log"
 export GO_FAILPOINTS=""
 

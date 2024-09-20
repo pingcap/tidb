@@ -1262,6 +1262,7 @@ func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset
 func WrapLogFilesIterWithCheckpointFailpoint(
 	v failpoint.Value,
 	logIter LogIter,
+	rules map[int64]*restoreutils.RewriteRules,
 ) (LogIter, error) {
 	if cmd, ok := v.(string); ok {
 		switch cmd {
@@ -1272,7 +1273,8 @@ func WrapLogFilesIterWithCheckpointFailpoint(
 			return newLogIter, errors.Errorf("skip the last table files")
 		case "only-last-table-files": // check whether all the files, except files skipped before, are skipped by checkpoint
 			newLogIter := iter.FilterOut(logIter, func(d *LogDataFileInfo) bool {
-				if d.OffsetInMergedGroup&1 == 0 {
+				_, exists := rules[d.TableId]
+				if d.OffsetInMergedGroup&1 == 0 && exists {
 					log.Panic("has files but not the files skipped before")
 				}
 				return false

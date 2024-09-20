@@ -1422,7 +1422,7 @@ func restoreStream(
 			}
 			failpoint.Inject("corrupt-files", func(v failpoint.Value) {
 				var retErr error
-				logFilesIter, retErr = logclient.WrapLogFilesIterWithCheckpointFailpoint(v, logFilesIter)
+				logFilesIter, retErr = logclient.WrapLogFilesIterWithCheckpointFailpoint(v, logFilesIter, rewriteRules)
 				defer func() { pErr = retErr }()
 			})
 		}
