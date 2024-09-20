@@ -1382,21 +1382,21 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 		return
 	}
 	var (
-		preSplit     func()
-		scatterScope string
+		preSplit func()
+		scope    scatterScope
 	)
 	val, ok := ctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion)
 	if !ok {
 		logutil.DDLLogger().Warn("won't scatter region")
 	} else {
-		scatterScope = val
+		scope = scatterScope(val)
 	}
 	if len(parts) > 0 {
-		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterScope) }
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scope) }
 	} else {
-		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterScope) }
+		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scope) }
 	}
-	if scatterScope != "" {
+	if scope != scatterOff {
 		preSplit()
 	} else {
 		go preSplit()
