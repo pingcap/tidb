@@ -210,6 +210,9 @@ func (aa *autoAdmin) heuristicCoveredIndexes(
 		var bestCoverIndex Index
 		var bestCoverIndexCost IndexSetCost
 		for i, coverIndex := range coverIndexSet.ToList() {
+			if candidateIndexes.Contains(coverIndex) {
+				continue // the new generated cover-index is duplicated
+			}
 			candidateIndexes.Add(coverIndex)
 			cost, err := evaluateIndexSetCost(querySet, aa.optimizer, candidateIndexes)
 			if err != nil {
