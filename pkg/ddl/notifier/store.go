@@ -30,7 +30,7 @@ type Store interface {
 		ctx context.Context,
 		se *sess.Session,
 		ddlJobID int64,
-		multiSchemaChangeID int,
+		multiSchemaChangeID int64,
 		processedBy uint64,
 	) error
 	Delete(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error
@@ -66,7 +66,7 @@ func (t *tableStore) Insert(ctx context.Context, s *sess.Session, change *schema
 
 //revive:disable
 
-func (t *tableStore) UpdateProcessed(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int, processedBy uint64) error {
+func (t *tableStore) UpdateProcessed(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int64, processedBy uint64) error {
 	//TODO implement me
 	panic("implement me")
 }
