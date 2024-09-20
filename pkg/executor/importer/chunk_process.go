@@ -32,11 +32,15 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+>>>>>>> a807829ed9e (importinto: protect panic from encode loop (#56166))
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 // constants, make it a variable for test
@@ -261,7 +265,7 @@ func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 		p.metrics = p.enc.metrics
 	}
 
-	group, gCtx := errgroup.WithContext(ctx)
+	group, gCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	group.Go(func() error {
 		return p.deliverLoop(gCtx)
 	})
