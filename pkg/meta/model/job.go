@@ -493,10 +493,7 @@ func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 	if jobVer <= JobVersion1 {
 		rawArgs, err := json.Marshal(args)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return rawArgs, nil
+		return rawArgs, errors.Trace(err)
 	}
 
 	intest.Assert(jobVer == JobVersion2, "job version is not v2")
@@ -507,10 +504,7 @@ func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 	}
 
 	rawArgs, err := json.Marshal(arg)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return rawArgs, nil
+	return rawArgs, errors.Trace(err)
 }
 
 // Encode encodes job with json format.
