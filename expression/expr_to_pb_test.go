@@ -503,19 +503,21 @@ func TestOtherFunc2Pb(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD:expression/expr_to_pb_test.go
 func TestExprPushDownToFlash(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
+=======
+func TestJsonPushDownToFlash(t *testing.T) {
+	ctx := mock.NewContext()
+>>>>>>> ff1f8621178 (expression: disable some json function from pushdown to TiFlash (#56177)):pkg/expression/expr_to_pb_test.go
 	client := new(mock.Client)
 
 	exprs := make([]Expression, 0)
 
 	jsonColumn := genColumn(mysql.TypeJSON, 1)
 	intColumn := genColumn(mysql.TypeLonglong, 2)
-	realColumn := genColumn(mysql.TypeDouble, 3)
-	decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
-	decimalColumn.RetType.SetDecimal(mysql.MaxDecimalScale)
-	decimalColumn.RetType.SetFlen(mysql.MaxDecimalWidth)
 	stringColumn := genColumn(mysql.TypeString, 5)
+<<<<<<< HEAD:expression/expr_to_pb_test.go
 	datetimeColumn := genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := genColumn(mysql.TypeString, 7)
 	binaryStringColumn.RetType.SetCollate(charset.CollationBin)
@@ -523,7 +525,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	float32Column := genColumn(mysql.TypeFloat, 9)
 	enumColumn := genColumn(mysql.TypeEnum, 10)
 	durationColumn := genColumn(mysql.TypeDuration, 11)
+=======
+>>>>>>> ff1f8621178 (expression: disable some json function from pushdown to TiFlash (#56177)):pkg/expression/expr_to_pb_test.go
 
+	// functions that can be pushdown to tiflash
+	// json_length
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
@@ -540,8 +546,161 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+<<<<<<< HEAD:expression/expr_to_pb_test.go
 	// lpad
 	function, err = NewFunction(mock.NewContext(), ast.Lpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
+=======
+	// json_unquote's argument is not cast(json as string)
+	function, err = NewFunction(mock.NewContext(), ast.JSONUnquote, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_array
+	function, err = NewFunction(mock.NewContext(), ast.JSONArray, types.NewFieldType(mysql.TypeJSON), jsonColumn, jsonColumn, jsonColumn, jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_depth
+	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_contains_path
+	function, err = NewFunction(mock.NewContext(), ast.JSONContainsPath, types.NewFieldType(mysql.TypeLonglong), jsonColumn, stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_valid
+	/// json_valid_others
+	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	/// json_valid_json
+	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	/// json_valid_string
+	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_keys
+	/// 1 arg
+	function, err = NewFunction(mock.NewContext(), ast.JSONKeys, types.NewFieldType(mysql.TypeJSON), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	/// 2 args
+	function, err = NewFunction(mock.NewContext(), ast.JSONKeys, types.NewFieldType(mysql.TypeJSON), jsonColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastJsonAsString
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastJsonAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// IfNullJson
+	function, err = NewFunction(mock.NewContext(), ast.Ifnull, types.NewFieldType(mysql.TypeJSON), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// IfJson
+	function, err = NewFunction(mock.NewContext(), ast.If, types.NewFieldType(mysql.TypeJSON), intColumn, jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// JsonIsNull is not implement, for function json_col is null, it will be converted to cast(json as string) is null
+	function, err = NewFunction(mock.NewContext(), ast.IsNull, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CaseWhenJson
+	function, err = NewFunction(mock.NewContext(), ast.Case, types.NewFieldType(mysql.TypeJSON), intColumn, jsonColumn, intColumn, jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CoalesceJson
+	function, err = NewFunction(mock.NewContext(), ast.Coalesce, types.NewFieldType(mysql.TypeJSON), jsonColumn, jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	pushed, remained := PushDownExprs(pushDownCtx, exprs, kv.TiFlash)
+	require.Len(t, pushed, len(exprs))
+	require.Len(t, remained, 0)
+
+	// functions that can not be pushed to tiflash
+	exprs = exprs[:0]
+	// LTJson
+	function, err = NewFunction(mock.NewContext(), ast.LT, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// LEJson
+	function, err = NewFunction(mock.NewContext(), ast.LE, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// GTJson
+	function, err = NewFunction(mock.NewContext(), ast.GT, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// GEJson
+	function, err = NewFunction(mock.NewContext(), ast.GE, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// EQJson
+	function, err = NewFunction(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// NEJson
+	function, err = NewFunction(mock.NewContext(), ast.NE, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// InJson
+	function, err = NewFunction(mock.NewContext(), ast.In, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiFlash)
+	require.Len(t, pushed, 0)
+	require.Len(t, remained, len(exprs))
+}
+
+func TestExprPushDownToFlash(t *testing.T) {
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
+
+	exprs := make([]Expression, 0)
+
+	intColumn := genColumn(mysql.TypeLonglong, 2)
+	realColumn := genColumn(mysql.TypeDouble, 3)
+	decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
+	decimalColumn.RetType.SetDecimal(mysql.MaxDecimalScale)
+	decimalColumn.RetType.SetFlen(mysql.MaxDecimalWidth)
+	stringColumn := genColumn(mysql.TypeString, 5)
+	datetimeColumn := genColumn(mysql.TypeDatetime, 6)
+	binaryStringColumn := genColumn(mysql.TypeString, 7)
+	binaryStringColumn.RetType.SetCollate(charset.CollationBin)
+	int32Column := genColumn(mysql.TypeLong, 8)
+	float32Column := genColumn(mysql.TypeFloat, 9)
+	enumColumn := genColumn(mysql.TypeEnum, 10)
+	durationColumn := genColumn(mysql.TypeDuration, 11)
+	// uint64 col
+	uintColumn := genColumn(mysql.TypeLonglong, 12)
+	uintColumn.RetType.AddFlag(mysql.UnsignedFlag)
+
+	function, err := NewFunction(mock.NewContext(), ast.Lpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
+>>>>>>> ff1f8621178 (expression: disable some json function from pushdown to TiFlash (#56177)):pkg/expression/expr_to_pb_test.go
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -648,11 +807,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// CastStringAsString
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), stringColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	// CastJsonAsString
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1239,7 +1393,72 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.Equal(t, tipb.ScalarFuncSig_CastTimeAsDuration, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
+<<<<<<< HEAD:expression/expr_to_pb_test.go
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
+=======
+	// Unhex
+	function, err = NewFunction(mock.NewContext(), ast.Unhex, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// IsIPv4
+	function, err = NewFunction(mock.NewContext(), ast.IsIPv4, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// IsIPv6
+	function, err = NewFunction(mock.NewContext(), ast.IsIPv6, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// Grouping
+	init := func(groupingFunc *ScalarFunction) (Expression, error) {
+		var err error
+		if groupingFunc.FuncName.L == ast.Grouping {
+			err = groupingFunc.Function.(*BuiltinGroupingImplSig).
+				SetMetadata(tipb.GroupingMode_ModeBitAnd, []map[uint64]struct{}{})
+		}
+		return groupingFunc, err
+	}
+	function, err = NewFunctionWithInit(mock.NewContext(), ast.Grouping, types.NewFieldType(mysql.TypeLonglong), init, uintColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastIntAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastRealAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), realColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastDecimalAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), decimalColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastStringAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), binaryStringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastTimeAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastDurationAsJson
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeJSON), durationColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiFlash)
+>>>>>>> ff1f8621178 (expression: disable some json function from pushdown to TiFlash (#56177)):pkg/expression/expr_to_pb_test.go
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
 
