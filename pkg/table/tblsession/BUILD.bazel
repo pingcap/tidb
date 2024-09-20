@@ -25,6 +25,7 @@ go_test(
     flaky = True,
     deps = [
         ":tblsession",
+        "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/sessionctx/variable",
         "//pkg/table",
