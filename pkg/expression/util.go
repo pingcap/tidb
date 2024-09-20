@@ -27,7 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1741,7 +1741,7 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 // of the given SQL digests, if `inValues` is given, or all these mappings otherwise. If `queryGlobal` is false, it
 // queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
 // queries the cluster version of these two tables.
-func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, exec contextopt.SQLExecutor, queryGlobal bool, inValues []any) (map[string]string, error) {
+func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, exec expropt.SQLExecutor, queryGlobal bool, inValues []any) (map[string]string, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
@@ -1789,7 +1789,7 @@ func (r *SQLDigestTextRetriever) updateDigestInfo(queryResult map[string]string)
 }
 
 // RetrieveLocal tries to retrieve the SQL text of the SQL digests from local information.
-func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, exec contextopt.SQLExecutor) error {
+func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, exec expropt.SQLExecutor) error {
 	if len(r.SQLDigestsMap) == 0 {
 		return nil
 	}
@@ -1823,7 +1823,7 @@ func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, exec context
 }
 
 // RetrieveGlobal tries to retrieve the SQL text of the SQL digests from the information of the whole cluster.
-func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, exec contextopt.SQLExecutor) error {
+func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, exec expropt.SQLExecutor) error {
 	err := r.RetrieveLocal(ctx, exec)
 	if err != nil {
 		return errors.Trace(err)

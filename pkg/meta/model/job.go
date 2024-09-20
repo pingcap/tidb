@@ -70,8 +70,8 @@ const (
 	ActionCreateSequence                ActionType = 34
 	ActionAlterSequence                 ActionType = 35
 	ActionDropSequence                  ActionType = 36
-	_DEPRECATEDActionAddColumns         ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
-	_DEPRECATEDActionDropColumns        ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionModifyTableAutoIDCache        ActionType = 39
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
@@ -589,11 +589,12 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 			return true, nil
 		}
 		if job.Type == ActionRenameTable {
-			var oldSchemaID int64
-			if err := job.DecodeArgs(&oldSchemaID); err != nil {
+			args, err := GetRenameTableArgs(job)
+			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if other.SchemaID == oldSchemaID {
+
+			if other.SchemaID == args.OldSchemaID {
 				return true, nil
 			}
 		}

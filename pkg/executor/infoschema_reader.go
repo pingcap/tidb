@@ -2594,7 +2594,6 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error 
 			info.Lease,           // LEASE
 			info.Version,         // VERSION
 			info.GitHash,         // GIT_HASH
-			info.BinlogStatus,    // BINLOG_STATUS
 			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
 		if sem.IsEnabled() {
