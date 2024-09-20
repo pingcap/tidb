@@ -563,3 +563,52 @@ func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
 	}
 	return getOrDecodeArgsV2[*RenameTablesArgs](job)
 }
+
+// PlacementPolicyArgs is the argument for create/alter/drop placement policy
+type PlacementPolicyArgs struct {
+	Policy         *PolicyInfo  `json:"policy,omitempty"`
+	ReplaceOnExist bool         `json:"replace_on_exist,omitempty"`
+	PolicyName     pmodel.CIStr `json:"policy_name,omitempty"`
+	PolicyID       int64        `json:"policy_id"`
+}
+
+func (a *PlacementPolicyArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionCreatePlacementPolicy {
+			job.Args = []any{a.Policy, a.ReplaceOnExist}
+		} else if job.Type == ActionAlterPlacementPolicy {
+			job.Args = []any{a.Policy}
+		} else {
+			intest.Assert(job.Type == ActionDropPlacementPolicy, "Invalid job type for PlacementPolicyArgs")
+			job.Args = []any{a.PolicyName}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetRenameTablesArgs gets the placement policy args.
+func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
+	var args *PlacementPolicyArgs = &PlacementPolicyArgs{}
+	var err error
+
+	if job.Version == JobVersion1 {
+		if job.Type == ActionCreatePlacementPolicy {
+			err = job.DecodeArgs(&args.Policy, &args.ReplaceOnExist)
+		} else if job.Type == ActionAlterPlacementPolicy {
+			err = job.DecodeArgs(&args.Policy)
+		} else {
+			intest.Assert(job.Type == ActionDropPlacementPolicy, "Invalid job type for PlacementPolicyArgs")
+			err = job.DecodeArgs(&args.PolicyName)
+		}
+	} else {
+		args, err = getOrDecodeArgsV2[*PlacementPolicyArgs](job)
+	}
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	args.PolicyID = job.SchemaID
+	return args, nil
+}
