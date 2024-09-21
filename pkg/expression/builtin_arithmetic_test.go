@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -30,7 +30,7 @@ import (
 )
 
 func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
-	ctx := contextstatic.NewStaticEvalContext()
+	ctx := exprstatic.NewEvalContext()
 	ret := &types.FieldType{}
 	a := &types.FieldType{}
 	a.SetDecimal(1)
