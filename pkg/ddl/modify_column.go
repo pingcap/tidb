@@ -171,7 +171,10 @@ func rollbackModifyColumnJob(jobCtx *jobContext, t *meta.Meta, tblInfo *model.Ta
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
-	job.Args = []any{[]int64{}, []int64{}}
+	job.FillFinishedArgs(&model.ModifyColumnArgs{
+		IndexIDs:     []int64{},
+		PartitionIDs: []int64{},
+	})
 	return ver, nil
 }
 
@@ -258,7 +261,10 @@ func rollbackModifyColumnJobWithData(
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// Reconstruct the job args to add the temporary index ids into delete range table.
-	job.Args = []any{changingIdxIDs, getPartitionIDs(tblInfo)}
+	job.FillFinishedArgs(&model.ModifyColumnArgs{
+		IndexIDs:     changingIdxIDs,
+		PartitionIDs: getPartitionIDs(tblInfo),
+	})
 	return ver, nil
 }
 
@@ -317,7 +323,10 @@ func (w *worker) doModifyColumn(
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
-	job.Args = []any{[]int64{}, []int64{}}
+	job.FillFinishedArgs(&model.ModifyColumnArgs{
+		IndexIDs:     []int64{},
+		PartitionIDs: []int64{},
+	})
 	return ver, nil
 }
 

@@ -716,8 +716,17 @@ func (d *SchemaTracker) handleModifyColumn(
 		return errors.Trace(err)
 	}
 
-	newColInfo := *job.Args[0].(**model.ColumnInfo)
-	updatedAutoRandomBits := job.Args[4].(uint64)
+	var (
+		newColInfo            *model.ColumnInfo
+		updatedAutoRandomBits uint64
+	)
+	if job.Version == model.JobVersion1 {
+		newColInfo = *job.Args[0].(**model.ColumnInfo)
+		updatedAutoRandomBits = job.Args[4].(uint64)
+	} else {
+		args := job.Args[0].(*model.ModifyColumnArgs)
+		newColInfo, updatedAutoRandomBits = args.NewCol, args.UpdatedAutoRandomBits
+	}
 
 	tblInfo.AutoRandomBits = updatedAutoRandomBits
 	oldCol := table.FindCol(t.Cols(), originalColName.L).ColumnInfo
