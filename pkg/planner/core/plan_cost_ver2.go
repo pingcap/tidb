@@ -141,7 +141,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	// give TiFlash a start-up cost to let the optimizer prefers to use TiKV to process small table scans.
 	if p.StoreType == kv.TiFlash {
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, 10000, rowSize, scanFactor))
-	} else if (p.SCtx().GetSessionVars().GetAllowPreferRangeScan() && (p.tblColHists.Pseudo || p.tblColHists.RealtimeCount < 1)) || p.tblColHists.ModifyCount > p.tblColHists.RealtimeCount {
+	} else if !p.isChildOfIndexLookUp && (p.SCtx().GetSessionVars().GetAllowPreferRangeScan() && (p.tblColHists.Pseudo || p.tblColHists.RealtimeCount < 1)) || p.tblColHists.ModifyCount > p.tblColHists.RealtimeCount {
 		// If tidb_opt_prefer_range_scan is enabled, OR we have a high modifyCount - apply a cost penalty
 		newRowCount := math.Min(1000, math.Max(float64(p.tblColHists.ModifyCount), float64(p.tblColHists.RealtimeCount)))
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
