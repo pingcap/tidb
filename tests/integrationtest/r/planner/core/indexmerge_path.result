@@ -1070,15 +1070,10 @@ IndexMerge	19.97	root		type: union
   └─TableRowIDScan	59.91	cop[tikv]	table:t	keep order:false, stats:pseudo
 EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (c = 13 OR c = 15 OR c = 5 OR b = '12' OR c = 13 OR b = '11');
 id	estRows	task	access object	operator info
-IndexMerge	0.05	root		type: union
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[13,13], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[15,15], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[5,5], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:["12","12"], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[13,13], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:["11","11"], keep order:false, stats:pseudo
-└─Selection(Probe)	0.05	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1)
-  └─TableRowIDScan	49.94	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp	0.05	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	0.05	cop[tikv]		or(or(eq(planner__core__indexmerge_path.t.c, 13), or(eq(planner__core__indexmerge_path.t.c, 15), eq(planner__core__indexmerge_path.t.c, 5))), or(eq(planner__core__indexmerge_path.t.b, "12"), or(eq(planner__core__indexmerge_path.t.c, 13), eq(planner__core__indexmerge_path.t.b, "11"))))
+  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 SET @@tidb_opt_fix_control = default;
 drop table if exists t, t1;
 create table t (a int, b varchar(30), c float, j json, pk int primary key,
