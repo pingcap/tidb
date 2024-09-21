@@ -1766,6 +1766,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			err = e.RemovePartitioning(sctx, ident, spec)
 		case ast.AlterTableRepairPartition:
 			err = errors.Trace(dbterror.ErrUnsupportedRepairPartition)
+		case ast.AlterTableConvertPartitionToTable:
+			err = e.ConvertPartitionToTable(sctx, ident, spec)
 		case ast.AlterTableDropColumn:
 			err = e.DropColumn(sctx, ident, spec)
 		case ast.AlterTableDropIndex:
@@ -2632,6 +2634,80 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
 	err = e.doDDLJob2(ctx, job, args)
+	return errors.Trace(err)
+}
+
+func checkConvertPartition(pi *model.PartitionInfo) error {
+	if pi.Type != pmodel.PartitionTypeRange && pi.Type != pmodel.PartitionTypeList {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CONVERT PARTITION TO TABLE, only RANGE and LIST partitioned tables are supported")
+	}
+	return nil
+}
+
+// ConvertPartitionToTable converts a single partition to a new table.
+func (e *executor) ConvertPartitionToTable(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	pSchema, pt, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.FastGenByArgs(ident.Schema, ident.Name))
+	}
+
+	pMeta := pt.Meta()
+	pi := pMeta.GetPartitionInfo()
+	if pi == nil {
+		return dbterror.ErrPartitionMgmtOnNonpartitioned
+	}
+	if err = checkConvertPartition(pi); err != nil {
+		return err
+	}
+	partName := spec.PartitionNames[0].L
+	_, err = tables.FindPartitionByName(pMeta, partName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if len(spec.Options) != 1 || len(spec.Options[0].TableNames) != 1 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CONVERT PARTITION TO TABLE, not exactly one new table name given")
+	}
+	newTableName := spec.Options[0].TableNames[0]
+	is := e.infoCache.GetLatest()
+	ntSchemaName := newTableName.Schema
+	if len(ntSchemaName.O) == 0 {
+		ntSchemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+	ntSchema, ok := is.SchemaByName(ntSchemaName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ntSchemaName)
+	}
+	ntIdent := ast.Ident{Schema: ntSchemaName, Name: newTableName.Name}
+
+	if _, err := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().TableByName(context.Background(), ntIdent.Schema, ntIdent.Name); err == nil {
+		return errors.Trace(infoschema.ErrTableExists.FastGenByArgs(ntIdent))
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       pSchema.ID,
+		TableID:        pMeta.ID,
+		SchemaName:     pSchema.Name.L,
+		TableName:      pMeta.Name.L,
+		Type:           model.ActionConvertPartitionToTable,
+		BinlogInfo:     &model.HistoryInfo{},
+		ReorgMeta:      NewDDLReorgMeta(ctx),
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{Database: pSchema.Name.L, Table: pMeta.Name.L},
+			{Database: ntIdent.Schema.L, Table: ntIdent.Name.L},
+		},
+	}
+	args := &model.ConvertPartitionArgs{
+		PartName:         partName,
+		NewTableSchemaID: ntSchema.ID,
+		NewTableName:     ntIdent.Name.O,
+	}
+
+	err = e.doDDLJob2(ctx, job, args)
+	// TODO: Warnings about analyze?!?
 	return errors.Trace(err)
 }
 

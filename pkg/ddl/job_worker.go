@@ -829,6 +829,8 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onTruncateTablePartition(jobCtx, t, job)
 	case model.ActionExchangeTablePartition:
 		ver, err = w.onExchangeTablePartition(jobCtx, t, job)
+	case model.ActionConvertPartitionToTable:
+		ver, err = w.onConvertPartitionToTable(jobCtx, t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(jobCtx, t, job)
 	case model.ActionDropColumn:

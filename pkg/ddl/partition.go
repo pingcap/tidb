@@ -2947,6 +2947,128 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	return ver, nil
 }
 
+func (w *worker) onConvertPartitionToTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetConvertPartitionArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return ver, errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
+	}
+	if err = checkConvertPartition(pi); err != nil {
+		return ver, err
+	}
+	partName := args.PartName
+	ntSchemaID := args.NewTableSchemaID
+	ntTableName := args.NewTableName
+	ntIdent := ast.Ident{
+		// Note that this is in lower case!
+		Schema: pmodel.NewCIStr(job.InvolvingSchemaInfo[1].Database),
+		Name:   pmodel.NewCIStr(ntTableName),
+	}
+	switch job.SchemaState {
+	case model.StateNone:
+		// create non-public new table
+		// block converting partition from use
+		_, pDef, err := getPartitionDef(tblInfo, partName)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		ntTableInfo := tblInfo.Clone()
+		ntTableInfo.Partition = nil
+		ntTableInfo.ID = pDef.ID
+		ntTableInfo.DBID = ntSchemaID
+		ntTableInfo.Name = pmodel.NewCIStr(ntTableName)
+		// TODO: Are there any state that actually fully blocks a table?
+		ntTableInfo.State = model.StateDeleteOnly
+		if _, err = getTableInfo(t, ntSchemaID, pDef.ID); err == nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(infoschema.ErrTableExists.FastGenByArgs(ntIdent))
+		}
+		// Copying autoIDs here, to detect possible errors early, so we can cancel.
+		autoIDs, err := t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Get()
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		err = t.GetAutoIDAccessors(ntSchemaID, ntTableInfo.ID).Put(autoIDs)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		if err = t.CreateTableOrView(ntSchemaID, ntTableInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		// TODO: Anymore checks to do?
+		// Handle Placement rules, Bundles, TiFlash?!?
+		// If we can keep the TiFlash data, then keep it!!!
+		tblInfo.Partition.DroppingDefinitions = []model.PartitionDefinition{pDef.Clone()}
+		job.SchemaState = model.StateWriteOnly
+		tblInfo.Partition.DDLState = job.SchemaState
+		// TODO: Add DDLAction = ActionConvertPartitionToTable
+		// TODO: Wait for DROP PARTITION pr to get the skipping of dropping partition
+		// TODO: Is this needed?
+		ntSchemaAndTableInfo := schemaIDAndTableInfo{schemaID: ntSchemaID, tblInfo: ntTableInfo}
+		return updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true, ntSchemaAndTableInfo)
+	case model.StateWriteOnly:
+		// remove converting partition from definitions
+		// still give duplicate error for Global Index, even if matching
+		// TODO: Wait for DROP PARTITION pr to get the skipping of dropping partition
+		for i := range pi.Definitions {
+			if pi.Definitions[i].ID == pi.DroppingDefinitions[0].ID {
+				pi.Definitions = append(pi.Definitions[:i], pi.Definitions[i+1:]...)
+				break
+			}
+		}
+		job.SchemaState = model.StateDeleteOnly
+		tblInfo.Partition.DDLState = job.SchemaState
+		return updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+	case model.StateDeleteOnly:
+		// Overwrite Global Index entries pointing to converting partition
+		// TODO: Also copy over the autoids again?
+		autoIDs, err := t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Get()
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		ntTableID := tblInfo.Partition.DroppingDefinitions[0].ID
+		err = t.GetAutoIDAccessors(ntSchemaID, ntTableID).Put(autoIDs)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteReorganization
+		tblInfo.Partition.DDLState = job.SchemaState
+		return updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true)
+	case model.StateDeleteReorganization:
+		// Clean up global indexes, finalize new table and set it to public
+		// TODO: Should we regenerate the global indexes as local unique indexes?!?
+		// For now, just remove them for faster CONVERT!
+		ntTableID := tblInfo.Partition.DroppingDefinitions[0].ID
+		ntTableInfo, err := getTableInfo(t, ntTableID, ntSchemaID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		ntTableInfo.State = model.StatePublic
+		tblInfo.Partition.DroppingDefinitions = nil
+		tblInfo.Partition.DDLState = model.StateNone
+		ntSchemaAndTableInfo := schemaIDAndTableInfo{schemaID: ntSchemaID, tblInfo: ntTableInfo}
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, true, ntSchemaAndTableInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		// TODO: Create newStatsDDLEventForJob()
+	}
+	return ver, nil
+}
+
 func getNewGlobal(partInfo *model.PartitionInfo, idx *model.IndexInfo) bool {
 	if len(partInfo.DDLUpdateIndexes) == 0 {
 		return idx.Global
