@@ -340,18 +340,18 @@ func convertAddTablePartitionJob2RollbackJob(jobCtx *jobContext, t *meta.Meta, j
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	if job.Type == model.ActionReorganizePartition ||
 		job.Type == model.ActionAlterTablePartitioning ||
 		job.Type == model.ActionRemovePartitioning {
-		partInfo := &model.PartitionInfo{}
-		var pNames []string
-		err = job.DecodeArgs(&pNames, &partInfo)
-		if err != nil {
-			return ver, err
-		}
-		job.Args = []any{partNames, partInfo}
+		args.PartNames = partNames
+		job.FillArgs(args)
 	} else {
-		job.Args = []any{partNames}
+		args.PartNames = partNames
+		model.FillRollbackArgsForAddPartition(job, args)
 	}
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {
