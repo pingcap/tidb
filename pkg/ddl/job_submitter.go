@@ -503,20 +503,17 @@ func getRequiredGIDCount(jobWs []*JobWrapper) int {
 		case model.ActionCreateSchema, model.ActionCreateResourceGroup:
 			count++
 		case model.ActionAlterTablePartitioning:
-			pInfo := jobW.Args[1].(*model.PartitionInfo)
+			args := jobW.JobArgs.(*model.TablePartitionArgs)
 			// A new table ID would be needed for
 			// the global table, which cannot be the same as the current table id,
 			// since this table id will be removed in the final state when removing
 			// all the data with this table id.
-			count += 1 + len(pInfo.Definitions)
+			count += 1 + len(args.PartInfo.Definitions)
 		case model.ActionTruncateTablePartition:
 			count += len(jobW.Args[0].([]int64))
-		case model.ActionAddTablePartition:
-			pInfo := jobW.Args[0].(*model.PartitionInfo)
-			count += len(pInfo.Definitions)
-		case model.ActionReorganizePartition, model.ActionRemovePartitioning:
-			pInfo := jobW.Args[1].(*model.PartitionInfo)
-			count += len(pInfo.Definitions)
+		case model.ActionAddTablePartition, model.ActionReorganizePartition, model.ActionRemovePartitioning:
+			args := jobW.JobArgs.(*model.TablePartitionArgs)
+			count += len(args.PartInfo.Definitions)
 		case model.ActionTruncateTable:
 			count += 1 + len(jobW.JobArgs.(*model.TruncateTableArgs).OldPartitionIDs)
 		}
@@ -561,9 +558,9 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 			}
 		case model.ActionAlterTablePartitioning:
 			if !jobW.IDAllocated {
-				pInfo := jobW.Args[1].(*model.PartitionInfo)
-				alloc.assignIDsForPartitionInfo(pInfo)
-				pInfo.NewTableID = alloc.next()
+				args := jobW.JobArgs.(*model.TablePartitionArgs)
+				alloc.assignIDsForPartitionInfo(args.PartInfo)
+				args.PartInfo.NewTableID = alloc.next()
 			}
 		case model.ActionTruncateTablePartition:
 			if !jobW.IDAllocated {
@@ -573,20 +570,15 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 				}
 				jobW.Args[1] = newIDs
 			}
-		case model.ActionAddTablePartition:
+		case model.ActionAddTablePartition, model.ActionReorganizePartition:
 			if !jobW.IDAllocated {
-				pInfo := jobW.Args[0].(*model.PartitionInfo)
-				alloc.assignIDsForPartitionInfo(pInfo)
-			}
-		case model.ActionReorganizePartition:
-			if !jobW.IDAllocated {
-				pInfo := jobW.Args[1].(*model.PartitionInfo)
+				pInfo := jobW.JobArgs.(*model.TablePartitionArgs).PartInfo
 				alloc.assignIDsForPartitionInfo(pInfo)
 			}
 		case model.ActionRemovePartitioning:
 			// a special partition is used in this case, and we will use the ID
 			// of the partition as the new table ID.
-			pInfo := jobW.Args[1].(*model.PartitionInfo)
+			pInfo := jobW.JobArgs.(*model.TablePartitionArgs).PartInfo
 			if !jobW.IDAllocated {
 				alloc.assignIDsForPartitionInfo(pInfo)
 			}

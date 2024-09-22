@@ -106,8 +106,9 @@ func buildTableInfoWithPartition(t *testing.T, store kv.Storage) (*model.TableIn
 	return tbl, partIDs
 }
 
-func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
+func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) (*model.Job, *model.TablePartitionArgs) {
 	return &model.Job{
+		Version:     model.GetJobVerInUse(),
 		SchemaID:    dbInfo.ID,
 		SchemaName:  dbInfo.Name.L,
 		TableID:     tblInfo.ID,
@@ -115,14 +116,13 @@ func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partN
 		SchemaState: model.StatePublic,
 		Type:        model.ActionDropTablePartition,
 		BinlogInfo:  &model.HistoryInfo{},
-		Args:        []any{partNames},
-	}
+	}, &model.TablePartitionArgs{PartNames: partNames}
 }
 
 func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
-	job := buildDropPartitionJob(dbInfo, tblInfo, partNames)
+	job, args := buildDropPartitionJob(dbInfo, tblInfo, partNames)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
