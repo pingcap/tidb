@@ -779,3 +779,32 @@ func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
 	}
 	return getOrDecodeArgsV2[*AddCheckConstraintArgs](job)
 }
+
+// AlterTablePlacementArgs is the arguments for alter table placements ddl job.
+type AlterTablePlacementArgs struct {
+	PlacementPolicyRef *PolicyRefInfo
+}
+
+func (a *AlterTablePlacementArgs) fillJob(job *Job) {
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.PlacementPolicyRef}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAlterTablePlacementArgs gets the args for alter table placements ddl job.
+func GetAlterTablePlacementArgs(job *Job) (*AlterTablePlacementArgs, error) {
+	if job.Version == JobVersion1 {
+		placementPolicyRef := &PolicyRefInfo{}
+		if err := job.DecodeArgs(&placementPolicyRef); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AlterTablePlacementArgs{
+			PlacementPolicyRef: placementPolicyRef,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*AlterTablePlacementArgs](job)
+}
