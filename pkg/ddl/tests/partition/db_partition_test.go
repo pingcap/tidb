@@ -3734,3 +3734,17 @@ func checkGlobalAndPK(t *testing.T, tk *testkit.TestKit, name string, indexes in
 		require.True(t, idxInfo.Primary)
 	}
 }
+
+func TestConvertPartitionToTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t (a int, b varchar(255), c int, primary key (a) clustered, key (b)) partition by range (a) (partition p0 values less than (1000000), partition p1 values less than (2000000))`)
+	tk.MustExec(`insert into t values (1,1,1),(2,2,2),(1000001,1000001,1000001)`)
+	tk.MustExec(`alter table t convert partition p0 to table t0`)
+	//tk.MustQuery(`show create table t0`).Check(testkit.Rows())
+	//tk.MustQuery(`show create table t`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1000001 1000001 1000001"))
+	tk.MustQuery(`select * from t0`).Sort().Check(testkit.Rows("1 1 1", "2 2 2"))
+}

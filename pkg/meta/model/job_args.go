@@ -354,6 +354,48 @@ func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, er
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
 }
 
+// ConvertPartitionArgs is used for ActionConvertPartitionToTable
+type ConvertPartitionArgs struct {
+	PartName         string `json:"part_name,omitempty"`
+	NewTableSchemaID int64  `json:"new_table_schema_id,omitempty"`
+	NewTableName     string `json:"new_table_name,omitempty"`
+}
+
+func (a *ConvertPartitionArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.PartName, a.NewTableSchemaID, a.NewTableName}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *ConvertPartitionArgs) decodeV1(job *Job) error {
+	var (
+		partName         string
+		newTableSchemaID int64
+		newTableName     string
+	)
+	if err := job.DecodeArgs(&partName, &newTableSchemaID, &newTableName); err != nil {
+		return err
+	}
+	a.PartName = partName
+	a.NewTableSchemaID = newTableSchemaID
+	a.NewTableName = newTableName
+	return nil
+}
+
+// GetConvertPartitionArgs gets the table partition args.
+func GetConvertPartitionArgs(job *Job) (*ConvertPartitionArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &ConvertPartitionArgs{}
+		if err := args.decodeV1(job); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*ConvertPartitionArgs](job)
+}
+
 // TablePartitionArgs is the arguments for table partition related jobs, including:
 //   - ActionAlterTablePartitioning
 //   - ActionRemovePartitioning

@@ -3056,6 +3056,8 @@ const (
 	AlterTableReorganizeLastPartition
 	AlterTableReorganizeFirstPartition
 	AlterTableRemoveTTL
+	AlterTableConvertPartitionToTable
+	AlterTableConvertTableToPartition
 )
 
 // LockType is the type for AlterTableSpec.
@@ -3689,6 +3691,19 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WritePlain(")")
 		}
+	case AlterTableConvertTableToPartition:
+		ctx.WriteKeyWord("CONVERT TABLE ")
+		n.NewTable.Restore(ctx)
+		ctx.WriteKeyWord(" TO ")
+		n.PartDefinitions[0].Restore(ctx)
+		if !n.WithValidation {
+			ctx.WriteKeyWord(" WITHOUT VALIDATION")
+		}
+	case AlterTableConvertPartitionToTable:
+		ctx.WriteKeyWord("CONVERT PARTITION ")
+		ctx.WriteName(n.PartitionNames[0].O)
+		ctx.WriteKeyWord(" TO TABLE ")
+		n.Options[0].TableNames[0].Restore(ctx)
 	case AlterTableExchangePartition:
 		ctx.WriteKeyWord("EXCHANGE PARTITION ")
 		ctx.WriteName(n.PartitionNames[0].O)

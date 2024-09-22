@@ -198,3 +198,14 @@ create table tp1(id int);
 ALTER TABLE tp1 PARTITION BY RANGE (id) INTERVAL (100) FIRST PARTITION LESS THAN (200) LAST PARTITION LESS THAN (600);
 select QUERY from information_schema.ddl_jobs limit 1;
 drop table tp1;
+
+create table pt (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
+# TODO Implement!
+-- error 8200
+alter table pt convert partition p0 to table nt;
+-- error 1146
+alter table pt convert table nt to partition p2 values less than (30);
+create table nt (a int, b int);
+-- error 8200
+alter table pt convert table nt to partition p2 values less than (30);
+drop table pt,nt;

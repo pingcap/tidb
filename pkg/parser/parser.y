@@ -1248,6 +1248,7 @@ import (
 	PartitionDefinition                    "Partition definition"
 	PartitionDefinitionList                "Partition definition list"
 	PartitionDefinitionListOpt             "Partition definition list option"
+	PartitionDefinitionWithoutSubPartition "Partition definition without subpartition"
 	PartitionIntervalOpt                   "Partition interval option"
 	PartitionKeyAlgorithmOpt               "ALGORITHM = n option for KEY partition"
 	PartitionMethod                        "Partition method"
@@ -2388,6 +2389,25 @@ AlterTableSpec:
 			Tp:         ast.AlterTableDropStatistics,
 			IfExists:   $3.(bool),
 			Statistics: statsSpec,
+		}
+	}
+|	"CONVERT" "PARTITION" Identifier "TO" "TABLE" TableName
+	{
+		to := &ast.TableOption{TableNames: []*ast.TableName{$6.(*ast.TableName)}}
+		$$ = &ast.AlterTableSpec{
+			Tp:             ast.AlterTableConvertPartitionToTable,
+			PartitionNames: []model.CIStr{model.NewCIStr($3)},
+			// NewTable will be preprocessed to make sure it exists, so use this instead.
+			Options: []*ast.TableOption{to},
+		}
+	}
+|	"CONVERT" "TABLE" TableName "TO" PartitionDefinitionWithoutSubPartition WithValidationOpt
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:              ast.AlterTableConvertTableToPartition,
+			NewTable:        $3.(*ast.TableName),
+			PartDefinitions: []*ast.PartitionDefinition{$5.(*ast.PartitionDefinition)},
+			WithValidation:  $6.(bool),
 		}
 	}
 |	"EXCHANGE" "PARTITION" Identifier "WITH" "TABLE" TableName WithValidationOpt
@@ -4769,13 +4789,20 @@ PartitionDefinitionList:
 	}
 
 PartitionDefinition:
-	"PARTITION" Identifier PartDefValuesOpt PartDefOptionList SubPartDefinitionListOpt
+	PartitionDefinitionWithoutSubPartition SubPartDefinitionListOpt
+	{
+		pd := $1.(*ast.PartitionDefinition)
+		pd.Sub = $2.([]*ast.SubPartitionDefinition)
+		$$ = pd
+	}
+
+PartitionDefinitionWithoutSubPartition:
+	"PARTITION" Identifier PartDefValuesOpt PartDefOptionList
 	{
 		$$ = &ast.PartitionDefinition{
 			Name:    model.NewCIStr($2),
 			Clause:  $3.(ast.PartitionDefinitionClause),
 			Options: $4.([]*ast.TableOption),
-			Sub:     $5.([]*ast.SubPartitionDefinition),
 		}
 	}
 
