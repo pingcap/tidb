@@ -18,6 +18,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/meta/model",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/charset",
         "//pkg/parser/duration",
@@ -44,8 +45,9 @@ go_test(
     ],
     embed = [":model"],
     flaky = True,
-    shard_count = 39,
+    shard_count = 41,
     deps = [
+        "//pkg/parser/ast",
         "//pkg/parser/charset",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

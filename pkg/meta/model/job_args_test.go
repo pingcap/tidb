@@ -467,6 +467,20 @@ func TestGetAlterSequenceArgs(t *testing.T) {
 		require.Equal(t, inArgs, args)
 	}
 }
+
+func TestGetModifyTableAutoIDCacheArgs(t *testing.T) {
+	inArgs := &ModifyTableAutoIDCacheArgs{
+		NewCache: 7527,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifyTableAutoIDCache)))
+		args, err := GetModifyTableAutoIDCacheArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
 func TestAddCheckConstraintArgs(t *testing.T) {
 	Constraint :=
 		&ConstraintInfo{

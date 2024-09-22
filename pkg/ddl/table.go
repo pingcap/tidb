@@ -657,8 +657,8 @@ func onRebaseAutoID(jobCtx *jobContext, t *meta.Meta, job *model.Job, tp autoid.
 }
 
 func onModifyTableAutoIDCache(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, error) {
-	var cache int64
-	if err := job.DecodeArgs(&cache); err != nil {
+	args, err := model.GetModifyTableAutoIDCacheArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
@@ -668,7 +668,7 @@ func onModifyTableAutoIDCache(jobCtx *jobContext, t *meta.Meta, job *model.Job) 
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo.AutoIDCache = cache
+	tblInfo.AutoIDCache = args.NewCache
 	ver, err := updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)

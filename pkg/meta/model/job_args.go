@@ -740,7 +740,7 @@ type AlterSequenceArgs struct {
 }
 
 func (a *AlterSequenceArgs) fillJob(job *Job) {
-	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "Job.DecodeArgs is invalid")
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
 		job.Args = []any{a.Ident, a.SeqOptions}
 	} else {
@@ -749,7 +749,6 @@ func (a *AlterSequenceArgs) fillJob(job *Job) {
 }
 
 // GetAlterSequenceArgs gets the args for alter Sequence ddl job.
-
 func GetAlterSequenceArgs(job *Job) (*AlterSequenceArgs, error) {
 	if job.Version == JobVersion1 {
 		var (
@@ -766,6 +765,35 @@ func GetAlterSequenceArgs(job *Job) (*AlterSequenceArgs, error) {
 	}
 
 	return getOrDecodeArgsV2[*AlterSequenceArgs](job)
+}
+
+// ModifyTableAutoIDCacheArgs is the arguments for Modify Table AutoID Cache ddl job.
+type ModifyTableAutoIDCacheArgs struct {
+	NewCache int64
+}
+
+func (a *ModifyTableAutoIDCacheArgs) fillJob(job *Job) {
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.NewCache}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetModifyTableAutoIDCacheArgs gets the args for modify table autoID cache ddl job.
+func GetModifyTableAutoIDCacheArgs(job *Job) (*ModifyTableAutoIDCacheArgs, error) {
+	if job.Version == JobVersion1 {
+		var newCache int64
+		if err := job.DecodeArgs(&newCache); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &ModifyTableAutoIDCacheArgs{
+			NewCache: newCache,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*ModifyTableAutoIDCacheArgs](job)
 }
 
 // GetCheckConstraintArgs gets the AlterCheckConstraint args.
