@@ -161,7 +161,8 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 
 		preferRangeScanCondition := allowPreferRangeScan && (tblColHists.Pseudo || tblColHists.RealtimeCount < 1)
 		hasHighModifyCount := tblColHists.ModifyCount > tblColHists.RealtimeCount
-		shouldApplyPenalty := !p.isChildOfIndexLookUp && (preferRangeScanCondition || hasHighModifyCount)
+		hasLowEstimate := rows > 1 && int64(rows) < tblColHists.RealtimeCount && int64(rows) <= tblColHists.ModifyCount
+		shouldApplyPenalty := !p.isChildOfIndexLookUp && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
 
 		if shouldApplyPenalty {
 			newRowCount := math.Min(MaxPenaltyRowCount, math.Max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
