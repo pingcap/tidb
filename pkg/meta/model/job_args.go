@@ -551,6 +551,20 @@ func UpdateRenameTableArgs(job *Job) error {
 	return nil
 }
 
+// CheckConstraintArgs is the arguments for both AlterCheckConstraint and DropCheckConstraint job.
+type CheckConstraintArgs struct {
+	ConstraintName pmodel.CIStr `json:"constraint_name,omitempty"`
+	Enforced       bool         `json:"enforced,omitempty"`
+}
+
+func (a *CheckConstraintArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.ConstraintName, a.Enforced}
+		return
+	}
+	job.Args = []any{a}
+}
+
 // ResourceGroupArgs is the arguments for resource group job.
 type ResourceGroupArgs struct {
 	// for DropResourceGroup we only use it to store the name, other fields are invalid.
@@ -716,4 +730,52 @@ func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
 			newSchemaIDs, newTableNames, tableIDs), nil
 	}
 	return getOrDecodeArgsV2[*RenameTablesArgs](job)
+}
+
+// GetCheckConstraintArgs gets the AlterCheckConstraint args.
+func GetCheckConstraintArgs(job *Job) (*CheckConstraintArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			constraintName pmodel.CIStr
+			enforced       bool
+		)
+		err := job.DecodeArgs(&constraintName, &enforced)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &CheckConstraintArgs{
+			ConstraintName: constraintName,
+			Enforced:       enforced,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*CheckConstraintArgs](job)
+}
+
+// AddCheckConstraintArgs is the arguemnt for add check constraint
+type AddCheckConstraintArgs struct {
+	Constraint *ConstraintInfo `json:"constraint_info"`
+}
+
+func (a *AddCheckConstraintArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.Constraint}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetAddCheckConstraintArgs gets the AddCheckConstraint args.
+func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
+	if job.Version == JobVersion1 {
+		var constraintInfo ConstraintInfo
+		err := job.DecodeArgs(&constraintInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AddCheckConstraintArgs{
+			Constraint: &constraintInfo,
+		}, nil
+	}
+	return getOrDecodeArgsV2[*AddCheckConstraintArgs](job)
 }
