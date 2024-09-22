@@ -481,6 +481,20 @@ func TestGetModifyTableAutoIDCacheArgs(t *testing.T) {
 	}
 }
 
+func TestGetShardRowIDArgs(t *testing.T) {
+	inArgs := &ShardRowIDArgs{
+		ShardRowIDBits: 101,
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionShardRowID)))
+		args, err := GetShardRowIDArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
 func TestAddCheckConstraintArgs(t *testing.T) {
 	Constraint :=
 		&ConstraintInfo{

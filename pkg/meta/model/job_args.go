@@ -735,8 +735,8 @@ func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
 
 // AlterSequenceArgs is the arguments for alter sequence ddl job.
 type AlterSequenceArgs struct {
-	Ident      ast.Ident
-	SeqOptions []*ast.SequenceOption
+	Ident      ast.Ident             `json:"ident,omitempty"`
+	SeqOptions []*ast.SequenceOption `json:"seq_options,omitempty"`
 }
 
 func (a *AlterSequenceArgs) fillJob(job *Job) {
@@ -769,7 +769,7 @@ func GetAlterSequenceArgs(job *Job) (*AlterSequenceArgs, error) {
 
 // ModifyTableAutoIDCacheArgs is the arguments for Modify Table AutoID Cache ddl job.
 type ModifyTableAutoIDCacheArgs struct {
-	NewCache int64
+	NewCache int64 `json:"new_cache,omitempty"`
 }
 
 func (a *ModifyTableAutoIDCacheArgs) fillJob(job *Job) {
@@ -794,6 +794,35 @@ func GetModifyTableAutoIDCacheArgs(job *Job) (*ModifyTableAutoIDCacheArgs, error
 	}
 
 	return getOrDecodeArgsV2[*ModifyTableAutoIDCacheArgs](job)
+}
+
+// ShardRowIDArgs is the arguments for shard row ID ddl job.
+type ShardRowIDArgs struct {
+	ShardRowIDBits uint64 `json:"shard_row_id_bits,omitempty"`
+}
+
+func (a *ShardRowIDArgs) fillJob(job *Job) {
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.ShardRowIDBits}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetShardRowIDArgs gets the args for shard row ID ddl job.
+func GetShardRowIDArgs(job *Job) (*ShardRowIDArgs, error) {
+	if job.Version == JobVersion1 {
+		var val uint64
+		if err := job.DecodeArgs(&val); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &ShardRowIDArgs{
+			ShardRowIDBits: val,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*ShardRowIDArgs](job)
 }
 
 // GetCheckConstraintArgs gets the AlterCheckConstraint args.

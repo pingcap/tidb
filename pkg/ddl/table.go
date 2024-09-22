@@ -678,12 +678,13 @@ func onModifyTableAutoIDCache(jobCtx *jobContext, t *meta.Meta, job *model.Job) 
 }
 
 func (w *worker) onShardRowID(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var shardRowIDBits uint64
-	err := job.DecodeArgs(&shardRowIDBits)
+	args, err := model.GetShardRowIDArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	shardRowIDBits := args.ShardRowIDBits
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled

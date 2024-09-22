@@ -2185,17 +2185,18 @@ func (e *executor) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal
 		return err
 	}
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		Type:           model.ActionShardRowID,
 		SchemaID:       schema.ID,
 		TableID:        tbInfo.ID,
 		SchemaName:     schema.Name.L,
 		TableName:      tbInfo.Name.L,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{uVal},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = e.DoDDLJob(ctx, job)
+	args := &model.ShardRowIDArgs{ShardRowIDBits: uVal}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
