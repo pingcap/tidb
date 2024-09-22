@@ -351,11 +351,9 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagMasterKeyCipherType, "plaintext", "Encrypt/decrypt method, "+
 		"be one of plaintext|aes128-ctr|aes192-ctr|aes256-ctr case-insensitively, "+
 		"\"plaintext\" represents no encrypt/decrypt")
-	flags.String(flagMasterKeyConfig, "", "Master key configs for point in time restore "+
-		"can use comma separated string to specify multiple master key backends if log backup had master key rotation."+
-		"example: \"local:///path/to/master/key/file,"+
+	flags.String(flagMasterKeyConfig, "", "Master key config for point in time restore "+
+		"examples: \"local:///path/to/master/key/file,"+
 		"aws-kms:///{key-id}?AWS_ACCESS_KEY_ID={access-key}&AWS_SECRET_ACCESS_KEY={secret-key}&REGION={region},"+
-		"azure-kms:///{key-name}/{key-version}?AZURE_TENANT_ID={tenant-id}&AZURE_CLIENT_ID={client-id}&AZURE_CLIENT_SECRET={client-secret}&AZURE_VAULT_NAME={vault-name},"+
 		"gcp-kms:///projects/{project-id}/locations/{location}/keyRings/{keyring}/cryptoKeys/{key-name}?AUTH=specified&CREDENTIALS={credentials}\"")
 	_ = flags.MarkHidden(flagMetadataDownloadBatchSize)
 
