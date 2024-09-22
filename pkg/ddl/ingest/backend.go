@@ -194,27 +194,27 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err erro
 	}
 
 	// Use distributed lock if run in distributed mode).
-	if bc.etcdClient != nil {
-		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d", bc.jobID)
-		se, _ := concurrency.NewSession(bc.etcdClient)
-		mu, err := acquireLock(bc.ctx, se, distLockKey)
-		if err != nil {
-			return true, false, errors.Trace(err)
-		}
-		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
-		defer func() {
-			err = mu.Unlock(bc.ctx)
-			if err != nil {
-				logutil.Logger(bc.ctx).Warn("release distributed flush lock error", zap.Error(err), zap.Int64("jobID", bc.jobID))
-			} else {
-				logutil.Logger(bc.ctx).Info("release distributed flush lock success", zap.Int64("jobID", bc.jobID))
-			}
-			err = se.Close()
-			if err != nil {
-				logutil.Logger(bc.ctx).Warn("close session error", zap.Error(err))
-			}
-		}()
-	}
+	// if bc.etcdClient != nil {
+	// 	distLockKey := fmt.Sprintf("/tidb/distributeLock/%d", bc.jobID)
+	// 	se, _ := concurrency.NewSession(bc.etcdClient)
+	// 	mu, err := acquireLock(bc.ctx, se, distLockKey)
+	// 	if err != nil {
+	// 		return true, false, errors.Trace(err)
+	// 	}
+	// 	logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
+	// 	defer func() {
+	// 		err = mu.Unlock(bc.ctx)
+	// 		if err != nil {
+	// 			logutil.Logger(bc.ctx).Warn("release distributed flush lock error", zap.Error(err), zap.Int64("jobID", bc.jobID))
+	// 		} else {
+	// 			logutil.Logger(bc.ctx).Info("release distributed flush lock success", zap.Int64("jobID", bc.jobID))
+	// 		}
+	// 		err = se.Close()
+	// 		if err != nil {
+	// 			logutil.Logger(bc.ctx).Warn("close session error", zap.Error(err))
+	// 		}
+	// 	}()
+	// }
 	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
 		if MockDMLExecutionStateBeforeImport != nil {
 			MockDMLExecutionStateBeforeImport()
