@@ -749,7 +749,6 @@ func (a *AlterSequenceArgs) fillJob(job *Job) {
 }
 
 // GetAlterSequenceArgs gets the args for alter Sequence ddl job.
-
 func GetAlterSequenceArgs(job *Job) (*AlterSequenceArgs, error) {
 	if job.Version == JobVersion1 {
 		var (
