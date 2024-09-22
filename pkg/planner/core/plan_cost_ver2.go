@@ -118,6 +118,12 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *
 	return p.PlanCostVer2, nil
 }
 
+const (
+	MinRowSize               = 2.0
+	TiFlashStartupRowPenalty = 10000
+	MaxPenaltyRowCount       = 1000
+)
+
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
@@ -127,24 +133,37 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	rows := getCardinality(p, option.CostFlag)
-	var rowSize float64
-	if p.StoreType == kv.TiKV {
-		rowSize = getAvgRowSize(p.StatsInfo(), p.tblCols) // consider all columns if TiKV
-	} else { // TiFlash
-		rowSize = getAvgRowSize(p.StatsInfo(), p.schema.Columns)
-	}
-	rowSize = math.Max(rowSize, 2.0)
-	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 
+	var columns []*expression.Column
+	if p.StoreType == kv.TiKV { // Assume all columns for TiKV
+		columns = p.tblCols
+	} else { // TiFlash
+		columns = p.schema.Columns
+	}
+	rowSize := getAvgRowSize(p.StatsInfo(), columns)
+	// Ensure rowSize has a reasonable minimum value to avoid underestimation
+	rowSize = math.Max(rowSize, MinRowSize)
+
+	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 
-	// give TiFlash a start-up cost to let the optimizer prefers to use TiKV to process small table scans.
+	// Apply TiFlash startup cost to prefer TiKV for small table scans
 	if p.StoreType == kv.TiFlash {
-		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, 10000, rowSize, scanFactor))
-	} else if !p.isChildOfIndexLookUp && (p.SCtx().GetSessionVars().GetAllowPreferRangeScan() && (p.tblColHists.Pseudo || p.tblColHists.RealtimeCount < 1)) || p.tblColHists.ModifyCount > p.tblColHists.RealtimeCount {
-		// If tidb_opt_prefer_range_scan is enabled, OR we have a high modifyCount - apply a cost penalty
-		newRowCount := math.Min(1000, math.Max(float64(p.tblColHists.ModifyCount), float64(p.tblColHists.RealtimeCount)))
-		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
+	} else {
+		// Apply cost penalty for high modifyCount or if PreferRangeScan enabled and pseudo/zero stats
+		sessionVars := p.SCtx().GetSessionVars()
+		allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
+		tblColHists := p.tblColHists
+
+		preferRangeScanCondition := allowPreferRangeScan && (tblColHists.Pseudo || tblColHists.RealtimeCount < 1)
+		hasHighModifyCount := tblColHists.ModifyCount > tblColHists.RealtimeCount
+		shouldApplyPenalty := !p.isChildOfIndexLookUp && (preferRangeScanCondition || hasHighModifyCount)
+
+		if shouldApplyPenalty {
+			newRowCount := math.Min(MaxPenaltyRowCount, math.Max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
+			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
+		}
 	}
 
 	p.PlanCostInit = true
