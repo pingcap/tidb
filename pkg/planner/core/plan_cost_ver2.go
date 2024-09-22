@@ -119,9 +119,9 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *
 }
 
 const (
-	MinRowSize               = 2.0
-	TiFlashStartupRowPenalty = 10000
-	MaxPenaltyRowCount       = 1000
+	MinRowSize               = 2.0   // Provide a minimum to avoid underestimation
+	TiFlashStartupRowPenalty = 10000 // Startup penalty for TiFlash scan
+	MaxPenaltyRowCount       = 1000  // Penalty for high risk scans
 )
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
