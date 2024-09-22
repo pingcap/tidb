@@ -115,6 +115,20 @@ check_db_consistency() {
     return 0
 }
 
+verify_dbs_empty() {
+    echo "Verifying databases are empty"
+    for i in $(seq $DB_COUNT); do
+        db_name="$DB${i}"
+        table_count=$(run_sql "USE $db_name; SHOW TABLES;" | wc -l)
+        if [ "$table_count" -ne 0 ]; then
+            echo "ERROR: Database $db_name is not empty"
+            return 1
+        fi
+    done
+    echo "All databases are empty"
+    return 0
+}
+
 run_backup_restore_test() {
     local encryption_mode=$1
     local full_encryption_args=$2
@@ -161,11 +175,11 @@ run_backup_restore_test() {
     #sanity check stop still works
     run_br log stop --task-name $TASK_NAME --pd $PD_ADDR || { echo "Failed to stop log backup"; exit 1; }
 
+    # restart service should clean up everything
     restart_services || { echo "Failed to restart services"; exit 1; }
 
-    # Drop databases before restoring
-    drop_db || { echo "Failed to drop databases before restore"; exit 1; }
-
+    verify_dbs_empty || { echo "Failed to verify databases are empty"; exit 1; }
+    
     # Run pitr restore and measure the performance
     echo "restore log backup with $full_encryption_args and $log_encryption_args"
     local start_time=$(date +%s.%N)
