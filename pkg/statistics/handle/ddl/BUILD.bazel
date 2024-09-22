@@ -31,22 +31,13 @@ go_test(
     timeout = "short",
     srcs = ["ddl_test.go"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 27,
-    deps = [
-        "//pkg/parser/model",
-        "//pkg/planner/cardinality",
-        "//pkg/statistics/handle/util",
-=======
-    shard_count = 19,
+    shard_count = 28,
     deps = [
         ":ddl",
-        "//pkg/ddl/notifier",
-        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/planner/cardinality",
         "//pkg/statistics/handle/storage",
->>>>>>> b9a7d35b82f (statistics: add `for update` into write to avoid inaccurate results (#56055))
+        "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//pkg/types",
         "//pkg/util",

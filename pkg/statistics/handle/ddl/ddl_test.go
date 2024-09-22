@@ -20,12 +20,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-=======
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
->>>>>>> b9a7d35b82f (statistics: add `for update` into write to avoid inaccurate results (#56055))
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -1511,7 +1508,7 @@ func TestAddPartitioning(t *testing.T) {
 	)
 }
 
-func findEvent(eventCh <-chan *util.DDLEvent, eventType model.ActionType) *util.DDLEvent {
+func findEvent(eventCh <-chan *statsutil.DDLEvent, eventType model.ActionType) *statsutil.DDLEvent {
 	// Find the target event.
 	for {
 		event := <-eventCh
@@ -1528,7 +1525,7 @@ func TestExchangePartition(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 int)")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	var wg util.WaitGroupWrapper
 	for i := 0; i < 20; i++ {
