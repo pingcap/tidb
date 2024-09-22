@@ -17,6 +17,7 @@ package model
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
@@ -436,6 +437,32 @@ func TestDropColumnArgs(t *testing.T) {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropColumn)))
 		args, err := GetDropColumnArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestGetAlterSequenceArgs(t *testing.T) {
+	inArgs := &AlterSequenceArgs{
+		Ident: ast.Ident{
+			Schema: model.NewCIStr("test_db"),
+			Name:   model.NewCIStr("test_t"),
+		},
+		SeqOptions: []*ast.SequenceOption{
+			{
+				Tp:       ast.SequenceOptionIncrementBy,
+				IntValue: 7527,
+			}, {
+				Tp:       ast.SequenceCache,
+				IntValue: 9528,
+			},
+		},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterSequence)))
+		args, err := GetAlterSequenceArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
 	}

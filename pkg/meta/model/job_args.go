@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -716,4 +717,39 @@ func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
 			newSchemaIDs, newTableNames, tableIDs), nil
 	}
 	return getOrDecodeArgsV2[*RenameTablesArgs](job)
+}
+
+// AlterSequenceArgs is the arguments for alter sequence ddl job.
+type AlterSequenceArgs struct {
+	Ident      ast.Ident
+	SeqOptions []*ast.SequenceOption
+}
+
+func (a *AlterSequenceArgs) fillJob(job *Job) {
+	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "Job.DecodeArgs is invalid")
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.Ident, a.SeqOptions}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAlterSequenceArgs gets the args for alter Sequence ddl job.
+
+func GetAlterSequenceArgs(job *Job) (*AlterSequenceArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			ident      ast.Ident
+			seqOptions []*ast.SequenceOption
+		)
+		if err := job.DecodeArgs(&ident, &seqOptions); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AlterSequenceArgs{
+			Ident:      ident,
+			SeqOptions: seqOptions,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*AlterSequenceArgs](job)
 }

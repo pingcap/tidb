@@ -5569,6 +5569,7 @@ func (e *executor) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequence
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       db.ID,
 		TableID:        tbl.Meta().ID,
 		SchemaName:     db.Name.L,
@@ -5579,8 +5580,11 @@ func (e *executor) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequence
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-
-	err = e.DoDDLJob(ctx, job)
+	args := &model.AlterSequenceArgs{
+		Ident:      ident,
+		SeqOptions: stmt.SeqOptions,
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
