@@ -244,6 +244,8 @@ type mdLoaderSetup struct {
 	dbIndexMap    map[string]int
 	tableIndexMap map[filter.Table]int
 	setupCfg      *MDLoaderSetupConfig
+
+	sampledParquetRowSize float64
 }
 
 // NewLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
@@ -532,12 +534,20 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 		}
 		s.tableDatas = append(s.tableDatas, info)
 	case SourceTypeParquet:
-		parquestDataSize, err2 := SampleParquetDataSize(ctx, info.FileMeta, s.loader.GetStore())
+		if s.sampledParquetRowSize == 0 {
+			s.sampledParquetRowSize, err = SampleParquetRowSize(ctx, info.FileMeta, s.loader.GetStore())
+			if err != nil {
+				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
+					zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type), zap.Error(err))
+				return err
+			}
+		}
+		totalRowCount, err2 := ReadParquetFileRowCountByFile(ctx, s.loader.GetStore(), info.FileMeta)
 		if err2 != nil {
-			logger.Error("fail to sample parquet data size", zap.String("category", "loader"),
+			logger.Error("fail to get file total row count", zap.String("category", "loader"),
 				zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type), zap.Error(err2))
 		} else {
-			info.FileMeta.RealSize = parquestDataSize
+			info.FileMeta.RealSize = int64(float64(totalRowCount) * s.sampledParquetRowSize)
 		}
 		s.tableDatas = append(s.tableDatas, info)
 	}
@@ -823,8 +833,8 @@ func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store
 	return float64(tot) / float64(pos), nil
 }
 
-// SampleParquetDataSize samples the data size of the parquet file.
-func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (int64, error) {
+// SampleParquetRowSize samples one row size of the parquet file.
+func SampleParquetRowSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
 	totalRowCount, err := ReadParquetFileRowCountByFile(ctx, store, fileMeta)
 	if totalRowCount == 0 || err != nil {
 		return 0, err
@@ -856,13 +866,12 @@ func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store s
 			return 0, err
 		}
 		lastRow := parser.LastRow()
-		rowCount++
+		rowCount += 1
 		rowSize += int64(lastRow.Length)
 		parser.RecycleRow(lastRow)
 		if rowSize > maxSampleParquetDataSize || rowCount > maxSampleParquetRowCount {
 			break
 		}
 	}
-	size := int64(float64(totalRowCount) / float64(rowCount) * float64(rowSize))
-	return size, nil
+	return float64(rowSize) / float64(rowCount), nil
 }
