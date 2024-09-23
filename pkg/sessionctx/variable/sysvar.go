@@ -775,13 +775,19 @@ var defaultSysVars = []*SysVar{
 		SetMaxDeltaSchemaCount(TidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBScatterRegion, Value: DefTiDBScatterRegion, PossibleValues: []string{"", "table", "global"}, Type: TypeEnum,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBScatterRegion, Value: DefTiDBScatterRegion, PossibleValues: []string{"", "table", "global"}, Type: TypeStr,
 		SetSession: func(vars *SessionVars, val string) error {
 			vars.ScatterRegion = val
 			return nil
 		},
 		GetSession: func(vars *SessionVars) (string, error) {
 			return vars.ScatterRegion, nil
+		},
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			if normalizedValue != "" && normalizedValue != "table" && normalizedValue != "global" {
+				return "", fmt.Errorf("invalid value for %s, it should be either '%s', '%s' or '%s'", normalizedValue, "", "table", "global")
+			}
+			return normalizedValue, nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(DefTiDBEnableStmtSummary), Type: TypeBool, AllowEmpty: true,
