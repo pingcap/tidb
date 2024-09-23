@@ -31,6 +31,7 @@ const ServerVerPrefix = "8.0.11-TiDB-"
 // Version information.
 var (
 	// TiDBReleaseVersion is initialized by (git describe --tags) in Makefile.
+	// example: v8.4.0-alpha-228-g650888fea7-dirty.
 	TiDBReleaseVersion = "None"
 
 	// ServerVersion is the version information of this tidb-server in MySQL's format.

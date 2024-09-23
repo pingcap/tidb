@@ -856,12 +856,16 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 	allSupportV2 := true
 	for _, info := range infos {
 		tidbVer := strings.TrimPrefix(info.Version, mysql.ServerVerPrefix)
+		tidbVer = strings.TrimPrefix(tidbVer, "v")
 		ver, err2 := semver.NewVersion(tidbVer)
 		if err2 != nil {
 			allSupportV2 = false
 			logutil.DDLLogger().Warn("parse server version failed, fallback to job version 1",
 				zap.String("err", err2.Error()))
+			break
 		}
+		// Note: pre-release version of 8.4.0 will NOT be considered as support V2.
+		// such as v8.4.0-alpha-228-g650888fea7-dirty.
 		if ver.LessThan(jobV2FirstVer) {
 			allSupportV2 = false
 			break
