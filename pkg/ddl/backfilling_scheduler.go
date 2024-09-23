@@ -178,6 +178,7 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnA
 		TiFlashQuerySpillRatio:               variable.DefTiFlashQuerySpillRatio,
 		ResourceGroupName:                    resourcegroup.DefaultResourceGroupName,
 		ExecDetails:                          &execDetails,
+		Priority:                             kv.PriorityLow,
 	}
 }
 
