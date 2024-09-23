@@ -82,12 +82,6 @@ const (
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
-
-	// ForceDDLJobVersionToV1InTest is a flag to force using ddl job version 1 in test.
-	// Since 8.4.0, we have a new version of DDL args, but we have to keep logics of
-	// old version for compatibility. We use set it to true to run unit-test another
-	// round for it to make sure both code are working correctly.
-	ForceDDLJobVersionToV1InTest = false
 )
 
 const (
@@ -96,6 +90,13 @@ const (
 	recoverCheckFlagEnableGC
 	recoverCheckFlagDisableGC
 )
+
+// ForceDDLJobVersionToV1InTest is a flag to force using ddl job version 1 in test.
+// Since 8.4.0, we have a new version of DDL args, but we have to keep logics of
+// old version for compatibility. We use set it to true to run unit-test another
+// round for it to make sure both code are working correctly.
+// Don't use it in unit-test. It's set in Makefile.
+var ForceDDLJobVersionToV1InTest = "false"
 
 // OnExist specifies what to do when a new object has a name collision.
 type OnExist uint8
@@ -725,7 +726,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// we will random choose a job version to run with.
 	// TODO add a separate CI flow to run with different job version, so we can cover
 	// more cases in a single run.
-	if (intest.InTest || config.GetGlobalConfig().Store == "unistore") && !ForceDDLJobVersionToV1InTest {
+	if (intest.InTest || config.GetGlobalConfig().Store == "unistore") && ForceDDLJobVersionToV1InTest == "false" {
 		jobVer := model.JobVersion1
 		// 50% percent to use JobVersion2 in test.
 		rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -736,7 +737,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	}
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid),
 		zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()),
-		zap.Stringer("jobVersion", model.GetJobVerInUse()))
+		zap.Stringer("jobVersion", model.GetJobVerInUse()),
+		zap.String("ForceDDLJobVersionToV1InTest", ForceDDLJobVersionToV1InTest))
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool
