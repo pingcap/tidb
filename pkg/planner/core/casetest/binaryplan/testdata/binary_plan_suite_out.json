@@ -468,7 +468,7 @@
         "SQL": "explain analyze format = 'binary' delete from t2",
         "BinaryPlan": {
           "main": {
-            "name": "Delete_3",
+            "name": "Delete_2",
             "children": [
               {
                 "name": "TableReader_6",
@@ -483,7 +483,7 @@
                     "operator_info": "keep order:false, stats:pseudo"
                   }
                 ],
-                "cost": 278258.64918623405,
+                "cost": 193778.64918623405,
                 "est_rows": 10000,
                 "act_rows": 8,
                 "task_type": 1,

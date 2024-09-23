@@ -22,6 +22,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/bits-and-blooms/bitset"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -217,6 +218,7 @@ type UpdateRecordOption interface {
 // RemoveRecordOpt contains the options will be used when removing a record.
 type RemoveRecordOpt struct {
 	indexesLayoutOffset IndexesLayout
+	columnSize          *ColumnSizeOption
 }
 
 // HasIndexesLayout returns whether the RemoveRecordOpt has indexes layout.
@@ -224,9 +226,19 @@ func (opt *RemoveRecordOpt) HasIndexesLayout() bool {
 	return opt.indexesLayoutOffset != nil
 }
 
+// GetIndexesLayout returns the IndexesLayout of the RemoveRecordOpt.
+func (opt *RemoveRecordOpt) GetIndexesLayout() IndexesLayout {
+	return opt.indexesLayoutOffset
+}
+
 // GetIndexLayout returns the IndexRowLayoutOption for the specified index.
 func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
 	return opt.indexesLayoutOffset[indexID]
+}
+
+// GetColumnSizeOpt returns the ColumnSizeOption of the RemoveRecordOpt.
+func (opt *RemoveRecordOpt) GetColumnSizeOpt() *ColumnSizeOption {
+	return opt.columnSize
 }
 
 // NewRemoveRecordOpt creates a new RemoveRecordOpt with options.
@@ -251,8 +263,29 @@ type IndexRowLayoutOption []int
 // It's mapping from index ID to the layout of the index.
 type IndexesLayout map[int64]IndexRowLayoutOption
 
+// GetIndexLayout returns the layout of the specified index.
+func (idx IndexesLayout) GetIndexLayout(idxID int64) IndexRowLayoutOption {
+	if idx == nil {
+		return nil
+	}
+	return idx[idxID]
+}
+
 func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
 	opt.indexesLayoutOffset = idx
+}
+
+// ColumnSizeOption records the column size information.
+// If the column is not pruned, we can calculate its acurate size by the real data.
+// Otherwise, we use the estimated avg size given by table statistics and field type information.
+type ColumnSizeOption struct {
+	NotPruned        *bitset.BitSet
+	AvgSizes         []float64
+	PublicColsLayout []int
+}
+
+func (c *ColumnSizeOption) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
+	opt.columnSize = c
 }
 
 // CommonMutateOptFunc is a function to provide common options for mutating a table.

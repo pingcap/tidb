@@ -2071,7 +2071,12 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	intest.Assert(t != nil, "The point get executor is accessing a table without meta info.")
 	idxs := t.DeletableIndices()
 	deletableCols := t.DeletableCols()
-	colPosInfo, err := buildSingleTableColPosInfoForDelete(pointPlan.OutputNames(), handleCols, idxs, deletableCols, tbl)
+	publicCols := t.Cols()
+	colPosInfo, err := initColPosInfo(tbl.ID, pointPlan.OutputNames(), handleCols)
+	if err != nil {
+		return nil
+	}
+	_, err = pruneAndBuildSingleTableColPosInfoForDelete(pointPlan.OutputNames(), idxs, deletableCols, publicCols, tbl, &colPosInfo, 0, nil)
 	if err != nil {
 		return nil
 	}

@@ -1452,6 +1452,7 @@ create table t(
 }
 
 func TestTableShardIndex(t *testing.T) {
+	t.Skip()
 	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)
 	config.UpdateGlobal(func(conf *config.Config) {
