@@ -16,9 +16,7 @@ package join
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
-	"math/big"
+	"math/rand"
 	"sort"
 	"strconv"
 	"testing"
@@ -32,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
+
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 type hashJoinInfo struct {
 	ctx                   sessionctx.Context
@@ -200,8 +200,7 @@ func buildJoinKeyIntDatums(num int) []any {
 	datumSet := make(map[int64]bool, num)
 	datums := make([]any, 0, num)
 	for len(datums) < num {
-		randVal, _ := rand.Int(rand.Reader, big.NewInt(100000))
-		val := randVal.Int64()
+		val := rand.Int63n(100000)
 		if datumSet[val] {
 			continue
 		}
@@ -211,17 +210,19 @@ func buildJoinKeyIntDatums(num int) []any {
 	return datums
 }
 
+func getRandString() string {
+	b := make([]byte, 10)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return string(b)
+}
+
 func buildJoinKeyStringDatums(num int) []any {
 	datumSet := make(map[string]bool, num)
 	datums := make([]any, 0, num)
 	for len(datums) < num {
-		buff := make([]byte, 10)
-		_, err := rand.Read(buff)
-		if err != nil {
-			panic("rand.Read returns error")
-		}
-
-		val := base64.RawURLEncoding.EncodeToString(buff)
+		val := getRandString()
 		if datumSet[val] {
 			continue
 		}

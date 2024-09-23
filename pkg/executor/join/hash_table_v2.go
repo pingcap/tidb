@@ -190,25 +190,25 @@ func newJoinHashTableForTest(partitionedRowTables []*rowTable) *hashTableV2 {
 	return jht
 }
 
-func (jht *hashTableV2) createRowPos(pos uint64) *rowPos {
-	if pos > jht.totalRowCount() {
+func (ht *hashTableV2) createRowPos(pos uint64) *rowPos {
+	if pos > ht.totalRowCount() {
 		panic("invalid call to createRowPos, the input pos should be in [0, totalRowCount]")
 	}
-	if pos == jht.totalRowCount() {
+	if pos == ht.totalRowCount() {
 		return &rowPos{
-			subTableIndex:   len(jht.tables),
+			subTableIndex:   len(ht.tables),
 			rowSegmentIndex: 0,
 			rowIndex:        0,
 		}
 	}
 	subTableIndex := 0
-	for pos >= jht.tables[subTableIndex].rowData.rowCount() {
-		pos -= jht.tables[subTableIndex].rowData.rowCount()
+	for pos >= ht.tables[subTableIndex].rowData.rowCount() {
+		pos -= ht.tables[subTableIndex].rowData.rowCount()
 		subTableIndex++
 	}
 	rowSegmentIndex := 0
-	for pos >= uint64(jht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount()) {
-		pos -= uint64(jht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount())
+	for pos >= uint64(ht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount()) {
+		pos -= uint64(ht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount())
 		rowSegmentIndex++
 	}
 	return &rowPos{
@@ -217,19 +217,19 @@ func (jht *hashTableV2) createRowPos(pos uint64) *rowPos {
 		rowIndex:        pos,
 	}
 }
-func (jht *hashTableV2) createRowIter(start, end uint64) *rowIter {
+func (ht *hashTableV2) createRowIter(start, end uint64) *rowIter {
 	if start > end {
 		start = end
 	}
 	return &rowIter{
-		table:      jht,
-		currentPos: jht.createRowPos(start),
-		endPos:     jht.createRowPos(end),
+		table:      ht,
+		currentPos: ht.createRowPos(start),
+		endPos:     ht.createRowPos(end),
 	}
 }
 
-func (jht *hashTableV2) isHashTableEmpty() bool {
-	for _, subTable := range jht.tables {
+func (ht *hashTableV2) isHashTableEmpty() bool {
+	for _, subTable := range ht.tables {
 		if !subTable.isHashTableEmpty {
 			return false
 		}
@@ -237,9 +237,9 @@ func (jht *hashTableV2) isHashTableEmpty() bool {
 	return true
 }
 
-func (jht *hashTableV2) totalRowCount() uint64 {
+func (ht *hashTableV2) totalRowCount() uint64 {
 	ret := uint64(0)
-	for _, table := range jht.tables {
+	for _, table := range ht.tables {
 		ret += table.rowData.rowCount()
 	}
 	return ret

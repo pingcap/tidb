@@ -312,6 +312,11 @@ func (w *buildWorkerBase) fetchBuildSideRows(ctx context.Context, hashJoinCtx *h
 
 	for {
 		err := checkAndSpillRowTableIfNeeded(fetcherAndWorkerSyncer, spillHelper)
+		if err != nil {
+			hasError = true
+			return
+		}
+
 		err = triggerIntest(2)
 		if err != nil {
 			hasError = true

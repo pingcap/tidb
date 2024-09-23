@@ -293,7 +293,7 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64)
 	return spilledPartitions, releasedMemoryUsage
 }
 
-func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
+func (*hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
 	rowLen := len(seg.rowStartOffset)
 	validJoinKeys = validJoinKeys[:rowLen]
 	for i := 0; i < rowLen; i++ {
@@ -578,12 +578,12 @@ type restoreStack struct {
 }
 
 func (r *restoreStack) pop() *restorePartition {
-	len := len(r.elems)
-	if len == 0 {
+	length := len(r.elems)
+	if length == 0 {
 		return nil
 	}
-	ret := r.elems[len-1]
-	r.elems = r.elems[:len-1]
+	ret := r.elems[length-1]
+	r.elems = r.elems[:length-1]
 	return ret
 }
 

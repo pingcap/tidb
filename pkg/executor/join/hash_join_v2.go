@@ -188,7 +188,7 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	}
 }
 
-func (htc *hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable) (int64, []int64) {
+func (*hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable) (int64, []int64) {
 	totalMemoryUsage := int64(0)
 	partitionsMemoryUsage := make([]int64, 0)
 	for _, table := range rowTables {
@@ -464,14 +464,14 @@ func (b *BuildWorkerV2) clearSegmentsInRowTable(partID int) {
 	b.HashJoinCtx.hashTableContext.clearSegmentsInRowTable(int(b.WorkerID), partID)
 }
 
-func (w *BuildWorkerV2) updatePartitionData(cost int64) {
-	atomic.AddInt64(&w.HashJoinCtx.stats.partitionData, cost)
-	setMaxValue(&w.HashJoinCtx.stats.maxPartitionData, cost)
+func (b *BuildWorkerV2) updatePartitionData(cost int64) {
+	atomic.AddInt64(&b.HashJoinCtx.stats.partitionData, cost)
+	setMaxValue(&b.HashJoinCtx.stats.maxPartitionData, cost)
 }
 
-func (w *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, cost *int64) error {
+func (b *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, cost *int64) error {
 	start := time.Now()
-	err := w.builder.processOneRestoredChunk(chk, w.HashJoinCtx, int(w.WorkerID), int(w.HashJoinCtx.partitionNumber))
+	err := b.builder.processOneRestoredChunk(chk, b.HashJoinCtx, int(b.WorkerID), int(b.HashJoinCtx.partitionNumber))
 	if err != nil {
 		return err
 	}
@@ -554,6 +554,28 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 	start := time.Now()
 	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
 	cost += int64(time.Since(start))
+}
+
+// buildHashTableForList builds hash table from `list`.
+func (b *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
+	cost := int64(0)
+	defer func() {
+		if b.HashJoinCtx.stats != nil {
+			atomic.AddInt64(&b.HashJoinCtx.stats.buildHashTable, cost)
+			setMaxValue(&b.HashJoinCtx.stats.maxBuildHashTable, cost)
+		}
+	}()
+	for task := range taskCh {
+		start := time.Now()
+		b.HashJoinCtx.hashTableContext.build(task)
+		failpoint.Inject("buildHashTablePanic", nil)
+		cost += int64(time.Since(start))
+		err := triggerIntest(5)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // NewJoinBuildWorkerV2 create a BuildWorkerV2
@@ -818,7 +840,6 @@ func (e *HashJoinV2Exec) startProbeFetcher(ctx context.Context) {
 				e.ProbeSideTupleFetcher.needScanRowTableAfterProbeDone,
 				e.ProbeSideTupleFetcher.shouldLimitProbeFetchSize(),
 				&e.ProbeSideTupleFetcher.hashJoinCtxBase)
-
 		}
 		e.workerWg.RunWithRecover(fetchProbeSideChunksFunc, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
 	}
@@ -919,7 +940,6 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 }
 
 func (w *ProbeWorkerV2) processOneRestoredProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
-	waitTime = 0
 	joinResult.err = w.JoinProbe.SetRestoredChunkForProbe(probeChunk)
 	if joinResult.err != nil {
 		return false, 0, joinResult
@@ -928,10 +948,9 @@ func (w *ProbeWorkerV2) processOneRestoredProbeChunk(probeChunk *chunk.Chunk, jo
 }
 
 func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
-	waitTime = 0
 	joinResult.err = w.JoinProbe.SetChunkForProbe(probeChunk)
 	if joinResult.err != nil {
-		return false, waitTime, joinResult
+		return false, 0, joinResult
 	}
 	return w.probeAndSendResult(joinResult)
 }
@@ -1450,28 +1469,6 @@ type buildTask struct {
 	partitionIdx int
 	segStartIdx  int
 	segEndIdx    int
-}
-
-// buildHashTableForList builds hash table from `list`.
-func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
-	cost := int64(0)
-	defer func() {
-		if w.HashJoinCtx.stats != nil {
-			atomic.AddInt64(&w.HashJoinCtx.stats.buildHashTable, cost)
-			setMaxValue(&w.HashJoinCtx.stats.maxBuildHashTable, cost)
-		}
-	}()
-	for task := range taskCh {
-		start := time.Now()
-		w.HashJoinCtx.hashTableContext.build(task)
-		failpoint.Inject("buildHashTablePanic", nil)
-		cost += int64(time.Since(start))
-		err := triggerIntest(5)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 type hashJoinRuntimeStatsV2 struct {

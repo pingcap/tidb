@@ -753,11 +753,11 @@ func (*mockJoinProbe) SetChunkForProbe(*chunk.Chunk) error {
 	return errors.New("not supported")
 }
 
-func (j *mockJoinProbe) SetRestoredChunkForProbe(chunk *chunk.Chunk) error {
+func (*mockJoinProbe) SetRestoredChunkForProbe(chunk *chunk.Chunk) error {
 	return errors.New("not supported")
 }
 
-func (j *mockJoinProbe) SpillRemainingProbeChunks() error {
+func (*mockJoinProbe) SpillRemainingProbeChunks() error {
 	return errors.New("not supported")
 }
 
