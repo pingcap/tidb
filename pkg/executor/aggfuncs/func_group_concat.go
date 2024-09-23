@@ -21,7 +21,6 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -73,17 +72,10 @@ func (e *baseGroupConcat4String) AppendFinalResult2Chunk(_ sessionctx.Context, p
 
 func (e *baseGroupConcat4String) handleTruncateError(sctx sessionctx.Context) (err error) {
 	if atomic.CompareAndSwapInt32(e.truncated, 0, 1) {
-<<<<<<< HEAD
 		if !sctx.GetSessionVars().StmtCtx.TruncateAsWarning {
-			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String())
+			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].StringWithCtx(false))
 		}
-		sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String()))
-=======
-		if !tc.Flags().TruncateAsWarning() {
-			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].StringWithCtx(ctx, errors.RedactLogDisable))
-		}
-		tc.AppendWarning(expression.ErrCutValueGroupConcat.FastGenByArgs(e.args[0].StringWithCtx(ctx, errors.RedactLogDisable)))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.FastGenByArgs(e.args[0].StringWithCtx(false)))
 	}
 	return nil
 }
