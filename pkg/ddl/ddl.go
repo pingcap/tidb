@@ -715,10 +715,11 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
-	// if we are running in test, random choose a job version to run with.
+	// if we are running in test, and we are not building with ddlargsv1 tag, we
+	// will random choose a job version to run with.
 	// TODO add a separate CI flow to run with different job version, so we can cover
 	// more cases in a single run.
-	if intest.InTest || config.GetGlobalConfig().Store == "unistore" {
+	if (intest.InTest || config.GetGlobalConfig().Store == "unistore") && !intest.ForceDDLJobVersionToV1 {
 		jobVer := model.JobVersion1
 		// 50% percent to use JobVersion2 in test.
 		rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
