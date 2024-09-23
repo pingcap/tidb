@@ -624,7 +624,7 @@ const (
 		start_time TIMESTAMP NOT NULL,
 		repeats int default 1,
 		match_type varchar(12) NOT NULL,
-		action varchar(12) NOT NULL,
+		action varchar(64) NOT NULL,
 		sample_sql TEXT NOT NULL,
 		sql_digest varchar(64) NOT NULL,
 		plan_digest varchar(64) NOT NULL,
@@ -3131,6 +3131,8 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`")
 	// modify column type of `plan_digest`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
+	// modify column length of `action`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `action` VARCHAR(64) NOT NULL;", infoschema.ErrColumnExists)
 }
 
 func upgradeToVer213(s sessiontypes.Session, ver int64) {
