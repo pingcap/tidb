@@ -47,7 +47,7 @@ go_test(
         "utils_test.go",
     ],
     flaky = True,
-    shard_count = 33,
+    shard_count = 34,
     deps = [
         ":indexadvisor",
         "//pkg/parser/mysql",
