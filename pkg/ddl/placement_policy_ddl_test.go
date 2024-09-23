@@ -48,7 +48,6 @@ func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.Execu
 		SchemaName: policyInfo.Name.L,
 		Type:       model.ActionCreatePlacementPolicy,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{policyInfo},
 	}
 	args := &model.PlacementPolicyArgs{
 		Policy: policyInfo,

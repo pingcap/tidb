@@ -785,7 +785,9 @@ type PlacementPolicyArgs struct {
 	Policy         *PolicyInfo  `json:"policy,omitempty"`
 	ReplaceOnExist bool         `json:"replace_on_exist,omitempty"`
 	PolicyName     pmodel.CIStr `json:"policy_name,omitempty"`
-	PolicyID       int64        `json:"policy_id"`
+
+	// it's set for alter/drop policy in v2
+	PolicyID int64 `json:"policy_id"`
 }
 
 func (a *PlacementPolicyArgs) fillJob(job *Job) {
@@ -806,7 +808,7 @@ func (a *PlacementPolicyArgs) fillJob(job *Job) {
 // GetRenameTablesArgs gets the placement policy args.
 func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 	if job.Version == JobVersion1 {
-		var args *PlacementPolicyArgs = &PlacementPolicyArgs{PolicyID: job.SchemaID}
+		args := &PlacementPolicyArgs{PolicyID: job.SchemaID}
 		var err error
 
 		if job.Type == ActionCreatePlacementPolicy {

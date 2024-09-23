@@ -1361,7 +1361,6 @@ func (e *executor) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy 
 		SchemaName: policy.Name.L,
 		Type:       model.ActionCreatePlacementPolicy,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{policy, onExist == OnExistReplace},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Policy: policy.Name.L,
 		}},
