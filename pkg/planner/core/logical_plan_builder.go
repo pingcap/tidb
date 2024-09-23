@@ -5258,16 +5258,17 @@ func buildColumns2HandleWithWrtiableColumns(
 	return cols2Handles, nil
 }
 
-// pruneAndBuildColPositionInfoForDelete builds columns to handle mapping for delete.
+// pruneAndBuildColPositionInfoForDelete prune unneeded columns and construct the column position information.
 // We'll have two kinds of columns seen by DELETE:
 //  1. The columns that are public. They are the columns that not affected by any DDL.
 //  2. The columns that are not public. They are the columns that are affected by DDL.
 //     But we need them because the non-public indexes may rely on them.
 //
 // The two kind of columns forms the whole columns of the table. Public part first.
-// This function records the following things:
-//  1. The position of the columns used by indexes in the DELETE's select's output.
-//  2. The row id's position in the output.
+// This function does the following things:
+//  1. Prune the columns that are not used by indexes and row id(and the partition expression and foreign keys in the near future).
+//  2. The position of the columns used by indexes in the DELETE's select's output.
+//  3. The row id's position in the final output.
 func pruneAndBuildColPositionInfoForDelete(
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
@@ -5367,10 +5368,10 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	colPosInfo.Start -= prePrunedCount
 
 	// Mark the columns in handle.
-	visitedCols := make(map[int]struct{}, tblLen)
+	fixedPos := make(map[int]int, len(deletableCols))
 	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
 		col := colPosInfo.HandleCols.GetCol(i)
-		visitedCols[col.Index-originalStart] = struct{}{}
+		fixedPos[col.Index-originalStart] = 0
 	}
 
 	// Mark the columns in indexes.
@@ -5379,15 +5380,14 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 			if col.Offset+originalStart >= len(names) || deletableCols[col.Offset].Name.L != names[col.Offset+originalStart].ColName.L {
 				return 0, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tblInfo.Name.O)
 			}
-			visitedCols[col.Offset] = struct{}{}
+			fixedPos[col.Offset] = 0
 		}
 	}
 
 	// Fix the column offsets.
 	pruned := 0
-	fixedPos := make(map[int]int, len(deletableCols))
 	for i := 0; i < tblLen; i++ {
-		if _, ok := visitedCols[i]; !ok {
+		if _, ok := fixedPos[i]; !ok {
 			nonPrunedSet.Clear(uint(i + originalStart))
 			pruned++
 			continue
@@ -5405,7 +5405,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	for i, col := range publicCols {
 		// If the column is not pruned, we can use the column data to get a more accurate size.
 		// We just need to record its position info.
-		if _, ok := visitedCols[col.Offset]; ok {
+		if _, ok := fixedPos[col.Offset]; ok {
 			colPosInfo.ColumnSize.PublicColsLayout = append(colPosInfo.ColumnSize.PublicColsLayout, fixedPos[col.Offset])
 			continue
 		}
