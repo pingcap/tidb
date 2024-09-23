@@ -485,7 +485,7 @@ func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuilt
 	}
 }
 
-func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType, isExplicitCharset bool) (baseBuiltinFunc, error) {
+func newBaseBuiltinCastFunc4String(ctx sessionctx.Context, funcName string, args []Expression, tp *types.FieldType, isExplicitCharset bool) (baseBuiltinFunc, error) {
 	var bf baseBuiltinFunc
 	var err error
 	if isExplicitCharset {

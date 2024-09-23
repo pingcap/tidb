@@ -1290,11 +1290,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
-<<<<<<< HEAD
-		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp)
-=======
-		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp, false, v.ExplicitCharSet)
->>>>>>> e0864c6cf1d (expression: let `cast` function supports explicit set charset (#55724))
+		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp, v.ExplicitCharSet)
 		if err != nil {
 			er.err = err
 			return retNode, false

@@ -48,42 +48,6 @@ type collationInfo struct {
 	isExplicitCharset bool
 }
 
-<<<<<<< HEAD
-=======
-// Hash64 implements the base.Hasher.<0th> interface.
-func (c *collationInfo) Hash64(h base.Hasher) {
-	h.HashInt64(int64(c.coer))
-	h.HashBool(c.coerInit.Load())
-	h.HashInt(int(c.repertoire))
-	h.HashString(c.charset)
-	h.HashString(c.collation)
-	h.HashBool(c.isExplicitCharset)
-}
-
-// Equals implements the base.Hasher.<1th> interface.
-func (c *collationInfo) Equals(other any) bool {
-	// the caller should care about c is nil or not.
-	if other == nil {
-		return false
-	}
-	var c2 *collationInfo
-	switch x := other.(type) {
-	case *collationInfo:
-		c2 = x
-	case collationInfo:
-		c2 = &x
-	default:
-		return false
-	}
-	return c.coer == c2.coer &&
-		c.coerInit.Load() == c2.coerInit.Load() &&
-		c.repertoire == c2.repertoire &&
-		c.charset == c2.charset &&
-		c.collation == c2.collation &&
-		c.isExplicitCharset == c2.isExplicitCharset
-}
-
->>>>>>> e0864c6cf1d (expression: let `cast` function supports explicit set charset (#55724))
 func (c *collationInfo) HasCoercibility() bool {
 	return c.coerInit.Load()
 }
@@ -297,18 +261,11 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		return &ExprCollation{args[1].Coercibility(), args[1].Repertoire(), charsetInfo, collation}, nil
 	case ast.Cast:
 		// We assume all the cast are implicit.
-<<<<<<< HEAD
 		ec = &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), args[0].GetType().GetCharset(), args[0].GetType().GetCollate()}
 		// Non-string type cast to string type should use @@character_set_connection and @@collation_connection.
 		// String type cast to string type should keep its original charset and collation. It should not happen.
 		if retType == types.ETString && argTps[0] != types.ETString {
 			ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
-=======
-		ec = &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), args[0].GetType(ctx.GetEvalCtx()).GetCharset(), args[0].GetType(ctx.GetEvalCtx()).GetCollate()}
-		// Cast to string type should use @@character_set_connection and @@collation_connection.
-		if retType == types.ETString {
-			ec.Charset, ec.Collation = ctx.GetCharsetInfo()
->>>>>>> e0864c6cf1d (expression: let `cast` function supports explicit set charset (#55724))
 		}
 		return ec, nil
 	case ast.Case:

@@ -457,12 +457,8 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 				var e Expression
 				var err error
 				if v.FuncName.L == ast.Cast {
-<<<<<<< HEAD
-					e = BuildCastFunction(v.GetCtx(), newArg, v.RetType)
-=======
-					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
+					e, err = BuildCastFunctionWithCheck(v.GetCtx(), newArg, v.RetType, v.Function.IsExplicitCharset())
 					terror.Log(err)
->>>>>>> e0864c6cf1d (expression: let `cast` function supports explicit set charset (#55724))
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
 					e = v.Clone()
