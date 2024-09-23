@@ -1387,7 +1387,7 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	)
 	val, ok := ctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion)
 	if !ok {
-		logutil.DDLLogger().Warn("won't scatter region")
+		logutil.DDLLogger().Warn("get system variable met problem, won't scatter region")
 	} else {
 		scope = scatterScope(val)
 	}
