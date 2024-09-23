@@ -1988,6 +1988,8 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		logFn = logutil.DDLLogger().Fatal
 	}
 
+	// to do:(joccau)
+	// we need refactor this part to support V2 job version after refactor all of ddl types.
 	var involvingSchemaInfo []model.InvolvingSchemaInfo
 	for _, j := range subJobs {
 		switch j.Type {
@@ -2007,27 +2009,12 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 				Mode:   model.SharedInvolving,
 			})
 		case model.ActionAddForeignKey:
-			var (
-				ref *model.FKInfo
-				ok  bool
-			)
-			if j.Version == model.JobVersion1 {
-				ref, ok = j.Args[0].(*model.FKInfo)
-				if !ok {
-					logFn("unexpected type of foreign key info",
-						zap.Any("args[0]", j.Args[0]),
-						zap.String("type", fmt.Sprintf("%T", j.Args[0])))
-					continue
-				}
-			} else {
-				args, ok := j.Args[0].(*model.AddForeignKeyArgs)
-				if !ok {
-					logFn("unexpected type of foreign key info",
-						zap.Any("args[0]", j.Args[0]),
-						zap.String("type", fmt.Sprintf("%T", j.Args[0])))
-					continue
-				}
-				ref = args.FkInfo
+			ref, ok := j.Args[0].(*model.FKInfo)
+			if !ok {
+				logFn("unexpected type of foreign key info",
+					zap.Any("args[0]", j.Args[0]),
+					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
+				continue
 			}
 			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
 				Database: ref.RefSchema.L,
@@ -2147,7 +2134,7 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 		newBase = newBaseTemp
 	}
 	job := &model.Job{
-		Version:        model.GetJobVerInUse(),
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        tbInfo.ID,
 		SchemaName:     schema.Name.L,
@@ -3546,7 +3533,7 @@ func (e *executor) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	job := &model.Job{
-		Version:        model.GetJobVerInUse(),
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3629,7 +3616,7 @@ func (e *executor) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast
 	}
 
 	job := &model.Job{
-		Version:        model.GetJobVerInUse(),
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -4978,7 +4965,7 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 	}
 
 	job := &model.Job{
-		Version:        model.GetJobVerInUse(),
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -5021,7 +5008,7 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 	}
 
 	job := &model.Job{
-		Version:        model.GetJobVerInUse(),
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -5642,7 +5629,7 @@ func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident,
 	}
 
 	job := &model.Job{
-		Version:        model.GetJobVerInUse(),
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
