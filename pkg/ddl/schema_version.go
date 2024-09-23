@@ -216,15 +216,14 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job) err
 	diff.TableID = job.TableID
 	diff.OldTableID = job.TableID
 	if job.SchemaState == model.StateDeleteReorganization {
-		partInfo := &model.PartitionInfo{}
-		var partNames []string
-		err := job.DecodeArgs(&partNames, &partInfo)
+		args, err := model.GetTablePartitionArgs(job)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		partInfo := args.PartInfo
 		// Final part, new table id is assigned
 		diff.TableID = partInfo.NewTableID
-		if len(job.CtxVars) > 0 {
+		if len(job.CtxVars) > 0 { // TODO remove it.
 			if droppedIDs, ok := job.CtxVars[0].([]int64); ok {
 				if addedIDs, ok := job.CtxVars[1].([]int64); ok {
 					// to use AffectedOpts we need both new and old to have the same length

@@ -42,7 +42,6 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_pingcap_tipb//go-binlog",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_stretchr_testify//assert",
         "@com_github_tikv_client_go_v2//oracle",
