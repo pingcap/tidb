@@ -2412,3 +2412,107 @@ func TestIssue50051(t *testing.T) {
 	tk.MustExec("insert into t6 values (0), (1), (2), (3);")
 	tk.MustQuery("select d from t5 where d < (select min(d) from t6) and d < 3;").Check(testkit.Rows("-3"))
 }
+
+func TestMinAccessCondsForDNFCond(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`create table t(a int, b int, c int, d int,
+		index ia(a), index ib(b), index ic(c), index iabc(a,b,c), index iab(a,b))`)
+
+	tests := []struct {
+		// indexPos specifies the index by its position in TableInfo.Indices.
+		indexPos                 int
+		exprStr                  string
+		accessConds              string
+		minAccessCondsForDNFCond int
+	}{
+		{
+			indexPos:                 0,
+			exprStr:                  "a = 1",
+			accessConds:              "[eq(test.t.a, 1)]",
+			minAccessCondsForDNFCond: 0,
+		},
+		{
+			indexPos:                 0,
+			exprStr:                  "a = 1 or a = 2 or a = 3",
+			accessConds:              "[or(eq(test.t.a, 1), or(eq(test.t.a, 2), eq(test.t.a, 3)))]",
+			minAccessCondsForDNFCond: 1,
+		},
+		{
+			indexPos:                 0,
+			exprStr:                  "a = 1 or b = 2 or c = 3",
+			accessConds:              "[]",
+			minAccessCondsForDNFCond: 0,
+		},
+		{
+			indexPos:                 0,
+			exprStr:                  "(a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+			accessConds:              "[or(eq(test.t.a, 1), or(eq(test.t.a, 3), eq(test.t.a, 5)))]",
+			minAccessCondsForDNFCond: 1,
+		},
+		{
+			indexPos:                 1,
+			exprStr:                  "(a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+			accessConds:              "[or(eq(test.t.b, 2), or(eq(test.t.b, 4), eq(test.t.b, 6)))]",
+			minAccessCondsForDNFCond: 1,
+		},
+		{
+			indexPos:                 2,
+			exprStr:                  "(a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+			accessConds:              "[]",
+			minAccessCondsForDNFCond: 0,
+		},
+		{
+			indexPos:                 3,
+			exprStr:                  "(a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+			accessConds:              "[or(and(eq(test.t.a, 1), eq(test.t.b, 2)), or(and(eq(test.t.a, 3), eq(test.t.b, 4)), and(eq(test.t.a, 5), and(eq(test.t.b, 6), eq(test.t.c, 7)))))]",
+			minAccessCondsForDNFCond: 2,
+		},
+		{
+			indexPos:                 4,
+			exprStr:                  "(a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+			accessConds:              "[or(and(eq(test.t.a, 1), eq(test.t.b, 2)), or(and(eq(test.t.a, 3), eq(test.t.b, 4)), and(eq(test.t.a, 5), eq(test.t.b, 6))))]",
+			minAccessCondsForDNFCond: 2,
+		},
+		{
+			indexPos:                 3,
+			exprStr:                  "(a=1) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+			accessConds:              "[or(eq(test.t.a, 1), or(and(eq(test.t.a, 3), eq(test.t.b, 4)), and(eq(test.t.a, 5), and(eq(test.t.b, 6), eq(test.t.c, 7)))))]",
+			minAccessCondsForDNFCond: 1,
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session()
+			ectx := sctx.GetExprCtx().GetEvalCtx()
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			nodeW := resolve.NewNodeW(stmts[0])
+			err = plannercore.Preprocess(context.Background(), sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
+			require.NotNil(t, selection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
+			}
+			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			require.NotNil(t, cols)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
+			require.NoError(t, err)
+			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
+			require.Equal(t, tt.minAccessCondsForDNFCond, res.MinAccessCondsForDNFCond)
+		})
+	}
+}

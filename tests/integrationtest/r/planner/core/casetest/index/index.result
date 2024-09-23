@@ -54,10 +54,10 @@ IndexMerge_9	0.20	root		type: union
   └─TableRowIDScan_7	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_contains(a, '[1, 2, 3]') and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 4: OR index merge from multi complicated mv index (memberof)，make full use of DNF item's condition even if the predicate is intersection case (json_contains);
 id	estRows	task	access object	operator info
-IndexLookUp_11	8.00	root		
-├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t2, index:idx3(c, d)	range:[1 2,1 2], [3 2,3 2], keep order:false, stats:pseudo
-└─Selection_10(Probe)	8.00	cop[tikv]		or(and(json_contains(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
-  └─TableRowIDScan_9	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexLookUp_11	0.16	root		
+├─IndexRangeScan_8(Build)	0.20	cop[tikv]	table:t2, index:idx3(c, d)	range:[1 2,1 2], [3 2,3 2], keep order:false, stats:pseudo
+└─Selection_10(Probe)	0.16	cop[tikv]		or(and(json_contains(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
+  └─TableRowIDScan_9	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_overlaps(a, '[1, 2, 3]') and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 5: OR index merge from multi complicated mv index (memberof)，make full use of DNF item's condition even if the predicate is intersection case (json_contains);
 id	estRows	task	access object	operator info
 Selection_5	0.32	root		or(and(json_overlaps(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
