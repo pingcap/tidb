@@ -2460,6 +2460,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 			SQL            string
 			PrunedOutput   string
 			FullLayoutInfo [][]string
+			InsidePlan     string
 		}
 	)
 	testData := planSuiteUnexportedData
@@ -2529,8 +2530,10 @@ func TestPruneColumnsForDelete(t *testing.T) {
 		testdata.OnRecord(func() {
 			outputs[i].PrunedOutput = outputNames
 			outputs[i].FullLayoutInfo = fullLayout
+			outputs[i].InsidePlan = ToString(deletePlan.SelectPlan)
 		})
 		require.Equal(t, outputs[i].PrunedOutput, outputNames, comment)
 		require.Equal(t, outputs[i].FullLayoutInfo, fullLayout, comment)
+		require.Equal(t, outputs[i].InsidePlan, ToString(deletePlan.SelectPlan), comment)
 	}
 }

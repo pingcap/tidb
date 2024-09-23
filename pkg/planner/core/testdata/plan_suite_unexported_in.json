@@ -600,6 +600,8 @@
     "name": "TestPruneColumnsForDelete",
     "cases": [
       "delete from t where a = 1",
+      "delete from t where a in (1, 2, 3)",
+      "delete from t where a > 1",
       "delete from t3 where b = 1",
       "delete from pt2",
       "delete t, t3 from t, t3 where t.a = t3.a"
