@@ -825,6 +825,7 @@ func (a *LockTablesArgs) fillJob(job *Job) {
 	job.Args = []any{a}
 }
 
+// GetLockTabkesArgs get the LockTablesArgs argument.
 func GetLockTablesArgs(job *Job) (*LockTablesArgs, error) {
 	var args *LockTablesArgs
 	var err error
@@ -854,7 +855,7 @@ func (a *RepairTableArgs) fillJob(job *Job) {
 	job.Args = []any{a}
 }
 
-// GetRepairTableArgs get the repair table args
+// GetRepairTableArgs get the repair table args.
 func GetRepairTableArgs(job *Job) (*RepairTableArgs, error) {
 	if job.Version == JobVersion1 {
 		var tblInfo *TableInfo
