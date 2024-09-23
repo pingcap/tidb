@@ -86,9 +86,12 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	helper := &hashJoinSpillHelper{hashJoinExec: hashJoinExec}
 	helper.cond = sync.NewCond(new(sync.Mutex))
 	helper.buildSpillChkFieldTypes = make([]*types.FieldType, 0, 3)
-	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeLonglong)) // hash value
-	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))      // valid join key
-	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit))      // row data
+
+	hashValueField := types.NewFieldType(mysql.TypeLonglong)
+	hashValueField.AddFlag(mysql.UnsignedFlag)
+	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, hashValueField)                    // hash value
+	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit)) // valid join key
+	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit)) // row data
 	helper.probeFieldTypes = getProbeSpillChunkFieldTypes(probeFieldTypes)
 	helper.spilledPartitions = make([]bool, partitionNum)
 	helper.hash = fnv.New64()

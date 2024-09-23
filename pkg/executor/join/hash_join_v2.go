@@ -1574,9 +1574,11 @@ func generatePartitionIndex(hashValue uint64, partitionMaskOffset int) uint64 {
 
 func getProbeSpillChunkFieldTypes(probeFieldTypes []*types.FieldType) []*types.FieldType {
 	ret := make([]*types.FieldType, 0, len(probeFieldTypes)+2)
-	ret = append(ret, types.NewFieldType(mysql.TypeLonglong)) // hash value
-	ret = append(ret, types.NewFieldType(mysql.TypeBit))      // serialized key
-	ret = append(ret, probeFieldTypes...)                     // row data
+	hashValueField := types.NewFieldType(mysql.TypeLonglong)
+	hashValueField.AddFlag(mysql.UnsignedFlag)
+	ret = append(ret, hashValueField)                    // hash value
+	ret = append(ret, types.NewFieldType(mysql.TypeBit)) // serialized key
+	ret = append(ret, probeFieldTypes...)                // row data
 	return ret
 }
 

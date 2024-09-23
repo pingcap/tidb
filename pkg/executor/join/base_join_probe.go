@@ -367,7 +367,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
 		serializedKeysBytes := serializedKeysCol.GetBytes(idx)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
-			j.spillTmpChk[partIndex].AppendInt64(0, int64(newHashVal))
+			j.spillTmpChk[partIndex].AppendUint64(0, newHashVal)
 			j.spillTmpChk[partIndex].AppendBytes(1, serializedKeysBytes)
 			j.spillTmpChk[partIndex].AppendPartialRow(2, j.currentChunk.GetRow(idx))
 
