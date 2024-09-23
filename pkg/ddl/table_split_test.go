@@ -65,6 +65,7 @@ func TestTableSplit(t *testing.T) {
 	tbl, err := infoSchema.TableByName(context.Background(), model.NewCIStr("mysql"), model.NewCIStr("tidb"))
 	require.NoError(t, err)
 	checkRegionStartWithTableID(t, tbl.Meta().ID, store.(kvStore))
+
 	tbl, err = infoSchema.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_part"))
 	require.NoError(t, err)
 	pi := tbl.Meta().GetPartitionInfo()
