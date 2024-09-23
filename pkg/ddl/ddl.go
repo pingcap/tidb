@@ -81,7 +81,7 @@ const (
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
-	detectJobVerInterval    = 2 * time.Minute
+	detectJobVerInterval    = 10 * time.Second
 )
 
 const (
@@ -791,10 +791,24 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
+// detect versions of all TiDB instances and choose a job version to use, rules:
+//   - if it's in test or run in uni-store, use V2 directly if ForceDDLJobVersionToV1InTest
+//     is not set, else use V1, we use this rule to run unit-tests using V1.
+//   - if all TiDB instances have version >= 8.4.0, use V2
+//   - otherwise, we must during upgrade from lower version, then start a background
+//     routine to detect the version of all TiDB instances repeatedly, when upgrade
+//     is done, we will use V2, and exit the routine.
+//
+// Note: at the time of this PR, some job types hasn't finished migrating to V2,
+// they will stay in V1 regardless of the version we choose here.
+//
+// It's possible that user start a new TiDB of version < 8.4.0 after we detect that
+// all instances have version >= 8.4.0, we will not consider this case here as we
+// don't support downgrade cluster version right now. And even if we try to change
+// the job version in use back to V1, it still will not work when owner transfer
+// to the new TiDB instance which cannot not handle existing submitted jobs of V2.
 func (d *ddl) detectAndUpdateJobVersion() {
 	if d.etcdCli == nil {
-		// we are in test or uni-store, we can use job version 2 directly if ForceDDLJobVersionToV1InTest
-		// is not set
 		if ForceDDLJobVersionToV1InTest != "false" {
 			model.SetJobVerInUse(model.JobVersion1)
 			return
@@ -807,19 +821,25 @@ func (d *ddl) detectAndUpdateJobVersion() {
 	if err != nil {
 		logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 	}
-	// TODO will TiDB < 8.4.0 be started after all TiDBs are >= 8.4.0?
-	// if no, we can avoid this routine here, if yes, it's broken actually.
-	d.wg.Run(func() {
+
+	if model.GetJobVerInUse() == model.JobVersion2 {
+		return
+	}
+
+	d.wg.RunWithLog(func() {
 		ticker := time.NewTicker(detectJobVerInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				err := d.detectAndUpdateJobVersionOnce()
-				if err != nil {
-					logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
-				}
 			case <-d.ctx.Done():
+				return
+			}
+			err = d.detectAndUpdateJobVersionOnce()
+			if err != nil {
+				logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
+			}
+			if model.GetJobVerInUse() == model.JobVersion2 {
 				return
 			}
 		}
@@ -852,9 +872,9 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		targetVer = model.JobVersion2
 	}
 	if model.GetJobVerInUse() != targetVer {
-		logutil.DDLLogger().Info("job version in use changed",
-			zap.Stringer("oldVer", model.GetJobVerInUse()),
-			zap.Stringer("newVer", targetVer))
+		logutil.DDLLogger().Info("change job version in use",
+			zap.Stringer("old", model.GetJobVerInUse()),
+			zap.Stringer("new", targetVer))
 		model.SetJobVerInUse(targetVer)
 	}
 	return nil
