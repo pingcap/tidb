@@ -17,6 +17,7 @@ package execdetails
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"slices"
 	"sort"
@@ -1305,7 +1306,7 @@ func (waitSummary *TiFlashWaitSummary) CanBeIgnored() bool {
 type BasicRuntimeStats struct {
 	// executor's Next() called times.
 	loop atomic.Int32
-	// executor consume time.
+	// executor consume time, including open, next, and close time.
 	consume atomic.Int64
 	// executor open time.
 	open atomic.Int64
