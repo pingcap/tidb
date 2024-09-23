@@ -107,9 +107,10 @@ function main() {
 
     # Download and set up LocalStack
     download "$localstack_url" "localstack-cli.tar.gz" "tmp/localstack-cli.tar.gz"
-    mkdir -p third_bin/localstack_internal
-    tar -xzf tmp/localstack-cli.tar.gz -C third_bin/localstack_internal
-    ln -s localstack_internal/localstack third_bin/localstack
+    mkdir -p tmp/localstack_extract
+    tar -xzf tmp/localstack-cli.tar.gz -C tmp/localstack_extract
+    mv tmp/localstack_extract/* third_bin/
+    rm -rf tmp/localstack_extract
 
     chmod +x third_bin/*
     rm -rf tmp

@@ -717,7 +717,7 @@ func (m *MemoryIngestData) NewIter(
 	}
 }
 
-// GetTS implements IngestData.GetCurrentTsFromPd.
+// GetTS implements IngestData.GetTS.
 func (m *MemoryIngestData) GetTS() uint64 {
 	return m.ts
 }

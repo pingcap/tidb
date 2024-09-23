@@ -1399,7 +1399,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		require.NoError(t, err)
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), se)
 		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
-		_, err := client.InitSchemasReplaceForDDL(ctx, cfg, nil)
+		_, err = client.InitSchemasReplaceForDDL(ctx, cfg, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "miss upstream table information at `start-ts`(1) but the full backup path is not specified")
 	}
