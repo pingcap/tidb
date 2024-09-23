@@ -726,8 +726,8 @@ const (
 	// CreateIndexAdvisorTable is a table to store the index advisor results.
 	CreateIndexAdvisorTable = `CREATE TABLE IF NOT EXISTS mysql.index_advisor_results (
        id bigint primary key not null auto_increment,
-       created_at timestamp not null,
-       updated_at timestamp not null,
+       created_at datetime not null,
+       updated_at datetime not null,
 
        schema_name varchar(64) not null,
        table_name varchar(64) not null,
@@ -741,6 +741,16 @@ const (
        index idx_create(created_at),
        index idx_update(updated_at),
        unique index idx(schema_name, table_name, index_columns))`
+
+	// CreateKernelOptionsTable is a table to store kernel options for tidb.
+	CreateKernelOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_kernel_options (
+        module varchar(128),
+        name varchar(128),
+        value varchar(128),
+        updated_at datetime,
+        status varchar(128),
+        description text,
+        primary key(module, name))`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -3173,6 +3183,7 @@ func upgradeToVer214(s sessiontypes.Session, ver int64) {
 	}
 
 	mustExecute(s, CreateIndexAdvisorTable)
+	mustExecute(s, CreateKernelOptionsTable)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3327,6 +3338,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateSchemaUnusedIndexesView)
 	// create mysql.index_advisor_results
 	mustExecute(s, CreateIndexAdvisorTable)
+	// create mysql.tidb_kernel_options
+	mustExecute(s, CreateKernelOptionsTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
