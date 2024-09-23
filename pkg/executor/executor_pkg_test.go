@@ -16,6 +16,8 @@ package executor
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -25,6 +27,7 @@ import (
 
 	"github.com/hashicorp/go-version"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -35,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -466,5 +470,75 @@ func TestSortSpillDisk(t *testing.T) {
 	// Don't spill too many partitions.
 	require.True(t, len(exe.partitionList) <= 4)
 	err = exe.Close()
+	require.NoError(t, err)
+}
+
+func TestSortSpillDiskReturnErrAndClearFile(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testSortedRowContainerSpill", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testSortedRowContainerSpill"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/errInSortExecFetchRowChunks", "1*return(0)->1*return(1)->return(2)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/errInSortExecFetchRowChunks"))
+	}()
+	disk.InitializeTempDir() // Clear all files
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().MemQuota.MemQuotaQuery = 1
+	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	cas := &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	opt := mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+		ndvs:   cas.ndvs,
+	}
+	dataSource := buildMockDataSource(opt)
+	exe := &SortExec{
+		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
+		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
+		schema:       dataSource.Schema(),
+	}
+	for _, idx := range cas.orderByIdx {
+		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
+	}
+	tmpCtx := context.Background()
+	chk := exec.NewFirstChunk(exe)
+	dataSource.prepareChunks()
+	err := exe.Open(tmpCtx)
+	require.NoError(t, err)
+
+	for {
+		err = exe.Next(tmpCtx, chk)
+		if chk.NumRows() == 0 || err != nil {
+			break
+		}
+	}
+	require.ErrorContains(t, err, "mockError")
+
+	err = exe.Close()
+	require.NoError(t, err)
+
+	// Check the temp files are deleted.
+	path := config.GetGlobalConfig().TempStoragePath
+	// Path is existed.
+	_, err = os.Stat(path)
+	require.False(t, os.IsNotExist(err))
+
+	err = filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			require.False(t, strings.Contains(filePath, "chunk")) // Check the temp files chunk.ListInDisk are deleted.
+		}
+		return nil
+	})
+
 	require.NoError(t, err)
 }
