@@ -646,12 +646,8 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-<<<<<<< HEAD
-	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
+	
 	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
-=======
-	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
->>>>>>> 801e55528f3 (expresssion: fix div result type infer bug if a integer type has minimum display length (#56158))
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
@@ -666,7 +662,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	lhsTp, rhsTp := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
+	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
 	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp, ctx.GetEvalCtx().GetDivPrecisionIncrement())
 	sig := &builtinArithmeticDivideDecimalSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DivideDecimal)
