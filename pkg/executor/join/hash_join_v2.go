@@ -732,7 +732,9 @@ func (e *HashJoinV2Exec) Close() error {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	e.releaseDisk()
-	e.spillHelper.close()
+	if e.spillHelper != nil {
+		e.spillHelper.close()
+	}
 	err := e.BaseExecutor.Close()
 	return err
 }
