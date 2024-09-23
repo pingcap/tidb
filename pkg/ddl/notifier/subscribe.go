@@ -60,7 +60,7 @@ type HandlerID int
 
 const (
 	// TestHandlerID is used for testing only.
-	TestHandlerID HandlerID = iota
+	TestHandlerID HandlerID = 0
 )
 
 // RegisterHandler must be called with an exclusive and fixed HandlerID for each
@@ -70,6 +70,8 @@ const (
 // RegisterHandler is not concurrency-safe.
 func RegisterHandler(id HandlerID, handler SchemaChangeHandler) {
 	intID := int(id)
+	// the ID is used by bit operation in processedByFlag. We use BIGINT UNSIGNED to
+	// store it so only 64 IDs are allowed.
 	if intID < 0 || intID >= 64 {
 		panic(fmt.Sprintf("illegal HandlerID: %d", id))
 	}
@@ -132,7 +134,7 @@ func (n *ddlNotifier) Start(ctx context.Context) {
 }
 
 func (n *ddlNotifier) processEvents(ctx context.Context) error {
-	events, err := n.store.List(ctx, sess.NewSession(n.ownedSCtx))
+	changes, err := n.store.List(ctx, sess.NewSession(n.ownedSCtx))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -140,25 +142,25 @@ func (n *ddlNotifier) processEvents(ctx context.Context) error {
 	// we should ensure deliver order of events to a handler, so if a handler returns
 	// error for previous events it should not receive later events.
 	skipHandlers := make(map[HandlerID]struct{})
-	for _, event := range events {
+	for _, change := range changes {
 		for handlerID, handler := range n.handlers {
 			if _, ok := skipHandlers[handlerID]; ok {
 				continue
 			}
-			if err2 := n.processEventForHandler(ctx, event, handlerID, handler); err2 != nil {
+			if err2 := n.processEventForHandler(ctx, change, handlerID, handler); err2 != nil {
 				skipHandlers[handlerID] = struct{}{}
 
 				if !goerr.Is(err2, ErrNotReadyRetryLater) {
-					logutil.Logger(ctx).Error("Error processing event",
-						zap.Int64("ddlJobID", event.ddlJobID),
-						zap.Int64("multiSchemaChangeSeq", event.multiSchemaChangeSeq),
+					logutil.Logger(ctx).Error("Error processing change",
+						zap.Int64("ddlJobID", change.ddlJobID),
+						zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
 						zap.Int("handlerID", int(handlerID)),
 						zap.Error(err2))
 				}
 				continue
 			}
 		}
-		// TODO: remove the processed event after all handlers processed it.
+		// TODO: remove the processed change after all handlers processed it.
 	}
 
 	return nil
