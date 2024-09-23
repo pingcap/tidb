@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -47,6 +48,8 @@ type topNSpillHelper struct {
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
+
+	sessCtx sessionctx.Context
 }
 
 func newTopNSpillerHelper(
@@ -58,6 +61,7 @@ func newTopNSpillerHelper(
 	fieldTypes []*types.FieldType,
 	workers []*topNWorker,
 	concurrencyNum int,
+	sessCtx sessionctx.Context,
 ) *topNSpillHelper {
 	lock := sync.Mutex{}
 	tmpSpillChunksChan := make(chan *chunk.Chunk, concurrencyNum)
@@ -78,6 +82,7 @@ func newTopNSpillerHelper(
 		workers:            workers,
 		bytesConsumed:      atomic.Int64{},
 		bytesLimit:         atomic.Int64{},
+		sessCtx:            sessCtx,
 	}
 }
 
@@ -209,6 +214,13 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 
 	rowPtrNum := chkHeap.Len()
 	for ; chkHeap.idx < rowPtrNum; chkHeap.idx++ {
+		if chkHeap.idx%100 == 0 && t.sessCtx != nil {
+			err := t.sessCtx.GetSessionVars().SQLKiller.HandleSignal()
+			if err != nil {
+				return err
+			}
+		}
+
 		if tmpSpillChunk.IsFull() {
 			err := t.spillTmpSpillChunk(inDisk, tmpSpillChunk)
 			if err != nil {

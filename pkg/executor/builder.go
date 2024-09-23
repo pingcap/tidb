@@ -1196,6 +1196,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) exec.Executor {
 				}},
 			},
 			ExecSchema: v.Schema(),
+			SessCtx:    b.ctx,
 		}
 	}
 	return t
@@ -2377,6 +2378,7 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) exec.Executor {
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:      v.ByItems,
 		ExecSchema:   v.Schema(),
+		SessCtx:      b.ctx,
 	}
 	executor_metrics.ExecutorCounterSortExec.Inc()
 	return &sortExec
@@ -2391,6 +2393,7 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:      v.ByItems,
 		ExecSchema:   v.Schema(),
+		SessCtx:      b.ctx,
 	}
 	executor_metrics.ExecutorCounterTopNExec.Inc()
 	return &sortexec.TopNExec{

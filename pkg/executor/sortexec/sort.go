@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -39,6 +40,8 @@ import (
 // SortExec represents sorting executor.
 type SortExec struct {
 	exec.BaseExecutor
+
+	SessCtx sessionctx.Context
 
 	ByItems    []*plannerutil.ByItems
 	fetched    *atomic.Bool
@@ -667,7 +670,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	fetcherWaiter := util.WaitGroupWrapper{}
 
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.chunkChannel, e.Parallel.fetcherAndWorkerSyncer, e.Parallel.resultChannel, e.finishCh, e.memTracker, e.Parallel.sortedRowsIters[i], e.MaxChunkSize(), e.Parallel.spillHelper)
+		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.chunkChannel, e.Parallel.fetcherAndWorkerSyncer, e.Parallel.resultChannel, e.finishCh, e.memTracker, e.Parallel.sortedRowsIters[i], e.MaxChunkSize(), e.Parallel.spillHelper, e.SessCtx)
 		worker := e.Parallel.workers[i]
 		workersWaiter.Run(func() {
 			worker.run()
