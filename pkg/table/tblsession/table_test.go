@@ -24,7 +24,6 @@ import (
 	_ "github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,7 +38,6 @@ func (m *mockTemporaryData) GetTableSize(tableID int64) int64 {
 
 func TestSessionMutateContextFields(t *testing.T) {
 	sctx := mock.NewContext()
-	sctx.Mutations = make(map[int64]*binlog.TableMutation)
 	ctx := tblsession.NewMutateContext(sctx)
 	// expression
 	require.True(t, sctx.GetExprCtx() == ctx.GetExprCtx())
