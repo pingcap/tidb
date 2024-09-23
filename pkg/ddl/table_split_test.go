@@ -50,6 +50,14 @@ func TestTableSplit(t *testing.T) {
 		partition p0 values less than (10),
 		partition p1 values less than (20)
 	)`)
+	tk.MustQuery("select @@global.tidb_scatter_region;").Check(testkit.Rows(""))
+	tk.MustExec("set @@global.tidb_scatter_region = 'table'")
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_part_2 (a int key) partition by range(a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+	)`)
 	defer dom.Close()
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	infoSchema := dom.InfoSchema()
@@ -57,10 +65,16 @@ func TestTableSplit(t *testing.T) {
 	tbl, err := infoSchema.TableByName(context.Background(), model.NewCIStr("mysql"), model.NewCIStr("tidb"))
 	require.NoError(t, err)
 	checkRegionStartWithTableID(t, tbl.Meta().ID, store.(kvStore))
-
 	tbl, err = infoSchema.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_part"))
 	require.NoError(t, err)
 	pi := tbl.Meta().GetPartitionInfo()
+	require.NotNil(t, pi)
+	for _, def := range pi.Definitions {
+		checkRegionStartWithTableID(t, def.ID, store.(kvStore))
+	}
+	tbl, err = infoSchema.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_part_2"))
+	require.NoError(t, err)
+	pi = tbl.Meta().GetPartitionInfo()
 	require.NotNil(t, pi)
 	for _, def := range pi.Definitions {
 		checkRegionStartWithTableID(t, def.ID, store.(kvStore))
