@@ -785,7 +785,7 @@ var defaultSysVars = []*SysVar{
 		},
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			if normalizedValue != "" && normalizedValue != "table" && normalizedValue != "global" {
-				return "", fmt.Errorf("invalid value for %s, it should be either '%s', '%s' or '%s'", normalizedValue, "", "table", "global")
+				return "", fmt.Errorf("invalid value for '%s', it should be either '%s', '%s' or '%s'", normalizedValue, "", "table", "global")
 			}
 			return normalizedValue, nil
 		},
