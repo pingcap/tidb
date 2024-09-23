@@ -495,6 +495,27 @@ func TestGetShardRowIDArgs(t *testing.T) {
 	}
 }
 
+func TestGetAlterTTLInfoArgs(t *testing.T) {
+	ttlEanble := true
+	ttlCronJobSchedule := "ttl-schedule"
+	inArgs := &AlterTTLInfoArgs{
+		TTLInfor: &TTLInfo{
+			ColumnName:       model.NewCIStr("column_name"),
+			IntervalExprStr:  "1",
+			IntervalTimeUnit: 10010,
+		},
+		TTLEnable:          &ttlEanble,
+		TTLCronJobSchedule: &ttlCronJobSchedule,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterTTLInfo)))
+		args, err := GetAlterTTLInfoArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
 func TestAddCheckConstraintArgs(t *testing.T) {
 	Constraint :=
 		&ConstraintInfo{

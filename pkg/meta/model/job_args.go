@@ -740,7 +740,6 @@ type AlterSequenceArgs struct {
 }
 
 func (a *AlterSequenceArgs) fillJob(job *Job) {
-	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
 		job.Args = []any{a.Ident, a.SeqOptions}
 	} else {
@@ -773,7 +772,6 @@ type ModifyTableAutoIDCacheArgs struct {
 }
 
 func (a *ModifyTableAutoIDCacheArgs) fillJob(job *Job) {
-	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
 		job.Args = []any{a.NewCache}
 	} else {
@@ -802,7 +800,6 @@ type ShardRowIDArgs struct {
 }
 
 func (a *ShardRowIDArgs) fillJob(job *Job) {
-	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
 		job.Args = []any{a.ShardRowIDBits}
 	} else {
@@ -823,6 +820,34 @@ func GetShardRowIDArgs(job *Job) (*ShardRowIDArgs, error) {
 	}
 
 	return getOrDecodeArgsV2[*ShardRowIDArgs](job)
+}
+
+// AlterTTLInfoArgs is the arguments for alter ttl info job.
+type AlterTTLInfoArgs struct {
+	TTLInfor           *TTLInfo `json:"ttl_infor,omitempty"`
+	TTLEnable          *bool    `json:"ttl_enable,omitempty"`
+	TTLCronJobSchedule *string  `json:"ttl_cron_job_schedule,omitempty"`
+}
+
+func (a *AlterTTLInfoArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.TTLInfor, a.TTLEnable, a.TTLCronJobSchedule}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAlterTTLInfoArgs gets the args for alter ttl info job.
+func GetAlterTTLInfoArgs(job *Job) (*AlterTTLInfoArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &AlterTTLInfoArgs{}
+		if err := job.DecodeArgs(&args.TTLInfor, &args.TTLEnable, &args.TTLCronJobSchedule); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+
+	return getOrDecodeArgsV2[*AlterTTLInfoArgs](job)
 }
 
 // GetCheckConstraintArgs gets the AlterCheckConstraint args.
