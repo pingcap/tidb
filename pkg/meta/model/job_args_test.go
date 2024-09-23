@@ -459,7 +459,7 @@ func TestGetRebaseAutoIDArgs(t *testing.T) {
 
 func TestGetModifyTableCommentArgs(t *testing.T) {
 	inArgs := &ModifyTableCommentArgs{
-		Comment: "TiDb is great",
+		Comment: "TiDB is great",
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {

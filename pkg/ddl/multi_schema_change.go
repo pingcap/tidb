@@ -260,13 +260,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		info.AlterIndexes = append(info.AlterIndexes, idxName)
 	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
 	case model.ActionAddForeignKey:
-		var fkInfo *model.FKInfo
-		if job.Version == model.JobVersion1 {
-			fkInfo = job.Args[0].(*model.FKInfo)
-		} else {
-			args := job.Args[0].(*model.AddForeignKeyArgs)
-			fkInfo = args.FkInfo
-		}
+		fkInfo := job.JobArgs.(*model.AddForeignKeyArgs).FkInfo
 		info.AddForeignKeys = append(info.AddForeignKeys, model.AddForeignKeyInfo{
 			Name: fkInfo.Name,
 			Cols: fkInfo.Cols,
