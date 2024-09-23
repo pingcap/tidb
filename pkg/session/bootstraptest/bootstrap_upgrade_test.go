@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -241,6 +242,33 @@ func TestUpgradeVersion75(t *testing.T) {
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, "host", strings.ToLower(row.GetString(0)))
 	require.Equal(t, "char(255)", strings.ToLower(row.GetString(1)))
+}
+
+func TestUpgradeVersion213(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	ver, err := session.GetBootstrapVersion(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	tk.MustQuery(`SELECT * FROM mysql.global_variables WHERE variable_name LIKE 'validate\_password\_%'`).Check(testkit.Rows())
+	tcs := []struct {
+		varName string
+		varVal  string
+	}{
+		{variable.ValidatePasswordCheckUserName, variable.On},
+		{variable.ValidatePasswordSpecialCharCount, "1"},
+		{variable.ValidatePasswordLength, "8"},
+		{variable.ValidatePasswordNumberCount, "1"},
+		{variable.ValidatePasswordMixedCaseCount, "1"},
+		{variable.ValidatePasswordPolicy, "MEDIUM"},
+		{variable.ValidatePasswordEnable, variable.Off},
+		{variable.ValidatePasswordDictionary, ""},
+	}
+	for _, tc := range tcs {
+		tk.MustQuery(`SELECT variable_value FROM mysql.global_variables WHERE variable_name = ?`, tc.varName).Check(testkit.Rows(tc.varVal))
+	}
 }
 
 func TestUpgradeVersionMockLatest(t *testing.T) {
