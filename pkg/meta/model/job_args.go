@@ -805,7 +805,7 @@ func (a *PlacementPolicyArgs) fillJob(job *Job) {
 	job.Args = []any{a}
 }
 
-// GetRenameTablesArgs gets the placement policy args.
+// GetPlacementPolicyArgs gets the placement policy args.
 func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 	if job.Version == JobVersion1 {
 		args := &PlacementPolicyArgs{PolicyID: job.SchemaID}
