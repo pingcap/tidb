@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -812,29 +811,11 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		setClause = sb.String()
 	}
 	optionMap := make(map[string]any, len(plan.Options))
-	var evalCtx expression.EvalContext
-	if plan.SCtx() != nil {
-		evalCtx = plan.SCtx().GetExprCtx().GetEvalCtx()
-	}
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
 			var val string
-			if constValue, ok := opt.Value.(*expression.Constant); ok {
-				// we can stringify 'constant' directly because
-				// redact is set to 'RedactLogDisable' by default
-				switch constValue.Value.Kind() {
-				case types.KindString, types.KindBytes:
-					val = constValue.Value.GetString()
-				case types.KindMysqlJSON:
-					val = constValue.Value.GetMysqlJSON().String()
-				case types.KindVectorFloat32:
-					val = constValue.Value.GetVectorFloat32().String()
-				default:
-					val = fmt.Sprintf("%v", constValue.Value.GetValue())
-				}
-			} else {
-				val = opt.Value.StringWithCtx(evalCtx, errors.RedactLogDisable)
-			}
+			cons := opt.Value.(*expression.Constant)
+			val = fmt.Sprintf("%v", cons.Value.GetValue())
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
