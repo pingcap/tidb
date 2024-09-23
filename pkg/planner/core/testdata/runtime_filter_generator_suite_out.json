@@ -170,8 +170,8 @@
           "  └─HashJoin 0.80 mpp[tiflash]  Null-aware anti semi join, equal:[eq(test.t1.k1, test.t2.k1)]",
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false",
-          "    └─TableFullScan(Probe) 1.00 mpp[tiflash] table:t1 keep order:false"
+          "    │   └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
+          "    └─TableFullScan(Probe) 1.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
