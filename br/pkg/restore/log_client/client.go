@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -205,10 +206,10 @@ func (rc *LogClient) CollectCompactedSsts(
 				maxRegionKey = r.EndKey
 			}
 		}
-		/// _, rawMaxKey, err := codec.DecodeBytes(maxRegionKey, nil)
-		/// if err != nil {
-		/// 	return 0, nil, errors.Trace(err)
-		/// }
+		_, rawMaxKey, err := codec.DecodeBytes(maxRegionKey, nil)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
 		sstFileCount += len(i.SstOutputs)
 
 		regionCompactedMap[i.Meta.RegionId] = append(regionCompactedMap[i.Meta.RegionId], CompactedItem{
@@ -217,7 +218,7 @@ func (rc *LogClient) CollectCompactedSsts(
 				Files:        i.SstOutputs,
 				RewriteRules: rewriteRules,
 			},
-			regionMaxKey: maxRegionKey,
+			regionMaxKey: rawMaxKey,
 		})
 	}
 	return sstFileCount, regionCompactedMap, nil
@@ -234,7 +235,7 @@ func findSplitRanges(regionId uint64, items CompactedItems, rightDeriveSplit boo
 	}
 
 	sort.Slice(items, func(i, j int) bool {
-		return bytes.Compare(keyFn(items[i]), keyFn(items[j])) > 0
+		return bytes.Compare(keyFn(items[i]), keyFn(items[j])) < 0
 	})
 
 	log.Info("find split key for region",
@@ -247,11 +248,12 @@ func findSplitRanges(regionId uint64, items CompactedItems, rightDeriveSplit boo
 		EndKey:   []byte(keyFn(items[0])),
 	}
 	// only one range in the region should split
-	rg, err := restoreutils.RewriteRange(&tmpRng, items[0].files.RewriteRules)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	splitRanges = append(splitRanges, *rg)
+	// rg, err := restoreutils.RewriteRange(&tmpRng, items[0].files.RewriteRules)
+	//if err != nil {
+	//	return nil, errors.Trace(err)
+	//}
+	// hack do not rewrite, just split
+	splitRanges = append(splitRanges, tmpRng)
 
 	return splitRanges, nil
 }
@@ -295,8 +297,6 @@ func (rc *LogClient) RestoreCompactedSsts(
 				}
 				return rc.restorer.RestoreFiles(eCtx, files, onProgress)
 			})
-			// reset for next batch
-			splitRanges = nil
 		} else {
 			files := make([]sstfiles.SstFilesInfo, 0, len(items))
 			for _, i := range items {
