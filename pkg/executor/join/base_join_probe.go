@@ -753,7 +753,7 @@ func (*mockJoinProbe) SetChunkForProbe(*chunk.Chunk) error {
 	return errors.New("not supported")
 }
 
-func (*mockJoinProbe) SetRestoredChunkForProbe(chunk *chunk.Chunk) error {
+func (*mockJoinProbe) SetRestoredChunkForProbe(*chunk.Chunk) error {
 	return errors.New("not supported")
 }
 

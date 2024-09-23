@@ -479,7 +479,7 @@ func (b *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, cost *int64) e
 	return nil
 }
 
-func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestoreImpl(i int, inDisk *chunk.DataInDiskByChunks, fetcherAndWorkerSyncer *sync.WaitGroup, hasErr bool, cost *int64) (err error) {
+func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestoreImpl(i int, inDisk *chunk.DataInDiskByChunks, fetcherAndWorkerSyncer *sync.WaitGroup, hasErr bool, cost *int64) (err error) {
 	defer func() {
 		fetcherAndWorkerSyncer.Done()
 
@@ -509,25 +509,25 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestoreImpl(i int, i
 		return err
 	}
 
-	err = w.processOneRestoredChunk(chk, cost)
+	err = b.processOneRestoredChunk(chk, cost)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chunk.DataInDiskByChunks, syncCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
+func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chunk.DataInDiskByChunks, syncCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
 	cost := int64(0)
 	defer func() {
-		if w.HashJoinCtx.stats != nil {
-			w.updatePartitionData(cost)
+		if b.HashJoinCtx.stats != nil {
+			b.updatePartitionData(cost)
 		}
 	}()
 
-	partitionNumber := w.HashJoinCtx.partitionNumber
-	hashJoinCtx := w.HashJoinCtx
+	partitionNumber := b.HashJoinCtx.partitionNumber
+	hashJoinCtx := b.HashJoinCtx
 
-	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
+	b.builder = createRowTableBuilder(b.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, b.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	hasErr := false
 	chunkNum := inDisk.NumChunks()
@@ -537,7 +537,7 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 			break
 		}
 
-		err := w.splitPartitionAndAppendToRowTableForRestoreImpl(i, inDisk, fetcherAndWorkerSyncer, hasErr, &cost)
+		err := b.splitPartitionAndAppendToRowTableForRestoreImpl(i, inDisk, fetcherAndWorkerSyncer, hasErr, &cost)
 		if err != nil {
 			hasErr = true
 			handleErr(err, errCh, doneCh)
@@ -552,8 +552,68 @@ func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 	}
 
 	start := time.Now()
-	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
+	b.builder.appendRemainingRowLocations(int(b.WorkerID), b.HashJoinCtx.hashTableContext)
 	cost += int64(time.Since(start))
+}
+
+func (b *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, fetcherAndWorkerSyncer *sync.WaitGroup, srcChkCh chan *chunk.Chunk, errCh chan error, doneCh chan struct{}) {
+	cost := int64(0)
+	defer func() {
+		if b.HashJoinCtx.stats != nil {
+			atomic.AddInt64(&b.HashJoinCtx.stats.partitionData, cost)
+			setMaxValue(&b.HashJoinCtx.stats.maxPartitionData, cost)
+		}
+	}()
+	partitionNumber := b.HashJoinCtx.partitionNumber
+	hashJoinCtx := b.HashJoinCtx
+
+	b.builder = createRowTableBuilder(b.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, b.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
+
+	hasErr := false
+	for chk := range srcChkCh {
+		err := b.splitPartitionAndAppendToRowTableImpl(typeCtx, chk, fetcherAndWorkerSyncer, hasErr, &cost)
+		if err != nil {
+			hasErr = true
+			handleErr(err, errCh, doneCh)
+		}
+	}
+
+	if hasErr {
+		return
+	}
+
+	start := time.Now()
+	b.builder.appendRemainingRowLocations(int(b.WorkerID), b.HashJoinCtx.hashTableContext)
+	cost += int64(time.Since(start))
+}
+
+func (b *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk, cost *int64) error {
+	start := time.Now()
+	err := b.builder.processOneChunk(chk, typeCtx, b.HashJoinCtx, int(b.WorkerID))
+	failpoint.Inject("splitPartitionPanic", nil)
+	*cost += int64(time.Since(start))
+	return err
+}
+
+func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableImpl(typeCtx types.Context, chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, hasErr bool, cost *int64) error {
+	defer func() {
+		fetcherAndWorkerSyncer.Done()
+	}()
+
+	if hasErr {
+		return nil
+	}
+
+	err := triggerIntest(5)
+	if err != nil {
+		return err
+	}
+
+	err = b.processOneChunk(typeCtx, chk, cost)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // buildHashTableForList builds hash table from `list`.
@@ -737,66 +797,6 @@ func (fetcher *ProbeSideTupleFetcherV2) shouldLimitProbeFetchSize() bool {
 		return true
 	}
 	return false
-}
-
-func (w *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, fetcherAndWorkerSyncer *sync.WaitGroup, srcChkCh chan *chunk.Chunk, errCh chan error, doneCh chan struct{}) {
-	cost := int64(0)
-	defer func() {
-		if w.HashJoinCtx.stats != nil {
-			atomic.AddInt64(&w.HashJoinCtx.stats.partitionData, cost)
-			setMaxValue(&w.HashJoinCtx.stats.maxPartitionData, cost)
-		}
-	}()
-	partitionNumber := w.HashJoinCtx.partitionNumber
-	hashJoinCtx := w.HashJoinCtx
-
-	w.builder = createRowTableBuilder(w.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
-
-	hasErr := false
-	for chk := range srcChkCh {
-		err := w.splitPartitionAndAppendToRowTableImpl(typeCtx, chk, fetcherAndWorkerSyncer, hasErr, &cost)
-		if err != nil {
-			hasErr = true
-			handleErr(err, errCh, doneCh)
-		}
-	}
-
-	if hasErr {
-		return
-	}
-
-	start := time.Now()
-	w.builder.appendRemainingRowLocations(int(w.WorkerID), w.HashJoinCtx.hashTableContext)
-	cost += int64(time.Since(start))
-}
-
-func (w *BuildWorkerV2) processOneChunk(typeCtx types.Context, chk *chunk.Chunk, cost *int64) error {
-	start := time.Now()
-	err := w.builder.processOneChunk(chk, typeCtx, w.HashJoinCtx, int(w.WorkerID))
-	failpoint.Inject("splitPartitionPanic", nil)
-	*cost += int64(time.Since(start))
-	return err
-}
-
-func (w *BuildWorkerV2) splitPartitionAndAppendToRowTableImpl(typeCtx types.Context, chk *chunk.Chunk, fetcherAndWorkerSyncer *sync.WaitGroup, hasErr bool, cost *int64) error {
-	defer func() {
-		fetcherAndWorkerSyncer.Done()
-	}()
-
-	if hasErr {
-		return nil
-	}
-
-	err := triggerIntest(5)
-	if err != nil {
-		return err
-	}
-
-	err = w.processOneChunk(typeCtx, chk, cost)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func (e *HashJoinV2Exec) canSkipProbeIfHashTableIsEmpty() bool {
