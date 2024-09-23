@@ -31,13 +31,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -57,7 +55,6 @@ type LazyTxn struct {
 
 	initCnt       int
 	stagingHandle kv.StagingHandle
-	mutations     map[int64]*binlog.TableMutation
 	writeSLI      sli.TxnWriteThroughputSLI
 
 	enterFairLockingOnValid bool
@@ -86,7 +83,6 @@ func (txn *LazyTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 }
 
 func (txn *LazyTxn) init() {
-	txn.mutations = make(map[int64]*binlog.TableMutation)
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
@@ -258,9 +254,6 @@ func (txn *LazyTxn) GoString() string {
 	} else if txn.Valid() {
 		s.WriteString("state=valid")
 		fmt.Fprintf(&s, ", txnStartTS=%d", txn.Transaction.StartTS())
-		if len(txn.mutations) > 0 {
-			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(txn.mutations), txn.mutations)
-		}
 	} else {
 		s.WriteString("state=invalid")
 	}
@@ -409,14 +402,6 @@ func ResetMockAutoRandIDRetryCount(failTimes int64) {
 // Commit overrides the Transaction interface.
 func (txn *LazyTxn) Commit(ctx context.Context) error {
 	defer txn.reset()
-	if len(txn.mutations) != 0 || txn.countHint() != 0 {
-		logutil.BgLogger().Error("the code should never run here",
-			zap.String("TxnState", txn.GoString()),
-			zap.Int("staging handler", int(txn.stagingHandle)),
-			zap.Int("mutations", txn.countHint()),
-			zap.Stack("something must be wrong"))
-		return errors.Trace(kv.ErrInvalidTxn)
-	}
 
 	txn.mu.Lock()
 	txn.updateState(txninfo.TxnCommitting)
@@ -577,9 +562,6 @@ func (txn *LazyTxn) reset() {
 func (txn *LazyTxn) cleanup() {
 	txn.cleanupStmtBuf()
 	txn.initStmtBuf()
-	for key := range txn.mutations {
-		delete(txn.mutations, key)
-	}
 }
 
 // KeysNeedToLock returns the keys need to be locked.
@@ -668,27 +650,6 @@ func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	return tablecodec.IndexKVIsUnique(v)
 }
 
-func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
-	bin := binloginfo.GetPrewriteValue(ctx, true)
-	for i := range bin.Mutations {
-		if bin.Mutations[i].TableId == tableID {
-			return &bin.Mutations[i]
-		}
-	}
-	idx := len(bin.Mutations)
-	bin.Mutations = append(bin.Mutations, binlog.TableMutation{TableId: tableID})
-	return &bin.Mutations[idx]
-}
-
-func mergeToMutation(m1, m2 *binlog.TableMutation) {
-	m1.InsertedRows = append(m1.InsertedRows, m2.InsertedRows...)
-	m1.UpdatedRows = append(m1.UpdatedRows, m2.UpdatedRows...)
-	m1.DeletedIds = append(m1.DeletedIds, m2.DeletedIds...)
-	m1.DeletedPks = append(m1.DeletedPks, m2.DeletedPks...)
-	m1.DeletedRows = append(m1.DeletedRows, m2.DeletedRows...)
-	m1.Sequence = append(m1.Sequence, m2.Sequence...)
-}
-
 type txnFailFuture struct{}
 
 func (txnFailFuture) Wait() (uint64, error) {
@@ -750,12 +711,6 @@ func (s *session) StmtCommit(ctx context.Context) {
 
 	st := &s.txn
 	st.flushStmtBuf()
-
-	// Need to flush binlog.
-	for tableID, delta := range st.mutations {
-		mutation := getBinlogMutation(s, tableID)
-		mergeToMutation(mutation, delta)
-	}
 }
 
 // StmtRollback implements the sessionctx.Context interface.
@@ -766,13 +721,4 @@ func (s *session) StmtRollback(ctx context.Context, isForPessimisticRetry bool) 
 		logutil.Logger(ctx).Error("txnManager failed to handle OnStmtRollback", zap.Error(err))
 	}
 	s.txn.cleanup()
-}
-
-// StmtGetMutation implements the sessionctx.Context interface.
-func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
-	st := &s.txn
-	if _, ok := st.mutations[tableID]; !ok {
-		st.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
-	}
-	return st.mutations[tableID]
 }
