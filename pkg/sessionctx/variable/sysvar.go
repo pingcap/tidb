@@ -73,7 +73,6 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: SystemTimeZone, Value: "CST"},
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
 	{Scope: ScopeNone, Name: Port, Value: "4000", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint16},
-	{Scope: ScopeNone, Name: LogBin, Value: Off, Type: TypeBool},
 	{Scope: ScopeNone, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 8.0 compatible"},
 	{Scope: ScopeNone, Name: Version, Value: mysql.ServerVersion},
 	{Scope: ScopeNone, Name: DataDir, Value: "/usr/local/mysql/data/"},
@@ -1677,7 +1676,6 @@ var defaultSysVars = []*SysVar{
 		s.DefaultCollationForUTF8MB4 = val
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLLogBin, Value: On, Type: TypeBool},
 	{
 		Scope:                   ScopeGlobal | ScopeSession,
 		Name:                    TimeZone,
@@ -3471,10 +3469,6 @@ const (
 	InnodbFastShutdown = "innodb_fast_shutdown"
 	// InnodbLockWaitTimeout is the name for 'innodb_lock_wait_timeout' system variable.
 	InnodbLockWaitTimeout = "innodb_lock_wait_timeout"
-	// SQLLogBin is the name for 'sql_log_bin' system variable.
-	SQLLogBin = "sql_log_bin"
-	// LogBin is the name for 'log_bin' system variable.
-	LogBin = "log_bin"
 	// MaxSortLength is the name for 'max_sort_length' system variable.
 	MaxSortLength = "max_sort_length"
 	// MaxSpRecursionDepth is the name for 'max_sp_recursion_depth' system variable.

@@ -25,7 +25,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -206,19 +205,6 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.avoid_temporal_upgrade = off")
 	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("0"))
-	tk.MustExec("set session sql_log_bin = on")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
-	tk.MustExec("set sql_log_bin = off")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("0"))
-	tk.MustExec("set @@sql_log_bin = on")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
-
-	binlogValue := "0"
-	if config.GetGlobalConfig().Binlog.Enable {
-		binlogValue = "1"
-	}
-	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(binlogValue))
-	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(binlogValue))
 
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")

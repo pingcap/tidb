@@ -15,7 +15,6 @@
 package tblsession
 
 import (
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -25,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tipb/go-binlog"
 )
 
 var _ tblctx.MutateContext = &MutateContext{}
@@ -117,24 +115,6 @@ func (ctx *MutateContext) GetReservedRowIDAlloc() (*stmtctx.ReservedRowIDAlloc, 
 	// because some old code checks `StmtCtx != nil` but we don't know why.
 	intest.Assert(false, "SessionVars.StmtCtx should not be nil")
 	return nil, false
-}
-
-// GetBinlogSupport implements the MutateContext interface.
-func (ctx *MutateContext) GetBinlogSupport() (tblctx.BinlogSupport, bool) {
-	failpoint.Inject("forceWriteBinlog", func() {
-		// Just to cover binlog related code in this package, since the `BinlogClient` is
-		// still nil, mutations won't be written to pump on commit.
-		failpoint.Return(ctx, true)
-	})
-	if ctx.vars().BinlogClient != nil {
-		return ctx, true
-	}
-	return nil, false
-}
-
-// GetBinlogMutation implements the BinlogSupport interface.
-func (ctx *MutateContext) GetBinlogMutation(tblID int64) *binlog.TableMutation {
-	return ctx.Context.StmtGetMutation(tblID)
 }
 
 // GetStatisticsSupport implements the MutateContext interface.

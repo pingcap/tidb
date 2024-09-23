@@ -70,8 +70,8 @@ const (
 	ActionCreateSequence                ActionType = 34
 	ActionAlterSequence                 ActionType = 35
 	ActionDropSequence                  ActionType = 36
-	_DEPRECATEDActionAddColumns         ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
-	_DEPRECATEDActionDropColumns        ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionModifyTableAutoIDCache        ActionType = 39
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
@@ -490,39 +490,45 @@ func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 	args.fillFinishedJob(job)
 }
 
+func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
+	if jobVer <= JobVersion1 {
+		rawArgs, err := json.Marshal(args)
+		return rawArgs, errors.Trace(err)
+	}
+
+	intest.Assert(jobVer == JobVersion2, "job version is not v2")
+	var arg any
+	if len(args) > 0 {
+		intest.Assert(len(args) == 1, "Job.Args should have only one element")
+		arg = args[0]
+	}
+
+	rawArgs, err := json.Marshal(arg)
+	return rawArgs, errors.Trace(err)
+}
+
 // Encode encodes job with json format.
 // updateRawArgs is used to determine whether to update the raw args.
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
 	if updateRawArgs {
-		if job.Version == JobVersion1 {
-			job.RawArgs, err = json.Marshal(job.Args)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if job.MultiSchemaInfo != nil {
-				for _, sub := range job.MultiSchemaInfo.SubJobs {
-					// Only update the args of executing sub-jobs.
-					if sub.Args == nil {
-						continue
-					}
-					sub.RawArgs, err = json.Marshal(sub.Args)
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
+		job.RawArgs, err = marshalArgs(job.Version, job.Args)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if job.MultiSchemaInfo != nil {
+			for _, sub := range job.MultiSchemaInfo.SubJobs {
+				// Only update the args of executing sub-jobs.
+				if sub.Args == nil {
+					continue
+				}
+
+				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
+				if err != nil {
+					return nil, errors.Trace(err)
 				}
 			}
-		} else {
-			var arg any
-			if len(job.Args) > 0 {
-				intest.Assert(len(job.Args) == 1, "Job.Args should have only one element")
-				arg = job.Args[0]
-			}
-			job.RawArgs, err = json.Marshal(arg)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			// TODO remember update sub-jobs' RawArgs when we do it.
 		}
 	}
 

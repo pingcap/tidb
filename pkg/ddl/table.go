@@ -121,7 +121,11 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver in
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
-		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
+		job.FillFinishedArgs(&model.DropTableArgs{
+			StartKey:        startKey,
+			OldPartitionIDs: oldIDs,
+			OldRuleIDs:      ruleIDs,
+		})
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
 			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
 			asyncNotifyEvent(jobCtx, dropTableEvent, job)
