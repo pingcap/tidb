@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/paging"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -165,7 +167,15 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		hasHighModifyCount := tblColHists.ModifyCount > tblColHists.RealtimeCount
 		// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
 		hasLowEstimate := rows > 1 && int64(rows) < tblColHists.RealtimeCount && int64(rows) <= tblColHists.ModifyCount
-		shouldApplyPenalty := !p.isChildOfIndexLookUp && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
+		var unsignedIntHandle bool
+		if p.Table.PKIsHandle {
+			if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
+				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+			}
+		}
+		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+		//shouldApplyPenalty := !p.isChildOfIndexLookUp && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
+		shouldApplyPenalty := hasFullRangeScan && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
 
 		if shouldApplyPenalty {
 			newRowCount := math.Min(MaxPenaltyRowCount, math.Max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
