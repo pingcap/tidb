@@ -4153,6 +4153,7 @@ func (e *executor) dropTableObject(
 		}
 
 		job := &model.Job{
+			Version:        model.GetJobVerInUse(),
 			SchemaID:       schema.ID,
 			TableID:        tableInfo.Meta().ID,
 			SchemaName:     schema.Name.L,
