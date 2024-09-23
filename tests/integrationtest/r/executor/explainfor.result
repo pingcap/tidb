@@ -847,7 +847,7 @@ id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:TABLES	table_name:["t"]
 desc format='brief' select * from information_schema.tables where upper(table_name)=upper('t');
 id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TABLES	table_name:["T"]
+MemTableScan	10000.00	root	table:TABLES	table_name:["t"]
 desc format='brief' select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name='t';
 id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:REFERENTIAL_CONSTRAINTS	table_name:["t"]
