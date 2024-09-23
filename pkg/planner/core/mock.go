@@ -619,11 +619,9 @@ func MockGlobalIndexHashPartitionTable() *model.TableInfo {
 				},
 			},
 			State: model.StatePublic,
-			Unique: true,
-			Global: true,
 		},
 		{
-			Name: pmodel.NewCIStr("b_1"),
+			Name: pmodel.NewCIStr("b_global"),
 			Columns: []*model.IndexColumn{
 				{
 					Name:   pmodel.NewCIStr("b"),
@@ -632,6 +630,8 @@ func MockGlobalIndexHashPartitionTable() *model.TableInfo {
 				},
 			},
 			State:  model.StatePublic,
+			Unique: true,
+			Global: true,
 		},
 	}...)
 	return tableInfo

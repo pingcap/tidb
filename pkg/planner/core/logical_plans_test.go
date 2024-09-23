@@ -1933,13 +1933,33 @@ func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
 	return pp
 }
 
+func getPartialIndexPathName(paths []*util.AccessPath) string {
+	name := "["
+	for i, path := range paths {
+		if path.IsTablePath() {
+			name += "PRIMARY_KEY"
+		} else {
+			name += path.Index.Name.O
+		}
+		if i != len(paths)-1 {
+			name += ", "
+		}
+	}
+	name += "]"
+	return name
+}
+
 func pathsName(paths []*candidatePath) string {
 	var names []string
 	for _, path := range paths {
-		if path.path.IsTablePath() {
-			names = append(names, "PRIMARY_KEY")
+		if len(path.path.PartialIndexPaths) != 0 {
+			names = append(names, getPartialIndexPathName(path.path.PartialIndexPaths))
 		} else {
-			names = append(names, path.path.Index.Name.O)
+			if path.path.IsTablePath() {
+				names = append(names, "PRIMARY_KEY")
+			} else {
+				names = append(names, path.path.Index.Name.O)
+			}
 		}
 	}
 	return strings.Join(names, ",")
@@ -2005,15 +2025,17 @@ func TestSkylinePruning(t *testing.T) {
 			sql:    "select * from t where d = 1 and f > 1 and g > 1 order by c, e",
 			result: "PRIMARY_KEY,c_d_e,g,f_g",
 		},
-		// select global index `b` instead of normal index `b_1`
 		{
 			sql:    "select * from pt2_global_index where b > 1 order by b",
-			result: "b",
+			result: "b_global",
 		},
-		// select global index `b` instead of normal index `b_1`
 		{
 			sql:    "select b from pt2_global_index where b > 1 order by b",
-			result: "b",
+			result: "b_global",
+		},
+		{
+			sql:    "select * from pt2_global_index where b > 1 or g = 5",
+			result: "PRIMARY_KEY,[g, b_global]",
 		},
 	}
 	s := createPlannerSuite()

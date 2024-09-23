@@ -932,7 +932,19 @@ func matchPropForIndexMergeAlternatives(ds *DataSource, path *util.AccessPath, p
 				if len(tmpOneItemAlternatives[b].IndexFilters) > 0 {
 					rhsCountAfter = tmpOneItemAlternatives[b].CountAfterIndex
 				}
-				return cmp.Compare(lhsCountAfter, rhsCountAfter)
+				res := cmp.Compare(lhsCountAfter, rhsCountAfter)
+				// If CountAfterAccess is same, any path is global index should be the first one.
+				if res == 0 {
+					var lIsGlobalIndex, rIsGlobalIndex int
+					if !tmpOneItemAlternatives[a].IsTablePath() && tmpOneItemAlternatives[a].Index.Global {
+						lIsGlobalIndex = 1
+					}
+					if !tmpOneItemAlternatives[b].IsTablePath() && tmpOneItemAlternatives[b].Index.Global {
+						rIsGlobalIndex = 1
+					}
+					return -cmp.Compare(lIsGlobalIndex, rIsGlobalIndex)
+				}
+				return res
 			})
 		}
 		allMatchIdxes = append(allMatchIdxes, idxWrapper{matchIdxes, pathIdx})
