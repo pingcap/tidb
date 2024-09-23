@@ -86,7 +86,6 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForT
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionDropForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	args := &model.DropForeignKeyArgs{FkName: pmodel.NewCIStr(foreignKeyName)}

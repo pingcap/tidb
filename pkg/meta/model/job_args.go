@@ -645,12 +645,10 @@ func GetRebaseAutoIDArgs(job *Job) (*RebaseAutoIDArgs, error) {
 
 // ModifyTableCommentArgs is the arguments for ActionModifyTableComment ddl.
 type ModifyTableCommentArgs struct {
-	Comment string
+	Comment string `json:"comment,omitempty"`
 }
 
 func (a *ModifyTableCommentArgs) fillJob(job *Job) {
-	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
-
 	if job.Version == JobVersion1 {
 		job.Args = []any{a.Comment}
 	} else {
@@ -675,13 +673,12 @@ func GetModifyTableCommentArgs(job *Job) (*ModifyTableCommentArgs, error) {
 
 // ModifyTableCharsetAndCollateArgs is the arguments for ActionModifyTableCharsetAndCollate ddl.
 type ModifyTableCharsetAndCollateArgs struct {
-	ToCharset          string
-	ToCollate          string
-	NeedsOverwriteCols bool
+	ToCharset          string `json:"to_charset,omitempty"`
+	ToCollate          string `json:"to_collate,omitempty"`
+	NeedsOverwriteCols bool   `json:"needs_overwrite_cols,omitempty"`
 }
 
 func (a *ModifyTableCharsetAndCollateArgs) fillJob(job *Job) {
-	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
 		job.Args = []any{a.ToCharset, a.ToCollate, a.NeedsOverwriteCols}
 	} else {
@@ -705,13 +702,11 @@ func GetModifyTableCharsetAndCollateArgs(job *Job) (*ModifyTableCharsetAndCollat
 
 // AlterIndexVisibilityArgs is the arguments for ActionAlterIndexVisibility ddl.
 type AlterIndexVisibilityArgs struct {
-	IndexName pmodel.CIStr
-	Invisible bool
+	IndexName pmodel.CIStr `json:"index_name,omitempty"`
+	Invisible bool         `json:"invisible,omitempty"`
 }
 
 func (a *AlterIndexVisibilityArgs) fillJob(job *Job) {
-	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
-
 	if job.Version == JobVersion1 {
 		job.Args = []any{a.IndexName, a.Invisible}
 	} else {
@@ -740,13 +735,11 @@ func GetAlterIndexVisibilityArgs(job *Job) (*AlterIndexVisibilityArgs, error) {
 
 // AddForeignKeyArgs is the arguments for ActionAddForeignKey ddl.
 type AddForeignKeyArgs struct {
-	FkInfo  *FKInfo
-	FkCheck bool
+	FkInfo  *FKInfo `json:"fk_info,omitempty"`
+	FkCheck bool    `json:"fk_check,omitempty"`
 }
 
 func (a *AddForeignKeyArgs) fillJob(job *Job) {
-	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
-
 	if job.Version == JobVersion1 {
 		job.Args = []any{a.FkInfo, a.FkCheck}
 	} else {
@@ -775,11 +768,10 @@ func GetAddForeignKeyArgs(job *Job) (*AddForeignKeyArgs, error) {
 
 // DropForeignKeyArgs is the arguments for DropForeignKey ddl.
 type DropForeignKeyArgs struct {
-	FkName pmodel.CIStr
+	FkName pmodel.CIStr `json:"fk_name,omitempty"`
 }
 
 func (a *DropForeignKeyArgs) fillJob(job *Job) {
-	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
 		job.Args = []any{a.FkName}
 	} else {
