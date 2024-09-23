@@ -607,7 +607,7 @@ func TestColumnTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_2"))
 	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
-		testkit.RowsWithSep("|", "4944"))
+		testkit.RowsWithSep("|", "4955"))
 }
 
 func TestIndexUsageTable(t *testing.T) {
@@ -654,7 +654,7 @@ func TestIndexUsageTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|idt2|idx_4"))
 	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage;`).Check(
-		testkit.RowsWithSep("|", "73"))
+		testkit.RowsWithSep("|", "76"))
 
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())
@@ -857,22 +857,22 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
-		"127|add index /* txn-merge */|public|120|125|t1|synced",
-		"126|create table|public|120|125|t1|synced",
-		"113|add index /* txn-merge */|public|106|111|t1|synced",
-		"112|create table|public|106|111|t1|synced",
+		"129|add index /* txn-merge */|public|122|127|t1|synced",
+		"128|create table|public|122|127|t1|synced",
+		"115|add index /* txn-merge */|public|108|113|t1|synced",
+		"114|create table|public|108|113|t1|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
-		"133|add index /* txn-merge */|public|120|131|t3|synced",
-		"130|add index /* txn-merge */|public|120|128|t2|synced",
-		"127|add index /* txn-merge */|public|120|125|t1|synced",
-		"124|add index /* txn-merge */|public|120|122|t0|synced",
+		"135|add index /* txn-merge */|public|122|133|t3|synced",
+		"132|add index /* txn-merge */|public|122|130|t2|synced",
+		"129|add index /* txn-merge */|public|122|127|t1|synced",
+		"126|add index /* txn-merge */|public|122|124|t0|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
-		"119|add index /* txn-merge */|public|106|117|t3|synced",
-		"118|create table|public|106|117|t3|synced",
+		"121|add index /* txn-merge */|public|108|119|t3|synced",
+		"120|create table|public|108|119|t3|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 					FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.Rows())
@@ -907,8 +907,8 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk.MustExec("create table test2.t1(id int)")
 	tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
-		"143|create table|public|140|142|t1|synced",
-		"138|create table|public|135|137|t1|synced",
+		"145|create table|public|142|144|t1|synced",
+		"140|create table|public|137|139|t1|synced",
 	))
 
 	// Test explain output, since the output may change in future.
