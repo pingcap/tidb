@@ -371,6 +371,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetAllowBatchCop(e.batchCop).
 			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &reqBuilder.Request, e.netDataSize)).
 			SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+			SetKilled(&e.Ctx().GetSessionVars().Killed).
 			Build()
 		if err != nil {
 			return nil, err
@@ -413,6 +414,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetAllowBatchCop(e.batchCop).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &reqBuilder.Request, e.netDataSize)).
 		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetKilled(&e.Ctx().GetSessionVars().Killed).
 		Build()
 	if err != nil {
 		return nil, err
@@ -462,7 +464,8 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetAllowBatchCop(e.batchCop).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &reqBuilder.Request, e.netDataSize)).
 		SetPaging(e.paging).
-		SetConnID(e.Ctx().GetSessionVars().ConnectionID)
+		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetKilled(&e.Ctx().GetSessionVars().Killed)
 	return reqBuilder.Build()
 }
 

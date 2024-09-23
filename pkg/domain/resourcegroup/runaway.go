@@ -107,12 +107,13 @@ func GenRunawayQueriesStmt(records []*RunawayRecord) (string, []interface{}) {
 type QuarantineRecord struct {
 	ID                int64
 	ResourceGroupName string
-	StartTime         time.Time
-	EndTime           time.Time
-	Watch             rmpb.RunawayWatchType
-	WatchText         string
-	Source            string
-	Action            rmpb.RunawayAction
+	// startTime and endTime are in UTC.
+	StartTime time.Time
+	EndTime   time.Time
+	Watch     rmpb.RunawayWatchType
+	WatchText string
+	Source    string
+	Action    rmpb.RunawayAction
 }
 
 // GetRecordKey is used to get the key in ttl cache.
