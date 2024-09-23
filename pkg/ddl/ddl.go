@@ -737,8 +737,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	}
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid),
 		zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()),
-		zap.Stringer("jobVersion", model.GetJobVerInUse()),
-		zap.String("ForceDDLJobVersionToV1InTest", ForceDDLJobVersionToV1InTest))
+		zap.Stringer("jobVersion", model.GetJobVerInUse()))
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool
