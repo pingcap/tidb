@@ -418,9 +418,14 @@ func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
 }
 
 func (j *baseJoinProbe) ResetProbe() {
-	// We must reset this variable or gc will raise error.
+	// We must reset `cachedBuildRows` or gc will raise error.
 	// However, we can't explain it so far.
 	j.cachedBuildRows = make([]matchedRowInfo, batchBuildRowSize)
+
+	// Reset `rowIndexInfos`, just in case of gc problems.
+	if j.ctx.hasOtherCondition() {
+		j.rowIndexInfos = make([]matchedRowInfo, 0, chunk.InitialCapacity)
+	}
 }
 
 func checkSQLKiller(killer *sqlkiller.SQLKiller, fpName string) error {

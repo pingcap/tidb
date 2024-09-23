@@ -48,12 +48,12 @@ type MockDataSourceParameters struct {
 	GenDataFunc func(row int, typ *types.FieldType) any
 	Ndvs        []int
 	Orders      []bool
-	Rows        int
 
 	// Sometimes, user wants to manually provide test data
 	// and he can save provided test data at here.
 	Datums [][]any
 
+	Rows   int
 	HasSel bool
 }
 

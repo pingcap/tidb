@@ -501,8 +501,6 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 		return errors.NewNoStackError(exceedMaxSpillRoundErrInfo)
 	}
 
-	h.hashJoinExec.HashJoinCtxV2.resetHashTableContextForRestore()
-
 	if h.buildRowsInDisk == nil {
 		return nil
 	}

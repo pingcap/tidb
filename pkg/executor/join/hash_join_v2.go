@@ -681,7 +681,11 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	}
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	e.diskTracker = disk.NewTracker(e.ID(), -1)
+	if e.diskTracker != nil {
+		e.diskTracker.Reset()
+	} else {
+		e.diskTracker = disk.NewTracker(e.ID(), -1)
+	}
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	e.spillHelper = newHashJoinSpillHelper(e, int(e.partitionNumber), e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes())
 
@@ -1043,6 +1047,7 @@ func (e *HashJoinV2Exec) reset() {
 	e.spillHelper.setCanSpillFlag(true)
 	e.resetProbeStatus()
 	e.releaseDisk()
+	e.resetHashTableContextForRestore()
 }
 
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
