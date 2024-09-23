@@ -313,18 +313,19 @@ func (a *DropTableArgs) fillFinishedJob(job *Job) {
 	job.Args = []any{a}
 }
 
+func (a *DropTableArgs) decodeV1(job *Job) error {
+	intest.Assert(job.Type == ActionDropTable, "only drop table job can call GetDropTableArgs")
+	return job.DecodeArgs(&a.Identifiers, &a.FKCheck)
+}
+
 // GetDropTableArgs gets the drop-table args.
 func GetDropTableArgs(job *Job) (*DropTableArgs, error) {
 	if job.Version == JobVersion1 {
-		intest.Assert(job.Type == ActionDropTable, "only drop table job can call GetDropTableArgs")
-		var (
-			tableIdentifiers []ast.Ident
-			fkCheck          bool
-		)
-		if err := job.DecodeArgs(&tableIdentifiers, &fkCheck); err != nil {
+		args := &DropTableArgs{}
+		if err := args.decodeV1(job); err != nil {
 			return nil, errors.Trace(err)
 		}
-		return &DropTableArgs{Identifiers: tableIdentifiers, FKCheck: fkCheck}, nil
+		return args, nil
 	}
 	return getOrDecodeArgsV2[*DropTableArgs](job)
 }
