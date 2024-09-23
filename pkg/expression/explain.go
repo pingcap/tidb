@@ -68,19 +68,6 @@ func (expr *ScalarFunction) ExplainNormalizedInfo() string {
 }
 
 // ExplainInfo implements the Expression interface.
-func (col *Column) ExplainInfo() string {
-	return col.String()
-}
-
-// ExplainNormalizedInfo implements the Expression interface.
-func (col *Column) ExplainNormalizedInfo() string {
-	if col.OrigName != "" {
-		return col.OrigName
-	}
-	return "?"
-}
-
-// ExplainInfo implements the Expression interface.
 func (col *Column) ExplainInfo(ctx EvalContext) string {
 	return col.ColumnExplainInfo(ctx, false)
 }
