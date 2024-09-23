@@ -303,10 +303,20 @@ func TestTablePartitionArgs(t *testing.T) {
 				}
 				if j2.Type != ActionDropTablePartition {
 					require.Equal(t, inArgs.PartInfo, args.PartInfo)
+				} else {
+					require.EqualValues(t, &PartitionInfo{}, args.PartInfo)
 				}
 			}
 		}
 	}
+
+	// for ActionDropTablePartition in V2, check PartInfo is not nil
+	j2 := &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, &TablePartitionArgs{PartNames: []string{"a", "b"}},
+		JobVersion2, ActionDropTablePartition)))
+	args, err := GetTablePartitionArgs(j2)
+	require.NoError(t, err)
+	require.EqualValues(t, &PartitionInfo{}, args.PartInfo)
 
 	for _, ver := range []JobVersion{JobVersion1, JobVersion2} {
 		j := &Job{
@@ -344,6 +354,7 @@ func TestTablePartitionArgs(t *testing.T) {
 		args, err := GetTablePartitionArgs(j2)
 		require.NoError(t, err)
 		require.EqualValues(t, partNames, args.PartNames)
+		require.EqualValues(t, &PartitionInfo{}, args.PartInfo)
 	}
 }
 
