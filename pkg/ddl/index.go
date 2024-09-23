@@ -1272,10 +1272,12 @@ func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, pmodel.CI
 		return nil, from, to, errors.Trace(err)
 	}
 
-	if err := job.DecodeArgs(&from, &to); err != nil {
+	args, err := model.GetRenameIndexArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, from, to, errors.Trace(err)
 	}
+	from, to = args.From, args.To
 
 	// Double check. See function `RenameIndex` in executor.go
 	duplicate, err := ValidateRenameIndex(from, to, tblInfo)

@@ -570,3 +570,19 @@ func TestResourceGroupArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestGetRenameIndexArgs(t *testing.T) {
+	inArgs := &RenameIndexArgs{
+		From: model.NewCIStr("old"),
+		To:   model.NewCIStr("new"),
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionRenameIndex)))
+
+		args, err := GetRenameIndexArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs.From, args.From)
+		require.Equal(t, inArgs.To, args.To)
+	}
+}

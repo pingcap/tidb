@@ -240,10 +240,12 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 			}
 		}
 	case model.ActionRenameIndex:
-		from := job.Args[0].(pmodel.CIStr)
-		to := job.Args[1].(pmodel.CIStr)
-		info.AddIndexes = append(info.AddIndexes, to)
-		info.DropIndexes = append(info.DropIndexes, from)
+		args, err := model.GetRenameIndexArgs(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		info.AddIndexes = append(info.AddIndexes, args.To)
+		info.DropIndexes = append(info.DropIndexes, args.From)
 	case model.ActionModifyColumn:
 		newCol := *job.Args[0].(**model.ColumnInfo)
 		oldColName := job.Args[1].(pmodel.CIStr)

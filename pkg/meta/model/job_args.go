@@ -907,3 +907,36 @@ func getAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 	}
 	return &a, nil
 }
+
+// RenameIndexArgs is the argument for rename index.
+type RenameIndexArgs struct {
+	From pmodel.CIStr `json:"from"`
+	To   pmodel.CIStr `json:"to"`
+}
+
+func (a *RenameIndexArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.From, a.To}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func GetRenameIndexArgs(job *Job) (*RenameIndexArgs, error) {
+	if job.Version == JobVersion1 {
+		if err := tryMarshalArgs(job); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		var from, to pmodel.CIStr
+		if err := job.DecodeArgs(&from, &to); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &RenameIndexArgs{
+			From: from,
+			To:   to,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*RenameIndexArgs](job)
+}
