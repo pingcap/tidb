@@ -17,7 +17,6 @@ package execdetails
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"slices"
 	"sort"
