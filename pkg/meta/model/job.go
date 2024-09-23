@@ -880,8 +880,10 @@ type SubJob struct {
 }
 
 // FillArgs fills args for subjob.
-func (sub *SubJob) FillArgs(args SubJobArgs) {
-	args.fillSubJob(sub)
+func (sub *SubJob) FillArgs(args JobArgs, version JobVersion) {
+	job := &Job{Version: version}
+	job.FillArgs(args)
+	sub.Args = job.Args
 }
 
 // IsNormal returns true if the sub-job is normally running.

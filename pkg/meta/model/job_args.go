@@ -40,6 +40,18 @@ func getOrDecodeArgsV2[T JobArgs](job *Job) (T, error) {
 	return v, nil
 }
 
+// GetArgsFromSubJob get arguments from SubJob
+func GetArgsFromSubJob[T JobArgs](
+	subJob *SubJob,
+	version JobVersion,
+	f func(*Job) (T, error)) (T, error) {
+	return f(&Job{
+		Version: version,
+		Type:    subJob.Type,
+		Args:    subJob.Args,
+	})
+}
+
 // JobArgs is the interface for job arguments.
 type JobArgs interface {
 	// fillJob fills the job args for submitting job. we make it private to avoid
@@ -574,10 +586,12 @@ func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
 // DropIndexArgs is the argument for drop index.
 // IndexIDs may have different length with IndexNames and IfExists.
 type DropIndexArgs struct {
-	IndexNames   []pmodel.CIStr `json:"index_names,omitempty"`
-	IfExists     []bool         `json:"if_exists,omitempty"`
-	IndexIDs     []int64        `json:"index_ids"`
-	PartitionIDs []int64        `json:"partition_ids "`
+	IndexNames []pmodel.CIStr `json:"index_names,omitempty"`
+	IfExists   []bool         `json:"if_exists,omitempty"`
+
+	// Belows are used for finished args.
+	IndexIDs     []int64 `json:"index_ids"`
+	PartitionIDs []int64 `json:"partition_ids"`
 
 	// This is used to distinguish rollback add index and drop index,
 	// since they have different args for v1.
@@ -613,17 +627,24 @@ func (a *DropIndexArgs) fillFinishedJob(job *Job) {
 	job.Args = []any{a}
 }
 
+func tryMarshalArgs(job *Job) error {
+	if len(job.Args) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(job.Args)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job.RawArgs = b
+	return nil
+}
+
 // GetDropIndexArgs gets the drop index args.
 // It's used for both drop index and rollback add index.
 func GetDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 	if job.Version == JobVersion1 {
-		// A temp workaround
-		if len(job.Args) > 0 && len(job.RawArgs) == 0 {
-			b, err := json.Marshal(job.Args)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			job.RawArgs = b
+		if err := tryMarshalArgs(job); err != nil {
+			return nil, errors.Trace(err)
 		}
 
 		indexNames := make([]pmodel.CIStr, 1)
@@ -646,13 +667,8 @@ func GetDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 // It's used for both drop index and rollback add index.
 func GetFinishedDropIndexArgs(job *Job) (*DropIndexArgs, error) {
 	if job.Version == JobVersion1 {
-		// A temp workaround
-		if len(job.Args) > 0 && len(job.RawArgs) == 0 {
-			b, err := json.Marshal(job.Args)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			job.RawArgs = b
+		if err := tryMarshalArgs(job); err != nil {
+			return nil, errors.Trace(err)
 		}
 
 		indexNames := make([]pmodel.CIStr, 1)
@@ -749,35 +765,6 @@ func (a *AddIndexArgs) getV1Args() []any {
 	}
 }
 
-// MergeIndexArg is used to merge several add index args
-func (a *AddIndexArgs) MergeIndexArg(Args []any, subjobVersion JobVersion) {
-	var indexArg *IndexArg
-
-	// TODO(joechenrh): update logic here after refactor done.
-	if subjobVersion != JobVersion2 {
-		indexArg = &IndexArg{
-			Unique:                  *Args[0].(*bool),
-			IndexName:               *Args[1].(*pmodel.CIStr),
-			IndexPartSpecifications: *Args[2].(*[]*ast.IndexPartSpecification),
-			IndexOption:             *Args[3].(**ast.IndexOption),
-			HiddenCols:              *Args[4].(*[]*ColumnInfo),
-			Global:                  *Args[5].(*bool),
-		}
-	} else {
-		indexArg = Args[0].(*AddIndexArgs).IndexArgs[0]
-	}
-	a.IndexArgs = append(a.IndexArgs, indexArg)
-}
-
-func (a *AddIndexArgs) fillSubJob(job *SubJob) {
-	intest.Assert(!a.IsPK, "a should not be add primary key argument")
-	if job.Version == JobVersion1 {
-		job.Args = a.getV1Args()
-		return
-	}
-	job.Args = []any{a}
-}
-
 func (a *AddIndexArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
 		job.Args = a.getV1Args()
@@ -806,6 +793,9 @@ func (a *AddIndexArgs) fillFinishedJob(job *Job) {
 // GetAddIndexArgs gets the add index args.
 func GetAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 	if job.Version == JobVersion1 {
+		if err := tryMarshalArgs(job); err != nil {
+			return nil, errors.Trace(err)
+		}
 		if job.Type == ActionAddIndex {
 			return getAddIndexArgs(job)
 		}
@@ -857,17 +847,6 @@ func GetFinishedAddIndexArgs(job *Job) (*AddIndexArgs, error) {
 }
 
 func getAddPrimaryKeyArgs(job *Job) (*AddIndexArgs, error) {
-	intest.Assert(job.Version == JobVersion1, "job version is not v1")
-
-	// A temp workaround
-	if len(job.Args) > 0 && len(job.RawArgs) == 0 {
-		b, err := json.Marshal(job.Args)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		job.RawArgs = b
-	}
-
 	var (
 		unique                  bool
 		indexName               pmodel.CIStr
@@ -898,17 +877,6 @@ func getAddPrimaryKeyArgs(job *Job) (*AddIndexArgs, error) {
 }
 
 func getAddIndexArgs(job *Job) (*AddIndexArgs, error) {
-	intest.Assert(job.Version == JobVersion1, "job version is not v1")
-
-	// A temp workaround
-	if len(job.Args) > 0 && len(job.RawArgs) == 0 {
-		b, err := json.Marshal(job.Args)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		job.RawArgs = b
-	}
-
 	uniques := make([]bool, 1)
 	indexNames := make([]pmodel.CIStr, 1)
 	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)

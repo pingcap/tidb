@@ -359,14 +359,10 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	newAddIndexesArgs := &model.AddIndexArgs{}
 
 	for _, subJob := range info.SubJobs {
-		if subJob.Type == model.ActionAddIndex {
-			newAddIndexesArgs.MergeIndexArg(subJob.Args, subJob.Version)
-		} else {
-			newSubJobs = append(newSubJobs, subJob)
-		}
+		args, _ := model.GetArgsFromSubJob(subJob, subJob.Version, model.GetAddIndexArgs)
+		newAddIndexesArgs.IndexArgs = append(newAddIndexesArgs.IndexArgs, args.IndexArgs...)
 	}
-
-	mergedSubJob.FillArgs(newAddIndexesArgs)
+	mergedSubJob.FillArgs(newAddIndexesArgs, model.JobVersion1)
 
 	// place the merged add index job at the end of the sub-jobs.
 	newSubJobs = append(newSubJobs, mergedSubJob)
