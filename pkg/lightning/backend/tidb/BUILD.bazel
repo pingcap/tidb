@@ -22,6 +22,8 @@ go_library(
         "//pkg/table",
         "//pkg/types",
         "//pkg/util/dbutil",
+        "//pkg/util/hack",
+        "//pkg/util/kvcache",
         "//pkg/util/redact",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_google_uuid//:uuid",
@@ -37,7 +39,7 @@ go_test(
     timeout = "short",
     srcs = ["tidb_test.go"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 17,
     deps = [
         ":tidb",
         "//pkg/errno",
@@ -60,5 +62,6 @@ go_test(
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )

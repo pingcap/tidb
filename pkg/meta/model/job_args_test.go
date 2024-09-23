@@ -256,10 +256,20 @@ func TestTablePartitionArgs(t *testing.T) {
 				}
 				if j2.Type != ActionDropTablePartition {
 					require.Equal(t, inArgs.PartInfo, args.PartInfo)
+				} else {
+					require.EqualValues(t, &PartitionInfo{}, args.PartInfo)
 				}
 			}
 		}
 	}
+
+	// for ActionDropTablePartition in V2, check PartInfo is not nil
+	j2 := &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, &TablePartitionArgs{PartNames: []string{"a", "b"}},
+		JobVersion2, ActionDropTablePartition)))
+	args, err := GetTablePartitionArgs(j2)
+	require.NoError(t, err)
+	require.EqualValues(t, &PartitionInfo{}, args.PartInfo)
 
 	for _, ver := range []JobVersion{JobVersion1, JobVersion2} {
 		j := &Job{
@@ -297,6 +307,7 @@ func TestTablePartitionArgs(t *testing.T) {
 		args, err := GetTablePartitionArgs(j2)
 		require.NoError(t, err)
 		require.EqualValues(t, partNames, args.PartNames)
+		require.EqualValues(t, &PartitionInfo{}, args.PartInfo)
 	}
 }
 
@@ -438,5 +449,43 @@ func TestDropColumnArgs(t *testing.T) {
 		args, err := GetDropColumnArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestAddCheckConstraintArgs(t *testing.T) {
+	Constraint :=
+		&ConstraintInfo{
+			Name:       model.NewCIStr("t3_c1"),
+			Table:      model.NewCIStr("t3"),
+			ExprString: "id<10",
+			State:      StateDeleteOnly,
+		}
+	inArgs := &AddCheckConstraintArgs{
+		Constraint: Constraint,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddCheckConstraint)))
+		args, err := GetAddCheckConstraintArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, "t3_c1", args.Constraint.Name.O)
+		require.Equal(t, "t3", args.Constraint.Table.O)
+		require.Equal(t, "id<10", args.Constraint.ExprString)
+		require.Equal(t, StateDeleteOnly, args.Constraint.State)
+	}
+}
+
+func TestCheckConstraintArgs(t *testing.T) {
+	inArgs := &CheckConstraintArgs{
+		ConstraintName: model.NewCIStr("c1"),
+		Enforced:       true,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropCheckConstraint)))
+		args, err := GetCheckConstraintArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, "c1", args.ConstraintName.O)
+		require.True(t, args.Enforced)
 	}
 }
