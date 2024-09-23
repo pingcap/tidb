@@ -984,8 +984,6 @@ func TestPrefetchPartitionTable(t *testing.T) {
 	query := "delete from prefetch where a = 2;" +
 		"delete from prefetch where a = 3;" +
 		"delete from prefetch where a in (4,5);"
-	// TODO: refactor the build code and extract the partition pruning one,
-	// so it can be called in prefetchPointPlanKeys
 	err := cc.handleQuery(ctx, query)
 	require.NoError(t, err)
 	txn, err := tk.Session().Txn(false)

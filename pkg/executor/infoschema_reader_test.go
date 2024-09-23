@@ -371,7 +371,6 @@ func TestForServersInfo(t *testing.T) {
 	require.Equal(t, info.Lease, rows[0][4])
 	require.Equal(t, info.Version, rows[0][5])
 	require.Equal(t, info.GitHash, rows[0][6])
-	require.Equal(t, info.BinlogStatus, rows[0][7])
 	require.Equal(t, stringutil.BuildStringFromLabels(info.Labels), rows[0][8])
 }
 

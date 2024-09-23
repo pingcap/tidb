@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -141,6 +142,11 @@ func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
 	db, err := ConnectMySQL(param.ToDriverConfig())
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	// The actual number of alive connections is controlled by the region concurrency
+	// The setting is required to avoid frequent connection creation and close
+	if db != nil {
+		db.SetMaxIdleConns(runtime.GOMAXPROCS(0))
 	}
 	return db, nil
 }

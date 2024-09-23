@@ -32,8 +32,8 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -183,10 +183,10 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 		// See: https://github.com/pingcap/tidb/pull/25728 for more details.
 		hasStrictMode := rInfo.ReorgMeta.SQLMode.HasStrictMode()
 		tc := exprCtx.GetStaticEvalCtx().TypeCtx()
-		evalCtx := exprCtx.GetStaticEvalCtx().Apply(contextstatic.WithTypeFlags(
+		evalCtx := exprCtx.GetStaticEvalCtx().Apply(exprstatic.WithTypeFlags(
 			tc.Flags().WithIgnoreZeroDateErr(!hasStrictMode),
 		))
-		exprCtx = exprCtx.Apply(contextstatic.WithEvalCtx(evalCtx))
+		exprCtx = exprCtx.Apply(exprstatic.WithEvalCtx(evalCtx))
 	}
 
 	tblCtx := newReorgTableMutateContext(exprCtx)
