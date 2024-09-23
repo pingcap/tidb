@@ -25,13 +25,16 @@ func newInvalidModeErr(s string) error {
 	return NewErr(ErrWrongValueForVar, "sql_mode", s)
 }
 
+// ServerVerPrefix is the prefix of the server version.
+const ServerVerPrefix = "8.0.11-TiDB-"
+
 // Version information.
 var (
 	// TiDBReleaseVersion is initialized by (git describe --tags) in Makefile.
 	TiDBReleaseVersion = "None"
 
 	// ServerVersion is the version information of this tidb-server in MySQL's format.
-	ServerVersion = fmt.Sprintf("8.0.11-TiDB-%s", TiDBReleaseVersion)
+	ServerVersion = fmt.Sprintf("%s%s", ServerVerPrefix, TiDBReleaseVersion)
 )
 
 // Header information.

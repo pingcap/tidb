@@ -21,12 +21,12 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -61,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -82,6 +81,7 @@ const (
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
+	detectJobVerInterval    = 2 * time.Minute
 )
 
 const (
@@ -91,12 +91,15 @@ const (
 	recoverCheckFlagDisableGC
 )
 
-// ForceDDLJobVersionToV1InTest is a flag to force using ddl job version 1 in test.
-// Since 8.4.0, we have a new version of DDL args, but we have to keep logics of
-// old version for compatibility. We use set it to true to run unit-test another
-// round for it to make sure both code are working correctly.
-// Don't use it in unit-test. It's set in Makefile.
-var ForceDDLJobVersionToV1InTest = "false"
+var (
+	// ForceDDLJobVersionToV1InTest is a flag to force using ddl job version 1 in test.
+	// Since 8.4.0, we have a new version of DDL args, but we have to keep logics of
+	// old version for compatibility. We use set it to true to run unit-test another
+	// round for it to make sure both code are working correctly.
+	// Don't use it in unit-test. It's set in Makefile.
+	ForceDDLJobVersionToV1InTest = "false"
+	jobV2FirstVer                = *semver.New("8.4.0")
+)
 
 // OnExist specifies what to do when a new object has a name collision.
 type OnExist uint8
@@ -722,19 +725,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
-	// if we are running in test, and we are not building with ForceDDLJobVersionToV1InTest=true,
-	// we will random choose a job version to run with.
-	// TODO add a separate CI flow to run with different job version, so we can cover
-	// more cases in a single run.
-	if (intest.InTest || config.GetGlobalConfig().Store == "unistore") && ForceDDLJobVersionToV1InTest == "false" {
-		jobVer := model.JobVersion1
-		// 50% percent to use JobVersion2 in test.
-		rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-		if rnd.Intn(2) == 0 {
-			jobVer = model.JobVersion2
-		}
-		model.SetJobVerInUse(jobVer)
-	}
+	d.detectAndUpdateJobVersion()
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid),
 		zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()),
 		zap.Stringer("jobVersion", model.GetJobVerInUse()))
@@ -797,6 +788,73 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		}
 	}
 
+	return nil
+}
+
+func (d *ddl) detectAndUpdateJobVersion() {
+	if d.etcdCli == nil {
+		// we are in test or uni-store, we can use job version 2 directly if ForceDDLJobVersionToV1InTest
+		// is not set
+		if ForceDDLJobVersionToV1InTest != "false" {
+			model.SetJobVerInUse(model.JobVersion1)
+			return
+		}
+		model.SetJobVerInUse(model.JobVersion2)
+		return
+	}
+
+	err := d.detectAndUpdateJobVersionOnce()
+	if err != nil {
+		logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
+	}
+	d.wg.Run(func() {
+		ticker := time.NewTicker(detectJobVerInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				err := d.detectAndUpdateJobVersionOnce()
+				if err != nil {
+					logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
+				}
+			case <-d.ctx.Done():
+				return
+			}
+		}
+	})
+}
+
+// when all TiDB instances have version >= 8.4.0, we can use job version 2, otherwise
+// we should use job version 1 to keep compatibility.
+func (d *ddl) detectAndUpdateJobVersionOnce() error {
+	infos, err := infosync.GetAllServerInfo(d.ctx)
+	if err != nil {
+		return err
+	}
+	allSupportV2 := true
+	for _, info := range infos {
+		tidbVer := strings.TrimPrefix(info.Version, mysql.ServerVerPrefix)
+		ver, err2 := semver.NewVersion(tidbVer)
+		if err2 != nil {
+			allSupportV2 = false
+			logutil.DDLLogger().Warn("parse server version failed, fallback to job version 1",
+				zap.String("err", err2.Error()))
+		}
+		if ver.LessThan(jobV2FirstVer) {
+			allSupportV2 = false
+			break
+		}
+	}
+	targetVer := model.JobVersion1
+	if allSupportV2 {
+		targetVer = model.JobVersion2
+	}
+	if model.GetJobVerInUse() != targetVer {
+		logutil.DDLLogger().Info("job version in use changed",
+			zap.Stringer("oldVer", model.GetJobVerInUse()),
+			zap.Stringer("newVer", targetVer))
+		model.SetJobVerInUse(targetVer)
+	}
 	return nil
 }
 
