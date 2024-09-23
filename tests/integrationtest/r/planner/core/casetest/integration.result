@@ -140,10 +140,10 @@ explain format = 'brief' select min(b), max(b) from cluster_index_t where a = 1;
 id	estRows	task	access object	operator info
 HashJoin	1.00	root		CARTESIAN inner join
 ├─StreamAgg(Build)	1.00	root		funcs:max(planner__core__casetest__integration.cluster_index_t.b)->Column#5
-│ └─TopN	1.00	root		planner__core__casetest__integration.cluster_index_t.b:desc, offset:0, count:1
-│   └─TableReader	1.00	root		data:TopN
-│     └─TopN	1.00	cop[tikv]		planner__core__casetest__integration.cluster_index_t.b:desc, offset:0, count:1
-│       └─TableRangeScan	10.00	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:false, stats:pseudo
+│ └─Limit	1.00	root		offset:0, count:1
+│   └─TableReader	1.00	root		data:Limit
+│     └─Limit	1.00	cop[tikv]		offset:0, count:1
+│       └─TableRangeScan	1.00	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, desc, stats:pseudo
 └─StreamAgg(Probe)	1.00	root		funcs:min(planner__core__casetest__integration.cluster_index_t.b)->Column#4
   └─Limit	1.00	root		offset:0, count:1
     └─TableReader	1.00	root		data:Limit
@@ -1094,9 +1094,9 @@ create table t(a int, b int, c int, d int, e int, f int, g int, primary key (a),
 set @@tidb_enable_chunk_rpc = on;
 explain format = 'verbose' select * from t where a > 1 order by f;
 id	estRows	estCost	task	access object	operator info
-Sort_5	3333.33	2164818.76	root		planner__core__casetest__integration.t.f
-└─TableReader_9	3333.33	178599.37	root		data:TableRangeScan_8
-  └─TableRangeScan_8	3333.33	1200590.50	cop[tikv]	table:t	range:(1,+inf], keep order:false, stats:pseudo
+Sort_5	3333.33	2146348.14	root		planner__core__casetest__integration.t.f
+└─TableReader_9	3333.33	160128.74	root		data:TableRangeScan_8
+  └─TableRangeScan_8	3333.33	923531.15	cop[tikv]	table:t	range:(1,+inf], keep order:false, stats:pseudo
 Level	Code	Message
 Note	1105	[t,f,f_g] remain after pruning paths for t given Prop{SortItems: [{planner__core__casetest__integration.t.f asc}], TaskTp: rootTask}
 Note	1105	[t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
