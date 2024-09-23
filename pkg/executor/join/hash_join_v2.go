@@ -772,6 +772,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	}
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 	e.spillHelper = newHashJoinSpillHelper(e, int(e.partitionNumber), e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes())
+	e.maxSpillRound = 1
 
 	if variable.EnableTmpStorageOnOOM.Load() && e.partitionNumber > 1 {
 		e.initMaxSpillRound()
