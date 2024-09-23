@@ -1133,11 +1133,15 @@ const (
 	// version 213
 	//   create `mysql.tidb_pitr_id_map` table
 	version213 = 213
+
+	// version 214
+	// If the TiDB upgrading from the a version before v7.0 to a newer version, we keep the tidb_enable_inl_join_inner_multi_pattern to 0.
+	version214 = 214
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version213
+var currentBootstrapVersion int64 = version214
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1306,6 +1310,7 @@ var (
 		upgradeToVer211,
 		upgradeToVer212,
 		upgradeToVer213,
+		upgradeToVer214,
 	}
 )
 
@@ -3141,6 +3146,14 @@ func upgradeToVer213(s sessiontypes.Session, ver int64) {
 	}
 
 	mustExecute(s, CreatePITRIDMap)
+}
+
+func upgradeToVer214(s sessiontypes.Session, ver int64) {
+	if ver >= version214 {
+		return
+	}
+
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableINLJoinInnerMultiPattern, variable.Off)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
