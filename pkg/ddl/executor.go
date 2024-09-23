@@ -4064,14 +4064,16 @@ func (e *executor) dropTableObject(
 		jobType        model.ActionType
 	)
 
-	var jobArgs []any
+	var (
+		objectIdents []ast.Ident
+		fkCheck      bool
+	)
 	switch tableObjectType {
 	case tableObject:
 		dropExistErr = infoschema.ErrTableDropExists
 		jobType = model.ActionDropTable
-		objectIdents := make([]ast.Ident, len(objects))
-		fkCheck := ctx.GetSessionVars().ForeignKeyChecks
-		jobArgs = []any{objectIdents, fkCheck}
+		objectIdents = make([]ast.Ident, len(objects))
+		fkCheck = ctx.GetSessionVars().ForeignKeyChecks
 		for i, tn := range objects {
 			objectIdents[i] = ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		}
@@ -4151,6 +4153,7 @@ func (e *executor) dropTableObject(
 		}
 
 		job := &model.Job{
+			Version:        model.GetJobVerInUse(),
 			SchemaID:       schema.ID,
 			TableID:        tableInfo.Meta().ID,
 			SchemaName:     schema.Name.L,
@@ -4158,12 +4161,15 @@ func (e *executor) dropTableObject(
 			TableName:      tableInfo.Meta().Name.L,
 			Type:           jobType,
 			BinlogInfo:     &model.HistoryInfo{},
-			Args:           jobArgs,
 			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 			SQLMode:        ctx.GetSessionVars().SQLMode,
 		}
+		args := &model.DropTableArgs{
+			Identifiers: objectIdents,
+			FKCheck:     fkCheck,
+		}
 
-		err = e.DoDDLJob(ctx, job)
+		err = e.doDDLJob2(ctx, job, args)
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 			continue

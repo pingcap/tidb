@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -279,6 +280,76 @@ func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
 	return getOrDecodeArgsV2[*BatchCreateTableArgs](job)
 }
 
+// DropTableArgs is the arguments for drop table/view/sequence job.
+// when dropping multiple objects, each object will have a separate job
+type DropTableArgs struct {
+	// below fields are only for drop table.
+	// when dropping multiple tables, the Identifiers is the same.
+	Identifiers []ast.Ident `json:"identifiers,omitempty"`
+	FKCheck     bool        `json:"fk_check,omitempty"`
+
+	// below fields are finished job args
+	StartKey        []byte   `json:"start_key,omitempty"`
+	OldPartitionIDs []int64  `json:"old_partition_ids,omitempty"`
+	OldRuleIDs      []string `json:"old_rule_ids,omitempty"`
+}
+
+func (a *DropTableArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		// only drop table job has in args.
+		if job.Type == ActionDropTable {
+			job.Args = []any{a.Identifiers, a.FKCheck}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *DropTableArgs) fillFinishedJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.StartKey, a.OldPartitionIDs, a.OldRuleIDs}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *DropTableArgs) decodeV1(job *Job) error {
+	intest.Assert(job.Type == ActionDropTable, "only drop table job can call GetDropTableArgs")
+	return job.DecodeArgs(&a.Identifiers, &a.FKCheck)
+}
+
+// GetDropTableArgs gets the drop-table args.
+func GetDropTableArgs(job *Job) (*DropTableArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &DropTableArgs{}
+		if err := args.decodeV1(job); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*DropTableArgs](job)
+}
+
+// GetFinishedDropTableArgs gets the drop-table args after the job is finished.
+func GetFinishedDropTableArgs(job *Job) (*DropTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			startKey        []byte
+			oldPartitionIDs []int64
+			oldRuleIDs      []string
+		)
+		if err := job.DecodeArgs(&startKey, &oldPartitionIDs, &oldRuleIDs); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &DropTableArgs{
+			StartKey:        startKey,
+			OldPartitionIDs: oldPartitionIDs,
+			OldRuleIDs:      oldRuleIDs,
+		}, nil
+	}
+	return getOrDecodeArgsV2[*DropTableArgs](job)
+}
+
 // TruncateTableArgs is the arguments for truncate table job.
 type TruncateTableArgs struct {
 	FKCheck         bool    `json:"fk_check,omitempty"`
@@ -434,7 +505,16 @@ func GetTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 		}
 		return args, nil
 	}
-	return getOrDecodeArgsV2[*TablePartitionArgs](job)
+	args, err := getOrDecodeArgsV2[*TablePartitionArgs](job)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// when it's ActionDropTablePartition job, or roll-backing a ActionAddTablePartition
+	// job, our execution part expect a non-nil PartInfo.
+	if args.PartInfo == nil {
+		args.PartInfo = &PartitionInfo{}
+	}
+	return args, nil
 }
 
 // GetFinishedTablePartitionArgs gets the table partition args after the job is finished.
