@@ -1426,7 +1426,7 @@ const (
 	DefTiDBAnalyzeColumnOptions                       = "PREDICATE"
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
-	DefTiDBAutoAnalyzeConcurrency                     = 2
+	DefTiDBAutoAnalyzeConcurrency                     = 1
 	DefTiDBEnablePrepPlanCache                        = true
 	DefTiDBPrepPlanCacheSize                          = 100
 	DefTiDBSessionPlanCacheSize                       = 100
