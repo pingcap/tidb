@@ -432,7 +432,7 @@ func Open(ctx context.Context, e Executor) (err error) {
 	}()
 	if e.RuntimeStats() != nil {
 		start := time.Now()
-		defer func() { e.RuntimeStats().RecordClose(time.Since(start)) }()
+		defer func() { e.RuntimeStats().RecordOpen(time.Since(start)) }()
 	}
 	return e.Open(ctx)
 }
