@@ -48,7 +48,13 @@ func (m *backendCtxManager) init(memRoot MemRoot, diskRoot DiskRoot) {
 }
 
 // Register creates a new backend and registers it to the backend context.
-func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int64, _ mysql.SQLMode) (*BackendContext, error) {
+func (m *backendCtxManager) Register(
+	ctx context.Context,
+	unique bool,
+	jobID int64,
+	_ mysql.SQLMode,
+	pdAddr string,
+) (*BackendContext, error) {
 	bc, exist := m.Load(jobID)
 	if !exist {
 		m.memRoot.RefreshConsumption()
@@ -61,6 +67,7 @@ func (m *backendCtxManager) Register(ctx context.Context, unique bool, jobID int
 			logutil.BgLogger().Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
 		}
+		cfg.TiDB.PdAddr = pdAddr
 		bd, err := createLocalBackend(ctx, cfg, glueLit{})
 		if err != nil {
 			logutil.BgLogger().Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))

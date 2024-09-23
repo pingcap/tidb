@@ -51,7 +51,6 @@ func generateLightningConfig(memRoot MemRoot, jobID int64, unique bool) (*config
 	} else {
 		cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
 	}
-	cfg.TiDB.PdAddr = tidbCfg.Path
 	cfg.TiDB.Host = "127.0.0.1"
 	cfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
 	// Set TLS related information
