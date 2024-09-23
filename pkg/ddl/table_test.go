@@ -403,17 +403,17 @@ func testAlterCacheTable(
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAlterCacheTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: newSchemaName.L, Table: tblInfo.Name.L},
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, nil, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -430,17 +430,17 @@ func testAlterNoCacheTable(
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAlterNoCacheTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: newSchemaName.L, Table: tblInfo.Name.L},
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, nil, true)))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
