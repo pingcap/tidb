@@ -189,7 +189,12 @@ func onDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.Args = append(job.Args, indexInfosToIDList(idxInfos))
+		dropColumnArgs, err := model.GetDropColumnArgs(job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		dropColumnArgs.IndexIDs = indexInfosToIDList(idxInfos)
+		job.FillArgs(dropColumnArgs)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		colInfo.State = model.StateDeleteReorganization
@@ -215,7 +220,12 @@ func onDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, 
 		} else {
 			// We should set related index IDs for job
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, getPartitionIDs(tblInfo))
+			dropColumnArgs, err := model.GetDropColumnArgs(job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			dropColumnArgs.PartitionIDs = getPartitionIDs(tblInfo)
+			job.FillArgs(dropColumnArgs)
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State))
@@ -231,16 +241,13 @@ func checkDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (*model.T
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	var colName pmodel.CIStr
-	var ifExists bool
-	// indexIDs is used to make sure we don't truncate args when decoding the rawArgs.
-	var indexIDs []int64
-	err = job.DecodeArgs(&colName, &ifExists, &indexIDs)
+	dropColumnArgs, err := model.GetDropColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
+	colName, ifExists := dropColumnArgs.ColName, dropColumnArgs.IfExists
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil || colInfo.Hidden {
 		job.State = model.JobStateCancelled
