@@ -653,7 +653,6 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx sessionctx.Context, args
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
 	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
@@ -669,6 +668,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx sessionctx.Context, args
 	if err != nil {
 		return nil, err
 	}
+	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
 	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp)
 	sig := &builtinArithmeticDivideDecimalSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DivideDecimal)
