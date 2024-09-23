@@ -45,7 +45,7 @@ func TestTableSplit(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// Synced split table region.
-	tk.MustExec("set @@session.tidb_scatter_region = 1")
+	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
 	tk.MustExec(`create table t_part (a int key) partition by range(a) (
 		partition p0 values less than (10),
 		partition p1 values less than (20)
@@ -108,7 +108,7 @@ func TestScatterRegion(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_scatter_region;").Check(testkit.Rows(""))
 
 	err := tk.ExecToErr("set @@tidb_scatter_region = 'test';")
-	require.ErrorContains(t, err, "Variable 'tidb_scatter_region' can't be set to the value of 'test'")
+	require.ErrorContains(t, err, "invalid value for 'test', it should be either '', 'table' or 'global'")
 }
 
 type kvStore interface {
