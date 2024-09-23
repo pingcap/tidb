@@ -116,10 +116,6 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 }
 
 func (h *hashJoinSpillHelper) close() {
-	for _, chk := range h.tmpSpillBuildSideChunks {
-		chk.Destroy(spillChunkSize, h.buildSpillChkFieldTypes)
-	}
-
 	for _, inDisks := range h.buildRowsInDisk {
 		for _, inDisk := range inDisks {
 			if inDisk != nil {
@@ -543,7 +539,7 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 func (h *hashJoinSpillHelper) initTmpSpillBuildSideChunks() {
 	if len(h.tmpSpillBuildSideChunks) < int(h.hashJoinExec.Concurrency) {
 		for i := len(h.tmpSpillBuildSideChunks); i < int(h.hashJoinExec.Concurrency); i++ {
-			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkFromPoolWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
+			h.tmpSpillBuildSideChunks = append(h.tmpSpillBuildSideChunks, chunk.NewChunkWithCapacity(h.buildSpillChkFieldTypes, spillChunkSize))
 		}
 	}
 }
