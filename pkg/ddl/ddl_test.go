@@ -16,9 +16,12 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -32,11 +35,13 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // DDLForTest exports for testing.
@@ -450,4 +455,86 @@ func TestAppendContinuousKeyRanges(t *testing.T) {
 		ranges := appendContinuousKeyRanges([]kv.KeyRange{}, ca.input)
 		require.Equal(t, ca.expect, ranges, "case %d", i)
 	}
+}
+
+func TestDetectAndUpdateJobVersion(t *testing.T) {
+	d := &ddl{ddlCtx: &ddlCtx{ctx: context.Background()}}
+
+	bak := model.GetJobVerInUse()
+	reset := func() {
+		model.SetJobVerInUse(bak)
+	}
+	t.Cleanup(reset)
+	require.Equal(t, model.JobVersion1, bak)
+
+	t.Run("in ut", func(t *testing.T) {
+		reset()
+		d.detectAndUpdateJobVersion()
+		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+	})
+
+	t.Run("force v1", func(t *testing.T) {
+		reset()
+		forceV1Bak := ForceDDLJobVersionToV1InTest
+		t.Cleanup(func() {
+			ForceDDLJobVersionToV1InTest = forceV1Bak
+		})
+		ForceDDLJobVersionToV1InTest = "true"
+		d.detectAndUpdateJobVersion()
+		require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+	})
+
+	d.etcdCli = &clientv3.Client{}
+	mockGetAllServerInfo := func(t *testing.T, versions ...string) {
+		serverInfos := make(map[string]*infosync.ServerInfo, len(versions))
+		for i, v := range versions {
+			serverInfos[fmt.Sprintf("node%d", i)] = &infosync.ServerInfo{
+				ServerVersionInfo: infosync.ServerVersionInfo{Version: fmt.Sprintf("%s%s", mysql.ServerVerPrefix, v)}}
+		}
+		bytes, err := json.Marshal(serverInfos)
+		require.NoError(t, err)
+		inTerms := fmt.Sprintf("return(`%s`)", string(bytes))
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", inTerms)
+	}
+
+	t.Run("all support v2, even with pre-release label", func(t *testing.T) {
+		reset()
+		mockGetAllServerInfo(t, "v8.4.0-alpha-228-g650888fea7-dirty", "v8.4.1", "8.5.0-alpha-228-g650888fea7-dirty")
+		d.detectAndUpdateJobVersion()
+		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+	})
+
+	t.Run("v1 first, later all support v2", func(t *testing.T) {
+		reset()
+		intervalBak := detectJobVerInterval
+		t.Cleanup(func() {
+			detectJobVerInterval = intervalBak
+		})
+		detectJobVerInterval = time.Millisecond
+		// unknown version
+		mockGetAllServerInfo(t, "unknown")
+		iterateCnt := 0
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDetectAndUpdateJobVersionOnce", func() {
+			iterateCnt++
+			if iterateCnt == 1 {
+				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				// less than 8.4.0
+				mockGetAllServerInfo(t, "8.3.0")
+			} else if iterateCnt == 2 {
+				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				// upgrade case
+				mockGetAllServerInfo(t, "v8.3.0", "v8.3.0", "v8.4.0")
+			} else if iterateCnt == 3 {
+				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				// upgrade done
+				mockGetAllServerInfo(t, "v8.4.0", "v8.4.0", "v8.4.0")
+			} else {
+				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+			}
+		})
+		// exit loop on 4th iteration
+		d.detectAndUpdateJobVersion()
+		d.wg.Wait()
+		require.EqualValues(t, 4, iterateCnt)
+	})
 }

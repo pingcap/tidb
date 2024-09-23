@@ -81,7 +81,6 @@ const (
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
-	detectJobVerInterval    = 10 * time.Second
 )
 
 const (
@@ -99,6 +98,7 @@ var (
 	// Don't use it in unit-test. It's set in Makefile.
 	ForceDDLJobVersionToV1InTest = "false"
 	jobV2FirstVer                = *semver.New("8.4.0")
+	detectJobVerInterval         = 10 * time.Second
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -839,6 +839,7 @@ func (d *ddl) detectAndUpdateJobVersion() {
 			if err != nil {
 				logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 			}
+			failpoint.InjectCall("afterDetectAndUpdateJobVersionOnce")
 			if model.GetJobVerInUse() == model.JobVersion2 {
 				return
 			}
@@ -860,12 +861,13 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		ver, err2 := semver.NewVersion(tidbVer)
 		if err2 != nil {
 			allSupportV2 = false
-			logutil.DDLLogger().Warn("parse server version failed, fallback to job version 1",
+			logutil.DDLLogger().Warn("parse server version failed", zap.String("version", info.Version),
 				zap.String("err", err2.Error()))
 			break
 		}
-		// Note: pre-release version of 8.4.0 will NOT be considered as support V2.
-		// such as v8.4.0-alpha-228-g650888fea7-dirty.
+		// sem-ver also compares pre-release labels, but we don't need to consider
+		// them here, so we clear them.
+		ver.PreRelease = ""
 		if ver.LessThan(jobV2FirstVer) {
 			allSupportV2 = false
 			break
