@@ -179,20 +179,24 @@ func TestMetaBuildContext(t *testing.T) {
 	defCtx := metabuild.NewContext()
 	allFields := make([]string, 0, len(fields))
 	for _, field := range fields {
-		switch val := field.checkDefault.(type) {
-		case func(*metabuild.Context):
-			val(defCtx)
-		default:
-			require.Equal(t, field.checkDefault, field.getter(defCtx), field.name)
-		}
+		t.Run("default_of_"+field.name, func(t *testing.T) {
+			switch val := field.checkDefault.(type) {
+			case func(*metabuild.Context):
+				val(defCtx)
+			default:
+				require.Equal(t, field.checkDefault, field.getter(defCtx), field.name)
+			}
+		})
 		allFields = append(allFields, "$."+field.name)
 	}
 
 	for _, field := range fields {
-		for _, val := range field.testVals {
-			ctx := metabuild.NewContext(field.option(val))
-			require.Equal(t, val, field.getter(ctx), "%s %v", field.name, val)
-		}
+		t.Run("option_of_"+field.name, func(t *testing.T) {
+			for _, val := range field.testVals {
+				ctx := metabuild.NewContext(field.option(val))
+				require.Equal(t, val, field.getter(ctx), "%s %v", field.name, val)
+			}
+		})
 	}
 
 	// test allFields are tested

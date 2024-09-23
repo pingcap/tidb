@@ -173,24 +173,26 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 	}
 
 	allFields := make([]string, 0, len(cases))
-	for i, f := range cases {
-		require.NotEmpty(t, f.field, "idx: %d", i)
-		allFields = append(allFields, "$."+f.field)
-		if f.check != nil {
-			ctx := NewMetaBuildContextWithSctx(sctx)
-			f.check(ctx)
-		}
-		for _, testVal := range f.testVals {
-			f.setSctx(testVal)
-			ctx := NewMetaBuildContextWithSctx(sctx)
-			require.Equal(t, testVal, f.getter(ctx), "field: %s, v: %v", f.field, testVal)
+	for _, f := range cases {
+		t.Run(f.field, func(t *testing.T) {
+			require.NotEmpty(t, f.field)
+			allFields = append(allFields, "$."+f.field)
 			if f.check != nil {
+				ctx := NewMetaBuildContextWithSctx(sctx)
 				f.check(ctx)
 			}
-		}
-		if f.extra != nil {
-			f.extra()
-		}
+			for _, testVal := range f.testVals {
+				f.setSctx(testVal)
+				ctx := NewMetaBuildContextWithSctx(sctx)
+				require.Equal(t, testVal, f.getter(ctx), "field: %s, v: %v", f.field, testVal)
+				if f.check != nil {
+					f.check(ctx)
+				}
+			}
+			if f.extra != nil {
+				f.extra()
+			}
+		})
 	}
 
 	// make sure all fields are tested (WithIgnorePath contains all fields that the below asserting will pass).
