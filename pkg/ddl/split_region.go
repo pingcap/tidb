@@ -73,17 +73,16 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	}
 }
 
-// PD controls the scope of scatter region through `tID`.
-// 1. nil means PD scatter region at cluster level.
-// 2. not nil means PD scatter region at table level when `scatter` is true.
-func getScatterConfig(scope scatterScope, tableID int64) (scatter bool, tID *int64) {
+// `tID` is used to control the scope of scatter. If it is `scatterTable`, the corresponding tableID is used.
+// If it is `scatterGlobal`, then the scatter configured as global uniformly use -1.
+func getScatterConfig(scope scatterScope, tableID int64) (scatter bool, tID int64) {
 	switch scope {
 	case scatterTable:
-		return true, &tableID
+		return true, tableID
 	case scatterGlobal:
-		return true, nil
+		return true, -1
 	default:
-		return false, &tableID
+		return false, tableID
 	}
 }
 
@@ -130,12 +129,12 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 		splitTableKeys = append(splitTableKeys, key)
 	}
 	scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
-	regionIDs, err := store.SplitRegions(ctx, splitTableKeys, scatter, tableID)
+	regionIDs, err := store.SplitRegions(ctx, splitTableKeys, scatter, &tableID)
 	if err != nil {
 		logutil.DDLLogger().Warn("pre split some table regions failed",
 			zap.Stringer("table", tbInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 	}
-	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, tableID)...)
+	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, &tableID)...)
 	return regionIDs
 }
 
@@ -143,7 +142,7 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 func SplitRecordRegion(ctx context.Context, store kv.SplittableStore, physicalTableID, tableID int64, scope scatterScope) uint64 {
 	tableStartKey := tablecodec.GenTablePrefix(physicalTableID)
 	scatter, tID := getScatterConfig(scope, tableID)
-	regionIDs, err := store.SplitRegions(ctx, [][]byte{tableStartKey}, scatter, tID)
+	regionIDs, err := store.SplitRegions(ctx, [][]byte{tableStartKey}, scatter, &tID)
 	if err != nil {
 		// It will be automatically split by TiKV later.
 		logutil.DDLLogger().Warn("split table region failed", zap.Error(err))
