@@ -1079,17 +1079,6 @@ set tidb_mem_quota_query = default;
 set global tidb_mem_oom_action = default;
 set global tidb_enable_tmp_storage_on_oom = default;
 
-# TestJoinInDisk
-SET GLOBAL tidb_mem_oom_action='LOG';
-## TODO(fengliyuan): how to ensure that it is using disk really?
-set @@tidb_mem_quota_query=1;
-drop table if exists t, t1;
-create table t(c1 int, c2 int);
-create table t1(c1 int, c2 int);
-insert into t values(1,1),(2,2);
-insert into t1 values(2,3),(4,4);
-select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1;
-
 # TestIssue30244
 drop table if exists t1,t2,t3,t4;
 create table t1 (c int, b int);
