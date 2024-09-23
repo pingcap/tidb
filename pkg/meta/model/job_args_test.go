@@ -15,8 +15,10 @@
 package model
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
@@ -198,6 +200,51 @@ func TestBatchCreateTableArgs(t *testing.T) {
 	args, err = GetBatchCreateTableArgs(j2)
 	require.NoError(t, err)
 	require.EqualValues(t, inArgs.Tables, args.Tables)
+}
+
+func TestDropTableArgs(t *testing.T) {
+	inArgs := &DropTableArgs{
+		Identifiers: []ast.Ident{
+			{Schema: model.NewCIStr("db"), Name: model.NewCIStr("tbl")},
+			{Schema: model.NewCIStr("db2"), Name: model.NewCIStr("tbl2")},
+		},
+		FKCheck: true,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropTable)))
+		args, err := GetDropTableArgs(j2)
+		require.NoError(t, err)
+		require.EqualValues(t, inArgs, args)
+	}
+	for _, tp := range []ActionType{ActionDropView, ActionDropSequence} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			if v == JobVersion1 {
+				require.Equal(t, json.RawMessage("null"), j2.RawArgs)
+			} else {
+				args, err := GetDropTableArgs(j2)
+				require.NoError(t, err)
+				require.EqualValues(t, inArgs, args)
+			}
+		}
+	}
+}
+
+func TestFinishedDropTableArgs(t *testing.T) {
+	inArgs := &DropTableArgs{
+		StartKey:        []byte("xxx"),
+		OldPartitionIDs: []int64{1, 2},
+		OldRuleIDs:      []string{"schema/test/a/par1", "schema/test/a/par2"},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionDropTable)))
+		args, err := GetFinishedDropTableArgs(j2)
+		require.NoError(t, err)
+		require.EqualValues(t, inArgs, args)
+	}
 }
 
 func TestTruncateTableArgs(t *testing.T) {
