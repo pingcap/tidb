@@ -16,15 +16,8 @@
 
 package intest
 
-const (
-	// InTest checks if the code is running in test.
-	InTest = false
-	// ForceDDLJobVersionToV1 is a flag to force using ddl job version 1.
-	// Since 8.4.0, we have a new version of DDL args, but we have to keep logics of
-	// old version for compatibility. We use build tag ddlargsv1 to run unit-test another
-	// round for it to make sure both code are working correctly.
-	ForceDDLJobVersionToV1 = false
-)
+// InTest checks if the code is running in test.
+const InTest = false
 
 // Assert is a stub function in release build.
 // See the same function in `util/intest/assert.go` for the real implement in test.
