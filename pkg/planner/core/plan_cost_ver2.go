@@ -159,8 +159,11 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
 		tblColHists := p.tblColHists
 
+		// preferRangeScan check here is same as in skylinePruning
 		preferRangeScanCondition := allowPreferRangeScan && (tblColHists.Pseudo || tblColHists.RealtimeCount < 1)
+		// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
 		hasHighModifyCount := tblColHists.ModifyCount > tblColHists.RealtimeCount
+		// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
 		hasLowEstimate := rows > 1 && int64(rows) < tblColHists.RealtimeCount && int64(rows) <= tblColHists.ModifyCount
 		shouldApplyPenalty := !p.isChildOfIndexLookUp && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
 
