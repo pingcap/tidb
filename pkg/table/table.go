@@ -255,6 +255,17 @@ type RemoveRecordOption interface {
 	applyRemoveRecordOpt(*RemoveRecordOpt)
 }
 
+// ExtraPartialRowOption is the combined one of IndexesLayout and ColumnSizeOption.
+type ExtraPartialRowOption struct {
+	IndexesRowLayout IndexesLayout
+	ColumnSize       *ColumnSizeOption
+}
+
+func (e *ExtraPartialRowOption) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
+	opt.indexesLayoutOffset = e.IndexesRowLayout
+	opt.columnSize = e.ColumnSize
+}
+
 // IndexRowLayoutOption is the option for index row layout.
 // It is used to specify the order of the index columns in the row.
 type IndexRowLayoutOption []int

@@ -5186,9 +5186,7 @@ type TblColPosInfo struct {
 	// HandleOrdinal represents the ordinal of the handle column.
 	HandleCols util.HandleCols
 
-	IndexesForDelete table.IndexesLayout
-
-	ColumnSizes *table.ColumnSizeOption
+	*table.ExtraPartialRowOption
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -5324,7 +5322,12 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 	if err != nil {
 		return TblColPosInfo{}, err
 	}
-	return TblColPosInfo{TblID: tid, Start: offset, HandleCols: handleCol}, nil
+	return TblColPosInfo{
+		TblID:                 tid,
+		Start:                 offset,
+		HandleCols:            handleCol,
+		ExtraPartialRowOption: &table.ExtraPartialRowOption{},
+	}, nil
 }
 
 // pruneAndBuildSingleTableColPosInfoForDelete builds columns mapping for delete.
@@ -5354,7 +5357,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 			indexColMap[idx.Meta().ID] = colPos
 		}
 		colPosInfo.End = colPosInfo.Start + tblLen
-		colPosInfo.IndexesForDelete = indexColMap
+		colPosInfo.IndexesRowLayout = indexColMap
 
 		return prePrunedCount, nil
 	}
@@ -5393,23 +5396,23 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	}
 
 	// Fill in the ColumnSizes.
-	colPosInfo.ColumnSizes = &table.ColumnSizeOption{
+	colPosInfo.ColumnSize = &table.ColumnSizeOption{
 		NotPruned:        bitset.New(uint(len(publicCols))),
 		AvgSizes:         make([]float64, 0, len(publicCols)),
 		PublicColsLayout: make([]int, 0, len(publicCols)),
 	}
-	colPosInfo.ColumnSizes.NotPruned.SetAll()
+	colPosInfo.ColumnSize.NotPruned.SetAll()
 	for i, col := range publicCols {
 		// If the column is not pruned, we can use the column data to get a more accurate size.
 		// We just need to record its position info.
 		if _, ok := visitedCols[col.Offset]; ok {
-			colPosInfo.ColumnSizes.PublicColsLayout = append(colPosInfo.ColumnSizes.PublicColsLayout, fixedPos[col.Offset])
+			colPosInfo.ColumnSize.PublicColsLayout = append(colPosInfo.ColumnSize.PublicColsLayout, fixedPos[col.Offset])
 			continue
 		}
 		// Otherwise we need to get the average size of the column by its field type.
 		// TODO: use statistics to get a maybe more accurate size.
-		colPosInfo.ColumnSizes.NotPruned.Clear(uint(i))
-		colPosInfo.ColumnSizes.AvgSizes = append(colPosInfo.ColumnSizes.AvgSizes, float64(chunk.EstimateTypeWidth(&col.FieldType)))
+		colPosInfo.ColumnSize.NotPruned.Clear(uint(i))
+		colPosInfo.ColumnSize.AvgSizes = append(colPosInfo.ColumnSize.AvgSizes, float64(chunk.EstimateTypeWidth(&col.FieldType)))
 	}
 	// Fix the index layout and fill in table.IndexRowLayoutOption.
 	indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
@@ -5440,7 +5443,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 		col.Index = fixedPos[col.Index-originalStart] + newStart
 	}
 	colPosInfo.End = colPosInfo.Start + tblLen - pruned
-	colPosInfo.IndexesForDelete = indexColMap
+	colPosInfo.IndexesRowLayout = indexColMap
 
 	return prePrunedCount + pruned, nil
 }

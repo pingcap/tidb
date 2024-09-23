@@ -2492,7 +2492,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 		fullLayout := func() [][]string {
 			ret := make([][]string, 0, len(deletePlan.TblColPosInfos))
 			for _, colsLayout := range deletePlan.TblColPosInfos {
-				innerRet := make([]string, 0, len(colsLayout.IndexesForDelete)*2+2)
+				innerRet := make([]string, 0, len(colsLayout.IndexesRowLayout)*2+2)
 				sb.Reset()
 				fmt.Fprintf(&sb, "tid: %d, [start, end]: [%d, %d] ", colsLayout.TblID, colsLayout.Start, colsLayout.End)
 				innerRet = append(innerRet, sb.String())
@@ -2507,7 +2507,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 				innerRet = append(innerRet, sb.String())
 				tbl, _ := s.is.TableByID(context.Background(), colsLayout.TblID)
 				idxes := tbl.DeletableIndices()
-				require.Equal(t, len(colsLayout.IndexesForDelete), len(idxes), comment)
+				require.Equal(t, len(colsLayout.IndexesRowLayout), len(idxes), comment)
 				for _, idx := range idxes {
 					sb.Reset()
 					idxInfo := idx.Meta()
@@ -2517,7 +2517,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 					}
 					innerRet = append(innerRet, sb.String())
 					sb.Reset()
-					indexLayout := colsLayout.IndexesForDelete[idxInfo.ID]
+					indexLayout := colsLayout.IndexesRowLayout[idxInfo.ID]
 					fmt.Fprintf(&sb, "col offset: %v", indexLayout)
 					innerRet = append(innerRet, sb.String())
 				}
