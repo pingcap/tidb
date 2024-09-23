@@ -405,13 +405,12 @@ func checkDropTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache,
 	if !variable.EnableForeignKey.Load() {
 		return nil
 	}
-	var objectIdents []ast.Ident
-	var fkCheck bool
-	err := job.DecodeArgs(&objectIdents, &fkCheck)
+	args, err := model.GetDropTableArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return errors.Trace(err)
 	}
+	objectIdents, fkCheck := args.Identifiers, args.FKCheck
 	referredFK, err := checkTableHasForeignKeyReferredInOwner(infoCache, job.SchemaName, job.TableName, objectIdents, fkCheck)
 	if err != nil {
 		return err
