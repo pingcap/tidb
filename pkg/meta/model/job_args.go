@@ -434,7 +434,16 @@ func GetTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 		}
 		return args, nil
 	}
-	return getOrDecodeArgsV2[*TablePartitionArgs](job)
+	args, err := getOrDecodeArgsV2[*TablePartitionArgs](job)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// when it's ActionDropTablePartition job, or roll-backing a ActionAddTablePartition
+	// job, our execution part expect a non-nil PartInfo.
+	if args.PartInfo == nil {
+		args.PartInfo = &PartitionInfo{}
+	}
+	return args, nil
 }
 
 // GetFinishedTablePartitionArgs gets the table partition args after the job is finished.
