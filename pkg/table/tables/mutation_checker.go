@@ -81,6 +81,7 @@ func CheckDataConsistency(
 ) error {
 	return checkDataConsistency(txn, tc, t, rowToInsert, rowToRemove, memBuffer, sh, nil)
 }
+
 func checkDataConsistency(
 	txn kv.Transaction, tc types.Context, t *TableCommon,
 	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle,
@@ -370,7 +371,7 @@ func compareIndexData(
 ) error {
 	for i := range indexData {
 		offsetInRow := indexInfo.Columns[i].Offset
-		if extraIndexLayout != nil {
+		if len(extraIndexLayout) > 0 {
 			offsetInRow = extraIndexLayout[i]
 		}
 		offsetInTable := indexInfo.Columns[i].Offset

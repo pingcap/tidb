@@ -5306,11 +5306,17 @@ func pruneAndBuildColPositionInfoForDelete(
 	for i := range cols2PosInfos {
 		cols2PosInfo := &cols2PosInfos[i]
 		tbl := tblID2Table[cols2PosInfo.TblID]
-		deletableIdxs := tbl.DeletableIndices()
-		deletableCols := tbl.DeletableCols()
 		tblInfo := tbl.Meta()
-		publicCols := tbl.Cols()
-		prunedColCnt, err = pruneAndBuildSingleTableColPosInfoForDelete(names, deletableIdxs, deletableCols, publicCols, tblInfo, cols2PosInfo, prunedColCnt, nonPruned)
+		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
+		// nonPrunedSet will be nil if it's a point get or has foreign keys.
+		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
+			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
+			if err != nil {
+				return nil, nil, err
+			}
+			continue
+		}
+		prunedColCnt, err = pruneAndBuildSingleTableColPosInfoForDelete(tbl, tblInfo, names, cols2PosInfo, prunedColCnt, nonPruned)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -5318,6 +5324,9 @@ func pruneAndBuildColPositionInfoForDelete(
 	return cols2PosInfos, nonPruned, nil
 }
 
+// initColPosInfo initializes the column position information.
+// It's used before we call pruneAndBuildSingleTableColPosInfoForDelete or buildSingleTableColPosInfoForDelete.
+// It initializes the needed information for the following pruning: the tid, starting position and the handle column.
 func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCols) (TblColPosInfo, error) {
 	offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
 	if err != nil {
@@ -5331,37 +5340,43 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 	}, nil
 }
 
+// buildSingleTableColPosInfoForDelete builds columns mapping for delete without pruning any columns.
+// It's temp code path for partition table, foreign key and point get plan.
+func buildSingleTableColPosInfoForDelete(
+	tbl table.Table,
+	colPosInfo *TblColPosInfo,
+) error {
+	deletableIdxs := tbl.DeletableIndices()
+	tblLen := len(tbl.DeletableCols())
+	indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
+	for _, idx := range deletableIdxs {
+		idxCols := idx.Meta().Columns
+		colPos := make([]int, 0, len(idxCols))
+		for _, col := range idxCols {
+			colPos = append(colPos, col.Offset)
+		}
+		indexColMap[idx.Meta().ID] = colPos
+	}
+	colPosInfo.End = colPosInfo.Start + tblLen
+	colPosInfo.IndexesRowLayout = indexColMap
+	return nil
+}
+
 // pruneAndBuildSingleTableColPosInfoForDelete builds columns mapping for delete.
 // And it will try to prune columns that not used in pk or indexes.
 func pruneAndBuildSingleTableColPosInfoForDelete(
-	names []*types.FieldName,
-	deletableIdxs []table.Index,
-	deletableCols, publicCols []*table.Column,
+	t table.Table,
 	tblInfo *model.TableInfo,
+	names []*types.FieldName,
 	colPosInfo *TblColPosInfo,
 	prePrunedCount int,
 	nonPrunedSet *bitset.BitSet,
 ) (int, error) {
 	// Columns can be seen by DELETE are the deletable columns.
+	deletableCols := t.DeletableCols()
+	deletableIdxs := t.DeletableIndices()
+	publicCols := t.Cols()
 	tblLen := len(deletableCols)
-
-	// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
-	// nonPrunedSet will be nil if it's a point get or has foreign keys.
-	if tblInfo.GetPartitionInfo() != nil || nonPrunedSet == nil {
-		indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
-		for _, idx := range deletableIdxs {
-			idxCols := idx.Meta().Columns
-			colPos := make([]int, 0, len(idxCols))
-			for _, col := range idxCols {
-				colPos = append(colPos, col.Offset)
-			}
-			indexColMap[idx.Meta().ID] = colPos
-		}
-		colPosInfo.End = colPosInfo.Start + tblLen
-		colPosInfo.IndexesRowLayout = indexColMap
-
-		return prePrunedCount, nil
-	}
 
 	// Fix the start position of the columns.
 	originalStart := colPosInfo.Start
@@ -5396,23 +5411,23 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	}
 
 	// Fill in the ColumnSizes.
-	colPosInfo.ColumnSize = &table.ColumnSizeOption{
+	colPosInfo.ColumnsSizeHelper = &table.ColumnsSizeHelper{
 		NotPruned:        bitset.New(uint(len(publicCols))),
 		AvgSizes:         make([]float64, 0, len(publicCols)),
 		PublicColsLayout: make([]int, 0, len(publicCols)),
 	}
-	colPosInfo.ColumnSize.NotPruned.SetAll()
+	colPosInfo.ColumnsSizeHelper.NotPruned.SetAll()
 	for i, col := range publicCols {
 		// If the column is not pruned, we can use the column data to get a more accurate size.
 		// We just need to record its position info.
 		if _, ok := fixedPos[col.Offset]; ok {
-			colPosInfo.ColumnSize.PublicColsLayout = append(colPosInfo.ColumnSize.PublicColsLayout, fixedPos[col.Offset])
+			colPosInfo.ColumnsSizeHelper.PublicColsLayout = append(colPosInfo.ColumnsSizeHelper.PublicColsLayout, fixedPos[col.Offset])
 			continue
 		}
 		// Otherwise we need to get the average size of the column by its field type.
 		// TODO: use statistics to get a maybe more accurate size.
-		colPosInfo.ColumnSize.NotPruned.Clear(uint(i))
-		colPosInfo.ColumnSize.AvgSizes = append(colPosInfo.ColumnSize.AvgSizes, float64(chunk.EstimateTypeWidth(&col.FieldType)))
+		colPosInfo.ColumnsSizeHelper.NotPruned.Clear(uint(i))
+		colPosInfo.ColumnsSizeHelper.AvgSizes = append(colPosInfo.ColumnsSizeHelper.AvgSizes, float64(chunk.EstimateTypeWidth(&col.FieldType)))
 	}
 	// Fix the index layout and fill in table.IndexRowLayoutOption.
 	indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
