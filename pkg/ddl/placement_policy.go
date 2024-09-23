@@ -186,7 +186,7 @@ func checkAllTablePlacementPoliciesExistAndCancelNonExistJob(t *meta.Meta, job *
 func onDropPlacementPolicy(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetPlacementPolicyArgs(job)
 	if err != nil {
-		return ver, errors.Trace(ast.ErrCoalescePartitionNoPartition)
+		return ver, errors.Trace(err)
 	}
 	policyInfo, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, args.PolicyID)
 	if err != nil {

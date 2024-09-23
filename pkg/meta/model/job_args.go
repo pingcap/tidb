@@ -589,10 +589,10 @@ func (a *PlacementPolicyArgs) fillJob(job *Job) {
 
 // GetRenameTablesArgs gets the placement policy args.
 func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
-	var args *PlacementPolicyArgs = &PlacementPolicyArgs{}
-	var err error
-
 	if job.Version == JobVersion1 {
+		var args *PlacementPolicyArgs = &PlacementPolicyArgs{PolicyID: job.SchemaID}
+		var err error
+
 		if job.Type == ActionCreatePlacementPolicy {
 			err = job.DecodeArgs(&args.Policy, &args.ReplaceOnExist)
 		} else if job.Type == ActionAlterPlacementPolicy {
@@ -601,14 +601,13 @@ func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 			intest.Assert(job.Type == ActionDropPlacementPolicy, "Invalid job type for PlacementPolicyArgs")
 			err = job.DecodeArgs(&args.PolicyName)
 		}
-	} else {
-		args, err = getOrDecodeArgsV2[*PlacementPolicyArgs](job)
+
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		return args, err
 	}
 
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	args.PolicyID = job.SchemaID
-	return args, nil
+	return getOrDecodeArgsV2[*PlacementPolicyArgs](job)
 }

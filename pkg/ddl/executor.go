@@ -1357,6 +1357,7 @@ func (e *executor) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy 
 	policy.ID = policyID
 
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaName: policy.Name.L,
 		Type:       model.ActionCreatePlacementPolicy,
 		BinlogInfo: &model.HistoryInfo{},
@@ -5953,6 +5954,7 @@ func (e *executor) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPla
 
 	args := &model.PlacementPolicyArgs{
 		PolicyName: policyName,
+		PolicyID:   policy.ID,
 	}
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
