@@ -92,10 +92,10 @@ const (
 )
 
 var (
-	// ForceDDLJobVersionToV1InTest is a flag to force using ddl job version 1 in test.
+	// ForceDDLJobVersionToV1InTest is a flag to force using ddl job V1 in test.
 	// Since 8.4.0, we have a new version of DDL args, but we have to keep logics of
-	// old version for compatibility. We use set it to true to run unit-test another
-	// round for it to make sure both code are working correctly.
+	// old version for compatibility. We change this to run unit-test another round
+	// in V1 to make sure both code are working correctly.
 	// Don't use it in unit-test. It's set in Makefile.
 	ForceDDLJobVersionToV1InTest = "false"
 	jobV2FirstVer                = *semver.New("8.4.0")
