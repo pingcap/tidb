@@ -452,7 +452,6 @@ func (e *AnalyzeExec) handleResultsError(
 	return err
 }
 
-<<<<<<< HEAD
 func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, statsConcurrency int, needGlobalStats bool,
 	subSctxs []sessionctx.Context,
 	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
@@ -461,30 +460,12 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	var wg util.WaitGroupWrapper
 	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
 	errCh := make(chan error, partitionStatsConcurrency)
+	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
 	for i := 0; i < partitionStatsConcurrency; i++ {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh, &e.Ctx().GetSessionVars().Killed)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {
-			worker.run(ctx1, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot)
-=======
-func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
-	buildStatsConcurrency int,
-	saveStatsConcurrency int,
-	needGlobalStats bool,
-	globalStatsMap globalStatsMap,
-	resultsCh <-chan *statistics.AnalyzeResults,
-) error {
-	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
-	wg := util.NewWaitGroupPool(e.gp)
-	saveResultsCh := make(chan *statistics.AnalyzeResults, saveStatsConcurrency)
-	errCh := make(chan error, saveStatsConcurrency)
-	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
-	for i := 0; i < saveStatsConcurrency; i++ {
-		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
-		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-		wg.Run(func() {
-			worker.run(ctx1, statsHandle, enableAnalyzeSnapshot)
->>>>>>> b02581a7a47 (*: fix data race in the EnableAnalyzeSnapshot (#55596))
+			worker.run(ctx1, enableAnalyzeSnapshot)
 		})
 	}
 	tableIDs := map[int64]struct{}{}
