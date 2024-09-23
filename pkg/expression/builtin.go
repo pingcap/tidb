@@ -494,6 +494,7 @@ func newBaseBuiltinCastFunc4String(ctx sessionctx.Context, funcName string, args
 			childrenVectorizedOnce: new(sync.Once),
 
 			args: args,
+			ctx:  ctx,
 			tp:   tp,
 		}
 		bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
