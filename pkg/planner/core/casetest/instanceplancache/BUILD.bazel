@@ -6,8 +6,9 @@ go_test(
     srcs = [
         "dml_test.go",
         "main_test.go",
+        "others_test.go",
     ],
     flaky = True,
-    shard_count = 3,
+    shard_count = 9,
     deps = ["//pkg/testkit"],
 )

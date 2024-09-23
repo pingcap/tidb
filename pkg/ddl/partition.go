@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -81,12 +81,12 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	partInfo := &model.PartitionInfo{}
-	err = job.DecodeArgs(&partInfo)
+	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, errors.Trace(err)
 	}
+	partInfo := args.PartInfo
 	if len(tblInfo.Partition.AddingDefinitions) > 0 {
 		return tblInfo, partInfo, tblInfo.Partition.AddingDefinitions, nil
 	}
@@ -229,7 +229,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Meta, job *mode
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		addPartitionEvent := util.NewAddPartitionEvent(tblInfo, partInfo)
+		addPartitionEvent := notifier.NewAddPartitionEvent(tblInfo, partInfo)
 		asyncNotifyEvent(jobCtx, addPartitionEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
@@ -604,22 +604,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 
 	tbInfo.Partition.Definitions = defs
 
-	if s.Interval != nil {
-		// Syntactic sugar for INTERVAL partitioning
-		// Generate the resulting CREATE TABLE as the query string
-		query, ok := ctx.Value(sessionctx.QueryString).(string)
-		if ok {
-			sqlMode := ctx.GetSessionVars().SQLMode
-			var buf bytes.Buffer
-			AppendPartitionDefs(tbInfo.Partition, &buf, sqlMode)
-
-			syntacticSugar := s.Interval.OriginalText()
-			syntacticStart := s.Interval.OriginTextPosition()
-			newQuery := query[:syntacticStart] + "(" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
-			ctx.SetValue(sessionctx.QueryString, newQuery)
-		}
-	}
-
 	if len(s.UpdateIndexes) > 0 {
 		updateIndexes := make([]model.UpdateIndexInfo, 0, len(s.UpdateIndexes))
 		dupCheck := make(map[string]struct{})
@@ -698,6 +682,28 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	return nil
+}
+
+func rewritePartitionQueryString(ctx sessionctx.Context, s *ast.PartitionOptions, tbInfo *model.TableInfo) {
+	if s == nil {
+		return
+	}
+
+	if s.Interval != nil {
+		// Syntactic sugar for INTERVAL partitioning
+		// Generate the resulting CREATE TABLE as the query string
+		query, ok := ctx.Value(sessionctx.QueryString).(string)
+		if ok {
+			sqlMode := ctx.GetSessionVars().SQLMode
+			var buf bytes.Buffer
+			AppendPartitionDefs(tbInfo.Partition, &buf, sqlMode)
+
+			syntacticSugar := s.Interval.OriginalText()
+			syntacticStart := s.Interval.OriginTextPosition()
+			newQuery := query[:syntacticStart] + "(" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
+			ctx.SetValue(sessionctx.QueryString, newQuery)
+		}
+	}
 }
 
 func getPartitionColSlices(sctx expression.BuildContext, tblInfo *model.TableInfo, s *ast.PartitionOptions) (partCols stringSlice, err error) {
@@ -2150,12 +2156,12 @@ func dropLabelRules(ctx context.Context, schemaName, tableName string, partNames
 
 // onDropTablePartition deletes old partition meta.
 func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var partNames []string
-	partInfo := model.PartitionInfo{}
-	if err := job.DecodeArgs(&partNames, &partInfo); err != nil {
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	partNames, partInfo := args.PartNames, args.PartInfo
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -2202,7 +2208,8 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 			return ver, errors.Trace(err)
 		}
 		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-		job.Args = []any{physicalTableIDs}
+		args.OldPhysicalTblIDs = physicalTableIDs
+		job.FillFinishedArgs(args)
 		return ver, nil
 	}
 
@@ -2322,20 +2329,21 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 		droppedDefs := tblInfo.Partition.DroppingDefinitions
 		tblInfo.Partition.DroppingDefinitions = nil
 		// used by ApplyDiff in updateSchemaVersion
-		job.CtxVars = []any{physicalTableIDs}
+		job.CtxVars = []any{physicalTableIDs} // TODO remove it.
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		dropPartitionEvent := util.NewDropPartitionEvent(
+		dropPartitionEvent := notifier.NewDropPartitionEvent(
 			tblInfo,
 			&model.PartitionInfo{Definitions: droppedDefs},
 		)
 		asyncNotifyEvent(jobCtx, dropPartitionEvent, job)
 		// A background job will be created to delete old partition data.
-		job.Args = []any{physicalTableIDs}
+		args.OldPhysicalTblIDs = physicalTableIDs
+		job.FillFinishedArgs(args)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
@@ -2420,7 +2428,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		truncatePartitionEvent := util.NewTruncatePartitionEvent(
+		truncatePartitionEvent := notifier.NewTruncatePartitionEvent(
 			tblInfo,
 			&model.PartitionInfo{Definitions: newPartitions},
 			&model.PartitionInfo{Definitions: oldPartitions},
@@ -2558,7 +2566,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		truncatePartitionEvent := util.NewTruncatePartitionEvent(
+		truncatePartitionEvent := notifier.NewTruncatePartitionEvent(
 			tblInfo,
 			&model.PartitionInfo{Definitions: newPartitions},
 			&model.PartitionInfo{Definitions: oldPartitions},
@@ -2930,7 +2938,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
-	exchangePartitionEvent := util.NewExchangePartitionEvent(
+	exchangePartitionEvent := notifier.NewExchangePartitionEvent(
 		pt,
 		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
 		originalNt,
@@ -2957,13 +2965,12 @@ func getReorgPartitionInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, []st
 	if err != nil {
 		return nil, nil, nil, nil, nil, errors.Trace(err)
 	}
-	partInfo := &model.PartitionInfo{}
-	var partNames []string
-	err = job.DecodeArgs(&partNames, &partInfo)
+	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, nil, errors.Trace(err)
 	}
+	partNames, partInfo := args.PartNames, args.PartInfo
 	var addingDefs, droppingDefs []model.PartitionDefinition
 	if tblInfo.Partition != nil {
 		addingDefs = tblInfo.Partition.AddingDefinitions
@@ -3472,7 +3479,12 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 		}
 		asyncNotifyEvent(jobCtx, event, job)
 		// A background job will be created to delete old partition data.
-		job.Args = []any{physicalTableIDs}
+		args, err := model.GetTablePartitionArgs(job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		args.OldPhysicalTblIDs = physicalTableIDs
+		job.FillFinishedArgs(args)
 
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
@@ -3489,23 +3501,23 @@ func newStatsDDLEventForJob(
 	tblInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
-) (*util.SchemaChangeEvent, error) {
-	var event *util.SchemaChangeEvent
+) (*notifier.SchemaChangeEvent, error) {
+	var event *notifier.SchemaChangeEvent
 	switch jobType {
 	case model.ActionReorganizePartition:
-		event = util.NewReorganizePartitionEvent(
+		event = notifier.NewReorganizePartitionEvent(
 			tblInfo,
 			addedPartInfo,
 			droppedPartInfo,
 		)
 	case model.ActionAlterTablePartitioning:
-		event = util.NewAddPartitioningEvent(
+		event = notifier.NewAddPartitioningEvent(
 			oldTblID,
 			tblInfo,
 			addedPartInfo,
 		)
 	case model.ActionRemovePartitioning:
-		event = util.NewRemovePartitioningEvent(
+		event = notifier.NewRemovePartitioningEvent(
 			oldTblID,
 			tblInfo,
 			droppedPartInfo,

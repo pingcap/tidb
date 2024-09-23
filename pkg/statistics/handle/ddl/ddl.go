@@ -16,7 +16,7 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -30,7 +30,7 @@ import (
 )
 
 type ddlHandlerImpl struct {
-	ddlEventCh         chan *ddlutil.SchemaChangeEvent
+	ddlEventCh         chan *notifier.SchemaChangeEvent
 	statsWriter        types.StatsReadWriter
 	statsHandler       types.StatsHandle
 	globalStatsHandler types.StatsGlobal
@@ -43,7 +43,7 @@ func NewDDLHandler(
 	globalStatsHandler types.StatsGlobal,
 ) types.DDL {
 	return &ddlHandlerImpl{
-		ddlEventCh:         make(chan *ddlutil.SchemaChangeEvent, 1000),
+		ddlEventCh:         make(chan *notifier.SchemaChangeEvent, 1000),
 		statsWriter:        statsWriter,
 		statsHandler:       statsHandler,
 		globalStatsHandler: globalStatsHandler,
@@ -51,13 +51,7 @@ func NewDDLHandler(
 }
 
 // HandleDDLEvent begins to process a ddl task.
-func (h *ddlHandlerImpl) HandleDDLEvent(s *ddlutil.SchemaChangeEvent) error {
-	sctx, err := h.statsHandler.SPool().Get()
-	if err != nil {
-		return err
-	}
-	defer h.statsHandler.SPool().Put(sctx)
-
+func (h *ddlHandlerImpl) HandleDDLEvent(s *notifier.SchemaChangeEvent) error {
 	switch s.GetType() {
 	case model.ActionCreateTable:
 		newTableInfo := s.GetCreateTableInfo()
@@ -192,6 +186,15 @@ func (h *ddlHandlerImpl) HandleDDLEvent(s *ddlutil.SchemaChangeEvent) error {
 	return nil
 }
 
+// UpdateStatsWithCountDeltaAndModifyCountDeltaForTest updates the global stats with the given count delta and modify count delta.
+func UpdateStatsWithCountDeltaAndModifyCountDeltaForTest(
+	sctx sessionctx.Context,
+	tableID int64,
+	countDelta, modifyCountDelta int64,
+) error {
+	return updateStatsWithCountDeltaAndModifyCountDelta(sctx, tableID, countDelta, modifyCountDelta)
+}
+
 // updateStatsWithCountDeltaAndModifyCountDelta updates
 // the global stats with the given count delta and modify count delta.
 // Only used by some special DDLs, such as exchange partition.
@@ -232,7 +235,7 @@ func updateStatsWithCountDeltaAndModifyCountDelta(
 	}
 
 	// Because count can not be negative, so we need to get the current and calculate the delta.
-	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(sctx, tableID)
+	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCountForUpdate(sctx, tableID)
 	if err != nil {
 		return err
 	}
@@ -285,6 +288,6 @@ func (h *ddlHandlerImpl) getTableIDs(tblInfo *model.TableInfo) (ids []int64, err
 }
 
 // DDLEventCh returns ddl events channel in handle.
-func (h *ddlHandlerImpl) DDLEventCh() chan *ddlutil.SchemaChangeEvent {
+func (h *ddlHandlerImpl) DDLEventCh() chan *notifier.SchemaChangeEvent {
 	return h.ddlEventCh
 }

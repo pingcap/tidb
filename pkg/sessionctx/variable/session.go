@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -837,6 +836,12 @@ type SessionVars struct {
 	// status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
 	status atomic.Uint32
 
+	// ShardRowIDBits is the number of shard bits for user table row ID.
+	ShardRowIDBits uint64
+
+	// PreSplitRegions is the number of regions that should be pre-split for the table.
+	PreSplitRegions uint64
+
 	// ClientCapability is client's capability.
 	ClientCapability uint32
 
@@ -889,9 +894,6 @@ type SessionVars struct {
 	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
 	// version, we load an old version schema for query.
 	SnapshotInfoschema any
-
-	// BinlogClient is used to write binlog.
-	BinlogClient *pumpcli.PumpsClient
 
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
@@ -3325,9 +3327,9 @@ const (
 	// SlowLogWaitRUDuration is the total duration for kv requests to wait available request-units.
 	SlowLogWaitRUDuration = "Time_queued_by_rc"
 	// SlowLogTidbCPUUsageDuration is the total tidb cpu usages.
-	SlowLogTidbCPUUsageDuration = "Tidb_cpu_usage"
+	SlowLogTidbCPUUsageDuration = "Tidb_cpu_time"
 	// SlowLogTikvCPUUsageDuration is the total tikv cpu usages.
-	SlowLogTikvCPUUsageDuration = "Tikv_cpu_usage"
+	SlowLogTikvCPUUsageDuration = "Tikv_cpu_time"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.

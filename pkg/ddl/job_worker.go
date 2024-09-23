@@ -40,9 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -86,7 +84,6 @@ type jobContext struct {
 	autoidCli       *autoid.ClientDiscover
 	store           kv.Storage
 	schemaVerSyncer schemaver.Syncer
-	binlogCli       *pumpcli.PumpsClient
 
 	// per job fields
 	notifyCh chan struct{}
@@ -599,7 +596,6 @@ func (w *worker) transitOneJobStep(jobCtx *jobContext, job *model.Job) (int64, e
 		jobCtx.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
-	writeBinlog(jobCtx.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.Commit(w.ctx)
@@ -665,19 +661,6 @@ func skipWriteBinlog(job *model.Job) bool {
 	}
 
 	return false
-}
-
-func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.Job) {
-	if job.IsDone() || job.IsRollbackDone() ||
-		// When this column is in the "delete only" and "delete reorg" states, the binlog of "drop column" has not been written yet,
-		// but the column has been removed from the binlog of the write operation.
-		// So we add this binlog to enable downstream components to handle DML correctly in this schema state.
-		(job.Type == model.ActionDropColumn && job.SchemaState == model.StateDeleteOnly) {
-		if skipWriteBinlog(job) {
-			return
-		}
-		binloginfo.SetDDLBinlog(binlogCli, txn, job.ID, int32(job.SchemaState), job.Query)
-	}
 }
 
 func chooseLeaseTime(t, max time.Duration) time.Duration {

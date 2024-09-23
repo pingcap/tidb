@@ -854,7 +854,6 @@ import (
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
-	drainer                    "DRAINER"
 	dry                        "DRY"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
@@ -863,7 +862,6 @@ import (
 	nodeState                  "NODE_STATE"
 	optimistic                 "OPTIMISTIC"
 	pessimistic                "PESSIMISTIC"
-	pump                       "PUMP"
 	region                     "REGION"
 	regions                    "REGIONS"
 	reset                      "RESET"
@@ -1040,7 +1038,6 @@ import (
 	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
-	ChangeStmt                 "Change statement"
 	SetBindingStmt             "Set binding statement"
 	SetRoleStmt                "Set active role statement"
 	SetDefaultRoleStmt         "Set default statement for some user"
@@ -7078,12 +7075,10 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
-|	"DRAINER"
 |	"JOBS"
 |	"JOB"
 |	"NODE_ID"
 |	"NODE_STATE"
-|	"PUMP"
 |	"SAMPLES"
 |	"SAMPLERATE"
 |	"SESSION_STATES"
@@ -10638,25 +10633,6 @@ SetOpr:
 SetOprOpt:
 	DefaultTrueDistinctOpt
 
-/********************Change Statement*******************************/
-ChangeStmt:
-	"CHANGE" "PUMP" "TO" "NODE_STATE" eq stringLit forKwd "NODE_ID" stringLit
-	{
-		$$ = &ast.ChangeStmt{
-			NodeType: ast.PumpType,
-			State:    $6,
-			NodeID:   $9,
-		}
-	}
-|	"CHANGE" "DRAINER" "TO" "NODE_STATE" eq stringLit forKwd "NODE_ID" stringLit
-	{
-		$$ = &ast.ChangeStmt{
-			NodeType: ast.DrainerType,
-			State:    $6,
-			NodeID:   $9,
-		}
-	}
-
 /********************Set Statement*******************************/
 SetStmt:
 	"SET" VariableAssignmentList
@@ -11845,18 +11821,6 @@ ShowTargetFilterable:
 			Tp: ast.ShowProcedureStatus,
 		}
 	}
-|	"PUMP" "STATUS"
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowPumpStatus,
-		}
-	}
-|	"DRAINER" "STATUS"
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowDrainerStatus,
-		}
-	}
 |	"FUNCTION" "STATUS"
 	{
 		// This statement is similar to SHOW PROCEDURE STATUS but for stored functions.
@@ -12163,7 +12127,6 @@ Statement:
 |	ExecuteStmt
 |	ExplainStmt
 |	CalibrateResourceStmt
-|	ChangeStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt

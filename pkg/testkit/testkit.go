@@ -48,14 +48,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
-	"google.golang.org/grpc"
 )
 
 var testKitIDGenerator atomic.Uint64
@@ -681,19 +679,6 @@ func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, re
 		}
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
-}
-
-// MockPumpClient is a mock pump client.
-type MockPumpClient struct{}
-
-// WriteBinlog is a mock method.
-func (m MockPumpClient) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
-	return &binlog.WriteBinlogResp{}, nil
-}
-
-// PullBinlogs is a mock method.
-func (m MockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
-	return nil, nil
 }
 
 var _ sqlexec.RecordSet = &rowsRecordSet{}

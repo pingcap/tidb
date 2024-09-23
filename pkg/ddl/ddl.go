@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -54,10 +55,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
@@ -75,8 +74,6 @@ const (
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
 	ddlPrompt          = "ddl"
-
-	shardRowIDBitsMax = 15
 
 	batchAddingJobs = 100
 
@@ -156,9 +153,6 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = uint32(0)
-	// GetPumpClient is used to get the pump client.
-	// It's exported for testing.
-	GetPumpClient = binloginfo.GetPumpsClient
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -202,6 +196,7 @@ type JobWrapper struct {
 	// IDAllocated see config of same name in CreateTableConfig.
 	// exported for test.
 	IDAllocated bool
+	JobArgs     model.JobArgs
 	// job submission is run in async, we use this channel to notify the caller.
 	// when fast create table enabled, we might combine multiple jobs into one, and
 	// append the channel to this slice.
@@ -215,6 +210,17 @@ func NewJobWrapper(job *model.Job, idAllocated bool) *JobWrapper {
 	return &JobWrapper{
 		Job:         job,
 		IDAllocated: idAllocated,
+		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
+	}
+}
+
+// NewJobWrapperWithArgs creates a new JobWrapper with job args.
+// TODO: merge with NewJobWrapper later.
+func NewJobWrapperWithArgs(job *model.Job, args model.JobArgs, idAllocated bool) *JobWrapper {
+	return &JobWrapper{
+		Job:         job,
+		IDAllocated: idAllocated,
+		JobArgs:     args,
 		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
 	}
 }
@@ -312,9 +318,8 @@ type ddlCtx struct {
 	schemaVerSyncer   schemaver.Syncer
 	serverStateSyncer serverstate.Syncer
 
-	ddlEventCh   chan<- *util.SchemaChangeEvent
-	lease        time.Duration        // lease is schema lease, default 45s, see config.Lease.
-	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	ddlEventCh   chan<- *notifier.SchemaChangeEvent
+	lease        time.Duration // lease is schema lease, default 45s, see config.Lease.
 	infoCache    *infoschema.InfoCache
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
@@ -554,7 +559,7 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(jobCtx *jobContext, e *util.SchemaChangeEvent, job *model.Job) {
+func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job) {
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.
@@ -622,7 +627,6 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		ownerManager:      manager,
 		schemaVerSyncer:   schemaVerSyncer,
 		serverStateSyncer: serverStateSyncer,
-		binlogCli:         GetPumpClient(),
 		infoCache:         opt.InfoCache,
 		tableLockCkr:      deadLockCkr,
 		etcdCli:           opt.EtcdCli,

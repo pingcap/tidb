@@ -270,8 +270,7 @@ func TestHandleLockTable(t *testing.T) {
 		Type:    model.ActionTruncateTable,
 		TableID: 1,
 	}
-	job.FillArgs(&model.TruncateTableArgs{NewTableID: 2})
-	jobW := ddl.NewJobWrapper(job, false)
+	jobW := ddl.NewJobWrapperWithArgs(job, &model.TruncateTableArgs{NewTableID: 2}, false)
 
 	t.Run("target table not locked", func(t *testing.T) {
 		se.ReleaseAllTableLocks()

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
@@ -37,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/pingcap/tipb/go-binlog"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -532,9 +530,6 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		if len(sessVars.TxnCtx.TemporaryTables) > 0 {
 			return errors.New("pipelined dml with temporary tables is not allowed")
 		}
-		if sessVars.BinlogClient != nil {
-			return errors.New("pipelined dml with binlog is not allowed")
-		}
 		if sessVars.CDCWriteSource != 0 {
 			return errors.New("pipelined dml with CDC source is not allowed")
 		}
@@ -585,24 +580,6 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 
 	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
 		txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
-	}
-
-	if sessVars.BinlogClient != nil {
-		prewriteValue := binloginfo.GetPrewriteValue(p.sctx, false)
-		if prewriteValue != nil {
-			prewriteData, err := prewriteValue.Marshal()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			info := &binloginfo.BinlogInfo{
-				Data: &binlog.Binlog{
-					Tp:            binlog.BinlogType_Prewrite,
-					PrewriteValue: prewriteData,
-				},
-				Client: sessVars.BinlogClient,
-			}
-			txn.SetOption(kv.BinlogInfo, info)
-		}
 	}
 
 	var txnSource uint64
