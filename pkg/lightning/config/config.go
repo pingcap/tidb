@@ -78,6 +78,7 @@ const (
 	DefaultRegionSplitBatchSize       = 4096
 	defaultLogicalImportBatchSize     = 96 * units.KiB
 	defaultLogicalImportBatchRows     = 65536
+	defaultLogicalImportPrepStmt      = false
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName           = "lightning_metadata"
@@ -1101,6 +1102,7 @@ type TikvImporter struct {
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
 	LogicalImportBatchSize  ByteSize `toml:"logical-import-batch-size" json:"logical-import-batch-size"`
 	LogicalImportBatchRows  int      `toml:"logical-import-batch-rows" json:"logical-import-batch-rows"`
+	LogicalImportPrepStmt   bool     `toml:"logical-import-prep-stmt" json:"logical-import-prep-stmt"`
 
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
@@ -1497,6 +1499,7 @@ func NewConfig() *Config {
 			BlockSize:               16 * 1024,
 			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
 			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
+			LogicalImportPrepStmt:   defaultLogicalImportPrepStmt,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,

@@ -228,6 +228,116 @@ func TestTruncateTableArgs(t *testing.T) {
 	}
 }
 
+func TestTablePartitionArgs(t *testing.T) {
+	inArgs := &TablePartitionArgs{
+		PartNames: []string{"a", "b"},
+		PartInfo: &PartitionInfo{Type: model.PartitionTypeRange, Definitions: []PartitionDefinition{
+			{ID: 1, Name: model.NewCIStr("a"), LessThan: []string{"1"}},
+			{ID: 2, Name: model.NewCIStr("b"), LessThan: []string{"2"}},
+		}},
+	}
+	for _, tp := range []ActionType{
+		ActionAlterTablePartitioning,
+		ActionRemovePartitioning,
+		ActionReorganizePartition,
+		ActionAddTablePartition,
+		ActionDropTablePartition,
+	} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			args, err := GetTablePartitionArgs(j2)
+			require.NoError(t, err)
+			if v == JobVersion2 {
+				require.Equal(t, inArgs, args)
+			} else {
+				if j2.Type != ActionAddTablePartition {
+					require.Equal(t, inArgs.PartNames, args.PartNames)
+				}
+				if j2.Type != ActionDropTablePartition {
+					require.Equal(t, inArgs.PartInfo, args.PartInfo)
+				}
+			}
+		}
+	}
+
+	for _, ver := range []JobVersion{JobVersion1, JobVersion2} {
+		j := &Job{
+			Version: ver,
+			Type:    ActionAddTablePartition,
+		}
+		j.FillArgs(inArgs)
+		_, err := j.Encode(true)
+		require.NoError(t, err)
+		partNames := []string{"aaaa", "bbb"}
+		FillRollbackArgsForAddPartition(j,
+			&TablePartitionArgs{
+				PartNames: partNames,
+				PartInfo: &PartitionInfo{Type: model.PartitionTypeRange, Definitions: []PartitionDefinition{
+					{ID: 1, Name: model.NewCIStr("aaaa"), LessThan: []string{"1"}},
+					{ID: 2, Name: model.NewCIStr("bbb"), LessThan: []string{"2"}},
+				}},
+			})
+		require.Len(t, j.Args, 1)
+		if ver == JobVersion1 {
+			require.EqualValues(t, partNames, j.Args[0].([]string))
+		} else {
+			args := j.Args[0].(*TablePartitionArgs)
+			require.EqualValues(t, partNames, args.PartNames)
+			require.Nil(t, args.PartInfo)
+			require.Nil(t, args.OldPhysicalTblIDs)
+		}
+
+		j.State = JobStateRollingback
+		bytes, err := j.Encode(true)
+		require.NoError(t, err)
+
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(bytes))
+		args, err := GetTablePartitionArgs(j2)
+		require.NoError(t, err)
+		require.EqualValues(t, partNames, args.PartNames)
+	}
+}
+
+func TestFinishedTablePartitionArgs(t *testing.T) {
+	inArgs := &TablePartitionArgs{
+		OldPhysicalTblIDs: []int64{1, 2},
+	}
+	for _, tp := range []ActionType{
+		ActionAlterTablePartitioning,
+		ActionRemovePartitioning,
+		ActionReorganizePartition,
+		ActionDropTablePartition,
+	} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, tp)))
+			args, err := GetFinishedTablePartitionArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.OldPhysicalTblIDs, args.OldPhysicalTblIDs)
+		}
+	}
+
+	// ActionAddTablePartition can use FillFinishedArgs when rollback
+	for _, ver := range []JobVersion{JobVersion1, JobVersion2} {
+		j := &Job{
+			Version: ver,
+			Type:    ActionAddTablePartition,
+			State:   JobStateRollbackDone,
+		}
+		j.FillFinishedArgs(inArgs)
+		bytes, err := j.Encode(true)
+		require.NoError(t, err)
+
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(bytes))
+		args, err := GetFinishedTablePartitionArgs(j2)
+		require.NoError(t, err)
+		require.EqualValues(t, inArgs.OldPhysicalTblIDs, args.OldPhysicalTblIDs)
+	}
+}
+
 func TestRenameTableArgs(t *testing.T) {
 	inArgs := &RenameTableArgs{
 		OldSchemaID:   9527,
@@ -311,5 +421,60 @@ func TestResourceGroupArgs(t *testing.T) {
 				require.EqualValues(t, inArgs, args)
 			}
 		}
+	}
+}
+
+func TestDropColumnArgs(t *testing.T) {
+	inArgs := &DropColumnArgs{
+		ColName:      model.NewCIStr("col_name"),
+		IfExists:     true,
+		IndexIDs:     []int64{1, 2, 3},
+		PartitionIDs: []int64{4, 5, 6},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropColumn)))
+		args, err := GetDropColumnArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestAddCheckConstraintArgs(t *testing.T) {
+	Constraint :=
+		&ConstraintInfo{
+			Name:       model.NewCIStr("t3_c1"),
+			Table:      model.NewCIStr("t3"),
+			ExprString: "id<10",
+			State:      StateDeleteOnly,
+		}
+	inArgs := &AddCheckConstraintArgs{
+		Constraint: Constraint,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddCheckConstraint)))
+		args, err := GetAddCheckConstraintArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, "t3_c1", args.Constraint.Name.O)
+		require.Equal(t, "t3", args.Constraint.Table.O)
+		require.Equal(t, "id<10", args.Constraint.ExprString)
+		require.Equal(t, StateDeleteOnly, args.Constraint.State)
+	}
+}
+
+func TestCheckConstraintArgs(t *testing.T) {
+	inArgs := &CheckConstraintArgs{
+		ConstraintName: model.NewCIStr("c1"),
+		Enforced:       true,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropCheckConstraint)))
+		args, err := GetCheckConstraintArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, "c1", args.ConstraintName.O)
+		require.True(t, args.Enforced)
 	}
 }
