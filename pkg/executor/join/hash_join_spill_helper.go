@@ -16,6 +16,7 @@ package join
 
 import (
 	"bytes"
+	"fmt"
 	"hash"
 	"hash/fnv"
 	"slices"
@@ -497,7 +498,7 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 	}
 
 	if lastRound+1 > h.hashJoinExec.maxSpillRound {
-		return errors.NewNoStackError(exceedMaxSpillRoundErrInfo)
+		return errors.NewNoStackError(fmt.Sprintf("lastRound: %d, maxSpillRound: %d", lastRound, h.hashJoinExec.maxSpillRound))
 	}
 
 	if h.buildRowsInDisk == nil {
