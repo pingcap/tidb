@@ -73,6 +73,20 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	}
 }
 
+// PD controls the scope of scatter region through `tID`.
+// 1. nil means PD scatter region at cluster level.
+// 2. not nil means PD scatter region at table level when `scatter` is true.
+func getScatterConfig(scope scatterScope, tableID int64) (scatter bool, tID *int64) {
+	switch scope {
+	case scatterTable:
+		return true, &tableID
+	case scatterGlobal:
+		return true, nil
+	default:
+		return false, &tableID
+	}
+}
+
 func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalID int64, scatterScope scatterScope) []uint64 {
 	// Example:
 	// sharding_bits = 4
@@ -115,24 +129,7 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
 		splitTableKeys = append(splitTableKeys, key)
 	}
-	var (
-		err     error
-		scatter bool
-		// PD controls the scope of scatter region through `tableId`.
-		// `nil` indicates that PD will scatter region at cluster level.
-		tableID *int64
-	)
-	switch scatterScope {
-	case scatterTable:
-		scatter = true
-		tableID = &tbInfo.ID
-	case scatterGlobal:
-		scatter = true
-		tableID = nil
-	default:
-		scatter = false
-		tableID = &tbInfo.ID
-	}
+	scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
 	regionIDs, err := store.SplitRegions(ctx, splitTableKeys, scatter, tableID)
 	if err != nil {
 		logutil.DDLLogger().Warn("pre split some table regions failed",
@@ -145,23 +142,7 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 // SplitRecordRegion is to split region in store by table prefix.
 func SplitRecordRegion(ctx context.Context, store kv.SplittableStore, physicalTableID, tableID int64, scope scatterScope) uint64 {
 	tableStartKey := tablecodec.GenTablePrefix(physicalTableID)
-	var (
-		scatter bool
-		// PD controls the scope of scatter region through `tID`.
-		// `nil` indicates that PD will scatter region at cluster level.
-		tID *int64
-	)
-	switch scope {
-	case scatterTable:
-		scatter = true
-		tID = &tableID
-	case scatterGlobal:
-		scatter = true
-		tID = nil
-	default:
-		scatter = false
-		tID = &tableID
-	}
+	scatter, tID := getScatterConfig(scope, tableID)
 	regionIDs, err := store.SplitRegions(ctx, [][]byte{tableStartKey}, scatter, tID)
 	if err != nil {
 		// It will be automatically split by TiKV later.
