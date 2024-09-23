@@ -425,6 +425,10 @@ func Open(ctx context.Context, e Executor) (err error) {
 			err = util.GetRecoverError(r)
 		}
 	}()
+	if e.RuntimeStats() != nil {
+		start := time.Now()
+		defer func() { e.RuntimeStats().RecordClose(time.Since(start)) }()
+	}
 	return e.Open(ctx)
 }
 
@@ -464,5 +468,9 @@ func Close(e Executor) (err error) {
 			err = util.GetRecoverError(r)
 		}
 	}()
+	if e.RuntimeStats() != nil {
+		start := time.Now()
+		defer func() { e.RuntimeStats().RecordClose(time.Since(start)) }()
+	}
 	return e.Close()
 }
