@@ -808,7 +808,7 @@ func (d *ddl) detectAndUpdateJobVersion() {
 		logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 	}
 	// TODO will TiDB < 8.4.0 be started after all TiDBs are >= 8.4.0?
-	// if no, we can avoid this routine here.
+	// if no, we can avoid this routine here, if yes, it's broken actually.
 	d.wg.Run(func() {
 		ticker := time.NewTicker(detectJobVerInterval)
 		defer ticker.Stop()
