@@ -16,5 +16,5 @@
 
 package intest
 
-// ForceDDLJobVersionToV1: see common.go.
+// ForceDDLJobVersionToV1 see common.go.
 const ForceDDLJobVersionToV1 = true
