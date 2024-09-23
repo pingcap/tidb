@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -441,12 +442,11 @@ func checkTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo
 		}
 	}
 	if tbInfo.TTLInfo != nil {
+		var foreignKeyCheckIs infoschemactx.MetaOnlyInfoSchema
 		if is, ok := ctx.GetInfoSchema(); ok {
-			err = checkTTLInfoValid(is, s.Table.Schema, tbInfo)
-		} else {
-			err = checkTTLInfoValid(nil, s.Table.Schema, tbInfo)
+			foreignKeyCheckIs = is
 		}
-		if err != nil {
+		if err = checkTTLInfoValid(s.Table.Schema, tbInfo, foreignKeyCheckIs); err != nil {
 			return err
 		}
 	}

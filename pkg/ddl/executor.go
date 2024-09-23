@@ -3703,7 +3703,7 @@ func (e *executor) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.I
 	var job *model.Job
 	if ttlInfo != nil {
 		tblInfo.TTLInfo = ttlInfo
-		err = checkTTLInfoValid(is, ident.Schema, tblInfo)
+		err = checkTTLInfoValid(ident.Schema, tblInfo, is)
 		if err != nil {
 			return err
 		}

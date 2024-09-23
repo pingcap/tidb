@@ -98,13 +98,27 @@ func onTTLInfoChange(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int6
 	return ver, nil
 }
 
-func checkTTLInfoValid(is infoschemactx.MetaOnlyInfoSchema, schema pmodel.CIStr, tblInfo *model.TableInfo) error {
+// checkTTLInfoValid checks the TTL settings for a table.
+// The argument `isForForeignKeyCheck` is used to check the table should not be referenced by foreign key.
+// If `isForForeignKeyCheck` is `nil`, it will skip the foreign key check.
+func checkTTLInfoValid(schema pmodel.CIStr, tblInfo *model.TableInfo, foreignKeyCheckIs infoschemactx.MetaOnlyInfoSchema) error {
+	if tblInfo.TempTableType != model.TempTableNone {
+		return dbterror.ErrTempTableNotAllowedWithTTL
+	}
+
 	if err := checkTTLIntervalExpr(tblInfo.TTLInfo); err != nil {
 		return err
 	}
 
-	if err := checkTTLTableSuitable(is, schema, tblInfo); err != nil {
+	if err := checkPrimaryKeyForTTLTable(tblInfo); err != nil {
 		return err
+	}
+
+	if foreignKeyCheckIs != nil {
+		// checks even when the foreign key check is not enabled, to keep safe
+		if referredFK := checkTableHasForeignKeyReferred(foreignKeyCheckIs, schema.L, tblInfo.Name.L, nil, true); referredFK != nil {
+			return dbterror.ErrUnsupportedTTLReferencedByFK
+		}
 	}
 
 	return checkTTLInfoColumnType(tblInfo)
@@ -122,25 +136,6 @@ func checkTTLInfoColumnType(tblInfo *model.TableInfo) error {
 	}
 	if !types.IsTypeTime(colInfo.FieldType.GetType()) {
 		return dbterror.ErrUnsupportedColumnInTTLConfig.GenWithStackByArgs(tblInfo.TTLInfo.ColumnName.O)
-	}
-
-	return nil
-}
-
-// checkTTLTableSuitable returns whether this table is suitable to be a TTL table
-// A temporary table or a parent table referenced by a foreign key cannot be TTL table
-func checkTTLTableSuitable(is infoschemactx.MetaOnlyInfoSchema, schema pmodel.CIStr, tblInfo *model.TableInfo) error {
-	if tblInfo.TempTableType != model.TempTableNone {
-		return dbterror.ErrTempTableNotAllowedWithTTL
-	}
-
-	if err := checkPrimaryKeyForTTLTable(tblInfo); err != nil {
-		return err
-	}
-
-	// checks even when the foreign key check is not enabled, to keep safe
-	if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tblInfo.Name.L, nil, true); referredFK != nil {
-		return dbterror.ErrUnsupportedTTLReferencedByFK
 	}
 
 	return nil

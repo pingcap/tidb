@@ -380,7 +380,7 @@ func isAcceptableForeignKeyColumnChange(newCol, originalCol, relatedCol *model.C
 }
 
 func checkTableHasForeignKeyReferred(is infoschemactx.MetaOnlyInfoSchema, schema, tbl string, ignoreTables []ast.Ident, fkCheck bool) *model.ReferredFKInfo {
-	if !fkCheck || is == nil {
+	if !fkCheck {
 		return nil
 	}
 	referredFKs := is.GetTableReferredForeignKeys(schema, tbl)
