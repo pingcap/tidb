@@ -156,7 +156,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	if p.StoreType == kv.TiFlash {
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
 	} else {
-		// Apply cost penalty for high modifyCount or if PreferRangeScan enabled and pseudo/zero stats
+		// Apply cost penalty for full scans that carry high risk of underestimation
 		sessionVars := p.SCtx().GetSessionVars()
 		allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
 		tblColHists := p.tblColHists
@@ -173,10 +173,9 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 			}
 		}
-		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
-		//shouldApplyPenalty := !p.isChildOfIndexLookUp && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
-		shouldApplyPenalty := hasFullRangeScan && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
+		hasFullRangeScan := !p.isChildOfIndexLookUp && ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 
+		shouldApplyPenalty := hasFullRangeScan && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
 		if shouldApplyPenalty {
 			newRowCount := math.Min(MaxPenaltyRowCount, math.Max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))

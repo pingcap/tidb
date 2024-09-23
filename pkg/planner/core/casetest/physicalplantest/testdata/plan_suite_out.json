@@ -2278,7 +2278,7 @@
       },
       {
         "SQL": "select max(a), min(a) from t where a > 10",
-        "Best": "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
+        "Best": "RightHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
       },
       {
         "SQL": "select max(d), min(d) from t where c = 1 and d > 10",
