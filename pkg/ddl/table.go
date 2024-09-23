@@ -1515,12 +1515,12 @@ func onAlterTablePartitionPlacement(jobCtx *jobContext, t *meta.Meta, job *model
 }
 
 func onAlterTablePlacement(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	policyRefInfo := &model.PolicyRefInfo{}
-	err = job.DecodeArgs(&policyRefInfo)
+	args, err := model.GetAlterTablePlacementArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
+	policyRefInfo := args.PlacementPolicyRef
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {

@@ -862,7 +862,7 @@ func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
 
 // AlterTablePlacementArgs is the arguments for alter table placements ddl job.
 type AlterTablePlacementArgs struct {
-	PlacementPolicyRef *PolicyRefInfo
+	PlacementPolicyRef *PolicyRefInfo `json:"placement_policy_ref,omitempty"`
 }
 
 func (a *AlterTablePlacementArgs) fillJob(job *Job) {

@@ -536,3 +536,19 @@ func TestCheckConstraintArgs(t *testing.T) {
 		require.True(t, args.Enforced)
 	}
 }
+
+func TestGetAlterTablePlacementArgs(t *testing.T) {
+	inArgs := &AlterTablePlacementArgs{
+		PlacementPolicyRef: &PolicyRefInfo{
+			ID:   7527,
+			Name: model.NewCIStr("placement-policy"),
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterTablePlacement)))
+		args, err := GetAlterTablePlacementArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
