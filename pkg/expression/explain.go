@@ -22,13 +22,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/redact"
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 )
 
 // ExplainInfo implements the Expression interface.
@@ -76,21 +72,8 @@ func (col *Column) ExplainInfo() string {
 	return col.String()
 }
 
-<<<<<<< HEAD
 // ExplainNormalizedInfo implements the Expression interface.
 func (col *Column) ExplainNormalizedInfo() string {
-=======
-// ColumnExplainInfo returns the explained info for column.
-func (col *Column) ColumnExplainInfo(ctx ParamValues, normalized bool) string {
-	if normalized {
-		return col.ColumnExplainInfoNormalized()
-	}
-	return col.StringWithCtx(ctx, errors.RedactLogDisable)
-}
-
-// ColumnExplainInfoNormalized returns the normalized explained info for column.
-func (col *Column) ColumnExplainInfoNormalized() string {
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	if col.OrigName != "" {
 		return col.OrigName
 	}
@@ -98,10 +81,6 @@ func (col *Column) ColumnExplainInfoNormalized() string {
 }
 
 // ExplainInfo implements the Expression interface.
-<<<<<<< HEAD
-func (expr *Constant) ExplainInfo() string {
-	dt, err := expr.Eval(chunk.Row{})
-=======
 func (col *Column) ExplainInfo(ctx EvalContext) string {
 	return col.ColumnExplainInfo(ctx, false)
 }
@@ -117,13 +96,12 @@ func (col *Column) ExplainNormalizedInfo4InList() string {
 }
 
 // ExplainInfo implements the Expression interface.
-func (expr *Constant) ExplainInfo(ctx EvalContext) string {
+func (expr *Constant) ExplainInfo(ctx sessionctx.Context) string {
 	redact := ctx.GetTiDBRedactLog()
 	if redact == errors.RedactLogEnable {
 		return "?"
 	}
 	dt, err := expr.Eval(ctx, chunk.Row{})
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	if err != nil {
 		return "not recognized const vanue"
 	}

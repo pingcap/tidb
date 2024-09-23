@@ -885,7 +885,7 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 <<<<<<< HEAD
 				buffer.WriteString(cond.String())
 =======
-				buffer.WriteString(cond.StringWithCtx(evalCtx, errors.RedactLogDisable))
+				buffer.WriteString(cond.StringWithCtx(false))
 >>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			}
 			fmt.Fprintf(buffer, "] in %v_%v are pushed down", p.TP(), p.ID())
