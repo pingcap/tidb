@@ -1809,38 +1809,23 @@ func checkResultOK(ok bool) error {
 }
 
 // checkPartitionFuncType checks partition function return type.
-func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, schema string, tblInfo *model.TableInfo) error {
-	if expr == nil {
-		return nil
-	}
-
-	if schema == "" {
-		schema = ctx.GetSessionVars().CurrentDB
-	}
-
-	e, err := expression.BuildSimpleExpr(ctx.GetExprCtx(), expr, expression.WithTableInfo(schema, tblInfo))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if e.GetType(ctx.GetExprCtx().GetEvalCtx()).EvalType() == types.ETInt {
-		return nil
-	}
-
-	if col, ok := expr.(*ast.ColumnNameExpr); ok {
-		return errors.Trace(dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.Name.Name.L))
-	}
-
-	return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
-}
-
-func checkPartitionFuncTypeExprString(ctx sessionctx.Context, expr, schema string, tblInfo *model.TableInfo) error {
-	if len(expr) == 0 {
+func checkPartitionFuncType(ctx sessionctx.Context, anyExpr any, schema string, tblInfo *model.TableInfo) error {
+	if anyExpr == nil {
 		return nil
 	}
 	if schema == "" {
 		schema = ctx.GetSessionVars().CurrentDB
 	}
-	e, err := expression.ParseSimpleExpr(ctx.GetExprCtx(), expr, expression.WithTableInfo(schema, tblInfo))
+	var e expression.Expression
+	var err error
+	switch expr := anyExpr.(type) {
+	case *ast.ColumnNameExpr:
+		e, err = expression.BuildSimpleExpr(ctx.GetExprCtx(), expr, expression.WithTableInfo(schema, tblInfo))
+	case string:
+		e, err = expression.ParseSimpleExpr(ctx.GetExprCtx(), expr, expression.WithTableInfo(schema, tblInfo))
+	default:
+		return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3131,7 +3116,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 
 		if job.Type == model.ActionAlterTablePartitioning {
 			// Also verify same things as in CREATE TABLE ... PARTITION BY
-			if err = checkPartitionFuncTypeExprString(sctx, partInfo.Expr, job.SchemaName, tblInfo); err != nil {
+			if err = checkPartitionFuncType(sctx, partInfo.Expr, job.SchemaName, tblInfo); err != nil {
 				job.State = model.JobStateCancelled
 				return ver, err
 			}
