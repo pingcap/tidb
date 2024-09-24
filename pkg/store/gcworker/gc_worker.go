@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -1569,16 +1568,23 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
-		args, err1 := json.Marshal([]any{kv.Key{}, []int64{int64(v.(int))}})
-		if err1 != nil {
-			return
-		}
-		historyJob = &model.Job{
-			Version: model.JobVersion1,
+		mockJ := &model.Job{
+			Version: model.GetJobVerInUse(),
 			ID:      dr.JobID,
 			Type:    model.ActionDropTable,
 			TableID: int64(v.(int)),
-			RawArgs: args,
+		}
+		mockJ.FillFinishedArgs(&model.DropTableArgs{
+			OldPartitionIDs: []int64{int64(v.(int))},
+		})
+		bytes, err1 := mockJ.Encode(true)
+		if err1 != nil {
+			return
+		}
+		historyJob = &model.Job{}
+		err1 = historyJob.Decode(bytes)
+		if err1 != nil {
+			return
 		}
 	})
 	if historyJob == nil {
@@ -1595,11 +1601,12 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 	var physicalTableIDs []int64
 	switch historyJob.Type {
 	case model.ActionDropTable:
-		var startKey kv.Key
-		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs); err != nil {
+		var args *model.DropTableArgs
+		args, err = model.GetFinishedDropTableArgs(historyJob)
+		if err != nil {
 			return
 		}
-		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
+		physicalTableIDs = append(args.OldPartitionIDs, historyJob.TableID)
 	case model.ActionTruncateTable:
 		var args *model.TruncateTableArgs
 		args, err = model.GetFinishedTruncateTableArgs(historyJob)
@@ -1607,9 +1614,14 @@ func doGCPlacementRules(se sessiontypes.Session, _ uint64,
 			return
 		}
 		physicalTableIDs = append(args.OldPartitionIDs, historyJob.TableID)
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
-		model.ActionReorganizePartition, model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning:
+	case model.ActionDropTablePartition, model.ActionReorganizePartition,
+		model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		args, err2 := model.GetFinishedTablePartitionArgs(historyJob)
+		if err2 != nil {
+			return err2
+		}
+		physicalTableIDs = args.OldPhysicalTblIDs
+	case model.ActionTruncateTablePartition:
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}
@@ -1657,15 +1669,21 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJob", func(v failpoint.Value) {
-		args, err1 := json.Marshal([]any{kv.Key{}, []int64{}, []string{v.(string)}})
+		mockJ := &model.Job{
+			Version: model.GetJobVerInUse(),
+			ID:      dr.JobID,
+			Type:    model.ActionDropTable,
+		}
+		mockJ.FillFinishedArgs(&model.DropTableArgs{
+			OldRuleIDs: []string{v.(string)},
+		})
+		bytes, err1 := mockJ.Encode(true)
 		if err1 != nil {
 			return
 		}
-		historyJob = &model.Job{
-			Version: model.JobVersion1,
-			ID:      dr.JobID,
-			Type:    model.ActionDropTable,
-			RawArgs: args,
+		historyJob = &model.Job{}
+		if err1 = historyJob.Decode(bytes); err1 != nil {
+			return
 		}
 	})
 	if historyJob == nil {
@@ -1682,15 +1700,14 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 
 	if historyJob.Type == model.ActionDropTable {
 		var (
-			startKey         kv.Key
-			physicalTableIDs []int64
-			ruleIDs          []string
-			rules            map[string]*label.Rule
+			args  *model.DropTableArgs
+			rules map[string]*label.Rule
 		)
-		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
+		args, err = model.GetFinishedDropTableArgs(historyJob)
+		if err != nil {
 			return
 		}
-
+		physicalTableIDs, ruleIDs := args.OldPartitionIDs, args.OldRuleIDs
 		// TODO: Here we need to get rules from PD and filter the rules which is not elegant. We should find a better way.
 		rules, err = infosync.GetLabelRules(context.TODO(), ruleIDs)
 		if err != nil {
