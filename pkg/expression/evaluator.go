@@ -15,13 +15,9 @@
 package expression
 
 import (
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/sessionctx"
-=======
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/expression/context"
->>>>>>> 801d5d6829f (planner: fix column evaluator can not detect input's column-ref and thus swapping and destroying later column ref projection logic (#53794))
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -37,17 +33,12 @@ type columnEvaluator struct {
 // NOTE: It should be called after all the other expressions are evaluated
 //
 //	since it will change the content of the input Chunk.
-<<<<<<< HEAD
 func (e *columnEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chunk) error {
-	for inputIdx, outputIdxes := range e.inputIdxToOutputIdxes {
-=======
-func (e *columnEvaluator) run(ctx EvalContext, input, output *chunk.Chunk) error {
 	// mergedInputIdxToOutputIdxes only can be determined in runtime when we saw the input chunk structure.
 	if e.mergedInputIdxToOutputIdxes.Load() == nil {
 		e.mergeInputIdxToOutputIdxes(input, e.inputIdxToOutputIdxes)
 	}
 	for inputIdx, outputIdxes := range *e.mergedInputIdxToOutputIdxes.Load() {
->>>>>>> 801d5d6829f (planner: fix column evaluator can not detect input's column-ref and thus swapping and destroying later column ref projection logic (#53794))
 		if err := output.SwapColumn(outputIdxes[0], input, inputIdx); err != nil {
 			return err
 		}
