@@ -21,11 +21,6 @@ import (
 	"testing"
 	"time"
 
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/errors"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -185,11 +180,7 @@ func TestConstantPropagation(t *testing.T) {
 			newConds := solver.PropagateConstant(ctx, conds)
 			var result []string
 			for _, v := range newConds {
-<<<<<<< HEAD
-				result = append(result, v.String())
-=======
-				result = append(result, v.StringWithCtx(ctx, errors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+				result = append(result, v.StringWithCtx(false))
 			}
 			sort.Strings(result)
 			require.Equalf(t, tt.result, strings.Join(result, ", "), "different for expr %s", tt.conditions)
@@ -237,20 +228,9 @@ func TestConstantFolding(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-<<<<<<< HEAD
+
 		newConds := FoldConstant(tt.condition)
-		require.Equalf(t, tt.result, newConds.String(), "different for expr %s", tt.condition)
-=======
-		ctx := mock.NewContext().GetExprCtx()
-		require.False(t, ctx.IsInNullRejectCheck())
-		expr := tt.condition(ctx)
-		if tt.nullRejectCheck {
-			ctx = exprctx.WithNullRejectCheck(ctx)
-			require.True(t, ctx.IsInNullRejectCheck())
-		}
-		newConds := FoldConstant(ctx, expr)
-		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable), "different for expr %s", tt.condition)
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		require.Equalf(t, tt.result, newConds.StringWithCtx(false), "different for expr %s", tt.condition)
 	}
 }
 
@@ -305,13 +285,8 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-<<<<<<< HEAD
 		newConds := FoldConstant(tt.condition)
-		require.Equalf(t, tt.result, newConds.String(), "different for expr %s", tt.condition)
-=======
-		newConds := FoldConstant(ctx, tt.condition)
-		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx, errors.RedactLogDisable), "different for expr %s", tt.condition)
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		require.Equalf(t, tt.result, newConds.StringWithCtx(false), "different for expr %s", tt.condition)
 	}
 }
 

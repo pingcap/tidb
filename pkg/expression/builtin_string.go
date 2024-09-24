@@ -2341,11 +2341,7 @@ func (c *charFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	// The last argument represents the charset name after "using".
 	if _, ok := args[len(args)-1].(*Constant); !ok {
 		// If we got there, there must be something wrong in other places.
-<<<<<<< HEAD
-		logutil.BgLogger().Warn(fmt.Sprintf("The last argument in char function must be constant, but got %T", args[len(args)-1]))
-=======
-		logutil.BgLogger().Warn(fmt.Sprintf("The last argument in char function must be constant, but got %T", args[len(args)-1].StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		logutil.BgLogger().Warn(fmt.Sprintf("The last argument in char function must be constant, but got %T", args[len(args)-1].StringWithCtx(false)))
 		return nil, errIncorrectArgs
 	}
 	charsetName, isNull, err := args[len(args)-1].EvalString(ctx, chunk.Row{})
@@ -3914,21 +3910,12 @@ func (c *weightStringFunctionClass) verifyArgs(args []Expression) (weightStringP
 	}
 	length := 0
 	if l == 3 {
-<<<<<<< HEAD
 		if args[1].GetType().EvalType() != types.ETString {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(false), c.funcName)
 		}
 		c1, ok := args[1].(*Constant)
 		if !ok {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
-=======
-		if args[1].GetType(ctx).EvalType() != types.ETString {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(ctx, errors.RedactLogDisable), c.funcName)
-		}
-		c1, ok := args[1].(*Constant)
-		if !ok {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(ctx, errors.RedactLogDisable), c.funcName)
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(false), c.funcName)
 		}
 		switch x := c1.Value.GetString(); x {
 		case "CHAR":
@@ -3940,29 +3927,16 @@ func (c *weightStringFunctionClass) verifyArgs(args []Expression) (weightStringP
 		default:
 			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(x, c.funcName)
 		}
-<<<<<<< HEAD
 		if args[2].GetType().EvalType() != types.ETInt {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].String(), c.funcName)
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].StringWithCtx(false), c.funcName)
 		}
 		c2, ok := args[2].(*Constant)
 		if !ok {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].String(), c.funcName)
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(false), c.funcName)
 		}
 		length = int(c2.Value.GetInt64())
 		if length == 0 {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].String(), c.funcName)
-=======
-		if args[2].GetType(ctx).EvalType() != types.ETInt {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].StringWithCtx(ctx, errors.RedactLogDisable), c.funcName)
-		}
-		c2, ok := args[2].(*Constant)
-		if !ok {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[1].StringWithCtx(ctx, errors.RedactLogDisable), c.funcName)
-		}
-		length = int(c2.Value.GetInt64())
-		if length == 0 {
-			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].StringWithCtx(ctx, errors.RedactLogDisable), c.funcName)
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			return weightStringPaddingNone, 0, ErrIncorrectType.GenWithStackByArgs(args[2].StringWithCtx(false), c.funcName)
 		}
 	}
 	return padding, length, nil

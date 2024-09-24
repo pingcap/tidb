@@ -19,11 +19,6 @@ import (
 	"fmt"
 	"strings"
 
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression"
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	"github.com/pingcap/tidb/pkg/planner/memo"
 )
 
@@ -71,11 +66,7 @@ func groupToString(g *memo.Group, idMap map[*memo.Group]int) []string {
 	schema := g.Prop.Schema
 	colStrs := make([]string, 0, len(schema.Columns))
 	for _, col := range schema.Columns {
-<<<<<<< HEAD
-		colStrs = append(colStrs, col.String())
-=======
-		colStrs = append(colStrs, col.StringWithCtx(ctx, errors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		colStrs = append(colStrs, col.StringWithCtx(false))
 	}
 
 	groupLine := bytes.NewBufferString("")
@@ -86,11 +77,7 @@ func groupToString(g *memo.Group, idMap map[*memo.Group]int) []string {
 		for _, key := range schema.Keys {
 			ukColStrs := make([]string, 0, len(key))
 			for _, col := range key {
-<<<<<<< HEAD
-				ukColStrs = append(ukColStrs, col.String())
-=======
-				ukColStrs = append(ukColStrs, col.StringWithCtx(ctx, errors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+				ukColStrs = append(ukColStrs, col.StringWithCtx(false))
 			}
 			ukStrs = append(ukStrs, strings.Join(ukColStrs, ","))
 		}

@@ -101,7 +101,7 @@ func (desc *baseFuncDesc) GetTiPBExpr(tryWindowDesc bool) (tp tipb.ExprType) {
 
 // AggFuncToPBExpr converts aggregate function to pb.
 func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFuncDesc, storeType kv.StoreType) (*tipb.Expr, error) {
-	pc := expression.NewPBConverter(client, sctx.GetSessionVars().StmtCtx)
+	pc := expression.NewPBConverter(client, sctx.GetSessionVars())
 	tp := aggFunc.GetTiPBExpr(false)
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil, errors.New("select request is not supported by client")
@@ -111,11 +111,7 @@ func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFunc
 	for _, arg := range aggFunc.Args {
 		pbArg := pc.ExprToPB(arg)
 		if pbArg == nil {
-<<<<<<< HEAD
-			return nil, errors.New(aggFunc.String() + " can't be converted to PB.")
-=======
-			return nil, errors.New(aggFunc.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + " can't be converted to PB.")
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			return nil, errors.New(aggFunc.StringWithCtx(false) + " can't be converted to PB.")
 		}
 		children = append(children, pbArg)
 	}
@@ -130,11 +126,7 @@ func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFunc
 		for _, arg := range aggFunc.OrderByItems {
 			pbArg := expression.SortByItemToPB(sc, client, arg.Expr, arg.Desc)
 			if pbArg == nil {
-<<<<<<< HEAD
-				return nil, errors.New(aggFunc.String() + " can't be converted to PB.")
-=======
-				return nil, errors.New(aggFunc.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + " can't be converted to PB.")
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+				return nil, errors.New(aggFunc.StringWithCtx(false) + " can't be converted to PB.")
 			}
 			orderBy = append(orderBy, pbArg)
 		}

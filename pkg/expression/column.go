@@ -380,29 +380,21 @@ func (col *Column) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 
 const columnPrefix = "Column#"
 
-<<<<<<< HEAD
-// String implements Stringer interface.
-func (col *Column) String() string {
-	if col.IsHidden {
-		// A hidden column must be a virtual generated column, we should output its expression.
-		return col.VirtualExpr.String()
-=======
 // StringWithCtx implements Expression interface.
-func (col *Column) StringWithCtx(_ ParamValues, redact string) string {
+func (col *Column) StringWithCtx(redact bool) string {
 	return col.string(redact)
 }
 
 // String implements Stringer interface.
 func (col *Column) String() string {
-	return col.string(errors.RedactLogDisable)
+	return col.string(false)
 }
 
-func (col *Column) string(redact string) string {
+func (col *Column) string(redact bool) string {
 	if col.IsHidden && col.VirtualExpr != nil {
 		// A hidden column without virtual expression indicates it's a stored type.
 		// a virtual column should be able to be stringified without context.
-		return col.VirtualExpr.StringWithCtx(exprctx.EmptyParamValues, redact)
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		return col.VirtualExpr.StringWithCtx(redact)
 	}
 	if col.OrigName != "" {
 		return col.OrigName

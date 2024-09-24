@@ -17,11 +17,7 @@ package expression
 import (
 	"testing"
 
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"

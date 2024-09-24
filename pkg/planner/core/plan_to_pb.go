@@ -38,7 +38,7 @@ func (p *PhysicalExpand) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 	if len(p.LevelExprs) > 0 {
 		return p.toPBV2(ctx, storeType)
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := ctx.GetSessionVars()
 	client := ctx.GetClient()
 	groupingSetsPB, err := p.GroupingSets.ToPB(sc, client)
 	if err != nil {

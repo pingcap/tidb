@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"strings"
 
-	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -39,11 +38,11 @@ func (by *ByItems) String() string {
 }
 
 // StringWithCtx implements expression.StringerWithCtx interface.
-func (by *ByItems) StringWithCtx(ctx expression.ParamValues, redact string) string {
+func (by *ByItems) StringWithCtx(redact bool) string {
 	if by.Desc {
-		return fmt.Sprintf("%s true", by.Expr.StringWithCtx(ctx, redact))
+		return fmt.Sprintf("%s true", by.Expr.StringWithCtx(redact))
 	}
-	return by.Expr.StringWithCtx(ctx, redact)
+	return by.Expr.StringWithCtx(redact)
 }
 
 // Clone makes a copy of ByItems.
@@ -70,11 +69,11 @@ func (by *ByItems) MemoryUsage() (sum int64) {
 }
 
 // StringifyByItemsWithCtx is used to print ByItems slice.
-func StringifyByItemsWithCtx(ctx expression.EvalContext, byItems []*ByItems) string {
+func StringifyByItemsWithCtx(byItems []*ByItems) string {
 	sb := strings.Builder{}
 	sb.WriteString("[")
 	for i, item := range byItems {
-		sb.WriteString(item.StringWithCtx(ctx, perrors.RedactLogDisable))
+		sb.WriteString(item.StringWithCtx(false))
 		if i != len(byItems)-1 {
 			sb.WriteString(" ")
 		}

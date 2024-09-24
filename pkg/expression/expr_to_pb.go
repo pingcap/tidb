@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	ast "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -34,35 +35,12 @@ import (
 )
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
-func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
+func ExpressionsToPBList(sc *variable.SessionVars, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
 	pc := PbConverter{client: client, sc: sc}
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-<<<<<<< HEAD
-			return nil, ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
-=======
-			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))
-		}
-		pbExpr = append(pbExpr, v)
-	}
-	return
-}
-
-// ProjectionExpressionsToPBList converts PhysicalProjection's expressions to tipb.Expr list for new plan.
-// It doesn't check type for top level column expression, since top level column expression doesn't imply any calculations
-func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
-	pc := PbConverter{client: client, ctx: ctx}
-	for _, expr := range exprs {
-		var v *tipb.Expr
-		if column, ok := expr.(*Column); ok {
-			v = pc.columnToPBExpr(column, false)
-		} else {
-			v = pc.ExprToPB(expr)
-		}
-		if v == nil {
-			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			return nil, ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(false))
 		}
 		pbExpr = append(pbExpr, v)
 	}
@@ -72,11 +50,11 @@ func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client k
 // PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
-	sc     *stmtctx.StatementContext
+	sc     *variable.SessionVars
 }
 
 // NewPBConverter creates a PbConverter.
-func NewPBConverter(client kv.Client, sc *stmtctx.StatementContext) PbConverter {
+func NewPBConverter(client kv.Client, sc *variable.SessionVars) PbConverter {
 	return PbConverter{client: client, sc: sc}
 }
 
@@ -103,7 +81,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	ft := expr.GetType()
 	d, err := expr.Eval(chunk.Row{})
 	if err != nil {
-		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
+		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo(false)), zap.Error(err))
 		return nil
 	}
 	tp, val, ok := pc.encodeDatum(ft, d)

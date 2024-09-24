@@ -178,7 +178,7 @@ type Expression interface {
 	RemapColumn(map[int64]*Column) (Expression, error)
 
 	// ExplainInfo returns operator information to be explained.
-	ExplainInfo() string
+	ExplainInfo(ctx sessionctx.Context) string
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string

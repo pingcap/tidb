@@ -1017,16 +1017,7 @@ func containOuterNot(expr Expression, not bool) bool {
 // Contains tests if `exprs` contains `e`.
 func Contains(exprs []Expression, e Expression) bool {
 	for _, expr := range exprs {
-<<<<<<< HEAD
 		if e == expr {
-=======
-		// Check string equivalence if one of the expressions is a clone.
-		sameString := false
-		if e != nil && expr != nil {
-			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		if e == expr || sameString {
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
 			return true
 		}
 	}
@@ -1454,10 +1445,10 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 }
 
 // GetUint64FromConstant gets a uint64 from constant expression.
-func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
+func GetUint64FromConstant(sctx sessionctx.Context, expr Expression) (uint64, bool, bool) {
 	con, ok := expr.(*Constant)
 	if !ok {
-		logutil.BgLogger().Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
+		logutil.BgLogger().Warn("not a constant expression", zap.String("expression", expr.ExplainInfo(sctx)))
 		return 0, false, false
 	}
 	dt := con.Value
@@ -1857,11 +1848,7 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 		// so we trim the \" prefix and suffix here.
 		strs[i] = strings.TrimSuffix(
 			strings.TrimPrefix(
-<<<<<<< HEAD
-				strconv.Quote(cond.String()),
-=======
-				strconv.Quote(cond.StringWithCtx(ctx, errors.RedactLogDisable)),
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+				strconv.Quote(cond.StringWithCtx(false)),
 				quote),
 			quote)
 	}
