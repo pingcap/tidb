@@ -4021,3 +4021,12 @@ func (s *SessionVars) PessimisticLockEligible() bool {
 	}
 	return false
 }
+
+const (
+	// ScatterOff means default, will not scatter region
+	ScatterOff string = ""
+	// ScatterTable means scatter region at table level
+	ScatterTable string = "table"
+	// ScatterGlobal means scatter region at global level
+	ScatterGlobal string = "global"
+)

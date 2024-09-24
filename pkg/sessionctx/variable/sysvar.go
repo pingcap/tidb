@@ -775,7 +775,7 @@ var defaultSysVars = []*SysVar{
 		SetMaxDeltaSchemaCount(TidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBScatterRegion, Value: DefTiDBScatterRegion, PossibleValues: []string{"", "table", "global"}, Type: TypeStr,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBScatterRegion, Value: DefTiDBScatterRegion, PossibleValues: []string{ScatterOff, ScatterTable, ScatterGlobal}, Type: TypeStr,
 		SetSession: func(vars *SessionVars, val string) error {
 			vars.ScatterRegion = val
 			return nil
@@ -784,8 +784,8 @@ var defaultSysVars = []*SysVar{
 			return vars.ScatterRegion, nil
 		},
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			if normalizedValue != "" && normalizedValue != "table" && normalizedValue != "global" {
-				return "", fmt.Errorf("invalid value for '%s', it should be either '%s', '%s' or '%s'", normalizedValue, "", "table", "global")
+			if normalizedValue != ScatterOff && normalizedValue != ScatterTable && normalizedValue != ScatterGlobal {
+				return "", fmt.Errorf("invalid value for '%s', it should be either '%s', '%s' or '%s'", normalizedValue, ScatterOff, ScatterTable, ScatterGlobal)
 			}
 			return normalizedValue, nil
 		},

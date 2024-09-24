@@ -1338,7 +1338,7 @@ const (
 	DefTiDBSkipIsolationLevelCheck          = false
 	DefTiDBExpensiveQueryTimeThreshold      = 60      // 60s
 	DefTiDBExpensiveTxnTimeThreshold        = 60 * 10 // 10 minutes
-	DefTiDBScatterRegion                    = ""
+	DefTiDBScatterRegion                    = ScatterOff
 	DefTiDBWaitSplitRegionFinish            = true
 	DefWaitSplitRegionTimeout               = 300 // 300s
 	DefTiDBEnableNoopFuncs                  = Off
