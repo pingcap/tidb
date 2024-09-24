@@ -2981,8 +2981,8 @@ func formatDecimal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result 
 
 			// force copy of the string
 			// https://github.com/pingcap/tidb/issues/56193
-			locale := "x" + localeBuf.GetString(i)
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale[1:]))
+			locale := strings.Clone(localeBuf.GetString(i))
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 		}
 
 		xStr := roundFormatArgs(x.String(), int(d))
@@ -3027,8 +3027,8 @@ func formatReal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *ch
 
 			// force copy of the string
 			// https://github.com/pingcap/tidb/issues/56193
-			locale := "x" + localeBuf.GetString(i)
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale[1:]))
+			locale := strings.Clone(localeBuf.GetString(i))
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 		}
 
 		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))
