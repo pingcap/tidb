@@ -413,7 +413,7 @@ func testAlterCacheTable(
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, nil, true))
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -440,7 +440,7 @@ func testAlterNoCacheTable(
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, nil, true)))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true)))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
@@ -614,7 +614,7 @@ func TestAlterTTL(t *testing.T) {
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, nil, true)))
+	require.NoError(t, de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true)))
 
 	v = getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})

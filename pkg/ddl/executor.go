@@ -6108,7 +6108,7 @@ func (e *executor) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err e
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 	}
 
-	return e.doDDLJob2(sctx, job, nil)
+	return e.doDDLJob2(sctx, job, &model.EmptyArgs{})
 }
 
 func checkCacheTableSize(store kv.Storage, tableID int64) (bool, error) {
