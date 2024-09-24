@@ -2031,15 +2031,15 @@ func TestSkylinePruning(t *testing.T) {
 			result: "PRIMARY_KEY,[g,b_global]",
 		},
 		{
-			sql:    "select * from pt2_global_index where b = 1 and c = 1",
+			sql:    "select * from pt2_global_index where b > 1 and c > 1",
 			result: "b_c_global", // will prune `b_c`
 		},
 		{
-			sql:    "select * from pt2_global_index where b = 1 and c = 1 and d = 1",
-			result: "b_c_global", // will prune `b_c` and `c_d_e`
+			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
+			result: "PRIMARY_KEY,c_d_e,b_c_global", // will prune `b_c` and keep `c_d_e`
 		},
 		{
-			sql:    "select * from pt2_global_index where c = 1 and d = 1 and e = 1",
+			sql:    "select * from pt2_global_index where c > 1 and d > 1 and e > 1",
 			result: "c_d_e", // will prune `b_c` and `b_c_global`
 		},
 	}
