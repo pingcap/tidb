@@ -3387,8 +3387,14 @@ func (b *builtinFormatWithLocaleSig) evalString(ctx EvalContext, row chunk.Row) 
 		return "", false, err
 	}
 	p := message.NewPrinter(lang)
-	xint, _ := strconv.ParseFloat(x, 64)
-	dint, _ := strconv.Atoi(d)
+	xint, err := strconv.ParseFloat(x, 64)
+	if err != nil {
+		return "", false, err
+	}
+	dint, err := strconv.Atoi(d)
+	if err != nil {
+		return "", false, err
+	}
 	formatString := p.Sprintf("%v", number.Decimal(xint, number.Scale(dint)))
 
 	return formatString, false, err
@@ -3411,7 +3417,16 @@ func (b *builtinFormatSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	formatString, err := mysql.GetLocaleFormatFunction("en_US")(x, d)
+	p := message.NewPrinter(language.English)
+	xint, err := strconv.ParseFloat(x, 64)
+	if err != nil {
+		return "", false, err
+	}
+	dint, err := strconv.Atoi(d)
+	if err != nil {
+		return "", false, err
+	}
+	formatString := p.Sprintf("%v", number.Decimal(xint, number.Scale(dint)))
 	return formatString, false, err
 }
 
