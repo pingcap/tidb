@@ -109,7 +109,7 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 	}()
 
 	p.setInSpilling()
-	
+
 	// Spill is done, broadcast to wake up all sleep goroutines
 	defer p.cond.Broadcast()
 	defer p.setNotSpilled()
