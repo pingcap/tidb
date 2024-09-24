@@ -470,6 +470,11 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 
 	t.Run("in ut", func(t *testing.T) {
 		reset()
+		forceV1Bak := ForceDDLJobVersionToV1InTest
+		t.Cleanup(func() {
+			ForceDDLJobVersionToV1InTest = forceV1Bak
+		})
+		ForceDDLJobVersionToV1InTest = "false"
 		d.detectAndUpdateJobVersion()
 		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 	})
@@ -490,7 +495,7 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		serverInfos := make(map[string]*infosync.ServerInfo, len(versions))
 		for i, v := range versions {
 			serverInfos[fmt.Sprintf("node%d", i)] = &infosync.ServerInfo{
-				ServerVersionInfo: infosync.ServerVersionInfo{Version: fmt.Sprintf("%s%s", mysql.ServerVerPrefix, v)}}
+				ServerVersionInfo: infosync.ServerVersionInfo{Version: v}}
 		}
 		bytes, err := json.Marshal(serverInfos)
 		require.NoError(t, err)
@@ -500,7 +505,8 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 
 	t.Run("all support v2, even with pre-release label", func(t *testing.T) {
 		reset()
-		mockGetAllServerInfo(t, "v8.4.0-alpha-228-g650888fea7-dirty", "v8.4.1", "8.5.0-alpha-228-g650888fea7-dirty")
+		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0-alpha-228-g650888fea7-dirty",
+			"8.0.11-TiDB-v8.4.1", "8.0.11-TiDB-8.5.0-beta")
 		d.detectAndUpdateJobVersion()
 		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 	})
@@ -519,23 +525,30 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 			iterateCnt++
 			if iterateCnt == 1 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
-				// less than 8.4.0
-				mockGetAllServerInfo(t, "8.3.0")
+				// user set version explicitly in config
+				mockGetAllServerInfo(t, "9.0.0-xxx")
 			} else if iterateCnt == 2 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
-				// upgrade case
-				mockGetAllServerInfo(t, "v8.3.0", "v8.3.0", "v8.4.0")
+				// invalid version
+				mockGetAllServerInfo(t, "xxx")
 			} else if iterateCnt == 3 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				// less than 8.4.0
+				mockGetAllServerInfo(t, "8.0.11-TiDB-8.3.0")
+			} else if iterateCnt == 4 {
+				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				// upgrade case
+				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.3.0", "8.0.11-TiDB-v8.3.0", "8.0.11-TiDB-v8.4.0")
+			} else if iterateCnt == 5 {
+				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
 				// upgrade done
-				mockGetAllServerInfo(t, "v8.4.0", "v8.4.0", "v8.4.0")
+				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0")
 			} else {
 				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 			}
 		})
-		// exit loop on 4th iteration
 		d.detectAndUpdateJobVersion()
 		d.wg.Wait()
-		require.EqualValues(t, 4, iterateCnt)
+		require.EqualValues(t, 6, iterateCnt)
 	})
 }

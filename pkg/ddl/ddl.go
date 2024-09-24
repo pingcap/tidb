@@ -839,7 +839,7 @@ func (d *ddl) detectAndUpdateJobVersion() {
 			}
 			err = d.detectAndUpdateJobVersionOnce()
 			if err != nil {
-				logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
+				logutil.SampleLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 			}
 			failpoint.InjectCall("afterDetectAndUpdateJobVersionOnce")
 			if model.GetJobVerInUse() == model.JobVersion2 {
@@ -859,12 +859,23 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 	}
 	allSupportV2 := true
 	for _, info := range infos {
-		tidbVer := strings.TrimPrefix(info.Version, mysql.ServerVerPrefix)
+		// we don't store TiDB version directly, but concatenated with a MySQL version,
+		// separated by mysql.VersionSeparator in most case.
+		tidbVer := info.Version
+		idx := strings.Index(tidbVer, mysql.VersionSeparator)
+		if idx < 0 {
+			allSupportV2 = false
+			// see https://github.com/pingcap/tidb/issues/31823
+			logutil.SampleLogger().Warn("unknown server version, might be changed directly in config",
+				zap.String("version", tidbVer))
+			break
+		}
+		tidbVer = tidbVer[idx+len(mysql.VersionSeparator):]
 		tidbVer = strings.TrimPrefix(tidbVer, "v")
 		ver, err2 := semver.NewVersion(tidbVer)
 		if err2 != nil {
 			allSupportV2 = false
-			logutil.DDLLogger().Warn("parse server version failed", zap.String("version", info.Version),
+			logutil.SampleLogger().Warn("parse server version failed", zap.String("version", info.Version),
 				zap.String("err", err2.Error()))
 			break
 		}
