@@ -134,7 +134,7 @@ run_backup_restore_test() {
     local full_encryption_args=$2
     local log_encryption_args=$3
 
-    echo "run_backup_restore_test $encryption_mode $full_encryption_args $log_encryption_args"
+    echo "===== run_backup_restore_test $encryption_mode $full_encryption_args $log_encryption_args ====="
 
     restart_services || { echo "Failed to restart services"; exit 1; }
 
@@ -247,6 +247,44 @@ start_and_wait_for_localstack() {
     return 1
 }
 
+test_backup_encrypted_restore_unencrypted() {
+    echo "===== Testing backup with encryption, restore without encryption ====="
+    
+    restart_services || { echo "Failed to restart services"; exit 1; }
+
+    # Start log backup
+    start_log_backup "local://$TEST_DIR/$PREFIX/log" "--log.crypter.method AES256-CTR --log.crypter.key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" || { echo "Failed to start log backup"; exit 1; }
+
+    # Create test databases and insert initial data
+    create_db_with_table || { echo "Failed to create databases and tables"; exit 1; }
+
+    # Backup with encryption
+    run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full --crypter.method AES256-CTR --crypter.key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+    # Insert additional test data
+    insert_additional_data "insert_after_full_backup" || { echo "Failed to insert additional data"; exit 1; }
+
+    wait_log_checkpoint_advance || { echo "Failed to wait for log checkpoint"; exit 1; }
+
+
+    # Stop and clean the cluster
+    restart_services || { echo "Failed to restart services"; exit 1; }
+
+    # Try to restore without encryption (this should fail)
+    if run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full --crypter.method AES256-CTR --crypter.key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"; then
+        echo "Error: Restore without encryption should have failed, but it succeeded"
+        exit 1
+    else
+        echo "Restore without encryption failed as expected"
+    fi
+
+    # Clean up after the test
+    drop_db || { echo "Failed to drop databases after test"; exit 1; }
+    rm -rf "$TEST_DIR/$PREFIX"
+
+    echo "TEST: test_backup_encrypted_restore_unencrypted passed"
+}
+
 
 test_plaintext() {
     run_backup_restore_test "plaintext" "" ""
@@ -341,6 +379,7 @@ test_mixed_full_plain_log_encrypted() {
 echo "Operation,Encryption Mode,Duration (seconds)" > "$TEST_DIR/performance_results.csv"
 
 # Run tests
+test_backup_encrypted_restore_unencrypted
 test_plaintext
 test_plaintext_data_key
 test_local_master_key

@@ -109,7 +109,7 @@ function main() {
     download "$localstack_url" "localstack-cli.tar.gz" "tmp/localstack-cli.tar.gz"
     mkdir -p tmp/localstack_extract
     tar -xzf tmp/localstack-cli.tar.gz -C tmp/localstack_extract
-    mv tmp/localstack_extract/* third_bin/
+    mv tmp/localstack_extract/localstack/* third_bin/
     rm -rf tmp/localstack_extract
 
     chmod +x third_bin/*
