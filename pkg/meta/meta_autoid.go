@@ -205,6 +205,7 @@ type AutoIDGroup struct {
 	RandomID    int64
 }
 
+// ConvertTo convert it to model.ModelAutoIDGroup
 func (a AutoIDGroup) ConvertTo() model.ModelAutoIDGroup {
 	return model.ModelAutoIDGroup{
 		RowID:       a.RowID,
