@@ -499,3 +499,31 @@ func init() {
 		logutil.BgLogger().Warn("set manager session TTL failed", zap.Error(err))
 	}
 }
+
+// AcquireDistributedLock creates a mutex on with ETCD client, and returns a mutex release function.
+func AcquireDistributedLock(
+	ctx context.Context,
+	cli *clientv3.Client,
+	key string,
+	ttlInSec int,
+) (release func(), err error) {
+	se, _ := concurrency.NewSession(cli, concurrency.WithTTL(ttlInSec))
+	mu := concurrency.NewMutex(se, key)
+	err = mu.Lock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	logutil.Logger(ctx).Info("acquire distributed flush lock success", zap.String("key", key))
+	return func() {
+		err = mu.Unlock(ctx)
+		if err != nil {
+			logutil.Logger(ctx).Warn("release distributed flush lock error", zap.Error(err), zap.String("key", key))
+		} else {
+			logutil.Logger(ctx).Info("release distributed flush lock success", zap.String("key", key))
+		}
+		err = se.Close()
+		if err != nil {
+			logutil.Logger(ctx).Warn("close session error", zap.Error(err))
+		}
+	}, nil
+}

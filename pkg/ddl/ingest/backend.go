@@ -31,12 +31,12 @@ import (
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -185,11 +185,12 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err erro
 	}
 
 	if bc.etcdClient != nil {
-		cleanup, err := acquireDistributedLock(bc.ctx, bc.etcdClient, bc.jobID)
+		key := fmt.Sprintf("/tidb/distributeLock/%d", bc.jobID)
+		release, err := owner.AcquireDistributedLock(bc.ctx, bc.etcdClient, key, 10)
 		if err != nil {
 			return true, false, err
 		}
-		defer cleanup()
+		defer release()
 	}
 
 	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
@@ -235,37 +236,6 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err erro
 }
 
 const distributedLockLease = 10 // Seconds
-
-func acquireDistributedLock(ctx context.Context, cli *clientv3.Client, jobID int64) (cleanup func(), err error) {
-	leaseGrantResp, err := cli.Grant(ctx, distributedLockLease)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	distLockKey := fmt.Sprintf("/tidb/distributeLock/%d", jobID)
-	se, _ := concurrency.NewSession(cli, concurrency.WithLease(leaseGrantResp.ID))
-	mu := concurrency.NewMutex(se, distLockKey)
-	err = mu.Lock(ctx)
-	if err != nil {
-		return nil, err
-	}
-	logutil.Logger(ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", jobID))
-	return func() {
-		err = mu.Unlock(ctx)
-		if err != nil {
-			logutil.Logger(ctx).Warn("release distributed flush lock error", zap.Error(err), zap.Int64("jobID", jobID))
-		} else {
-			logutil.Logger(ctx).Info("release distributed flush lock success", zap.Int64("jobID", jobID))
-		}
-		err = se.Close()
-		if err != nil {
-			logutil.Logger(ctx).Warn("close session error", zap.Error(err))
-		}
-		_, err := cli.Revoke(ctx, leaseGrantResp.ID)
-		if err != nil {
-			logutil.Logger(ctx).Warn("revoke lease error", zap.Error(err))
-		}
-	}, nil
-}
 
 func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 	logger := log.FromContext(bc.ctx).With(
