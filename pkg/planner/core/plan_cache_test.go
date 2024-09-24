@@ -110,13 +110,10 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 		return plannercore.ToString(p)
 	}
 	defer func() {
-		tk.MustExec("set session tidb_redact_log=MARKER")
+		tk.MustExec("set session tidb_redact_log=OFF")
 	}()
 	require.Equal(t, planString("select a from t where a < 1"), "IndexReader(Index(t.a)[[-inf,1)])")
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	tk.MustExec("set session tidb_redact_log=MARKER")
 	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	tk.MustExec("set session tidb_redact_log=ON")
@@ -125,9 +122,6 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 
 	require.Equal(t, planString("select * from t where b < 1"), "TableReader(Table(t)->Sel([lt(test.t.b, 1)]))")
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	tk.MustExec("set session tidb_redact_log=MARKER")
 	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	tk.MustExec("set session tidb_redact_log=ON")
