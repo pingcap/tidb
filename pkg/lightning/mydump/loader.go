@@ -866,7 +866,7 @@ func SampleParquetRowSize(ctx context.Context, fileMeta SourceFileMeta, store st
 			return 0, err
 		}
 		lastRow := parser.LastRow()
-		rowCount += 1
+		rowCount++
 		rowSize += int64(lastRow.Length)
 		parser.RecycleRow(lastRow)
 		if rowSize > maxSampleParquetDataSize || rowCount > maxSampleParquetRowCount {
