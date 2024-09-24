@@ -26,13 +26,15 @@ go_test(
     srcs = [
         "group_and_expr_test.go",
         "group_id_generator_test.go",
+        "memo_test.go",
     ],
     embed = [":memo"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 5,
     deps = [
         "//pkg/expression",
         "//pkg/planner/cascades/base",
+        "//pkg/planner/core",
         "//pkg/planner/core/operator/logicalop",
         "@com_github_stretchr_testify//require",
     ],
