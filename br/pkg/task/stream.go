@@ -1797,7 +1797,7 @@ func checkPiTRTaskInfo(
 				)
 			}
 
-			log.Info("the same task, skip snapshot restore")
+			log.Info("detect log restore checkpoint. so skip snapshot restore and start log restore from the checkpoint")
 			// the same task, skip full restore because it is already in the log restore stage.
 			doFullRestore = false
 		}

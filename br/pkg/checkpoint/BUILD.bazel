@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "backup.go",
         "checkpoint.go",
+        "external_storage.go",
         "log_restore.go",
         "restore.go",
         "storage.go",

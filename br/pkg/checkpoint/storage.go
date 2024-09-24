@@ -25,29 +25,21 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
 type checkpointStorage interface {
-	flushCheckpointData(ctx context.Context, fname string, data []byte) error
-	flushCheckpointChecksum(ctx context.Context, fname string, data []byte) error
-}
+	flushCheckpointData(ctx context.Context, data []byte) error
+	flushCheckpointChecksum(ctx context.Context, data []byte) error
 
-type externalCheckpointStorage struct {
-	storage storage.ExternalStorage
-}
-
-func (s *externalCheckpointStorage) flushCheckpointData(ctx context.Context, fname string, data []byte) error {
-	return s.storage.WriteFile(ctx, fname, data)
-}
-
-func (s *externalCheckpointStorage) flushCheckpointChecksum(ctx context.Context, fname string, data []byte) error {
-	return s.storage.WriteFile(ctx, fname, data)
+	initialLock(ctx context.Context) error
+	updateLock(ctx context.Context) error
+	deleteLock(ctx context.Context)
 }
 
 // Notice that:
@@ -95,6 +87,11 @@ const (
 	selectCheckpointMetaSQLTemplate string = `SELECT segment_id, data FROM %n.%n;`
 )
 
+// IsCheckpointDB checks whether the dbname is checkpoint database.
+func IsCheckpointDB(dbname pmodel.CIStr) bool {
+	return dbname.O == LogRestoreCheckpointDatabaseName || dbname.O == SnapshotRestoreCheckpointDatabaseName
+}
+
 const CheckpointIdMapBlockSize int = 524288
 
 func chunkInsertCheckpointData(data []byte, fn func(segmentId uint64, chunk []byte) error) error {
@@ -128,7 +125,21 @@ type tableCheckpointStorage struct {
 	checkpointDBName string
 }
 
-func (s *tableCheckpointStorage) flushCheckpointData(ctx context.Context, _ string, data []byte) error {
+func (s *tableCheckpointStorage) initialLock(ctx context.Context) error {
+	log.Fatal("unimplement!")
+	return nil
+}
+
+func (s *tableCheckpointStorage) updateLock(ctx context.Context) error {
+	log.Fatal("unimplement!")
+	return nil
+}
+
+func (s *tableCheckpointStorage) deleteLock(ctx context.Context) {
+	log.Fatal("unimplement!")
+}
+
+func (s *tableCheckpointStorage) flushCheckpointData(ctx context.Context, data []byte) error {
 	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointDataTableName, data)
 	for i, sql := range sqls {
 		args := argss[i]
@@ -139,7 +150,7 @@ func (s *tableCheckpointStorage) flushCheckpointData(ctx context.Context, _ stri
 	return nil
 }
 
-func (s *tableCheckpointStorage) flushCheckpointChecksum(ctx context.Context, _ string, data []byte) error {
+func (s *tableCheckpointStorage) flushCheckpointChecksum(ctx context.Context, data []byte) error {
 	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointChecksumTableName, data)
 	for i, sql := range sqls {
 		args := argss[i]
@@ -272,11 +283,11 @@ func insertCheckpointMeta[T any](ctx context.Context, se glue.Session, dbName st
 	return errors.Trace(err)
 }
 
-func selectCheckpointMeta[T any](
+func selectCheckpointMeta(
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
 	dbName string, tableName string,
-	meta *T,
+	meta any,
 ) error {
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),

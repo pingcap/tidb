@@ -113,8 +113,8 @@ func StartCheckpointLogRestoreRunnerForTest(
 	tick time.Duration,
 ) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
-		ctx, newTableCheckpointStorage(se, LogRestoreCheckpointDatabaseName),
-		nil, nil, nil, flushPosition{}, valueMarshalerForLogRestore)
+		newTableCheckpointStorage(se, LogRestoreCheckpointDatabaseName),
+		nil, valueMarshalerForLogRestore)
 
 	runner.startCheckpointMainLoop(ctx, tick, tick, 0)
 	return runner, nil
@@ -125,8 +125,8 @@ func StartCheckpointRunnerForLogRestore(
 	se glue.Session,
 ) (*CheckpointRunner[LogRestoreKeyType, LogRestoreValueType], error) {
 	runner := newCheckpointRunner[LogRestoreKeyType, LogRestoreValueType](
-		ctx, newTableCheckpointStorage(se, LogRestoreCheckpointDatabaseName),
-		nil, nil, nil, flushPosition{}, valueMarshalerForLogRestore)
+		newTableCheckpointStorage(se, LogRestoreCheckpointDatabaseName),
+		nil, valueMarshalerForLogRestore)
 
 	// for restore, no need to set lock
 	runner.startCheckpointMainLoop(ctx, defaultTickDurationForFlush, defaultTckDurationForChecksum, 0)
