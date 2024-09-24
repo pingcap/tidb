@@ -71,6 +71,9 @@ type AnalysisJob interface {
 	// GetIndicators gets the indicators of the job.
 	GetIndicators() Indicators
 
+	// SetIndicators sets the indicators of the job.
+	SetIndicators(indicators Indicators)
+
 	// GetTableID gets the table ID of the job.
 	GetTableID() int64
 
@@ -155,4 +158,10 @@ func isValidToAnalyze(
 	}
 
 	return true, ""
+}
+
+// IsDynamicPartitionedTableAnalysisJob checks whether the job is a dynamic partitioned table analysis job.
+func IsDynamicPartitionedTableAnalysisJob(job AnalysisJob) bool {
+	_, ok := job.(*DynamicPartitionedTableAnalysisJob)
+	return ok
 }
