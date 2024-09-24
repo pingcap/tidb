@@ -932,7 +932,7 @@ func TestIssue11896(t *testing.T) {
 	tk.MustExec("insert into t1 value(1);")
 
 	tk.MustQuery("select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;").Check(testkit.Rows("1 1"))
-	
+
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 bigint);")
