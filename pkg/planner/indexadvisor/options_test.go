@@ -159,7 +159,7 @@ func TestOptionShow(t *testing.T) {
 			"timeout 30s The timeout of index advisor."))
 
 	tk.MustExec(`recommend index set max_index_columns=10`)
-		tk.MustQuery(`recommend index show`).Sort().
+	tk.MustQuery(`recommend index show`).Sort().
 		Check(testkit.Rows("max_index_columns 10 The maximum number of columns in an index.",
 			"max_num_index 5 The maximum number of indexes to recommend for a table.",
 			"max_num_query 1111 The maximum number of queries to recommend indexes.",
