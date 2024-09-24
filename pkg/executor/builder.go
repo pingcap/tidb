@@ -5646,7 +5646,6 @@ func (b *executorBuilder) buildRecommendIndex(v *plannercore.RecommendIndexPlan)
 		Action:       v.Action,
 		SQL:          v.SQL,
 		AdviseID:     v.AdviseID,
-		Option:       v.Option,
-		Value:        v.Value,
+		Options:      v.Options,
 	}
 }

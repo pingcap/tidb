@@ -2731,8 +2731,7 @@ type RecommendIndexExec struct {
 	Action   string
 	SQL      string
 	AdviseID int64
-	Option   string
-	Value    ast.ValueExpr
+	Options  []ast.RecommendIndexOption
 	done     bool
 }
 
@@ -2745,7 +2744,7 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.done = true
 
 	if e.Action == "set" {
-		return indexadvisor.SetOption(e.Ctx(), e.Option, e.Value)
+		return indexadvisor.SetOptions(e.Ctx(), e.Options)
 	}
 
 	if e.Action != "run" {

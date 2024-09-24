@@ -64,6 +64,16 @@ func fillOption(sctx sessionctx.Context, opt *Option) error {
 	return nil
 }
 
+// SetOptions sets the values of options.
+func SetOptions(sctx sessionctx.Context, options []ast.RecommendIndexOption) error {
+	for _, opt := range options {
+		if err := SetOption(sctx, opt.Option, opt.Value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SetOption sets the value of an option.
 func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
 	var v string
