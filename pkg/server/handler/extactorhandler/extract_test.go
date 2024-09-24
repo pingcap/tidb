@@ -26,7 +26,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/kv"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler/extactorhandler"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
@@ -44,11 +43,6 @@ func TestExtractHandler(t *testing.T) {
 	defer closeStmtSummary()
 
 	store := testkit.CreateMockStore(t)
-	testExtractHandler(t, store)
-}
-
-func testExtractHandler(t *testing.T, store kv.Storage) {
-	server2.RunInGoTestChan = make(chan struct{})
 	driver := server2.NewTiDBDriver(store)
 	client := testserverclient.NewTestServerClient()
 	cfg := util.NewTestConfig()

@@ -27,11 +27,8 @@ go_test(
     deps = [
         ":extactorhandler",
         "//pkg/config",
-<<<<<<< HEAD:pkg/server/handler/extactorhandler/BUILD.bazel
-=======
         "//pkg/domain",
         "//pkg/kv",
->>>>>>> d940b7ddc2b (*: init ctx for extractWorker (#55228)):pkg/server/handler/extractorhandler/BUILD.bazel
         "//pkg/metrics",
         "//pkg/server",
         "//pkg/server/internal/testserverclient",
