@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,10 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 package ddl_test
 
 import (
@@ -25,7 +21,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -43,34 +39,28 @@ func TestDDLHistoryBasic(t *testing.T) {
 		newTk := testkit.NewTestKit(t, store)
 		return newTk.Session(), nil
 	}, 8, 8, 0)
-	sessPool := session.NewSessionPool(rs)
+	sessPool := session.NewSessionPool(rs, store)
 	sessCtx, err := sessPool.Get()
 	require.NoError(t, err)
 	sess := session.NewSession(sessCtx)
-
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLightning)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return ddl.AddHistoryDDLJob(context.Background(), sess, t, &model.Job{
+		return ddl.AddHistoryDDLJob(sess, t, &model.Job{
 			ID: 1,
 		}, false)
 	})
-
 	require.NoError(t, err)
-
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return ddl.AddHistoryDDLJob(context.Background(), sess, t, &model.Job{
+		return ddl.AddHistoryDDLJob(sess, t, &model.Job{
 			ID: 2,
 		}, false)
 	})
-
 	require.NoError(t, err)
-
 	job, err := ddl.GetHistoryJobByID(sessCtx, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), job.ID)
-
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		jobs, err := ddl.GetLastNHistoryDDLJobs(m, 2)
@@ -78,7 +68,6 @@ func TestDDLHistoryBasic(t *testing.T) {
 		require.Equal(t, 2, len(jobs))
 		return nil
 	})
-
 	require.NoError(t, err)
 
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
@@ -90,7 +79,6 @@ func TestDDLHistoryBasic(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		jobs, err := ddl.ScanHistoryDDLJobs(m, 2, 2)
