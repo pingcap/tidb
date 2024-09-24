@@ -24,8 +24,11 @@ import (
 )
 
 const (
-	OptModule          = "index_advisor"
-	OptMaxNumIndex     = "max_num_index"
+	// OptModule is the module name for index advisor options.
+	OptModule = "index_advisor"
+	// OptMaxNumIndex is the option name for the maximum number of indexes to recommend for a table.
+	OptMaxNumIndex = "max_num_index"
+	// OptMaxIndexColumns is the option name for the maximum number of columns in an index.
 	OptMaxIndexColumns = "max_index_columns"
 )
 
@@ -45,6 +48,7 @@ func fillOption(sctx sessionctx.Context, opt *Option) error {
 	return nil
 }
 
+// SetOption sets the value of an option.
 func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
 	var v string
 	switch opt {
@@ -114,14 +118,13 @@ func defaultVal(opt string) string {
 }
 
 func intVal(val ast.ValueExpr) (int, error) {
-	v := val.GetValue()
-	switch v.(type) {
+	switch v := val.GetValue().(type) {
 	case int:
-		return v.(int), nil
+		return v, nil
 	case uint64:
-		return int(v.(uint64)), nil
+		return int(v), nil
 	case int64:
-		return int(v.(int64)), nil
+		return int(v), nil
 	default:
 		return 0, errors.Errorf("invalid value type %T", v)
 	}
