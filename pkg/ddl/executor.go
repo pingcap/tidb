@@ -2829,21 +2829,23 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	job := &model.Job{
-		SchemaID:    schema.ID,
-		TableID:     meta.ID,
-		SchemaName:  schema.Name.L,
-		SchemaState: model.StatePublic,
-		TableName:   t.Meta().Name.L,
-		Type:        model.ActionTruncateTablePartition,
-		BinlogInfo:  &model.HistoryInfo{},
-		// the second item is the new partition IDs, we add a placeholder here,
-		// job submitter will fill it.
-		Args:           []any{pids, []int64{}},
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		SchemaState:    model.StatePublic,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionTruncateTablePartition,
+		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+	args := &model.TruncateTableArgs{
+		OldPartitionIDs: pids,
+		// job submitter will fill new partition IDs.
+	}
 
-	err = e.DoDDLJob(ctx, job)
+	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
 		return errors.Trace(err)
 	}

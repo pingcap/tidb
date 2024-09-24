@@ -350,7 +350,7 @@ func GetFinishedDropTableArgs(job *Job) (*DropTableArgs, error) {
 	return getOrDecodeArgsV2[*DropTableArgs](job)
 }
 
-// TruncateTableArgs is the arguments for truncate table job.
+// TruncateTableArgs is the arguments for truncate table/partition job.
 type TruncateTableArgs struct {
 	FKCheck         bool    `json:"fk_check,omitempty"`
 	NewTableID      int64   `json:"new_table_id,omitempty"`
@@ -364,22 +364,40 @@ type TruncateTableArgs struct {
 
 func (a *TruncateTableArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
-		// Args[0] is the new table ID, args[2] is the ids for table partitions, we
-		// add a placeholder here, they will be filled by job submitter.
-		// the last param is not required for execution, we need it to calculate
-		// number of new IDs to generate.
-		job.Args = []any{a.NewTableID, a.FKCheck, a.NewPartitionIDs, len(a.OldPartitionIDs)}
+		if job.Type == ActionTruncateTable {
+			// Args[0] is the new table ID, args[2] is the ids for table partitions, we
+			// add a placeholder here, they will be filled by job submitter.
+			// the last param is not required for execution, we need it to calculate
+			// number of new IDs to generate.
+			job.Args = []any{a.NewTableID, a.FKCheck, a.NewPartitionIDs, len(a.OldPartitionIDs)}
+		} else {
+			job.Args = []any{a.OldPartitionIDs, a.NewPartitionIDs}
+		}
 		return
 	}
 	job.Args = []any{a}
 }
 
+func (a *TruncateTableArgs) decodeV1(job *Job) error {
+	var err error
+	if job.Type == ActionTruncateTable {
+		err = job.DecodeArgs(&a.NewTableID, &a.FKCheck, &a.NewPartitionIDs)
+	} else {
+		err = job.DecodeArgs(&a.OldPartitionIDs, &a.NewPartitionIDs)
+	}
+	return err
+}
+
 func (a *TruncateTableArgs) fillFinishedJob(job *Job) {
 	if job.Version == JobVersion1 {
-		// the first param is the start key of the old table, it's not used anywhere
-		// now, so we fill an empty byte slice here.
-		// we can call tablecodec.EncodeTablePrefix(tableID) to get it.
-		job.Args = []any{[]byte{}, a.OldPartitionIDs}
+		if job.Type == ActionTruncateTable {
+			// the first param is the start key of the old table, it's not used anywhere
+			// now, so we fill an empty byte slice here.
+			// we can call tablecodec.EncodeTablePrefix(tableID) to get it.
+			job.Args = []any{[]byte{}, a.OldPartitionIDs}
+		} else {
+			job.Args = []any{a.OldPartitionIDs}
+		}
 		return
 	}
 	job.Args = []any{a}
@@ -398,28 +416,26 @@ func GetFinishedTruncateTableArgs(job *Job) (*TruncateTableArgs, error) {
 func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, error) {
 	if job.Version == JobVersion1 {
 		if argsOfFinished {
-			var startKey []byte
+			if job.Type == ActionTruncateTable {
+				var startKey []byte
+				var oldPartitionIDs []int64
+				if err := job.DecodeArgs(&startKey, &oldPartitionIDs); err != nil {
+					return nil, errors.Trace(err)
+				}
+				return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
+			}
 			var oldPartitionIDs []int64
-			if err := job.DecodeArgs(&startKey, &oldPartitionIDs); err != nil {
+			if err := job.DecodeArgs(&oldPartitionIDs); err != nil {
 				return nil, errors.Trace(err)
 			}
 			return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
 		}
 
-		var (
-			newTableID      int64
-			fkCheck         bool
-			newPartitionIDs []int64
-		)
-		err := job.DecodeArgs(&newTableID, &fkCheck, &newPartitionIDs)
-		if err != nil {
+		args := &TruncateTableArgs{}
+		if err := args.decodeV1(job); err != nil {
 			return nil, errors.Trace(err)
 		}
-		return &TruncateTableArgs{
-			NewTableID:      newTableID,
-			FKCheck:         fkCheck,
-			NewPartitionIDs: newPartitionIDs,
-		}, nil
+		return args, nil
 	}
 
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)

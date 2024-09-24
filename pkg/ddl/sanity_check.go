@@ -96,7 +96,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return len(args.OldPartitionIDs) + 1, nil
-	case model.ActionTruncateTable:
+	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 		args, err := model.GetFinishedTruncateTableArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -109,12 +109,6 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return len(args.OldPhysicalTblIDs), nil
-	case model.ActionTruncateTablePartition:
-		var physicalTableIDs []int64
-		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
-			return 0, errors.Trace(err)
-		}
-		return len(physicalTableIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		indexID := make([]int64, 1)
 		ifExists := make([]bool, 1)
