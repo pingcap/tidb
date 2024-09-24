@@ -109,10 +109,15 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
 	require.Equal(t, rows[1][7].(string) /* row_count */, "3")
 
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+	// TODO(lance6716): dist_task also need this
+
 	// test cancel is timely
+	enter := make(chan struct{})
 	failpoint.EnableCall(
 		"github.com/pingcap/tidb/pkg/lightning/backend/local/beforeExecuteRegionJob",
 		func(ctx context.Context) {
+			close(enter)
 			select {
 			case <-time.After(time.Second * 50):
 			case <-ctx.Done():
@@ -120,9 +125,11 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 		})
 	wg.Add(1)
 	go func() {
-		tk2.MustExec("alter table t add index idx_ba(b, a);")
-		wg.Done()
+		defer wg.Done()
+		err := tk2.ExecToErr("alter table t add index idx_ba(b, a);")
+		require.ErrorContains(t, err, "Cancelled DDL job")
 	}()
+	<-enter
 	jobID := tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string)
 	now := time.Now()
 	tk.MustExec("admin cancel ddl jobs " + jobID)

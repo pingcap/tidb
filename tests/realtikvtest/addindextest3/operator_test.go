@@ -59,7 +59,8 @@ func TestBackfillOperators(t *testing.T) {
 	var opTasks []ddl.TableScanTask
 	{
 		ctx := context.Background()
-		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		defer cancel()
 		pTbl := tbl.(table.PhysicalTable)
 		src := ddl.NewTableScanTaskSource(opCtx, store, pTbl, startKey, endKey, nil)
 		sink := testutil.NewOperatorTestSink[ddl.TableScanTask]()
@@ -94,7 +95,8 @@ func TestBackfillOperators(t *testing.T) {
 		}
 
 		ctx := context.Background()
-		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		defer cancel()
 		src := testutil.NewOperatorTestSource(opTasks...)
 		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, nil, 0)
 		sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
@@ -127,7 +129,8 @@ func TestBackfillOperators(t *testing.T) {
 	// Test IndexIngestOperator.
 	{
 		ctx := context.Background()
-		opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+		defer cancel()
 		var keys, values [][]byte
 		onWrite := func(key, val []byte) {
 			keys = append(keys, key)
@@ -179,7 +182,8 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	sessPool := newSessPoolForTest(t, store)
 
 	ctx := context.Background()
-	opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+	opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+	defer cancel()
 	mockBackendCtx := &ingest.MockBackendCtx{}
 	mockEngine := ingest.NewMockEngineInfo(nil)
 	mockEngine.SetHook(func(key, val []byte) {})
@@ -278,7 +282,8 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 			} else {
 				require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
 			}
-			opCtx := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+			opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
+			defer cancel()
 			pipeline, err := ddl.NewAddIndexIngestPipeline(
 				opCtx, store,
 				sessPool,

@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	logutil2 "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
@@ -675,7 +676,59 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		return errors.Trace(err)
 	}
 	job := reorgInfo.Job
-	opCtx := NewLocalOperatorCtx(ctx, job.ID)
+	opCtx, cancel := NewLocalOperatorCtx(ctx, job.ID)
+
+	// spawn a goroutine to check if the job is cancelled
+	// TODO: design a more systematic way to cancel DDL jobs
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		sctx, err := sessPool.Get()
+		if err != nil {
+			logutil2.Logger(opCtx).Warn(
+				"failed to get session for job canceling checker, job can still be canceled after ingest is done",
+				zap.Error(err))
+			return
+		}
+		defer sessPool.Put(sctx)
+
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-opCtx.Done():
+			case <-ticker.C:
+				jobsFromTable, err := getJobsBySQL(
+					ctx,
+					sess.NewSession(sctx),
+					JobTable,
+					fmt.Sprintf("job_id = %d", job.ID),
+				)
+				if err != nil {
+					logutil2.Logger(opCtx).Warn("failed to get job status", zap.Error(err))
+					continue
+				}
+				if len(jobsFromTable) == 0 {
+					logutil2.Logger(opCtx).Warn("job not found in job table")
+					return
+				}
+				if jobsFromTable[0].State != model.JobStateRunning {
+					logutil2.Logger(opCtx).Info(
+						"job is not running, canceling ingest",
+						zap.Stringer("job state", jobsFromTable[0].State))
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
+	defer cancel()
+
 	idxCnt := len(reorgInfo.elements)
 	indexIDs := make([]int64, 0, idxCnt)
 	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
@@ -705,11 +758,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		return errors.Trace(err)
 	}
 	defer ingest.LitBackCtxMgr.Unregister(job.ID)
-	sctx, err := sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer sessPool.Put(sctx)
 
 	cpMgr, err := ingest.NewCheckpointManager(
 		ctx,
@@ -737,6 +785,11 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
 	}
 
+	sctx, err := sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer sessPool.Put(sctx)
 	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
 
 	engines, err := bcCtx.Register(indexIDs, uniques, t)
