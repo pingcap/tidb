@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -209,7 +209,7 @@ func EvalExpireTime(now time.Time, interval string, unit ast.TimeUnitType) (time
 		now.Nanosecond(), time.UTC,
 	)
 
-	exprCtx := contextstatic.NewStaticExprContext()
+	exprCtx := exprstatic.NewExprContext()
 	// we need to set the location to UTC to make sure the time is in the same timezone as the start time.
 	intest.Assert(exprCtx.GetEvalCtx().Location() == time.UTC)
 	expr, err := expression.ParseSimpleExpr(

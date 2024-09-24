@@ -754,19 +754,19 @@ func (s *InferTypeSuite) createTestCase4ArithmeticFuncs() []typeInferTestCase {
 		{"c_double_d * c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
 		{"c_double_d * c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
 
-		{"c_int_d / c_int_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 16, 4},
-		{"c_int_d / c_bigint_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 16, 4},
+		{"c_int_d / c_int_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
+		{"c_int_d / c_bigint_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
 		{"c_int_d / c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
-		{"c_int_d / c_time_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 16, 4},
+		{"c_int_d / c_time_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
 		{"c_int_d / c_double_d", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
-		{"c_int_d / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 19, 4},
+		{"c_int_d / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 18, 4},
 		{"c_datetime / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 29, 6}, // TODO: flen should be 25.
 		{"c_bigint_d / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 28, 4}, // TODO: flen should be 28.
 		{"c_double_d / c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"c_double_d / c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"c_double_d / c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"2/3", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 6, 4},
-		{"-2/3", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 7, 4},
+		{"-2/3", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 6, 4},
 
 		{"c_int_d DIV c_int_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"c_uint_d DIV c_uint_d", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, mysql.MaxIntWidth, 0},

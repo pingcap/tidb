@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -137,7 +137,7 @@ func (b *bindingHint) MarshalJSON() ([]byte, error) {
 }
 
 // DebugTraceTryBinding records the hint that might be chosen to the debug trace.
-func DebugTraceTryBinding(s context.PlanContext, binding *hint.HintsSet) {
+func DebugTraceTryBinding(s planctx.PlanContext, binding *hint.HintsSet) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &bindingHint{
 		Hint:   binding,
@@ -147,7 +147,7 @@ func DebugTraceTryBinding(s context.PlanContext, binding *hint.HintsSet) {
 }
 
 // DebugTraceBestBinding records the chosen hint to the debug trace.
-func DebugTraceBestBinding(s context.PlanContext, binding *hint.HintsSet) {
+func DebugTraceBestBinding(s planctx.PlanContext, binding *hint.HintsSet) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	traceInfo := &bindingHint{
 		Hint:   binding,

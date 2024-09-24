@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -73,7 +74,6 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: SystemTimeZone, Value: "CST"},
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
 	{Scope: ScopeNone, Name: Port, Value: "4000", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint16},
-	{Scope: ScopeNone, Name: LogBin, Value: Off, Type: TypeBool},
 	{Scope: ScopeNone, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 8.0 compatible"},
 	{Scope: ScopeNone, Name: Version, Value: mysql.ServerVersion},
 	{Scope: ScopeNone, Name: DataDir, Value: "/usr/local/mysql/data/"},
@@ -1691,7 +1691,6 @@ var defaultSysVars = []*SysVar{
 		s.DefaultCollationForUTF8MB4 = val
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLLogBin, Value: On, Type: TypeBool},
 	{
 		Scope:                   ScopeGlobal | ScopeSession,
 		Name:                    TimeZone,
@@ -2408,6 +2407,20 @@ var defaultSysVars = []*SysVar{
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashJoinVersion, Value: DefTiDBHashJoinVersion, Type: TypeStr,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			lowerValue := strings.ToLower(normalizedValue)
+			if lowerValue != joinversion.HashJoinVersionLegacy && lowerValue != joinversion.HashJoinVersionOptimized {
+				err := fmt.Errorf("incorrect value: `%s`. %s options: %s", originalValue, TiDBHashJoinVersion, joinversion.HashJoinVersionLegacy+", "+joinversion.HashJoinVersionOptimized)
+				return normalizedValue, err
+			}
+			return normalizedValue, nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.UseHashJoinV2 = joinversion.IsOptimizedVersion(val)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableHashJoin, Value: BoolToOnOff(DefTiDBOptEnableHashJoin), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.DisableHashJoin = !TiDBOptOn(val)
 		return nil
@@ -3485,10 +3498,6 @@ const (
 	InnodbFastShutdown = "innodb_fast_shutdown"
 	// InnodbLockWaitTimeout is the name for 'innodb_lock_wait_timeout' system variable.
 	InnodbLockWaitTimeout = "innodb_lock_wait_timeout"
-	// SQLLogBin is the name for 'sql_log_bin' system variable.
-	SQLLogBin = "sql_log_bin"
-	// LogBin is the name for 'log_bin' system variable.
-	LogBin = "log_bin"
 	// MaxSortLength is the name for 'max_sort_length' system variable.
 	MaxSortLength = "max_sort_length"
 	// MaxSpRecursionDepth is the name for 'max_sp_recursion_depth' system variable.

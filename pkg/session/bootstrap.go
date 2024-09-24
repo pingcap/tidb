@@ -624,7 +624,7 @@ const (
 		start_time TIMESTAMP NOT NULL,
 		repeats int default 1,
 		match_type varchar(12) NOT NULL,
-		action varchar(12) NOT NULL,
+		action varchar(64) NOT NULL,
 		sample_sql TEXT NOT NULL,
 		sql_digest varchar(64) NOT NULL,
 		plan_digest varchar(64) NOT NULL,
@@ -722,6 +722,35 @@ const (
 		GROUP BY table_schema, table_name, index_name
 		HAVING
 			sum(last_access_time) is null;`
+
+	// CreateIndexAdvisorTable is a table to store the index advisor results.
+	CreateIndexAdvisorTable = `CREATE TABLE IF NOT EXISTS mysql.index_advisor_results (
+       id bigint primary key not null auto_increment,
+       created_at datetime not null,
+       updated_at datetime not null,
+
+       schema_name varchar(64) not null,
+       table_name varchar(64) not null,
+       index_name varchar(127) not null,
+       index_columns varchar(500) not null COMMENT 'split by ",", e.g. "c1", "c1,c2", "c1,c2,c3,c4,c5"',
+
+       index_details json,        -- est_index_size, reason, DDL to create this index, ...
+       top_impacted_queries json, -- improvement, plan before and after this index, ...
+       workload_impact json,      -- improvement and more details, ...
+       extra json,                -- for the cloud env to save more info like RU, cost_saving, ...
+       index idx_create(created_at),
+       index idx_update(updated_at),
+       unique index idx(schema_name, table_name, index_columns))`
+
+	// CreateKernelOptionsTable is a table to store kernel options for tidb.
+	CreateKernelOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_kernel_options (
+        module varchar(128),
+        name varchar(128),
+        value varchar(128),
+        updated_at datetime,
+        status varchar(128),
+        description text,
+        primary key(module, name))`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -1135,13 +1164,18 @@ const (
 	version213 = 213
 
 	// version 214
-	//   changes variable `tidb_scatter_region` value from ON to "table" and OFF to "".
+	//   create `mysql.index_advisor_results` table
 	version214 = 214
+
+
+	// version 215
+	//   changes variable `tidb_scatter_region` value from ON to "table" and OFF to "".
+	version215 = 215
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version214
+var currentBootstrapVersion int64 = version215
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1311,6 +1345,7 @@ var (
 		upgradeToVer212,
 		upgradeToVer213,
 		upgradeToVer214,
+		upgradeToVer215,
 	}
 )
 
@@ -3136,6 +3171,8 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`")
 	// modify column type of `plan_digest`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
+	// modify column length of `action`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `action` VARCHAR(64) NOT NULL;", infoschema.ErrColumnExists)
 }
 
 func upgradeToVer213(s sessiontypes.Session, ver int64) {
@@ -3147,7 +3184,16 @@ func upgradeToVer213(s sessiontypes.Session, ver int64) {
 }
 
 func upgradeToVer214(s sessiontypes.Session, ver int64) {
-	if ver >= version213 {
+	if ver >= version214 {
+		return
+	}
+
+	mustExecute(s, CreateIndexAdvisorTable)
+	mustExecute(s, CreateKernelOptionsTable)
+}
+
+func upgradeToVer215(s sessiontypes.Session, ver int64) {
+	if ver >= version214 {
 		return
 	}
 
@@ -3305,6 +3351,10 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateSysSchema)
 	// create `sys.schema_unused_indexes` view
 	mustExecute(s, CreateSchemaUnusedIndexesView)
+	// create mysql.index_advisor_results
+	mustExecute(s, CreateIndexAdvisorTable)
+	// create mysql.tidb_kernel_options
+	mustExecute(s, CreateKernelOptionsTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

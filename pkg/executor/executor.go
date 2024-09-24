@@ -53,11 +53,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -2748,19 +2748,23 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return fmt.Errorf("unsupported action: %s", e.Action)
 	}
 
-	results, err := indexadvisor.AdviseIndexes(ctx, e.Ctx(), &indexadvisor.Option{
+	opt := &indexadvisor.Option{
 		MaxNumIndexes: 3,
 		MaxIndexWidth: 3,
-		SpecifiedSQLs: []string{e.SQL},
-	})
+	}
+	if e.SQL != "" {
+		opt.SpecifiedSQLs = []string{e.SQL}
+	}
+
+	results, err := indexadvisor.AdviseIndexes(ctx, e.Ctx(), opt)
 
 	for _, r := range results {
 		req.AppendString(0, r.Database)
 		req.AppendString(1, r.Table)
 		req.AppendString(2, r.IndexName)
 		req.AppendString(3, strings.Join(r.IndexColumns, ","))
-		req.AppendString(4, fmt.Sprintf("%v", r.IndexSize))
-		req.AppendString(5, r.Reason)
+		req.AppendString(4, fmt.Sprintf("%v", r.IndexDetail.IndexSize))
+		req.AppendString(5, r.IndexDetail.Reason)
 
 		jData, err := json.Marshal(r.TopImpactedQueries)
 		if err != nil {
