@@ -601,19 +601,6 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 			sc.AllowInvalidDate = true
 			sc.IgnoreZeroInDate = true
 			var err error
-<<<<<<< HEAD
-			lower, err = d.ConvertTo(sc, &column.Info.FieldType)
-			if err != nil {
-				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
-				delete(table.Columns, histID)
-				continue
-			}
-			d = types.NewBytesDatum(row.GetBytes(6))
-			upper, err = d.ConvertTo(sc, &column.Info.FieldType)
-			if err != nil {
-				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
-				delete(table.Columns, histID)
-=======
 			if column.Info.FieldType.EvalType() == types.ETString && column.Info.FieldType.GetType() != mysql.TypeEnum && column.Info.FieldType.GetType() != mysql.TypeSet {
 				// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
 				// original value.
@@ -622,9 +609,9 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 				// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
 				// or "Data too long".
 				// So we change it to TypeBlob to bypass those logics here.
-				lower, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, unspecifiedLengthTp)
+				lower, err = d.ConvertTo(sc, unspecifiedLengthTp)
 			} else {
-				lower, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
+				lower, err = d.ConvertTo(sc, &column.Info.FieldType)
 			}
 			if err != nil {
 				hasErr = true
@@ -635,16 +622,15 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
 			if column.Info.FieldType.EvalType() == types.ETString && column.Info.FieldType.GetType() != mysql.TypeEnum && column.Info.FieldType.GetType() != mysql.TypeSet {
-				upper, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, unspecifiedLengthTp)
+				upper, err = d.ConvertTo(sc, unspecifiedLengthTp)
 			} else {
-				upper, err = d.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, &column.Info.FieldType)
+				upper, err = d.ConvertTo(sc, &column.Info.FieldType)
 			}
 			if err != nil {
 				hasErr = true
 				failedTableID = tableID
 				failedHistID = histID
 				table.DelCol(histID)
->>>>>>> ebf31468577 (statistics: fix the error that init stats might got failure when decoding column bucket (#55685))
 				continue
 			}
 		}
