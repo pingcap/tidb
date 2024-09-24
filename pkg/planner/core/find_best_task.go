@@ -737,7 +737,7 @@ func compareCandidates(sctx base.PlanContext, prop *property.PhysicalProperty, l
 	// (1): the set of columns that occurred in the access condition,
 	// (2): does it require a double scan,
 	// (3): whether or not it matches the physical property,
-	// (4): it's a global index path or not.
+	// (4): it's a global index path or not, it only works when two indexes contains same columns.
 	// If `x` is not worse than `y` at all factors,
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)

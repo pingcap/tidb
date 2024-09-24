@@ -607,7 +607,7 @@ func MockGlobalIndexHashPartitionTable() *model.TableInfo {
 	}
 	tableInfo.Columns = cols
 	tableInfo.Partition = partition
-	// add a global index `b` and noraml index `b_1`
+	// add a global index `b_global` and `b_c_global` and noraml index `b` and `b_c`
 	tableInfo.Indices = append(tableInfo.Indices, []*model.IndexInfo{
 		{
 			Name: pmodel.NewCIStr("b"),
@@ -627,6 +627,40 @@ func MockGlobalIndexHashPartitionTable() *model.TableInfo {
 					Name:   pmodel.NewCIStr("b"),
 					Length: types.UnspecifiedLength,
 					Offset: 1,
+				},
+			},
+			State:  model.StatePublic,
+			Unique: true,
+			Global: true,
+		},
+		{
+			Name: pmodel.NewCIStr("b_c"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   pmodel.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+				{
+					Name:   pmodel.NewCIStr("c"),
+					Length: types.UnspecifiedLength,
+					Offset: 2,
+				},
+			},
+			State: model.StatePublic,
+		},
+		{
+			Name: pmodel.NewCIStr("b_c_global"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   pmodel.NewCIStr("b"),
+					Length: types.UnspecifiedLength,
+					Offset: 1,
+				},
+				{
+					Name:   pmodel.NewCIStr("c"),
+					Length: types.UnspecifiedLength,
+					Offset: 2,
 				},
 			},
 			State:  model.StatePublic,

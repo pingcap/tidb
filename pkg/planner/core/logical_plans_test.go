@@ -2018,15 +2018,23 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 order by b",
-			result: "b_global",
+			result: "b_global,b_c_global",
 		},
 		{
 			sql:    "select b from pt2_global_index where b > 1 order by b",
-			result: "b_global",
+			result: "b_global,b_c_global",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 or g = 5",
 			result: "PRIMARY_KEY,[g,b_global]",
+		},
+		{
+			sql:    "select * from pt2_global_index where b = 1 and c = 1",
+			result: "b_c_global", // will prune `b_c`
+		},
+		{
+			sql:    "select * from pt2_global_index where b = 1 and c = 1 and d = 1",
+			result: "b_c_global", // will prune `c_d_e`
 		},
 	}
 	s := createPlannerSuite()
