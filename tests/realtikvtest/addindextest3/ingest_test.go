@@ -15,11 +15,13 @@
 package addindextest_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -106,6 +108,27 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	require.True(t, strings.Contains(rows[1][3].(string) /* job_type */, "ingest"))
 	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
 	require.Equal(t, rows[1][7].(string) /* row_count */, "3")
+
+	// test cancel is timely
+	failpoint.EnableCall(
+		"github.com/pingcap/tidb/pkg/lightning/backend/local/beforeExecuteRegionJob",
+		func(ctx context.Context) {
+			select {
+			case <-time.After(time.Second * 50):
+			case <-ctx.Done():
+			}
+		})
+	wg.Add(1)
+	go func() {
+		tk2.MustExec("alter table t add index idx_ba(b, a);")
+		wg.Done()
+	}()
+	jobID := tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string)
+	now := time.Now()
+	tk.MustExec("admin cancel ddl jobs " + jobID)
+	wg.Wait()
+	// cancel should be timely
+	require.Less(t, time.Since(now).Seconds(), 30.0)
 }
 
 func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
