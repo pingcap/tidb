@@ -437,6 +437,8 @@ func (p *PhysicalLimit) ExplainInfo() string {
 	}
 	if redact {
 		fmt.Fprintf(buffer, "offset:?, count:?")
+	} else {
+		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
 	}
 	return buffer.String()
 }
