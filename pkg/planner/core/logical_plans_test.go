@@ -2036,7 +2036,11 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b = 1 and c = 1 and d = 1",
-			result: "b_c_global", // will prune `c_d_e`
+			result: "b_c_global", // will prune `b_c` and `c_d_e`
+		},
+		{
+			sql:    "select * from pt2_global_index where c = 1 and d = 1 and e = 1",
+			result: "c_d_e", // will prune `b_c` and `b_c_global`
 		},
 	}
 	s := createPlannerSuite()
