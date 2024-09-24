@@ -16,6 +16,7 @@ package indexadvisor_test
 
 import (
 	"context"
+	"github.com/stretchr/testify/require"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
@@ -23,37 +24,23 @@ import (
 	s "github.com/pingcap/tidb/pkg/util/set"
 )
 
-func TestSetOption(t *testing.T) {
+func TestOptionMaxNumIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
+
+	tk.MustExec(`use mysql`)
 	tk.MustExec(`recommend index set max_num_index=10`)
-	tk.MustExec(`recommend index set max_index_columns=5`)
-	tk.MustQuery(`select name, value from mysql.tidb_kernel_options where module='index_advisor'`).
-		Sort().Check(testkit.Rows("max_index_columns 5", "max_num_index 10"))
-
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='max_num_index'`).
+		Check(testkit.Rows("10"))
 	tk.MustExec(`recommend index set max_num_index=11`)
-	tk.MustExec(`recommend index set max_index_columns=11`)
-	tk.MustQuery(`select name, value from mysql.tidb_kernel_options where module='index_advisor'`).
-		Sort().Check(testkit.Rows("max_index_columns 11", "max_num_index 11"))
-
-	tk.MustExec(`recommend index set max_num_index=22`)
-	tk.MustExec(`recommend index set max_index_columns=22`)
-	tk.MustQuery(`select name, value from mysql.tidb_kernel_options where module='index_advisor'`).
-		Sort().Check(testkit.Rows("max_index_columns 22", "max_num_index 22"))
-
-	// invalid option values
-	tk.MustExecToErr(`recommend index set xxx=1`)
-	tk.MustExecToErr(`recommend index set xxx=-1`)
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='max_num_index'`).
+		Check(testkit.Rows("11"))
+	tk.MustExec(`recommend index set max_num_index=33`)
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='max_num_index'`).
+		Check(testkit.Rows("33"))
 	tk.MustExecToErr(`recommend index set max_num_index=-1`)
 	tk.MustExecToErr(`recommend index set max_num_index=0`)
-	tk.MustExecToErr(`recommend index set max_index_columns=-1`)
-	tk.MustExecToErr(`recommend index set max_index_columns=0`)
-}
 
-func TestOptionEffectiveness(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int)`)
 	querySet := s.NewSet[indexadvisor.Query]()
@@ -66,8 +53,26 @@ func TestOptionEffectiveness(t *testing.T) {
 	check(ctx, t, tk, "test.t.a,test.t.b", new(indexadvisor.Option)) // 2 indexes
 	tk.MustExec(`recommend index set max_num_index=1`)
 	check(ctx, t, tk, "test.t.a", new(indexadvisor.Option)) // 1 index
+}
 
-	tk.MustExec(`drop table t`)
+func TestOptionMaxIndexColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use mysql`)
+	tk.MustExec(`recommend index set max_index_columns=10`)
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='max_index_columns'`).
+		Check(testkit.Rows("10"))
+	tk.MustExec(`recommend index set max_index_columns=11`)
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='max_index_columns'`).
+		Check(testkit.Rows("11"))
+	tk.MustExec(`recommend index set max_index_columns=33`)
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='max_index_columns'`).
+		Check(testkit.Rows("33"))
+	tk.MustExecToErr(`recommend index set max_index_columns=-1`)
+	tk.MustExecToErr(`recommend index set max_index_columns=0`)
+
+	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int, d int)`)
 	opt := func(sql string) *indexadvisor.Option {
 		return &indexadvisor.Option{SpecifiedSQLs: []string{sql}}
@@ -83,4 +88,55 @@ func TestOptionEffectiveness(t *testing.T) {
 	check(nil, t, tk, "test.t.a", opt("select b from t where a=1"))
 	check(nil, t, tk, "test.t.a", opt("select b, c from t where a=1"))
 	check(nil, t, tk, "test.t.a", opt("select b from t where a=1 and d=1"))
+}
+
+func TestOptionMaxNumQuery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use mysql`)
+	tk.MustExec(`recommend index set max_num_query=10`)
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='max_num_query'`).
+		Check(testkit.Rows("10"))
+	tk.MustExec(`recommend index set max_num_query=22`)
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='max_num_query'`).
+		Check(testkit.Rows("22"))
+	tk.MustExec(`recommend index set max_num_query=1111`)
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='max_num_query'`).
+		Check(testkit.Rows("1111"))
+	tk.MustExecToErr(`recommend index set max_num_query=-1`)
+	tk.MustExecToErr(`recommend index set max_num_query=0`)
+}
+
+func TestOptionTimeout(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use mysql`)
+	tk.MustExec(`recommend index set timeout='123ms'`)
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='timeout'`).
+		Check(testkit.Rows("123ms"))
+	tk.MustExec(`recommend index set timeout='1s'`)
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='timeout'`).
+		Check(testkit.Rows("1s"))
+	tk.MustExec(`recommend index set timeout='0s'`)
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='timeout'`).
+		Check(testkit.Rows("0s")) // allow 0
+	tk.MustExec(`recommend index set timeout='1m'`)
+	tk.MustQuery(`select value from tidb_kernel_options where module='index_advisor' and name='timeout'`).
+		Check(testkit.Rows("1m"))
+	tk.MustExecToErr(`recommend index set timeout='-1s'`)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`recommend index set timeout='1m'`)
+	tk.MustExec(`create table t (a int, b int, c int)`)
+	rows := tk.MustQuery(`recommend index run for 'select a from t where a=1'`).Rows()
+	require.Equal(t, 1, len(rows))
+
+	tk.MustExec(`recommend index set timeout='0m'`)
+	tk.MustQueryToErr(`recommend index run for 'select a from t where a=1'`) // timeout
+
+	tk.MustExec(`recommend index set timeout='1m'`)
+	rows = tk.MustQuery(`recommend index run for 'select a from t where a=1'`).Rows()
+	require.Equal(t, 1, len(rows))
 }

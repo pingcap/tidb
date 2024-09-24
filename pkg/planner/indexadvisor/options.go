@@ -17,6 +17,7 @@ package indexadvisor
 import (
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -30,10 +31,14 @@ const (
 	OptMaxNumIndex = "max_num_index"
 	// OptMaxIndexColumns is the option name for the maximum number of columns in an index.
 	OptMaxIndexColumns = "max_index_columns"
+	// OptMaxNumQuery is the option name for the maximum number of queries to recommend indexes.
+	OptMaxNumQuery = "max_num_query"
+	// OptTimeout is the option name for the timeout of index advisor.
+	OptTimeout = "timeout"
 )
 
 func fillOption(sctx sessionctx.Context, opt *Option) error {
-	vals, err := getOption(sctx, OptMaxNumIndex, OptMaxIndexColumns)
+	vals, err := getOption(sctx, OptMaxNumIndex, OptMaxIndexColumns, OptMaxNumQuery, OptTimeout)
 	if err != nil {
 		return err
 	}
@@ -45,6 +50,17 @@ func fillOption(sctx sessionctx.Context, opt *Option) error {
 		i, _ := strconv.ParseInt(vals[OptMaxIndexColumns], 10, 64)
 		opt.MaxIndexWidth = int(i)
 	}
+	if opt.MaxNumQuery == 0 {
+		i, _ := strconv.ParseInt(vals[OptMaxNumQuery], 10, 64)
+		opt.MaxNumQuery = int(i)
+	}
+	if opt.Timeout == 0 {
+		i, err := time.ParseDuration(vals[OptTimeout])
+		if err != nil {
+			return err
+		}
+		opt.Timeout = i
+	}
 	return nil
 }
 
@@ -52,7 +68,7 @@ func fillOption(sctx sessionctx.Context, opt *Option) error {
 func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
 	var v string
 	switch opt {
-	case OptMaxNumIndex, OptMaxIndexColumns:
+	case OptMaxNumIndex, OptMaxIndexColumns, OptMaxNumQuery:
 		x, err := intVal(val)
 		if err != nil {
 			return err
@@ -61,6 +77,15 @@ func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
 			return errors.Errorf("invalid value %v for %s", x, opt)
 		}
 		v = fmt.Sprintf("%v", x)
+	case OptTimeout:
+		v = val.GetValue().(string)
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return err
+		}
+		if d < 0 {
+			return errors.Errorf("invalid value %v for %s", d, opt)
+		}
 	default:
 		return errors.Errorf("unknown option %s", opt)
 	}
@@ -103,6 +128,10 @@ func description(opt string) string {
 		return "The maximum number of indexes to recommend for a table."
 	case OptMaxIndexColumns:
 		return "The maximum number of columns in an index."
+	case OptMaxNumQuery:
+		return "The maximum number of queries to recommend indexes."
+	case OptTimeout:
+		return "The timeout of index advisor."
 	}
 	return ""
 }
@@ -113,6 +142,10 @@ func defaultVal(opt string) string {
 		return "5"
 	case OptMaxIndexColumns:
 		return "3"
+	case OptMaxNumQuery:
+		return "1000"
+	case OptTimeout:
+		return "30s"
 	}
 	return ""
 }
