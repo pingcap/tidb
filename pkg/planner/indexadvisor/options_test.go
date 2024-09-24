@@ -16,12 +16,12 @@ package indexadvisor_test
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"github.com/pingcap/tidb/pkg/testkit"
 	s "github.com/pingcap/tidb/pkg/util/set"
+	"github.com/stretchr/testify/require"
 )
 
 func TestOptionMaxNumIndex(t *testing.T) {
