@@ -569,3 +569,17 @@ func TestGetSetTiFlashReplicaArgs(t *testing.T) {
 		require.Equal(t, inArgs, args)
 	}
 }
+
+func TestGetUpdateTiFlashReplicaStatusArgs(t *testing.T) {
+	inArgs := &UpdateTiFlashReplicaStatusArgs{
+		Available:  true,
+		PhysicalID: 1001,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionUpdateTiFlashReplicaStatus)))
+		args, err := GetUpdateTiFlashReplicaStatusArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}

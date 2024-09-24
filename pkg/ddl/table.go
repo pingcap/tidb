@@ -1146,13 +1146,13 @@ func (w *worker) checkTiFlashReplicaCount(replicaCount uint64) error {
 	return checkTiFlashReplicaCount(ctx, replicaCount)
 }
 
-func onUpdateFlashReplicaStatus(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var available bool
-	var physicalID int64
-	if err := job.DecodeArgs(&available, &physicalID); err != nil {
+func onUpdateTiFlashReplicaStatus(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetUpdateTiFlashReplicaStatusArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	available, physicalID := args.Available, args.PhysicalID
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {

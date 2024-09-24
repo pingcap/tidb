@@ -913,3 +913,36 @@ func GetSetTiFlashReplicaArgs(job *Job) (*SetTiFlashReplicaArgs, error) {
 
 	return getOrDecodeArgsV2[*SetTiFlashReplicaArgs](job)
 }
+
+// UpdateTiFlashReplicaStatusArgs is the arguments for updating TiFlash replica status ddl.
+type UpdateTiFlashReplicaStatusArgs struct {
+	Available  bool
+	PhysicalID int64
+}
+
+func (a *UpdateTiFlashReplicaStatusArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.Available, a.PhysicalID}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetUpdateTiFlashReplicaStatusArgs gets the args for updating TiFlash replica status ddl.
+func GetUpdateTiFlashReplicaStatusArgs(job *Job) (*UpdateTiFlashReplicaStatusArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			available  bool
+			physicalID int64
+		)
+		if err := job.DecodeArgs(&available, &physicalID); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &UpdateTiFlashReplicaStatusArgs{
+			Available:  available,
+			PhysicalID: physicalID,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*UpdateTiFlashReplicaStatusArgs](job)
+}

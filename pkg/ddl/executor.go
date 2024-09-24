@@ -3907,17 +3907,21 @@ func (e *executor) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       db.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     db.Name.L,
 		TableName:      tb.Meta().Name.L,
 		Type:           model.ActionUpdateTiFlashReplicaStatus,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{available, physicalID},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err := e.DoDDLJob(ctx, job)
+	args := &model.UpdateTiFlashReplicaStatusArgs{
+		Available:  available,
+		PhysicalID: physicalID,
+	}
+	err := e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
