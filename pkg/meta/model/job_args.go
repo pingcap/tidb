@@ -1161,7 +1161,7 @@ func GetRecoverArgs(job *Job) (*RecoverArgs, error) {
 	if job.Version == JobVersion1 {
 		var (
 			recoverTableInfo  *RecoverTableInfo
-			recoverSchemaInfo *RecoverSchemaInfo = &RecoverSchemaInfo{}
+			recoverSchemaInfo = &RecoverSchemaInfo{}
 			recoverCheckFlag  int64
 		)
 
