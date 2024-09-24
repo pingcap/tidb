@@ -44,12 +44,10 @@ func TestRedactExplain(t *testing.T) {
 	// in multi-value
 	tk.MustQuery("explain select 1 from t left join tlist on tlist.a=t.a where t.a in (12, 13)").
 		Check(testkit.Rows(
-			"Projection_7 2.50 root  ?->Column#5",
-			"└─HashJoin_9 2.50 root  left outer join, equal:[eq(test.t.a, test.tlist.a)]",
-			"  ├─Batch_Point_Get_10(Build) 2.00 root table:t handle:[12 13], keep order:false, desc:false",
-			"  └─TableReader_13(Probe) 20.00 root partition:dual data:Selection_12",
-			"    └─Selection_12 20.00 cop[tikv]  in(test.tlist.a, ?, ?), not(isnull(test.tlist.a))",
-			"      └─TableFullScan_11 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"))
+			"Projection_8 2.00 root  ?->Column#5",
+			"└─HashJoin_9 2.00 root  left outer join, equal:[eq(test.t.a, test.tlist.a)]",
+			"  ├─TableDual_12(Build) 0.00 root  rows:0",
+			"  └─Batch_Point_Get_11(Probe) 2.00 root table:t handle:[12 13], keep order:false, desc:false"))
 	// TableRangeScan + Limit
 	tk.MustQuery("explain select * from t where a > 1 limit 10 offset 10;").
 		Check(testkit.Rows(
@@ -79,9 +77,9 @@ func TestRedactExplain(t *testing.T) {
 		"            └─Projection_10 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, plus(test.employee.deptid, ?)->Column#6", // <- here
 		"              └─TableFullScan_11 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"))
 	tk.MustQuery("explain format = 'brief' select * from tlist where a in (2)").Check(testkit.Rows(
-		"TableReader 10.00 root partition:p0 data:Selection",
+		"TableReader 10.00 root  data:Selection",
 		"└─Selection 10.00 cop[tikv]  eq(test.tlist.a, ?)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"))
+		"  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"))
 	// CTE
 	tk.MustQuery("explain with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte, t limit 100 offset 100;").Check(
 		testkit.Rows("Limit_25 100.00 root  offset:?, count:?",
