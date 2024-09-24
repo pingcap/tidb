@@ -587,7 +587,7 @@ func TestAlterTTL(t *testing.T) {
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	args := &model.AlterTTLInfoArgs{
-		TTLInfor: &model.TTLInfo{
+		TTLInfo: &model.TTLInfo{
 			ColumnName:       tblInfo.Columns[1].Name,
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: int(ast.TimeUnitYear),

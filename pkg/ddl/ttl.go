@@ -57,7 +57,7 @@ func onTTLInfoChange(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int6
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	ttlInfo, ttlInfoEnable, ttlInfoJobInterval := args.TTLInfor, args.TTLEnable, args.TTLCronJobSchedule
+	ttlInfo, ttlInfoEnable, ttlInfoJobInterval := args.TTLInfo, args.TTLEnable, args.TTLCronJobSchedule
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {

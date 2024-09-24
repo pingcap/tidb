@@ -632,7 +632,7 @@ func TestGetAlterTTLInfoArgs(t *testing.T) {
 	ttlEanble := true
 	ttlCronJobSchedule := "ttl-schedule"
 	inArgs := &AlterTTLInfoArgs{
-		TTLInfor: &TTLInfo{
+		TTLInfo: &TTLInfo{
 			ColumnName:       model.NewCIStr("column_name"),
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: 10010,

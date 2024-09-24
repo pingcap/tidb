@@ -3764,7 +3764,7 @@ func (e *executor) AlterTableTTLInfoOrEnable(ctx sessionctx.Context, ident ast.I
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.AlterTTLInfoArgs{
-		TTLInfor:           ttlInfo,
+		TTLInfo:            ttlInfo,
 		TTLEnable:          ttlEnable,
 		TTLCronJobSchedule: ttlCronJobSchedule,
 	}

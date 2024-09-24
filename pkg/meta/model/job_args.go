@@ -1088,14 +1088,14 @@ func GetShardRowIDArgs(job *Job) (*ShardRowIDArgs, error) {
 
 // AlterTTLInfoArgs is the arguments for alter ttl info job.
 type AlterTTLInfoArgs struct {
-	TTLInfor           *TTLInfo `json:"ttl_infor,omitempty"`
+	TTLInfo            *TTLInfo `json:"ttl_info,omitempty"`
 	TTLEnable          *bool    `json:"ttl_enable,omitempty"`
 	TTLCronJobSchedule *string  `json:"ttl_cron_job_schedule,omitempty"`
 }
 
 func (a *AlterTTLInfoArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
-		job.Args = []any{a.TTLInfor, a.TTLEnable, a.TTLCronJobSchedule}
+		job.Args = []any{a.TTLInfo, a.TTLEnable, a.TTLCronJobSchedule}
 	} else {
 		job.Args = []any{a}
 	}
@@ -1105,7 +1105,7 @@ func (a *AlterTTLInfoArgs) fillJob(job *Job) {
 func GetAlterTTLInfoArgs(job *Job) (*AlterTTLInfoArgs, error) {
 	if job.Version == JobVersion1 {
 		args := &AlterTTLInfoArgs{}
-		if err := job.DecodeArgs(&args.TTLInfor, &args.TTLEnable, &args.TTLCronJobSchedule); err != nil {
+		if err := job.DecodeArgs(&args.TTLInfo, &args.TTLEnable, &args.TTLCronJobSchedule); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return args, nil
