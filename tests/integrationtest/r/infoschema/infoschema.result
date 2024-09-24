@@ -121,14 +121,14 @@ explain select engine, DATA_LENGTH from information_schema.tables where (table_n
 id	estRows	task	access object	operator info
 Projection_4	8000.00	root		Column#5, Column#10
 └─Selection_5	8000.00	root		or(eq(Column#3, "t4"), eq(lower(Column#3), "t5"))
-  └─MemTableScan_6	10000.00	root	table:TABLES	table_schema:["INFOSCHEMA__INFOSCHEMA"]
+  └─MemTableScan_6	10000.00	root	table:TABLES	table_schema:["infoschema__infoschema"]
 select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
 engine	DATA_LENGTH
 InnoDB	8
 InnoDB	8
 explain select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
 id	estRows	task	access object	operator info
-MemTableScan_5	10000.00	root	table:TABLES	table_name:["T4","t4"], table_schema:["infoschema__infoschema"]
+MemTableScan_5	10000.00	root	table:TABLES	table_name:["t4"], table_schema:["infoschema__infoschema"]
 select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
 engine	DATA_LENGTH
 InnoDB	8
@@ -159,6 +159,12 @@ pt2	p1
 pt2	p2
 pt2	p3
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt0' and table_schema = 'infoschema__infoschema';
+TABLE_NAME	PARTITION_NAME
+explain select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
+id	estRows	task	access object	operator info
+Projection_4	10000.00	root		Column#3, Column#4
+└─MemTableScan_5	10000.00	root	table:PARTITIONS	table_schema:["infoschema__infoschema"], table_name_pattern:[pt0]
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
 TABLE_NAME	PARTITION_NAME
 drop table pt1;
 drop table pt2;
@@ -278,6 +284,14 @@ select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics 
 TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
 infoschema__infoschema_2	t2	a
 infoschema__infoschema_2	t2	b
+explain select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema = 'infoschema__infoschema_2';
+id	estRows	task	access object	operator info
+Projection_4	10000.00	root		Column#2, Column#3, Column#8
+└─MemTableScan_5	10000.00	root	table:STATISTICS	table_schema:["infoschema__infoschema_2"], table_name_pattern:[%t2%]
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema = 'infoschema__infoschema_2';
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+infoschema__infoschema_2	t2	a
+infoschema__infoschema_2	t2	b
 drop table infoschema__infoschema.t1;
 drop table infoschema__infoschema_2.t2;
 drop database if exists indexusage;
@@ -314,6 +328,13 @@ select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_u
 TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
 indexusage	idt1	idx_1
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and TABLE_NAME = 'idt2' and INDEX_NAME = 'idx_4';
+TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
+indexusage	idt2	idx_4
+explain select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA like '%indexusage%' and TABLE_NAME like '%idt2%' and INDEX_NAME like '%idx_4%';
+id	estRows	task	access object	operator info
+Projection_4	10000.00	root		Column#1, Column#2, Column#3
+└─MemTableScan_5	10000.00	root	table:TIDB_INDEX_USAGE	index_name_pattern:[%idx_4%], table_name_pattern:[%idt2%], table_schema_pattern:[%indexusage%]
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA like '%indexusage%' and TABLE_NAME like '%idt2%' and INDEX_NAME like '%idx_4%';
 TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
 indexusage	idt2	idx_4
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage1';
@@ -383,6 +404,14 @@ infoschema__infoschema_2
 select SCHEMA_NAME from information_schema.schemata where schema_name = 'infoschema__infoschema';
 SCHEMA_NAME
 infoschema__infoschema
+explain select SCHEMA_NAME from information_schema.schemata where schema_name like 'infoschema__infoschema%';
+id	estRows	task	access object	operator info
+Projection_4	10000.00	root		Column#2
+└─MemTableScan_5	10000.00	root	table:SCHEMATA	schema_name_pattern:[infoschema__infoschema%]
+select SCHEMA_NAME from information_schema.schemata where schema_name like 'infoschema__infoschema%';
+SCHEMA_NAME
+infoschema__infoschema
+infoschema__infoschema_2
 drop database infoschema__infoschema_2;
 create database if not exists db1;
 create table db1.table1(id int not null primary key, cat_name varchar(255) not null, cat_description text);
@@ -391,6 +420,14 @@ create database if not exists db2;
 create table db2.table1(id int not null primary key, cat_name varchar(255) not null, cat_description text);
 create table db2.table2(id int not null, FOREIGN KEY fk(id) REFERENCES table1(id) ON UPDATE CASCADE ON DELETE RESTRICT);
 select * from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where table_schema = 'db1' order by TABLE_NAME;
+CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
+def	db1	PRIMARY	def	db1	table1	id	1	1	NULL	NULL	NULL
+def	db1	fk	def	db1	table2	id	1	1	db1	table1	id
+explain select * from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where table_schema like '%db1%' order by TABLE_NAME;
+id	estRows	task	access object	operator info
+Sort_5	10000.00	root		Column#6
+└─MemTableScan_8	10000.00	root	table:KEY_COLUMN_USAGE	table_schema_pattern:[%db1%]
+select * from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where table_schema like '%db1%' order by TABLE_NAME;
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
 def	db1	PRIMARY	def	db1	table1	id	1	1	NULL	NULL	NULL
 def	db1	fk	def	db1	table2	id	1	1	db1	table1	id
@@ -434,5 +471,11 @@ select sequence_schema, sequence_name from information_schema.sequences;
 sequence_schema	sequence_name
 Db1	s1
 dB2	s2
+explain select sequence_schema, sequence_name from information_schema.sequences where sequence_schema like '%db1%';
+id	estRows	task	access object	operator info
+Projection_4	10000.00	root		Column#2, Column#3
+└─MemTableScan_5	10000.00	root	table:SEQUENCES	sequence_schema_pattern:[%db1%]
+select sequence_schema, sequence_name from information_schema.sequences where sequence_schema like '%db1%';
+sequence_schema	sequence_name
 drop database db1;
 drop database db2;

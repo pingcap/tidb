@@ -1327,10 +1327,12 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 		return nil, indexName, invisible, errors.Trace(err)
 	}
 
-	if err := job.DecodeArgs(&indexName, &invisible); err != nil {
+	args, err := model.GetAlterIndexVisibilityArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, indexName, invisible, errors.Trace(err)
 	}
+	indexName, invisible = args.IndexName, args.Invisible
 
 	skip, err := validateAlterIndexVisibility(nil, indexName, invisible, tblInfo)
 	if err != nil {

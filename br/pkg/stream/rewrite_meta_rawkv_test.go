@@ -670,8 +670,8 @@ var (
 
 var (
 	dropSchemaJob                 *model.Job
-	dropTable0Job                 = &model.Job{Version: model.JobVersion1, Type: model.ActionDropTable, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",[72,73,74],[""]]`)}
-	dropTable1Job                 = &model.Job{Version: model.JobVersion1, Type: model.ActionDropTable, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",[],[""]]`)}
+	dropTable0Job                 *model.Job
+	dropTable1Job                 *model.Job
 	dropTable0Partition1Job       *model.Job
 	reorganizeTable0Partition1Job *model.Job
 	removeTable0Partition1Job     *model.Job
@@ -743,6 +743,10 @@ func init() {
 		SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID}, &model.TablePartitionArgs{OldPhysicalTblIDs: []int64{73}})
 	dropTable0Partition1Job = genFinishedJob(&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionDropTablePartition,
 		SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID}, &model.TablePartitionArgs{OldPhysicalTblIDs: []int64{73}})
+	dropTable0Job = genFinishedJob(&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionDropTable,
+		SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID}, &model.DropTableArgs{OldPartitionIDs: []int64{72, 73, 74}})
+	dropTable1Job = genFinishedJob(&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionDropTable,
+		SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID}, &model.DropTableArgs{})
 }
 
 type mockInsertDeleteRange struct {
