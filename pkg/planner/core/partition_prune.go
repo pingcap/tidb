@@ -49,31 +49,26 @@ func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 			for i := range ret {
 				idx := pi.GetOverlappingDroppingPartitionIdx(ret[i])
 				if idx == -1 {
+					// dropped without overlapping partition, skip it
 					continue
 				}
 				if idx == ret[i] {
+					// non-dropped partition
 					newRet = append(newRet, idx)
 					continue
 				}
 				// partition being dropped, remove the consecutive range of dropping partitions
 				// and add the overlapping partition.
 				end := i + 1
-				for ; end < len(ret); end++ {
-					if ret[end] < idx {
-						continue
-					}
-					if ret[end] == idx {
-						// overlapping partition already included, append it together with the following
-						newRet = append(newRet, ret[end:]...)
-						if len(newRet) == len(pi.Definitions) {
-							return []int{FullRange}, nil
-						}
-						return newRet, nil
-					}
-					break
+				for ; end < len(ret) && ret[end] < idx; end++ {
+					continue
 				}
-				if len(partitionNames) == 0 || s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
-					newRet = append(newRet, idx)
+				// add the overlapping partition, if not already included
+				if end >= len(ret) || ret[end] != idx {
+					// It must also match partitionNames if explicitly given
+					if len(partitionNames) == 0 || s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+						newRet = append(newRet, idx)
+					}
 				}
 				if end < len(ret) {
 					newRet = append(newRet, ret[end:]...)
