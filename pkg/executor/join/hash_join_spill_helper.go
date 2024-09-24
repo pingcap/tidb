@@ -45,7 +45,7 @@ type hashJoinSpillHelper struct {
 	probeRowsInDisk [][]*chunk.DataInDiskByChunks
 
 	buildSpillChkFieldTypes []*types.FieldType
-	probeFieldTypes         []*types.FieldType
+	probeSpillFieldTypes    []*types.FieldType
 	tmpSpillBuildSideChunks []*chunk.Chunk
 
 	// When respilling a row, we need to recalculate the row's hash value.
@@ -92,7 +92,7 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, hashValueField)                    // hash value
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit)) // valid join key
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit)) // row data
-	helper.probeFieldTypes = getProbeSpillChunkFieldTypes(probeFieldTypes)
+	helper.probeSpillFieldTypes = getProbeSpillChunkFieldTypes(probeFieldTypes)
 	helper.spilledPartitions = make([]bool, partitionNum)
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
@@ -102,8 +102,8 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 		helper.validJoinKeysBuffer = make([][]byte, hashJoinExec.Concurrency)
 	}
 
-	helper.probeSpilledRowIdx = make([]int, 0, len(helper.probeFieldTypes)-1)
-	for i := 1; i < len(helper.probeFieldTypes); i++ {
+	helper.probeSpilledRowIdx = make([]int, 0, len(helper.probeSpillFieldTypes)-1)
+	for i := 1; i < len(helper.probeSpillFieldTypes); i++ {
 		helper.probeSpilledRowIdx = append(helper.probeSpilledRowIdx, i)
 	}
 
@@ -315,7 +315,7 @@ func (h *hashJoinSpillHelper) spillBuildSegmentToDisk(workerID int, partID int, 
 		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
 		h.buildRowsInDisk[workerID][partID] = inDisk
 
-		inDisk = chunk.NewDataInDiskByChunks(h.probeFieldTypes)
+		inDisk = chunk.NewDataInDiskByChunks(h.probeSpillFieldTypes)
 		inDisk.GetDiskTracker().AttachTo(h.diskTracker)
 		h.probeRowsInDisk[workerID][partID] = inDisk
 	}
