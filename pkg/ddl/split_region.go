@@ -67,7 +67,7 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 }
 
 // `tID` is used to control the scope of scatter. If it is `ScatterTable`, the corresponding tableID is used.
-// If it is `ScatterGlobal`, then the scatter configured as global uniformly use -1.
+// If it is `ScatterGlobal`, the scatter configured at global level uniformly use -1 as `tID`.
 func getScatterConfig(scope string, tableID int64) (scatter bool, tID int64) {
 	switch scope {
 	case variable.ScatterTable:
