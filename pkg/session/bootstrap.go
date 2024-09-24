@@ -63,7 +63,8 @@ import (
 	"go.uber.org/zap"
 )
 
-var bootstrapOwnerKey = "/tidb/distributeLock/"
+// bootstrapOwnerKey is the key used by ddl owner mutex during boostrap.
+var bootstrapOwnerKey = "/tidb/distributeDDLOwnerLock/"
 
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
@@ -1499,7 +1500,17 @@ func upgrade(s sessiontypes.Session) {
 	}
 
 	var ver int64
-	acquireLock(s)
+	i := 0
+	var maxRetryCnt = 10
+	for ; i < maxRetryCnt; i++ {
+		ok := acquireLock(s)
+		if ok {
+			break
+		}
+	}
+	if i == maxRetryCnt {
+		logutil.BgLogger().Fatal("[upgrade] get ddl owner distributed lock failed", zap.Error(err))
+	}
 	ver, err = getBootstrapVersion(s)
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
