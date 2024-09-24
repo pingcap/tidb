@@ -37,7 +37,7 @@ go_test(
     ],
     embed = [":owner"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         "//pkg/ddl",
         "//pkg/infoschema",
@@ -54,8 +54,10 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_client_v3//concurrency",
+        "@io_etcd_go_etcd_server_v3//embed",
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_golang_google_grpc//:grpc",
+        "@org_golang_x_exp//rand",
         "@org_uber_go_goleak//:goleak",
     ],
 )
