@@ -1693,7 +1693,6 @@ func TestPushCollationDown(t *testing.T) {
 	require.NoError(t, err)
 	client := new(mock.Client)
 	sc := stmtctx.NewStmtCtx()
-
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
 	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
 		fc.SetCharsetAndCollation("binary", coll) // only collation matters
@@ -1761,8 +1760,7 @@ func TestMetadata(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher"))
 	}()
 
-	pc := PbConverter{client: client, sc: sc}
-
+	pc := NewPBConverter(client, sc)
 	metadata := new(tipb.InUnionMetadata)
 	var err error
 	// InUnion flag is false in `BuildCastFunction` when `ScalarFuncSig_CastStringAsInt`

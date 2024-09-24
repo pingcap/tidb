@@ -1386,7 +1386,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 			storageName = "storage layer"
 		}
 		warnErr := errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
-		statCtx := (*(pc.sc)).GetSessionVars().StmtCtx
+		statCtx := pc.sc.GetSessionVars().StmtCtx
 		if statCtx.InExplainStmt {
 			statCtx.AppendWarning(warnErr)
 		} else {
@@ -1414,7 +1414,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 }
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
-	statCtx := (*(pc.sc)).GetSessionVars().StmtCtx
+	statCtx := pc.sc.GetSessionVars().StmtCtx
 	if storeType == kv.TiFlash {
 		switch expr.GetType().GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
@@ -1455,7 +1455,7 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
 func PushDownExprsWithExtraInfo(sc sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
-	pc := PbConverter{sc: &sc, client: client}
+	pc := PbConverter{sc: sc, client: client}
 	for _, expr := range exprs {
 		if canExprPushDown(expr, pc, storeType, canEnumPush) {
 			pushed = append(pushed, expr)
