@@ -21,12 +21,12 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -61,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -89,6 +88,17 @@ const (
 	recoverCheckFlagNone int64 = iota
 	recoverCheckFlagEnableGC
 	recoverCheckFlagDisableGC
+)
+
+var (
+	// ForceDDLJobVersionToV1InTest is a flag to force using ddl job V1 in test.
+	// Since 8.4.0, we have a new version of DDL args, but we have to keep logics of
+	// old version for compatibility. We change this to run unit-test another round
+	// in V1 to make sure both code are working correctly.
+	// Don't use it in unit-test. It's set in Makefile.
+	ForceDDLJobVersionToV1InTest = "false"
+	jobV2FirstVer                = *semver.New("8.4.0")
+	detectJobVerInterval         = 10 * time.Second
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -715,18 +725,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
-	// if we are running in test, random choose a job version to run with.
-	// TODO add a separate CI flow to run with different job version, so we can cover
-	// more cases in a single run.
-	if intest.InTest || config.GetGlobalConfig().Store == "unistore" {
-		jobVer := model.JobVersion1
-		// 50% percent to use JobVersion2 in test.
-		rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-		if rnd.Intn(2) == 0 {
-			jobVer = model.JobVersion2
-		}
-		model.SetJobVerInUse(jobVer)
-	}
+	d.detectAndUpdateJobVersion()
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid),
 		zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()),
 		zap.Stringer("jobVersion", model.GetJobVerInUse()))
@@ -789,6 +788,115 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		}
 	}
 
+	return nil
+}
+
+// detect versions of all TiDB instances and choose a job version to use, rules:
+//   - if it's in test or run in uni-store, use V2 directly if ForceDDLJobVersionToV1InTest
+//     is not set, else use V1, we use this rule to run unit-tests using V1.
+//   - if all TiDB instances have version >= 8.4.0, use V2
+//   - otherwise, we must during upgrade from lower version, then start a background
+//     routine to detect the version of all TiDB instances repeatedly, when upgrade
+//     is done, we will use V2, and exit the routine.
+//
+// Note: at the time of this PR, some job types hasn't finished migrating to V2,
+// they will stay in V1 regardless of the version we choose here.
+//
+// It's possible that user start a new TiDB of version < 8.4.0 after we detect that
+// all instances have version >= 8.4.0, we will not consider this case here as we
+// don't support downgrade cluster version right now. And even if we try to change
+// the job version in use back to V1, it still will not work when owner transfer
+// to the new TiDB instance which cannot not handle existing submitted jobs of V2.
+func (d *ddl) detectAndUpdateJobVersion() {
+	if d.etcdCli == nil {
+		if ForceDDLJobVersionToV1InTest != "false" {
+			model.SetJobVerInUse(model.JobVersion1)
+			return
+		}
+		model.SetJobVerInUse(model.JobVersion2)
+		return
+	}
+
+	err := d.detectAndUpdateJobVersionOnce()
+	if err != nil {
+		logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
+	}
+
+	if model.GetJobVerInUse() == model.JobVersion2 {
+		return
+	}
+
+	logutil.DDLLogger().Info("job version in use is not v2, maybe in upgrade, start detecting",
+		zap.Stringer("current", model.GetJobVerInUse()))
+	d.wg.RunWithLog(func() {
+		ticker := time.NewTicker(detectJobVerInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+			case <-d.ctx.Done():
+				return
+			}
+			err = d.detectAndUpdateJobVersionOnce()
+			if err != nil {
+				logutil.SampleLogger().Warn("detect job version failed", zap.String("err", err.Error()))
+			}
+			failpoint.InjectCall("afterDetectAndUpdateJobVersionOnce")
+			if model.GetJobVerInUse() == model.JobVersion2 {
+				logutil.DDLLogger().Info("job version in use is v2 now, stop detecting")
+				return
+			}
+		}
+	})
+}
+
+// when all TiDB instances have version >= 8.4.0, we can use job version 2, otherwise
+// we should use job version 1 to keep compatibility.
+func (d *ddl) detectAndUpdateJobVersionOnce() error {
+	infos, err := infosync.GetAllServerInfo(d.ctx)
+	if err != nil {
+		return err
+	}
+	allSupportV2 := true
+	for _, info := range infos {
+		// we don't store TiDB version directly, but concatenated with a MySQL version,
+		// separated by mysql.VersionSeparator.
+		tidbVer := info.Version
+		idx := strings.Index(tidbVer, mysql.VersionSeparator)
+		if idx < 0 {
+			allSupportV2 = false
+			// see https://github.com/pingcap/tidb/issues/31823
+			logutil.SampleLogger().Warn("unknown server version, might be changed directly in config",
+				zap.String("version", tidbVer))
+			break
+		}
+		tidbVer = tidbVer[idx+len(mysql.VersionSeparator):]
+		tidbVer = strings.TrimPrefix(tidbVer, "v")
+		ver, err2 := semver.NewVersion(tidbVer)
+		if err2 != nil {
+			allSupportV2 = false
+			logutil.SampleLogger().Warn("parse server version failed", zap.String("version", info.Version),
+				zap.String("err", err2.Error()))
+			break
+		}
+		// sem-ver also compares pre-release labels, but we don't need to consider
+		// them here, so we clear them.
+		ver.PreRelease = ""
+		if ver.LessThan(jobV2FirstVer) {
+			allSupportV2 = false
+			break
+		}
+	}
+	targetVer := model.JobVersion1
+	if allSupportV2 {
+		targetVer = model.JobVersion2
+	}
+	if model.GetJobVerInUse() != targetVer {
+		logutil.DDLLogger().Info("change job version in use",
+			zap.Stringer("old", model.GetJobVerInUse()),
+			zap.Stringer("new", targetVer))
+		model.SetJobVerInUse(targetVer)
+	}
 	return nil
 }
 
