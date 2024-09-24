@@ -175,7 +175,7 @@ func TestConstantPropagation(t *testing.T) {
 			ctx := mock.NewContext()
 			conds := make([]Expression, 0, len(tt.conditions))
 			for _, cd := range tt.conditions {
-				conds = append(conds, FoldConstant(cd))
+				conds = append(conds, FoldConstant(ctx, cd))
 			}
 			newConds := solver.PropagateConstant(ctx, conds)
 			var result []string
@@ -228,8 +228,8 @@ func TestConstantFolding(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-
-		newConds := FoldConstant(tt.condition)
+		ctx := mock.NewContext()
+		newConds := FoldConstant(ctx, tt.condition)
 		require.Equalf(t, tt.result, newConds.StringWithCtx(false), "different for expr %s", tt.condition)
 	}
 }
@@ -285,7 +285,8 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		newConds := FoldConstant(tt.condition)
+		ctx := mock.NewContext()
+		newConds := FoldConstant(ctx, tt.condition)
 		require.Equalf(t, tt.result, newConds.StringWithCtx(false), "different for expr %s", tt.condition)
 	}
 }
