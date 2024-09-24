@@ -14,7 +14,151 @@
 
 package priorityqueue
 
-import "container/heap"
+import (
+	"container/heap"
+	"context"
+
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
+	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"go.uber.org/zap"
+)
+
+// Make sure AnalysisPriorityQueue implements JobQueue.
+var _ JobQueue = &AnalysisPriorityQueue{}
+
+// JobQueue is an interface that represents a queue of analysis jobs.
+// This is temporarily used to decouple the rebuilding process from the actual queue implementation.
+// TODO: Remove this interface when we switch to the new priority queue implementation.
+type JobQueue interface {
+	Push(job AnalysisJob) error
+}
+
+func pushJob(queue JobQueue, job AnalysisJob, calculator *PriorityCalculator) error {
+	if job == nil {
+		return nil
+	}
+	weight := calculator.CalculateWeight(job)
+	if weight <= 0 {
+		statslogutil.SingletonStatsSamplerLogger().Warn(
+			"Table gets a negative weight",
+			zap.Float64("weight", weight),
+			zap.Stringer("job", job),
+		)
+	}
+	job.SetWeight(weight)
+	return queue.Push(job)
+}
+
+// FetchAllTablesAndBuildAnalysisJobs builds analysis jobs for all eligible tables and partitions.
+func FetchAllTablesAndBuildAnalysisJobs(
+	sctx sessionctx.Context,
+	statsHandle statstypes.StatsHandle,
+	jobQueue JobQueue,
+) error {
+	parameters := exec.GetAutoAnalyzeParameters(sctx)
+	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	lockedTables, err := lockstats.QueryLockedTables(sctx)
+	if err != nil {
+		return err
+	}
+	currentTs, err := getStartTs(sctx)
+	if err != nil {
+		return err
+	}
+
+	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
+	calculator := NewPriorityCalculator()
+
+	dbs := is.AllSchemaNames()
+	for _, db := range dbs {
+		if util.IsMemOrSysDB(db.L) {
+			continue
+		}
+
+		tbls, err := is.SchemaTableInfos(context.Background(), db)
+		if err != nil {
+			return err
+		}
+
+		for _, tblInfo := range tbls {
+			if _, ok := lockedTables[tblInfo.ID]; ok {
+				continue
+			}
+
+			if tblInfo.IsView() {
+				continue
+			}
+
+			pi := tblInfo.GetPartitionInfo()
+			if pi == nil {
+				job := jobFactory.CreateNonPartitionedTableAnalysisJob(
+					db.O,
+					tblInfo,
+					statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
+				)
+				err := pushJob(jobQueue, job, calculator)
+				if err != nil {
+					return err
+				}
+				continue
+			}
+
+			partitionDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions))
+			for _, def := range pi.Definitions {
+				if _, ok := lockedTables[def.ID]; !ok {
+					partitionDefs = append(partitionDefs, def)
+				}
+			}
+			partitionStats := GetPartitionStats(statsHandle, tblInfo, partitionDefs)
+
+			if pruneMode == variable.Static {
+				for pIDAndName, stats := range partitionStats {
+					job := jobFactory.CreateStaticPartitionAnalysisJob(
+						db.O,
+						tblInfo,
+						pIDAndName.ID,
+						pIDAndName.Name,
+						stats,
+					)
+					err := pushJob(jobQueue, job, calculator)
+					if err != nil {
+						return err
+					}
+				}
+			} else {
+				job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
+					db.O,
+					tblInfo,
+					statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
+					partitionStats,
+				)
+				err := pushJob(jobQueue, job, calculator)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func getStartTs(sctx sessionctx.Context) (uint64, error) {
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return 0, err
+	}
+	return txn.StartTS(), nil
+}
 
 // AnalysisPriorityQueue is a priority queue for TableAnalysisJobs.
 type AnalysisPriorityQueue struct {
@@ -31,8 +175,9 @@ func NewAnalysisPriorityQueue() *AnalysisPriorityQueue {
 }
 
 // Push adds a job to the priority queue with the given weight.
-func (apq *AnalysisPriorityQueue) Push(job AnalysisJob) {
+func (apq *AnalysisPriorityQueue) Push(job AnalysisJob) error {
 	heap.Push(apq.inner, job)
+	return nil
 }
 
 // Pop removes the highest priority job from the queue.
