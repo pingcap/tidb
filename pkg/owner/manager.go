@@ -507,10 +507,17 @@ func AcquireDistributedLock(
 	key string,
 	ttlInSec int,
 ) (release func(), err error) {
-	se, _ := concurrency.NewSession(cli, concurrency.WithTTL(ttlInSec))
+	se, err := concurrency.NewSession(cli, concurrency.WithTTL(ttlInSec))
+	if err != nil {
+		return nil, err
+	}
 	mu := concurrency.NewMutex(se, key)
 	err = mu.Lock(ctx)
 	if err != nil {
+		err1 := se.Close()
+		if err1 != nil {
+			logutil.Logger(ctx).Warn("close session error", zap.Error(err1))
+		}
 		return nil, err
 	}
 	logutil.Logger(ctx).Info("acquire distributed flush lock success", zap.String("key", key))

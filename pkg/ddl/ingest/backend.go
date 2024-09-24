@@ -190,7 +190,9 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err erro
 		if err != nil {
 			return true, false, err
 		}
-		defer release()
+		if release != nil {
+			defer release()
+		}
 	}
 
 	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
