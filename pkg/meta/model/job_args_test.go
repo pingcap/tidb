@@ -514,7 +514,7 @@ func TestRepairTableArgs(t *testing.T) {
 }
 
 func TestRecoverArgs(t *testing.T) {
-	recoverInfo := &RecoverInfo{
+	recoverInfo := &RecoverTableInfo{
 		SchemaID:  1,
 		DropJobID: 2,
 		TableInfo: &TableInfo{
@@ -526,9 +526,8 @@ func TestRecoverArgs(t *testing.T) {
 	}
 
 	inArgs := &RecoverArgs{
-		RecoverInfo: recoverInfo,
-		RecoverSchemaInfo: &RecoverSchemaInfo{
-			RecoverTabsInfo: []*RecoverInfo{recoverInfo},
+		RecoverInfo: &RecoverSchemaInfo{
+			RecoverTableInfos: []*RecoverTableInfo{recoverInfo},
 		},
 		RecoverCheckFlag: 2,
 	}
@@ -541,11 +540,7 @@ func TestRecoverArgs(t *testing.T) {
 			args, err := GetRecoverArgs(j2)
 			require.NoError(t, err)
 			require.Equal(t, inArgs.RecoverCheckFlag, args.RecoverCheckFlag)
-			if tp == ActionRecoverTable {
-				require.Equal(t, inArgs.RecoverInfo, args.RecoverInfo)
-			} else {
-				require.Equal(t, inArgs.RecoverSchemaInfo, args.RecoverSchemaInfo)
-			}
+			require.Equal(t, inArgs.RecoverInfo, args.RecoverInfo)
 		}
 	}
 }

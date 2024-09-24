@@ -236,7 +236,7 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	recoverSchemaInfo := args.RecoverSchemaInfo
+	recoverSchemaInfo := args.RecoverInfo
 
 	schemaInfo := recoverSchemaInfo.DBInfo
 	// check GC and safe point
@@ -269,7 +269,7 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 			}
 		}
 
-		recoverTbls := recoverSchemaInfo.RecoverTabsInfo
+		recoverTbls := recoverSchemaInfo.RecoverTableInfos
 		if recoverSchemaInfo.LoadTablesOnExecute {
 			sid := recoverSchemaInfo.DBInfo.ID
 			snap := w.store.GetSnapshot(kv.NewVersion(recoverSchemaInfo.SnapshotTS))
@@ -279,14 +279,14 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err2)
 			}
-			recoverTbls = make([]*model.RecoverInfo, 0, len(tables))
+			recoverTbls = make([]*model.RecoverTableInfo, 0, len(tables))
 			for _, tblInfo := range tables {
 				autoIDs, err3 := snapMeta.GetAutoIDAccessors(sid, tblInfo.ID).Get()
 				if err3 != nil {
 					job.State = model.JobStateCancelled
 					return ver, errors.Trace(err3)
 				}
-				recoverTbls = append(recoverTbls, &model.RecoverInfo{
+				recoverTbls = append(recoverTbls, &model.RecoverTableInfo{
 					SchemaID:      sid,
 					TableInfo:     tblInfo,
 					DropJobID:     recoverSchemaInfo.DropJobID,

@@ -288,7 +288,7 @@ func (d *Checker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (er
 }
 
 // RecoverTable implements the DDL interface.
-func (*Checker) RecoverTable(_ sessionctx.Context, _ *model.RecoverInfo) (err error) {
+func (*Checker) RecoverTable(_ sessionctx.Context, _ *model.RecoverTableInfo) (err error) {
 	//TODO implement me
 	panic("implement me")
 }

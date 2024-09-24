@@ -104,7 +104,7 @@ type Executor interface {
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
-	RecoverTable(ctx sessionctx.Context, recoverInfo *model.RecoverInfo) (err error)
+	RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error)
 	RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *model.RecoverSchemaInfo) error
 	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error
@@ -819,8 +819,8 @@ func (e *executor) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *mode
 	}
 
 	args := &model.RecoverArgs{
-		RecoverSchemaInfo: recoverSchemaInfo,
-		RecoverCheckFlag:  recoverCheckFlagNone,
+		RecoverInfo:      recoverSchemaInfo,
+		RecoverCheckFlag: recoverCheckFlagNone,
 	}
 	err := e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
@@ -1445,9 +1445,9 @@ func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) 
 	return errors.Trace(err)
 }
 
-func (e *executor) RecoverTable(ctx sessionctx.Context, recoverInfo *model.RecoverInfo) (err error) {
+func (e *executor) RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error) {
 	is := e.infoCache.GetLatest()
-	schemaID, tbInfo := recoverInfo.SchemaID, recoverInfo.TableInfo
+	schemaID, tbInfo := recoverTableInfo.SchemaID, recoverTableInfo.TableInfo
 	// Check schema exist.
 	schema, ok := is.SchemaByID(schemaID)
 	if !ok {
@@ -1463,9 +1463,9 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverInfo *model.Recov
 	// for "flashback table xxx to yyy"
 	// Note: this case only allow change table name, schema remains the same.
 	var involvedSchemas []model.InvolvingSchemaInfo
-	if recoverInfo.OldTableName != tbInfo.Name.L {
+	if recoverTableInfo.OldTableName != tbInfo.Name.L {
 		involvedSchemas = []model.InvolvingSchemaInfo{
-			{Database: schema.Name.L, Table: recoverInfo.OldTableName},
+			{Database: schema.Name.L, Table: recoverTableInfo.OldTableName},
 			{Database: schema.Name.L, Table: tbInfo.Name.L},
 		}
 	}
@@ -1485,7 +1485,9 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverInfo *model.Recov
 	}
 
 	args := &model.RecoverArgs{
-		RecoverInfo:      recoverInfo,
+		RecoverInfo: &model.RecoverSchemaInfo{
+			RecoverTableInfos: []*model.RecoverTableInfo{recoverTableInfo},
+		},
 		RecoverCheckFlag: recoverCheckFlagNone}
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)

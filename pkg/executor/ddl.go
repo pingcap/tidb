@@ -422,7 +422,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return err
 	}
 
-	recoverInfo := &model.RecoverInfo{
+	recoverInfo := &model.RecoverTableInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
@@ -473,9 +473,11 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 			fmt.Sprintf("(Table ID %d)", job.TableID),
 		)
 	}
-	// Return the cloned meta here, since meta will be modified later.
+	// Return a shallow meta here, since the state field will be modified later.
 	// This may corrupt the infocache.
-	return job, table.Meta().Clone(), nil
+	// see https://github.com/pingcap/tidb/issues/55462
+	tblInfo := *table.Meta()
+	return job, &tblInfo, nil
 }
 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
@@ -540,7 +542,12 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	if tableInfo.TempTableType == model.TempTableGlobal {
 		return nil, nil, exeerrors.ErrUnsupportedFlashbackTmpTable
 	}
-	return jobInfo, tableInfo, nil
+
+	// Return a shallow copy of the table meta here.
+	// Since it's retrieved from infocache and its State field will be changed later.
+	// see https://github.com/pingcap/tidb/issues/55462
+	tblInfo := *tableInfo
+	return jobInfo, &tblInfo, nil
 }
 
 func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error {
@@ -579,7 +586,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 
-	recoverInfo := &model.RecoverInfo{
+	recoverInfo := &model.RecoverTableInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,

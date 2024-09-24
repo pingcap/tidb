@@ -140,7 +140,7 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, t *meta.Meta, job *model.Job
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	recoverInfo := args.RecoverInfo
+	recoverInfo := args.RecoverTableInfos()[0]
 
 	schemaID := recoverInfo.SchemaID
 	tblInfo := recoverInfo.TableInfo
@@ -238,7 +238,7 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, t *meta.Meta, job *model.Job
 	return ver, nil
 }
 
-func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *model.RecoverInfo) (ver int64, err error) {
+func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *model.RecoverTableInfo) (ver int64, err error) {
 	var tids []int64
 	if recoverInfo.TableInfo.GetPartitionInfo() != nil {
 		tids = getPartitionIDs(recoverInfo.TableInfo)

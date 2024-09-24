@@ -30,7 +30,7 @@ type AutoIDGroup struct {
 }
 
 // RecoverInfo contains information needed by DDL.RecoverTable.
-type RecoverInfo struct {
+type RecoverTableInfo struct {
 	SchemaID      int64
 	TableInfo     *TableInfo
 	DropJobID     int64
@@ -43,7 +43,7 @@ type RecoverInfo struct {
 // RecoverSchemaInfo contains information needed by DDL.RecoverSchema.
 type RecoverSchemaInfo struct {
 	*DBInfo
-	RecoverTabsInfo []*RecoverInfo
+	RecoverTableInfos []*RecoverTableInfo
 	// LoadTablesOnExecute is the new logic to avoid a large RecoverTabsInfo can't be
 	// persisted. If it's true, DDL owner will recover RecoverTabsInfo instead of the
 	// job submit node.
@@ -870,47 +870,51 @@ func GetRepairTableArgs(job *Job) (*RepairTableArgs, error) {
 
 // RecoverArgs is the argument for recover table/schema.
 type RecoverArgs struct {
-	RecoverInfo       *RecoverInfo       `json:"recover_table_info,omitempty"`
-	RecoverSchemaInfo *RecoverSchemaInfo `json:"recover_schema_info,omitempty"`
-	RecoverCheckFlag  int64              `json:"recover_check_flag_none"`
+	RecoverInfo      *RecoverSchemaInfo `json:"recover_info"`
+	RecoverCheckFlag int64              `json:"recover_check_flag_none"`
 }
 
 func (a *RecoverArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
 		if job.Type == ActionRecoverTable {
-			job.Args = []any{a.RecoverInfo, a.RecoverCheckFlag}
+			job.Args = []any{a.RecoverTableInfos()[0], a.RecoverCheckFlag}
 		} else {
-			job.Args = []any{a.RecoverSchemaInfo, a.RecoverCheckFlag}
+			job.Args = []any{a.RecoverInfo, a.RecoverCheckFlag}
 		}
 		return
 	}
 	job.Args = []any{a}
 }
 
+func (a *RecoverArgs) RecoverTableInfos() []*RecoverTableInfo {
+	return a.RecoverInfo.RecoverTableInfos
+}
+
 // GetRecoverArgs get the recover table/schema args.
 func GetRecoverArgs(job *Job) (*RecoverArgs, error) {
 	if job.Version == JobVersion1 {
 		var (
-			recoverTableInfo  *RecoverInfo
-			recoverSchemaInfo *RecoverSchemaInfo
+			recoverTableInfo  *RecoverTableInfo
+			recoverSchemaInfo *RecoverSchemaInfo = &RecoverSchemaInfo{}
 			recoverCheckFlag  int64
-			err               error
 		)
 
 		if job.Type == ActionRecoverTable {
-			err = job.DecodeArgs(&recoverTableInfo, &recoverCheckFlag)
+			err := job.DecodeArgs(&recoverTableInfo, &recoverCheckFlag)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			recoverSchemaInfo.RecoverTableInfos = []*RecoverTableInfo{recoverTableInfo}
 		} else {
-			err = job.DecodeArgs(&recoverSchemaInfo, &recoverCheckFlag)
-		}
-
-		if err != nil {
-			return nil, errors.Trace(err)
+			err := job.DecodeArgs(&recoverSchemaInfo, &recoverCheckFlag)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 
 		return &RecoverArgs{
-			RecoverInfo:       recoverTableInfo,
-			RecoverSchemaInfo: recoverSchemaInfo,
-			RecoverCheckFlag:  recoverCheckFlag}, nil
+			RecoverInfo:      recoverSchemaInfo,
+			RecoverCheckFlag: recoverCheckFlag}, nil
 	}
 
 	return getOrDecodeArgsV2[*RecoverArgs](job)

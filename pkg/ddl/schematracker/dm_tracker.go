@@ -320,7 +320,7 @@ func (d *SchemaTracker) DropTable(_ sessionctx.Context, stmt *ast.DropTableStmt)
 }
 
 // RecoverTable implements the DDL interface, which is no-op in DM's case.
-func (*SchemaTracker) RecoverTable(_ sessionctx.Context, _ *model.RecoverInfo) (err error) {
+func (*SchemaTracker) RecoverTable(_ sessionctx.Context, _ *model.RecoverTableInfo) (err error) {
 	return nil
 }
 
