@@ -1167,7 +1167,6 @@ const (
 	//   create `mysql.index_advisor_results` table
 	version214 = 214
 
-
 	// version 215
 	//   changes variable `tidb_scatter_region` value from ON to "table" and OFF to "".
 	version215 = 215
@@ -3193,7 +3192,7 @@ func upgradeToVer214(s sessiontypes.Session, ver int64) {
 }
 
 func upgradeToVer215(s sessiontypes.Session, ver int64) {
-	if ver >= version214 {
+	if ver >= version215 {
 		return
 	}
 
