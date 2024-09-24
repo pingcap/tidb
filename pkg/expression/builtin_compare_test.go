@@ -77,11 +77,7 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 	for _, test := range tests {
 		f, err := ParseSimpleExprsWithNames(ctx, test.exprStr, schema, names)
 		require.NoError(t, err)
-<<<<<<< HEAD
-		require.Equal(t, test.result, f[0].String())
-=======
-		require.Equal(t, test.result, f.StringWithCtx(ctx, errors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		require.Equal(t, test.result, f[0].StringWithCtx(false))
 	}
 }
 

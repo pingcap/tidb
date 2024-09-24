@@ -155,11 +155,7 @@ go_library(
         "//pkg/util/plancache",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
-<<<<<<< HEAD
-=======
-        "//pkg/util/ranger/context",
         "//pkg/util/redact",
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
         "//pkg/util/rowcodec",
         "//pkg/util/sem",
         "//pkg/util/set",

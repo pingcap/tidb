@@ -44,7 +44,7 @@ func genColumn(tp byte, id int64) *Column {
 func TestConstant2Pb(t *testing.T) {
 	t.Skip("constant pb has changed")
 	var constExprs []Expression
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	// can be transformed
@@ -127,7 +127,7 @@ func TestConstant2Pb(t *testing.T) {
 
 func TestColumn2Pb(t *testing.T) {
 	var colExprs []Expression
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	colExprs = append(colExprs, genColumn(mysql.TypeSet, 1))
@@ -219,7 +219,7 @@ func TestColumn2Pb(t *testing.T) {
 
 func TestCompareFunc2Pb(t *testing.T) {
 	var compareExprs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	funcNames := []string{ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE, ast.NullEQ}
@@ -255,7 +255,7 @@ func TestCompareFunc2Pb(t *testing.T) {
 
 func TestLikeFunc2Pb(t *testing.T) {
 	var likeFuncs []Expression
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	retTp := types.NewFieldType(mysql.TypeString)
@@ -293,7 +293,7 @@ func TestLikeFunc2Pb(t *testing.T) {
 
 func TestArithmeticalFunc2Pb(t *testing.T) {
 	var arithmeticalFuncs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	funcNames := []string{ast.Plus, ast.Minus, ast.Mul, ast.Div}
@@ -339,7 +339,7 @@ func TestArithmeticalFunc2Pb(t *testing.T) {
 }
 
 func TestDateFunc2Pb(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	fc, err := NewFunction(
@@ -360,7 +360,7 @@ func TestDateFunc2Pb(t *testing.T) {
 
 func TestLogicalFunc2Pb(t *testing.T) {
 	var logicalFuncs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	funcNames := []string{ast.LogicAnd, ast.LogicOr, ast.LogicXor, ast.UnaryNot}
@@ -396,7 +396,7 @@ func TestLogicalFunc2Pb(t *testing.T) {
 
 func TestBitwiseFunc2Pb(t *testing.T) {
 	var bitwiseFuncs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	funcNames := []string{ast.And, ast.Or, ast.Xor, ast.LeftShift, ast.RightShift, ast.BitNeg}
@@ -434,7 +434,7 @@ func TestBitwiseFunc2Pb(t *testing.T) {
 
 func TestControlFunc2Pb(t *testing.T) {
 	var controlFuncs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	funcNames := []string{
@@ -475,7 +475,7 @@ func TestControlFunc2Pb(t *testing.T) {
 
 func TestOtherFunc2Pb(t *testing.T) {
 	var otherFuncs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	funcNames := []string{ast.Coalesce, ast.IsNull}
@@ -504,7 +504,7 @@ func TestOtherFunc2Pb(t *testing.T) {
 }
 
 func TestJsonPushDownToFlash(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	exprs := make([]Expression, 0)
@@ -608,7 +608,7 @@ func TestJsonPushDownToFlash(t *testing.T) {
 }
 
 func TestExprPushDownToFlash(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	exprs := make([]Expression, 0)
@@ -1378,7 +1378,7 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 func TestExprOnlyPushDownToFlash(t *testing.T) {
 	t.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	exprs := make([]Expression, 0)
@@ -1435,7 +1435,7 @@ func TestExprOnlyPushDownToFlash(t *testing.T) {
 }
 
 func TestExprPushDownToTiKV(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	exprs := make([]Expression, 0)
@@ -1623,7 +1623,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 }
 
 func TestExprOnlyPushDownToTiKV(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	function, err := NewFunction(mock.NewContext(), "uuid", types.NewFieldType(mysql.TypeLonglong))
@@ -1649,7 +1649,7 @@ func TestExprOnlyPushDownToTiKV(t *testing.T) {
 }
 
 func TestGroupByItem2Pb(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	item := genColumn(mysql.TypeDouble, 0)
@@ -1666,7 +1666,7 @@ func TestGroupByItem2Pb(t *testing.T) {
 }
 
 func TestSortByItem2Pb(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	item := genColumn(mysql.TypeDouble, 0)
@@ -1697,7 +1697,7 @@ func TestPushCollationDown(t *testing.T) {
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
 	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
 		fc.SetCharsetAndCollation("binary", coll) // only collation matters
-		pbExpr, err := ExpressionsToPBList(sc, []Expression{fc}, client)
+		pbExpr, err := ExpressionsToPBList(mock.NewContext(), []Expression{fc}, client)
 		require.NoError(t, err)
 		expr, err := PBToExpr(pbExpr[0], tps, sc)
 		require.NoError(t, err)
@@ -1714,7 +1714,7 @@ func columnCollation(c *Column, chs, coll string) *Column {
 
 func TestNewCollationsEnabled(t *testing.T) {
 	var colExprs []Expression
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	colExprs = colExprs[:0]
@@ -1753,7 +1753,7 @@ func TestNewCollationsEnabled(t *testing.T) {
 }
 
 func TestMetadata(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("all")`))
@@ -1795,7 +1795,7 @@ func TestMetadata(t *testing.T) {
 
 func TestPushDownSwitcher(t *testing.T) {
 	var funcs = make([]Expression, 0)
-	sc := stmtctx.NewStmtCtx()
+	sc := mock.NewContext()
 	client := new(mock.Client)
 
 	cases := []struct {
@@ -1876,6 +1876,6 @@ func TestPanicIfPbCodeUnspecified(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/PanicIfPbCodeUnspecified"))
 	}()
-	pc := PbConverter{client: new(mock.Client), sc: stmtctx.NewStmtCtx()}
+	pc := PbConverter{client: new(mock.Client), sc: mock.NewContext()}
 	require.PanicsWithError(t, "unspecified PbCode: *expression.builtinBitAndSig", func() { pc.ExprToPB(fn) })
 }

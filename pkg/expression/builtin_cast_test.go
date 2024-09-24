@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1436,11 +1435,7 @@ func TestWrapWithCastAsString(t *testing.T) {
 	}
 
 	expr := BuildCastFunction(ctx, &Constant{RetType: types.NewFieldType(mysql.TypeEnum)}, types.NewFieldType(mysql.TypeVarString))
-<<<<<<< HEAD
-	require.NotContains(t, expr.String(), "to_binary")
-=======
-	require.NotContains(t, expr.StringWithCtx(ctx, errors.RedactLogDisable), "to_binary")
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+	require.NotContains(t, expr.StringWithCtx(false), "to_binary")
 }
 
 func TestWrapWithCastAsJSON(t *testing.T) {
