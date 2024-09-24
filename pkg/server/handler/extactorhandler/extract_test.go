@@ -24,12 +24,9 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-<<<<<<< HEAD:pkg/server/handler/extactorhandler/extract_test.go
-=======
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
->>>>>>> d940b7ddc2b (*: init ctx for extractWorker (#55228)):pkg/server/handler/extractorhandler/extract_test.go
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler/extactorhandler"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
@@ -37,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
@@ -48,18 +44,6 @@ func TestExtractHandler(t *testing.T) {
 	defer closeStmtSummary()
 
 	store := testkit.CreateMockStore(t)
-	testExtractHandler(t, store)
-}
-
-func TestExtractHandlerInfoSchemaV2(t *testing.T) {
-	setupStmtSummary()
-	defer closeStmtSummary()
-
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_schema_cache_size = 600*1024*1024")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/skipGet", `return()`)
-
 	testExtractHandler(t, store)
 }
 
@@ -79,14 +63,11 @@ func testExtractHandler(t *testing.T, store kv.Storage) {
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
 	server.SetDomain(dom)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_schema_cache_size = 600*1024*1024")
 	go func() {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	<-server2.RunInGoTestChan
-
 	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	client.WaitUntilServerOnline()
@@ -98,7 +79,10 @@ func testExtractHandler(t *testing.T, store kv.Storage) {
 	eh := &extactorhandler.ExtractTaskServeHandler{ExtractHandler: dom.GetExtractHandle()}
 	router := mux.NewRouter()
 	router.Handle("/extract_task/dump", eh)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/server/extractTaskServeHandler", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/extractTaskServeHandler", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/extractTaskServeHandler"))
+	}()
 	resp0, err := client.FetchStatus(fmt.Sprintf("/extract_task/dump?type=plan&begin=%s&end=%s",
 		url.QueryEscape(startTime.Format(types.TimeFormat)), url.QueryEscape(endTime.Format(types.TimeFormat))))
 	require.NoError(t, err)
