@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	tikverr "github.com/tikv/client-go/v2/error"
