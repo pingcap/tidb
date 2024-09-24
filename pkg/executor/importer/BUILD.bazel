@@ -69,11 +69,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
-<<<<<<< HEAD
         "@org_golang_x_sync//errgroup",
-=======
-        "@io_etcd_go_etcd_client_v3//:client",
->>>>>>> a807829ed9e (importinto: protect panic from encode loop (#56166))
         "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",
     ],
