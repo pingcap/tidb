@@ -301,24 +301,35 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 func (rc *SnapClient) InitCheckpoint(
 	ctx context.Context,
 	s storage.ExternalStorage,
-	taskName string,
 	config *pdutil.ClusterConfig,
 	checkpointFirstRun bool,
-) (map[int64]map[string]struct{}, *pdutil.ClusterConfig, error) {
-	var (
-		// checkpoint sets distinguished by range key
-		checkpointSetWithTableID = make(map[int64]map[string]struct{})
-
-		checkpointClusterConfig *pdutil.ClusterConfig
-
-		err error
-	)
+) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
+	// checkpoint sets distinguished by range key
+	checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
 	if !checkpointFirstRun {
+		execCtx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, s, taskName)
+		meta, err := checkpoint.LoadCheckpointMetadataForSnapshotRestore(ctx, execCtx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
+		}
+
+		if meta.UpstreamClusterID != rc.backupMeta.ClusterId {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The upstream cluster id[%d] of the current snapshot restore does not match that[%d] recorded in checkpoint. "+
+					"Perhaps you should specify the last full backup storage instead, "+
+					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
+				rc.backupMeta.ClusterId, meta.UpstreamClusterID, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+		}
+
+		if meta.RestoredTS != rc.backupMeta.EndVersion {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The current snapshot restore want to restore cluster to the BackupTS[%d], which is different from that[%d] recorded in checkpoint. "+
+					"Perhaps you should specify the last full backup storage instead, "+
+					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
+				rc.backupMeta.EndVersion, meta.RestoredTS, checkpoint.SnapshotRestoreCheckpointDatabaseName,
+			)
 		}
 
 		// The schedulers config is nil, so the restore-schedulers operation is just nil.
@@ -329,7 +340,7 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 
 		// t1 is the latest time the checkpoint ranges persisted to the external storage.
-		t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rangeKey checkpoint.RestoreValueType) {
+		t1, err := checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, execCtx, func(tableID int64, rangeKey checkpoint.RestoreValueType) {
 			checkpointSet, exists := checkpointSetWithTableID[tableID]
 			if !exists {
 				checkpointSet = make(map[string]struct{})
@@ -341,7 +352,7 @@ func (rc *SnapClient) InitCheckpoint(
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 		// t2 is the latest time the checkpoint checksum persisted to the external storage.
-		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
+		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, execCtx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
@@ -354,17 +365,20 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
-		meta := &checkpoint.CheckpointMetadataForRestore{}
+		meta := &checkpoint.CheckpointMetadataForSnapshotRestore{
+			UpstreamClusterID: rc.backupMeta.ClusterId,
+			RestoredTS:        rc.backupMeta.EndVersion,
+		}
 		// a nil config means undo function
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
 		}
-		if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, meta, taskName); err != nil {
+		if err := checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, rc.db.Session(), meta); err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 	}
 
-	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, s, rc.cipher, taskName)
+	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, rc.db.Session())
 	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
 }
 

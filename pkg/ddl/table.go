@@ -592,16 +592,14 @@ func onRebaseAutoRandomType(jobCtx *jobContext, t *meta.Meta, job *model.Job) (v
 }
 
 func onRebaseAutoID(jobCtx *jobContext, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
-	schemaID := job.SchemaID
-	var (
-		newBase int64
-		force   bool
-	)
-	err := job.DecodeArgs(&newBase, &force)
+	args, err := model.GetRebaseAutoIDArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	schemaID := job.SchemaID
+	newBase, force := args.NewBase, args.Force
 
 	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
@@ -987,8 +985,8 @@ func finishJobRenameTables(jobCtx *jobContext, t *meta.Meta, job *model.Job, arg
 }
 
 func onModifyTableComment(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var comment string
-	if err := job.DecodeArgs(&comment); err != nil {
+	args, err := model.GetModifyTableCommentArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -1003,7 +1001,7 @@ func onModifyTableComment(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver
 		return ver, nil
 	}
 
-	tblInfo.Comment = comment
+	tblInfo.Comment = args.Comment
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -1013,12 +1011,12 @@ func onModifyTableComment(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver
 }
 
 func onModifyTableCharsetAndCollate(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var toCharset, toCollate string
-	var needsOverwriteCols bool
-	if err := job.DecodeArgs(&toCharset, &toCollate, &needsOverwriteCols); err != nil {
+	args, err := model.GetModifyTableCharsetAndCollateArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	toCharset, toCollate, needsOverwriteCols := args.ToCharset, args.ToCollate, args.NeedsOverwriteCols
 
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
