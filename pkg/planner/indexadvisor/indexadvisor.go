@@ -48,6 +48,13 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
 		return nil, errors.New("nil input")
 	}
 
+	advisorLogger().Info("fill index advisor option")
+	if err := fillOption(sctx, option); err != nil {
+		advisorLogger().Error("fill index advisor option failed", zap.Error(err))
+		return nil, err
+	}
+	advisorLogger().Info("index advisor option filled", zap.Any("option", option))
+
 	advisorLogger().Info("start to recommend indexes")
 	defer func() {
 		if r := recover(); r != nil {

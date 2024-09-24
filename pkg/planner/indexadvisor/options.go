@@ -1,0 +1,128 @@
+// Copyright 2024 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package indexadvisor
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pkg/errors"
+)
+
+const (
+	OptModule          = "index_advisor"
+	OptMaxNumIndex     = "max_num_index"
+	OptMaxIndexColumns = "max_index_columns"
+)
+
+func fillOption(sctx sessionctx.Context, opt *Option) error {
+	vals, err := getOption(sctx, OptMaxNumIndex, OptMaxIndexColumns)
+	if err != nil {
+		return err
+	}
+	if opt.MaxNumIndexes == 0 {
+		i, _ := strconv.ParseInt(vals[OptMaxNumIndex], 10, 64)
+		opt.MaxNumIndexes = int(i)
+	}
+	if opt.MaxIndexWidth == 0 {
+		i, _ := strconv.ParseInt(vals[OptMaxIndexColumns], 10, 64)
+		opt.MaxIndexWidth = int(i)
+	}
+	return nil
+}
+
+func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
+	var v string
+	switch opt {
+	case OptMaxNumIndex, OptMaxIndexColumns:
+		x, err := intVal(val)
+		if err != nil {
+			return err
+		}
+		if x <= 0 {
+			return errors.Errorf("invalid value %v for %s", x, opt)
+		}
+		v = fmt.Sprintf("%v", x)
+	default:
+		return errors.Errorf("unknown option %s", opt)
+	}
+	template := `INSERT INTO mysql.tidb_kernel_options VALUES (%?, %?, %?, now(), 'valid', %?)
+		ON DUPLICATE KEY UPDATE value = %?, updated_at=now(), description = %?`
+	_, err := exec(sctx, template, OptModule, opt, v, description(opt), v, description(opt))
+	return err
+}
+
+func getOption(sctx sessionctx.Context, opts ...string) (map[string]string, error) {
+	template := `SELECT name, value FROM mysql.tidb_kernel_options WHERE module = '%v' AND name in (%v)`
+	var optStrs string
+	for i, opt := range opts {
+		if i > 0 {
+			optStrs += ","
+		}
+		optStrs += fmt.Sprintf("'%s'", opt)
+	}
+
+	sql := fmt.Sprintf(template, OptModule, optStrs)
+	rows, err := exec(sctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	res := make(map[string]string)
+	for _, row := range rows {
+		res[row.GetString(0)] = row.GetString(1)
+	}
+	for _, opt := range opts {
+		if _, ok := res[opt]; !ok {
+			res[opt] = defaultVal(opt)
+		}
+	}
+	return res, nil
+}
+
+func description(opt string) string {
+	switch opt {
+	case OptMaxNumIndex:
+		return "The maximum number of indexes to recommend for a table."
+	case OptMaxIndexColumns:
+		return "The maximum number of columns in an index."
+	}
+	return ""
+}
+
+func defaultVal(opt string) string {
+	switch opt {
+	case OptMaxNumIndex:
+		return "5"
+	case OptMaxIndexColumns:
+		return "3"
+	}
+	return ""
+}
+
+func intVal(val ast.ValueExpr) (int, error) {
+	v := val.GetValue()
+	switch v.(type) {
+	case int:
+		return v.(int), nil
+	case uint64:
+		return int(v.(uint64)), nil
+	case int64:
+		return int(v.(int64)), nil
+	default:
+		return 0, errors.Errorf("invalid value type %T", v)
+	}
+}

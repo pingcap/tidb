@@ -2744,14 +2744,15 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.done = true
 
+	if e.Action == "set" {
+		return indexadvisor.SetOption(e.Ctx(), e.Option, e.Value)
+	}
+
 	if e.Action != "run" {
 		return fmt.Errorf("unsupported action: %s", e.Action)
 	}
 
-	opt := &indexadvisor.Option{
-		MaxNumIndexes: 3,
-		MaxIndexWidth: 3,
-	}
+	opt := &indexadvisor.Option{}
 	if e.SQL != "" {
 		opt.SpecifiedSQLs = []string{e.SQL}
 	}
