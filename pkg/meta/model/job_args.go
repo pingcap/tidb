@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-// ModelAutoIDGroup is the same as meta.AutoIDGroup to avoid cycle import.
-type ModelAutoIDGroup struct {
+// IDGroup is the same as meta.AutoIDGroup to avoid cycle import.
+type IDGroup struct {
 	RowID       int64
 	IncrementID int64
 	RandomID    int64
@@ -36,7 +36,7 @@ type RecoverTableInfo struct {
 	TableInfo     *TableInfo
 	DropJobID     int64
 	SnapshotTS    uint64
-	AutoIDs       ModelAutoIDGroup
+	AutoIDs       IDGroup
 	OldSchemaName string
 	OldTableName  string
 }
