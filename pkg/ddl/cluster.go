@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -81,7 +82,7 @@ func closePDSchedule(ctx context.Context) error {
 	return infosync.SetPDScheduleConfig(ctx, closeMap)
 }
 
-func savePDSchedule(ctx context.Context, job *model.Job) error {
+func savePDSchedule(ctx context.Context, args *model.FlashbackClusterArgs) error {
 	retValue, err := infosync.GetPDScheduleConfig(ctx)
 	if err != nil {
 		return err
@@ -90,7 +91,7 @@ func savePDSchedule(ctx context.Context, job *model.Job) error {
 	for _, key := range pdScheduleKey {
 		saveValue[key] = retValue[key]
 	}
-	job.Args[pdScheduleArgsOffset] = &saveValue
+	args.PDScheduleValue = &saveValue
 	return nil
 }
 
@@ -713,18 +714,14 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 		return ver, errors.Errorf("Not support flashback cluster in non-TiKV env")
 	}
 
-	var flashbackTS, lockedRegions, startTS, commitTS uint64
-	var pdScheduleValue map[string]any
-	var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
-	var gcEnabledValue bool
-	var keyRanges []kv.KeyRange
-	if err := job.DecodeArgs(&flashbackTS, &pdScheduleValue, &gcEnabledValue, &autoAnalyzeValue, &readOnlyValue, &lockedRegions, &startTS, &commitTS, &ttlJobEnableValue, &keyRanges); err != nil {
+	args, err := model.GetFlashbackClusterArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	var totalRegions, completedRegions atomic.Uint64
-	totalRegions.Store(lockedRegions)
+	totalRegions.Store(args.TotalRegions)
 
 	sess, err := w.sessPool.Get()
 	if err != nil {
@@ -736,7 +733,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and update job args.
 	case model.StateNone:
-		if err = savePDSchedule(w.ctx, job); err != nil {
+		if err = savePDSchedule(w.ctx, args); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -745,45 +742,45 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		job.Args[gcEnabledOffset] = &gcEnableValue
-		autoAnalyzeValue, err = getTiDBEnableAutoAnalyze(sess)
+		args.TiDBEnableGC = gcEnableValue
+		autoAnalyzeValue, err := getTiDBEnableAutoAnalyze(sess)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		job.Args[autoAnalyzeOffset] = &autoAnalyzeValue
-		readOnlyValue, err = getTiDBSuperReadOnly(sess)
+		args.TiDBEnableAutoAnalyze = autoAnalyzeValue
+		readOnlyValue, err := getTiDBSuperReadOnly(sess)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		job.Args[readOnlyOffset] = &readOnlyValue
-		ttlJobEnableValue, err = getTiDBTTLJobEnable(sess)
+		args.TiDBSuperReadOnly = readOnlyValue
+		ttlJobEnableValue, err := getTiDBTTLJobEnable(sess)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		job.Args[ttlJobEnableOffSet] = &ttlJobEnableValue
+		args.TiDBTTLJobEnable = &ttlJobEnableValue
 		job.SchemaState = model.StateDeleteOnly
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule, get flashback key ranges.
 	case model.StateDeleteOnly:
-		if err = checkAndSetFlashbackClusterInfo(w.ctx, sess, jobCtx.store, t, job, flashbackTS); err != nil {
+		if err = checkAndSetFlashbackClusterInfo(w.ctx, sess, jobCtx.store, t, job, args.FlashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		// We should get startTS here to avoid lost startTS when TiDB crashed during send prepare flashback RPC.
-		startTS, err = jobCtx.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		startTS, err := jobCtx.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		job.Args[startTSOffset] = startTS
-		keyRanges, err = getFlashbackKeyRanges(w.ctx, sess, flashbackTS)
+		args.StartTS = startTS
+		keyRanges, err := getFlashbackKeyRanges(w.ctx, sess, args.FlashbackTS)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.Args[keyRangesOffset] = keyRanges
+		args.FlashbackKeyRanges = *(*model.KeyRange)(unsafe.Pointer(&keyRanges))
 		job.SchemaState = model.StateWriteOnly
 		return updateSchemaVersion(jobCtx, t, job)
 	// Stage 3, lock related key ranges.

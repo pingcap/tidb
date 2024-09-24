@@ -1414,20 +1414,10 @@ func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) 
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Gap between local time and PD TSO is %s, please check PD/system time", gap))
 	}
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		Type:       model.ActionFlashbackCluster,
 		BinlogInfo: &model.HistoryInfo{},
 		// The value for global variables is meaningless, it will cover during flashback cluster.
-		Args: []any{
-			flashbackTS,
-			map[string]any{},
-			true,         /* tidb_gc_enable */
-			variable.On,  /* tidb_enable_auto_analyze */
-			variable.Off, /* tidb_super_read_only */
-			0,            /* totalRegions */
-			0,            /* startTS */
-			0,            /* commitTS */
-			variable.On,  /* tidb_ttl_job_enable */
-			[]kv.KeyRange{} /* flashback key_ranges */},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		// FLASHBACK CLUSTER affects all schemas and tables.
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
@@ -1436,7 +1426,17 @@ func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) 
 		}},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-	err = e.DoDDLJob(ctx, job)
+
+	args := &model.FlashbackClusterArgs{
+		FlashbackTS:           flashbackTS,
+		Tmp:                   map[string]any{},
+		TiDBEnableGC:          true,
+		TiDBEnableAutoAnalyze: true,
+		TiDBSuperReadOnly:     false,
+		TiDBTTLJobEnable:      true,
+		FlashbackKeyRanges:    []model.KeyRange{},
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 

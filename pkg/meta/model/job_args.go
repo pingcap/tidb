@@ -1044,3 +1044,73 @@ func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
 	}
 	return getOrDecodeArgsV2[*AddCheckConstraintArgs](job)
 }
+
+type KeyRange struct {
+	StartKey []byte
+	EndKey   []byte
+
+	XXXNoUnkeyedLiteral struct{}
+	XXXunrecognized     []byte
+	XXXsizecache        int32
+}
+
+type FlashbackClusterArgs struct {
+	FlashbackTS           uint64
+	PDScheduleValue       *map[string]any
+	TiDBEnableGC          bool
+	TiDBEnableAutoAnalyze bool
+	TiDBSuperReadOnly     bool
+	TotalRegions          uint64
+	StartTS               uint64
+	CommitTS              uint64
+	TiDBTTLJobEnable      bool
+	FlashbackKeyRanges    []KeyRange
+}
+
+func (a *FlashbackClusterArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{
+			a.FlashbackTS, a.PDScheduleValue, a.TiDBEnableGC, "ON", "ON",
+			a.TotalRegions, a.StartTS, a.CommitTS, "ON", a.FlashbackKeyRanges,
+		}
+		if !a.TiDBEnableAutoAnalyze {
+			job.Args[3] = "OFF"
+		}
+		if !a.TiDBSuperReadOnly {
+			job.Args[4] = "OFF"
+		}
+		if !a.TiDBTTLJobEnable {
+			job.Args[8] = "OFF"
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func GetFlashbackClusterArgs(job *Job) (*FlashbackClusterArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &FlashbackClusterArgs{}
+		var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
+
+		if err := job.DecodeArgs(
+			&args.FlashbackTS, &args.PDScheduleValue, &args.TiDBEnableGC,
+			&autoAnalyzeValue, &readOnlyValue, &args.TotalRegions,
+			&args.StartTS, &args.CommitTS, &ttlJobEnableValue, &args.FlashbackKeyRanges); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if autoAnalyzeValue == "ON" {
+			args.TiDBEnableAutoAnalyze = true
+		}
+		if readOnlyValue == "ON" {
+			args.TiDBSuperReadOnly = true
+		}
+		if ttlJobEnableValue == "ON" {
+			args.TiDBTTLJobEnable = true
+		}
+
+		return args, nil
+	}
+
+	return getOrDecodeArgsV2[*FlashbackClusterArgs](job)
+}
