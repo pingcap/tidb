@@ -954,8 +954,8 @@ func TestAddUniqueIndexFalsePositiveDuplicate(t *testing.T) {
 		_, err := tk1.Exec("replace into `t` values (3, 'dup');")
 		assert.NoError(t, err)
 	}
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)")
-
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)"))
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
 	tk.MustExec("alter table t add unique index idx(b);")
 	tk.MustExec("admin check table t;")
 }
