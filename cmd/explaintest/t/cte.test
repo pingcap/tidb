@@ -1,5 +1,8 @@
 set tidb_cost_model_version=1;
-use test;
+drop database if exists cte;
+create database cte;
+drop database if exists cte1;
+create database cte1;
 # case 1
 drop table if exists tbl_0;
 create table tbl_0(a int);
@@ -259,7 +262,7 @@ explain select * from t1 where exists(with recursive cte1 as (select c1, c2 from
 select * from t1 where exists(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 # Some cases to Test Create View With CTE and checkout Database
 # With name is the same as the table name
-use test;
+use cte;
 drop table if exists t1, t2;
 drop view if exists v1;
 create table t1 (a int);
@@ -267,14 +270,13 @@ insert into t1 values (0), (1), (2), (3), (4);
 create table t2 (a int);
 insert into t2 values (1), (2), (3), (4), (5);
 drop view if exists v1,v2;
-create view v1 as with t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc;
-create view v2 as with recursive t1 as ( select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc;
-create database if not exists test1;
-use test1;
-select * from test.v1;
-select * from test.v2;
+create view v1 as with t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc limit 5;
+create view v2 as with recursive t1 as ( select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc limit 5;
+use cte1;
+select * from cte.v1;
+select * from cte.v2;
 # case
-use test;
+use cte;
 drop table if exists t ,t1, t2;
 create table t(a int);
 insert into t values (0);
@@ -284,28 +286,28 @@ create table t2 (c int);
 insert into t2 values (0);
 drop view if exists v1;
 create view v1 as with t1 as (with t11 as (select * from t) select * from t1, t2) select * from t1;
-use test1;
-select * from test.v1;
+use cte1;
+select * from cte.v1;
 # case
-use test;
+use cte;
 drop table if exists t11111;
 create table t11111 (d int);
 insert into t11111 values (123), (223), (323);
 drop view if exists v1;
 create view v1 as WITH t123 AS (WITH t11111 AS ( SELECT * FROM t1 ) SELECT ( WITH t2 AS ( SELECT ( WITH t23 AS ( SELECT * FROM t11111 ) SELECT * FROM t23 LIMIT 1 ) FROM t11111 ) SELECT *  FROM t2  LIMIT 1  )  FROM t11111, t2 ) SELECT * FROM t11111;
-use test1;
-select * from test.v1;
+use cte1;
+select * from cte.v1;
 # case
-use test;
+use cte;
 drop table if exists t1;
 create table t1 (a int);
 insert into t1 values (1);
 drop view if exists v1;
 create view v1 as SELECT (WITH qn AS (SELECT 10*a as a FROM t1),qn2 AS (SELECT 3*a AS b FROM qn) SELECT * from qn2 LIMIT 1) FROM t1;
-use test1;
-select * from test.v1;
+use cte1;
+select * from cte.v1;
 # case
-use test;
+use cte;
 drop table if exists t1,t2;
 create table t1 (a int);
 insert into t1 values (0), (1);
@@ -313,8 +315,8 @@ create table t2 (b int);
 insert into t2 values  (4), (5);
 drop view if exists v1;
 create view v1 as with t1 as (with t11 as (select * from t1) select * from t1, t2) select * from t1;
-use test1;
-select * from test.v1;
+use cte1;
+select * from cte.v1;
 # case
 CREATE TABLE `t_cqmg3b` (
   `wkey` int(11) DEFAULT NULL,
@@ -337,73 +339,6 @@ WITH cte_0 AS (select distinct ref_0.wkey as c0, ref_0.pkey as c1, ref_0.c_xhsnd
 #case
 with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 as (select 3) select * from cte2 union all select * from cte2) order by 1;
 
-<<<<<<< HEAD:cmd/explaintest/t/cte.test
-# Tests for PR #55732
-drop table if exists t1, t2;
-create table t1(a int, b int);
-create table t2(a int, b int);
-insert into t1 value(5,5);
-insert into t2 value(1,1);
-with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1;
-# This UPDATE should update t2.b to 2
-update t2 set b=2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
-select * from t2;
-# This DELETE should delete all rows in t2
-delete from t2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
-select * from t2;
-
-# Issue #55666
-drop table if exists table_abc1;
-drop table if exists table_abc2;
-drop table if exists table_abc3;
-drop table if exists table_abc4;
-
-CREATE TABLE `table_abc1` (
-  `column_abc1` varchar(10) DEFAULT NULL,
-  `column_abc2` varchar(10) DEFAULT NULL,
-  `column_abc3` varchar(10) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-
-CREATE TABLE `table_abc3` (
-  `column_abc5` varchar(10) DEFAULT NULL,
-  `column_abc6` varchar(10) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-
-CREATE TABLE `table_abc4` (
-  `column_abc3` varchar(10) DEFAULT NULL,
-  `column_abc7` varchar(10) DEFAULT NULL,
-  `column_abc5` varchar(10) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-
-INSERT INTO `table_abc1` VALUES ('KTL157','KTL157','KTL157');
-INSERT INTO `table_abc3` VALUES ('1000','20240819');
-INSERT INTO `table_abc4` VALUES ('KTL157','test','1000');
-
-DELETE FROM table_abc3 t_abc3
-WHERE t_abc3.column_abc5 IN (
-    SELECT a.column_abc5
-    FROM (
-        WITH tree_cte1 AS (
-            WITH RECURSIVE tree_cte AS (
-                SELECT t.column_abc1, t.column_abc2, t.column_abc3, 0 AS lv
-                FROM table_abc1 t
-                WHERE t.column_abc1 IN ('KTL157', 'KTL159')
-                UNION ALL
-                SELECT t.column_abc1, t.column_abc2, t.column_abc3, tcte.lv + 1
-                FROM table_abc1 t
-                JOIN tree_cte tcte ON t.column_abc1 = tcte.column_abc2
-                WHERE tcte.lv <= 1
-            )
-            SELECT * FROM tree_cte
-        )
-        SELECT  e.column_abc5
-        FROM (
-            SELECT DISTINCT * FROM tree_cte1
-        ) aa
-        LEFT JOIN table_abc4 e ON e.column_abc3 = aa.column_abc3
-    ) a
-);
-=======
 # case: test CTE with complicated Apply and other operators
 drop table if exists tt, tt1, tt2, tt3, tt4, tt5;
 create table tt(c1 int, c2 int);
@@ -747,4 +682,70 @@ SELECT col_4
           FROM product_detail
 ) a;
 
->>>>>>> d04ec9d914a (planner: fix CTE hang or wrong result when multiple Apply is used (#55553)):tests/integrationtest/t/cte.test
+# Tests for PR #55732
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 value(5,5);
+insert into t2 value(1,1);
+with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1;
+# This UPDATE should update t2.b to 2
+update t2 set b=2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
+select * from t2;
+# This DELETE should delete all rows in t2
+delete from t2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
+select * from t2;
+
+# Issue #55666
+drop table if exists table_abc1;
+drop table if exists table_abc2;
+drop table if exists table_abc3;
+drop table if exists table_abc4;
+
+CREATE TABLE `table_abc1` (
+  `column_abc1` varchar(10) DEFAULT NULL,
+  `column_abc2` varchar(10) DEFAULT NULL,
+  `column_abc3` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `table_abc3` (
+  `column_abc5` varchar(10) DEFAULT NULL,
+  `column_abc6` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `table_abc4` (
+  `column_abc3` varchar(10) DEFAULT NULL,
+  `column_abc7` varchar(10) DEFAULT NULL,
+  `column_abc5` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+INSERT INTO `table_abc1` VALUES ('KTL157','KTL157','KTL157');
+INSERT INTO `table_abc3` VALUES ('1000','20240819');
+INSERT INTO `table_abc4` VALUES ('KTL157','test','1000');
+
+DELETE FROM table_abc3 t_abc3
+WHERE t_abc3.column_abc5 IN (
+    SELECT a.column_abc5
+    FROM (
+        WITH tree_cte1 AS (
+            WITH RECURSIVE tree_cte AS (
+                SELECT t.column_abc1, t.column_abc2, t.column_abc3, 0 AS lv
+                FROM table_abc1 t
+                WHERE t.column_abc1 IN ('KTL157', 'KTL159')
+                UNION ALL
+                SELECT t.column_abc1, t.column_abc2, t.column_abc3, tcte.lv + 1
+                FROM table_abc1 t
+                JOIN tree_cte tcte ON t.column_abc1 = tcte.column_abc2
+                WHERE tcte.lv <= 1
+            )
+            SELECT * FROM tree_cte
+        )
+        SELECT  e.column_abc5
+        FROM (
+            SELECT DISTINCT * FROM tree_cte1
+        ) aa
+        LEFT JOIN table_abc4 e ON e.column_abc3 = aa.column_abc3
+    ) a
+);
+
+
