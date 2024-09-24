@@ -1948,7 +1948,7 @@ Failed to split region ranges: %s
 
 ["executor:8253"]
 error = '''
-Query execution was interrupted, identified as runaway query
+Query execution was interrupted, identified as runaway query [%s]
 '''
 
 ["executor:8254"]

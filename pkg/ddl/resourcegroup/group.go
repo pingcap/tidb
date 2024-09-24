@@ -38,19 +38,20 @@ func NewGroupFromOptions(groupName string, options *model.ResourceGroupSettings)
 
 	group.Priority = uint32(options.Priority)
 	if options.Runaway != nil {
+		if options.Runaway.ExecElapsedTimeMs == 0 && options.Runaway.ProcessedKeys == 0 && options.Runaway.RequestUnit == 0 {
+			return nil, ErrResourceGroupRunawayRuleIsEmpty
+		}
 		runaway := &rmpb.RunawaySettings{
 			Rule: &rmpb.RunawayRule{},
 		}
-
 		// Update the rule settings.
-		if options.Runaway.ExecElapsedTimeMs == 0 {
-			return nil, ErrInvalidResourceGroupRunawayExecElapsedTime
-		}
 		runaway.Rule.ExecElapsedTimeMs = options.Runaway.ExecElapsedTimeMs
+		runaway.Rule.ProcessedKeys = options.Runaway.ProcessedKeys
+		runaway.Rule.RequestUnit = options.Runaway.RequestUnit
+		// Update the action settings.
 		if options.Runaway.Action == pmodel.RunawayActionNone {
 			return nil, ErrUnknownResourceGroupRunawayAction
 		}
-		// Update the action settings.
 		runaway.Action = rmpb.RunawayAction(options.Runaway.Action)
 		if options.Runaway.Action == pmodel.RunawayActionSwitchGroup && len(options.Runaway.SwitchGroupName) == 0 {
 			return nil, ErrUnknownResourceGroupRunawaySwitchGroupName

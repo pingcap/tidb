@@ -16,6 +16,7 @@ package indexadvisor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -85,6 +86,8 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return nil, err
 	}
+
+	saveRecommendations(sctx, results)
 
 	return results, nil
 }
@@ -175,6 +178,7 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 			Database:     idx.SchemaName,
 			Table:        idx.TableName,
 			IndexColumns: cols,
+			IndexDetail:  new(IndexDetail),
 		}
 
 		// generate a graceful index name
@@ -187,7 +191,7 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 			advisorLogger().Info("show index stats failed", zap.Error(err))
 			return nil, err
 		}
-		indexResult.IndexSize = uint64(indexSize)
+		indexResult.IndexDetail.IndexSize = uint64(indexSize)
 
 		// calculate the improvements
 		var workloadCostBefore, workloadCostAfter float64
@@ -241,8 +245,8 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 
 		normText, _ := NormalizeDigest(indexResult.TopImpactedQueries[0].Query)
 		indexResult.WorkloadImpact = workloadImpact
-		indexResult.Reason = fmt.Sprintf(`Column %v appear in Equal or
-Range Predicate clause(s) in query '%v'`, cols, normText)
+		indexResult.IndexDetail.Reason =
+			fmt.Sprintf(`Column %v appear in Equal or Range Predicate clause(s) in query: %v`, cols, normText)
 		results = append(results, indexResult)
 	}
 	return results, nil
@@ -277,4 +281,38 @@ func gracefulIndexName(opt Optimizer, schema, tableName string, cols []string) s
 		}
 	}
 	return indexName
+}
+
+func saveRecommendations(sctx sessionctx.Context, results []*Recommendation) {
+	for _, r := range results {
+		q, err := json.Marshal(r.TopImpactedQueries)
+		if err != nil {
+			advisorLogger().Error("marshal top impacted queries failed", zap.Error(err))
+			continue
+		}
+		w, err := json.Marshal(r.WorkloadImpact)
+		if err != nil {
+			advisorLogger().Error("marshal workload impact failed", zap.Error(err))
+			continue
+		}
+		d, err := json.Marshal(r.IndexDetail)
+		if err != nil {
+			advisorLogger().Error("marshal index detail failed", zap.Error(err))
+			continue
+		}
+
+		template := `insert into mysql.index_advisor_results (
+                created_at, updated_at, schema_name, table_name, index_name,
+                index_columns, index_details, top_impacted_queries, workload_impact, extra) values
+            (now(), now(), %?, %?, %?, %?, %?, %?, %?, null)
+            on duplicate key update
+            updated_at=now(), index_details=%?, top_impacted_queries=%?, workload_impact=%?`
+
+		if _, err := exec(sctx, template, r.Database, r.Table,
+			r.IndexName, strings.Join(r.IndexColumns, ","),
+			json.RawMessage(d), json.RawMessage(q), json.RawMessage(w),
+			json.RawMessage(d), json.RawMessage(q), json.RawMessage(w)); err != nil {
+			advisorLogger().Error("save advise result failed", zap.Error(err))
+		}
+	}
 }

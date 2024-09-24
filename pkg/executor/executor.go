@@ -2763,8 +2763,8 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendString(1, r.Table)
 		req.AppendString(2, r.IndexName)
 		req.AppendString(3, strings.Join(r.IndexColumns, ","))
-		req.AppendString(4, fmt.Sprintf("%v", r.IndexSize))
-		req.AppendString(5, r.Reason)
+		req.AppendString(4, fmt.Sprintf("%v", r.IndexDetail.IndexSize))
+		req.AppendString(5, r.IndexDetail.Reason)
 
 		jData, err := json.Marshal(r.TopImpactedQueries)
 		if err != nil {
