@@ -204,10 +204,10 @@ func SortedExplainNormalizedScalarFuncList(ctx sessionctx.Context, exprs []*Scal
 }
 
 // ExplainColumnList generates explain information for a list of columns.
-func ExplainColumnList(cols []*Column) []byte {
+func ExplainColumnList(ctx sessionctx.Context, cols []*Column) []byte {
 	buffer := bytes.NewBufferString("")
 	for i, col := range cols {
-		buffer.WriteString(col.ExplainInfo(nil))
+		buffer.WriteString(col.ExplainInfo(ctx))
 		if i+1 < len(cols) {
 			buffer.WriteString(", ")
 		}

@@ -524,11 +524,11 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 	}
 	if len(p.OuterJoinKeys) > 0 {
 		buffer.WriteString(", outer key:")
-		buffer.Write(expression.ExplainColumnList(p.OuterJoinKeys))
+		buffer.Write(expression.ExplainColumnList(p.SCtx(), p.OuterJoinKeys))
 	}
 	if len(p.InnerJoinKeys) > 0 {
 		buffer.WriteString(", inner key:")
-		buffer.Write(expression.ExplainColumnList(p.InnerJoinKeys))
+		buffer.Write(expression.ExplainColumnList(p.SCtx(), p.InnerJoinKeys))
 	}
 
 	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
@@ -680,11 +680,11 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	if len(p.LeftJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", left key:%s",
-			expression.ExplainColumnList(p.LeftJoinKeys))
+			expression.ExplainColumnList(p.SCtx(), p.LeftJoinKeys))
 	}
 	if len(p.RightJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", right key:%s",
-			expression.ExplainColumnList(p.RightJoinKeys))
+			expression.ExplainColumnList(p.SCtx(), p.RightJoinKeys))
 	}
 	if len(p.LeftConditions) > 0 {
 		if normalized {
