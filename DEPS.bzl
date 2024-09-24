@@ -10486,4 +10486,3 @@ def go_deps():
             "https://storage.googleapis.com/pingcapmirror/gomod/go.uber.org/zap/org_uber_go_zap-v1.26.0.zip",
         ],
     )
-
