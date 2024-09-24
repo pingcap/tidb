@@ -188,9 +188,8 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 			buffer.WriteString("handle:?")
 		} else {
 			redactMode := p.SCtx().GetSessionVars().EnableRedactLog
-			redactOn := redactMode == errors.RedactLogEnable
 			buffer.WriteString("handle:")
-			if redactOn {
+			if redactMode {
 				buffer.WriteString("?")
 			} else if p.UnsignedHandle {
 				redact.WriteRedact(&buffer, strconv.FormatUint(uint64(p.Handle.IntValue()), 10), redactMode)

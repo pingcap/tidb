@@ -23,8 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	ast "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -35,8 +34,8 @@ import (
 )
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
-func ExpressionsToPBList(sc *variable.SessionVars, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
-	pc := PbConverter{client: client, sc: sc}
+func ExpressionsToPBList(sc sessionctx.Context, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
+	pc := PbConverter{client: client, sc: &sc}
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
@@ -50,11 +49,11 @@ func ExpressionsToPBList(sc *variable.SessionVars, exprs []Expression, client kv
 // PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
-	sc     *variable.SessionVars
+	sc     *sessionctx.Context
 }
 
 // NewPBConverter creates a PbConverter.
-func NewPBConverter(client kv.Client, sc *variable.SessionVars) PbConverter {
+func NewPBConverter(client kv.Client, sc *sessionctx.Context) PbConverter {
 	return PbConverter{client: client, sc: sc}
 }
 
@@ -81,7 +80,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	ft := expr.GetType()
 	d, err := expr.Eval(chunk.Row{})
 	if err != nil {
-		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo(false)), zap.Error(err))
+		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo(*(pc.sc))), zap.Error(err))
 		return nil
 	}
 	tp, val, ok := pc.encodeDatum(ft, d)
@@ -144,7 +143,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.GetType(), nil)
+			val, err := codec.EncodeMySQLTime((*(pc.sc)).GetSessionVars().StmtCtx, d.GetMysqlTime(), ft.GetType(), nil)
 			if err != nil {
 				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
@@ -277,8 +276,8 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 }
 
 // GroupByItemToPB converts group by items to pb.
-func GroupByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Expression) *tipb.ByItem {
-	pc := PbConverter{client: client, sc: sc}
+func GroupByItemToPB(sc sessionctx.Context, client kv.Client, expr Expression) *tipb.ByItem {
+	pc := PbConverter{client: client, sc: &sc}
 	e := pc.ExprToPB(expr)
 	if e == nil {
 		return nil
@@ -287,8 +286,8 @@ func GroupByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Expres
 }
 
 // SortByItemToPB converts order by items to pb.
-func SortByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Expression, desc bool) *tipb.ByItem {
-	pc := PbConverter{client: client, sc: sc}
+func SortByItemToPB(sc sessionctx.Context, client kv.Client, expr Expression, desc bool) *tipb.ByItem {
+	pc := PbConverter{client: client, sc: &sc}
 	e := pc.ExprToPB(expr)
 	if e == nil {
 		return nil

@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
@@ -287,7 +286,7 @@ func (gs GroupingSet) MemoryUsage() int64 {
 }
 
 // ToPB is used to convert current grouping set to pb constructor.
-func (gs GroupingSet) ToPB(sc *variable.SessionVars, client kv.Client) (*tipb.GroupingSet, error) {
+func (gs GroupingSet) ToPB(sc sessionctx.Context, client kv.Client) (*tipb.GroupingSet, error) {
 	res := &tipb.GroupingSet{}
 	for _, gExprs := range gs {
 		gExprsPB, err := ExpressionsToPBList(sc, gExprs, client)
@@ -341,7 +340,7 @@ func (gss GroupingSets) StringWithCtx(redact bool) string {
 }
 
 // ToPB is used to convert current grouping sets to pb constructor.
-func (gss GroupingSets) ToPB(sc *variable.SessionVars, client kv.Client) ([]*tipb.GroupingSet, error) {
+func (gss GroupingSets) ToPB(sc sessionctx.Context, client kv.Client) ([]*tipb.GroupingSet, error) {
 	res := make([]*tipb.GroupingSet, 0, len(gss))
 	for _, gs := range gss {
 		one, err := gs.ToPB(sc, client)

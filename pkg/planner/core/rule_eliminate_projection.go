@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 
-	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -214,7 +213,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {
 				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
-				foldedExpr := expression.FoldConstant(proj.Exprs[i])
+				foldedExpr := expression.FoldConstant(p.SCtx(), proj.Exprs[i])
 				// the folded expr should have the same null flag with the original expr, especially for the projection under union, so forcing it here.
 				foldedExpr.GetType().SetFlag((foldedExpr.GetType().GetFlag() & ^mysql.NotNullFlag) | (proj.Exprs[i].GetType().GetFlag() & mysql.NotNullFlag))
 				proj.Exprs[i] = foldedExpr
@@ -348,11 +347,7 @@ func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *logi
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-<<<<<<< HEAD
-			buffer.WriteString(expr.String())
-=======
-			buffer.WriteString(expr.StringWithCtx(ectx, perrors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			buffer.WriteString(expr.StringWithCtx(false))
 		}
 		buffer.WriteString("]")
 		return buffer.String()

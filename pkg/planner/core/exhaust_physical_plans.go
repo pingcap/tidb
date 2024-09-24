@@ -880,7 +880,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		if helper == nil {
 			return nil
 		}
-		rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols, outerJoinKeys)
+		rangeInfo := helper.buildRangeDecidedByInformation(p.SCtx(), helper.chosenPath.IdxCols, outerJoinKeys)
 		innerTask = p.constructInnerTableScanTask(wrapper, helper.chosenRanges.Range(), outerJoinKeys, rangeInfo, false, false, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
@@ -917,11 +917,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			if i != 0 {
 				buffer.WriteString(" ")
 			}
-<<<<<<< HEAD
-			buffer.WriteString(key.String())
-=======
-			buffer.WriteString(key.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			buffer.WriteString(key.StringWithCtx(false))
 		}
 		buffer.WriteString("]")
 		rangeInfo := buffer.String()
@@ -982,7 +978,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		return nil
 	}
 	joins = make([]PhysicalPlan, 0, 3)
-	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols, outerJoinKeys)
+	rangeInfo := helper.buildRangeDecidedByInformation(p.SCtx(), helper.chosenPath.IdxCols, outerJoinKeys)
 	maxOneRow := false
 	if helper.chosenPath.Index.Unique && helper.usedColsLen == len(helper.chosenPath.FullIdxCols) {
 		l := len(helper.chosenAccess)
@@ -1035,7 +1031,7 @@ type indexJoinBuildHelper struct {
 	curIdxOff2KeyOff    []int
 }
 
-func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*expression.Column, outerJoinKeys []*expression.Column) string {
+func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(ctx sessionctx.Context, idxCols []*expression.Column, outerJoinKeys []*expression.Column) string {
 	buffer := bytes.NewBufferString("[")
 	isFirst := true
 	for idxOff, keyOff := range ijHelper.idxOff2KeyOff {
@@ -1049,23 +1045,16 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 		}
 		fmt.Fprintf(buffer, "eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff])
 	}
-<<<<<<< HEAD
-=======
-	ectx := ijHelper.join.SCtx().GetExprCtx().GetEvalCtx()
+
 	// It is to build the range info which is used in explain. It is necessary to redact the range info.
-	redact := ectx.GetTiDBRedactLog()
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+	redact := ctx.GetSessionVars().EnableRedactLog
 	for _, access := range ijHelper.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")
 		} else {
 			isFirst = false
 		}
-<<<<<<< HEAD
-		fmt.Fprintf(buffer, "%v", access)
-=======
-		fmt.Fprintf(buffer, "%v", access.StringWithCtx(ectx, redact))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		fmt.Fprintf(buffer, "%v", access.StringWithCtx(redact))
 	}
 	buffer.WriteString("]")
 	return buffer.String()
@@ -2389,16 +2378,16 @@ func canExprsInJoinPushdown(p *LogicalJoin, storeType kv.StoreType) bool {
 		}
 		equalExprs = append(equalExprs, eqCondition)
 	}
-	if !expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, equalExprs, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(p.SCtx(), equalExprs, p.SCtx().GetClient(), storeType) {
 		return false
 	}
-	if !expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.LeftConditions, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(p.SCtx(), p.LeftConditions, p.SCtx().GetClient(), storeType) {
 		return false
 	}
-	if !expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.RightConditions, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(p.SCtx(), p.RightConditions, p.SCtx().GetClient(), storeType) {
 		return false
 	}
-	if !expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.OtherConditions, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(p.SCtx(), p.OtherConditions, p.SCtx().GetClient(), storeType) {
 		return false
 	}
 	return true
@@ -2662,13 +2651,13 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	newProps := []*property.PhysicalProperty{newProp}
 	// generate a mpp task candidate if mpp mode is allowed
 	if newProp.TaskTp != property.MppTaskType && p.SCtx().GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash) &&
-		expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
+		expression.CanExprsPushDown(p.SCtx(), p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
 		mppProp := newProp.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		newProps = append(newProps, mppProp)
 	}
 	if newProp.TaskTp != property.CopSingleReadTaskType && p.SCtx().GetSessionVars().AllowProjectionPushDown && p.canPushToCop(kv.TiKV) &&
-		expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) {
+		expression.CanExprsPushDown(p.SCtx(), p.Exprs, p.SCtx().GetClient(), kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) {
 		copProp := newProp.CloneEssentialFields()
 		copProp.TaskTp = property.CopSingleReadTaskType
 		newProps = append(newProps, copProp)
@@ -2897,12 +2886,12 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		}
 
 		if lw.Frame != nil && lw.Frame.Type == ast.Ranges {
-			if _, err := expression.ExpressionsToPBList(lw.SCtx().GetSessionVars().StmtCtx, lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
+			if _, err := expression.ExpressionsToPBList(lw.SCtx(), lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
 			}
-			if _, err := expression.ExpressionsToPBList(lw.SCtx().GetSessionVars().StmtCtx, lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
+			if _, err := expression.ExpressionsToPBList(lw.SCtx(), lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
@@ -3537,7 +3526,7 @@ func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
 	return !expression.ContainVirtualColumn(p.Conditions) &&
 		p.canPushToCop(storeTp) &&
 		expression.CanExprsPushDown(
-			p.SCtx().GetSessionVars().StmtCtx,
+			p.SCtx(),
 			p.Conditions,
 			p.SCtx().GetClient(),
 			storeTp)

@@ -615,13 +615,13 @@ Loop:
 
 // SubstituteCorCol2Constant will substitute correlated column to constant value which it contains.
 // If the args of one scalar function are all constant, we will substitute it to constant.
-func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
+func SubstituteCorCol2Constant(ctx sessionctx.Context, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		allConstant := true
 		newArgs := make([]Expression, 0, len(x.GetArgs()))
 		for _, arg := range x.GetArgs() {
-			newArg, err := SubstituteCorCol2Constant(arg)
+			newArg, err := SubstituteCorCol2Constant(ctx, arg)
 			if err != nil {
 				return nil, err
 			}
@@ -653,7 +653,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		return &Constant{Value: *x.Data, RetType: x.GetType()}, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
-			newExpr := FoldConstant(x)
+			newExpr := FoldConstant(ctx, x)
 			return &Constant{Value: newExpr.(*Constant).Value, RetType: x.GetType()}, nil
 		}
 	}

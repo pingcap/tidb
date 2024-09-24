@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -184,11 +183,7 @@ func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFu
 	// exclude null safe equal predicate
 	if eqPredicate.FuncName.L == ast.NullEQ {
 		logutil.BgLogger().Debug("The runtime filter doesn't support null safe eq predicate",
-<<<<<<< HEAD
-			zap.String("EQPredicate", eqPredicate.String()))
-=======
-			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)))
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(false)))
 		return false
 	}
 	var targetColumn, srcColumn *expression.Column
@@ -205,11 +200,7 @@ func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFu
 	// todo: cast expr in target column
 	if targetColumn.IsHidden || targetColumn.OrigName == "" {
 		logutil.BgLogger().Debug("Target column does not match RF pattern",
-<<<<<<< HEAD
-			zap.String("EQPredicate", eqPredicate.String()),
-=======
-			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)),
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(false)),
 			zap.String("TargetColumn", targetColumn.String()),
 			zap.Bool("IsHidden", targetColumn.IsHidden),
 			zap.String("OrigName", targetColumn.OrigName))
@@ -221,11 +212,7 @@ func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFu
 		srcColumnType == mysql.TypeLongBlob || srcColumnType == mysql.TypeMediumBlob ||
 		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetType().Hybrid() || srcColumn.GetType().IsArray() {
 		logutil.BgLogger().Debug("Src column type does not match RF pattern",
-<<<<<<< HEAD
-			zap.String("EQPredicate", eqPredicate.String()),
-=======
-			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)),
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(false)),
 			zap.String("SrcColumn", srcColumn.String()),
 			zap.String("SrcColumnType", srcColumn.GetType().String()))
 		return false

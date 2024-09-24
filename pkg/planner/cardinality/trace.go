@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 
-	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -96,11 +95,7 @@ func exprToString(e expression.Expression) (string, error) {
 		buffer.WriteString(")")
 		return buffer.String(), nil
 	case *expression.Column:
-<<<<<<< HEAD
-		return expr.String(), nil
-=======
-		return expr.StringWithCtx(ctx, perrors.RedactLogDisable), nil
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+		return expr.StringWithCtx(false), nil
 	case *expression.CorrelatedColumn:
 		return "", errors.New("tracing for correlated columns not supported now")
 	case *expression.Constant:

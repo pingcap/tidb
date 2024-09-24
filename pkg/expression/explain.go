@@ -69,7 +69,7 @@ func (expr *ScalarFunction) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements the Expression interface.
 func (col *Column) ExplainInfo(ctx sessionctx.Context) string {
-	return col.ColumnExplainInfo(ctx, false)
+	return col.ColumnExplainInfo(ctx.GetSessionVars().EnableRedactLog, false)
 }
 
 // ExplainNormalizedInfo implements the Expression interface.
@@ -83,14 +83,11 @@ func (col *Column) ExplainNormalizedInfo4InList() string {
 }
 
 // ColumnExplainInfo returns the explained info for column.
-func (col *Column) ColumnExplainInfo(sctx sessionctx.Context, normalized bool) string {
+func (col *Column) ColumnExplainInfo(redact, normalized bool) string {
 	if normalized {
 		return col.ColumnExplainInfoNormalized()
 	}
-	if sctx == nil {
-		return col.String()
-	}
-	return col.StringWithCtx(sctx.GetSessionVars().EnableRedactLog)
+	return col.StringWithCtx(redact)
 }
 
 // ColumnExplainInfoNormalized returns the normalized explained info for column.
@@ -195,6 +192,15 @@ func sortedExplainExpressionList(ctx sessionctx.Context, exprs []Expression, nor
 // SortedExplainNormalizedExpressionList is same like SortedExplainExpressionList, but use for generating normalized information.
 func SortedExplainNormalizedExpressionList(ctx sessionctx.Context, exprs []Expression) []byte {
 	return sortedExplainExpressionList(ctx, exprs, true)
+}
+
+// SortedExplainNormalizedScalarFuncList is same like SortedExplainExpressionList, but use for generating normalized information.
+func SortedExplainNormalizedScalarFuncList(ctx sessionctx.Context, exprs []*ScalarFunction) []byte {
+	expressions := make([]Expression, len(exprs))
+	for i := range exprs {
+		expressions[i] = exprs[i]
+	}
+	return sortedExplainExpressionList(ctx, expressions, true)
 }
 
 // ExplainColumnList generates explain information for a list of columns.

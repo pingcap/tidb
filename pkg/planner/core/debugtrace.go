@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -106,13 +105,8 @@ func DebugTraceReceivedCommand(s sessionctx.Context, cmd byte, stmtNode ast.Stmt
 	if len(binaryParams) > 0 {
 		execInfo.BinaryParamsInfo = make([]binaryParamInfo, len(binaryParams))
 		for i, param := range binaryParams {
-<<<<<<< HEAD
 			execInfo.BinaryParamsInfo[i].Type = param.GetType().String()
-			execInfo.BinaryParamsInfo[i].Value = param.String()
-=======
-			execInfo.BinaryParamsInfo[i].Type = param.GetType(s.GetExprCtx().GetEvalCtx()).String()
-			execInfo.BinaryParamsInfo[i].Value = param.StringWithCtx(s.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable)
->>>>>>> f5ac1c4a453 (*: support tidb_redact_log for explain (#54553))
+			execInfo.BinaryParamsInfo[i].Value = param.StringWithCtx(false)
 		}
 	}
 }
