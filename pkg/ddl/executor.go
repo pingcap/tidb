@@ -3801,7 +3801,7 @@ func (e *executor) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) 
 			CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 			SQLMode:        ctx.GetSessionVars().SQLMode,
 		}
-		err = e.doDDLJob2(ctx, job, nil)
+		err = e.doDDLJob2(ctx, job, &model.EmptyArgs{})
 		return errors.Trace(err)
 	}
 
@@ -6167,7 +6167,7 @@ func (e *executor) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err 
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	return e.doDDLJob2(ctx, job, nil)
+	return e.doDDLJob2(ctx, job, &model.EmptyArgs{})
 }
 
 func (e *executor) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName pmodel.CIStr, constr *ast.Constraint) error {
