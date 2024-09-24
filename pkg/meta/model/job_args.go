@@ -30,7 +30,7 @@ type AutoIDGroup struct {
 	RandomID    int64
 }
 
-// RecoverInfo contains information needed by DDL.RecoverTable.
+// RecoverTableInfo contains information needed by DDL.RecoverTable.
 type RecoverTableInfo struct {
 	SchemaID      int64
 	TableInfo     *TableInfo
@@ -1090,7 +1090,7 @@ func (a *LockTablesArgs) fillJob(job *Job) {
 	job.Args = []any{a}
 }
 
-// GetLockTabkesArgs get the LockTablesArgs argument.
+// GetLockTablesArgs get the LockTablesArgs argument.
 func GetLockTablesArgs(job *Job) (*LockTablesArgs, error) {
 	var args *LockTablesArgs
 	var err error
@@ -1151,6 +1151,7 @@ func (a *RecoverArgs) fillJob(job *Job) {
 	job.Args = []any{a}
 }
 
+// RecoverTableInfos get all the recover infos.
 func (a *RecoverArgs) RecoverTableInfos() []*RecoverTableInfo {
 	return a.RecoverInfo.RecoverTableInfos
 }
