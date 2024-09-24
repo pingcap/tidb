@@ -291,7 +291,7 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 					TableInfo:     tblInfo,
 					DropJobID:     recoverSchemaInfo.DropJobID,
 					SnapshotTS:    recoverSchemaInfo.SnapshotTS,
-					AutoIDs:       autoIDs.ConvertTo(),
+					AutoIDs:       autoIDs,
 					OldSchemaName: recoverSchemaInfo.OldSchemaName.L,
 					OldTableName:  tblInfo.Name.L,
 				})

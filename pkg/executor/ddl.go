@@ -427,7 +427,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
 		SnapshotTS:    job.StartTS,
-		AutoIDs:       autoIDs.ConvertTo(),
+		AutoIDs:       autoIDs,
 		OldSchemaName: job.SchemaName,
 		OldTableName:  tblInfo.Name.L,
 	}
@@ -591,7 +591,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
 		SnapshotTS:    job.StartTS,
-		AutoIDs:       autoIDs.ConvertTo(),
+		AutoIDs:       autoIDs,
 		OldSchemaName: job.SchemaName,
 		OldTableName:  s.Table.Name.L,
 	}

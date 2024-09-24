@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-// IDGroup is the same as meta.AutoIDGroup to avoid cycle import.
-type IDGroup struct {
+// AutoIDGroup represents a group of auto IDs of a specific table.
+type AutoIDGroup struct {
 	RowID       int64
 	IncrementID int64
 	RandomID    int64
@@ -36,7 +36,7 @@ type RecoverTableInfo struct {
 	TableInfo     *TableInfo
 	DropJobID     int64
 	SnapshotTS    uint64
-	AutoIDs       IDGroup
+	AutoIDs       AutoIDGroup
 	OldSchemaName string
 	OldTableName  string
 }
@@ -1078,12 +1078,12 @@ func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
 
 // LockTablesArgs is the argument for LockTables.
 type LockTablesArgs struct {
-	LockTables    []TableLockTpInfo
-	IndexOfLock   int
-	UnlockTables  []TableLockTpInfo
-	IndexOfUnlock int
-	SessionInfo   SessionInfo
-	IsCleanup     bool
+	LockTables    []TableLockTpInfo `json:"lock_tables,omitempty"`
+	IndexOfLock   int               `json:"index_of_lock,omitempty"`
+	UnlockTables  []TableLockTpInfo `json:"unlock_tables,omitempty"`
+	IndexOfUnlock int               `json:"index_of_unlock,omitempty"`
+	SessionInfo   SessionInfo       `json:"session_info,omitempty"`
+	IsCleanup     bool              `json:"is_cleanup:omitempty"`
 }
 
 func (a *LockTablesArgs) fillJob(job *Job) {
@@ -1135,8 +1135,8 @@ func GetRepairTableArgs(job *Job) (*RepairTableArgs, error) {
 
 // RecoverArgs is the argument for recover table/schema.
 type RecoverArgs struct {
-	RecoverInfo *RecoverSchemaInfo `json:"recover_info"`
-	CheckFlag   int64              `json:"check_flag"`
+	RecoverInfo *RecoverSchemaInfo `json:"recover_info,omitempty"`
+	CheckFlag   int64              `json:"check_flag,omitempty"`
 }
 
 func (a *RecoverArgs) fillJob(job *Job) {
@@ -1172,7 +1172,7 @@ func GetRecoverArgs(job *Job) (*RecoverArgs, error) {
 			}
 			recoverSchemaInfo.RecoverTableInfos = []*RecoverTableInfo{recoverTableInfo}
 		} else {
-			err := job.DecodeArgs(&recoverSchemaInfo, &recoverCheckFlag)
+			err := job.DecodeArgs(recoverSchemaInfo, &recoverCheckFlag)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1180,7 +1180,8 @@ func GetRecoverArgs(job *Job) (*RecoverArgs, error) {
 
 		return &RecoverArgs{
 			RecoverInfo: recoverSchemaInfo,
-			CheckFlag:   recoverCheckFlag}, nil
+			CheckFlag:   recoverCheckFlag,
+		}, nil
 	}
 
 	return getOrDecodeArgsV2[*RecoverArgs](job)

@@ -268,12 +268,7 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *model.R
 	tableInfo := recoverInfo.TableInfo.Clone()
 	tableInfo.State = model.StatePublic
 	tableInfo.UpdateTS = t.StartTS
-	autoIDs := meta.AutoIDGroup{
-		RowID:       recoverInfo.AutoIDs.RowID,
-		IncrementID: recoverInfo.AutoIDs.IncrementID,
-		RandomID:    recoverInfo.AutoIDs.RandomID,
-	}
-	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, tableInfo, autoIDs)
+	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, tableInfo, recoverInfo.AutoIDs)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

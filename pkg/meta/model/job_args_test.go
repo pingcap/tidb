@@ -618,8 +618,8 @@ func TestLockTableArgs(t *testing.T) {
 	inArgs := &LockTablesArgs{
 		LockTables:    []TableLockTpInfo{{1, 1, model.TableLockNone}},
 		UnlockTables:  []TableLockTpInfo{{2, 2, model.TableLockNone}},
-		IndexOfLock:   0,
-		IndexOfUnlock: 0,
+		IndexOfLock:   13,
+		IndexOfUnlock: 24,
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		for _, tp := range []ActionType{ActionLockTable, ActionUnlockTable} {
