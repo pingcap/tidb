@@ -76,7 +76,7 @@ func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
 		if x <= 0 {
 			return errors.Errorf("invalid value %v for %s", x, opt)
 		}
-		v = fmt.Sprintf("%v", x)
+		v = strconv.Itoa(x)
 	case OptTimeout:
 		v = val.GetValue().(string)
 		d, err := time.ParseDuration(v)
