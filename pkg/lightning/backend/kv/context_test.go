@@ -22,18 +22,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
-	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
@@ -126,63 +122,10 @@ func TestLitExprContext(t *testing.T) {
 		},
 	}
 
-	// We need to compare the new introduced `*litExprContext` the same behavior with the old `session`.
-	// After refactoring finished, we can remove the old session and this test.
-	compareWithLegacySession := func(t *testing.T, ctx *litExprContext, opts *encode.SessionOptions) {
-		if opts.SysVars == nil {
-			opts.SysVars = make(map[string]string)
-		}
-		if _, ok := opts.SysVars["div_precision_increment"]; !ok {
-			// It seems that `DefDivPrecisionIncrement` is not set as a default value in `newSession` and its
-			// default value is 0.
-			// We should set it manually to make test pass.
-			// The legacy code has no bug for this default value because the `DefaultImportantVariables`
-			// will be loaded every time to override this variable:
-			// https://github.com/pingcap/tidb/blob/2e457b394f09165e23fa5121fcfd89c6e8a6e835/pkg/lightning/common/common.go#L33-L42
-			opts.SysVars["div_precision_increment"] = strconv.Itoa(variable.DefDivPrecisionIncrement)
-		}
-		if _, ok := opts.SysVars["block_encryption_mode"]; !ok {
-			// same reason with `DivPrecisionIncrement`, we need to set `block_encryption_mode` manually to pass test.
-			opts.SysVars["block_encryption_mode"] = variable.DefBlockEncryptionMode
-		}
-		se := newSession(opts, log.L())
-		seCtx := contextstatic.MakeExprContextStatic(se.exprCtx.SessionExprContext)
-		deeptest.AssertDeepClonedEqual(t, seCtx, ctx.StaticExprContext, deeptest.WithIgnorePath([]string{
-			"$.staticExprCtxState.evalCtx.id",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.typeCtx.loc",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.warnHandler",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.typeCtx.warnHandler",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.errCtx.warnHandler",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.currentTime",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.requestVerificationFn",
-			"$.staticExprCtxState.evalCtx.staticEvalCtxState.requestDynamicVerificationFn",
-			"$.staticExprCtxState.rng",
-			"$.staticExprCtxState.planCacheTracker",
-		}))
-		currentTime, err := seCtx.GetEvalCtx().CurrentTime()
-		require.NoError(t, err)
-		seTime, err := seCtx.GetEvalCtx().CurrentTime()
-		require.NoError(t, err)
-		if opts.Timestamp == 0 {
-			require.InDelta(t, seTime.Unix(), currentTime.Unix(), 2)
-		} else {
-			require.Equal(t, opts.Timestamp*1000000000, currentTime.UnixNano())
-			require.Equal(t, seTime.UnixNano(), currentTime.UnixNano())
-		}
-		require.Equal(t, seCtx.GetEvalCtx().Location().String(), ctx.GetEvalCtx().Location().String())
-	}
-
 	for i, c := range cases {
 		t.Run("case-"+strconv.Itoa(i), func(t *testing.T) {
 			ctx, err := newLitExprContext(c.sqlMode, c.sysVars, c.timestamp)
 			require.NoError(t, err)
-
-			compareWithLegacySession(t, ctx, &encode.SessionOptions{
-				SQLMode:   c.sqlMode,
-				SysVars:   c.sysVars,
-				Timestamp: c.timestamp,
-			})
-
 			evalCtx := ctx.GetEvalCtx()
 			require.Equal(t, c.sqlMode, evalCtx.SQLMode())
 			tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
@@ -294,8 +237,6 @@ func TestLitTableMutateContext(t *testing.T) {
 		require.NotNil(t, alloc)
 		require.Equal(t, &stmtctx.ReservedRowIDAlloc{}, alloc)
 		require.True(t, alloc.Exhausted())
-		_, ok = tblCtx.GetBinlogSupport()
-		require.False(t, ok)
 		_, ok = tblCtx.GetCachedTableSupport()
 		require.False(t, ok)
 		_, ok = tblCtx.GetTemporaryTableSupport()
@@ -316,31 +257,6 @@ func TestLitTableMutateContext(t *testing.T) {
 		require.Empty(t, tblCtx.GetColumnSize(456))
 	}
 
-	// We need to compare the new introduced `*litTableMutateContext` the same behavior with the old `session`.
-	// After refactoring finished, we can remove the old session and this test.
-	compareWithLegacySession := func(ctx *litTableMutateContext, vars map[string]string) {
-		se := newSession(&encode.SessionOptions{
-			SQLMode: mysql.ModeNone,
-			SysVars: vars,
-		}, log.L())
-		// make sure GetRowIDShardGenerator() internal assertion pass
-		se.GetSessionVars().TxnCtx = &variable.TransactionContext{}
-		se.GetSessionVars().TxnCtx.StartTS = 123
-		seCtx := se.GetTableCtx()
-		require.Equal(t, seCtx.ConnectionID(), ctx.ConnectionID())
-		require.Equal(t, seCtx.InRestrictedSQL(), ctx.InRestrictedSQL())
-		require.Equal(t, seCtx.TxnAssertionLevel(), ctx.TxnAssertionLevel())
-		require.Equal(t, seCtx.GetMutateBuffers(), ctx.GetMutateBuffers())
-		require.Equal(t, seCtx.EnableMutationChecker(), ctx.EnableMutationChecker())
-		require.Equal(t, seCtx.GetRowEncodingConfig(), ctx.GetRowEncodingConfig())
-		require.Equal(t, seCtx.GetRowIDShardGenerator().GetShardStep(), ctx.GetRowIDShardGenerator().GetShardStep())
-		seAlloc, ok := seCtx.GetReservedRowIDAlloc()
-		require.True(t, ok)
-		alloc, ok := ctx.GetReservedRowIDAlloc()
-		require.True(t, ok)
-		require.Equal(t, seAlloc, alloc)
-	}
-
 	// test for default
 	tblCtx, err := newLitTableMutateContext(exprCtx, nil)
 	require.NoError(t, err)
@@ -348,14 +264,13 @@ func TestLitTableMutateContext(t *testing.T) {
 	require.Equal(t, variable.AssertionLevelOff, tblCtx.TxnAssertionLevel())
 	require.Equal(t, variable.DefTiDBEnableMutationChecker, tblCtx.EnableMutationChecker())
 	require.False(t, tblCtx.EnableMutationChecker())
-	require.Equal(t, tbctx.RowEncodingConfig{
+	require.Equal(t, tblctx.RowEncodingConfig{
 		IsRowLevelChecksumEnabled: false,
 		RowEncoder:                &rowcodec.Encoder{Enable: false},
 	}, tblCtx.GetRowEncodingConfig())
 	g := tblCtx.GetRowIDShardGenerator()
 	require.NotNil(t, g)
 	require.Equal(t, variable.DefTiDBShardAllocateStep, g.GetShardStep())
-	compareWithLegacySession(tblCtx, nil)
 
 	// test for load vars
 	sysVars := map[string]string{
@@ -369,7 +284,7 @@ func TestLitTableMutateContext(t *testing.T) {
 	checkCommon(t, tblCtx)
 	require.Equal(t, variable.AssertionLevelStrict, tblCtx.TxnAssertionLevel())
 	require.True(t, tblCtx.EnableMutationChecker())
-	require.Equal(t, tbctx.RowEncodingConfig{
+	require.Equal(t, tblctx.RowEncodingConfig{
 		IsRowLevelChecksumEnabled: false,
 		RowEncoder:                &rowcodec.Encoder{Enable: true},
 	}, tblCtx.GetRowEncodingConfig())
@@ -377,7 +292,6 @@ func TestLitTableMutateContext(t *testing.T) {
 	require.NotNil(t, g)
 	require.NotEqual(t, variable.DefTiDBShardAllocateStep, g.GetShardStep())
 	require.Equal(t, 1234567, g.GetShardStep())
-	compareWithLegacySession(tblCtx, sysVars)
 
 	// test for `RowEncodingConfig.IsRowLevelChecksumEnabled` which should be loaded from global variable.
 	require.False(t, variable.EnableRowLevelChecksum.Load())
@@ -388,9 +302,8 @@ func TestLitTableMutateContext(t *testing.T) {
 	}
 	tblCtx, err = newLitTableMutateContext(exprCtx, sysVars)
 	require.NoError(t, err)
-	require.Equal(t, tbctx.RowEncodingConfig{
+	require.Equal(t, tblctx.RowEncodingConfig{
 		IsRowLevelChecksumEnabled: true,
 		RowEncoder:                &rowcodec.Encoder{Enable: true},
 	}, tblCtx.GetRowEncodingConfig())
-	compareWithLegacySession(tblCtx, sysVars)
 }

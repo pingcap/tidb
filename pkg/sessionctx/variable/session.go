@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -896,9 +895,6 @@ type SessionVars struct {
 	// version, we load an old version schema for query.
 	SnapshotInfoschema any
 
-	// BinlogClient is used to write binlog.
-	BinlogClient *pumpcli.PumpsClient
-
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
 
@@ -1313,9 +1309,6 @@ type SessionVars struct {
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex ClusteredIndexDefMode
 
-	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
-	EnableGlobalIndex bool
-
 	// EnableParallelApply indicates that whether to use parallel apply.
 	EnableParallelApply bool
 
@@ -1357,6 +1350,9 @@ type SessionVars struct {
 
 	// DisableHashJoin indicates whether to disable hash join.
 	DisableHashJoin bool
+
+	// UseHashJoinV2 indicates whether to use hash join v2.
+	UseHashJoinV2 bool
 
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool

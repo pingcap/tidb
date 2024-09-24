@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -100,7 +100,7 @@ func (r *resultChecker) initRowPtrs() {
 }
 
 func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count int64) bool {
-	ctx := contextstatic.NewStaticEvalContext()
+	ctx := exprstatic.NewEvalContext()
 
 	if r.rowPtrs == nil {
 		r.initRowPtrs()

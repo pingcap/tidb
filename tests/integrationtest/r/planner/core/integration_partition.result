@@ -82,14 +82,14 @@ use list_partition_cre;
 drop table if exists tlist;
 create table tuk1 (a int, b int, unique key(a)) partition by list (a) (partition p0 values in (0));
 create table tuk2 (a int, b int, unique key(a)) partition by list (b) (partition p0 values in (0));
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table tuk2 (a int, b int, unique key(a), unique key(b)) partition by list (a) (partition p0 values in (0));
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table tcoluk1 (a int, b int, unique key(a)) partition by list columns(a) (partition p0 values in (0));
 create table tcoluk2 (a int, b int, unique key(a)) partition by list columns(b) (partition p0 values in (0));
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table tcoluk2 (a int, b int, unique key(a), unique key(b)) partition by list columns(a) (partition p0 values in (0));
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table tpk1 (a int, b int, primary key(a)) partition by list (a) (partition p0 values in (0));
 create table tpk2 (a int, b int, primary key(a, b)) partition by list (a) (partition p0 values in (0));
 create table tcolpk1 (a int, b int, primary key(a)) partition by list columns(a) (partition p0 values in (0));
@@ -112,19 +112,21 @@ use list_partition_ddl;
 drop table if exists tlist;
 create table tlist (a int, b int) partition by list (a) (partition p0 values in (0));
 alter table tlist add primary key (b);
-Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table tlist add primary key (a);
 alter table tlist add unique key (b);
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table tlist add key (b);
 alter table tlist rename index b to bb;
 alter table tlist drop index bb;
 create table tcollist (a int, b int) partition by list columns (a) (partition p0 values in (0));
 alter table tcollist add primary key (b);
-Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table tcollist add primary key (a);
+alter table tcollist add primary key (b);
+Error 1068 (42000): Multiple primary key defined
 alter table tcollist add unique key (b);
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table tcollist add key (b);
 alter table tcollist rename index b to bb;
 alter table tcollist drop index bb;
@@ -468,7 +470,7 @@ partition p2 values in (10, 11, 12, 13, 14));
 alter table tlist add primary key(a);
 alter table tlist drop primary key;
 alter table tlist add primary key(b);
-Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table tcollist (a int, b int) partition by list columns (a) (
 partition p0 values in (0, 1, 2, 3, 4),
 partition p1 values in (5, 6, 7, 8, 9),
@@ -476,7 +478,7 @@ partition p2 values in (10, 11, 12, 13, 14));
 alter table tcollist add primary key(a);
 alter table tcollist drop primary key;
 alter table tcollist add primary key(b);
-Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create database issue_27018;
 use issue_27018;
 CREATE TABLE PK_LP9326 (

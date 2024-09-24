@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -652,6 +653,7 @@ const (
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 
 	// TiDBEnableGlobalIndex means if we could create an global index on a partition table or not.
+	// Deprecated, will always be ON
 	TiDBEnableGlobalIndex = "tidb_enable_global_index"
 
 	// TiDBPartitionPruneMode indicates the partition prune mode used.
@@ -856,10 +858,10 @@ const (
 	// TiDBEnableInstancePlanCache indicates whether to enable instance plan cache.
 	// If this variable is false, session-level plan cache will be used.
 	TiDBEnableInstancePlanCache = "tidb_enable_instance_plan_cache"
-	// TiDBInstancePlanCacheTargetMemSize indicates the target memory size of instance plan cache.
-	TiDBInstancePlanCacheTargetMemSize = "tidb_instance_plan_cache_target_mem_size"
+	// TiDBInstancePlanCacheReservedPercentage indicates the percentage memory to evict.
+	TiDBInstancePlanCacheReservedPercentage = "tidb_instance_plan_cache_reserved_percentage"
 	// TiDBInstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.
-	TiDBInstancePlanCacheMaxMemSize = "tidb_instance_plan_cache_max_mem_size"
+	TiDBInstancePlanCacheMaxMemSize = "tidb_instance_plan_cache_max_size"
 
 	// TiDBConstraintCheckInPlacePessimistic controls whether to skip certain kinds of pessimistic locks.
 	TiDBConstraintCheckInPlacePessimistic = "tidb_constraint_check_in_place_pessimistic"
@@ -958,6 +960,9 @@ const (
 
 	// TiDBOptEnableHashJoin indicates whether to enable hash join.
 	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
+
+	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
+	TiDBHashJoinVersion = "tidb_hash_join_version"
 
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
@@ -1355,7 +1360,6 @@ const (
 	DefTiDBEnableCollectExecutionInfo       = true
 	DefTiDBAllowAutoRandExplicitInsert      = false
 	DefTiDBEnableClusteredIndex             = ClusteredIndexDefModeOn
-	DefTiDBEnableGlobalIndex                = false
 	DefTiDBRedactLog                        = Off
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
@@ -1369,96 +1373,96 @@ const (
 	DefTiDBGuaranteeLinearizability         = true
 	DefTiDBAnalyzeVersion                   = 2
 	// Deprecated: This variable is deprecated, please do not use this variable.
-	DefTiDBAutoAnalyzePartitionBatchSize           = mysql.PartitionCountLimit
-	DefTiDBEnableIndexMergeJoin                    = false
-	DefTiDBTrackAggregateMemoryUsage               = true
-	DefCTEMaxRecursionDepth                        = 1000
-	DefTiDBTmpTableMaxSize                         = 64 << 20 // 64MB.
-	DefTiDBEnableLocalTxn                          = false
-	DefTiDBTSOClientBatchMaxWaitTime               = 0.0 // 0ms
-	DefTiDBEnableTSOFollowerProxy                  = false
-	DefPDEnableFollowerHandleRegion                = false
-	DefTiDBEnableOrderedResultMode                 = false
-	DefTiDBEnablePseudoForOutdatedStats            = false
-	DefTiDBRegardNULLAsPoint                       = true
-	DefEnablePlacementCheck                        = true
-	DefTimestamp                                   = "0"
-	DefTimestampFloat                              = 0.0
-	DefTiDBEnableStmtSummary                       = true
-	DefTiDBStmtSummaryInternalQuery                = false
-	DefTiDBStmtSummaryRefreshInterval              = 1800
-	DefTiDBStmtSummaryHistorySize                  = 24
-	DefTiDBStmtSummaryMaxStmtCount                 = 3000
-	DefTiDBStmtSummaryMaxSQLLength                 = 4096
-	DefTiDBCapturePlanBaseline                     = Off
-	DefTiDBIgnoreInlistPlanDigest                  = false
-	DefTiDBEnableIndexMerge                        = true
-	DefEnableLegacyInstanceScope                   = true
-	DefTiDBTableCacheLease                         = 3 // 3s
-	DefTiDBPersistAnalyzeOptions                   = true
-	DefTiDBStatsLoadSyncWait                       = 100
-	DefTiDBStatsLoadPseudoTimeout                  = true
-	DefSysdateIsNow                                = false
-	DefTiDBEnableParallelHashaggSpill              = true
-	DefTiDBEnableMutationChecker                   = false
-	DefTiDBTxnAssertionLevel                       = AssertionOffStr
-	DefTiDBIgnorePreparedCacheCloseStmt            = false
-	DefTiDBBatchPendingTiFlashCount                = 4000
-	DefRCReadCheckTS                               = false
-	DefTiDBRemoveOrderbyInSubquery                 = true
-	DefTiDBSkewDistinctAgg                         = false
-	DefTiDB3StageDistinctAgg                       = true
-	DefTiDB3StageMultiDistinctAgg                  = false
-	DefTiDBOptExplainEvaledSubquery                = false
-	DefTiDBReadStaleness                           = 0
-	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
-	DefMaxAllowedPacket                     uint64 = 67108864
-	DefTiDBEnableBatchDML                          = false
-	DefTiDBMemQuotaQuery                           = memory.DefMemQuotaQuery // 1GB
-	DefTiDBStatsCacheMemQuota                      = 0
-	MaxTiDBStatsCacheMemQuota                      = 1024 * 1024 * 1024 * 1024 // 1TB
-	DefTiDBQueryLogMaxLen                          = 4096
-	DefRequireSecureTransport                      = false
-	DefTiDBCommitterConcurrency                    = 128
-	DefTiDBBatchDMLIgnoreError                     = false
-	DefTiDBMemQuotaAnalyze                         = -1
-	DefTiDBEnableAutoAnalyze                       = true
-	DefTiDBEnableAutoAnalyzePriorityQueue          = true
-	DefTiDBAnalyzeColumnOptions                    = "PREDICATE"
-	DefTiDBMemOOMAction                            = "CANCEL"
-	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
-	DefTiDBAutoAnalyzeConcurrency                  = 2
-	DefTiDBEnablePrepPlanCache                     = true
-	DefTiDBPrepPlanCacheSize                       = 100
-	DefTiDBSessionPlanCacheSize                    = 100
-	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
-	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
-	DefTiDBEnableDistTask                          = true
-	DefTiDBEnableFastCreateTable                   = false
-	DefTiDBSimplifiedMetrics                       = false
-	DefTiDBEnablePaging                            = true
-	DefTiFlashFineGrainedShuffleStreamCount        = 0
-	DefStreamCountWhenMaxThreadsNotSet             = 8
-	DefTiFlashFineGrainedShuffleBatchSize          = 8192
-	DefAdaptiveClosestReadThreshold                = 4096
-	DefTiDBEnableAnalyzeSnapshot                   = false
-	DefTiDBGenerateBinaryPlan                      = true
-	DefEnableTiDBGCAwareMemoryTrack                = false
-	DefTiDBDefaultStrMatchSelectivity              = 0.8
-	DefTiDBEnableTmpStorageOnOOM                   = true
-	DefTiDBEnableMDL                               = true
-	DefTiFlashFastScan                             = false
-	DefMemoryUsageAlarmRatio                       = 0.7
-	DefMemoryUsageAlarmKeepRecordNum               = 5
-	DefTiDBEnableFastReorg                         = true
-	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
-	DefExecutorConcurrency                         = 5
-	DefTiDBEnableNonPreparedPlanCache              = false
-	DefTiDBEnableNonPreparedPlanCacheForDML        = false
-	DefTiDBNonPreparedPlanCacheSize                = 100
-	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
-	DefTiDBInstancePlanCacheTargetMemSize          = 100 * size.MB
-	DefTiDBInstancePlanCacheMaxMemSize             = 120 * size.MB
+	DefTiDBAutoAnalyzePartitionBatchSize              = mysql.PartitionCountLimit
+	DefTiDBEnableIndexMergeJoin                       = false
+	DefTiDBTrackAggregateMemoryUsage                  = true
+	DefCTEMaxRecursionDepth                           = 1000
+	DefTiDBTmpTableMaxSize                            = 64 << 20 // 64MB.
+	DefTiDBEnableLocalTxn                             = false
+	DefTiDBTSOClientBatchMaxWaitTime                  = 0.0 // 0ms
+	DefTiDBEnableTSOFollowerProxy                     = false
+	DefPDEnableFollowerHandleRegion                   = false
+	DefTiDBEnableOrderedResultMode                    = false
+	DefTiDBEnablePseudoForOutdatedStats               = false
+	DefTiDBRegardNULLAsPoint                          = true
+	DefEnablePlacementCheck                           = true
+	DefTimestamp                                      = "0"
+	DefTimestampFloat                                 = 0.0
+	DefTiDBEnableStmtSummary                          = true
+	DefTiDBStmtSummaryInternalQuery                   = false
+	DefTiDBStmtSummaryRefreshInterval                 = 1800
+	DefTiDBStmtSummaryHistorySize                     = 24
+	DefTiDBStmtSummaryMaxStmtCount                    = 3000
+	DefTiDBStmtSummaryMaxSQLLength                    = 4096
+	DefTiDBCapturePlanBaseline                        = Off
+	DefTiDBIgnoreInlistPlanDigest                     = false
+	DefTiDBEnableIndexMerge                           = true
+	DefEnableLegacyInstanceScope                      = true
+	DefTiDBTableCacheLease                            = 3 // 3s
+	DefTiDBPersistAnalyzeOptions                      = true
+	DefTiDBStatsLoadSyncWait                          = 100
+	DefTiDBStatsLoadPseudoTimeout                     = true
+	DefSysdateIsNow                                   = false
+	DefTiDBEnableParallelHashaggSpill                 = true
+	DefTiDBEnableMutationChecker                      = false
+	DefTiDBTxnAssertionLevel                          = AssertionOffStr
+	DefTiDBIgnorePreparedCacheCloseStmt               = false
+	DefTiDBBatchPendingTiFlashCount                   = 4000
+	DefRCReadCheckTS                                  = false
+	DefTiDBRemoveOrderbyInSubquery                    = true
+	DefTiDBSkewDistinctAgg                            = false
+	DefTiDB3StageDistinctAgg                          = true
+	DefTiDB3StageMultiDistinctAgg                     = false
+	DefTiDBOptExplainEvaledSubquery                   = false
+	DefTiDBReadStaleness                              = 0
+	DefTiDBGCMaxWaitTime                              = 24 * 60 * 60
+	DefMaxAllowedPacket                        uint64 = 67108864
+	DefTiDBEnableBatchDML                             = false
+	DefTiDBMemQuotaQuery                              = memory.DefMemQuotaQuery // 1GB
+	DefTiDBStatsCacheMemQuota                         = 0
+	MaxTiDBStatsCacheMemQuota                         = 1024 * 1024 * 1024 * 1024 // 1TB
+	DefTiDBQueryLogMaxLen                             = 4096
+	DefRequireSecureTransport                         = false
+	DefTiDBCommitterConcurrency                       = 128
+	DefTiDBBatchDMLIgnoreError                        = false
+	DefTiDBMemQuotaAnalyze                            = -1
+	DefTiDBEnableAutoAnalyze                          = true
+	DefTiDBEnableAutoAnalyzePriorityQueue             = true
+	DefTiDBAnalyzeColumnOptions                       = "PREDICATE"
+	DefTiDBMemOOMAction                               = "CANCEL"
+	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
+	DefTiDBAutoAnalyzeConcurrency                     = 1
+	DefTiDBEnablePrepPlanCache                        = true
+	DefTiDBPrepPlanCacheSize                          = 100
+	DefTiDBSessionPlanCacheSize                       = 100
+	DefTiDBEnablePrepPlanCacheMemoryMonitor           = true
+	DefTiDBPrepPlanCacheMemoryGuardRatio              = 0.1
+	DefTiDBEnableDistTask                             = true
+	DefTiDBEnableFastCreateTable                      = false
+	DefTiDBSimplifiedMetrics                          = false
+	DefTiDBEnablePaging                               = true
+	DefTiFlashFineGrainedShuffleStreamCount           = 0
+	DefStreamCountWhenMaxThreadsNotSet                = 8
+	DefTiFlashFineGrainedShuffleBatchSize             = 8192
+	DefAdaptiveClosestReadThreshold                   = 4096
+	DefTiDBEnableAnalyzeSnapshot                      = false
+	DefTiDBGenerateBinaryPlan                         = true
+	DefEnableTiDBGCAwareMemoryTrack                   = false
+	DefTiDBDefaultStrMatchSelectivity                 = 0.8
+	DefTiDBEnableTmpStorageOnOOM                      = true
+	DefTiDBEnableMDL                                  = true
+	DefTiFlashFastScan                                = false
+	DefMemoryUsageAlarmRatio                          = 0.7
+	DefMemoryUsageAlarmKeepRecordNum                  = 5
+	DefTiDBEnableFastReorg                            = true
+	DefTiDBDDLDiskQuota                               = 100 * 1024 * 1024 * 1024 // 100GB
+	DefExecutorConcurrency                            = 5
+	DefTiDBEnableNonPreparedPlanCache                 = false
+	DefTiDBEnableNonPreparedPlanCacheForDML           = false
+	DefTiDBNonPreparedPlanCacheSize                   = 100
+	DefTiDBPlanCacheMaxPlanSize                       = 2 * size.MB
+	DefTiDBInstancePlanCacheMaxMemSize                = 100 * size.MB
+	DefTiDBInstancePlanCacheReservedPercentage        = 0.1
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
 	MinDDLReorgBatchSize                  int32  = 32
@@ -1511,6 +1515,7 @@ const (
 	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
+	DefTiDBEnableINLJoinMultiPattern                  = true
 	DefTiFlashComputeDispatchPolicy                   = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                 = true
 	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
@@ -1540,6 +1545,7 @@ const (
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
+	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionLegacy
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
@@ -1605,17 +1611,17 @@ var (
 	OOMAction                            = atomic.NewString(DefTiDBMemOOMAction)
 	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
 	// variables for plan cache
-	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
-	EnableInstancePlanCache           = atomic.NewBool(false)
-	InstancePlanCacheTargetMemSize    = atomic.NewInt64(int64(DefTiDBInstancePlanCacheTargetMemSize))
-	InstancePlanCacheMaxMemSize       = atomic.NewInt64(int64(DefTiDBInstancePlanCacheMaxMemSize))
-	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
-	EnableFastCreateTable             = atomic.NewBool(DefTiDBEnableFastCreateTable)
-	DDLForce2Queue                    = atomic.NewBool(false)
-	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
-	EnableMDL                         = atomic.NewBool(false)
-	AutoAnalyzePartitionBatchSize     = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
-	AutoAnalyzeConcurrency            = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
+	PreparedPlanCacheMemoryGuardRatio   = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
+	EnableInstancePlanCache             = atomic.NewBool(false)
+	InstancePlanCacheReservedPercentage = atomic.NewFloat64(0.1)
+	InstancePlanCacheMaxMemSize         = atomic.NewInt64(int64(DefTiDBInstancePlanCacheMaxMemSize))
+	EnableDistTask                      = atomic.NewBool(DefTiDBEnableDistTask)
+	EnableFastCreateTable               = atomic.NewBool(DefTiDBEnableFastCreateTable)
+	DDLForce2Queue                      = atomic.NewBool(false)
+	EnableNoopVariables                 = atomic.NewBool(DefTiDBEnableNoopVariables)
+	EnableMDL                           = atomic.NewBool(false)
+	AutoAnalyzePartitionBatchSize       = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
+	AutoAnalyzeConcurrency              = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning

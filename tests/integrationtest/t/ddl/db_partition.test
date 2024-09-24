@@ -927,7 +927,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -940,7 +940,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -954,7 +954,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -968,7 +968,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -982,7 +982,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -995,7 +995,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -1009,7 +1009,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -1023,7 +1023,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists part6;
--- error 1503
+-- error 8264
 create table part6 (
 	col1 int not null,
 	col2 date not null,
@@ -1037,7 +1037,7 @@ partition by range( col1 + col2 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
--- error 1503
+-- error 8264
 create table part7 (
 	col1 int not null,
 	col2 int not null,
@@ -1048,7 +1048,7 @@ partition by range (col1 + col2) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
--- error 1503
+-- error 8264
 create table part8 (
          a int not null,
          b int not null,
@@ -1063,7 +1063,7 @@ partition by range columns (b) (
        partition p1 values less than (7),
        partition p2 values less than (11)
 );
--- error 1503
+-- error 8264
 create table part9 (
          a int not null,
          b int not null,
@@ -1078,7 +1078,7 @@ partition by range columns (b, c) (
        partition p1 values less than (7, 9),
        partition p2 values less than (11, 22)
 );
--- error 1503
+-- error 8264
 create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
 			partition p0 values less than ('aaaaa'),
 			partition p1 values less than ('bbbbb'),
@@ -1087,7 +1087,7 @@ create table part12 (a varchar(20), b binary) partition by range columns (a) (
 			partition p0 values less than ('aaaaa'),
 			partition p1 values less than ('bbbbb'),
 			partition p2 values less than ('ccccc'));
--- error 1503
+-- error 8264
 alter table part12 add unique index (a(5));
 create table part13 (a varchar(20), b varchar(10), unique index (a(5),b)) partition by range columns (b) (
 			partition p0 values less than ('aaaaa'),
@@ -2068,7 +2068,6 @@ alter table pt1 exchange partition p0 with table nt2;
 
 
 # TestExchangePartitionTableCompatiable
-set tidb_enable_global_index=true;
 
 drop database if exists partition_exchange;
 create database partition_exchange;
@@ -2257,7 +2256,6 @@ alter table pt35 exchange partition p0 with table nt35;
 
 drop database partition_exchange;
 use ddl__db_partition;
-set tidb_enable_global_index=default;
 
 --echo # 53385
 drop table if exists t,t1;

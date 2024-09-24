@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -791,7 +791,7 @@ func (c *setVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinSetStringVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinSetStringVarSig) Clone() builtinFunc {
@@ -829,7 +829,7 @@ func (b *builtinSetStringVarSig) evalString(ctx EvalContext, row chunk.Row) (res
 
 type builtinSetRealVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinSetRealVarSig) Clone() builtinFunc {
@@ -865,7 +865,7 @@ func (b *builtinSetRealVarSig) evalReal(ctx EvalContext, row chunk.Row) (res flo
 
 type builtinSetDecimalVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinSetDecimalVarSig) Clone() builtinFunc {
@@ -900,7 +900,7 @@ func (b *builtinSetDecimalVarSig) evalDecimal(ctx EvalContext, row chunk.Row) (*
 
 type builtinSetIntVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinSetIntVarSig) Clone() builtinFunc {
@@ -935,7 +935,7 @@ func (b *builtinSetIntVarSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 
 type builtinSetTimeVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinSetTimeVarSig) Clone() builtinFunc {
@@ -1269,7 +1269,7 @@ func (c *valuesFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinValuesIntSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1319,7 +1319,7 @@ func (b *builtinValuesIntSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool
 
 type builtinValuesRealSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1359,7 +1359,7 @@ func (b *builtinValuesRealSig) evalReal(ctx EvalContext, _ chunk.Row) (float64, 
 
 type builtinValuesDecimalSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1396,7 +1396,7 @@ func (b *builtinValuesDecimalSig) evalDecimal(ctx EvalContext, _ chunk.Row) (*ty
 
 type builtinValuesStringSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1442,7 +1442,7 @@ func (b *builtinValuesStringSig) evalString(ctx EvalContext, _ chunk.Row) (strin
 
 type builtinValuesTimeSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1479,7 +1479,7 @@ func (b *builtinValuesTimeSig) evalTime(ctx EvalContext, _ chunk.Row) (types.Tim
 
 type builtinValuesDurationSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1517,7 +1517,7 @@ func (b *builtinValuesDurationSig) evalDuration(ctx EvalContext, _ chunk.Row) (t
 
 type builtinValuesJSONSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1554,7 +1554,7 @@ func (b *builtinValuesJSONSig) evalJSON(ctx EvalContext, _ chunk.Row) (types.Bin
 
 type builtinValuesVectorFloat32Sig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
