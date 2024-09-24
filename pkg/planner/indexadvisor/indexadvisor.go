@@ -137,6 +137,9 @@ func prepareQuerySet(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return nil, err
 	}
+	if querySet.Size() == 0 {
+		return nil, errors.New("empty query set after filtering invalid queries")
+	}
 	advisorLogger().Info("finish query preparation", zap.Int("num_query", querySet.Size()))
 	return querySet, nil
 }
