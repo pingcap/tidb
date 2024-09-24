@@ -1819,10 +1819,13 @@ func checkPartitionFuncType(ctx sessionctx.Context, anyExpr any, schema string, 
 	var e expression.Expression
 	var err error
 	switch expr := anyExpr.(type) {
-	case *ast.ColumnNameExpr:
-		e, err = expression.BuildSimpleExpr(ctx.GetExprCtx(), expr, expression.WithTableInfo(schema, tblInfo))
 	case string:
+		if expr == "" {
+			return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
+		}
 		e, err = expression.ParseSimpleExpr(ctx.GetExprCtx(), expr, expression.WithTableInfo(schema, tblInfo))
+	case ast.ExprNode:
+		e, err = expression.BuildSimpleExpr(ctx.GetExprCtx(), expr, expression.WithTableInfo(schema, tblInfo))
 	default:
 		return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
 	}
@@ -1833,6 +1836,9 @@ func checkPartitionFuncType(ctx sessionctx.Context, anyExpr any, schema string, 
 		return nil
 	}
 	if col, ok := e.(*expression.Column); ok {
+		if col2, ok2 := anyExpr.(*ast.ColumnNameExpr); ok2 {
+			return errors.Trace(dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col2.Name.Name.L))
+		}
 		return errors.Trace(dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.OrigName))
 	}
 	return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
@@ -3116,9 +3122,18 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 
 		if job.Type == model.ActionAlterTablePartitioning {
 			// Also verify same things as in CREATE TABLE ... PARTITION BY
-			if err = checkPartitionFuncType(sctx, partInfo.Expr, job.SchemaName, tblInfo); err != nil {
-				job.State = model.JobStateCancelled
-				return ver, err
+			if len(partInfo.Columns) > 0 {
+				for _, col := range partInfo.Columns {
+					if err = checkPartitionFuncType(sctx, col.O, job.SchemaName, tblInfo); err != nil {
+						job.State = model.JobStateCancelled
+						return ver, err
+					}
+				}
+			} else {
+				if err = checkPartitionFuncType(sctx, partInfo.Expr, job.SchemaName, tblInfo); err != nil {
+					job.State = model.JobStateCancelled
+					return ver, err
+				}
 			}
 		}
 		// move the adding definition into tableInfo.
