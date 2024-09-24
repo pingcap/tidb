@@ -701,7 +701,8 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 }
 
 func compareGlobalIndex(lhs, rhs *candidatePath) int {
-	if lhs.path.IsTablePath() || rhs.path.IsTablePath() {
+	if lhs.path.IsTablePath() || rhs.path.IsTablePath() ||
+		len(lhs.path.PartialIndexPaths) != 0 || len(rhs.path.PartialIndexPaths) != 0 {
 		return 0
 	}
 	return compareBool(lhs.path.Index.Global, rhs.path.Index.Global)
@@ -933,18 +934,18 @@ func matchPropForIndexMergeAlternatives(ds *DataSource, path *util.AccessPath, p
 					rhsCountAfter = tmpOneItemAlternatives[b].CountAfterIndex
 				}
 				res := cmp.Compare(lhsCountAfter, rhsCountAfter)
-				// If CountAfterAccess is same, any path is global index should be the first one.
-				if res == 0 {
-					var lIsGlobalIndex, rIsGlobalIndex int
-					if !tmpOneItemAlternatives[a].IsTablePath() && tmpOneItemAlternatives[a].Index.Global {
-						lIsGlobalIndex = 1
-					}
-					if !tmpOneItemAlternatives[b].IsTablePath() && tmpOneItemAlternatives[b].Index.Global {
-						rIsGlobalIndex = 1
-					}
-					return -cmp.Compare(lIsGlobalIndex, rIsGlobalIndex)
+				if res != 0 {
+					return res
 				}
-				return res
+				// If CountAfterAccess is same, any path is global index should be the first one.
+				var lIsGlobalIndex, rIsGlobalIndex int
+				if !tmpOneItemAlternatives[a].IsTablePath() && tmpOneItemAlternatives[a].Index.Global {
+					lIsGlobalIndex = 1
+				}
+				if !tmpOneItemAlternatives[b].IsTablePath() && tmpOneItemAlternatives[b].Index.Global {
+					rIsGlobalIndex = 1
+				}
+				return -cmp.Compare(lIsGlobalIndex, rIsGlobalIndex)
 			})
 		}
 		allMatchIdxes = append(allMatchIdxes, idxWrapper{matchIdxes, pathIdx})

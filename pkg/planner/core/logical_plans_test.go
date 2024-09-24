@@ -1933,33 +1933,24 @@ func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
 	return pp
 }
 
-func getPartialIndexPathName(paths []*util.AccessPath) string {
-	name := "["
-	for i, path := range paths {
-		if path.IsTablePath() {
-			name += "PRIMARY_KEY"
-		} else {
-			name += path.Index.Name.O
-		}
-		if i != len(paths)-1 {
-			name += ", "
-		}
+func getIndexPathName(path *util.AccessPath) string {
+	if path.IsTablePath() {
+		return "PRIMARY_KEY"
 	}
-	name += "]"
-	return name
+	return path.Index.Name.O
 }
 
 func pathsName(paths []*candidatePath) string {
 	var names []string
 	for _, path := range paths {
 		if len(path.path.PartialIndexPaths) != 0 {
-			names = append(names, getPartialIndexPathName(path.path.PartialIndexPaths))
-		} else {
-			if path.path.IsTablePath() {
-				names = append(names, "PRIMARY_KEY")
-			} else {
-				names = append(names, path.path.Index.Name.O)
+			var partialIndexPahtNames []string
+			for _, partialIndexPath := range path.path.PartialIndexPaths {
+				partialIndexPahtNames = append(partialIndexPahtNames, getIndexPathName(partialIndexPath))
 			}
+			names = append(names, "["+strings.Join(partialIndexPahtNames, ",")+"]")
+		} else {
+			names = append(names, getIndexPathName(path.path))
 		}
 	}
 	return strings.Join(names, ",")
@@ -2035,7 +2026,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 or g = 5",
-			result: "PRIMARY_KEY,[g, b_global]",
+			result: "PRIMARY_KEY,[g,b_global]",
 		},
 	}
 	s := createPlannerSuite()
