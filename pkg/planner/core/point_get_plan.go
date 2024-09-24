@@ -894,7 +894,6 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	ctx.GetSessionVars().PlanColumnID.Store(0)
 	switch x := node.Node.(type) {
 	case *ast.SelectStmt:
-		// TODO: move this up to cover Delete as well after we have finished the fix for https://github.com/pingcap/tidb/issues/38911
 		if x.SelectIntoOpt != nil {
 			return nil
 		}
