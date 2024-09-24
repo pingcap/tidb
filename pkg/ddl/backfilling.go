@@ -701,6 +701,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		for {
 			select {
 			case <-opCtx.Done():
+				return
 			case <-ticker.C:
 				jobsFromTable, err := getJobsBySQL(
 					ctx,
