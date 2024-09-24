@@ -32,49 +32,6 @@ type Result struct {
 	comment string
 	require *require.Assertions
 	assert  *assert.Assertions
-
-	useAssert bool
-}
-
-// WithUseAssert returns the Result with assert enabled or disabled.
-func (res *Result) WithUseAssert(useAssert bool) *Result {
-	res.useAssert = useAssert
-	return res
-}
-
-type assertion interface {
-	Equal(expected any, actual any, msgAndArgs ...any)
-	Truef(value bool, msg string, args ...any)
-	True(value bool, msgAndArgs ...any)
-	False(value bool, msgAndArgs ...any)
-}
-
-func (res *Result) getAssert() assertion {
-	if res.useAssert {
-		return &assertWrapper{assert: res.assert}
-	}
-	return res.require
-}
-
-// assertWrapper wraps a `*assert.Assertions` to implement the `assertion` interface.
-type assertWrapper struct {
-	assert *assert.Assertions
-}
-
-func (a *assertWrapper) Equal(expected any, actual any, msgAndArgs ...any) {
-	a.assert.Equal(expected, actual, msgAndArgs...)
-}
-
-func (a *assertWrapper) Truef(value bool, msg string, args ...any) {
-	a.assert.Truef(value, msg, args...)
-}
-
-func (a *assertWrapper) True(value bool, msgAndArgs ...any) {
-	a.assert.True(value, msgAndArgs...)
-}
-
-func (a *assertWrapper) False(value bool, msgAndArgs ...any) {
-	a.assert.False(value, msgAndArgs...)
 }
 
 // Check asserts the result equals the expected results.
@@ -89,7 +46,7 @@ func (res *Result) Check(expected [][]any) {
 		_, _ = fmt.Fprintf(needBuff, "%s\n", row)
 	}
 
-	res.getAssert().Equal(needBuff.String(), resBuff.String(), res.comment)
+	res.require.Equal(needBuff.String(), resBuff.String(), res.comment)
 }
 
 // Equal check whether the result equals the expected results.
@@ -114,11 +71,11 @@ func (res *Result) AddComment(c string) {
 
 // CheckWithFunc asserts the result match the expected results in the way `f` specifies.
 func (res *Result) CheckWithFunc(expected [][]any, f func([]string, []any) bool) {
-	res.getAssert().Equal(len(res.rows), len(expected), res.comment+"\nResult length mismatch")
+	res.require.Equal(len(res.rows), len(expected), res.comment+"\nResult length mismatch")
 
 	for i, resRow := range res.rows {
 		expectedRow := expected[i]
-		res.getAssert().Truef(f(resRow, expectedRow), res.comment+"\nCheck with function failed\nactual: %s\nexpected: %s", resRow, expectedRow)
+		res.require.Truef(f(resRow, expectedRow), res.comment+"\nCheck with function failed\nactual: %s\nexpected: %s", resRow, expectedRow)
 	}
 }
 
@@ -166,7 +123,7 @@ func (res *Result) Rows() [][]any {
 // CheckAt asserts the result of selected columns equals the expected results.
 func (res *Result) CheckAt(cols []int, expected [][]any) {
 	for _, e := range expected {
-		res.getAssert().Equal(len(e), len(cols))
+		res.require.Equal(len(e), len(cols))
 	}
 
 	rows := make([][]string, 0, len(expected))
@@ -179,7 +136,7 @@ func (res *Result) CheckAt(cols []int, expected [][]any) {
 	}
 	got := fmt.Sprintf("%s", rows)
 	need := fmt.Sprintf("%s", expected)
-	res.getAssert().Equal(need, got, res.comment)
+	res.require.Equal(need, got, res.comment)
 }
 
 // CheckContain checks whether the result contains the expected string
@@ -200,7 +157,7 @@ func (res *Result) CheckContain(expected string) {
 		}
 	}
 	comment := fmt.Sprintf("the result doesn't contain the expected %s\n%s\n%s\n", expected, result.String(), res.comment)
-	res.getAssert().Equal(true, false, comment)
+	res.require.Equal(true, false, comment)
 }
 
 func (res *Result) String() string {
@@ -223,7 +180,7 @@ func (res *Result) String() string {
 func (res *Result) MultiCheckContain(expecteds []string) {
 	result := res.String()
 	for _, expected := range expecteds {
-		res.getAssert().True(strings.Contains(result, expected), "the result doesn't contain the exepected %s\n%s", expected, result)
+		res.require.True(strings.Contains(result, expected), "the result doesn't contain the exepected %s\n%s", expected, result)
 	}
 }
 
@@ -247,13 +204,13 @@ func (res *Result) CheckNotContain(unexpected string) {
 		}
 	}
 	comment := fmt.Sprintf("%s\nthe result contain the unexepected '%s':\n%s", res.comment, unexpected, result)
-	res.getAssert().Equal(false, found, comment)
+	res.require.Equal(false, found, comment)
 }
 
 // MultiCheckNotContain checks whether the result doesn't contain the strings in `expected`
 func (res *Result) MultiCheckNotContain(unexpecteds []string) {
 	result := res.String()
 	for _, unexpected := range unexpecteds {
-		res.getAssert().False(strings.Contains(result, unexpected), "the result contain the unexepected %s\n%s", unexpected, result)
+		res.require.False(strings.Contains(result, unexpected), "the result contain the unexepected %s\n%s", unexpected, result)
 	}
 }
