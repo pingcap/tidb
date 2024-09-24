@@ -4,7 +4,6 @@ go_library(
     name = "txn",
     srcs = [
         "batch_getter.go",
-        "binlog.go",
         "error.go",
         "scanner.go",
         "snapshot.go",
@@ -18,7 +17,6 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx/binloginfo",
         "//pkg/store/driver/error",
         "//pkg/store/driver/options",
         "//pkg/table/tables",
@@ -32,7 +30,6 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_pingcap_tipb//go-binlog",
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//tikv",

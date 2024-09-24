@@ -20,6 +20,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +35,7 @@ func TestPublishToTableStore(t *testing.T) {
 CREATE TABLE ddl_notifier (
 	ddl_job_id BIGINT,
 	multi_schema_change_seq BIGINT COMMENT '-1 if the schema change does not belong to a multi-schema change DDL. 0 or positive numbers representing the sub-job index of a multi-schema change DDL',
-	schema_change JSON COMMENT 'SchemaChange at rest',
+	schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',
 	processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
 	PRIMARY KEY(ddl_job_id, multi_schema_change_seq)
 )
@@ -42,11 +44,12 @@ CREATE TABLE ddl_notifier (
 	ctx := context.Background()
 	s := notifier.OpenTableStore("test", "ddl_notifier")
 	se := sess.NewSession(tk.Session())
-	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, nil, s)
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, nil, s)
+	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
+	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
-
 	got, err := s.List(ctx, se, 1)
 	require.NoError(t, err)
 	require.Len(t, got, 1)

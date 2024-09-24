@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -37,7 +37,7 @@ import (
 )
 
 // ceTraceExpr appends an expression and related information into CE trace
-func ceTraceExpr(sctx context.PlanContext, tableID int64, tp string, expr expression.Expression, rowCount float64) {
+func ceTraceExpr(sctx planctx.PlanContext, tableID int64, tp string, expr expression.Expression, rowCount float64) {
 	exprStr, err := exprToString(sctx.GetExprCtx().GetEvalCtx(), expr)
 	if err != nil {
 		logutil.BgLogger().Debug("Failed to trace CE of an expression", zap.String("category", "OptimizerTrace"),
@@ -126,7 +126,7 @@ type getRowCountInput struct {
 }
 
 func debugTraceGetRowCountInput(
-	s context.PlanContext,
+	s planctx.PlanContext,
 	id int64,
 	ranges ranger.Ranges,
 ) {
@@ -142,10 +142,10 @@ func debugTraceGetRowCountInput(
 }
 
 // GetTblInfoForUsedStatsByPhysicalID get table name, partition name and TableInfo that will be used to record used stats.
-var GetTblInfoForUsedStatsByPhysicalID func(sctx context.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo)
+var GetTblInfoForUsedStatsByPhysicalID func(sctx planctx.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo)
 
 // recordUsedItemStatsStatus only records un-FullLoad item load status during user query
-func recordUsedItemStatsStatus(sctx context.PlanContext, stats any, tableID, id int64) {
+func recordUsedItemStatsStatus(sctx planctx.PlanContext, stats any, tableID, id int64) {
 	// Sometimes we try to use stats on _tidb_rowid (id == -1), which must be empty, we ignore this case here.
 	if id <= 0 {
 		return
@@ -213,7 +213,7 @@ func recordUsedItemStatsStatus(sctx context.PlanContext, stats any, tableID, id 
 }
 
 // ceTraceRange appends a list of ranges and related information into CE trace
-func ceTraceRange(sctx context.PlanContext, tableID int64, colNames []string, ranges []*ranger.Range, tp string, rowCount uint64) {
+func ceTraceRange(sctx planctx.PlanContext, tableID int64, colNames []string, ranges []*ranger.Range, tp string, rowCount uint64) {
 	sc := sctx.GetSessionVars().StmtCtx
 	tc := sc.TypeCtx()
 	allPoint := true
@@ -257,7 +257,7 @@ type startEstimateRangeInfo struct {
 }
 
 func debugTraceStartEstimateRange(
-	s context.PlanContext,
+	s planctx.PlanContext,
 	r *ranger.Range,
 	lowBytes, highBytes []byte,
 	currentCount float64,
@@ -302,7 +302,7 @@ type endEstimateRangeInfo struct {
 }
 
 func debugTraceEndEstimateRange(
-	s context.PlanContext,
+	s planctx.PlanContext,
 	count float64,
 	addType debugTraceAddRowCountType,
 ) {

@@ -72,6 +72,9 @@ select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt2' and table_schema = 'infoschema__infoschema';
 -- sorted_result
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name = 'pt0' and table_schema = 'infoschema__infoschema';
+explain select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
+-- sorted_result
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
 drop table pt1;
 drop table pt2;
 
@@ -142,6 +145,9 @@ select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics 
 select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name = 't1';
 --sorted_result
 select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name = 't2' and table_schema = 'infoschema__infoschema_2';
+explain select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema = 'infoschema__infoschema_2';
+--sorted_result
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema = 'infoschema__infoschema_2';
 drop table infoschema__infoschema.t1;
 drop table infoschema__infoschema_2.t2;
 
@@ -165,6 +171,9 @@ select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_u
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1' and INDEX_NAME = 'idx_1';
 -- sorted_result
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and TABLE_NAME = 'idt2' and INDEX_NAME = 'idx_4';
+explain select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA like '%indexusage%' and TABLE_NAME like '%idt2%' and INDEX_NAME like '%idx_4%';
+-- sorted_result
+select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA like '%indexusage%' and TABLE_NAME like '%idt2%' and INDEX_NAME like '%idx_4%';
 
 # Empty query
 -- sorted_result
@@ -209,6 +218,9 @@ select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.columns whe
 use infoschema__infoschema;
 select SCHEMA_NAME from information_schema.schemata where schema_name = 'infoschema__infoschema_2';
 select SCHEMA_NAME from information_schema.schemata where schema_name = 'infoschema__infoschema';
+explain select SCHEMA_NAME from information_schema.schemata where schema_name like 'infoschema__infoschema%';
+-- sorted_result
+select SCHEMA_NAME from information_schema.schemata where schema_name like 'infoschema__infoschema%';
 drop database infoschema__infoschema_2;
 
 # TestFilterKeyColumnUsageTable
@@ -219,6 +231,9 @@ create database if not exists db2;
 create table db2.table1(id int not null primary key, cat_name varchar(255) not null, cat_description text);
 create table db2.table2(id int not null, FOREIGN KEY fk(id) REFERENCES table1(id) ON UPDATE CASCADE ON DELETE RESTRICT);
 select * from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where table_schema = 'db1' order by TABLE_NAME;
+explain select * from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where table_schema like '%db1%' order by TABLE_NAME;
+-- sorted_result
+select * from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where table_schema like '%db1%' order by TABLE_NAME;
 drop database db1;
 drop database db2;
 
@@ -243,5 +258,8 @@ select sequence_schema, sequence_name from information_schema.sequences where se
 select sequence_schema, sequence_name from information_schema.sequences where sequence_schema = 'db1' and sequence_name = 's1';
 select sequence_schema, sequence_name from information_schema.sequences where sequence_schema = 'db1' and sequence_name = 's2';
 select sequence_schema, sequence_name from information_schema.sequences;
+explain select sequence_schema, sequence_name from information_schema.sequences where sequence_schema like '%db1%';
+-- sorted_result
+select sequence_schema, sequence_name from information_schema.sequences where sequence_schema like '%db1%';
 drop database db1;
 drop database db2;

@@ -1430,12 +1430,11 @@ func TestTiFlashReorgPartition(t *testing.T) {
 				// Add the tiflash stores as peers for the new regions, to fullfil the check
 				// in checkPartitionReplica
 				pdCli := s.store.(tikv.Storage).GetRegionCache().PDClient()
-				var dummy []pmodel.CIStr
-				partInfo := &model.PartitionInfo{}
-				_ = job.DecodeArgs(&dummy, &partInfo)
+				args, err := model.GetTablePartitionArgs(job)
+				require.NoError(t, err)
 				ctx := context.Background()
 				stores, _ := pdCli.GetAllStores(ctx)
-				for _, pDef := range partInfo.Definitions {
+				for _, pDef := range args.PartInfo.Definitions {
 					startKey, endKey := tablecodec.GetTableHandleKeyRange(pDef.ID)
 					regions, _ := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 					for i := range regions {

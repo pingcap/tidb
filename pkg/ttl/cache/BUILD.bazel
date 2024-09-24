@@ -13,7 +13,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
-        "//pkg/expression/contextstatic",
+        "//pkg/expression/exprstatic",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/model",
