@@ -22,7 +22,6 @@ go_test(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/logutil",
-        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
