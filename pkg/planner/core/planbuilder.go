@@ -4178,39 +4178,13 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		}
 		options = append(options, &loadDataOpt)
 	}
-<<<<<<< HEAD
-=======
 
-	neededVars, err := checkImportIntoColAssignments(ld.ColumnAssignments)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, v := range ld.ColumnsAndUserVars {
-		userVar := v.UserVar
-		if userVar == nil {
-			continue
-		}
-		delete(neededVars, strings.ToLower(userVar.Name))
-	}
-	if len(neededVars) > 0 {
-		valuesStr := make([]string, 0, len(neededVars))
-		for _, v := range neededVars {
-			valuesStr = append(valuesStr, strconv.Itoa(v))
-		}
-		return nil, errors.Errorf(
-			"column assignment cannot use variables set outside IMPORT INTO statement, index %s",
-			strings.Join(valuesStr, ","),
-		)
-	}
-
-	tnW := b.resolveCtx.GetTableName(ld.Table)
-	if tnW.TableInfo.TempTableType != model.TempTableNone {
+	tableInfo := ld.Table.TableInfo
+	if tableInfo.TempTableType != model.TempTableNone {
 		return nil, errors.Errorf("IMPORT INTO does not support temporary table")
-	} else if tnW.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+	} else if tableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return nil, errors.Errorf("IMPORT INTO does not support cached table")
 	}
->>>>>>> ae86e046b62 (importinto: fix panic when import to a temporary table, disallow import to cached table (#55983))
 	p := ImportInto{
 		Path:               ld.Path,
 		Format:             ld.Format,
@@ -4239,7 +4213,6 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	if importFromServer {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	}
-	tableInfo := p.Table.TableInfo
 	// we use the latest IS to support IMPORT INTO dst FROM SELECT * FROM src AS OF TIMESTAMP '2020-01-01 00:00:00'
 	// Note: we need to get p.Table when preprocessing, at that time, IS of session
 	// transaction is used, if the session ctx is already in snapshot read using tidb_snapshot, we might
