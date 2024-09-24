@@ -5527,7 +5527,7 @@ func (e *executor) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTab
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	args := &model.RepairTableArgs{newTableInfo}
+	args := &model.RepairTableArgs{TableInfo: newTableInfo}
 	err = e.doDDLJob2(ctx, job, args)
 	if err == nil {
 		// Remove the old TableInfo from repairInfo before domain reload.
