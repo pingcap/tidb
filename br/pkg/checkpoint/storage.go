@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -135,9 +134,7 @@ func (s *tableCheckpointStorage) updateLock(ctx context.Context) error {
 	return nil
 }
 
-func (s *tableCheckpointStorage) deleteLock(ctx context.Context) {
-	log.Fatal("unimplement!")
-}
+func (s *tableCheckpointStorage) deleteLock(ctx context.Context) {}
 
 func (s *tableCheckpointStorage) flushCheckpointData(ctx context.Context, data []byte) error {
 	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointDataTableName, data)
@@ -328,7 +325,7 @@ func dropCheckpointTables(
 		}
 	}
 	// check if any user table is created in the checkpoint database
-	tables, err := dom.InfoSchema().SchemaTableInfos(ctx, model.NewCIStr(dbName))
+	tables, err := dom.InfoSchema().SchemaTableInfos(ctx, pmodel.NewCIStr(dbName))
 	if err != nil {
 		return errors.Trace(err)
 	}

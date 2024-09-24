@@ -39,7 +39,11 @@ type externalCheckpointStorage struct {
 	timer  GlobalTimer
 }
 
-func newExternalCheckpointStorage(ctx context.Context, s storage.ExternalStorage, timer GlobalTimer) (*externalCheckpointStorage, error) {
+func newExternalCheckpointStorage(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	timer GlobalTimer,
+) (*externalCheckpointStorage, error) {
 	checkpointStorage := &externalCheckpointStorage{
 		flushPosition: flushPositionForBackup(),
 		storage:       s,
