@@ -3123,11 +3123,11 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 		if job.Type == model.ActionAlterTablePartitioning {
 			// Also verify same things as in CREATE TABLE ... PARTITION BY
 			if len(partInfo.Columns) > 0 {
-				for _, col := range partInfo.Columns {
-					if err = checkPartitionFuncType(sctx, col.O, job.SchemaName, tblInfo); err != nil {
-						job.State = model.JobStateCancelled
-						return ver, err
-					}
+				// shallow copy, only for reading/checking
+				tmpTblInfo := *tblInfo
+				tmpTblInfo.Partition = partInfo
+				if err = checkColumnsPartitionType(&tmpTblInfo); err != nil {
+					return ver, err
 				}
 			} else {
 				if err = checkPartitionFuncType(sctx, partInfo.Expr, job.SchemaName, tblInfo); err != nil {

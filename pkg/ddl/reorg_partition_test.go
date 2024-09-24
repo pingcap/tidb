@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -566,42 +567,53 @@ func TestPartitionByColumnChecks(t *testing.T) {
 	cols := "(i int, f float, c char(20), b bit(2), b32 bit(32), b64 bit(64), d date, dt datetime, dt6 datetime(6), ts timestamp, ts6 timestamp(6), j json)"
 	vals := `(1, 2.2, "A and c", b'10', b'10001000100010001000100010001000', b'1000100010001000100010001000100010001000100010001000100010001000', '2024-09-24', '2024-09-24 13:01:02', '2024-09-24 13:01:02.123456', '2024-09-24 13:01:02', '2024-09-24 13:01:02.123456', '{"key1": "value1", "key2": "value2"}')`
 	tk.MustExec(`create table t ` + cols)
-	// KEY
-	tk.MustContainErrMsg(`create table kj `+cols+` partition by key(j) partitions 2`, "[ddl:1659]Field 'j' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by key(j) partitions 2`, "[ddl:1659]Field 'j' is of a not allowed type for this type of partitioning")
-	// LIST
-	// LIST COLUMNS
-	tk.MustContainErrMsg(`create table cb `+cols+` partition by list columns (b) (partition pDef default)`, "[ddl:1659]Field 'b' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`create table cf `+cols+` partition by list columns (f) (partition pDef default)`, "[ddl:1659]Field 'f' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`create table cts `+cols+` partition by list columns (ts) (partition pDef default)`, "[ddl:1659]Field 'ts' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`create table cj `+cols+` partition by list columns (j) (partition pDef default)`, "[ddl:1659]Field 'j' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by list columns (b) (partition pDef default)`, "[ddl:1659]Field 'b' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by list columns (f) (partition pDef default)`, "[ddl:1659]Field 'f' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by list columns (ts) (partition pDef default)`, "[ddl:1659]Field 'ts' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by list columns (j) (partition pDef default)`, "[ddl:1659]Field 'j' is of a not allowed type for this type of partitioning")
-	// HASH
-	tk.MustContainErrMsg(`create table hts `+cols+` partition by hash(year(ts)) partitions 2`, "[ddl:1486]Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed")
-	tk.MustContainErrMsg(`alter table t partition by hash(year(ts)) partitions 2`, "[ddl:1486]Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed")
-	tk.MustContainErrMsg(`create table hd `+cols+` partition by hash(d) partitions 2`, "[ddl:1659]Field 'd' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by hash(d) partitions 3`, "[ddl:1659]Field 'test.t.d' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`create table hts `+cols+` partition by hash(ts) partitions 2`, "[ddl:1659]Field 'ts' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by hash(ts) partitions 3`, "[ddl:1659]Field 'test.t.ts' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`create table hts6 `+cols+` partition by hash(ts6) partitions 2`, "[ddl:1659]Field 'ts6' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by hash(ts6) partitions 3`, "[ddl:1659]Field 'test.t.ts6' is of a not allowed type for this type of partitioning")
-
-	// RANGE
-	tk.MustContainErrMsg(`create table tt `+cols+` partition by range (f) (partition pMax values less than (MAXVALUE))`, "[ddl:1659]Field 'f' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by range(f) (partition pMax values less than (MAXVALUE))`, "[ddl:1659]Field 'test.t.f' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`create table tt `+cols+` partition by range (d) (partition pMax values less than (MAXVALUE))`, "[ddl:1659]Field 'd' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by range(d) (partition pMax values less than (MAXVALUE))`, "[ddl:1659]Field 'test.t.d' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`create table tt `+cols+` partition by range (dt) (partition pMax values less than (MAXVALUE))`, "[ddl:1659]Field 'dt' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by range(dt) (partition pMax values less than (MAXVALUE))`, "[ddl:1659]Field 'test.t.dt' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`create table tt `+cols+` partition by range (dt6) (partition pMax values less than (MAXVALUE))`, "[ddl:1659]Field 'dt6' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by range(dt6) (partition pMax values less than (MAXVALUE))`, "[ddl:1659]Field 'test.t.dt6' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`create table tt `+cols+` partition by range (ts) (partition pMax values less than (MAXVALUE))`, "[ddl:1659]Field 'ts' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by range(ts) (partition pMax values less than (MAXVALUE))`, "[ddl:1659]Field 'test.t.ts' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`create table tt `+cols+` partition by range (ts6) (partition pMax values less than (MAXVALUE))`, "[ddl:1659]Field 'ts6' is of a not allowed type for this type of partitioning")
-	tk.MustContainErrMsg(`alter table t partition by range(ts6) (partition pMax values less than (MAXVALUE))`, "[ddl:1659]Field 'test.t.ts6' is of a not allowed type for this type of partitioning")
+	testCases := []struct {
+		partClause string
+		err        error
+	}{
+		{"key (c) partitions 2", nil},
+		{"key (j) partitions 2", dbterror.ErrNotAllowedTypeInPartition},
+		{"list (c) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"list (b) (partition pDef default)", nil},
+		{"list (f) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"list (j) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"list columns (b) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"list columns (f) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"list columns (ts) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"list columns (j) (partition pDef default)", dbterror.ErrNotAllowedTypeInPartition},
+		{"hash (year(ts)) partitions 2", dbterror.ErrWrongExprInPartitionFunc},
+		{"hash (ts) partitions 2", dbterror.ErrNotAllowedTypeInPartition},
+		{"hash (ts6) partitions 2", dbterror.ErrNotAllowedTypeInPartition},
+		{"hash (d) partitions 2", dbterror.ErrNotAllowedTypeInPartition},
+		{"hash (f) partitions 2", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (c) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (f) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (d) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (dt) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (dt6) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (ts) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (ts6) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range (j) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range columns (b) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range columns (b64) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range columns (c) (partition pMax values less than (maxvalue))", nil},
+		{"range columns (f) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range columns (d) (partition pMax values less than (maxvalue))", nil},
+		{"range columns (dt) (partition pMax values less than (maxvalue))", nil},
+		{"range columns (dt6) (partition pMax values less than (maxvalue))", nil},
+		{"range columns (ts) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range columns (ts6) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+		{"range columns (j) (partition pMax values less than (maxvalue))", dbterror.ErrNotAllowedTypeInPartition},
+	}
+	for _, testCase := range testCases {
+		err := tk.ExecToErr(`create table tt ` + cols + ` partition by ` + testCase.partClause)
+		require.ErrorIs(t, err, testCase.err, testCase.partClause)
+		if testCase.err == nil {
+			tk.MustExec(`drop table tt`)
+		}
+		err = tk.ExecToErr(`alter table t partition by ` + testCase.partClause)
+		require.ErrorIs(t, err, testCase.err)
+	}
 
 	// Not documented or tested!!
 	// KEY - Allows more types than documented, should be OK!
