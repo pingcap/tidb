@@ -82,6 +82,11 @@ func TestTableSplit(t *testing.T) {
 	}
 }
 
+// TestScatterRegion test the behavior of the tidb_scatter_region system variable, for verifying:
+// 1. The variable can be set and queried correctly at both session and global levels.
+// 2. Changes to the global variable affect new sessions but not existing ones.
+// 3. The variable only accepts valid values (”, 'table', 'global').
+// 4. Attempts to set invalid values result in appropriate error messages.
 func TestScatterRegion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
