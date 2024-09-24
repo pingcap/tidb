@@ -51,7 +51,7 @@ func execRetry(ctx context.Context, exec sqlexec.SQLExecutor, sql string) error 
 }
 
 func generatePartitionDef(sb *strings.Builder, col string) {
-	fmt.Fprintf(sb, "PARTITION BY RANGE( TO_DAYS(%s) ) (", col)
+	fmt.Fprintf(sb, " PARTITION BY RANGE( TO_DAYS(%s) ) (", col)
 	// tbInfo is nil, retval must be false
 	_ = generatePartitionRanges(sb, nil)
 	fmt.Fprintf(sb, ")")

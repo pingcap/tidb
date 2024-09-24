@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -39,16 +40,16 @@ func calcNextTick(now time.Time) time.Duration {
 
 func (w *Worker) createAllPartitions(ctx context.Context, exec sqlexec.SQLExecutor, is infoschema.InfoSchema) error {
 	sb := &strings.Builder{}
-	for _, tbl := range tbls {
-		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tbl.name))
+	for _, tbl := range workloadTables {
+		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tbl.destTable))
 		if err != nil {
-			logutil.BgLogger().Info("housekeeper can't get table", zap.String("tb", tbl.name), zap.Error(err))
+			logutil.BgLogger().Info("housekeeper can't get table", zap.String("tb", tbl.destTable), zap.Error(err))
 			return err
 		}
 		tbInfo := tbSchema.Meta()
 
 		sb.Reset()
-		fmt.Fprintf(sb, "ALTER TABLE %s ADD PARTITION (", tbl.name)
+		sqlescape.MustFormatSQL(sb, "ALTER TABLE %n.%n ADD PARTITION (", WorkloadSchema, tbl.destTable)
 		if !generatePartitionRanges(sb, tbInfo) {
 			fmt.Fprintf(sb, ")")
 			err = execRetry(ctx, exec, sb.String())
@@ -69,10 +70,10 @@ func (w *Worker) dropOldPartitions(ctx context.Context, exec sqlexec.SQLExecutor
 	}
 
 	sb := &strings.Builder{}
-	for _, tbl := range tbls {
-		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tbl.name))
+	for _, tbl := range workloadTables {
+		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tbl.destTable))
 		if err != nil {
-			logutil.BgLogger().Info("housekeeper can't get table", zap.String("tb", tbl.name), zap.Error(err))
+			logutil.BgLogger().Info("housekeeper can't get table", zap.String("tb", tbl.destTable), zap.Error(err))
 			continue
 		}
 		tbInfo := tbSchema.Meta()
@@ -86,7 +87,8 @@ func (w *Worker) dropOldPartitions(ctx context.Context, exec sqlexec.SQLExecutor
 				continue
 			}
 			sb.Reset()
-			fmt.Fprintf(sb, "ALTER TABLE %s DROP PARTITION %s", tbl.name, pt.Name.L)
+			sqlescape.MustFormatSQL(sb, "ALTER TABLE %s.%s DROP PARTITION %s",
+				WorkloadSchema, tbl.destTable, pt.Name.L)
 			err = execRetry(ctx, exec, sb.String())
 			if err != nil {
 				logutil.BgLogger().Info("housekeeper can't drop partition", zap.String("part", pt.Name.L), zap.Error(err))
