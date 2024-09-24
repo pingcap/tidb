@@ -110,6 +110,11 @@ func (j *DynamicPartitionedTableAnalysisJob) GetIndicators() Indicators {
 	return j.Indicators
 }
 
+// SetIndicators sets the indicators of the table.
+func (j *DynamicPartitionedTableAnalysisJob) SetIndicators(indicators Indicators) {
+	j.Indicators = indicators
+}
+
 // HasNewlyAddedIndex checks whether the job has newly added index.
 func (j *DynamicPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 	return len(j.PartitionIndexes) > 0
