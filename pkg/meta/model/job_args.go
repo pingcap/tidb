@@ -58,7 +58,7 @@ type FinishedJobArgs interface {
 // EmptyArgs is the args for ddl job with nothing args.
 type EmptyArgs struct{}
 
-func (a *EmptyArgs) fillJob(*Job) {}
+func (*EmptyArgs) fillJob(*Job) {}
 
 // CreateSchemaArgs is the arguments for create schema job.
 type CreateSchemaArgs struct {
