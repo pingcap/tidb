@@ -114,7 +114,8 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 
 	// test cancel is timely
 	enter := make(chan struct{})
-	failpoint.EnableCall(
+	testfailpoint.EnableCall(
+		t,
 		"github.com/pingcap/tidb/pkg/lightning/backend/local/beforeExecuteRegionJob",
 		func(ctx context.Context) {
 			close(enter)

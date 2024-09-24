@@ -148,7 +148,6 @@ func (*EmptyRowCntListener) Written(_ int) {}
 // SetTotal implements RowCountListener.
 func (*EmptyRowCntListener) SetTotal(_ int) {}
 
-// TODO(lance6716):
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
 	ctx *OperatorCtx,
