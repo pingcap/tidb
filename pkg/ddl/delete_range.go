@@ -299,12 +299,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 	case model.ActionDropTable:
 		tableID := job.TableID
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
-		var startKey kv.Key
-		var physicalTableIDs []int64
-		var ruleIDs []string
-		if err := job.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
+		args, err := model.GetFinishedDropTableArgs(job)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		physicalTableIDs := args.OldPartitionIDs
 		if len(physicalTableIDs) > 0 {
 			if err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "drop table: partition table IDs"); err != nil {
 				return errors.Trace(err)
