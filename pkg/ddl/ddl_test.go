@@ -460,12 +460,13 @@ func TestAppendContinuousKeyRanges(t *testing.T) {
 func TestDetectAndUpdateJobVersion(t *testing.T) {
 	d := &ddl{ddlCtx: &ddlCtx{ctx: context.Background()}}
 
-	bak := model.GetJobVerInUse()
 	reset := func() {
-		model.SetJobVerInUse(bak)
+		model.SetJobVerInUse(model.JobVersion1)
 	}
 	t.Cleanup(reset)
-	require.Equal(t, model.JobVersion1, bak)
+	// other ut in the same address space might change it
+	reset()
+	require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
 
 	t.Run("in ut", func(t *testing.T) {
 		reset()
