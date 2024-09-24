@@ -419,7 +419,8 @@ func TestStoreBalancerPick(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		b.run(ctx)
+		err := b.run(ctx)
+		require.NoError(t, err)
 	}()
 
 	job := &regionJob{
@@ -520,7 +521,8 @@ func TestCancelBalancer(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		b.run(ctx)
+		err := b.run(ctx)
+		require.NoError(t, err)
 	}()
 
 	jobs := mockRegionJob4Balance(t, 20)
@@ -544,7 +546,8 @@ func TestStoreBalancerNoRace(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		b.run(ctx)
+		err := b.run(ctx)
+		require.NoError(t, err)
 	}()
 
 	cnt := 200

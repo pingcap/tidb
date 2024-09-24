@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/util"
@@ -939,7 +940,7 @@ func newRegionJobRetryer(
 // stop retryer and `jobWg.Done` will be trigger for jobs that are not put back
 // yet. It should only be used in error case.
 func (q *regionJobRetryer) run(ctx context.Context) {
-	defer q.internalClose()
+	defer q.cleanupUnprocessedJobs()
 
 	for {
 		var front *regionJob
@@ -1008,8 +1009,8 @@ func (q *regionJobRetryer) close() {
 	}, "queue should be empty considering it's happy path")
 }
 
-// internalClose is only internally used, caller should not use it.
-func (q *regionJobRetryer) internalClose() {
+// cleanupUnprocessedJobs is only internally used, caller should not use it.
+func (q *regionJobRetryer) cleanupUnprocessedJobs() {
 	q.protectedClosed.mu.Lock()
 	defer q.protectedClosed.mu.Unlock()
 	q.protectedClosed.closed = true
@@ -1043,9 +1044,9 @@ func (q *regionJobRetryer) push(job *regionJob) bool {
 
 // storeBalancer is used to balance the store load when sending region jobs to
 // worker. Internally it maintains a large enough buffer to hold all region jobs,
-// and pick the job that has the least load to send to worker. Because it does
-// not have backpressure, it should not be used with external engine to avoid
-// OOM.
+// and pick the job related to stores that has the least load to send to worker.
+// Because it does not have backpressure, it should not be used with external
+// engine to avoid OOM.
 type storeBalancer struct {
 	// map[int]*regionJob
 	jobs   sync.Map
@@ -1058,7 +1059,6 @@ type storeBalancer struct {
 	innerJobFromWorkerCh chan *regionJob
 
 	wakeSendToWorker chan struct{}
-	done             chan struct{}
 
 	// map[uint64]int. 0 can appear in the map after it's decremented to 0.
 	storeLoadMap sync.Map
@@ -1075,33 +1075,38 @@ func newStoreBalancer(
 		innerJobToWorkerCh:   make(chan *regionJob),
 		innerJobFromWorkerCh: make(chan *regionJob),
 		wakeSendToWorker:     make(chan struct{}, 1),
-		done:                 make(chan struct{}),
 		jobWg:                jobWg,
 	}
 }
 
-func (b *storeBalancer) run(workerCtx context.Context) {
-	var wg sync.WaitGroup
-	wg.Add(3)
-	go func() {
-		defer wg.Done()
-		b.runReadToWorkerCh(workerCtx)
-	}()
-	go func() {
-		defer wg.Done()
-		b.runSendToWorker(workerCtx)
-	}()
-	go func() {
-		defer wg.Done()
-		b.runReadFromWorker(workerCtx)
-	}()
+func (b *storeBalancer) run(workerCtx context.Context) error {
+	// all goroutine will not return error except panic, so we make use of
+	// ErrorGroupWithRecover.
+	wg, ctx2 := util2.NewErrorGroupWithRecoverWithCtx(workerCtx)
+	sendToWorkerCtx, cancelSendToWorker := context.WithCancel(ctx2)
+	wg.Go(func() error {
+		b.runReadToWorkerCh(ctx2)
+		cancelSendToWorker()
+		return nil
+	})
+	wg.Go(func() error {
+		b.runSendToWorker(sendToWorkerCtx)
+		return nil
+	})
+	wg.Go(func() error {
+		b.runReadFromWorker(ctx2)
+		return nil
+	})
 
-	wg.Wait()
+	if err := wg.Wait(); err != nil {
+		return err
+	}
 
 	b.jobs.Range(func(_, value any) bool {
 		value.(*regionJob).done(b.jobWg)
 		return true
 	})
+	return nil
 }
 
 func (b *storeBalancer) runReadToWorkerCh(workerCtx context.Context) {
@@ -1111,7 +1116,6 @@ func (b *storeBalancer) runReadToWorkerCh(workerCtx context.Context) {
 			return
 		case job, ok := <-b.jobToWorkerCh:
 			if !ok {
-				close(b.done)
 				close(b.innerJobToWorkerCh)
 				return
 			}
@@ -1139,8 +1143,6 @@ func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
 	for {
 		select {
 		case <-workerCtx.Done():
-			return
-		case <-b.done:
 			return
 		case <-b.wakeSendToWorker:
 		}
@@ -1215,16 +1217,15 @@ func (b *storeBalancer) pickJob() *regionJob {
 
 	for _, p := range best.region.Region.Peers {
 	retry:
-		if val, ok := b.storeLoadMap.Load(p.StoreId); !ok {
-			// this is the only place that entry is saved to storeLoadMap, we will not
-			// overwrite anything.
-			b.storeLoadMap.Store(p.StoreId, 1)
-		} else {
-			old := val.(int)
-			if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old+1) {
-				// retry the whole check because the entry may have been deleted
-				goto retry
-			}
+		val, loaded := b.storeLoadMap.LoadOrStore(p.StoreId, 1)
+		if !loaded {
+			continue
+		}
+
+		old := val.(int)
+		if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old+1) {
+			// retry the whole check because the entry may have been deleted
+			goto retry
 		}
 	}
 	return best

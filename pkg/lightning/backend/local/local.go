@@ -1427,8 +1427,7 @@ func (local *Backend) doImport(
 	if _, ok := engine.(*Engine); ok {
 		balancer = newStoreBalancer(jobToWorkerCh, jobFromWorkerCh, &jobWg)
 		workGroup.Go(func() error {
-			balancer.run(workerCtx)
-			return nil
+			return balancer.run(workerCtx)
 		})
 	}
 
