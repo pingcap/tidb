@@ -362,7 +362,6 @@ func TestIndexUsageReporterWithGlobalIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index='on'")
 	tk.MustExec(`create table t (pk int primary key, id_1 int, unique key idx_1(id_1) global)
 partition by range (pk) (
 partition p0 values less than (10),
@@ -385,7 +384,6 @@ partition p3 values less than MAXVALUE)`)
 	tk.MustExec("analyze table t")
 	tk.RefreshSession()
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index='on'")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 
 	cases := []testCase{
