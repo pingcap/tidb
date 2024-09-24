@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -43,6 +44,14 @@ type LogicalLimit struct {
 func (p LogicalLimit) Init(ctx base.PlanContext, offset int) *LogicalLimit {
 	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeLimit, &p, offset)
 	return &p
+}
+
+// ************************ start implementation of HashEquals interface ************************
+
+func (p *LogicalLimit) Hash64(h base2.Hasher) {
+	h.HashString(plancodec.TypeLimit)
+	h.HashUint64(p.Offset)
+	h.HashUint64(p.Count)
 }
 
 // *************************** start implementation of Plan interface ***************************
