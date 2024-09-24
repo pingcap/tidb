@@ -39,26 +39,26 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, t *meta.Meta, job *model
 		return ver, errors.Trace(err)
 	}
 
-	var fkInfo model.FKInfo
-	var fkCheck bool
-	err = job.DecodeArgs(&fkInfo, &fkCheck)
+	args, err := model.GetAddForeignKeyArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	fkInfo, fkCheck := args.FkInfo, args.FkCheck
+
 	if job.IsRollingback() {
 		return dropForeignKey(jobCtx, t, job, tblInfo, fkInfo.Name)
 	}
 	switch job.SchemaState {
 	case model.StateNone:
-		err = checkAddForeignKeyValidInOwner(jobCtx.infoCache, job.SchemaName, tblInfo, &fkInfo, fkCheck)
+		err = checkAddForeignKeyValidInOwner(jobCtx.infoCache, job.SchemaName, tblInfo, fkInfo, fkCheck)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
 		fkInfo.State = model.StateWriteOnly
 		fkInfo.ID = allocateFKIndexID(tblInfo)
-		tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
+		tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, fkInfo)
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -66,7 +66,7 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, t *meta.Meta, job *model
 		job.SchemaState = model.StateWriteOnly
 		return ver, nil
 	case model.StateWriteOnly:
-		err = checkForeignKeyConstrain(w, job.SchemaName, tblInfo.Name.L, &fkInfo, fkCheck)
+		err = checkForeignKeyConstrain(w, job.SchemaName, tblInfo.Name.L, fkInfo, fkCheck)
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, err
@@ -99,13 +99,12 @@ func onDropForeignKey(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int
 		return ver, errors.Trace(err)
 	}
 
-	var fkName pmodel.CIStr
-	err = job.DecodeArgs(&fkName)
+	args, err := model.GetDropForeignKeyArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	return dropForeignKey(jobCtx, t, job, tblInfo, fkName)
+	return dropForeignKey(jobCtx, t, job, tblInfo, args.FkName)
 }
 
 func dropForeignKey(jobCtx *jobContext, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, fkName pmodel.CIStr) (ver int64, err error) {

@@ -1988,6 +1988,8 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		logFn = logutil.DDLLogger().Fatal
 	}
 
+	// to do:(joccau)
+	// we need refactor this part to support V2 job version after refactor all of ddl types.
 	var involvingSchemaInfo []model.InvolvingSchemaInfo
 	for _, j := range subJobs {
 		switch j.Type {
@@ -2132,17 +2134,23 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 		newBase = newBaseTemp
 	}
 	job := &model.Job{
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        tbInfo.ID,
 		SchemaName:     schema.Name.L,
 		TableName:      tbInfo.Name.L,
 		Type:           actionType,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{newBase, force},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = e.DoDDLJob(ctx, job)
+	args := &model.RebaseAutoIDArgs{
+		NewBase: newBase,
+		Force:   force,
+	}
+	// need fill args, the job will be pushed subjob.
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -3526,18 +3534,19 @@ func (e *executor) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	job := &model.Job{
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
 		TableName:      tb.Meta().Name.L,
 		Type:           model.ActionModifyTableComment,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{spec.Comment},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-
-	err = e.DoDDLJob(ctx, job)
+	args := &model.ModifyTableCommentArgs{Comment: spec.Comment}
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -3610,17 +3619,24 @@ func (e *executor) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast
 	}
 
 	job := &model.Job{
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
 		TableName:      tb.Meta().Name.L,
 		Type:           model.ActionModifyTableCharsetAndCollate,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{toCharset, toCollate, needsOverwriteCols},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = e.DoDDLJob(ctx, job)
+
+	args := &model.ModifyTableCharsetAndCollateArgs{
+		ToCharset:          toCharset,
+		ToCollate:          toCollate,
+		NeedsOverwriteCols: needsOverwriteCols,
+	}
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -4963,13 +4979,13 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 	}
 
 	job := &model.Job{
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionAddForeignKey,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{fkInfo, fkCheck},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
@@ -4984,8 +5000,12 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 		},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
-
-	err = e.DoDDLJob(ctx, job)
+	args := &model.AddForeignKeyArgs{
+		FkInfo:  fkInfo,
+		FkCheck: fkCheck,
+	}
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -5002,6 +5022,7 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 	}
 
 	job := &model.Job{
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -5009,12 +5030,12 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionDropForeignKey,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{fkName},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-
-	err = e.DoDDLJob(ctx, job)
+	args := &model.DropForeignKeyArgs{FkName: fkName}
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -5625,18 +5646,22 @@ func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident,
 	}
 
 	job := &model.Job{
+		Version:        model.JobVersion1,
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
 		TableName:      tb.Meta().Name.L,
 		Type:           model.ActionAlterIndexVisibility,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{indexName, invisible},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-
-	err = e.DoDDLJob(ctx, job)
+	args := &model.AlterIndexVisibilityArgs{
+		IndexName: indexName,
+		Invisible: invisible,
+	}
+	job.FillArgs(args)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 

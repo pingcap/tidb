@@ -515,11 +515,73 @@ func TestGetAlterSequenceArgs(t *testing.T) {
 			},
 		},
 	}
-
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterSequence)))
 		args, err := GetAlterSequenceArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestGetRebaseAutoIDArgs(t *testing.T) {
+	inArgs := &RebaseAutoIDArgs{
+		NewBase: 9527,
+		Force:   true,
+	}
+	for _, tp := range []ActionType{ActionRebaseAutoID, ActionRebaseAutoRandomBase} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			args, err := GetRebaseAutoIDArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, inArgs, args)
+		}
+	}
+}
+
+func TestGetModifyTableCommentArgs(t *testing.T) {
+	inArgs := &ModifyTableCommentArgs{
+		Comment: "TiDB is great",
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifyTableComment)))
+		args, err := GetModifyTableCommentArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestGetAlterIndexVisibilityArgs(t *testing.T) {
+	inArgs := &AlterIndexVisibilityArgs{
+		IndexName: model.NewCIStr("index-name"),
+		Invisible: true,
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterIndexVisibility)))
+		args, err := GetAlterIndexVisibilityArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestGetAddForeignKeyArgs(t *testing.T) {
+	inArgs := &AddForeignKeyArgs{
+		FkInfo: &FKInfo{
+			ID:   7527,
+			Name: model.NewCIStr("fk-name"),
+		},
+		FkCheck: true,
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddForeignKey)))
+		args, err := GetAddForeignKeyArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
 	}
@@ -547,6 +609,20 @@ func TestGetShardRowIDArgs(t *testing.T) {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionShardRowID)))
 		args, err := GetShardRowIDArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestGetDropForeignKeyArgs(t *testing.T) {
+	inArgs := &DropForeignKeyArgs{
+		FkName: model.NewCIStr("fk-name"),
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropForeignKey)))
+		args, err := GetDropForeignKeyArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
 	}
