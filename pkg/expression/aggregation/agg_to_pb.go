@@ -101,7 +101,7 @@ func (desc *baseFuncDesc) GetTiPBExpr(tryWindowDesc bool) (tp tipb.ExprType) {
 
 // AggFuncToPBExpr converts aggregate function to pb.
 func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFuncDesc, storeType kv.StoreType) (*tipb.Expr, error) {
-	pc := expression.NewPBConverter(client, &sctx)
+	pc := expression.NewPBConverter(client, sctx)
 	tp := aggFunc.GetTiPBExpr(false)
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil, errors.New("select request is not supported by client")

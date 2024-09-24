@@ -125,7 +125,7 @@ func (s *WindowFuncDesc) Clone() *WindowFuncDesc {
 
 // WindowFuncToPBExpr converts aggregate function to pb.
 func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowFuncDesc) *tipb.Expr {
-	pc := expression.NewPBConverter(client, &sctx)
+	pc := expression.NewPBConverter(client, sctx)
 	tp := desc.GetTiPBExpr(true)
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
