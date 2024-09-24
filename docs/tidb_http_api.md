@@ -234,6 +234,7 @@
             }
         }
     }
+<<<<<<< HEAD
     ```
 
     *Hint: The meaning of the MVCC operation type:*
@@ -252,6 +253,268 @@
     ```
 
 1. Get MVCC Information of the first key in the table with a specified start ts
+=======
+
+15. Scatter regions of the specified table, add a `scatter-range` scheduler for the PD and the range is same as the table range.
+
+     ```shell
+     curl http://{TiDBIP}:10080/tables/{db}/{table}/scatter
+     ```
+
+     *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example.*
+
+     **Note**: The `scatter-range` scheduler may conflict with the global scheduler, do not use it for long periods on the larger table.
+
+16. Stop scatter the regions, disable the `scatter-range` scheduler for the specified table.
+
+     ```shell
+     curl http://{TiDBIP}:10080/tables/{db}/{table}/stop-scatter
+     ```
+
+     *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example.*
+
+17. Get TiDB server settings
+
+     ```shell
+     curl http://{TiDBIP}:10080/settings
+     ```
+
+18. Get TiDB server information.
+
+     ```shell
+     curl http://{TiDBIP}:10080/info
+     ```
+
+     ```shell
+     $curl http://127.0.0.1:10080/info
+     {
+         "ddl_id": "f7e73ed5-63b4-4cb4-ba7c-42b32dc74e77",
+         "git_hash": "f572e33854e1c0f942f031e9656d0004f99995c6",
+         "ip": "",
+         "is_owner": true,
+         "lease": "45s",
+         "listening_port": 4000,
+         "status_port": 10080,
+         "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
+     }
+     ```
+
+19. Get TiDB cluster all servers information.
+
+     ```shell
+     curl http://{TiDBIP}:10080/info/all
+     ```
+
+     ```shell
+     $curl http://127.0.0.1:10080/info/all
+     {
+         "servers_num": 2,
+         "owner_id": "29a65ec0-d931-4f9e-a212-338eaeffab96",
+         "is_all_server_version_consistent": true,
+         "all_servers_info": {
+             "29a65ec0-d931-4f9e-a212-338eaeffab96": {
+                 "version": "5.7.25-TiDB-v4.0.0-alpha-669-g8f2a09a52-dirty",
+                 "git_hash": "8f2a09a52fdcaf9d9bfd775d2c6023f363dc121e",
+                 "ddl_id": "29a65ec0-d931-4f9e-a212-338eaeffab96",
+                 "ip": "",
+                 "listening_port": 4000,
+                 "status_port": 10080,
+                 "lease": "45s",
+                 "binlog_status": "Off"
+             },
+             "cd13c9eb-c3ee-4887-af9b-e64f3162d92c": {
+                 "version": "5.7.25-TiDB-v4.0.0-alpha-669-g8f2a09a52-dirty",
+                 "git_hash": "8f2a09a52fdcaf9d9bfd775d2c6023f363dc121e",
+                 "ddl_id": "cd13c9eb-c3ee-4887-af9b-e64f3162d92c",
+                 "ip": "",
+                 "listening_port": 4001,
+                 "status_port": 10081,
+                 "lease": "45s",
+                 "binlog_status": "Off"
+             }
+         }
+     }
+     ```
+
+20. Enable/Disable TiDB server general log
+
+     ```shell
+     curl -X POST -d "tidb_general_log=1" http://{TiDBIP}:10080/settings
+     curl -X POST -d "tidb_general_log=0" http://{TiDBIP}:10080/settings
+     ```
+
+21. Change TiDB server log level
+
+     ```shell
+     curl -X POST -d "log_level=debug" http://{TiDBIP}:10080/settings
+     curl -X POST -d "log_level=info" http://{TiDBIP}:10080/settings
+     ```
+
+22. Change TiDB DDL slow log threshold
+
+     The unit is millisecond.
+
+     ```shell
+     curl -X POST -d "ddl_slow_threshold=300" http://{TiDBIP}:10080/settings
+     ```
+
+23. Get the column value by an encoded row and some information that can be obtained from a column of the table schema information. 
+
+     Argument example: rowBin=base64_encoded_row_value
+
+     ```shell
+     curl http://{TiDBIP}:10080/tables/{colID}/{colFlag}/{colLen}?rowBin={val}
+     ```
+
+     *Hint: For the column which field type is timezone dependent, e.g. `timestamp`, convert its value to UTC timezone.*
+
+24. Resign the ddl owner, let tidb start a new ddl owner election.
+
+     ```shell
+     curl -X POST http://{TiDBIP}:10080/ddl/owner/resign
+     ```
+
+    **Note**: If you request a TiDB that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`
+
+25. Get the TiDB DDL job history information.
+
+     ```shell
+     curl http://{TiDBIP}:10080/ddl/history
+     ```
+
+     **Note**: When the DDL history is very very long, system table may containg too many jobs. This interface will get a maximum of 2048 history ddl jobs by default. If you want get more jobs, consider adding `start_job_id` and `limit`.
+
+26. Get count {number} TiDB DDL job history information.
+
+     ```shell
+     curl http://{TiDBIP}:10080/ddl/history?limit={number}
+     ```
+
+27. Get count {number} TiDB DDL job history information, start with job {id}
+
+     ```shell
+     curl http://{TIDBIP}:10080/ddl/history?start_job_id={id}&limit={number}
+     ```
+
+28. Download TiDB debug info
+
+     ```shell
+     curl http://{TiDBIP}:10080/debug/zip?seconds=60 --output debug.zip
+     ```
+
+     zip file will include:
+
+     - Go heap pprof(after GC)
+     - Go cpu pprof(10s)
+     - Go mutex pprof
+     - Full goroutine
+     - TiDB config and version
+
+     Param:
+
+     - seconds: profile time(s), default is 10s. 
+
+29. Get statistics data of specified table.
+
+     ```shell
+     curl http://{TiDBIP}:10080/stats/dump/{db}/{table}
+     ```
+
+30. Get statistics data of specific table and timestamp.
+
+     ```shell
+     curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyyMMddHHmmss}
+     ```
+
+     ```shell
+     curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyy-MM-dd HH:mm:ss}
+     ```
+
+31. Resume the binlog writing when Pump is recovered.
+
+     ```shell
+     curl http://{TiDBIP}:10080/binlog/recover
+     ```
+
+     Return value:
+
+     - timeout, return status code: 400, message: `timeout`
+     - If it returns normally, status code: 200, message example:
+
+         ```text
+         {
+           "Skipped": false,
+           "SkippedCommitterCounter": 0
+         }
+         ```
+
+         `Skipped`: false indicates that the current binlog is not in the skipped state, otherwise, it is in the skipped state
+         `SkippedCommitterCounter`: Represents how many transactions are currently being committed in the skipped state. By default, the API will return after waiting until all skipped-binlog transactions are committed. If this value is greater than 0, it means that you need to wait until them are committed .
+
+     Param:
+
+     - op=nowait: return after binlog status is recoverd, do not wait until the skipped-binlog transactions are committed.
+     - op=reset: reset `SkippedCommitterCounter` to 0 to avoid the problem that `SkippedCommitterCounter` is not cleared due to some unusual cases.
+     - op=status: Get the current status of binlog recovery.
+
+32. Enable/disable async commit feature
+
+     ```shell
+     curl -X POST -d "tidb_enable_async_commit=1" http://{TiDBIP}:10080/settings
+     curl -X POST -d "tidb_enable_async_commit=0" http://{TiDBIP}:10080/settings
+     ```
+
+33. Enable/disable one-phase commit feature
+
+     ```shell
+     curl -X POST -d "tidb_enable_1pc=1" http://{TiDBIP}:10080/settings
+     curl -X POST -d "tidb_enable_1pc=0" http://{TiDBIP}:10080/settings
+     ```
+
+34. Enable/disable the mutation checker
+
+     ```shell
+     curl -X POST -d "tidb_enable_mutation_checker=1" http://{TiDBIP}:10080/settings
+     curl -X POST -d "tidb_enable_mutation_checker=0" http://{TiDBIP}:10080/settings
+     ```
+
+35. Get/Set the size of the Ballast Object
+
+     ```shell
+     # get current size of the ballast object
+     curl -v http://{TiDBIP}:10080/debug/ballast-object-sz
+     # reset the size of the ballast object (2GB in this example)
+     curl -v -X POST -d "2147483648" http://{TiDBIP}:10080/debug/ballast-object-sz
+     ```
+
+36. Set deadlock history table capacity
+
+     ```shell
+     curl -X POST -d "deadlock_history_capacity={number}" http://{TiDBIP}:10080/settings
+     ```
+
+37. Set whether deadlock history (`DEADLOCKS`) collect retryable deadlocks
+
+     ```shell
+     curl -X POST -d "deadlock_history_collect_retryable={bool_val}" http://{TiDBIP}:10080/settings
+     ```
+
+38. Set transaction_id to digest mapping minimum duration threshold, only transactions which last longer than this threshold will be collected into `TRX_SUMMARY`.
+
+     ```shell
+     curl -X POST -d "transaction_id_digest_min_duration={number}" http://{TiDBIP}:10080/settings
+     ```
+
+     Unit of duration here is ms.
+
+39. Set transaction summary table (`TRX_SUMMARY`) capacity
+
+     ```shell
+     curl -X POST -d "transaction_summary_capacity={number}" http://{TiDBIP}:10080/settings
+     ```
+
+40. The commands are used to handle smooth upgrade mode(refer to the [TiDB Smooth Upgrade](https://github.com/pingcap/docs/blob/4aa0b1d5078617cc06bd1957c5c93e86efb4668d/smooth-upgrade-tidb.md) for details) operations. We can send these upgrade operations to the cluster. The operations here include `start`, `finish` and `show`.
+>>>>>>> f2856e3521f (ddl: limit the count of getting ddlhistory jobs (#55590))
 
     ```shell
     curl http://{TiDBIP}:10080/mvcc/txn/{startTS}/{db}/{table}
