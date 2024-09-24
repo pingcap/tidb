@@ -250,9 +250,9 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 		// none -> write only
 		// check GC enable and update flag.
 		if gcEnable {
-			args.RecoverCheckFlag = recoverCheckFlagEnableGC
+			args.CheckFlag = recoverCheckFlagEnableGC
 		} else {
-			args.RecoverCheckFlag = recoverCheckFlagDisableGC
+			args.CheckFlag = recoverCheckFlagDisableGC
 		}
 		job.FillArgs(args)
 

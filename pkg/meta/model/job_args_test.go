@@ -529,7 +529,7 @@ func TestRecoverArgs(t *testing.T) {
 		RecoverInfo: &RecoverSchemaInfo{
 			RecoverTableInfos: []*RecoverTableInfo{recoverInfo},
 		},
-		RecoverCheckFlag: 2,
+		CheckFlag: 2,
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -539,7 +539,7 @@ func TestRecoverArgs(t *testing.T) {
 
 			args, err := GetRecoverArgs(j2)
 			require.NoError(t, err)
-			require.Equal(t, inArgs.RecoverCheckFlag, args.RecoverCheckFlag)
+			require.Equal(t, inArgs.CheckFlag, args.CheckFlag)
 			require.Equal(t, inArgs.RecoverInfo, args.RecoverInfo)
 		}
 	}

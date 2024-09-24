@@ -397,7 +397,7 @@ func finishRecoverTable(w *worker, job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if args.RecoverCheckFlag == recoverCheckFlagEnableGC {
+	if args.CheckFlag == recoverCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)
@@ -411,7 +411,7 @@ func finishRecoverSchema(w *worker, job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if args.RecoverCheckFlag == recoverCheckFlagEnableGC {
+	if args.CheckFlag == recoverCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)

@@ -473,8 +473,8 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 			fmt.Sprintf("(Table ID %d)", job.TableID),
 		)
 	}
-	// Return a shallow meta here, since the state field will be modified later.
-	// This may corrupt the infocache.
+	// We can't return the meta directly since it will be modified outside, which may corrupt the infocache.
+	// Since only State field is changed, return a shallow copy is enough.
 	// see https://github.com/pingcap/tidb/issues/55462
 	tblInfo := *table.Meta()
 	return job, &tblInfo, nil
@@ -543,8 +543,8 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 		return nil, nil, exeerrors.ErrUnsupportedFlashbackTmpTable
 	}
 
-	// Return a shallow copy of the table meta here.
-	// Since it's retrieved from infocache and its State field will be changed later.
+	// We can't return the meta directly since it will be modified outside, which may corrupt the infocache.
+	// Since only State field is changed, return a shallow copy is enough.
 	// see https://github.com/pingcap/tidb/issues/55462
 	tblInfo := *tableInfo
 	return jobInfo, &tblInfo, nil

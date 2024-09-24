@@ -870,16 +870,16 @@ func GetRepairTableArgs(job *Job) (*RepairTableArgs, error) {
 
 // RecoverArgs is the argument for recover table/schema.
 type RecoverArgs struct {
-	RecoverInfo      *RecoverSchemaInfo `json:"recover_info"`
-	RecoverCheckFlag int64              `json:"recover_check_flag_none"`
+	RecoverInfo *RecoverSchemaInfo `json:"recover_info"`
+	CheckFlag   int64              `json:"check_flag"`
 }
 
 func (a *RecoverArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
 		if job.Type == ActionRecoverTable {
-			job.Args = []any{a.RecoverTableInfos()[0], a.RecoverCheckFlag}
+			job.Args = []any{a.RecoverTableInfos()[0], a.CheckFlag}
 		} else {
-			job.Args = []any{a.RecoverInfo, a.RecoverCheckFlag}
+			job.Args = []any{a.RecoverInfo, a.CheckFlag}
 		}
 		return
 	}
@@ -913,8 +913,8 @@ func GetRecoverArgs(job *Job) (*RecoverArgs, error) {
 		}
 
 		return &RecoverArgs{
-			RecoverInfo:      recoverSchemaInfo,
-			RecoverCheckFlag: recoverCheckFlag}, nil
+			RecoverInfo: recoverSchemaInfo,
+			CheckFlag:   recoverCheckFlag}, nil
 	}
 
 	return getOrDecodeArgsV2[*RecoverArgs](job)

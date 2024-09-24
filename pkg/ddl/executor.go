@@ -819,8 +819,8 @@ func (e *executor) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *mode
 	}
 
 	args := &model.RecoverArgs{
-		RecoverInfo:      recoverSchemaInfo,
-		RecoverCheckFlag: recoverCheckFlagNone,
+		RecoverInfo: recoverSchemaInfo,
+		CheckFlag:   recoverCheckFlagNone,
 	}
 	err := e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
@@ -1488,7 +1488,7 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.
 		RecoverInfo: &model.RecoverSchemaInfo{
 			RecoverTableInfos: []*model.RecoverTableInfo{recoverTableInfo},
 		},
-		RecoverCheckFlag: recoverCheckFlagNone}
+		CheckFlag: recoverCheckFlagNone}
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
