@@ -866,7 +866,6 @@ type AlterTablePlacementArgs struct {
 }
 
 func (a *AlterTablePlacementArgs) fillJob(job *Job) {
-	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
 		job.Args = []any{a.PlacementPolicyRef}
 	} else {
@@ -887,4 +886,30 @@ func GetAlterTablePlacementArgs(job *Job) (*AlterTablePlacementArgs, error) {
 	}
 
 	return getOrDecodeArgsV2[*AlterTablePlacementArgs](job)
+}
+
+// SetTiFlashReplicaArgs is the arguments for setting TiFlash replica ddl.
+type SetTiFlashReplicaArgs struct {
+	TiflashReplica ast.TiFlashReplicaSpec
+}
+
+func (a *SetTiFlashReplicaArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.TiflashReplica}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetSetTiFlashReplicaArgs gets the args for setting TiFlash replica ddl.
+func GetSetTiFlashReplicaArgs(job *Job) (*SetTiFlashReplicaArgs, error) {
+	if job.Version == JobVersion1 {
+		tiflashReplica := ast.TiFlashReplicaSpec{}
+		if err := job.DecodeArgs(&tiflashReplica); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &SetTiFlashReplicaArgs{TiflashReplica: tiflashReplica}, nil
+	}
+
+	return getOrDecodeArgsV2[*SetTiFlashReplicaArgs](job)
 }
