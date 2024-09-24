@@ -17,7 +17,6 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
-	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"math"
 	"math/bits"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
