@@ -43,6 +43,7 @@ func TestExtractHandler(t *testing.T) {
 	defer closeStmtSummary()
 
 	store := testkit.CreateMockStore(t)
+
 	driver := server2.NewTiDBDriver(store)
 	client := testserverclient.NewTestServerClient()
 	cfg := util.NewTestConfig()
