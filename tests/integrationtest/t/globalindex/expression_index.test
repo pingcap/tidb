@@ -1,5 +1,3 @@
-set tidb_enable_global_index=true;
-
 drop table if exists t;
 CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
