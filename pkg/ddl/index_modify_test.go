@@ -1227,7 +1227,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	require.Truef(t, terror.ErrorEqual(dbterror.ErrDupKeyName, lastWarn.Err), "err %v", lastWarn.Err)
 	require.Equal(t, contextutil.WarnLevelNote, lastWarn.Level)
 	tk.MustContainErrMsg("alter table t add vector index if not exists idx((vec_cosine_distance(c))) USING HNSW;",
-		"Duplicate vector index function name 'vector index: vecIdx, column name: c, duplicate function name: vec_cosine_distance'")
+		"[ddl:1061]vector index vecIdx function vec_cosine_distance already exist on column c")
 
 	// normal test cases
 	tk.MustExec("drop table if exists t;")
@@ -1276,6 +1276,10 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
 	tk.MustExec("alter table t alter index idx visible")
 
+	// test modify/change column with a vector index
+	tk.MustContainErrMsg("alter table t modify column b vector(2)", "[ddl:8200]Unsupported modify column: vector indexes on the column")
+	tk.MustExec("alter table t modify column b vector(3) not null")
+
 	// test rename index
 	tk.MustExec("alter table t rename index idx to vecIdx")
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
@@ -1296,7 +1300,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` vector(3) DEFAULT NULL\n" +
+		"  `b` vector(3) NOT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test create a vector index with same name
@@ -1310,7 +1314,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` vector(3) DEFAULT NULL,\n" +
+		"  `b` vector(3) NOT NULL,\n" +
 		"  VECTOR INDEX `idx`((VEC_COSINE_DISTANCE(`b`))) COMMENT 'b comment'\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
@@ -1319,7 +1323,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustExec("alter table t drop index idx, drop index idx2")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` vector(3) DEFAULT NULL\n" +
+		"  `b` vector(3) NOT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustExec("admin check table t")

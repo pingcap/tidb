@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1153,6 +1154,35 @@ func TestParallelAlterAddIndex(t *testing.T) {
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
 		require.EqualError(t, err2, "[ddl:1061]index already exist index_b")
+	}
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
+}
+
+func TestParallelAlterAddVectorIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table tt (a int, b vector, c vector(3), d vector(4));")
+	tk.MustExec("alter table tt set tiflash replica 2 location labels 'a','b';")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/"+
+			"ddl/MockCheckVectorIndexProcess"))
+	}()
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	sql1 := "alter table tt add vector index vecIdx((vec_cosine_distance(c))) USING HNSW;"
+	sql2 := "alter table tt add vector index vecIdx1((vec_cosine_distance(c))) USING HNSW;"
+	f := func(err1, err2 error) {
+		require.NoError(t, err1)
+		require.EqualError(t, err2,
+			"[ddl:1061]DDL job rollback, error msg: vector index vecIdx function vec_cosine_distance already exist on column c")
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }

@@ -422,7 +422,9 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 			continue
 		}
 		if idx.VectorInfo.DistanceMetric == distanceMetric {
-			return nil, "", dbterror.ErrDupKeyName.FastGen(fmt.Sprintf("Duplicate vector index function name 'vector index: %s, column name: %s, duplicate function name: %s'", idx.Name, colInfo.Name, f.FnName))
+			return nil, "", dbterror.ErrDupKeyName.GenWithStack(
+				fmt.Sprintf("vector index %s function %s already exist on column %s",
+					idx.Name, f.FnName, colInfo.Name))
 		}
 	}
 	if colInfo.FieldType.GetFlen() <= 0 {
