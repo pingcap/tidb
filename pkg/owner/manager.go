@@ -500,7 +500,7 @@ func init() {
 	}
 }
 
-// AcquireDistributedLock creates a mutex on with ETCD client, and returns a mutex release function.
+// AcquireDistributedLock creates a mutex with ETCD client, and returns a mutex release function.
 func AcquireDistributedLock(
 	ctx context.Context,
 	cli *clientv3.Client,
