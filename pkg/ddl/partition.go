@@ -1821,7 +1821,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, anyExpr any, schema string, 
 	switch expr := anyExpr.(type) {
 	case string:
 		if expr == "" {
-			return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
+			return nil
 		}
 		e, err = expression.ParseSimpleExpr(ctx.GetExprCtx(), expr, expression.WithTableInfo(schema, tblInfo))
 	case ast.ExprNode:
@@ -3127,6 +3127,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 				tmpTblInfo := *tblInfo
 				tmpTblInfo.Partition = partInfo
 				if err = checkColumnsPartitionType(&tmpTblInfo); err != nil {
+					job.State = model.JobStateCancelled
 					return ver, err
 				}
 			} else {
