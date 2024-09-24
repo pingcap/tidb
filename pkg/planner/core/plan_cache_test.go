@@ -341,7 +341,7 @@ func TestIssue38269(t *testing.T) {
 	tk.MustExec("set @a = 10, @b = 20, @c = 30, @d = 40, @e = 50, @f = 60")
 	tk.MustExec("execute stmt1 using @a, @b, @c")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-	tk.MustExec("set session tidb_redact_log=MARKER")
+	tk.MustExec("set session tidb_redact_log=ON")
 	tk.MustExec("execute stmt1 using @d, @e, @f")
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
@@ -354,8 +354,9 @@ func TestIssue38269(t *testing.T) {
 		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 		"└─IndexLookUp_11(Probe) 37.46 root  ",
 		"  ├─Selection_10(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
-		"  │ └─IndexRangeScan_8 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  │ └─IndexRangeScan_8 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ?, ?, ?)], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_9(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+	tk.MustExec("set session tidb_redact_log=OFF")
 }
 
 func TestIssue38533(t *testing.T) {
