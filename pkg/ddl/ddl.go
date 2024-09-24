@@ -826,6 +826,8 @@ func (d *ddl) detectAndUpdateJobVersion() {
 		return
 	}
 
+	logutil.DDLLogger().Info("job version in use is not v2, maybe in upgrade, start detecting",
+		zap.Stringer("current", model.GetJobVerInUse()))
 	d.wg.RunWithLog(func() {
 		ticker := time.NewTicker(detectJobVerInterval)
 		defer ticker.Stop()
@@ -841,6 +843,7 @@ func (d *ddl) detectAndUpdateJobVersion() {
 			}
 			failpoint.InjectCall("afterDetectAndUpdateJobVersionOnce")
 			if model.GetJobVerInUse() == model.JobVersion2 {
+				logutil.DDLLogger().Info("job version in use is v2 now, stop detecting")
 				return
 			}
 		}
