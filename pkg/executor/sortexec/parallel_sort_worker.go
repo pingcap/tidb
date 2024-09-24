@@ -80,7 +80,6 @@ func newParallelSortWorker(
 		sortedRowsIter:         sortedRowsIter,
 		maxSortedRowsLimit:     maxChunkSize * 30,
 		spillHelper:            spillHelper,
-		sessCtx:                sessCtx,
 	}
 }
 

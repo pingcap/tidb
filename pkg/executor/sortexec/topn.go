@@ -109,7 +109,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 			exec.RetTypes(e),
 			workers,
 			e.Concurrency,
-			e.SortExec.SessCtx,
+			e.Ctx(),
 		)
 		e.spillAction = &topNSpillAction{spillHelper: e.spillHelper}
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
