@@ -860,7 +860,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 	allSupportV2 := true
 	for _, info := range infos {
 		// we don't store TiDB version directly, but concatenated with a MySQL version,
-		// separated by mysql.VersionSeparator in most case.
+		// separated by mysql.VersionSeparator.
 		tidbVer := info.Version
 		idx := strings.Index(tidbVer, mysql.VersionSeparator)
 		if idx < 0 {
