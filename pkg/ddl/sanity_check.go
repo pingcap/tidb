@@ -101,7 +101,10 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return len(args.OldPartitionIDs) + 1, nil
+		if job.Type == model.ActionTruncateTable {
+			return len(args.OldPartitionIDs) + 1, nil
+		}
+		return len(args.OldPartitionIDs), nil
 	case model.ActionDropTablePartition, model.ActionReorganizePartition,
 		model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		args, err := model.GetFinishedTablePartitionArgs(job)
