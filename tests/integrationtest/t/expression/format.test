@@ -1,10 +1,23 @@
+# Different number of decimals
 SELECT FORMAT('1.234',1,'id_ID');
 SELECT FORMAT('1.234',2,'id_ID');
 SELECT FORMAT('1.234',3,'id_ID');
 SELECT FORMAT('1.234',4,'id_ID');
 
+# Nonexistend locale, should get a warning
 SELECT FORMAT('1.234',1,'xxxxxx');
+SHOW WARNINGS;
 
-SELECT FORMAT('1.234',1,'nl_NL');
-SELECT FORMAT('1.234',1,'en_US');
-SELECT FORMAT('1.234',1,'zh');
+# Testing a few locales. Mostly those that don't follow other locales
+SELECT FORMAT(100000.234,4,'nl_BE');
+SELECT FORMAT(100000.234,4,'fr_BE');
+SELECT FORMAT(100000.234,4,'en_IN');
+SELECT FORMAT(100000.234,4,'de_CH');
+
+# The first two should work fine, the third should give a warning.
+SELECT FORMAT(100000.234,999999999999999999,'de_CH');
+SHOW WARNINGS;
+SELECT FORMAT(100000.234,9999999999999999999,'de_CH');
+SHOW WARNINGS;
+SELECT FORMAT(100000.234,99999999999999999999,'de_CH');
+SHOW WARNINGS;
