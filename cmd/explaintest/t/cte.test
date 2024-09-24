@@ -1,4 +1,7 @@
-use test;
+drop database if exists cte;
+create database cte;
+drop database if exists cte1;
+create database cte1;
 # case 1
 drop table if exists tbl_0;
 create table tbl_0(a int);
@@ -258,7 +261,7 @@ explain select * from t1 where exists(with recursive cte1 as (select c1, c2 from
 select * from t1 where exists(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 # Some cases to Test Create View With CTE and checkout Database
 # With name is the same as the table name
-use test;
+use cte;
 drop table if exists t1, t2;
 drop view if exists v1;
 create table t1 (a int);
@@ -266,14 +269,13 @@ insert into t1 values (0), (1), (2), (3), (4);
 create table t2 (a int);
 insert into t2 values (1), (2), (3), (4), (5);
 drop view if exists v1,v2;
-create view v1 as with t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc;
-create view v2 as with recursive t1 as ( select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc;
-create database if not exists test1;
-use test1;
-select * from test.v1;
-select * from test.v2;
+create view v1 as with t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc limit 5;
+create view v2 as with recursive t1 as ( select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc limit 5;
+use cte1;
+select * from cte.v1;
+select * from cte.v2;
 # case
-use test;
+use cte;
 drop table if exists t ,t1, t2;
 create table t(a int);
 insert into t values (0);
@@ -283,28 +285,28 @@ create table t2 (c int);
 insert into t2 values (0);
 drop view if exists v1;
 create view v1 as with t1 as (with t11 as (select * from t) select * from t1, t2) select * from t1;
-use test1;
-select * from test.v1;
+use cte1;
+select * from cte.v1;
 # case
-use test;
+use cte;
 drop table if exists t11111;
 create table t11111 (d int);
 insert into t11111 values (123), (223), (323);
 drop view if exists v1;
 create view v1 as WITH t123 AS (WITH t11111 AS ( SELECT * FROM t1 ) SELECT ( WITH t2 AS ( SELECT ( WITH t23 AS ( SELECT * FROM t11111 ) SELECT * FROM t23 LIMIT 1 ) FROM t11111 ) SELECT *  FROM t2  LIMIT 1  )  FROM t11111, t2 ) SELECT * FROM t11111;
-use test1;
-select * from test.v1;
+use cte1;
+select * from cte.v1;
 # case
-use test;
+use cte;
 drop table if exists t1;
 create table t1 (a int);
 insert into t1 values (1);
 drop view if exists v1;
 create view v1 as SELECT (WITH qn AS (SELECT 10*a as a FROM t1),qn2 AS (SELECT 3*a AS b FROM qn) SELECT * from qn2 LIMIT 1) FROM t1;
-use test1;
-select * from test.v1;
+use cte1;
+select * from cte.v1;
 # case
-use test;
+use cte;
 drop table if exists t1,t2;
 create table t1 (a int);
 insert into t1 values (0), (1);
@@ -312,8 +314,8 @@ create table t2 (b int);
 insert into t2 values  (4), (5);
 drop view if exists v1;
 create view v1 as with t1 as (with t11 as (select * from t1) select * from t1, t2) select * from t1;
-use test1;
-select * from test.v1;
+use cte1;
+select * from cte.v1;
 # case
 CREATE TABLE `t_cqmg3b` (
   `wkey` int(11) DEFAULT NULL,
@@ -333,8 +335,6 @@ CREATE TABLE `t_dnmxh` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 INSERT INTO `t_dnmxh` VALUES (104,571000,NULL),(104,572000,44.37),(104,573000,59.91),(104,574000,91.5),(104,575000,9.53),(104,576000,92.4),(104,577000,47.96),(106,585000,NULL),(106,586000,NULL),(106,587000,NULL),(106,588000,NULL),(106,589000,NULL),(108,595000,13.35),(108,596000,13.51),(108,597000,47.51),(108,598000,NULL),(113,616000,24.73),(113,617000,NULL),(113,618000,92.6),(113,619000,NULL),(113,620000,91.65),(113,621000,100.46),(113,622000,31.3),(113,623000,63.81);
 WITH cte_0 AS (select distinct ref_0.wkey as c0, ref_0.pkey as c1, ref_0.c_xhsndb as c2 from t_dnmxh as ref_0 where (1 <= ( select ref_1.pkey not in ( select ref_5.wkey as c0 from t_dnmxh as ref_5 where (ref_5.wkey < ( select ref_6.pkey as c0 from t_cqmg3b as ref_6 where 88 between 96 and 76)) ) as c0 from (t_cqmg3b as ref_1 left outer join t_dnmxh as ref_2 on (ref_1.wkey = ref_2.wkey )) where ref_0.c_xhsndb is NULL union select 33 <= 91 as c0 from t_cqmg3b as ref_8 ))), cte_1 AS (select ref_9.wkey as c0, ref_9.pkey as c1, ref_9.c_anpf_c as c2, ref_9.c_b_fp_c as c3, ref_9.c_ndccfb as c4, ref_9.c_8rswc as c5 from t_cqmg3b as ref_9) select count(1) from cte_0 as ref_10 where case when 56 < 50 then case when 100 in ( select distinct ref_11.c4 as c0 from cte_1 as ref_11 where (ref_11.c4 > ( select ref_13.pkey as c0 from t_dnmxh as ref_13 where (ref_13.wkey > ( select distinct ref_11.c1 as c0 from cte_0 as ref_14)) )) or (1 = 1)) then null else null end else '7mxv6' end not like 'ki4%vc';
-<<<<<<< HEAD:cmd/explaintest/t/cte.test
-=======
 #case
 with cte1 as (select 1), cte2 as (select 2) select * from cte1 union (with cte2 as (select 3) select * from cte2 union all select * from cte2) order by 1;
 
@@ -681,4 +681,3 @@ SELECT col_4
           FROM product_detail
 ) a;
 
->>>>>>> d04ec9d914a (planner: fix CTE hang or wrong result when multiple Apply is used (#55553)):tests/integrationtest/t/cte.test

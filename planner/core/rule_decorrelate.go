@@ -128,20 +128,12 @@ func ExtractCorrelatedCols4PhysicalPlan(p PhysicalPlan) []*expression.Correlated
 //	 |_ Apply_3
 //	     |_ outerSide
 //	     |_ innerSide(cor_col_3)
-<<<<<<< HEAD:planner/core/rule_decorrelate.go
 func ExtractOuterApplyCorrelatedCols(p PhysicalPlan) []*expression.CorrelatedColumn {
-	return extractOuterApplyCorrelatedColsHelper(p, []*expression.Schema{})
-}
-
-func extractOuterApplyCorrelatedColsHelper(p PhysicalPlan, outerSchemas []*expression.Schema) []*expression.CorrelatedColumn {
-=======
-func ExtractOuterApplyCorrelatedCols(p base.PhysicalPlan) []*expression.CorrelatedColumn {
 	corCols, _ := extractOuterApplyCorrelatedColsHelper(p)
 	return corCols
 }
 
-func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan) ([]*expression.CorrelatedColumn, []*expression.Schema) {
->>>>>>> d04ec9d914a (planner: fix CTE hang or wrong result when multiple Apply is used (#55553)):pkg/planner/core/rule_decorrelate.go
+func extractOuterApplyCorrelatedColsHelper(p PhysicalPlan) ([]*expression.CorrelatedColumn, []*expression.Schema) {
 	if p == nil {
 		return nil, nil
 	}
@@ -151,7 +143,7 @@ func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan) ([]*expression.C
 	allCorCols := p.ExtractCorrelatedCols()
 	allOuterSchemas := []*expression.Schema{}
 
-	handler := func(child base.PhysicalPlan) {
+	handler := func(child PhysicalPlan) {
 		childCorCols, childOuterSchemas := extractOuterApplyCorrelatedColsHelper(child)
 		allCorCols = append(allCorCols, childCorCols...)
 		allOuterSchemas = append(allOuterSchemas, childOuterSchemas...)
