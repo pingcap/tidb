@@ -1026,6 +1026,7 @@ o_totalprice desc,
 o_orderdate
 limit 100;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD:cmd/explaintest/r/tpch.result
 Projection	100.00	root		tpch.customer.c_name, tpch.customer.c_custkey, tpch.orders.o_orderkey, tpch.orders.o_orderdate, tpch.orders.o_totalprice, Column#54
 └─TopN	100.00	root		tpch.orders.o_totalprice:desc, tpch.orders.o_orderdate, offset:0, count:100
   └─HashAgg	59251097.60	root		group by:tpch.customer.c_custkey, tpch.customer.c_name, tpch.orders.o_orderdate, tpch.orders.o_orderkey, tpch.orders.o_totalprice, funcs:sum(tpch.lineitem.l_quantity)->Column#54, funcs:firstrow(tpch.customer.c_custkey)->tpch.customer.c_custkey, funcs:firstrow(tpch.customer.c_name)->tpch.customer.c_name, funcs:firstrow(tpch.orders.o_orderkey)->tpch.orders.o_orderkey, funcs:firstrow(tpch.orders.o_totalprice)->tpch.orders.o_totalprice, funcs:firstrow(tpch.orders.o_orderdate)->tpch.orders.o_orderdate
@@ -1035,6 +1036,17 @@ Projection	100.00	root		tpch.customer.c_name, tpch.customer.c_custkey, tpch.orde
       │ │ └─HashAgg	74063872.00	root		group by:tpch.lineitem.l_orderkey, funcs:sum(Column#66)->Column#52, funcs:firstrow(tpch.lineitem.l_orderkey)->tpch.lineitem.l_orderkey
       │ │   └─TableReader	74063872.00	root		data:HashAgg
       │ │     └─HashAgg	74063872.00	cop[tikv]		group by:tpch.lineitem.l_orderkey, funcs:sum(tpch.lineitem.l_quantity)->Column#66
+=======
+Projection	100.00	root		tpch50.customer.c_name, tpch50.customer.c_custkey, tpch50.orders.o_orderkey, tpch50.orders.o_orderdate, tpch50.orders.o_totalprice, Column#54
+└─TopN	100.00	root		tpch50.orders.o_totalprice:desc, tpch50.orders.o_orderdate, offset:0, count:100
+  └─HashAgg	60000000.00	root		group by:tpch50.customer.c_custkey, tpch50.customer.c_name, tpch50.orders.o_orderdate, tpch50.orders.o_orderkey, tpch50.orders.o_totalprice, funcs:sum(tpch50.lineitem.l_quantity)->Column#54, funcs:firstrow(tpch50.customer.c_custkey)->tpch50.customer.c_custkey, funcs:firstrow(tpch50.customer.c_name)->tpch50.customer.c_name, funcs:firstrow(tpch50.orders.o_orderkey)->tpch50.orders.o_orderkey, funcs:firstrow(tpch50.orders.o_totalprice)->tpch50.orders.o_totalprice, funcs:firstrow(tpch50.orders.o_orderdate)->tpch50.orders.o_orderdate
+    └─IndexHashJoin	243550009.54	root		inner join, inner:IndexLookUp, outer key:tpch50.orders.o_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)
+      ├─HashJoin(Build)	60000000.00	root		inner join, equal:[eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)]
+      │ ├─Selection(Build)	59126579.20	root		gt(Column#52, 314)
+      │ │ └─HashAgg	73908224.00	root		group by:tpch50.lineitem.l_orderkey, funcs:sum(Column#84)->Column#52, funcs:firstrow(tpch50.lineitem.l_orderkey)->tpch50.lineitem.l_orderkey
+      │ │   └─TableReader	73908224.00	root		data:HashAgg
+      │ │     └─HashAgg	73908224.00	cop[tikv]		group by:tpch50.lineitem.l_orderkey, funcs:sum(tpch50.lineitem.l_quantity)->Column#84
+>>>>>>> 53a3d20a3c0 (planner, sctx: open enhanced index join pattern by default (#56172)):tests/integrationtest/r/tpch.result
       │ │       └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
       │ └─HashJoin(Probe)	75000000.00	root		inner join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
       │   ├─TableReader(Build)	7500000.00	root		data:TableFullScan
