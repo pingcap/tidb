@@ -1171,11 +1171,14 @@ const (
 	// version 214
 	//   create `mysql.index_advisor_results` table
 	version214 = 214
+
+	// If the TiDB upgrading from the a version before v7.0 to a newer version, we keep the tidb_enable_inl_join_inner_multi_pattern to 0.
+	version215 = 215
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version214
+var currentBootstrapVersion int64 = version215
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1345,6 +1348,7 @@ var (
 		upgradeToVer212,
 		upgradeToVer213,
 		upgradeToVer214,
+		upgradeToVer215,
 	}
 )
 
@@ -3193,6 +3197,14 @@ func upgradeToVer214(s sessiontypes.Session, ver int64) {
 
 	mustExecute(s, CreateIndexAdvisorTable)
 	mustExecute(s, CreateKernelOptionsTable)
+}
+
+func upgradeToVer215(s sessiontypes.Session, ver int64) {
+	if ver >= version215 {
+		return
+	}
+
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableINLJoinInnerMultiPattern, variable.Off)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

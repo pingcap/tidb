@@ -30,11 +30,11 @@ type Store interface {
 		ctx context.Context,
 		se *sess.Session,
 		ddlJobID int64,
-		multiSchemaChangeID int,
+		multiSchemaChangeID int64,
 		processedBy uint64,
 	) error
 	Delete(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error
-	List(ctx context.Context, se *sess.Session, limit int) ([]*schemaChange, error)
+	List(ctx context.Context, se *sess.Session) ([]*schemaChange, error)
 }
 
 // DefaultStore is the system table store. Still WIP now.
@@ -64,12 +64,25 @@ func (t *tableStore) Insert(ctx context.Context, s *sess.Session, change *schema
 	return err
 }
 
-//revive:disable
-
-func (t *tableStore) UpdateProcessed(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int, processedBy uint64) error {
-	//TODO implement me
-	panic("implement me")
+func (t *tableStore) UpdateProcessed(
+	ctx context.Context,
+	se *sess.Session,
+	ddlJobID int64,
+	multiSchemaChangeID int64,
+	processedBy uint64,
+) error {
+	sql := fmt.Sprintf(`
+		UPDATE %s.%s
+		SET processed_by_flag = %d
+		WHERE ddl_job_id = %d AND multi_schema_change_seq = %d`,
+		t.db, t.table,
+		processedBy,
+		ddlJobID, multiSchemaChangeID)
+	_, err := se.Execute(ctx, sql, "ddl_notifier")
+	return err
 }
+
+//revive:disable
 
 func (t *tableStore) Delete(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error {
 	//TODO implement me
@@ -78,15 +91,15 @@ func (t *tableStore) Delete(ctx context.Context, se *sess.Session, ddlJobID int6
 
 //revive:enable
 
-func (t *tableStore) List(ctx context.Context, se *sess.Session, limit int) ([]*schemaChange, error) {
+func (t *tableStore) List(ctx context.Context, se *sess.Session) ([]*schemaChange, error) {
 	sql := fmt.Sprintf(`
 		SELECT
 			ddl_job_id,
 			multi_schema_change_seq,
 			schema_change,
 			processed_by_flag
-		FROM %s.%s ORDER BY ddl_job_id, multi_schema_change_seq LIMIT %d`,
-		t.db, t.table, limit)
+		FROM %s.%s ORDER BY ddl_job_id, multi_schema_change_seq`,
+		t.db, t.table)
 	rows, err := se.Execute(ctx, sql, "ddl_notifier")
 	if err != nil {
 		return nil, err
