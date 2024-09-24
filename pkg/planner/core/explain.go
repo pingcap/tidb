@@ -692,7 +692,8 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 		if normalized {
 			fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.SCtx(), p.LeftConditions))
 		} else {
-			fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
+			fmt.Fprintf(buffer, ", left cond:%s",
+				sortedExplainExpressionList(p.SCtx(), p.LeftConditions))
 		}
 	}
 	if len(p.RightConditions) > 0 {
