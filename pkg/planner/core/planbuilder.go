@@ -2376,6 +2376,43 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 	return
 }
 
+// This function is to check whether all indexes is special global index or not.
+// A special global index is an index that is both a global index and an expression index or a prefix index.
+func checkIsAllSpecialGlobalIndex(as *ast.AnalyzeTableStmt, tbl *resolve.TableNameW) (bool, error) {
+	isAnalyzeTable := len(as.PartitionNames) == 0
+
+	// For `Analyze table t index`
+	if as.IndexFlag && len(as.IndexNames) == 0 {
+		for _, idx := range tbl.TableInfo.Indices {
+			if idx.State != model.StatePublic {
+				continue
+			}
+			if !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
+				return false, nil
+			}
+			// `Analyze table t partition p0 index`
+			if !isAnalyzeTable {
+				return false, errors.NewNoStackErrorf("Analyze global index '%s' can't work with analyze specified partitions", idx.Name.O)
+			}
+		}
+	} else {
+		for _, idxName := range as.IndexNames {
+			idx := tbl.TableInfo.FindIndexByName(idxName.L)
+			if idx == nil || idx.State != model.StatePublic {
+				return false, plannererrors.ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tbl.Name.O)
+			}
+			if !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
+				return false, nil
+			}
+			// `Analyze table t partition p0 index idx0`
+			if !isAnalyzeTable {
+				return false, errors.NewNoStackErrorf("Analyze global index '%s' can't work with analyze specified partitions", idx.Name.O)
+			}
+		}
+	}
+	return true, nil
+}
+
 func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	as *ast.AnalyzeTableStmt,
 	analyzePlan *Analyze,
@@ -2392,34 +2429,10 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	}
 
 	isAnalyzeTable := len(as.PartitionNames) == 0
-	allSpecialGlobalIndex := true
-	if as.IndexFlag && len(as.IndexNames) == 0 {
-		for _, idx := range tbl.TableInfo.Indices {
-			if idx.State != model.StatePublic {
-				continue
-			}
-			if !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
-				allSpecialGlobalIndex = false
-				break
-			}
-			if !isAnalyzeTable {
-				return errors.NewNoStackErrorf("Analyze global index '%s' can't work with analyze specified partitions", idx.Name.O)
-			}
-		}
-	} else {
-		for _, idxName := range as.IndexNames {
-			idx := tbl.TableInfo.FindIndexByName(idxName.L)
-			if idx == nil || idx.State != model.StatePublic {
-				return plannererrors.ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tbl.Name.O)
-			}
-			if !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
-				allSpecialGlobalIndex = false
-				break
-			}
-			if !isAnalyzeTable {
-				return errors.NewNoStackErrorf("Analyze global index '%s' can't work with analyze specified partitions", idx.Name.O)
-			}
-		}
+
+	allSpecialGlobalIndex, err := checkIsAllSpecialGlobalIndex(as, tbl)
+	if err != nil {
+		return err
 	}
 
 	astOpts, err := handleAnalyzeOptionsV2(as.AnalyzeOpts)
