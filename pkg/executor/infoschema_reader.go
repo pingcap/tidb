@@ -405,9 +405,6 @@ func (e *memtableRetriever) setDataForStatistics(ctx context.Context, sctx sessi
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
-		if table.State != model.StatePublic {
-			continue
-		}
 		e.setDataForStatisticsInTable(schema, table, ex)
 	}
 	return nil
@@ -530,9 +527,6 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 			continue
 		}
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
-			continue
-		}
-		if table.State != model.StatePublic {
 			continue
 		}
 		for _, fk := range table.ForeignKeys {
@@ -752,9 +746,6 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				*slot = true
 			}
 			v2.IterateAllTableItems(func(t infoschema.TableItem) bool {
-				if t.State != model.StatePublic {
-					return true
-				}
 				if !ex.HasTableName(t.TableName.L) {
 					return true
 				}
@@ -811,9 +802,6 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		loc = time.Local
 	}
 	for i, table := range tables {
-		if table.State != model.StatePublic {
-			continue
-		}
 		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows, useStatsCache)
 		if err != nil {
 			return errors.Trace(err)
@@ -841,7 +829,7 @@ func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sct
 			return errors.Trace(err)
 		}
 		for _, table := range tables {
-			if len(table.Constraints) > 0 && table.State == model.StatePublic {
+			if len(table.Constraints) > 0 {
 				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
 					continue
 				}
@@ -885,7 +873,7 @@ func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context,
 	}
 	for i, table := range tables {
 		schema := schemas[i]
-		if len(table.Constraints) > 0 && table.State == model.StatePublic {
+		if len(table.Constraints) > 0 {
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
 				continue
 			}
@@ -976,9 +964,6 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 		for e.tblIdx < len(e.curTables) {
 			table = e.curTables[e.tblIdx]
 			e.tblIdx++
-			if table.State != model.StatePublic {
-				continue
-			}
 			if e.setDataForColumnsWithOneTable(ctx, sctx, schema, table, checker) {
 				return nil
 			}
@@ -1185,9 +1170,6 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 		return errors.Trace(err)
 	}
 	for i, table := range tables {
-		if table.State != model.StatePublic {
-			continue
-		}
 		schema := schemas[i]
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
 			continue
@@ -1368,9 +1350,6 @@ func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx session
 
 	var rows [][]types.Datum
 	for i, table := range tables {
-		if table.State != model.StatePublic {
-			continue
-		}
 		rows, err = e.setDataFromIndex(sctx, schemas[i], table, rows)
 		if err != nil {
 			return errors.Trace(err)
@@ -1777,9 +1756,6 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx 
 	}
 	rows := make([][]types.Datum, 0, len(tables))
 	for i, table := range tables {
-		if table.State != model.StatePublic {
-			continue
-		}
 		schema := schemas[i]
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
 			continue
@@ -2187,9 +2163,6 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 			continue
 		}
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
-			continue
-		}
-		if tbl.State != model.StatePublic {
 			continue
 		}
 
@@ -3882,10 +3855,6 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 		if checker != nil && !checker.RequestVerification(
 			sctx.GetSessionVars().ActiveRoles,
 			schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
-			continue
-		}
-
-		if tbl.State != model.StatePublic {
 			continue
 		}
 

@@ -724,13 +724,6 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 	require.False(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
-		State: model.StateNone,
-	}
-	b, err = json.Marshal(tableInfo)
-	require.NoError(t, err)
-	require.True(t, meta.IsTableInfoMustLoad(b))
-
-	tableInfo = &model.TableInfo{
 		State: model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
