@@ -191,7 +191,7 @@ func dealWithRedact(input string, redact bool) string {
 	if redact {
 		return "?"
 	}
-	return fmt.Sprintf("‹%s›", input)
+	return input
 }
 
 // String implements the Stringer interface.
