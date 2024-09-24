@@ -1312,7 +1312,7 @@ partition by range( col3 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'col1', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists Part1;
 create table Part1 (
 col1 int not null,
@@ -1326,7 +1326,7 @@ partition by range( col1 + col3 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'col1', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists Part1;
 create table Part1 (
 col1 int not null,
@@ -1340,7 +1340,7 @@ partition by range( col3 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'col1', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists Part1;
 create table Part1 (
 col1 int not null,
@@ -1354,7 +1354,7 @@ partition by range( col1 + col3 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'col3', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists Part1;
 create table Part1 (
 col1 int not null,
@@ -1367,7 +1367,7 @@ partition by range( col3 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists Part1;
 create table Part1 (
 col1 int not null,
@@ -1381,7 +1381,7 @@ partition by range( year(col2)  ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists Part1;
 create table Part1 (
 col1 int not null,
@@ -1395,7 +1395,7 @@ partition by range( col1 + col2 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists part6;
 create table part6 (
 col1 int not null,
@@ -1410,7 +1410,7 @@ partition by range( col1 + col2 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'col1_2', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table part7 (
 col1 int not null,
 col2 int not null,
@@ -1421,7 +1421,7 @@ partition by range (col1 + col2) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'col3', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table part8 (
 a int not null,
 b int not null,
@@ -1436,7 +1436,7 @@ partition p0 values less than (4),
 partition p1 values less than (7),
 partition p2 values less than (11)
 );
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'c', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table part9 (
 a int not null,
 b int not null,
@@ -1451,18 +1451,18 @@ partition p0 values less than (4, 5),
 partition p1 values less than (7, 9),
 partition p2 values less than (11, 22)
 );
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
 partition p0 values less than ('aaaaa'),
 partition p1 values less than ('bbbbb'),
 partition p2 values less than ('ccccc'));
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table part12 (a varchar(20), b binary) partition by range columns (a) (
 partition p0 values less than ('aaaaa'),
 partition p1 values less than ('bbbbb'),
 partition p2 values less than ('ccccc'));
 alter table part12 add unique index (a(5));
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table part13 (a varchar(20), b varchar(10), unique index (a(5),b)) partition by range columns (b) (
 partition p0 values less than ('aaaaa'),
 partition p1 values less than ('bbbbb'),
@@ -3095,7 +3095,6 @@ drop table if exists nt2;
 create table nt2 (a int, b int, c int);
 alter table nt2 add index idx((a+c));
 alter table pt1 exchange partition p0 with table nt2;
-set tidb_enable_global_index=true;
 drop database if exists partition_exchange;
 create database partition_exchange;
 use partition_exchange;
@@ -3248,7 +3247,6 @@ alter table pt35 exchange partition p0 with table nt35;
 Error 1731 (HY000): Non matching attribute 'global index: b' between partition and table
 drop database partition_exchange;
 use ddl__db_partition;
-set tidb_enable_global_index=default;
 # 53385
 drop table if exists t,t1;
 create table t (id int not null, store_id int not null )  partition by range (store_id) (partition p0 values less than (6), partition p1 values less than (11), partition p2 values less than (16), partition p3 values less than (21));

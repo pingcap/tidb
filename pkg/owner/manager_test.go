@@ -17,6 +17,7 @@ package owner_test
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"runtime"
 	"sync/atomic"
 	"testing"
@@ -31,11 +32,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
+	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/tests/v3/integration"
+	"golang.org/x/exp/rand"
 )
 
 const testLease = 5 * time.Millisecond
@@ -433,4 +437,109 @@ func deleteLeader(cli *clientv3.Client, prefixKey string) error {
 	}
 	_, err = cli.Delete(context.Background(), string(resp.Kvs[0].Key))
 	return errors.Trace(err)
+}
+
+func TestAcquireDistributedLock(t *testing.T) {
+	const addrFmt = "http://127.0.0.1:%d"
+	cfg := embed.NewConfig()
+	cfg.Dir = t.TempDir()
+	// rand port in [20000, 60000)
+	randPort := int(rand.Int31n(40000)) + 20000
+	clientAddr := fmt.Sprintf(addrFmt, randPort)
+	lcurl, _ := url.Parse(clientAddr)
+	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*lcurl}, []url.URL{*lcurl}
+	lpurl, _ := url.Parse(fmt.Sprintf(addrFmt, randPort+1))
+	cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*lpurl}, []url.URL{*lpurl}
+	cfg.InitialCluster = "default=" + lpurl.String()
+	cfg.Logger = "zap"
+	embedEtcd, err := embed.StartEtcd(cfg)
+	require.NoError(t, err)
+	<-embedEtcd.Server.ReadyNotify()
+	t.Cleanup(func() {
+		embedEtcd.Close()
+	})
+	makeEtcdCli := func(t *testing.T) (cli *clientv3.Client) {
+		cli, err := clientv3.New(clientv3.Config{
+			Endpoints: []string{lcurl.String()},
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			cli.Close()
+		})
+		return cli
+	}
+	t.Run("acquire distributed lock with same client", func(t *testing.T) {
+		cli := makeEtcdCli(t)
+		getLock := make(chan struct{})
+		ctx := context.Background()
+
+		release1, err := owner.AcquireDistributedLock(ctx, cli, "test-lock", 10)
+		require.NoError(t, err)
+		var wg util.WaitGroupWrapper
+		wg.Run(func() {
+			// Acquire another distributed lock will be blocked.
+			release2, err := owner.AcquireDistributedLock(ctx, cli, "test-lock", 10)
+			require.NoError(t, err)
+			getLock <- struct{}{}
+			release2()
+		})
+		timer := time.NewTimer(300 * time.Millisecond)
+		select {
+		case <-getLock:
+			require.FailNow(t, "acquired same lock unexpectedly")
+		case <-timer.C:
+			release1()
+			<-getLock
+		}
+		wg.Wait()
+
+		release1, err = owner.AcquireDistributedLock(ctx, cli, "test-lock/1", 10)
+		require.NoError(t, err)
+		release2, err := owner.AcquireDistributedLock(ctx, cli, "test-lock/2", 10)
+		require.NoError(t, err)
+		release1()
+		release2()
+	})
+
+	t.Run("acquire distributed lock with different clients", func(t *testing.T) {
+		cli1 := makeEtcdCli(t)
+		cli2 := makeEtcdCli(t)
+
+		getLock := make(chan struct{})
+		ctx := context.Background()
+
+		release1, err := owner.AcquireDistributedLock(ctx, cli1, "test-lock", 10)
+		require.NoError(t, err)
+		var wg util.WaitGroupWrapper
+		wg.Run(func() {
+			// Acquire another distributed lock will be blocked.
+			release2, err := owner.AcquireDistributedLock(ctx, cli2, "test-lock", 10)
+			require.NoError(t, err)
+			getLock <- struct{}{}
+			release2()
+		})
+		timer := time.NewTimer(300 * time.Millisecond)
+		select {
+		case <-getLock:
+			require.FailNow(t, "acquired same lock unexpectedly")
+		case <-timer.C:
+			release1()
+			<-getLock
+		}
+		wg.Wait()
+	})
+
+	t.Run("acquire distributed lock until timeout", func(t *testing.T) {
+		cli1 := makeEtcdCli(t)
+		cli2 := makeEtcdCli(t)
+		ctx := context.Background()
+
+		_, err := owner.AcquireDistributedLock(ctx, cli1, "test-lock", 1)
+		require.NoError(t, err)
+		cli1.Close() // Note that release() is not invoked.
+
+		release2, err := owner.AcquireDistributedLock(ctx, cli2, "test-lock", 10)
+		require.NoError(t, err)
+		release2()
+	})
 }

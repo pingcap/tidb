@@ -254,12 +254,9 @@ type RestoreConfig struct {
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
 
-	UseCheckpoint                     bool   `json:"use-checkpoint" toml:"use-checkpoint"`
-	checkpointSnapshotRestoreTaskName string `json:"-" toml:"-"`
-	checkpointLogRestoreTaskName      string `json:"-" toml:"-"`
-	checkpointTaskInfoClusterID       uint64 `json:"-" toml:"-"`
-	upstreamClusterID                 uint64 `json:"-" toml:"-"`
-	WaitTiflashReady                  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
+	UseCheckpoint     bool   `json:"use-checkpoint" toml:"use-checkpoint"`
+	upstreamClusterID uint64 `json:"-" toml:"-"`
+	WaitTiflashReady  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -531,19 +528,6 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	cfg.Config.Concurrency = cfg.PitrConcurrency
 }
 
-// generateLogRestoreTaskName generates the log restore taskName for checkpoint
-func (cfg *RestoreConfig) generateLogRestoreTaskName(clusterID, startTS, restoreTs uint64) string {
-	cfg.checkpointTaskInfoClusterID = clusterID
-	cfg.checkpointLogRestoreTaskName = fmt.Sprintf("%d/%d.%d", clusterID, startTS, restoreTs)
-	return cfg.checkpointLogRestoreTaskName
-}
-
-// generateSnapshotRestoreTaskName generates the snapshot restore taskName for checkpoint
-func (cfg *RestoreConfig) generateSnapshotRestoreTaskName(clusterID uint64) string {
-	cfg.checkpointSnapshotRestoreTaskName = fmt.Sprint(clusterID)
-	return cfg.checkpointSnapshotRestoreTaskName
-}
-
 func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, cfg *RestoreConfig) error {
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
@@ -656,22 +640,6 @@ func registerTaskToPD(ctx context.Context, etcdCLI *clientv3.Client) (closeF fun
 	return register.Close, errors.Trace(err)
 }
 
-func removeCheckpointDataForSnapshotRestore(ctx context.Context, storageName string, taskName string, config *Config) error {
-	_, s, err := GetStorage(ctx, storageName, config)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(checkpoint.RemoveCheckpointDataForRestore(ctx, s, taskName))
-}
-
-func removeCheckpointDataForLogRestore(ctx context.Context, storageName string, taskName string, clusterID uint64, config *Config) error {
-	_, s, err := GetStorage(ctx, storageName, config)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(checkpoint.RemoveCheckpointDataForLogRestore(ctx, s, taskName, clusterID))
-}
-
 func DefaultRestoreConfig() RestoreConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
 	DefineCommonFlags(fs)
@@ -715,43 +683,57 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		conf.KeyspaceName = cfg.KeyspaceName
 	})
 
+	// TODO: remove version checker from `NewMgr`
+	mgr, err := NewMgr(c, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, true, conn.NormalVersionChecker)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer mgr.Close()
+
 	var restoreError error
 	if IsStreamRestore(cmdName) {
-		restoreError = RunStreamRestore(c, g, cmdName, cfg)
+		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBRPiTR); err != nil {
+			return errors.Trace(err)
+		}
+		restoreError = RunStreamRestore(c, mgr, g, cmdName, cfg)
 	} else {
-		restoreError = runRestore(c, g, cmdName, cfg, nil)
+		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBR); err != nil {
+			return errors.Trace(err)
+		}
+		restoreError = runRestore(c, mgr, g, cmdName, cfg, nil)
 	}
 	if restoreError != nil {
 		return errors.Trace(restoreError)
 	}
 	// Clear the checkpoint data
 	if cfg.UseCheckpoint {
-		if len(cfg.checkpointLogRestoreTaskName) > 0 {
-			log.Info("start to remove checkpoint data for log restore")
-			err = removeCheckpointDataForLogRestore(c, cfg.Config.Storage, cfg.checkpointLogRestoreTaskName, cfg.checkpointTaskInfoClusterID, &cfg.Config)
-			if err != nil {
-				log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
-			}
-		}
-		if len(cfg.checkpointSnapshotRestoreTaskName) > 0 {
-			log.Info("start to remove checkpoint data for snapshot restore.")
-			var storage string
+		se, err := g.CreateSession(mgr.GetStorage())
+		if err != nil {
+			log.Warn("failed to remove checkpoint data", zap.Error(err))
+		} else {
 			if IsStreamRestore(cmdName) {
-				storage = cfg.FullBackupStorage
+				log.Info("start to remove checkpoint data for PITR restore")
+				err = checkpoint.RemoveCheckpointDataForLogRestore(c, mgr.GetDomain(), se)
+				if err != nil {
+					log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
+				}
+				err = checkpoint.RemoveCheckpointDataForSnapshotRestore(c, mgr.GetDomain(), se)
+				if err != nil {
+					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
+				}
 			} else {
-				storage = cfg.Config.Storage
+				err = checkpoint.RemoveCheckpointDataForSnapshotRestore(c, mgr.GetDomain(), se)
+				if err != nil {
+					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
+				}
 			}
-			err = removeCheckpointDataForSnapshotRestore(c, storage, cfg.checkpointSnapshotRestoreTaskName, &cfg.Config)
-			if err != nil {
-				log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
-			}
+			log.Info("all the checkpoint data is removed.")
 		}
-		log.Info("all the checkpoint data is removed.")
 	}
 	return nil
 }
 
-func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig, checkInfo *PiTRTaskInfo) error {
+func runRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *RestoreConfig, checkInfo *PiTRTaskInfo) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
@@ -763,14 +745,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	// Restore needs domain to do DDL.
-	needDomain := true
-	keepaliveCfg := GetKeepalive(&cfg.Config)
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer mgr.Close()
 	codec := mgr.GetStorage().GetCodec()
 
 	// need retrieve these configs from tikv if not set in command.
@@ -785,11 +759,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	httpCli := httputil.NewClient(mgr.GetTLSConfig())
 	mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
 
+	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	// using tikv config to set the concurrency-per-store for client.
 	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
-	err = configureRestoreClient(ctx, client, cfg)
+	err := configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -885,16 +860,11 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		log.Info("finish removing pd scheduler")
 	}()
 
-	var checkpointTaskName string
 	var checkpointFirstRun bool = true
 	if cfg.UseCheckpoint {
-		checkpointTaskName = cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
-		// if the checkpoint metadata exists in the external storage, the restore is not
+		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.
-		existsCheckpointMetadata, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, checkpointTaskName)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		existsCheckpointMetadata := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, mgr.GetDomain())
 		checkpointFirstRun = !existsCheckpointMetadata
 	}
 
@@ -924,10 +894,16 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
+	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
+	err = client.AllocTableIDs(ctx, tables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// reload or register the checkpoint
 	var checkpointSetWithTableID map[int64]map[string]struct{}
 	if cfg.UseCheckpoint {
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, s, checkpointTaskName, schedulersConfig, checkpointFirstRun)
+		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, s, schedulersConfig, checkpointFirstRun)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1011,12 +987,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		} else {
 			client.SetPolicyMap(policies)
 		}
-	}
-
-	// preallocate the table id, because any ddl job or database creation also allocates the global ID
-	err = client.AllocTableIDs(ctx, tables)
-	if err != nil {
-		return errors.Trace(err)
 	}
 
 	// execute DDL first
@@ -1418,6 +1388,9 @@ func filterRestoreFiles(
 		dbName := db.Info.Name.O
 		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
 			dbName = name
+		}
+		if checkpoint.IsCheckpointDB(db.Info.Name) {
+			continue
 		}
 		if !cfg.TableFilter.MatchSchema(dbName) {
 			continue

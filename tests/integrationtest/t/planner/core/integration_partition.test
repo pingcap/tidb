@@ -47,14 +47,14 @@ use list_partition_cre;
 drop table if exists tlist;
 set tidb_enable_list_partition = 1;
 create table tuk1 (a int, b int, unique key(a)) partition by list (a) (partition p0 values in (0));
--- error 1503
+-- error 8264
 create table tuk2 (a int, b int, unique key(a)) partition by list (b) (partition p0 values in (0));
--- error 1503
+-- error 8264
 create table tuk2 (a int, b int, unique key(a), unique key(b)) partition by list (a) (partition p0 values in (0));
 create table tcoluk1 (a int, b int, unique key(a)) partition by list columns(a) (partition p0 values in (0));
--- error 1503
+-- error 8264
 create table tcoluk2 (a int, b int, unique key(a)) partition by list columns(b) (partition p0 values in (0));
--- error 1503
+-- error 8264
 create table tcoluk2 (a int, b int, unique key(a), unique key(b)) partition by list columns(a) (partition p0 values in (0));
 create table tpk1 (a int, b int, primary key(a)) partition by list (a) (partition p0 values in (0));
 create table tpk2 (a int, b int, primary key(a, b)) partition by list (a) (partition p0 values in (0));
@@ -81,19 +81,21 @@ use list_partition_ddl;
 drop table if exists tlist;
 set tidb_enable_list_partition = 1;
 create table tlist (a int, b int) partition by list (a) (partition p0 values in (0));
--- error 1503
+-- error 8264
 alter table tlist add primary key (b);
 alter table tlist add primary key (a);
--- error 1503
+-- error 8264
 alter table tlist add unique key (b);
 alter table tlist add key (b);
 alter table tlist rename index b to bb;
 alter table tlist drop index bb;
 create table tcollist (a int, b int) partition by list columns (a) (partition p0 values in (0));
--- error 1503
+-- error 8264
 alter table tcollist add primary key (b);
 alter table tcollist add primary key (a);
--- error 1503
+-- error 1068
+alter table tcollist add primary key (b);
+-- error 8264
 alter table tcollist add unique key (b);
 alter table tcollist add key (b);
 alter table tcollist rename index b to bb;
@@ -366,7 +368,7 @@ create table tlist (a int, b int) partition by list (a) (
     partition p2 values in (10, 11, 12, 13, 14));
 alter table tlist add primary key(a);
 alter table tlist drop primary key;
--- error 1503
+-- error 8264
 alter table tlist add primary key(b);
 create table tcollist (a int, b int) partition by list columns (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -374,7 +376,7 @@ create table tcollist (a int, b int) partition by list columns (a) (
     partition p2 values in (10, 11, 12, 13, 14));
 alter table tcollist add primary key(a);
 alter table tcollist drop primary key;
--- error 1503
+-- error 8264
 alter table tcollist add primary key(b);
 
 

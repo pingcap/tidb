@@ -1309,9 +1309,6 @@ type SessionVars struct {
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex ClusteredIndexDefMode
 
-	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
-	EnableGlobalIndex bool
-
 	// EnableParallelApply indicates that whether to use parallel apply.
 	EnableParallelApply bool
 
@@ -1353,6 +1350,9 @@ type SessionVars struct {
 
 	// DisableHashJoin indicates whether to disable hash join.
 	DisableHashJoin bool
+
+	// UseHashJoinV2 indicates whether to use hash join v2.
+	UseHashJoinV2 bool
 
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
