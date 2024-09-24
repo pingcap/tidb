@@ -93,7 +93,7 @@ func TestGenIDAndInsertJobsWithRetry(t *testing.T) {
 	wg.Wait()
 
 	jobCount := threads * iterations
-	gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+	gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 	require.NoError(t, err)
 	require.Len(t, gotJobs, jobCount)
 	currGID := getGlobalID(ctx, t, store)
@@ -353,7 +353,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 			require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{c.jobW}))
 			require.Equal(t, currentGlobalID+int64(c.requiredIDCount), getGlobalID(ctx, t, store), fmt.Sprintf("case-%d", i))
 		}
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, len(cases))
 	})
@@ -371,7 +371,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 		require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), jobWs))
 		require.Equal(t, currentGlobalID+int64(totalRequiredCnt), getGlobalID(ctx, t, store))
 
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, len(cases))
 	})
@@ -407,7 +407,7 @@ func TestCombinedIDAllocation(t *testing.T) {
 				checkPartitionInfo(pInfo)
 			}
 		}
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		require.Len(t, gotJobs, allocIDCaseCount)
 		for _, j := range gotJobs {
