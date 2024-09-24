@@ -7,6 +7,7 @@ go_library(
         "indexadvisor.go",
         "model.go",
         "optimizer.go",
+        "options.go",
         "utils.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/indexadvisor",
@@ -32,6 +33,7 @@ go_library(
         "//pkg/util/set",
         "//pkg/util/sqlexec",
         "@com_github_google_uuid//:uuid",
+        "@com_github_pkg_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -44,10 +46,11 @@ go_test(
         "indexadvisor_test.go",
         "indexadvisor_tpch_test.go",
         "optimizer_test.go",
+        "options_test.go",
         "utils_test.go",
     ],
     flaky = True,
-    shard_count = 34,
+    shard_count = 38,
     deps = [
         ":indexadvisor",
         "//pkg/parser/mysql",
