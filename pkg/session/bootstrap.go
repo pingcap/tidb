@@ -1514,17 +1514,8 @@ func upgrade(s sessiontypes.Session) {
 	}
 
 	var ver int64
-	i := 0
-	var maxRetryCnt = 10
-	var releaseFn func()
-	var ok bool
-	for ; i < maxRetryCnt; i++ {
-		releaseFn, ok = acquireLock(s)
-		if ok {
-			break
-		}
-	}
-	if i == maxRetryCnt {
+	releaseFn, ok := acquireLock(s)
+	if !ok {
 		logutil.BgLogger().Fatal("[upgrade] get ddl owner distributed lock failed", zap.Error(err))
 	}
 	ver, err = getBootstrapVersion(s)

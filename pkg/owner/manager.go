@@ -522,7 +522,14 @@ func AcquireDistributedLock(
 		return nil, err
 	}
 	mu := concurrency.NewMutex(se, key)
-	err = mu.Lock(ctx)
+	maxRetryCnt := 10
+	err = util2.RunWithRetry(maxRetryCnt, util2.RetryInterval, func() (bool, error) {
+		err = mu.Lock(ctx)
+		if err != nil {
+			return true, err
+		}
+		return false, nil
+	})
 	if err != nil {
 		err1 := se.Close()
 		if err1 != nil {
