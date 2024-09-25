@@ -517,30 +517,28 @@ func checkVectorIndexIfNeedTiFlashReplica(ctx sessionctx.Context, tblInfo *model
 			break
 		}
 	}
+	if !hasVectorIndex {
+		return nil
+	}
 
-	if hasVectorIndex {
-		if tblInfo.TiFlashReplica == nil {
-			replicas, err := infoschema.GetTiFlashStoreCount(ctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if replicas == 0 {
-				return errors.Trace(dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
-			}
-
-			// Always try to set to 1 as the default replica count.
-			defaultReplicas := uint64(1)
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:          defaultReplicas,
-				LocationLabels: make([]string, 0),
-			}
-		}
-
-		if err := checkTableTypeForVectorIndex(tblInfo); err != nil {
+	if tblInfo.TiFlashReplica == nil {
+		replicas, err := infoschema.GetTiFlashStoreCount(ctx)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		if replicas == 0 {
+			return errors.Trace(dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
+		}
+
+		// Always try to set to 1 as the default replica count.
+		defaultReplicas := uint64(1)
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:          defaultReplicas,
+			LocationLabels: make([]string, 0),
+		}
 	}
-	return nil
+
+	return errors.Trace(checkTableTypeForVectorIndex(tblInfo))
 }
 
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
