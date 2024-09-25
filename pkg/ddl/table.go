@@ -1378,12 +1378,12 @@ func onRepairTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 }
 
 func onAlterTableAttributes(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	rule := label.NewRule()
-	err = job.DecodeArgs(rule)
+	args, err := model.GetAlterTableAttributesArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
+	rule := (*label.Rule)(args.Rule)
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
@@ -1392,9 +1392,9 @@ func onAlterTableAttributes(jobCtx *jobContext, t *meta.Meta, job *model.Job) (v
 
 	if len(rule.Labels) == 0 {
 		patch := label.NewRulePatch([]*label.Rule{}, []string{rule.ID})
-		err = infosync.UpdateLabelRules(context.TODO(), patch)
+		err = infosync.UpdateLabelRules(jobCtx.ctx, patch)
 	} else {
-		err = infosync.PutLabelRule(context.TODO(), rule)
+		err = infosync.PutLabelRule(jobCtx.ctx, rule)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled

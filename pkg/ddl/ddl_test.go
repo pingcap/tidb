@@ -337,7 +337,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
 }
 
-func TestAppendContinuousKeyRanges(t *testing.T) {
+func TestMergeContinuousKeyRanges(t *testing.T) {
 	cases := []struct {
 		input  []keyRangeMayExclude
 		expect []kv.KeyRange
@@ -447,7 +447,7 @@ func TestAppendContinuousKeyRanges(t *testing.T) {
 	}
 
 	for i, ca := range cases {
-		ranges := appendContinuousKeyRanges([]kv.KeyRange{}, ca.input)
+		ranges := mergeContinuousKeyRanges(ca.input)
 		require.Equal(t, ca.expect, ranges, "case %d", i)
 	}
 }

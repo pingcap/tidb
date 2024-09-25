@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 )
 
 func TestGetOrDecodeArgsV2(t *testing.T) {
@@ -611,5 +612,60 @@ func TestCheckConstraintArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "c1", args.ConstraintName.O)
 		require.True(t, args.Enforced)
+	}
+}
+
+func TestFlashbackClusterArgs(t *testing.T) {
+	inArgs := &FlashbackClusterArgs{
+		FlashbackTS:       111,
+		StartTS:           222,
+		CommitTS:          333,
+		EnableGC:          true,
+		EnableAutoAnalyze: true,
+		EnableTTLJob:      true,
+		SuperReadOnly:     true,
+		TotalRegions:      444,
+		PDScheduleValue:   map[string]any{"t1": 123.0},
+		FlashbackKeyRanges: []KeyRange{
+			{StartKey: []byte("db1"), EndKey: []byte("db2")},
+			{StartKey: []byte("db2"), EndKey: []byte("db3")},
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionFlashbackCluster)))
+		args, err := GetFlashbackClusterArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, inArgs.FlashbackTS, args.FlashbackTS)
+		require.Equal(t, inArgs.StartTS, args.StartTS)
+		require.Equal(t, inArgs.CommitTS, args.CommitTS)
+		require.Equal(t, inArgs.TotalRegions, args.TotalRegions)
+		require.Equal(t, inArgs.FlashbackKeyRanges, args.FlashbackKeyRanges)
+		require.Equal(t, inArgs.PDScheduleValue, args.PDScheduleValue)
+
+		require.True(t, args.EnableAutoAnalyze)
+		require.True(t, args.EnableGC)
+		require.True(t, args.EnableTTLJob)
+		require.True(t, args.SuperReadOnly)
+	}
+}
+
+func TestAlterTableAttributesArgs(t *testing.T) {
+	inArgs := &AlterTableAttributesArgs{
+		Rule: &pd.LabelRule{
+			ID:       "id",
+			Index:    2,
+			RuleType: "rule",
+			Labels:   []pd.RegionLabel{{Key: "key", Value: "value"}},
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterTableAttributes)))
+		args, err := GetAlterTableAttributesArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, *inArgs.Rule, *args.Rule)
 	}
 }

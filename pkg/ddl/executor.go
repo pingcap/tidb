@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -1428,13 +1429,11 @@ func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) 
 	}
 
 	args := &model.FlashbackClusterArgs{
-		FlashbackTS:           flashbackTS,
-		Tmp:                   map[string]any{},
-		TiDBEnableGC:          true,
-		TiDBEnableAutoAnalyze: true,
-		TiDBSuperReadOnly:     false,
-		TiDBTTLJobEnable:      true,
-		FlashbackKeyRanges:    []model.KeyRange{},
+		FlashbackTS:       flashbackTS,
+		PDScheduleValue:   map[string]any{},
+		EnableGC:          true,
+		EnableAutoAnalyze: true,
+		EnableTTLJob:      true,
 	}
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
@@ -5670,18 +5669,19 @@ func (e *executor) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident,
 	rule.Reset(schema.Name.L, meta.Name.L, "", ids...)
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        meta.ID,
 		SchemaName:     schema.Name.L,
 		TableName:      meta.Name.L,
 		Type:           model.ActionAlterTableAttributes,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{rule},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = e.DoDDLJob(ctx, job)
+	args := &model.AlterTableAttributesArgs{Rule: (*pd.LabelRule)(rule)}
+	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -293,8 +293,13 @@ func TestJobCodec(t *testing.T) {
 		ID:         16,
 		Type:       ActionFlashbackCluster,
 		BinlogInfo: &HistoryInfo{},
-		Args:       []any{0, map[string]any{}, "ON", true},
 	}
+	args := &FlashbackClusterArgs{
+		PDScheduleValue:   map[string]any{},
+		EnableGC:          true,
+		EnableAutoAnalyze: true,
+	}
+	job15.FillArgs(args)
 	job15.RawArgs, err = json.Marshal(job15.Args)
 	require.NoError(t, err)
 	isDependent, err = job.IsDependentOn(job15)

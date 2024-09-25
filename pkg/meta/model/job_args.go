@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	pd "github.com/tikv/pd/client/http"
 )
 
 // getOrDecodeArgsV2 get the argsV2 from job, if the argsV2 is nil, decode rawArgsV2
@@ -1045,41 +1046,45 @@ func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
 	return getOrDecodeArgsV2[*AddCheckConstraintArgs](job)
 }
 
+// KeyRange is copied from kv.KeyRange to avoid cycle import.
 type KeyRange struct {
-	StartKey []byte
-	EndKey   []byte
+	StartKey []byte `json:"start_key,omitempty"`
+	EndKey   []byte `json:"end_key,omitempty"`
 
-	XXXNoUnkeyedLiteral struct{}
-	XXXunrecognized     []byte
-	XXXsizecache        int32
+	// Unused fields
+	// They are reserved to ensure the consistent result after marshalling.
+	UnusedStruct struct{} `json:"-"`
+	UnusedSlice  []byte   `json:"-"`
+	UnusedInt    int32    `json:"-"`
 }
 
+// FlashbackClusterArgs is the argument for flashback cluster.
 type FlashbackClusterArgs struct {
-	FlashbackTS           uint64
-	PDScheduleValue       *map[string]any
-	TiDBEnableGC          bool
-	TiDBEnableAutoAnalyze bool
-	TiDBSuperReadOnly     bool
-	TotalRegions          uint64
-	StartTS               uint64
-	CommitTS              uint64
-	TiDBTTLJobEnable      bool
-	FlashbackKeyRanges    []KeyRange
+	FlashbackTS        uint64         `json:"flashback_ts,omitempty"`
+	PDScheduleValue    map[string]any `json:"pd_schedule_value,omitempty"`
+	EnableGC           bool           `json:"enable_gc,omitempty"`
+	EnableAutoAnalyze  bool           `json:"enable_auto_analyze,omitempty"`
+	EnableTTLJob       bool           `json:"enable_ttl_job,omitempty"`
+	SuperReadOnly      bool           `json:"super_read_only,omitempty"`
+	TotalRegions       uint64         `json:"total_regions,omitempty"`
+	StartTS            uint64         `json:"start_ts,omitempty"`
+	CommitTS           uint64         `json:"commit_ts,omitempty"`
+	FlashbackKeyRanges []KeyRange     `json:"key_ranges,omitempty"`
 }
 
 func (a *FlashbackClusterArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
 		job.Args = []any{
-			a.FlashbackTS, a.PDScheduleValue, a.TiDBEnableGC, "ON", "ON",
+			a.FlashbackTS, a.PDScheduleValue, a.EnableGC, "ON", "ON",
 			a.TotalRegions, a.StartTS, a.CommitTS, "ON", a.FlashbackKeyRanges,
 		}
-		if !a.TiDBEnableAutoAnalyze {
+		if !a.EnableAutoAnalyze {
 			job.Args[3] = "OFF"
 		}
-		if !a.TiDBSuperReadOnly {
+		if !a.SuperReadOnly {
 			job.Args[4] = "OFF"
 		}
-		if !a.TiDBTTLJobEnable {
+		if !a.EnableTTLJob {
 			job.Args[8] = "OFF"
 		}
 		return
@@ -1087,30 +1092,60 @@ func (a *FlashbackClusterArgs) fillJob(job *Job) {
 	job.Args = []any{a}
 }
 
+// GetFlashbackClusterArgs get the flashback cluster argument from job.
 func GetFlashbackClusterArgs(job *Job) (*FlashbackClusterArgs, error) {
 	if job.Version == JobVersion1 {
 		args := &FlashbackClusterArgs{}
 		var autoAnalyzeValue, readOnlyValue, ttlJobEnableValue string
 
 		if err := job.DecodeArgs(
-			&args.FlashbackTS, &args.PDScheduleValue, &args.TiDBEnableGC,
+			&args.FlashbackTS, &args.PDScheduleValue, &args.EnableGC,
 			&autoAnalyzeValue, &readOnlyValue, &args.TotalRegions,
 			&args.StartTS, &args.CommitTS, &ttlJobEnableValue, &args.FlashbackKeyRanges); err != nil {
 			return nil, errors.Trace(err)
 		}
 
 		if autoAnalyzeValue == "ON" {
-			args.TiDBEnableAutoAnalyze = true
+			args.EnableAutoAnalyze = true
 		}
 		if readOnlyValue == "ON" {
-			args.TiDBSuperReadOnly = true
+			args.SuperReadOnly = true
 		}
 		if ttlJobEnableValue == "ON" {
-			args.TiDBTTLJobEnable = true
+			args.EnableTTLJob = true
 		}
 
 		return args, nil
 	}
 
 	return getOrDecodeArgsV2[*FlashbackClusterArgs](job)
+}
+
+// AlterTableAttributesArgs is the argument for alter table attributes
+type AlterTableAttributesArgs struct {
+	Rule *pd.LabelRule `json:"rule,omitempty"`
+}
+
+func (a *AlterTableAttributesArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.Rule}
+		return
+	}
+
+	job.Args = []any{a}
+}
+
+// GetAlterTableAttributesArgs get alter table attribute args from job.
+func GetAlterTableAttributesArgs(job *Job) (*AlterTableAttributesArgs, error) {
+	if job.Version == JobVersion1 {
+		rule := &pd.LabelRule{}
+		if err := job.DecodeArgs(&rule); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AlterTableAttributesArgs{
+			Rule: rule,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*AlterTableAttributesArgs](job)
 }
