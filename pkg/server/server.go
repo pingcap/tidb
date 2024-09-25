@@ -1035,6 +1035,7 @@ func (s *Server) GetAutoAnalyzeProcID() uint64 {
 func (s *Server) StoreInternalSession(se interface{}) {
 	s.sessionMapMutex.Lock()
 	s.internalSessions[se] = struct{}{}
+	metrics.InternalSessions.Set(float64(len(s.internalSessions)))
 	s.sessionMapMutex.Unlock()
 }
 
@@ -1043,6 +1044,7 @@ func (s *Server) StoreInternalSession(se interface{}) {
 func (s *Server) DeleteInternalSession(se interface{}) {
 	s.sessionMapMutex.Lock()
 	delete(s.internalSessions, se)
+	metrics.InternalSessions.Set(float64(len(s.internalSessions)))
 	s.sessionMapMutex.Unlock()
 }
 

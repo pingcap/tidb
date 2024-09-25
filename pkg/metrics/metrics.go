@@ -278,6 +278,21 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GlobalSortIngestWorkerCnt)
 	prometheus.MustRegister(AddIndexScanRate)
 
+<<<<<<< HEAD
+=======
+	prometheus.MustRegister(InfoSchemaV2CacheCounter)
+	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)
+	prometheus.MustRegister(InfoSchemaV2CacheMemLimit)
+	prometheus.MustRegister(TableByNameDuration)
+
+	prometheus.MustRegister(BindingCacheHitCounter)
+	prometheus.MustRegister(BindingCacheMissCounter)
+	prometheus.MustRegister(BindingCacheMemUsage)
+	prometheus.MustRegister(BindingCacheMemLimit)
+	prometheus.MustRegister(BindingCacheNumBindings)
+	prometheus.MustRegister(InternalSessions)
+
+>>>>>>> f988947aad2 (server,metrics: add a metrics for internal session count (#56272))
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
