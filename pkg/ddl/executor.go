@@ -644,7 +644,7 @@ func (e *executor) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, 
 	}
 
 	job := &model.Job{
-		Version:             model.JobVersion1,
+		Version:             model.GetJobVerInUse(),
 		SchemaID:            schema.ID,
 		TableID:             tblInfo.ID,
 		SchemaName:          schema.Name.L,
@@ -2000,21 +2000,6 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	var involvingSchemaInfo []model.InvolvingSchemaInfo
 	for _, j := range subJobs {
 		switch j.Type {
-		case model.ActionAlterTablePlacement:
-			ref, ok := j.Args[0].(*model.PolicyRefInfo)
-			if !ok {
-				logFn("unexpected type of policy reference info",
-					zap.Any("args[0]", j.Args[0]),
-					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
-				continue
-			}
-			if ref == nil {
-				continue
-			}
-			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
-				Policy: ref.Name.L,
-				Mode:   model.SharedInvolving,
-			})
 		case model.ActionAddForeignKey:
 			ref, ok := j.Args[0].(*model.FKInfo)
 			if !ok {
