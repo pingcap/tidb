@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/session"
 	"github.com/spf13/cobra"
 	"sourcegraph.com/sourcegraph/appdash"
 )
@@ -38,6 +39,7 @@ func NewStreamCommand() *cobra.Command {
 			build.LogInfo(build.BR)
 			utils.LogEnvVariables()
 			task.LogArguments(c)
+			session.DisableStats4Test()
 			return nil
 		},
 	}
