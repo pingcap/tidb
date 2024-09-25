@@ -1533,14 +1533,9 @@ func (local *Backend) doImport(
 		if balancer != nil {
 			intest.AssertFunc(func() bool {
 				allZero := true
-				balancer.storeLoadMap.Range(func(key, value interface{}) bool {
+				balancer.storeLoadMap.Range(func(key, value any) bool {
 					if value.(int) != 0 {
 						allZero = false
-						println("intest: store load is not zero", key.(uint64), value.(int))
-						log.FromContext(workerCtx).Error(
-							"intest: store load is not zero",
-							zap.Any("storeID", key),
-							zap.Any("load", value))
 						return false
 					}
 					return true
