@@ -1788,29 +1788,38 @@ func checkResultOK(ok bool) error {
 }
 
 // checkPartitionFuncType checks partition function return type.
-func checkPartitionFuncType(ctx *metabuild.Context, expr ast.ExprNode, schema string, tblInfo *model.TableInfo) error {
-	if expr == nil {
+func checkPartitionFuncType(ctx expression.BuildContext, anyExpr any, schema string, tblInfo *model.TableInfo) error {
+	if anyExpr == nil {
 		return nil
 	}
-
-	exprCtx := ctx.GetExprCtx()
-	evalCtx := exprCtx.GetEvalCtx()
 	if schema == "" {
-		schema = evalCtx.CurrentDB()
+		schema = ctx.GetEvalCtx().CurrentDB()
 	}
-
-	e, err := expression.BuildSimpleExpr(exprCtx, expr, expression.WithTableInfo(schema, tblInfo))
+	var e expression.Expression
+	var err error
+	switch expr := anyExpr.(type) {
+	case string:
+		if expr == "" {
+			return nil
+		}
+		e, err = expression.ParseSimpleExpr(ctx, expr, expression.WithTableInfo(schema, tblInfo))
+	case ast.ExprNode:
+		e, err = expression.BuildSimpleExpr(ctx, expr, expression.WithTableInfo(schema, tblInfo))
+	default:
+		return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if e.GetType(evalCtx).EvalType() == types.ETInt {
+	if e.GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
 		return nil
 	}
-
-	if col, ok := expr.(*ast.ColumnNameExpr); ok {
-		return errors.Trace(dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.Name.Name.L))
+	if col, ok := e.(*expression.Column); ok {
+		if col2, ok2 := anyExpr.(*ast.ColumnNameExpr); ok2 {
+			return errors.Trace(dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col2.Name.Name.L))
+		}
+		return errors.Trace(dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.OrigName))
 	}
-
 	return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
 }
 
@@ -3095,6 +3104,23 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 			return ver, err
 		}
 
+		if job.Type == model.ActionAlterTablePartitioning {
+			// Also verify same things as in CREATE TABLE ... PARTITION BY
+			if len(partInfo.Columns) > 0 {
+				// shallow copy, only for reading/checking
+				tmpTblInfo := *tblInfo
+				tmpTblInfo.Partition = partInfo
+				if err = checkColumnsPartitionType(&tmpTblInfo); err != nil {
+					job.State = model.JobStateCancelled
+					return ver, err
+				}
+			} else {
+				if err = checkPartitionFuncType(sctx.GetExprCtx(), partInfo.Expr, job.SchemaName, tblInfo); err != nil {
+					job.State = model.JobStateCancelled
+					return ver, err
+				}
+			}
+		}
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
 		orgDefs := tblInfo.Partition.Definitions

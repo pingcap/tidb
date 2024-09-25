@@ -434,7 +434,7 @@ func checkTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo
 			return errors.Trace(err)
 		}
 		if s.Partition != nil {
-			if err := checkPartitionFuncType(ctx, s.Partition.Expr, s.Table.Schema.O, tbInfo); err != nil {
+			if err := checkPartitionFuncType(ctx.GetExprCtx(), s.Partition.Expr, s.Table.Schema.O, tbInfo); err != nil {
 				return errors.Trace(err)
 			}
 			if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
