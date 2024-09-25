@@ -88,6 +88,9 @@ func (t *tableStore) DeleteAndCommit(
 	ddlJobID int64,
 	multiSchemaChangeID int,
 ) error {
+	if err := se.Begin(ctx); err != nil {
+		return errors.Trace(err)
+	}
 	sql := fmt.Sprintf(`
 		DELETE FROM %s.%s
 		WHERE ddl_job_id = %d AND multi_schema_change_seq = %d`,
