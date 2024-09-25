@@ -548,7 +548,9 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo table.Table, item model.TableIt
 	if !ok {
 		return false
 	}
-	if !tbl.ColAndIdxExistenceMap.Checked() {
+	if !tbl.ColAndIdxExistenceMap.Checked() ||
+		// Randomly check the existence map to avoid the map has missing information.
+		rand.Intn(10_000) == 1 {
 		tbl = tbl.Copy()
 		for _, col := range tbl.HistColl.GetColSlice() {
 			if tblInfo.Meta().FindColumnByID(col.ID) == nil {
