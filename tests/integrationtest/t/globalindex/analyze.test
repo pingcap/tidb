@@ -68,3 +68,31 @@ analyze table t partition p0 index primary;
 --error 1105
 analyze table t partition p0 index;
 
+
+--echo #Test analyze special global indexes and normal indexes mixed.
+drop table if exists t;
+create table t(
+    a int,
+    b int,
+    c int,
+    d varchar(20),
+    index b(b),
+    unique index b_s((b + 1)) global,
+    unique index d_s(d(3)) global
+) partition by hash(a) partitions 5;
+
+show warnings;
+
+insert into t values (1, 1, 1, 'abc'), (2, 2, 2, 'abd'), (3, 3, 3, 'axe'), (4, 4, 4, 'axf'), (5, 5, 5, 'azd');
+
+-- echo #Test `analyze table t index idx1[, idx2]` stmt
+analyze table t index b, b_s, d_s;
+
+explain select * from t use index(b_s) where b + 1 > 3;
+explain select * from t use index(b) where b > 3;
+explain select * from t use index(d_s) where d like 'ab%';
+
+--sorted_result
+--replace_column 6 <update_time> 9 <avg_col_size>
+show stats_histograms where table_name='t' and Db_name='globalindex__analyze';
+

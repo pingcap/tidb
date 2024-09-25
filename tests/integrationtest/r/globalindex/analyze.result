@@ -93,3 +93,60 @@ analyze table t partition p0 index primary;
 Error 1105 (HY000): Analyze global index 'PRIMARY' can't work with analyze specified partitions
 analyze table t partition p0 index;
 Error 1105 (HY000): Analyze global index 'PRIMARY' can't work with analyze specified partitions
+#Test analyze special global indexes and normal indexes mixed.
+drop table if exists t;
+create table t(
+a int,
+b int,
+c int,
+d varchar(20),
+index b(b),
+unique index b_s((b + 1)) global,
+unique index d_s(d(3)) global
+) partition by hash(a) partitions 5;
+show warnings;
+Level	Code	Message
+Warning	8265	Auto analyze is not effective for index 'b_s', need analyze manually
+Warning	8265	Auto analyze is not effective for index 'd_s', need analyze manually
+insert into t values (1, 1, 1, 'abc'), (2, 2, 2, 'abd'), (3, 3, 3, 'axe'), (4, 4, 4, 'axf'), (5, 5, 5, 'azd');
+#Test `analyze table t index idx1[, idx2]` stmt
+analyze table t index b, b_s, d_s;
+explain select * from t use index(b_s) where b + 1 > 3;
+id	estRows	task	access object	operator info
+Projection_4	3.00	root		globalindex__analyze.t.a, globalindex__analyze.t.b, globalindex__analyze.t.c, globalindex__analyze.t.d
+└─IndexLookUp_9	3.00	root	partition:all	
+  ├─IndexRangeScan_6(Build)	3.00	cop[tikv]	table:t, index:b_s(`b` + 1)	range:(3,+inf], keep order:false
+  └─TableRowIDScan_7(Probe)	3.00	cop[tikv]	table:t	keep order:false
+explain select * from t use index(b) where b > 3;
+id	estRows	task	access object	operator info
+IndexLookUp_7	2.00	root	partition:all	
+├─IndexRangeScan_5(Build)	2.00	cop[tikv]	table:t, index:b(b)	range:(3,+inf], keep order:false
+└─TableRowIDScan_6(Probe)	2.00	cop[tikv]	table:t	keep order:false
+explain select * from t use index(d_s) where d like 'ab%';
+id	estRows	task	access object	operator info
+IndexLookUp_9	2.00	root	partition:all	
+├─IndexRangeScan_5(Build)	2.00	cop[tikv]	table:t, index:d_s(d)	range:["ab","ac"), keep order:false
+└─Selection_8(Probe)	2.00	cop[tikv]		like(globalindex__analyze.t.d, "ab%", 92)
+  └─TableRowIDScan_6	2.00	cop[tikv]	table:t	keep order:false
+show stats_histograms where table_name='t' and Db_name='globalindex__analyze';
+Db_name	Table_name	Partition_name	Column_name	Is_index	Update_time	Distinct_count	Null_count	Avg_col_size	Correlation	Load_status	Total_mem_usage	Hist_mem_usage	Topn_mem_usage	Cms_mem_usage
+globalindex__analyze	t	global	b	0	<update_time>	5	0	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	global	b	1	<update_time>	5	0	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	global	b_s	1	<update_time>	5	0	<avg_col_size>	0	allLoaded	237	0	237	0
+globalindex__analyze	t	global	d	0	<update_time>	5	0	<avg_col_size>	0	allLoaded	242	0	242	0
+globalindex__analyze	t	global	d_s	1	<update_time>	5	0	<avg_col_size>	0	allLoaded	242	0	242	0
+globalindex__analyze	t	p0	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p0	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p0	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
+globalindex__analyze	t	p1	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p1	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p1	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
+globalindex__analyze	t	p2	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p2	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p2	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
+globalindex__analyze	t	p3	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p3	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p3	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
+globalindex__analyze	t	p4	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
+globalindex__analyze	t	p4	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
+globalindex__analyze	t	p4	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
