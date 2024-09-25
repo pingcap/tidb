@@ -23,6 +23,37 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
+// AutoIDGroup represents a group of auto IDs of a specific table.
+type AutoIDGroup struct {
+	RowID       int64
+	IncrementID int64
+	RandomID    int64
+}
+
+// RecoverTableInfo contains information needed by DDL.RecoverTable.
+type RecoverTableInfo struct {
+	SchemaID      int64
+	TableInfo     *TableInfo
+	DropJobID     int64
+	SnapshotTS    uint64
+	AutoIDs       AutoIDGroup
+	OldSchemaName string
+	OldTableName  string
+}
+
+// RecoverSchemaInfo contains information needed by DDL.RecoverSchema.
+type RecoverSchemaInfo struct {
+	*DBInfo
+	RecoverTableInfos []*RecoverTableInfo
+	// LoadTablesOnExecute is the new logic to avoid a large RecoverTabsInfo can't be
+	// persisted. If it's true, DDL owner will recover RecoverTabsInfo instead of the
+	// job submit node.
+	LoadTablesOnExecute bool
+	DropJobID           int64
+	SnapshotTS          uint64
+	OldSchemaName       pmodel.CIStr
+}
+
 // getOrDecodeArgsV2 get the argsV2 from job, if the argsV2 is nil, decode rawArgsV2
 // and fill argsV2.
 func getOrDecodeArgsV2[T JobArgs](job *Job) (T, error) {
@@ -1165,6 +1196,117 @@ func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
 		}, nil
 	}
 	return getOrDecodeArgsV2[*AddCheckConstraintArgs](job)
+}
+
+// LockTablesArgs is the argument for LockTables.
+type LockTablesArgs struct {
+	LockTables    []TableLockTpInfo `json:"lock_tables,omitempty"`
+	IndexOfLock   int               `json:"index_of_lock,omitempty"`
+	UnlockTables  []TableLockTpInfo `json:"unlock_tables,omitempty"`
+	IndexOfUnlock int               `json:"index_of_unlock,omitempty"`
+	SessionInfo   SessionInfo       `json:"session_info,omitempty"`
+	IsCleanup     bool              `json:"is_cleanup:omitempty"`
+}
+
+func (a *LockTablesArgs) fillJob(job *Job) {
+	job.Args = []any{a}
+}
+
+// GetLockTablesArgs get the LockTablesArgs argument.
+func GetLockTablesArgs(job *Job) (*LockTablesArgs, error) {
+	var args *LockTablesArgs
+	var err error
+
+	if job.Version == JobVersion1 {
+		err = job.DecodeArgs(&args)
+	} else {
+		args, err = getOrDecodeArgsV2[*LockTablesArgs](job)
+	}
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return args, nil
+}
+
+// RepairTableArgs is the argument for repair table
+type RepairTableArgs struct {
+	*TableInfo `json:"table_info"`
+}
+
+func (a *RepairTableArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.TableInfo}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetRepairTableArgs get the repair table args.
+func GetRepairTableArgs(job *Job) (*RepairTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var tblInfo *TableInfo
+		if err := job.DecodeArgs(&tblInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &RepairTableArgs{tblInfo}, nil
+	}
+
+	return getOrDecodeArgsV2[*RepairTableArgs](job)
+}
+
+// RecoverArgs is the argument for recover table/schema.
+type RecoverArgs struct {
+	RecoverInfo *RecoverSchemaInfo `json:"recover_info,omitempty"`
+	CheckFlag   int64              `json:"check_flag,omitempty"`
+}
+
+func (a *RecoverArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionRecoverTable {
+			job.Args = []any{a.RecoverTableInfos()[0], a.CheckFlag}
+		} else {
+			job.Args = []any{a.RecoverInfo, a.CheckFlag}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// RecoverTableInfos get all the recover infos.
+func (a *RecoverArgs) RecoverTableInfos() []*RecoverTableInfo {
+	return a.RecoverInfo.RecoverTableInfos
+}
+
+// GetRecoverArgs get the recover table/schema args.
+func GetRecoverArgs(job *Job) (*RecoverArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			recoverTableInfo  *RecoverTableInfo
+			recoverSchemaInfo = &RecoverSchemaInfo{}
+			recoverCheckFlag  int64
+		)
+
+		if job.Type == ActionRecoverTable {
+			err := job.DecodeArgs(&recoverTableInfo, &recoverCheckFlag)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			recoverSchemaInfo.RecoverTableInfos = []*RecoverTableInfo{recoverTableInfo}
+		} else {
+			err := job.DecodeArgs(recoverSchemaInfo, &recoverCheckFlag)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		return &RecoverArgs{
+			RecoverInfo: recoverSchemaInfo,
+			CheckFlag:   recoverCheckFlag,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*RecoverArgs](job)
 }
 
 // PlacementPolicyArgs is the argument for create/alter/drop placement policy

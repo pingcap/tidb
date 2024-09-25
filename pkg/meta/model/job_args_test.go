@@ -687,6 +687,72 @@ func TestCheckConstraintArgs(t *testing.T) {
 	}
 }
 
+func TestLockTableArgs(t *testing.T) {
+	inArgs := &LockTablesArgs{
+		LockTables:    []TableLockTpInfo{{1, 1, model.TableLockNone}},
+		UnlockTables:  []TableLockTpInfo{{2, 2, model.TableLockNone}},
+		IndexOfLock:   13,
+		IndexOfUnlock: 24,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		for _, tp := range []ActionType{ActionLockTable, ActionUnlockTable} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+
+			args, err := GetLockTablesArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, inArgs.LockTables, args.LockTables)
+			require.Equal(t, inArgs.UnlockTables, args.UnlockTables)
+			require.Equal(t, inArgs.IndexOfLock, args.IndexOfLock)
+			require.Equal(t, inArgs.IndexOfUnlock, args.IndexOfUnlock)
+		}
+	}
+}
+
+func TestRepairTableArgs(t *testing.T) {
+	inArgs := &RepairTableArgs{&TableInfo{ID: 1, Name: model.NewCIStr("t")}}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionRepairTable)))
+
+		args, err := GetRepairTableArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs.TableInfo, args.TableInfo)
+	}
+}
+
+func TestRecoverArgs(t *testing.T) {
+	recoverInfo := &RecoverTableInfo{
+		SchemaID:  1,
+		DropJobID: 2,
+		TableInfo: &TableInfo{
+			ID:   100,
+			Name: model.NewCIStr("table"),
+		},
+		OldSchemaName: "old",
+		OldTableName:  "table",
+	}
+
+	inArgs := &RecoverArgs{
+		RecoverInfo: &RecoverSchemaInfo{
+			RecoverTableInfos: []*RecoverTableInfo{recoverInfo},
+		},
+		CheckFlag: 2,
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		for _, tp := range []ActionType{ActionRecoverTable, ActionRecoverSchema} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+
+			args, err := GetRecoverArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, inArgs.CheckFlag, args.CheckFlag)
+			require.Equal(t, inArgs.RecoverInfo, args.RecoverInfo)
+		}
+	}
+}
+
 func TestPlacementPolicyArgs(t *testing.T) {
 	inArgs := &PlacementPolicyArgs{
 		Policy:         &PolicyInfo{ID: 1, Name: model.NewCIStr("policy"), State: StateDeleteOnly},

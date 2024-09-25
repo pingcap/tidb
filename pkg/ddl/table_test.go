@@ -115,7 +115,7 @@ func testLockTable(
 	tblInfo *model.TableInfo,
 	lockTp pmodel.TableLockType,
 ) *model.Job {
-	arg := &ddl.LockTablesArg{
+	args := &model.LockTablesArgs{
 		LockTables: []model.TableLockTpInfo{{SchemaID: newSchemaID, TableID: tblInfo.ID, Tp: lockTp}},
 		SessionInfo: model.SessionInfo{
 			ServerID:  uuid,
@@ -123,17 +123,17 @@ func testLockTable(
 		},
 	}
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionLockTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{arg},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: schemaName.L, Table: tblInfo.Name.L},
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
