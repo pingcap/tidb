@@ -1297,14 +1297,8 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	fpName := "github.com/pingcap/tidb/pkg/executor/join/errorFetchBuildSideRowsMockOOMPanic"
 	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
-	isHashJoinV2Enabled := join.IsHashJoinV2Enabled()
-	defer func() {
-		join.SetEnableHashJoinV2(isHashJoinV2Enabled)
-		require.NoError(t, failpoint.Disable(fpName))
-	}()
-	useHashJoinV2 := []bool{true, false}
-	for _, hashJoinV2 := range useHashJoinV2 {
-		join.SetEnableHashJoinV2(hashJoinV2)
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
 		err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
 		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 	}

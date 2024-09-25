@@ -497,6 +497,9 @@ var (
 			"tidb_enable_dist_task setting. To utilize distributed task execution, please enable tidb_ddl_enable_fast_reorg first."), nil))
 	// ErrGlobalIndexNotExplicitlySet is for Global index when not explicitly said GLOBAL, including UPDATE INDEXES
 	ErrGlobalIndexNotExplicitlySet = ClassDDL.NewStd(mysql.ErrGlobalIndexNotExplicitlySet)
+	// ErrWarnGlobalIndexNeedManuallyAnalyze is used for global indexes,
+	// which cannot trigger automatic analysis when it contains prefix columns or virtual generated columns.
+	ErrWarnGlobalIndexNeedManuallyAnalyze = ClassDDL.NewStd(mysql.ErrWarnGlobalIndexNeedManuallyAnalyze)
 )
 
 // ReorgRetryableErrCodes is the error codes that are retryable for reorganization.
