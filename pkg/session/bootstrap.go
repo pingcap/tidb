@@ -1424,8 +1424,11 @@ func acquireLock(s sessiontypes.Session) (func(), bool) {
 	}
 	cli := dom.GetEtcdClient()
 	if cli == nil {
-		logutil.BgLogger().Warn("etcd client is nil")
-		return nil, false
+		logutil.BgLogger().Warn("etcd client is nil, force to acquire ddl owner lock")
+		// Special handling for test.
+		return func() {
+			// do nothing
+		}, true
 	}
 	releaseFn, err := owner.AcquireDistributedLock(context.Background(), cli, ddl.DDLOwnerKey, 10)
 	if err != nil {
