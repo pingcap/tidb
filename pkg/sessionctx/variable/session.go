@@ -1106,12 +1106,6 @@ type SessionVars struct {
 	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
 	OptimizerEnableNAAJ bool
 
-	// EnableTablePartition enables table partition feature.
-	EnableTablePartition string
-
-	// EnableListTablePartition enables list table partition feature.
-	EnableListTablePartition bool
-
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
 
@@ -1311,9 +1305,6 @@ type SessionVars struct {
 
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex ClusteredIndexDefMode
-
-	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
-	EnableGlobalIndex bool
 
 	// EnableParallelApply indicates that whether to use parallel apply.
 	EnableParallelApply bool

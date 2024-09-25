@@ -76,9 +76,8 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 		isSpecial := false
 		for _, col := range idx.Columns {
 			colInfo := e.colsInfo[col.Offset]
-			isVirtualCol := colInfo.IsGenerated() && !colInfo.GeneratedStored
 			isPrefixCol := col.Length != types.UnspecifiedLength
-			if isVirtualCol || isPrefixCol {
+			if colInfo.IsVirtualGenerated() || isPrefixCol {
 				isSpecial = true
 				break
 			}

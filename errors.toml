@@ -1561,6 +1561,11 @@ error = '''
 Global Index is needed for index '%-.192s', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 '''
 
+["ddl:8265"]
+error = '''
+Auto analyze is not effective for index '%-.192s', need analyze manually
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV

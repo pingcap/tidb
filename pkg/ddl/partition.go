@@ -508,23 +508,15 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		return nil
 	}
 
-	if strings.EqualFold(ctx.GetSessionVars().EnableTablePartition, "OFF") {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTablePartitionDisabled)
-		return nil
-	}
-
 	var enable bool
 	switch s.Tp {
 	case pmodel.PartitionTypeRange:
 		enable = true
 	case pmodel.PartitionTypeList:
-		// Partition by list is enabled only when tidb_enable_list_partition is 'ON'.
-		enable = ctx.GetSessionVars().EnableListTablePartition
-		if enable {
-			err := checkListPartitions(s.Definitions)
-			if err != nil {
-				return err
-			}
+		enable = true
+		err := checkListPartitions(s.Definitions)
+		if err != nil {
+			return err
 		}
 	case pmodel.PartitionTypeHash, pmodel.PartitionTypeKey:
 		// Partition by hash and key is enabled by default.
@@ -643,21 +635,8 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 				return err
 			}
 			if !ck {
-				indexTp := ""
-				if !ctx.GetSessionVars().EnableGlobalIndex {
-					if index.Primary {
-						indexTp = "PRIMARY KEY"
-						if tbInfo.IsCommonHandle {
-							indexTp = "CLUSTERED INDEX"
-						}
-					} else {
-						indexTp = "UNIQUE INDEX"
-					}
-				} else if index.Primary && tbInfo.IsCommonHandle {
-					indexTp = "CLUSTERED INDEX"
-				}
-				if indexTp != "" {
-					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
+				if index.Primary && tbInfo.IsCommonHandle {
+					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 				}
 				if !index.Global {
 					return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
@@ -2854,7 +2833,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
 	// TODO: Fix the issue of big transactions during EXCHANGE PARTITION with AutoID.
 	// Similar to https://github.com/pingcap/tidb/issues/46904
-	newAutoIDs := meta.AutoIDGroup{
+	newAutoIDs := model.AutoIDGroup{
 		RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
 		IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
 		RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
@@ -4312,17 +4291,9 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
 	for _, index := range tblInfo.Indices {
 		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
-			if index.Primary {
+			if index.Primary && tblInfo.IsCommonHandle {
 				// global index does not support clustered index
-				if tblInfo.IsCommonHandle {
-					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
-				}
-				if !sctx.GetSessionVars().EnableGlobalIndex {
-					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
-				}
-			}
-			if !sctx.GetSessionVars().EnableGlobalIndex {
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 			}
 		}
 	}
@@ -4366,10 +4337,10 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model
 		}
 	}
 
-	// In MySQL, every unique key on the table must use every column in the table's partitioning expression.(This
-	// also includes the table's primary key.)
-	// In TiDB, global index will be built when this constraint is not satisfied and EnableGlobalIndex is set.
+	// In MySQL, every unique key on the table must use every column in the table's
+	// partitioning expression.(This also includes the table's primary key.)
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
+	// TiDB can remove this limitation with Global Index
 	return checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns), nil
 }
 

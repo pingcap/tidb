@@ -35,7 +35,8 @@ type ResourceGroupRunawaySettings struct {
 
 // ResourceGroupBackgroundSettings is the background settings of the resource group.
 type ResourceGroupBackgroundSettings struct {
-	JobTypes []string `json:"job_types"`
+	JobTypes          []string `json:"job_types"`
+	ResourceUtilLimit uint64   `json:"utilization_limit"`
 }
 
 // ResourceGroupSettings is the settings of the resource group
@@ -123,7 +124,19 @@ func (p *ResourceGroupSettings) String() string {
 		sb.WriteString(")")
 	}
 	if p.Background != nil {
-		fmt.Fprintf(sb, ", BACKGROUND=(TASK_TYPES='%s')", strings.Join(p.Background.JobTypes, ","))
+		sb.WriteString(", BACKGROUND=(")
+		first := true
+		if len(p.Background.JobTypes) > 0 {
+			fmt.Fprintf(sb, "TASK_TYPES='%s'", strings.Join(p.Background.JobTypes, ","))
+			first = false
+		}
+		if p.Background.ResourceUtilLimit > 0 {
+			if !first {
+				sb.WriteString(", ")
+			}
+			fmt.Fprintf(sb, "UTILIZATION_LIMIT=%d", p.Background.ResourceUtilLimit)
+		}
+		sb.WriteRune(')')
 	}
 
 	return sb.String()
