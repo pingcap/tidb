@@ -1431,7 +1431,8 @@ func onAlterTablePartitionAttributes(jobCtx *jobContext, t *meta.Meta, job *mode
 		patch := label.NewRulePatch([]*label.Rule{}, []string{rule.ID})
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	} else {
-		err = infosync.PutLabelRule(context.TODO(), rule)
+		labelRule := label.Rule(*rule)
+		err = infosync.PutLabelRule(context.TODO(), &labelRule)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled

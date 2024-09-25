@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -5699,6 +5700,7 @@ func (e *executor) AlterTablePartitionAttributes(ctx sessionctx.Context, ident a
 	}
 	rule.Reset(schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
 
+	pdLabelRule := pdhttp.LabelRule(*rule)
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
@@ -5712,7 +5714,7 @@ func (e *executor) AlterTablePartitionAttributes(ctx sessionctx.Context, ident a
 	}
 	args := &model.AlterTablePartitionArgs{
 		PartitionID: partitionID,
-		LabelRule:   rule,
+		LabelRule:   &pdLabelRule,
 	}
 
 	err = e.doDDLJob2(ctx, job, args)

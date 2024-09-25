@@ -602,9 +602,9 @@ func GetExchangeTablePartitionArgs(job *Job) (*ExchangeTablePartitionArgs, error
 //   - ActionAlterTablePartitionAttributes
 //   - ActionAlterTablePartitionPlacement
 type AlterTablePartitionArgs struct {
-	PartitionID   int64          `json:"partition_id,omitempty"`
-	LabelRule     *pdhttp.Rule   `json:"label_rule,omitempty"`
-	PolicyRefInfo *PolicyRefInfo `json:"policy_ref_info,omitempty"`
+	PartitionID   int64             `json:"partition_id,omitempty"`
+	LabelRule     *pdhttp.LabelRule `json:"label_rule,omitempty"`
+	PolicyRefInfo *PolicyRefInfo    `json:"policy_ref_info,omitempty"`
 }
 
 func (a *AlterTablePartitionArgs) fillJob(job *Job) {
