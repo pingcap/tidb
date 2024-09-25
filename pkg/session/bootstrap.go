@@ -629,6 +629,7 @@ const (
 		sql_digest varchar(64) NOT NULL,
 		plan_digest varchar(64) NOT NULL,
 		tidb_server varchar(512),
+		rule VARCHAR(512) DEFAULT '',
 		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when select runaway query",
 		INDEX time_index(start_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -644,6 +645,7 @@ const (
 		source varchar(512) NOT NULL,
 		action bigint(10),
 		switch_group_name VARCHAR(32) DEFAULT '',
+		rule VARCHAR(512) DEFAULT '',
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -660,6 +662,7 @@ const (
 		source varchar(512) NOT NULL,
 		action bigint(10),
 		switch_group_name VARCHAR(32) DEFAULT '',
+		rule VARCHAR(512) DEFAULT '',
 		done_time TIMESTAMP(6) NOT NULL
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
@@ -1157,6 +1160,8 @@ const (
 	// 1. switchGroup: add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
 	// 2. modify column `plan_digest` type, modify column `time` to `start_time,
 	// modify column `original_sql` to `sample_sql` to `mysql.tidb_runaway_queries`.
+	// 3. modify column length of `action`.
+	// 4. add column `rule` to `mysql.tidb_runaway_watch`, `mysql.tidb_runaway_watch_done` and `mysql.tidb_runaway_queries`.
 	version212 = 212
 
 	// version 213
@@ -1166,11 +1171,14 @@ const (
 	// version 214
 	//   create `mysql.index_advisor_results` table
 	version214 = 214
+
+	// If the TiDB upgrading from the a version before v7.0 to a newer version, we keep the tidb_enable_inl_join_inner_multi_pattern to 0.
+	version215 = 215
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version214
+var currentBootstrapVersion int64 = version215
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1340,6 +1348,7 @@ var (
 		upgradeToVer212,
 		upgradeToVer213,
 		upgradeToVer214,
+		upgradeToVer215,
 	}
 )
 
@@ -3165,8 +3174,12 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`")
 	// modify column type of `plan_digest`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
-	// modify column length of `action`.
+	// 3. modify column length of `action`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `action` VARCHAR(64) NOT NULL;", infoschema.ErrColumnExists)
+	// 4. add column `rule` to `mysql.tidb_runaway_watch`, `mysql.tidb_runaway_watch_done` and `mysql.tidb_runaway_queries`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD COLUMN `rule` VARCHAR(512) DEFAULT '' AFTER `switch_group_name`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD COLUMN `rule` VARCHAR(512) DEFAULT '' AFTER `switch_group_name`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `rule` VARCHAR(512) DEFAULT '' AFTER `tidb_server`;", infoschema.ErrColumnExists)
 }
 
 func upgradeToVer213(s sessiontypes.Session, ver int64) {
@@ -3184,6 +3197,14 @@ func upgradeToVer214(s sessiontypes.Session, ver int64) {
 
 	mustExecute(s, CreateIndexAdvisorTable)
 	mustExecute(s, CreateKernelOptionsTable)
+}
+
+func upgradeToVer215(s sessiontypes.Session, ver int64) {
+	if ver >= version215 {
+		return
+	}
+
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableINLJoinInnerMultiPattern, variable.Off)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

@@ -1775,3 +1775,38 @@ func MergeTiFlashRUConsumption(executionSummaries []*tipb.ExecutorExecutionSumma
 	ruDetails.Merge(newRUDetails)
 	return nil
 }
+
+// RURuntimeStats is a wrapper of util.RUDetails,
+// which implements the RuntimeStats interface.
+type RURuntimeStats struct {
+	*util.RUDetails
+}
+
+// String implements the RuntimeStats interface.
+func (e *RURuntimeStats) String() string {
+	if e.RUDetails != nil {
+		return fmt.Sprintf("RU:%f", e.RRU()+e.WRU())
+	}
+	return ""
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *RURuntimeStats) Clone() RuntimeStats {
+	return &RURuntimeStats{RUDetails: e.RUDetails.Clone()}
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *RURuntimeStats) Merge(other RuntimeStats) {
+	if tmp, ok := other.(*RURuntimeStats); ok {
+		if e.RUDetails != nil {
+			e.RUDetails.Merge(tmp.RUDetails)
+		} else {
+			e.RUDetails = tmp.RUDetails.Clone()
+		}
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (*RURuntimeStats) Tp() int {
+	return TpRURuntimeStats
+}

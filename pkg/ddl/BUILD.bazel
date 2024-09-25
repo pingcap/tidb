@@ -172,6 +172,7 @@ go_library(
         "//pkg/util/timeutil",
         "//pkg/util/topsql",
         "//pkg/util/topsql/state",
+        "@com_github_coreos_go_semver//semver",
         "@com_github_docker_go_units//:go-units",
         "@com_github_google_uuid//:uuid",
         "@com_github_ngaut_pools//:pools",

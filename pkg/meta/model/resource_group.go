@@ -25,6 +25,8 @@ import (
 // ResourceGroupRunawaySettings is the runaway settings of the resource group
 type ResourceGroupRunawaySettings struct {
 	ExecElapsedTimeMs uint64                  `json:"exec_elapsed_time_ms"`
+	ProcessedKeys     int64                   `json:"processed_keys"`
+	RequestUnit       int64                   `json:"request_unit"`
 	Action            model.RunawayActionType `json:"action"`
 	SwitchGroupName   string                  `json:"switch_group_name"`
 	WatchType         model.RunawayWatchType  `json:"watch_type"`
@@ -33,7 +35,8 @@ type ResourceGroupRunawaySettings struct {
 
 // ResourceGroupBackgroundSettings is the background settings of the resource group.
 type ResourceGroupBackgroundSettings struct {
-	JobTypes []string `json:"job_types"`
+	JobTypes          []string `json:"job_types"`
+	ResourceUtilLimit uint64   `json:"utilization_limit"`
 }
 
 // ResourceGroupSettings is the settings of the resource group
@@ -84,7 +87,27 @@ func (p *ResourceGroupSettings) String() string {
 		writeSettingItemToBuilder(sb, "BURSTABLE", separatorFn)
 	}
 	if p.Runaway != nil {
-		writeSettingDurationToBuilder(sb, "QUERY_LIMIT=(EXEC_ELAPSED", time.Duration(p.Runaway.ExecElapsedTimeMs)*time.Millisecond, separatorFn)
+		fmt.Fprintf(sb, ", QUERY_LIMIT=(")
+		// rule settings
+		firstParam := true
+		if p.Runaway.ExecElapsedTimeMs > 0 {
+			fmt.Fprintf(sb, "EXEC_ELAPSED=\"%s\"", (time.Duration(p.Runaway.ExecElapsedTimeMs) * time.Millisecond).String())
+			firstParam = false
+		}
+		if p.Runaway.ProcessedKeys > 0 {
+			if !firstParam {
+				sb.WriteString(" ")
+			}
+			fmt.Fprintf(sb, "PROCESSED_KEYS=%d", p.Runaway.ProcessedKeys)
+			firstParam = false
+		}
+		if p.Runaway.RequestUnit > 0 {
+			if !firstParam {
+				sb.WriteString(" ")
+			}
+			fmt.Fprintf(sb, "RU=%d", p.Runaway.RequestUnit)
+		}
+		// action settings
 		if p.Runaway.Action == model.RunawayActionSwitchGroup {
 			writeSettingItemToBuilder(sb, fmt.Sprintf("ACTION=%s(%s)", p.Runaway.Action.String(), p.Runaway.SwitchGroupName))
 		} else {
@@ -101,7 +124,19 @@ func (p *ResourceGroupSettings) String() string {
 		sb.WriteString(")")
 	}
 	if p.Background != nil {
-		fmt.Fprintf(sb, ", BACKGROUND=(TASK_TYPES='%s')", strings.Join(p.Background.JobTypes, ","))
+		sb.WriteString(", BACKGROUND=(")
+		first := true
+		if len(p.Background.JobTypes) > 0 {
+			fmt.Fprintf(sb, "TASK_TYPES='%s'", strings.Join(p.Background.JobTypes, ","))
+			first = false
+		}
+		if p.Background.ResourceUtilLimit > 0 {
+			if !first {
+				sb.WriteString(", ")
+			}
+			fmt.Fprintf(sb, "UTILIZATION_LIMIT=%d", p.Background.ResourceUtilLimit)
+		}
+		sb.WriteRune(')')
 	}
 
 	return sb.String()

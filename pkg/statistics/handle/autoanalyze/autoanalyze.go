@@ -687,7 +687,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	}
 	// Check if any index of the table needs to analyze.
 	for _, idx := range tblInfo.Indices {
-		if idx.State != model.StatePublic {
+		if idx.State != model.StatePublic || statsutil.IsSpecialGlobalIndex(idx, tblInfo) {
 			continue
 		}
 		// Collect all the partition names that need to analyze.

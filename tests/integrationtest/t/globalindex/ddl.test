@@ -1,28 +1,26 @@
-set tidb_enable_global_index=OFF;
 -- error 8200
 create table t (a int, b int, unique index idx(a) global);
 -- error 8200
 create table t (a int, b int, index idx(a) global);
--- error 1503
 create table t (a int, b int, unique index idx(a) global) partition by hash(b) partitions 3;
+drop table t;
 -- error 8200
 create table t (a int, b int, index idx(a) global) partition by hash(b) partitions 3;
--- error 1503
 create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3;
--- error 1503
+drop table t3;
+-- error 8264
 create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3;
 create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3;
--- error 1503
+-- error 8264
 alter table t partition by hash(b) partitions 3;
--- error 1503
 alter table t partition by hash(b) partitions 3 update indexes (a global);
 -- error 8200
 alter table t add index idxErr (b) global;
--- error 1503
+-- error 8200
 alter table t add unique index idxErr (b) global;
 -- error 8200
 create index idxErr on t (b) global;
--- error 1503
+-- error 8200
 create unique index idxErr on t (b) global;
 alter table t remove partitioning;
 -- error 8200
@@ -35,7 +33,6 @@ create index idxErr on t (b) global;
 create unique index idxErr on t (b) global;
 drop table t;
 
-set tidb_enable_global_index=ON;
 -- error 8200
 create table t (a int, b int, unique index idx(a) global);
 -- error 8200

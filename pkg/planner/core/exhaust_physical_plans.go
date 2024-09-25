@@ -1024,23 +1024,29 @@ func constructInnerTableScanTask(
 	ts.PlanPartInfo = copTask.physPlanPartInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
-	return constructIndexJoinInnerSideTask(p, prop, copTask, ds, nil, wrapper)
+	return constructIndexJoinInnerSideTaskWithAggCheck(p, prop, copTask, ds, nil, wrapper)
 }
 
-func constructInnerByZippedChildren(prop *property.PhysicalProperty, zippedChildren []base.LogicalPlan, child base.PhysicalPlan) base.PhysicalPlan {
+func constructIndexJoinInnerSideTask(curTask base.Task, prop *property.PhysicalProperty, zippedChildren []base.LogicalPlan, skipAgg bool) base.Task {
 	for i := len(zippedChildren) - 1; i >= 0; i-- {
 		switch x := zippedChildren[i].(type) {
 		case *logicalop.LogicalUnionScan:
-			child = constructInnerUnionScan(prop, x, child)
+			curTask = constructInnerUnionScan(prop, x, curTask.Plan()).Attach2Task(curTask)
 		case *logicalop.LogicalProjection:
-			child = constructInnerProj(prop, x, child)
+			curTask = constructInnerProj(prop, x, curTask.Plan()).Attach2Task(curTask)
 		case *logicalop.LogicalSelection:
-			child = constructInnerSel(prop, x, child)
+			curTask = constructInnerSel(prop, x, curTask.Plan()).Attach2Task(curTask)
 		case *logicalop.LogicalAggregation:
-			child = constructInnerAgg(prop, x, child)
+			if skipAgg {
+				continue
+			}
+			curTask = constructInnerAgg(prop, x, curTask.Plan()).Attach2Task(curTask)
+		}
+		if curTask.Invalid() {
+			return nil
 		}
 	}
-	return child
+	return curTask
 }
 
 func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *logicalop.LogicalAggregation, child base.PhysicalPlan) base.PhysicalPlan {
@@ -1049,7 +1055,6 @@ func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *logicalop.Lo
 	}
 	physicalHashAgg := NewPhysicalHashAgg(logicalAgg, logicalAgg.StatsInfo(), prop)
 	physicalHashAgg.SetSchema(logicalAgg.Schema().Clone())
-	physicalHashAgg.SetChildren(child)
 	return physicalHashAgg
 }
 
@@ -1060,7 +1065,6 @@ func constructInnerSel(prop *property.PhysicalProperty, sel *logicalop.LogicalSe
 	physicalSel := PhysicalSelection{
 		Conditions: sel.Conditions,
 	}.Init(sel.SCtx(), sel.StatsInfo(), sel.QueryBlockOffset(), prop)
-	physicalSel.SetChildren(child)
 	return physicalSel
 }
 
@@ -1072,22 +1076,20 @@ func constructInnerProj(prop *property.PhysicalProperty, proj *logicalop.Logical
 		Exprs:            proj.Exprs,
 		CalculateNoDelay: proj.CalculateNoDelay,
 	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), prop)
-	physicalProj.SetChildren(child)
 	physicalProj.SetSchema(proj.Schema())
 	return physicalProj
 }
 
-func constructInnerUnionScan(prop *property.PhysicalProperty, us *logicalop.LogicalUnionScan, reader base.PhysicalPlan) base.PhysicalPlan {
+func constructInnerUnionScan(prop *property.PhysicalProperty, us *logicalop.LogicalUnionScan, childPlan base.PhysicalPlan) base.PhysicalPlan {
 	if us == nil {
-		return reader
+		return childPlan
 	}
 	// Use `reader.StatsInfo()` instead of `us.StatsInfo()` because it should be more accurate. No need to specify
 	// childrenReqProps now since we have got reader already.
 	physicalUnionScan := PhysicalUnionScan{
 		Conditions: us.Conditions,
 		HandleCols: us.HandleCols,
-	}.Init(us.SCtx(), reader.StatsInfo(), us.QueryBlockOffset(), prop)
-	physicalUnionScan.SetChildren(reader)
+	}.Init(us.SCtx(), childPlan.StatsInfo(), us.QueryBlockOffset(), prop)
 	return physicalUnionScan
 }
 
@@ -1325,7 +1327,7 @@ func constructInnerIndexScanTask(
 		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection function", zap.Error(err))
 		return nil
 	}
-	return constructIndexJoinInnerSideTask(p, prop, cop, ds, path, wrapper)
+	return constructIndexJoinInnerSideTaskWithAggCheck(p, prop, cop, ds, path, wrapper)
 }
 
 // construct the inner join task by inner child plan tree
@@ -1336,7 +1338,7 @@ func constructInnerIndexScanTask(
 //	There are two kinds of agg: stream agg and hash agg. Stream agg depends on some conditions, such as the group by cols
 //
 // Step2: build other inner plan node to task
-func constructIndexJoinInnerSideTask(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, dsCopTask *CopTask, ds *DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
+func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, dsCopTask *CopTask, ds *DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
 	var la *logicalop.LogicalAggregation
 	var canPushAggToCop bool
 	if len(wrapper.zippedChildren) > 0 {
@@ -1353,8 +1355,7 @@ func constructIndexJoinInnerSideTask(p *logicalop.LogicalJoin, prop *property.Ph
 	// If the bottom plan is not aggregation or the aggregation can't be pushed to coprocessor, we will construct a root task directly.
 	if !canPushAggToCop {
 		result := dsCopTask.ConvertToRootTask(ds.SCtx()).(*RootTask)
-		result.SetPlan(constructInnerByZippedChildren(prop, wrapper.zippedChildren, result.GetPlan()))
-		return result
+		return constructIndexJoinInnerSideTask(result, prop, wrapper.zippedChildren, false)
 	}
 
 	// Try stream aggregation first.
@@ -1434,8 +1435,7 @@ func constructIndexJoinInnerSideTask(p *logicalop.LogicalJoin, prop *property.Ph
 	if !ok {
 		return nil
 	}
-	result.SetPlan(constructInnerByZippedChildren(prop, wrapper.zippedChildren[0:len(wrapper.zippedChildren)-1], result.p))
-	return result
+	return constructIndexJoinInnerSideTask(result, prop, wrapper.zippedChildren, true)
 }
 
 func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.PhysicalPlan) []base.PhysicalPlan {

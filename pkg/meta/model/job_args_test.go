@@ -686,3 +686,31 @@ func TestCheckConstraintArgs(t *testing.T) {
 		require.True(t, args.Enforced)
 	}
 }
+
+func TestPlacementPolicyArgs(t *testing.T) {
+	inArgs := &PlacementPolicyArgs{
+		Policy:         &PolicyInfo{ID: 1, Name: model.NewCIStr("policy"), State: StateDeleteOnly},
+		PolicyName:     model.NewCIStr("policy_name"),
+		PolicyID:       123,
+		ReplaceOnExist: false,
+	}
+	for _, tp := range []ActionType{ActionCreatePlacementPolicy, ActionAlterPlacementPolicy, ActionDropPlacementPolicy} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			j2.SchemaID = inArgs.PolicyID
+			args, err := GetPlacementPolicyArgs(j2)
+			require.NoError(t, err)
+			if tp == ActionCreatePlacementPolicy {
+				require.EqualValues(t, inArgs.Policy, args.Policy)
+				require.EqualValues(t, inArgs.ReplaceOnExist, args.ReplaceOnExist)
+			} else if tp == ActionAlterPlacementPolicy {
+				require.EqualValues(t, inArgs.Policy, args.Policy)
+				require.EqualValues(t, inArgs.PolicyID, args.PolicyID)
+			} else {
+				require.EqualValues(t, inArgs.PolicyName, args.PolicyName)
+				require.EqualValues(t, inArgs.PolicyID, args.PolicyID)
+			}
+		}
+	}
+}
