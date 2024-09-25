@@ -3209,8 +3209,9 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 		// Doing the preSplitAndScatter here, since all checks are completed,
 		// and we will soon start writing to the new partitions.
 		if s, ok := jobCtx.store.(kv.SplittableStore); ok && s != nil {
-			// partInfo only contains the AddingPartitions
-			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, true)
+			// 1. partInfo only contains the AddingPartitions
+			// 2. ScatterTable control all new split region need waiting for scatter region finish at table level.
+			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, variable.ScatterTable)
 		}
 
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.

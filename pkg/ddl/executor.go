@@ -1390,21 +1390,21 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 		return
 	}
 	var (
-		preSplit      func()
-		scatterRegion bool
+		preSplit     func()
+		scatterScope string
 	)
-	val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBScatterRegion)
-	if err != nil {
-		logutil.DDLLogger().Warn("won't scatter region", zap.Error(err))
+	val, ok := ctx.GetSessionVars().GetSystemVar(variable.TiDBScatterRegion)
+	if !ok {
+		logutil.DDLLogger().Warn("get system variable met problem, won't scatter region")
 	} else {
-		scatterRegion = variable.TiDBOptOn(val)
+		scatterScope = val
 	}
 	if len(parts) > 0 {
-		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterRegion) }
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, parts, scatterScope) }
 	} else {
-		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
+		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterScope) }
 	}
-	if scatterRegion {
+	if scatterScope != variable.ScatterOff {
 		preSplit()
 	} else {
 		go preSplit()

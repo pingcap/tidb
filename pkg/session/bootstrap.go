@@ -1174,11 +1174,15 @@ const (
 
 	// If the TiDB upgrading from the a version before v7.0 to a newer version, we keep the tidb_enable_inl_join_inner_multi_pattern to 0.
 	version215 = 215
+
+	// version 216
+	//   changes variable `tidb_scatter_region` value from ON to "table" and OFF to "".
+	version216 = 216
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version215
+var currentBootstrapVersion int64 = version216
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1349,6 +1353,7 @@ var (
 		upgradeToVer213,
 		upgradeToVer214,
 		upgradeToVer215,
+		upgradeToVer216,
 	}
 )
 
@@ -3205,6 +3210,15 @@ func upgradeToVer215(s sessiontypes.Session, ver int64) {
 	}
 
 	initGlobalVariableIfNotExists(s, variable.TiDBEnableINLJoinInnerMultiPattern, variable.Off)
+}
+
+func upgradeToVer216(s sessiontypes.Session, ver int64) {
+	if ver >= version216 {
+		return
+	}
+
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'OFF'")
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='table' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'ON'")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
