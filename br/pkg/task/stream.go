@@ -347,7 +347,7 @@ func (s *streamMgr) setLock(ctx context.Context) error {
 // adjustAndCheckStartTS checks that startTS should be smaller than currentTS,
 // and endTS is larger than currentTS.
 func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
-	currentTS, err := s.mgr.GetCurrentTsFromPd(ctx)
+	currentTS, err := s.mgr.GetCurrentTsFromPD(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

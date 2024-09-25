@@ -45,7 +45,8 @@ func NewManager(cipherInfo *backuppb.CipherInfo, masterKeyConfigs *backuppb.Mast
 	return nil, nil
 }
 
-func (m *Manager) Decrypt(ctx context.Context, content []byte, fileEncryptionInfo *encryptionpb.FileEncryptionInfo) ([]byte, error) {
+func (m *Manager) Decrypt(ctx context.Context, content []byte, fileEncryptionInfo *encryptionpb.FileEncryptionInfo) (
+	[]byte, error) {
 	switch mode := fileEncryptionInfo.Mode.(type) {
 	case *encryptionpb.FileEncryptionInfo_PlainTextDataKey:
 		if m.cipherInfo == nil {

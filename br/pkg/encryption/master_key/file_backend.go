@@ -40,7 +40,7 @@ func createFileBackend(keyPath string) (*FileBackend, error) {
 
 	key, err := hex.DecodeString(string(content[:fileLen-1]))
 	if err != nil {
-		return nil, errors.Annotate(err, "failed to decode master key from file")
+		return nil, errors.Annotate(err, "failed to decode hex format master key from file")
 	}
 
 	backend, err := NewMemAesGcmBackend(key)
@@ -52,7 +52,10 @@ func createFileBackend(keyPath string) (*FileBackend, error) {
 }
 
 func (f *FileBackend) Encrypt(ctx context.Context, plaintext []byte) (*encryptionpb.EncryptedContent, error) {
-	iv := NewIV()
+	iv, err := NewIVGcm()
+	if err != nil {
+		return nil, err
+	}
 	return f.memCache.EncryptContent(ctx, plaintext, iv)
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
+	"google.golang.org/api/option"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -41,7 +42,13 @@ func NewGcpKms(config *encryptionpb.MasterKeyKms) (*GcpKms, error) {
 	location := strings.Join(strings.Split(config.KeyId, "/")[:4], "/")
 
 	ctx := context.Background()
-	client, err := kms.NewKeyManagementClient(ctx)
+
+	var clientOpt option.ClientOption
+	if config.GcpKms.Credential != "" {
+		clientOpt = option.WithCredentialsFile(config.GcpKms.Credential)
+	}
+
+	client, err := kms.NewKeyManagementClient(ctx, clientOpt)
 	if err != nil {
 		return nil, errors.Errorf("failed to create GCP KMS client: %v", err)
 	}

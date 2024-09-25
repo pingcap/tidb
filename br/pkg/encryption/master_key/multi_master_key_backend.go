@@ -4,16 +4,20 @@ package encryption
 
 import (
 	"context"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"go.uber.org/multierr"
 )
 
 const (
 	defaultBackendCapacity = 5
 )
 
+// MultiMasterKeyBackend can contain multiple master shard backends.
+// If any one of those backends successfully decrypts the data, the data will be returned.
+// The main purpose of this backend is to provide a high availability for master key in the future.
+// Right now only one master key backend is used to encrypt/decrypt data.
 type MultiMasterKeyBackend struct {
 	backends []Backend
 }
@@ -35,21 +39,22 @@ func NewMultiMasterKeyBackend(masterKeysProto []*encryptionpb.MasterKey) (*Multi
 	}, nil
 }
 
-func (m *MultiMasterKeyBackend) Decrypt(ctx context.Context, encryptedContent *encryptionpb.EncryptedContent) ([]byte, error) {
+func (m *MultiMasterKeyBackend) Decrypt(ctx context.Context, encryptedContent *encryptionpb.EncryptedContent) (
+	[]byte, error) {
 	if len(m.backends) == 0 {
 		return nil, errors.New("internal error: should always contain at least one backend")
 	}
 
-	var errMsgs = make([]string, 0, defaultBackendCapacity)
+	var err error
 	for _, masterKeyBackend := range m.backends {
-		res, err := masterKeyBackend.Decrypt(ctx, encryptedContent)
-		if err == nil {
+		res, decryptErr := masterKeyBackend.Decrypt(ctx, encryptedContent)
+		if decryptErr == nil {
 			return res, nil
 		}
-		errMsgs = append(errMsgs, errors.ErrorStack(err))
+		err = multierr.Append(err, decryptErr)
 	}
 
-	return nil, errors.Errorf("failed to decrypt in multi master key backend: %s", strings.Join(errMsgs, ","))
+	return nil, errors.Wrap(err, "failed to decrypt in multi master key backend")
 }
 
 func (m *MultiMasterKeyBackend) Close() {

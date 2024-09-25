@@ -89,13 +89,11 @@ func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv 
 }
 
 func DecryptFullBackupMetaIfNeeded(metaData []byte, cipherInfo *backuppb.CipherInfo) ([]byte, error) {
-	// the prefix of backup meta file is iv(16 bytes) if encryption method is valid
-	var iv []byte
-	if cipherInfo != nil && cipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
-		iv = metaData[:CrypterIvLen]
-	} else {
+	if cipherInfo == nil || !utils.IsEffectiveEncryptionMethod(cipherInfo.CipherType) {
 		return metaData, nil
 	}
+	// the prefix of backup meta file is iv(16 bytes) for ctr mode if encryption method is valid
+	iv := metaData[:CrypterIvLen]
 	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], cipherInfo, iv)
 	if err != nil {
 		return nil, errors.Annotate(err, "decrypt failed with wrong key")

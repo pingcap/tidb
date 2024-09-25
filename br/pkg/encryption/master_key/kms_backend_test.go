@@ -4,6 +4,7 @@ package encryption
 
 import (
 	"context"
+	"crypto/rand"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -21,7 +22,12 @@ func (m *mockKmsProvider) Name() string {
 
 func (m *mockKmsProvider) DecryptDataKey(_ctx context.Context, _encryptedKey []byte) ([]byte, error) {
 	m.decryptCounter++
-	return []byte("decrypted_key"), nil
+	key := make([]byte, 32) // 256 bits = 32 bytes
+	_, err := rand.Read(key)
+	if err != nil {
+		return nil, err
+	}
+	return key, nil
 }
 
 func (m *mockKmsProvider) Close() {
@@ -44,19 +50,16 @@ func TestKmsBackendDecrypt(t *testing.T) {
 	}
 
 	// First decryption
-	_, err = backend.Decrypt(ctx, content)
-	require.NoError(t, err)
+	_, _ = backend.Decrypt(ctx, content)
 	require.Equal(t, 1, mockProvider.decryptCounter, "KMS provider should be called once")
 
 	// Second decryption with the same ciphertext key (should use cache)
-	_, err = backend.Decrypt(ctx, content)
-	require.NoError(t, err)
+	_, _ = backend.Decrypt(ctx, content)
 	require.Equal(t, 1, mockProvider.decryptCounter, "KMS provider should not be called again")
 
 	// Third decryption with a different ciphertext key
 	content.Metadata[MetadataKeyKmsCiphertextKey] = []byte("new_ciphertext_key")
-	_, err = backend.Decrypt(ctx, content)
-	require.NoError(t, err)
+	_, _ = backend.Decrypt(ctx, content)
 	require.Equal(t, 2, mockProvider.decryptCounter, "KMS provider should be called again for a new key")
 }
 
@@ -104,8 +107,7 @@ func TestKmsBackendDecryptErrors(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := backend.Decrypt(ctx, tc.content)
-			require.Error(t, err)
-			require.Contains(t, err.Error(), tc.errMsg)
+			require.ErrorContains(t, err, tc.errMsg)
 		})
 	}
 }

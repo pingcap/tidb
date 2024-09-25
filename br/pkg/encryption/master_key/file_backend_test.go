@@ -8,7 +8,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,7 +50,7 @@ func TestFileBackendAes256Gcm(t *testing.T) {
 	require.NoError(t, err)
 	ct, err := hex.DecodeString("84e5f23f95648fa247cb28eef53abec947dbf05ac953734618111583840bd980")
 	require.NoError(t, err)
-	iv, err := hex.DecodeString("cafabd9672ca6c79a2fbdc22")
+	ivBytes, err := hex.DecodeString("cafabd9672ca6c79a2fbdc22")
 	require.NoError(t, err)
 
 	tempKeyFile, err := createMasterKeyFile()
@@ -62,13 +61,16 @@ func TestFileBackendAes256Gcm(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	encryptedContent, err := backend.memCache.EncryptContent(ctx, pt, IV(iv))
+	iv, err := NewIVFromSlice(ivBytes)
 	require.NoError(t, err)
-	assert.Equal(t, ct, encryptedContent.Content)
+
+	encryptedContent, err := backend.memCache.EncryptContent(ctx, pt, iv)
+	require.NoError(t, err)
+	require.Equal(t, ct, encryptedContent.Content)
 
 	plaintext, err := backend.Decrypt(ctx, encryptedContent)
 	require.NoError(t, err)
-	assert.Equal(t, pt, plaintext)
+	require.Equal(t, pt, plaintext)
 }
 
 func TestFileBackendAuthenticate(t *testing.T) {
@@ -87,19 +89,17 @@ func TestFileBackendAuthenticate(t *testing.T) {
 
 	plaintext, err := backend.Decrypt(ctx, encryptedContent)
 	require.NoError(t, err)
-	assert.Equal(t, pt, plaintext)
+	require.Equal(t, pt, plaintext)
 
 	// Test checksum mismatch
 	encryptedContent1 := *encryptedContent
 	encryptedContent1.Metadata[MetadataKeyAesGcmTag][0] ^= 0xFF
 	_, err = backend.Decrypt(ctx, &encryptedContent1)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), wrongMasterKey)
+	require.ErrorContains(t, err, wrongMasterKey)
 
 	// Test checksum not found
 	encryptedContent2 := *encryptedContent
 	delete(encryptedContent2.Metadata, MetadataKeyAesGcmTag)
 	_, err = backend.Decrypt(ctx, &encryptedContent2)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), gcmTagNotFound)
+	require.ErrorContains(t, err, gcmTagNotFound)
 }

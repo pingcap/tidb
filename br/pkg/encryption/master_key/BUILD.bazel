@@ -18,6 +18,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_pingcap_log//:log",
+        "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -37,7 +38,6 @@ go_test(
     deps = [
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
-        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",
     ],

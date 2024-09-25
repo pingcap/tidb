@@ -149,10 +149,9 @@ func parseGcpKmsConfig(u *url.URL) (encryptionpb.MasterKey, error) {
 
 	projectID, location, keyRing, keyName := matches[1], matches[2], matches[3], matches[4]
 	q := u.Query()
-	credentials := q.Get(GCPCredentials)
 
-	if credentials == "" {
-		return encryptionpb.MasterKey{}, errors.Errorf("missing required GCP KMS parameter: %s", GCPCredentials)
+	gcpKms := &encryptionpb.GcpKms{
+		Credential: q.Get(GCPCredentials),
 	}
 
 	return encryptionpb.MasterKey{
@@ -160,9 +159,7 @@ func parseGcpKmsConfig(u *url.URL) (encryptionpb.MasterKey, error) {
 			Kms: &encryptionpb.MasterKeyKms{
 				Vendor: GCPVendor,
 				KeyId:  fmt.Sprintf("projects/%s/locations/%s/keyRings/%s/cryptoKeys/%s", projectID, location, keyRing, keyName),
-				GcpKms: &encryptionpb.GcpKms{
-					Credential: credentials,
-				},
+				GcpKms: gcpKms,
 			},
 		},
 	}, nil

@@ -15,9 +15,9 @@
 package stream
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -223,8 +223,10 @@ func (m *MetadataHelper) verifyChecksumAndDecryptIfNeeded(ctx context.Context, d
 	// Verify checksum before decryption
 	if encryptionInfo.Checksum != nil {
 		actualChecksum := sha256.Sum256(data)
-		if !bytes.Equal(actualChecksum[:], encryptionInfo.Checksum) {
-			return nil, errors.Errorf("checksum mismatch before decryption, expected %s, actual %s", encryptionInfo.Checksum, actualChecksum)
+		expectedChecksumHex := hex.EncodeToString(encryptionInfo.Checksum)
+		actualChecksumHex := hex.EncodeToString(actualChecksum[:])
+		if expectedChecksumHex != actualChecksumHex {
+			return nil, errors.Errorf("checksum mismatch before decryption, expected %s, actual %s", expectedChecksumHex, actualChecksumHex)
 		}
 	}
 

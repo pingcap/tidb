@@ -4,8 +4,8 @@ package encryption
 
 import (
 	"crypto/rand"
-	"encoding/binary"
-	"time"
+
+	"github.com/pingcap/errors"
 )
 
 // must keep it same with the constants in TiKV implementation
@@ -18,14 +18,43 @@ const (
 	MetadataMethodAes256Gcm     string = "aes256-gcm"
 )
 
-type IV [12]byte
+const (
+	GcmIv12 = 12
+	CtrIv16 = 16
+)
 
-func NewIV() IV {
-	var iv IV
-	binary.BigEndian.PutUint64(iv[:8], uint64(time.Now().UnixNano()))
-	// Fill the remaining 4 bytes with random data
-	if _, err := rand.Read(iv[8:]); err != nil {
-		panic(err) // Handle this error appropriately in production code
+type IvType int
+
+const (
+	IvTypeGcm IvType = iota
+	IvTypeCtr
+)
+
+type IV struct {
+	Type IvType
+	Data []byte
+}
+
+func NewIVGcm() (IV, error) {
+	iv := make([]byte, GcmIv12)
+	_, err := rand.Read(iv)
+	if err != nil {
+		return IV{}, err
 	}
-	return iv
+	return IV{Type: IvTypeGcm, Data: iv}, nil
+}
+
+func NewIVFromSlice(src []byte) (IV, error) {
+	switch len(src) {
+	case CtrIv16:
+		return IV{Type: IvTypeCtr, Data: append([]byte(nil), src...)}, nil
+	case GcmIv12:
+		return IV{Type: IvTypeGcm, Data: append([]byte(nil), src...)}, nil
+	default:
+		return IV{}, errors.Errorf("invalid IV length, must be 12 or 16 bytes, got %d", len(src))
+	}
+}
+
+func (iv IV) AsSlice() []byte {
+	return iv.Data
 }

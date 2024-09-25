@@ -31,12 +31,13 @@ func NewMemAesGcmBackend(key []byte) (*MemAesGcmBackend, error) {
 	}, nil
 }
 
-func (m *MemAesGcmBackend) EncryptContent(_ctx context.Context, plaintext []byte, iv IV) (*encryptionpb.EncryptedContent, error) {
+func (m *MemAesGcmBackend) EncryptContent(_ctx context.Context, plaintext []byte, iv IV) (
+	*encryptionpb.EncryptedContent, error) {
 	content := encryptionpb.EncryptedContent{
 		Metadata: make(map[string][]byte),
 	}
 	content.Metadata[MetadataKeyMethod] = []byte(MetadataMethodAes256Gcm)
-	content.Metadata[MetadataKeyIv] = iv[:]
+	content.Metadata[MetadataKeyIv] = iv.AsSlice()
 
 	block, err := aes.NewCipher(m.key.Key())
 	if err != nil {
@@ -47,14 +48,18 @@ func (m *MemAesGcmBackend) EncryptContent(_ctx context.Context, plaintext []byte
 		return nil, err
 	}
 
-	ciphertext := aesgcm.Seal(nil, iv[:], plaintext, nil)
+	// The Seal function in AES-GCM mode appends the authentication tag to the ciphertext.
+	// We need to separate the actual ciphertext from the tag for storage and later verification.
+	// Reference: https://pkg.go.dev/crypto/cipher#AEAD
+	ciphertext := aesgcm.Seal(nil, iv.AsSlice(), plaintext, nil)
 	content.Content = ciphertext[:len(ciphertext)-aesgcm.Overhead()]
 	content.Metadata[MetadataKeyAesGcmTag] = ciphertext[len(ciphertext)-aesgcm.Overhead():]
 
 	return &content, nil
 }
 
-func (m *MemAesGcmBackend) DecryptContent(_ctx context.Context, content *encryptionpb.EncryptedContent) ([]byte, error) {
+func (m *MemAesGcmBackend) DecryptContent(_ctx context.Context, content *encryptionpb.EncryptedContent) (
+	[]byte, error) {
 	method, ok := content.Metadata[MetadataKeyMethod]
 	if !ok {
 		return nil, errors.Errorf("metadata %s not found", MetadataKeyMethod)
@@ -68,8 +73,11 @@ func (m *MemAesGcmBackend) DecryptContent(_ctx context.Context, content *encrypt
 	if !ok {
 		return nil, errors.Errorf("metadata %s not found", MetadataKeyIv)
 	}
-	var iv IV
-	copy(iv[:], ivValue)
+
+	iv, err := NewIVFromSlice(ivValue)
+	if err != nil {
+		return nil, err
+	}
 
 	tag, ok := content.Metadata[MetadataKeyAesGcmTag]
 	if !ok {
@@ -86,7 +94,7 @@ func (m *MemAesGcmBackend) DecryptContent(_ctx context.Context, content *encrypt
 	}
 
 	ciphertext := append(content.Content, tag...)
-	plaintext, err := aesgcm.Open(nil, iv[:], ciphertext, nil)
+	plaintext, err := aesgcm.Open(nil, iv.AsSlice(), ciphertext, nil)
 	if err != nil {
 		return nil, errors.Annotate(err, wrongMasterKey+" :decrypt in GCM mode failed")
 	}

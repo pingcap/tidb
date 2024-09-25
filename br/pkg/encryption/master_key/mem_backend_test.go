@@ -6,46 +6,38 @@ import (
 	"bytes"
 	"context"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewMemAesGcmBackend(t *testing.T) {
 	key := make([]byte, 32) // 256-bit key
 	_, err := NewMemAesGcmBackend(key)
-	if err != nil {
-		t.Fatalf("Failed to create MemAesGcmBackend: %v", err)
-	}
+	require.NoError(t, err, "Failed to create MemAesGcmBackend")
 
 	shortKey := make([]byte, 16)
 	_, err = NewMemAesGcmBackend(shortKey)
-	if err == nil {
-		t.Fatal("Expected error for short key, got nil")
-	}
+	require.Error(t, err, "Expected error for short key")
 }
 
 func TestEncryptDecrypt(t *testing.T) {
 	key := make([]byte, 32)
 	backend, err := NewMemAesGcmBackend(key)
-	if err != nil {
-		t.Fatalf("Failed to create MemAesGcmBackend: %v", err)
-	}
+	require.NoError(t, err, "Failed to create MemAesGcmBackend")
 
 	plaintext := []byte("Hello, World!")
-	iv := NewIV()
+
+	iv, err := NewIVGcm()
+	require.NoError(t, err, "failed to create gcm iv")
 
 	ctx := context.Background()
 	encrypted, err := backend.EncryptContent(ctx, plaintext, iv)
-	if err != nil {
-		t.Fatalf("Encryption failed: %v", err)
-	}
+	require.NoError(t, err, "Encryption failed")
 
 	decrypted, err := backend.DecryptContent(ctx, encrypted)
-	if err != nil {
-		t.Fatalf("Decryption failed: %v", err)
-	}
+	require.NoError(t, err, "Decryption failed")
 
-	if !bytes.Equal(plaintext, decrypted) {
-		t.Fatalf("Decrypted text doesn't match original. Got %v, want %v", decrypted, plaintext)
-	}
+	require.Equal(t, plaintext, decrypted, "Decrypted text doesn't match original")
 }
 
 func TestDecryptWithWrongKey(t *testing.T) {
@@ -59,14 +51,14 @@ func TestDecryptWithWrongKey(t *testing.T) {
 	backend2, _ := NewMemAesGcmBackend(key2)
 
 	plaintext := []byte("Hello, World!")
-	iv := NewIV()
+
+	iv, err := NewIVGcm()
+	require.NoError(t, err, "failed to create gcm iv")
 
 	ctx := context.Background()
 	encrypted, _ := backend1.EncryptContent(ctx, plaintext, iv)
-	_, err := backend2.DecryptContent(ctx, encrypted)
-	if err == nil {
-		t.Fatal("Expected decryption with wrong key to fail, but it succeeded")
-	}
+	_, err = backend2.DecryptContent(ctx, encrypted)
+	require.Error(t, err, "Expected decryption with wrong key to fail")
 }
 
 func TestDecryptWithTamperedCiphertext(t *testing.T) {
@@ -74,16 +66,16 @@ func TestDecryptWithTamperedCiphertext(t *testing.T) {
 	backend, _ := NewMemAesGcmBackend(key)
 
 	plaintext := []byte("Hello, World!")
-	iv := NewIV()
+
+	iv, err := NewIVGcm()
+	require.NoError(t, err, "failed to create gcm iv")
 
 	ctx := context.Background()
 	encrypted, _ := backend.EncryptContent(ctx, plaintext, iv)
 	encrypted.Content[0] ^= 1 // Tamper with the ciphertext
 
-	_, err := backend.DecryptContent(ctx, encrypted)
-	if err == nil {
-		t.Fatal("Expected decryption of tampered ciphertext to fail, but it succeeded")
-	}
+	_, err = backend.DecryptContent(ctx, encrypted)
+	require.Error(t, err, "Expected decryption of tampered ciphertext to fail")
 }
 
 func TestDecryptWithMissingMetadata(t *testing.T) {
@@ -91,16 +83,16 @@ func TestDecryptWithMissingMetadata(t *testing.T) {
 	backend, _ := NewMemAesGcmBackend(key)
 
 	plaintext := []byte("Hello, World!")
-	iv := NewIV()
+
+	iv, err := NewIVGcm()
+	require.NoError(t, err, "failed to create gcm iv")
 
 	ctx := context.Background()
 	encrypted, _ := backend.EncryptContent(ctx, plaintext, iv)
 	delete(encrypted.Metadata, MetadataKeyMethod)
 
-	_, err := backend.DecryptContent(ctx, encrypted)
-	if err == nil {
-		t.Fatal("Expected decryption with missing metadata to fail, but it succeeded")
-	}
+	_, err = backend.DecryptContent(ctx, encrypted)
+	require.Error(t, err, "Expected decryption with missing metadata to fail")
 }
 
 func TestEncryptDecryptLargeData(t *testing.T) {
@@ -108,20 +100,16 @@ func TestEncryptDecryptLargeData(t *testing.T) {
 	backend, _ := NewMemAesGcmBackend(key)
 
 	plaintext := make([]byte, 1000000) // 1 MB of data
-	iv := NewIV()
+
+	iv, err := NewIVGcm()
+	require.NoError(t, err, "failed to create gcm iv")
 
 	ctx := context.Background()
 	encrypted, err := backend.EncryptContent(ctx, plaintext, iv)
-	if err != nil {
-		t.Fatalf("Encryption of large data failed: %v", err)
-	}
+	require.NoError(t, err, "Encryption of large data failed")
 
 	decrypted, err := backend.DecryptContent(ctx, encrypted)
-	if err != nil {
-		t.Fatalf("Decryption of large data failed: %v", err)
-	}
+	require.NoError(t, err, "Decryption of large data failed")
 
-	if !bytes.Equal(plaintext, decrypted) {
-		t.Fatal("Decrypted large data doesn't match original")
-	}
+	require.True(t, bytes.Equal(plaintext, decrypted), "Decrypted large data doesn't match original")
 }

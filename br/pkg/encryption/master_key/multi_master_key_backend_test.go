@@ -8,8 +8,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // MockBackend is a mock implementation of the Backend interface
@@ -45,8 +45,8 @@ func TestMultiMasterKeyBackendDecrypt(t *testing.T) {
 		}
 
 		result, err := backend.Decrypt(ctx, encryptedContent)
-		assert.NoError(t, err)
-		assert.Equal(t, []byte("decrypted"), result)
+		require.NoError(t, err)
+		require.Equal(t, []byte("decrypted"), result)
 
 		mock1.AssertExpectations(t)
 		mock2.AssertNotCalled(t, "Decrypt")
@@ -64,8 +64,8 @@ func TestMultiMasterKeyBackendDecrypt(t *testing.T) {
 		}
 
 		result, err := backend.Decrypt(ctx, encryptedContent)
-		assert.NoError(t, err)
-		assert.Equal(t, []byte("decrypted"), result)
+		require.NoError(t, err)
+		require.Equal(t, []byte("decrypted"), result)
 
 		mock1.AssertExpectations(t)
 		mock2.AssertExpectations(t)
@@ -83,10 +83,10 @@ func TestMultiMasterKeyBackendDecrypt(t *testing.T) {
 		}
 
 		result, err := backend.Decrypt(ctx, encryptedContent)
-		assert.Error(t, err)
-		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "failed1")
-		assert.Contains(t, err.Error(), "failed2")
+		require.Error(t, err)
+		require.Nil(t, result)
+		require.Contains(t, err.Error(), "failed1")
+		require.Contains(t, err.Error(), "failed2")
 
 		mock1.AssertExpectations(t)
 		mock2.AssertExpectations(t)
@@ -98,8 +98,8 @@ func TestMultiMasterKeyBackendDecrypt(t *testing.T) {
 		}
 
 		result, err := backend.Decrypt(ctx, encryptedContent)
-		assert.Error(t, err)
-		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "internal error")
+		require.Error(t, err)
+		require.Nil(t, result)
+		require.Contains(t, err.Error(), "internal error")
 	})
 }

@@ -31,7 +31,7 @@ func NewKmsBackend(kmsProvider kms.Provider) (*KmsBackend, error) {
 	}, nil
 }
 
-func (k *KmsBackend) decryptContent(ctx context.Context, content *encryptionpb.EncryptedContent) ([]byte, error) {
+func (k *KmsBackend) Decrypt(ctx context.Context, content *encryptionpb.EncryptedContent) ([]byte, error) {
 	vendorName := k.kmsProvider.Name()
 	if val, ok := content.Metadata[MetadataKeyKmsVendor]; !ok {
 		return nil, errors.New("wrong master key: missing KMS vendor")
@@ -69,11 +69,8 @@ func (k *KmsBackend) decryptContent(ctx context.Context, content *encryptionpb.E
 	if err != nil {
 		return nil, errors.Annotate(err, "decrypt encrypted key failed")
 	}
-	dataKey := kms.DataKeyPair{
-		Encrypted: &ciphertextKey,
-		Plaintext: plaintextKey,
-	}
-	backend, err := NewMemAesGcmBackend(dataKey.Plaintext.Key())
+
+	backend, err := NewMemAesGcmBackend(plaintextKey.Key())
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to create MemAesGcmBackend")
 	}
@@ -84,10 +81,6 @@ func (k *KmsBackend) decryptContent(ctx context.Context, content *encryptionpb.E
 	}
 
 	return k.state.cached.encryptionBackend.DecryptContent(ctx, content)
-}
-
-func (k *KmsBackend) Decrypt(ctx context.Context, content *encryptionpb.EncryptedContent) ([]byte, error) {
-	return k.decryptContent(ctx, content)
 }
 
 func (k *KmsBackend) Close() {

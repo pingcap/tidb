@@ -20,6 +20,7 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@com_google_cloud_go_kms//apiv1",
         "@com_google_cloud_go_kms//apiv1/kmspb",
+        "@org_golang_google_api//option",
         "@org_golang_google_protobuf//types/known/wrapperspb",
         "@org_uber_go_zap//:zap",
     ],

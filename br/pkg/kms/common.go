@@ -63,9 +63,3 @@ func (p *PlainKey) KeyTag() CryptographyType {
 func (p *PlainKey) Key() []byte {
 	return p.key
 }
-
-// DataKeyPair represents a pair of encrypted and plaintext keys
-type DataKeyPair struct {
-	Encrypted *EncryptedKey
-	Plaintext *PlainKey
-}
