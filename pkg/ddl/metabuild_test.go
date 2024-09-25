@@ -128,26 +128,6 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 			},
 		},
 		{
-			field: "enableListTablePartition",
-			setSctx: func(val any) {
-				sessVars.EnableListTablePartition = val.(bool)
-			},
-			testVals: []any{true, false},
-			getter: func(ctx *metabuild.Context) any {
-				return ctx.EnableListTablePartition()
-			},
-		},
-		{
-			field: "enableGlobalIndex",
-			setSctx: func(val any) {
-				sessVars.EnableGlobalIndex = val.(bool)
-			},
-			testVals: []any{true, false},
-			getter: func(ctx *metabuild.Context) any {
-				return ctx.EnableGlobalIndex()
-			},
-		},
-		{
 			field: "suppressTooLongIndexErr",
 			extra: func() {
 				require.True(t,

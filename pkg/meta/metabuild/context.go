@@ -91,20 +91,6 @@ func WithEnableTablePartitionMode(mode string) Option {
 	})
 }
 
-// WithEnableListTablePartition sets whether to enable list table partition.
-func WithEnableListTablePartition(enable bool) Option {
-	return funcOpt(func(ctx *Context) {
-		ctx.enableListTablePartition = enable
-	})
-}
-
-// WithEnableGlobalIndex sets whether to enable global index.
-func WithEnableGlobalIndex(enable bool) Option {
-	return funcOpt(func(ctx *Context) {
-		ctx.enableGlobalIndex = enable
-	})
-}
-
 // WithSuppressTooLongIndexErr sets whether to suppress too long index error.
 func WithSuppressTooLongIndexErr(suppress bool) Option {
 	return funcOpt(func(ctx *Context) {
@@ -128,8 +114,6 @@ type Context struct {
 	shardRowIDBits                 uint64
 	preSplitRegions                uint64
 	enableTablePartitionMode       string
-	enableListTablePartition       bool
-	enableGlobalIndex              bool
 	suppressTooLongIndexErr        bool
 	is                             infoschemactx.MetaOnlyInfoSchema
 }
@@ -143,8 +127,6 @@ func NewContext(opts ...Option) *Context {
 		shardRowIDBits:                 variable.DefShardRowIDBits,
 		enableTablePartitionMode:       variable.On,
 		preSplitRegions:                variable.DefPreSplitRegions,
-		enableListTablePartition:       true,
-		enableGlobalIndex:              variable.DefTiDBEnableGlobalIndex,
 		suppressTooLongIndexErr:        false,
 	}
 
@@ -212,16 +194,6 @@ func (ctx *Context) GetPreSplitRegions() uint64 {
 // GetEnableTablePartitionMode returns the enable table partition mode.
 func (ctx *Context) GetEnableTablePartitionMode() string {
 	return ctx.enableTablePartitionMode
-}
-
-// EnableListTablePartition returns whether enable list table partition.
-func (ctx *Context) EnableListTablePartition() bool {
-	return ctx.enableListTablePartition
-}
-
-// EnableGlobalIndex returns whether enable global index.
-func (ctx *Context) EnableGlobalIndex() bool {
-	return ctx.enableGlobalIndex
 }
 
 // SuppressTooLongIndexErr returns whether suppress too long index error.

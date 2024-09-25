@@ -127,28 +127,6 @@ func TestMetaBuildContext(t *testing.T) {
 			},
 		},
 		{
-			name: "enableListTablePartition",
-			getter: func(ctx *metabuild.Context) any {
-				return ctx.EnableListTablePartition()
-			},
-			checkDefault: true,
-			option: func(val any) metabuild.Option {
-				return metabuild.WithEnableListTablePartition(val.(bool))
-			},
-			testVals: []any{true, false},
-		},
-		{
-			name: "enableGlobalIndex",
-			getter: func(ctx *metabuild.Context) any {
-				return ctx.EnableGlobalIndex()
-			},
-			checkDefault: defVars.EnableGlobalIndex,
-			option: func(val any) metabuild.Option {
-				return metabuild.WithEnableGlobalIndex(val.(bool))
-			},
-			testVals: []any{true, false},
-		},
-		{
 			name: "suppressTooLongIndexErr",
 			getter: func(ctx *metabuild.Context) any {
 				return ctx.SuppressTooLongIndexErr()
