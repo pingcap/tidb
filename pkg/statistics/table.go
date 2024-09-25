@@ -144,7 +144,7 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 
 // ColNum returns the number of columns in the map.
 func (m *ColAndIdxExistenceMap) ColNum() int {
-	return len(m.colAnalyzed) + len(m.idxAnalyzed)
+	return len(m.colAnalyzed)
 }
 
 // Clone deeply copies the map.
