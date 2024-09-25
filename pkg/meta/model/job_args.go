@@ -1061,9 +1061,8 @@ func (a *AlterTablePlacementArgs) fillJob(job *Job) {
 // GetAlterTablePlacementArgs gets the args for alter table placements ddl job.
 func GetAlterTablePlacementArgs(job *Job) (*AlterTablePlacementArgs, error) {
 	if job.Version == JobVersion1 {
-		// we need decodeArgs like follow code.
-		// Because the placementPolicyRef is nil as input args, the output placementPolicyRef will nil after DecodeArgs.
-		placementPolicyRef := &PolicyRefInfo{}
+		// when the target policy is 'default', policy info is nil
+		var placementPolicyRef *PolicyRefInfo
 		if err := job.DecodeArgs(&placementPolicyRef); err != nil {
 			return nil, errors.Trace(err)
 		}
