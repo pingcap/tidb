@@ -16,6 +16,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	tmodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/table"
@@ -38,51 +39,57 @@ func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 			return nil, err
 		}
 		ret := s.convertToIntSlice(rangeOr, pi, partitionNames)
-		if pi.CanHaveOverlappingDroppingPartition() {
-			if len(ret) == 1 && ret[0] == FullRange {
-				ret = make([]int, 0, len(pi.Definitions))
-				for i := range pi.Definitions {
-					ret = append(ret, i)
-				}
-			}
-			newRet := make([]int, 0, len(ret))
-			for i := range ret {
-				idx := pi.GetOverlappingDroppingPartitionIdx(ret[i])
-				if idx == -1 {
-					// dropped without overlapping partition, skip it
-					continue
-				}
-				if idx == ret[i] {
-					// non-dropped partition
-					newRet = append(newRet, idx)
-					continue
-				}
-				// partition being dropped, remove the consecutive range of dropping partitions
-				// and add the overlapping partition.
-				end := i + 1
-				for ; end < len(ret) && ret[end] < idx; end++ {
-					continue
-				}
-				// add the overlapping partition, if not already included
-				if end >= len(ret) || ret[end] != idx {
-					// It must also match partitionNames if explicitly given
-					if len(partitionNames) == 0 || s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
-						newRet = append(newRet, idx)
-					}
-				}
-				if end < len(ret) {
-					newRet = append(newRet, ret[end:]...)
-				}
-				break
-			}
-			if len(newRet) == len(pi.Definitions) {
-				return []int{FullRange}, nil
-			}
-			return newRet, nil
-		}
+		ret = handleDroppingForRange(pi, partitionNames, ret)
 		return ret, nil
 	case model.PartitionTypeList:
 		return s.pruneListPartition(ctx, tbl, partitionNames, conds, columns)
 	}
 	return []int{FullRange}, nil
+}
+
+func handleDroppingForRange(pi *tmodel.PartitionInfo, partitionNames []model.CIStr, usedPartitions []int) []int {
+	if pi.CanHaveOverlappingDroppingPartition() {
+		if len(usedPartitions) == 1 && usedPartitions[0] == FullRange {
+			usedPartitions = make([]int, 0, len(pi.Definitions))
+			for i := range pi.Definitions {
+				usedPartitions = append(usedPartitions, i)
+			}
+		}
+		ret := make([]int, 0, len(usedPartitions))
+		for i := range usedPartitions {
+			idx := pi.GetOverlappingDroppingPartitionIdx(usedPartitions[i])
+			if idx == -1 {
+				// dropped without overlapping partition, skip it
+				continue
+			}
+			if idx == usedPartitions[i] {
+				// non-dropped partition
+				ret = append(ret, idx)
+				continue
+			}
+			// partition being dropped, remove the consecutive range of dropping partitions
+			// and add the overlapping partition.
+			end := i + 1
+			for ; end < len(usedPartitions) && usedPartitions[end] < idx; end++ {
+				continue
+			}
+			// add the overlapping partition, if not already included
+			if end >= len(usedPartitions) || usedPartitions[end] != idx {
+				// It must also match partitionNames if explicitly given
+				s := PartitionProcessor{}
+				if len(partitionNames) == 0 || s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+					ret = append(ret, idx)
+				}
+			}
+			if end < len(usedPartitions) {
+				ret = append(ret, usedPartitions[end:]...)
+			}
+			break
+		}
+		usedPartitions = ret
+	}
+	if len(usedPartitions) == len(pi.Definitions) {
+		return []int{FullRange}
+	}
+	return usedPartitions
 }

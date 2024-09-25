@@ -941,32 +941,37 @@ func (pi *PartitionInfo) GetOverlappingDroppingPartitionIdx(idx int) int {
 	if pi.CanHaveOverlappingDroppingPartition() {
 		switch pi.Type {
 		case model.PartitionTypeRange:
-		DEFINITIONS_LOOP:
 			for i := idx; i < len(pi.Definitions); i++ {
-				for _, def := range pi.DroppingDefinitions {
-					if def.ID == pi.Definitions[i].ID {
-						continue DEFINITIONS_LOOP
-					}
+				if pi.IsDropping(i) {
+					continue
 				}
 				return i
 			}
 			// Last partition is also dropped!
 			return -1
 		case model.PartitionTypeList:
-			for _, def := range pi.DroppingDefinitions {
-				if def.ID == pi.Definitions[idx].ID {
-					defaultIdx := pi.GetDefaultListPartition()
-					if defaultIdx == idx {
-						// Dropping default partition
-						return -1
-					}
-					return defaultIdx
+			if pi.IsDropping(idx) {
+				defaultIdx := pi.GetDefaultListPartition()
+				if defaultIdx == idx {
+					return -1
 				}
+				return defaultIdx
 			}
 			return idx
 		}
 	}
 	return idx
+}
+
+// IsDropping returns true if the partition
+// is being dropped (i.e. in DroppingDefinitions)
+func (pi *PartitionInfo) IsDropping(idx int) bool {
+	for _, def := range pi.DroppingDefinitions {
+		if def.ID == pi.Definitions[idx].ID {
+			return true
+		}
+	}
+	return false
 }
 
 // PartitionState is the state of the partition.
