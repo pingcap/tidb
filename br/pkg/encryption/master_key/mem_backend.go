@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -32,7 +31,7 @@ func NewMemAesGcmBackend(key []byte) (*MemAesGcmBackend, error) {
 	}, nil
 }
 
-func (m *MemAesGcmBackend) EncryptContent(ctx context.Context, plaintext []byte, iv IV) (*encryptionpb.EncryptedContent, error) {
+func (m *MemAesGcmBackend) EncryptContent(_ctx context.Context, plaintext []byte, iv IV) (*encryptionpb.EncryptedContent, error) {
 	content := encryptionpb.EncryptedContent{
 		Metadata: make(map[string][]byte),
 	}
@@ -55,10 +54,10 @@ func (m *MemAesGcmBackend) EncryptContent(ctx context.Context, plaintext []byte,
 	return &content, nil
 }
 
-func (m *MemAesGcmBackend) DecryptContent(ctx context.Context, content *encryptionpb.EncryptedContent) ([]byte, error) {
+func (m *MemAesGcmBackend) DecryptContent(_ctx context.Context, content *encryptionpb.EncryptedContent) ([]byte, error) {
 	method, ok := content.Metadata[MetadataKeyMethod]
 	if !ok {
-		return nil, fmt.Errorf("metadata %s not found", MetadataKeyMethod)
+		return nil, errors.Errorf("metadata %s not found", MetadataKeyMethod)
 	}
 	if string(method) != MetadataMethodAes256Gcm {
 		return nil, errors.Errorf("encryption method mismatch, expected %s vs actual %s",

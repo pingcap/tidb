@@ -26,6 +26,10 @@ func (m *MockBackend) Decrypt(ctx context.Context, encryptedContent *encryptionp
 	return nil, args.Error(1)
 }
 
+func (m *MockBackend) Close() {
+	// do nothing
+}
+
 func TestMultiMasterKeyBackendDecrypt(t *testing.T) {
 	ctx := context.Background()
 	encryptedContent := &encryptionpb.EncryptedContent{Content: []byte("encrypted")}

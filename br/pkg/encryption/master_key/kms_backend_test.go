@@ -24,6 +24,10 @@ func (m *mockKmsProvider) DecryptDataKey(_ctx context.Context, _encryptedKey []b
 	return []byte("decrypted_key"), nil
 }
 
+func (m *mockKmsProvider) Close() {
+	// do nothing
+}
+
 func TestKmsBackendDecrypt(t *testing.T) {
 	ctx := context.Background()
 	mockProvider := &mockKmsProvider{name: "mock_kms"}

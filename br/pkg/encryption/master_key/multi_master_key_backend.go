@@ -10,6 +10,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 )
 
+const (
+	defaultBackendCapacity = 5
+)
+
 type MultiMasterKeyBackend struct {
 	backends []Backend
 }
@@ -18,7 +22,7 @@ func NewMultiMasterKeyBackend(masterKeysProto []*encryptionpb.MasterKey) (*Multi
 	if masterKeysProto == nil && len(masterKeysProto) == 0 {
 		return nil, errors.New("must provide at least one master key")
 	}
-	var backends []Backend
+	var backends = make([]Backend, 0, defaultBackendCapacity)
 	for _, masterKeyProto := range masterKeysProto {
 		backend, err := CreateBackend(masterKeyProto)
 		if err != nil {
@@ -36,7 +40,7 @@ func (m *MultiMasterKeyBackend) Decrypt(ctx context.Context, encryptedContent *e
 		return nil, errors.New("internal error: should always contain at least one backend")
 	}
 
-	var errMsgs []string
+	var errMsgs = make([]string, 0, defaultBackendCapacity)
 	for _, masterKeyBackend := range m.backends {
 		res, err := masterKeyBackend.Decrypt(ctx, encryptedContent)
 		if err == nil {

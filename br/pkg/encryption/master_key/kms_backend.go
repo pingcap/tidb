@@ -57,12 +57,12 @@ func (k *KmsBackend) decryptContent(ctx context.Context, content *encryptionpb.E
 
 	// piggyback on NewDownloadSSTBackoffer, a refactor is ongoing to remove all the backoffers
 	// so user don't need to write a backoffer for every type
-	decryptedKey, err := utils.WithRetryV2(ctx, utils.NewDownloadSSTBackoffer(), func(ctx context.Context) ([]byte, error) {
-		return k.kmsProvider.DecryptDataKey(ctx, ciphertextKey)
-	})
+	decryptedKey, err :=
+		utils.WithRetryV2(ctx, utils.NewDownloadSSTBackoffer(), func(ctx context.Context) ([]byte, error) {
+			return k.kmsProvider.DecryptDataKey(ctx, ciphertextKey)
+		})
 	if err != nil {
 		return nil, errors.Annotate(err, "decrypt encrypted key failed")
-
 	}
 
 	plaintextKey, err := kms.NewPlainKey(decryptedKey, kms.CryptographyTypeAesGcm256)

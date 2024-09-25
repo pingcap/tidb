@@ -11,6 +11,8 @@ import (
 	"cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -88,5 +90,8 @@ func (g *GcpKms) calculateCRC32C(data []byte) uint32 {
 }
 
 func (g *GcpKms) Close() {
-	g.client.Close()
+	err := g.client.Close()
+	if err != nil {
+		log.Error("failed to close gcp kms client", zap.Error(err))
+	}
 }
