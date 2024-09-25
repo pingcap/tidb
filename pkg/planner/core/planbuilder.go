@@ -2523,10 +2523,13 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 
 	if isAnalyzeTable {
 		if needAnalyzeCols {
+			// When `needAnalyzeCols == true`, non-global indexes already covered by previous loop,
+			// deal with global index here.
 			for _, indexInfo := range specialGlobalIndexes {
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
 			}
 		} else {
+			// For `analyze table t index idx1[, idx2]` and all indexes are global index.
 			for _, idxName := range as.IndexNames {
 				idx := tbl.TableInfo.FindIndexByName(idxName.L)
 				if idx == nil || !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {

@@ -952,7 +952,7 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 }
 
 // checkGlobalIndex check if the index is allowed to have global index
-func checkGlobalIndex(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+func checkGlobalIndex(ctx sessionctx.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	pi := tblInfo.GetPartitionInfo()
 	isPartitioned := pi != nil && pi.Type != pmodel.PartitionTypeNone
 	if indexInfo.Global {
@@ -980,9 +980,9 @@ func checkGlobalIndex(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) erro
 }
 
 // checkGlobalIndexes check if global index is supported.
-func checkGlobalIndexes(tblInfo *model.TableInfo) error {
+func checkGlobalIndexes(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
 	for _, indexInfo := range tblInfo.Indices {
-		err := checkGlobalIndex(tblInfo, indexInfo)
+		err := checkGlobalIndex(ctx, tblInfo, indexInfo)
 		if err != nil {
 			return err
 		}
@@ -1091,7 +1091,7 @@ func (e *executor) createTableWithInfoJob(
 		}
 	}
 
-	if err := checkTableInfoValidExtra(tbInfo); err != nil {
+	if err := checkTableInfoValidExtra(ctx, tbInfo); err != nil {
 		return nil, err
 	}
 
