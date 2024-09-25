@@ -2747,6 +2747,9 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Action == "set" {
 		return indexadvisor.SetOption(e.Ctx(), e.Option, e.Value)
 	}
+	if e.Action == "show" {
+		return e.showOptions(req)
+	}
 
 	if e.Action != "run" {
 		return fmt.Errorf("unsupported action: %s", e.Action)
@@ -2774,4 +2777,19 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendString(6, string(jData))
 	}
 	return err
+}
+
+func (e *RecommendIndexExec) showOptions(req *chunk.Chunk) error {
+	vals, desc, err := indexadvisor.GetOptions(e.Ctx(), indexadvisor.AllOptions...)
+	if err != nil {
+		return err
+	}
+	for _, opt := range indexadvisor.AllOptions {
+		if v, ok := vals[opt]; ok {
+			req.AppendString(0, opt)
+			req.AppendString(1, v)
+			req.AppendString(2, desc[opt])
+		}
+	}
+	return nil
 }
