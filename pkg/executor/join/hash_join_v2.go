@@ -295,6 +295,7 @@ func (e *HashJoinV2Exec) Close() error {
 		for i := range e.ProbeWorkers {
 			close(e.ProbeWorkers[i].joinChkResourceCh)
 			channel.Clear(e.ProbeWorkers[i].joinChkResourceCh)
+			e.ProbeWorkers[i].JoinProbe.ClearProbeState()
 		}
 		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
 		e.waiterWg.Wait()
@@ -470,6 +471,9 @@ func (e *HashJoinV2Exec) waitJoinWorkersAndCloseResultChan() {
 			}, e.handleJoinWorkerPanic)
 		}
 		e.workerWg.Wait()
+	}
+	for _, probeWorker := range e.ProbeWorkers {
+		probeWorker.JoinProbe.ClearProbeState()
 	}
 	close(e.joinResultCh)
 }

@@ -5,6 +5,9 @@ CREATE TABLE `t` (
 UNIQUE KEY `idx` ((lower(`b`))) global
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 5;
+show warnings;
+Level	Code	Message
+Warning	8265	Auto analyze is not effective for index 'idx', need analyze manually
 insert into t values (1, 'a'), (2, 'b'), (3, 'C'), (4, 'd'), (5, 'x');
 insert into t values (3, 'c');
 Error 1062 (23000): Duplicate entry 'c' for key 't.idx'
