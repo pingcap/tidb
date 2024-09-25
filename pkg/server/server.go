@@ -1055,23 +1055,19 @@ func (s *Server) ServerID() uint64 {
 // StoreInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
 func (s *Server) StoreInternalSession(se any) {
-	var count int
 	s.sessionMapMutex.Lock()
 	s.internalSessions[se] = struct{}{}
-	count = len(s.internalSessions)
+	metrics.InternalSessions.Set(float64(len(s.internalSessions)))
 	s.sessionMapMutex.Unlock()
-	metrics.InternalSessions.Set(float64(count))
 }
 
 // DeleteInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
 func (s *Server) DeleteInternalSession(se any) {
-	var count int
 	s.sessionMapMutex.Lock()
 	delete(s.internalSessions, se)
-	count = len(s.internalSessions)
+	metrics.InternalSessions.Set(float64(len(s.internalSessions)))
 	s.sessionMapMutex.Unlock()
-	metrics.InternalSessions.Set(float64(count))
 }
 
 // GetInternalSessionStartTSList implements SessionManager interface.
