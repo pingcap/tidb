@@ -270,7 +270,6 @@ func SetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Reserved recoverSchemaCheckFlag value for gc work judgment.
 	recoverTabsInfo := args.RecoverTableInfos()
 	diff.AffectedOpts = make([]*model.AffectedOption, len(recoverTabsInfo))
 	for i := range recoverTabsInfo {
