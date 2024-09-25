@@ -20,9 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
-	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
+	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1828,7 +1827,7 @@ func (c *getQueryAttrFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinGetQueryAttrStringSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinGetQueryAttrStringSig) Clone() builtinFunc {
