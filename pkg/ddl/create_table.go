@@ -406,7 +406,7 @@ func buildTableInfoWithCheck(ctx *metabuild.Context, s *ast.CreateTableStmt, dbC
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(ctx, tbInfo); err != nil {
+	if err = checkTableInfoValidExtra(tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
@@ -512,7 +512,7 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName pmodel.CIStr, table
 // name length and column count.
 // (checkTableInfoValid is also used in repairing objects which don't perform
 // these checks. Perhaps the two functions should be merged together regardless?)
-func checkTableInfoValidExtra(ctx *metabuild.Context, tbInfo *model.TableInfo) error {
+func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 	if err := checkTooLongTable(tbInfo.Name); err != nil {
 		return err
 	}
@@ -532,7 +532,7 @@ func checkTableInfoValidExtra(ctx *metabuild.Context, tbInfo *model.TableInfo) e
 	if err := checkColumnsAttributes(tbInfo.Columns); err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkGlobalIndexes(tbInfo, ctx.EnableGlobalIndex()); err != nil {
+	if err := checkGlobalIndexes(tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1107,6 +1107,7 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
+	tblInfo.TableCacheStatusType = model.TableCacheStatusDisable
 	// Ignore TiFlash replicas for temporary tables.
 	if s.TemporaryKeyword != ast.TemporaryNone {
 		tblInfo.TiFlashReplica = nil

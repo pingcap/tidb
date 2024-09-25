@@ -63,6 +63,8 @@ const (
 	NormalVersionChecker VersionCheckerType = iota
 	// version checker for PiTR
 	StreamVersionChecker
+	// no check
+	NoVersionChecker
 )
 
 // Mgr manages connections to a TiDB cluster.
@@ -170,17 +172,18 @@ func NewMgr(
 		return nil, errors.Trace(err)
 	}
 	if checkRequirements {
-		var checker version.VerChecker
+		var versionErr error
 		switch versionCheckerType {
 		case NormalVersionChecker:
-			checker = version.CheckVersionForBR
+			versionErr = version.CheckClusterVersion(ctx, controller.GetPDClient(), version.CheckVersionForBR)
 		case StreamVersionChecker:
-			checker = version.CheckVersionForBRPiTR
+			versionErr = version.CheckClusterVersion(ctx, controller.GetPDClient(), version.CheckVersionForBRPiTR)
+		case NoVersionChecker:
+			versionErr = nil
 		default:
 			return nil, errors.Errorf("unknown command type, comman code is %d", versionCheckerType)
 		}
-		err = version.CheckClusterVersion(ctx, controller.GetPDClient(), checker)
-		if err != nil {
+		if versionErr != nil {
 			return nil, errors.Annotate(err, "running BR in incompatible version of cluster, "+
 				"if you believe it's OK, use --check-requirements=false to skip.")
 		}

@@ -5740,6 +5740,11 @@ func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, e
 		schema.Append(buildColumnWithName("", "reason", mysql.TypeVarchar, 256))
 		schema.Append(buildColumnWithName("", "top_impacted_query", mysql.TypeBlob, -1))
 		p.setSchemaAndNames(schema.col2Schema(), schema.names)
+	case "set":
+		p.Option = strings.TrimSpace(p.Option)
+		if p.Option == "" {
+			return nil, fmt.Errorf("option is empty")
+		}
 	default:
 		return nil, fmt.Errorf("unsupported action %s", v.Action)
 	}

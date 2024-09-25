@@ -606,7 +606,6 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec("set tidb_enable_global_index = true")
 	tk.MustExec("set tidb_analyze_version = 1")
 	tk.MustExec("set global tidb_enable_historical_stats = true")
 	defer tk.MustExec("set global tidb_enable_historical_stats = default")

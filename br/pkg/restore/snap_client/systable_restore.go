@@ -63,8 +63,9 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"global_variables":                 {},
 		"capture_plan_baselines_blacklist": {},
 		// gc info don't need to recover.
-		"gc_delete_range":      {},
-		"gc_delete_range_done": {},
+		"gc_delete_range":       {},
+		"gc_delete_range_done":  {},
+		"index_advisor_results": {},
 
 		// replace into view is not supported now
 		"tidb_mdl_view": {},

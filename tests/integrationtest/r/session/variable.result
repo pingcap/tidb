@@ -90,49 +90,30 @@ tidb_enable_table_partition	OFF
 show global variables like 'tidb_enable_table_partition';
 Variable_name	Value
 tidb_enable_table_partition	ON
+set tidb_enable_list_partition=on;
+show warnings;
+Level	Code	Message
+Warning	1681	tidb_enable_list_partition is deprecated and will be removed in a future release.
 set tidb_enable_list_partition=off;
+Error 1105 (HY000): tidb_enable_list_partition is now always on, and cannot be turned off
+show warnings;
+Level	Code	Message
+Warning	1681	tidb_enable_list_partition is deprecated and will be removed in a future release.
+Error	1105	tidb_enable_list_partition is now always on, and cannot be turned off
 show variables like 'tidb_enable_list_partition';
 Variable_name	Value
-tidb_enable_list_partition	OFF
+tidb_enable_list_partition	ON
 set global tidb_enable_list_partition=on;
 show global variables like 'tidb_enable_list_partition';
 Variable_name	Value
 tidb_enable_list_partition	ON
-show variables like 'tidb_enable_list_partition';
-Variable_name	Value
-tidb_enable_list_partition	OFF
 set tidb_enable_list_partition=1;
 show variables like 'tidb_enable_list_partition';
-Variable_name	Value
-tidb_enable_list_partition	ON
-set tidb_enable_list_partition=on;
-show variables like 'tidb_enable_list_partition';
-Variable_name	Value
-tidb_enable_list_partition	ON
-show global variables like 'tidb_enable_list_partition';
-Variable_name	Value
-tidb_enable_list_partition	ON
-set global tidb_enable_list_partition=off;
-show global variables like 'tidb_enable_list_partition';
-Variable_name	Value
-tidb_enable_list_partition	OFF
-show variables like 'tidb_enable_list_partition';
-Variable_name	Value
-tidb_enable_list_partition	ON
-set tidb_enable_list_partition=off;
-show variables like 'tidb_enable_list_partition';
-Variable_name	Value
-tidb_enable_list_partition	OFF
-set global tidb_enable_list_partition=on;
-show global variables like 'tidb_enable_list_partition';
 Variable_name	Value
 tidb_enable_list_partition	ON
 show variables like 'tidb_enable_table_partition';
 Variable_name	Value
 tidb_enable_table_partition	ON
-show variables like 'tidb_enable_list_partition';
-Variable_name	Value
-tidb_enable_list_partition	ON
 set global tidb_enable_table_partition = default;
 set @@foreign_key_checks=0;
 CREATE TABLE address (

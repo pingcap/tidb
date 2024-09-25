@@ -21,6 +21,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/errno",
+        "//pkg/executor/join/joinversion",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta/model",
