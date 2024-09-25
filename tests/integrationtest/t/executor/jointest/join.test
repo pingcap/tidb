@@ -646,7 +646,7 @@ create table t(c1 bigint unsigned);
 create table t1(c1 bit(64));
 insert into t value(18446744073709551615);
 insert into t1 value(-1);
-select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;
+select hex(t1.c1), t.c1 from t, t1 where t.c1 = t1.c1;
 
 ## Issues 11896
 drop table if exists t;
@@ -655,7 +655,7 @@ create table t(c1 bigint);
 create table t1(c1 bit(64));
 insert into t value(1);
 insert into t1 value(1);
-select * from t, t1 where t.c1 = t1.c1;
+select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;
 drop table if exists t;
 drop table if exists t1;
 create table t(c1 bigint);
