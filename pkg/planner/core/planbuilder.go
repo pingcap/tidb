@@ -2390,7 +2390,7 @@ func checkIsAllSpecialGlobalIndex(as *ast.AnalyzeTableStmt, tbl *resolve.TableNa
 			if !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
 				return false, nil
 			}
-			// `Analyze table t partition p0 index`
+			// For `Analyze table t partition p0 index`
 			if !isAnalyzeTable {
 				return false, errors.NewNoStackErrorf("Analyze global index '%s' can't work with analyze specified partitions", idx.Name.O)
 			}
