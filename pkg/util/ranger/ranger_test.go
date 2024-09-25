@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -1686,7 +1687,7 @@ func TestTableShardIndex(t *testing.T) {
 					ds = selection.Children()[0].Children()[0].Children()[0].(*logicalop.DataSource)
 				}
 			}
-			newConds := ds.AddPrefix4ShardIndexes(ds.SCtx(), conds)
+			newConds := utilfuncp.AddPrefix4ShardIndexes(ds, ds.SCtx(), conds)
 			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, newConds))
 		})
 	}
