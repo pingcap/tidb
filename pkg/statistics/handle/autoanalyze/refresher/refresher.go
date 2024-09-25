@@ -180,25 +180,6 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 	return nil
 }
 
-func (r *Refresher) pushJob(job priorityqueue.AnalysisJob, calculator *priorityqueue.PriorityCalculator) {
-	if job == nil {
-		return
-	}
-	// We apply a penalty to larger tables, which can potentially result in a negative weight.
-	// To prevent this, we filter out any negative weights. Under normal circumstances, table sizes should not be negative.
-	weight := calculator.CalculateWeight(job)
-	if weight <= 0 {
-		statslogutil.SingletonStatsSamplerLogger().Warn(
-			"Table gets a negative weight",
-			zap.Float64("weight", weight),
-			zap.Stringer("job", job),
-		)
-	}
-	job.SetWeight(weight)
-	// Push the job onto the queue.
-	r.Jobs.Push(job)
-}
-
 // WaitAutoAnalyzeFinishedForTest waits for the auto analyze job to be finished.
 // Only used in the test.
 func (r *Refresher) WaitAutoAnalyzeFinishedForTest() {
