@@ -995,7 +995,6 @@ insert into test_gc_read_1(a, b) values (1, null);
 insert into test_gc_read_2(a, b) values (1, null);
 
 # TestSelectPartition
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists th, tr, tl;
 create table th (a int, b int) partition by hash(a) partitions 3;
 create table tr (a int, b int)
@@ -1046,7 +1045,6 @@ select * from tscalar where c1 in (40);
 select * from tscalar where c1 in (-40);
 select * from tscalar where c1 in (-40, -40);
 select * from tscalar where c1 in (-1);
-set @@session.tidb_enable_list_partition = default;
 
 # TestPrepareLoadData
 -- error 1295

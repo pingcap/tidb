@@ -190,6 +190,7 @@ const (
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
 	// TiDBEnableListTablePartition is used to control list table partition feature.
+	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBEnableListTablePartition = "tidb_enable_list_partition"
 
 	// TiDBSkipIsolationLevelCheck is used to control whether to return error when set unsupported transaction

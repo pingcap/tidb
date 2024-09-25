@@ -2081,9 +2081,13 @@ var defaultSysVars = []*SysVar{
 		}
 		return On, nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableListTablePartition, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableListTablePartition = TiDBOptOn(val)
-		return nil
+	// Keeping tidb_enable_list_partition here, to give errors if setting it to anything other than ON
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableListTablePartition, Value: On, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue, _ string, _ ScopeFlag) (string, error) {
+		vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(TiDBEnableListTablePartition))
+		if !TiDBOptOn(normalizedValue) {
+			return normalizedValue, errors.Errorf("tidb_enable_list_partition is now always on, and cannot be turned off")
+		}
+		return normalizedValue, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashJoinConcurrency, Value: strconv.Itoa(DefTiDBHashJoinConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
 		s.hashJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)

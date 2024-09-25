@@ -778,7 +778,6 @@ func TestCreateTableWithListPartition(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -940,7 +939,6 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t")
 	type errorCase struct {
 		sql string
@@ -1151,7 +1149,6 @@ func TestAlterTableTruncatePartitionByList(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),
 	    partition p1 values in (3,4),
@@ -1183,7 +1180,6 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -1792,7 +1788,6 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	tk.MustGetErrCode("alter table e6 exchange partition p1 with table e7", errno.ErrRowDoesNotMatchPartition)
 
 	// validation test for list partition
-	tk.MustExec("set @@tidb_enable_list_partition=true")
 	tk.MustExec(`CREATE TABLE t1 (store_id int)
 	PARTITION BY LIST (store_id) (
 		PARTITION pNorth VALUES IN (1, 2, 3, 4, 5),

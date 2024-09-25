@@ -1106,9 +1106,6 @@ type SessionVars struct {
 	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
 	OptimizerEnableNAAJ bool
 
-	// EnableListTablePartition enables list table partition feature.
-	EnableListTablePartition bool
-
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
 
