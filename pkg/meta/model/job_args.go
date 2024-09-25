@@ -55,7 +55,7 @@ type FinishedJobArgs interface {
 	fillFinishedJob(job *Job)
 }
 
-// EmptyArgs is the args for ddl job with nothing args.
+// EmptyArgs is the args for ddl job with no args.
 type EmptyArgs struct{}
 
 func (*EmptyArgs) fillJob(*Job) {}
