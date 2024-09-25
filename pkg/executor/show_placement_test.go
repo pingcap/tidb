@@ -172,12 +172,12 @@ func TestShowPlacementPrivilege(t *testing.T) {
 	tk.MustExec(`grant select on db2.t1 to 'user1'@'%'`)
 
 	// after grant
-	tk1.MustQuery("show placement").Check(testkit.Rows(
-		"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
+	tk1.MustQuery("show placement").Sort().Check(testkit.Rows(
 		"DATABASE db2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
+		"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" NULL",
+		"TABLE db2.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
 		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
 		"TABLE test.t3 PARTITION p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
-		"TABLE db2.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" PENDING",
 	))
 }
 
