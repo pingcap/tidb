@@ -1094,3 +1094,30 @@ func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 
 	return getOrDecodeArgsV2[*PlacementPolicyArgs](job)
 }
+
+// SetDefaultValueArgs is the argument for setting default value ddl.
+type SetDefaultValueArgs struct {
+	Col *Column `json:"column,omitempty"`
+}
+
+func (a *SetDefaultValueArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.Col}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetSetDefaultValueArgs get the args for setting default value ddl.
+func GetSetDefaultValueArgs(job *Job) (*SetDefaultValueArgs, error) {
+	if job.Version == JobVersion1 {
+		col := &Column{}
+		err := job.DecodeArgs(col)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &SetDefaultValueArgs{Col: col}, nil
+	}
+
+	return getOrDecodeArgsV2[*SetDefaultValueArgs](job)
+}

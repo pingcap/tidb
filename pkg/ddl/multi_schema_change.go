@@ -248,7 +248,8 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
 		}
 	case model.ActionSetDefaultValue:
-		col := job.Args[0].(*table.Column)
+		args := job.JobArgs.(*model.SetDefaultValueArgs)
+		col := args.Col
 		info.ModifyColumns = append(info.ModifyColumns, col.Name)
 	case model.ActionAlterIndexVisibility:
 		idxName := job.JobArgs.(*model.AlterIndexVisibilityArgs).IndexName

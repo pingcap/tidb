@@ -44,6 +44,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// Column is the same struct as model.Column.
 type Column model.Column
 
 // String implements fmt.Stringer interface.
