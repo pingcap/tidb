@@ -70,6 +70,8 @@ type ProbeV2 interface {
 	GetProbeCollision() uint64
 	// Reset probe collsion
 	ResetProbeCollision()
+	// Clear probe state
+	ClearProbeState()
 }
 
 type offsetAndLength struct {
@@ -254,6 +256,15 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 	return
+}
+
+func (j *baseJoinProbe) ClearProbeState() {
+	for i := 0; i < len(j.cachedBuildRows); i++ {
+		j.cachedBuildRows[i] = matchedRowInfo{}
+	}
+	if j.ctx.OtherCondition != nil {
+		j.rowIndexInfos = j.rowIndexInfos[:0]
+	}
 }
 
 func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
