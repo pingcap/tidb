@@ -1773,6 +1773,11 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		},
 		{
 			functionName: ast.DateAdd,
+			retType:      types.NewFieldType(mysql.TypeDuration),
+			args:         []Expression{durationColumn, stringColumn, NewStrConst("minute")},
+		},
+		{
+			functionName: ast.DateAdd,
 			retType:      types.NewFieldType(mysql.TypeDatetime),
 			args:         []Expression{durationColumn, stringColumn, NewStrConst("year_month")},
 		},
@@ -1790,6 +1795,11 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.DateSub,
 			retType:      types.NewFieldType(mysql.TypeDatetime),
 			args:         []Expression{datetimeColumn, intColumn, NewStrConst("quarter")},
+		},
+		{
+			functionName: ast.DateSub,
+			retType:      types.NewFieldType(mysql.TypeDuration),
+			args:         []Expression{durationColumn, stringColumn, NewStrConst("hour")},
 		},
 		{
 			functionName: ast.DateSub,
