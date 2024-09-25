@@ -28,19 +28,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func option(SQLs string) *indexadvisor.Option {
-	if SQLs == "" {
-		return &indexadvisor.Option{MaxNumIndexes: 3, MaxIndexWidth: 3}
-	}
-	return &indexadvisor.Option{MaxNumIndexes: 3, MaxIndexWidth: 3, SpecifiedSQLs: strings.Split(SQLs, ";")}
-}
-
 func check(ctx context.Context, t *testing.T, tk *testkit.TestKit,
-	expected string, opt *indexadvisor.Option) {
+	expected, SQLs string) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), opt)
+	var sqls []string
+	if SQLs != "" {
+		sqls = strings.Split(SQLs, ";")
+	}
+	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), sqls, nil)
 	if expected == "err" {
 		require.Error(t, err)
 		return
@@ -65,8 +62,8 @@ func TestIndexAdvisorInvalidQuery(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 
-	check(nil, t, tk, "err", option("xxx"))
-	check(nil, t, tk, "err", option("xxx;select a from t where a=1"))
+	check(nil, t, tk, "err", "xxx")
+	check(nil, t, tk, "err", "xxx;select a from t where a=1")
 }
 
 func TestIndexAdvisorFrequency(t *testing.T) {
@@ -74,29 +71,26 @@ func TestIndexAdvisorFrequency(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int)`)
-	opt := &indexadvisor.Option{
-		MaxNumIndexes: 1,
-		MaxIndexWidth: 3,
-	}
+	tk.MustExec(`recommend index set max_num_index=1`)
 
 	querySet := s.NewSet[indexadvisor.Query]()
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where a=1", Frequency: 2})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where b=1", Frequency: 1})
 	ctx := context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
-	check(ctx, t, tk, "test.t.a", opt)
+	check(ctx, t, tk, "test.t.a", "")
 
 	querySet = s.NewSet[indexadvisor.Query]()
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where a=1", Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where b=1", Frequency: 2})
 	ctx = context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
-	check(ctx, t, tk, "test.t.b", opt)
+	check(ctx, t, tk, "test.t.b", "")
 
 	querySet = s.NewSet[indexadvisor.Query]()
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where a=1", Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where b=1", Frequency: 2})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where c=1", Frequency: 100})
 	ctx = context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
-	check(ctx, t, tk, "test.t.c", opt)
+	check(ctx, t, tk, "test.t.c", "")
 }
 
 func TestIndexAdvisorBasic1(t *testing.T) {
@@ -105,11 +99,9 @@ func TestIndexAdvisorBasic1(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int)`)
 
-	check(nil, t, tk, "test.t.a", option("select * from t where a=1"))
-	check(nil, t, tk, "test.t.a,test.t.b",
-		option("select * from t where a=1; select * from t where b=1"))
-	check(nil, t, tk, "test.t.a,test.t.b",
-		option("select a from t where a=1; select b from t where b=1"))
+	check(nil, t, tk, "test.t.a", "select * from t where a=1")
+	check(nil, t, tk, "test.t.a,test.t.b", "select * from t where a=1; select * from t where b=1")
+	check(nil, t, tk, "test.t.a,test.t.b", "select a from t where a=1; select b from t where b=1")
 }
 
 func TestIndexAdvisorBasic2(t *testing.T) {
@@ -124,7 +116,7 @@ func TestIndexAdvisorBasic2(t *testing.T) {
 		sqls = append(sqls, sql)
 	}
 	sqls = append(sqls, "select * from t0 where a=1") // only 1 single useful SQL
-	check(nil, t, tk, "test.t0.a", option(strings.Join(sqls, ";")))
+	check(nil, t, tk, "test.t0.a", strings.Join(sqls, ";"))
 }
 
 func TestIndexAdvisorCTE(t *testing.T) {
@@ -134,9 +126,9 @@ func TestIndexAdvisorCTE(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, c int)`)
 
 	check(nil, t, tk, "test.t.a_b",
-		option("with cte as (select * from t where a=1) select * from cte where b=1"))
+		"with cte as (select * from t where a=1) select * from cte where b=1")
 	check(nil, t, tk, "test.t.a_b_c,test.t.c",
-		option("with cte as (select * from t where a=1) select * from cte where b=1; select * from t where c=1"))
+		"with cte as (select * from t where a=1) select * from cte where b=1; select * from t where c=1")
 }
 
 func TestIndexAdvisorFixControl43817(t *testing.T) {
@@ -146,9 +138,9 @@ func TestIndexAdvisorFixControl43817(t *testing.T) {
 	tk.MustExec(`create table t1 (a int, b int, c int)`)
 	tk.MustExec(`create table t2 (a int, b int, c int)`)
 
-	check(nil, t, tk, "err", option("select * from t1 where a=(select max(a) from t2)"))
+	check(nil, t, tk, "err", "select * from t1 where a=(select max(a) from t2)")
 	check(nil, t, tk, "err",
-		option("select * from t1 where a=(select max(a) from t2); select * from t1 where b=1"))
+		"select * from t1 where a=(select max(a) from t2); select * from t1 where b=1")
 }
 
 func TestIndexAdvisorView(t *testing.T) {
@@ -158,15 +150,16 @@ func TestIndexAdvisorView(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, c int)`)
 	tk.MustExec("create DEFINER=`root`@`127.0.0.1` view v as select * from t where a=1")
 
-	check(nil, t, tk, "test.t.b", option("select * from v where b=1"))
+	check(nil, t, tk, "test.t.b", "select * from v where b=1")
 	check(nil, t, tk, "test.t.b,test.t.c",
-		option("select * from v where b=1; select * from t where c=1"))
+		"select * from v where b=1; select * from t where c=1")
 }
 
 func TestIndexAdvisorMassive(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
+	tk.MustExec(`recommend index set max_num_index=3`)
 
 	for i := 0; i < 10; i++ {
 		sql := fmt.Sprintf(`create table t%d(c0 int,c1 int,c2 int,c3 int,c4 int,c5 int,c6 int,c7 int)`, i)
@@ -178,7 +171,7 @@ func TestIndexAdvisorMassive(t *testing.T) {
 			rand.Intn(10), rand.Intn(8), rand.Intn(8), rand.Intn(8))
 		sqls = append(sqls, sql)
 	}
-	r, err := indexadvisor.AdviseIndexes(context.Background(), tk.Session(), option(strings.Join(sqls, ";")))
+	r, err := indexadvisor.AdviseIndexes(context.Background(), tk.Session(), sqls, nil)
 	require.NoError(t, err) // no error and can get some recommendations
 	require.Len(t, r, 3)
 }
@@ -190,7 +183,7 @@ func TestIndexAdvisorIncorrectCurrentDB(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, c int)`)
 
 	tk.MustExec(`use mysql`)
-	check(nil, t, tk, "test.t.a", option("select * from test.t where a=1"))
+	check(nil, t, tk, "test.t.a", "select * from test.t where a=1")
 }
 
 func TestIndexAdvisorPrefix(t *testing.T) {
@@ -200,9 +193,9 @@ func TestIndexAdvisorPrefix(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, c int)`)
 
 	check(nil, t, tk, "test.t.a_b",
-		option("select * from t where a=1;select * from t where a=1 and b=1"))
+		"select * from t where a=1;select * from t where a=1 and b=1")
 	check(nil, t, tk, "test.t.a_b_c", // a_b_c can cover a_b
-		option("select * from t where a=1;select * from t where a=1 and b=1; select * from t where a=1 and b=1 and c=1"))
+		"select * from t where a=1;select * from t where a=1 and b=1; select * from t where a=1 and b=1 and c=1")
 }
 
 func TestIndexAdvisorCoveringIndex(t *testing.T) {
@@ -211,9 +204,9 @@ func TestIndexAdvisorCoveringIndex(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int, d int)`)
 
-	check(nil, t, tk, "test.t.a_b", option("select b from t where a=1"))
-	check(nil, t, tk, "test.t.a_b_c", option("select b, c from t where a=1"))
-	check(nil, t, tk, "test.t.a_d_b", option("select b from t where a=1 and d=1"))
+	check(nil, t, tk, "test.t.a_b", "select b from t where a=1")
+	check(nil, t, tk, "test.t.a_b_c", "select b, c from t where a=1")
+	check(nil, t, tk, "test.t.a_d_b", "select b from t where a=1 and d=1")
 }
 
 func TestIndexAdvisorExistingIndex(t *testing.T) {
@@ -222,10 +215,10 @@ func TestIndexAdvisorExistingIndex(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int, index ab (a, b))`)
 
-	check(nil, t, tk, "", option("select * from t where a=1")) // covered by existing a_b
-	check(nil, t, tk, "", option("select * from t where a=1; select * from t where a=1 and b=1"))
+	check(nil, t, tk, "", "select * from t where a=1") // covered by existing a_b
+	check(nil, t, tk, "", "select * from t where a=1; select * from t where a=1 and b=1")
 	check(nil, t, tk, "test.t.c",
-		option("select * from t where a=1; select * from t where a=1 and b=1; select * from t where c=1"))
+		"select * from t where a=1; select * from t where a=1 and b=1; select * from t where c=1")
 }
 
 func TestIndexAdvisorWeb3Bench(t *testing.T) {
@@ -376,12 +369,9 @@ FROM (SELECT block_number AS block_receipts
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: q8, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: q9, Frequency: 1})
 
+	tk.MustExec(`recommend index set max_num_index=3`)
 	ctx := context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
-	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), &indexadvisor.Option{
-		MaxNumIndexes: 3,
-		MaxIndexWidth: 3,
-		SpecifiedSQLs: nil,
-	})
+	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, nil)
 	require.NoError(t, err)
 	require.True(t, len(r) > 0)
 }
