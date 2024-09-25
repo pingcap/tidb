@@ -117,7 +117,6 @@ func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error
 	for k, v := range colLength {
 		c.colLength[k] = v
 	}
-	c.modifyTime = time.Now()
 	return nil
 }
 
