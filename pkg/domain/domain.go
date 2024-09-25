@@ -2380,10 +2380,8 @@ func (do *Domain) loadStatsWorker() {
 		lease = 3 * time.Second
 	}
 	loadTicker := time.NewTicker(lease)
-	updStatsHealthyTicker := time.NewTicker(20 * lease)
 	defer func() {
 		loadTicker.Stop()
-		updStatsHealthyTicker.Stop()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
 	do.initStats()
@@ -2400,8 +2398,6 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
 			}
-		case <-updStatsHealthyTicker.C:
-			statsHandle.UpdateStatsHealthyMetrics()
 		case <-do.exit:
 			return
 		}
@@ -2527,6 +2523,64 @@ func (do *Domain) handleDDLEvent() {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
+	logutil.BgLogger().Info("updateStatsWorker started.")
+	lease := do.statsLease
+	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
+	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
+	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
+	gcStatsTicker := time.NewTicker(100 * lease)
+	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
+	updateStatsHealthyTicker := time.NewTicker(20 * lease)
+	readMemTicker := time.NewTicker(memory.ReadMemInterval)
+	statsHandle := do.StatsHandle()
+	defer func() {
+		dumpColStatsUsageTicker.Stop()
+		gcStatsTicker.Stop()
+		deltaUpdateTicker.Stop()
+		readMemTicker.Stop()
+		updateStatsHealthyTicker.Stop()
+		do.SetStatsUpdating(false)
+		logutil.BgLogger().Info("updateStatsWorker exited.")
+	}()
+	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
+
+	for {
+		select {
+		case <-do.exit:
+			do.updateStatsWorkerExitPreprocessing(statsHandle, owner)
+			return
+		case <-deltaUpdateTicker.C:
+			err := statsHandle.DumpStatsDeltaToKV(false)
+			if err != nil {
+				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
+			}
+		case <-gcStatsTicker.C:
+			if !owner.IsOwner() {
+				continue
+			}
+			err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
+			if err != nil {
+				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
+			}
+			do.CheckAutoAnalyzeWindows()
+		case <-dumpColStatsUsageTicker.C:
+			err := statsHandle.DumpColStatsUsageToKV()
+			if err != nil {
+				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
+			}
+		case <-readMemTicker.C:
+			memory.ForceReadMemStats()
+		case <-updateStatsHealthyTicker.C:
+			statsHandle.UpdateStatsHealthyMetrics()
+		}
+	}
+}
+
+>>>>>>> 0d5e0e921f6 (domain: move UpdateStatsHealthyMetrics into updateStatsWorker (#55386))
 func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "autoAnalyzeWorker", nil, false)
 	statsHandle := do.StatsHandle()
