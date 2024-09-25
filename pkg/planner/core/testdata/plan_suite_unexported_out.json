@@ -1140,22 +1140,7 @@
         "PrunedOutput": "test.pt2.a: 0, test.pt2.b: 1, test.pt2.c: 2, test.pt2.d: 3, test.pt2.e: 4, test.pt2.c_str: 5, test.pt2.d_str: 6, test.pt2.e_str: 7, test.pt2.f: 8, test.pt2.g: 9, test.pt2.h: 10, test.pt2.i_date: 11, test.pt2.ptn: 12",
         "FullLayoutInfo": [
           [
-            "tid: 8, [start, end]: [0, 13] ",
-            "handle cols: test.pt2.a:0",
-            "index c_d_e: c d e ",
-            "col offset: [2 3 4]",
-            "index x: e ",
-            "col offset: [4]",
-            "index f: f ",
-            "col offset: [8]",
-            "index g: g ",
-            "col offset: [9]",
-            "index f_g: f g ",
-            "col offset: [8 9]",
-            "index c_d_e_str: c_str d_str e_str ",
-            "col offset: [5 6 7]",
-            "index e_d_c_str_prefix: e_str d_str c_str ",
-            "col offset: [7 6 5]"
+            "no column-pruning happened"
           ]
         ],
         "InsidePlan": "PartitionUnionAll{TableReader(Table(pt2))->TableReader(Table(pt2))}"
