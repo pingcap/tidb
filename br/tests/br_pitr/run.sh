@@ -172,8 +172,8 @@ fi
 echo "restart a services"
 restart_services
 
-echo "corrupt a log file"
 filename=$(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta" | tail -n 1)
+echo "corrupt a log file $filename"
 filename_temp=$filename"_temp"
 filename_bak=$filename"_bak"
 echo "corruption" > $filename_temp
