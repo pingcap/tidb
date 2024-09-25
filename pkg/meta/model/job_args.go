@@ -55,6 +55,11 @@ type FinishedJobArgs interface {
 	fillFinishedJob(job *Job)
 }
 
+// EmptyArgs is the args for ddl job with no args.
+type EmptyArgs struct{}
+
+func (*EmptyArgs) fillJob(*Job) {}
+
 // CreateSchemaArgs is the arguments for create schema job.
 type CreateSchemaArgs struct {
 	DBInfo *DBInfo `json:"db_info,omitempty"`
@@ -995,6 +1000,123 @@ func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
 			newSchemaIDs, newTableNames, tableIDs), nil
 	}
 	return getOrDecodeArgsV2[*RenameTablesArgs](job)
+}
+
+// AlterSequenceArgs is the arguments for alter sequence ddl job.
+type AlterSequenceArgs struct {
+	Ident      ast.Ident             `json:"ident,omitempty"`
+	SeqOptions []*ast.SequenceOption `json:"seq_options,omitempty"`
+}
+
+func (a *AlterSequenceArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.Ident, a.SeqOptions}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAlterSequenceArgs gets the args for alter Sequence ddl job.
+func GetAlterSequenceArgs(job *Job) (*AlterSequenceArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			ident      ast.Ident
+			seqOptions []*ast.SequenceOption
+		)
+		if err := job.DecodeArgs(&ident, &seqOptions); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AlterSequenceArgs{
+			Ident:      ident,
+			SeqOptions: seqOptions,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*AlterSequenceArgs](job)
+}
+
+// ModifyTableAutoIDCacheArgs is the arguments for Modify Table AutoID Cache ddl job.
+type ModifyTableAutoIDCacheArgs struct {
+	NewCache int64 `json:"new_cache,omitempty"`
+}
+
+func (a *ModifyTableAutoIDCacheArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.NewCache}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetModifyTableAutoIDCacheArgs gets the args for modify table autoID cache ddl job.
+func GetModifyTableAutoIDCacheArgs(job *Job) (*ModifyTableAutoIDCacheArgs, error) {
+	if job.Version == JobVersion1 {
+		var newCache int64
+		if err := job.DecodeArgs(&newCache); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &ModifyTableAutoIDCacheArgs{
+			NewCache: newCache,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*ModifyTableAutoIDCacheArgs](job)
+}
+
+// ShardRowIDArgs is the arguments for shard row ID ddl job.
+type ShardRowIDArgs struct {
+	ShardRowIDBits uint64 `json:"shard_row_id_bits,omitempty"`
+}
+
+func (a *ShardRowIDArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.ShardRowIDBits}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetShardRowIDArgs gets the args for shard row ID ddl job.
+func GetShardRowIDArgs(job *Job) (*ShardRowIDArgs, error) {
+	if job.Version == JobVersion1 {
+		var val uint64
+		if err := job.DecodeArgs(&val); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &ShardRowIDArgs{
+			ShardRowIDBits: val,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*ShardRowIDArgs](job)
+}
+
+// AlterTTLInfoArgs is the arguments for alter ttl info job.
+type AlterTTLInfoArgs struct {
+	TTLInfo            *TTLInfo `json:"ttl_info,omitempty"`
+	TTLEnable          *bool    `json:"ttl_enable,omitempty"`
+	TTLCronJobSchedule *string  `json:"ttl_cron_job_schedule,omitempty"`
+}
+
+func (a *AlterTTLInfoArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.TTLInfo, a.TTLEnable, a.TTLCronJobSchedule}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAlterTTLInfoArgs gets the args for alter ttl info job.
+func GetAlterTTLInfoArgs(job *Job) (*AlterTTLInfoArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &AlterTTLInfoArgs{}
+		if err := job.DecodeArgs(&args.TTLInfo, &args.TTLEnable, &args.TTLCronJobSchedule); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+
+	return getOrDecodeArgsV2[*AlterTTLInfoArgs](job)
 }
 
 // GetCheckConstraintArgs gets the AlterCheckConstraint args.
