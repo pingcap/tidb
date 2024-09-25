@@ -22,6 +22,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -38,6 +39,8 @@ func TestKey(key string) string {
 type Option struct {
 	MaxNumIndexes int
 	MaxIndexWidth int
+	MaxNumQuery   int
+	Timeout       time.Duration
 	SpecifiedSQLs []string
 }
 
@@ -48,7 +51,12 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
 		return nil, errors.New("nil input")
 	}
 
-	advisorLogger().Info("start to recommend indexes")
+	advisorLogger().Info("fill index advisor option")
+	if err := fillOption(sctx, option); err != nil {
+		advisorLogger().Error("fill index advisor option failed", zap.Error(err))
+		return nil, err
+	}
+	advisorLogger().Info("index advisor option filled and start", zap.Any("option", option))
 	defer func() {
 		if r := recover(); r != nil {
 			advisorLogger().Error("panic in AdviseIndexes", zap.Any("recover", r))
@@ -61,7 +69,7 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
 	advisorLogger().Info("what-if optimizer prepared")
 
 	defaultDB := sctx.GetSessionVars().CurrentDB
-	querySet, err := prepareQuerySet(ctx, sctx, defaultDB, opt, option.SpecifiedSQLs)
+	querySet, err := prepareQuerySet(ctx, sctx, defaultDB, opt, option)
 	if err != nil {
 		advisorLogger().Error("prepare workload failed", zap.Error(err))
 		return nil, err
@@ -76,7 +84,7 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
 	advisorLogger().Info("indexable columns filled", zap.Int("indexable-cols", indexableColSet.Size()))
 
 	// start the advisor
-	indexes, err := adviseIndexes(querySet, indexableColSet, option.MaxNumIndexes, option.MaxIndexWidth, opt)
+	indexes, err := adviseIndexes(querySet, indexableColSet, opt, option)
 	if err != nil {
 		advisorLogger().Error("advise indexes failed", zap.Error(err))
 		return nil, err
@@ -94,11 +102,11 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
 
 // prepareQuerySet prepares the target queries for the index advisor.
 func prepareQuerySet(ctx context.Context, sctx sessionctx.Context,
-	defaultDB string, opt Optimizer, specifiedSQLs []string) (s.Set[Query], error) {
+	defaultDB string, opt Optimizer, option *Option) (s.Set[Query], error) {
 	advisorLogger().Info("prepare target query set")
 	querySet := s.NewSet[Query]()
-	if len(specifiedSQLs) > 0 { // if target queries are specified
-		for _, sql := range specifiedSQLs {
+	if len(option.SpecifiedSQLs) > 0 { // if target queries are specified
+		for _, sql := range option.SpecifiedSQLs {
 			querySet.Add(Query{SchemaName: defaultDB, Text: sql, Frequency: 1})
 		}
 	} else {
@@ -106,7 +114,7 @@ func prepareQuerySet(ctx context.Context, sctx sessionctx.Context,
 			querySet = ctx.Value(TestKey("query_set")).(s.Set[Query])
 		} else {
 			var err error
-			if querySet, err = loadQuerySetFromStmtSummary(sctx); err != nil {
+			if querySet, err = loadQuerySetFromStmtSummary(sctx, option); err != nil {
 				return nil, err
 			}
 			if querySet.Size() == 0 {
@@ -117,24 +125,27 @@ func prepareQuerySet(ctx context.Context, sctx sessionctx.Context,
 
 	// filter invalid queries
 	var err error
-	querySet, err = RestoreSchemaName(defaultDB, querySet, len(specifiedSQLs) == 0)
+	querySet, err = RestoreSchemaName(defaultDB, querySet, len(option.SpecifiedSQLs) == 0)
 	if err != nil {
 		return nil, err
 	}
-	querySet, err = FilterSQLAccessingSystemTables(querySet, len(specifiedSQLs) == 0)
+	querySet, err = FilterSQLAccessingSystemTables(querySet, len(option.SpecifiedSQLs) == 0)
 	if err != nil {
 		return nil, err
 	}
-	querySet, err = FilterInvalidQueries(opt, querySet, len(specifiedSQLs) == 0)
+	querySet, err = FilterInvalidQueries(opt, querySet, len(option.SpecifiedSQLs) == 0)
 	if err != nil {
 		return nil, err
+	}
+	if querySet.Size() == 0 {
+		return nil, errors.New("empty query set after filtering invalid queries")
 	}
 	advisorLogger().Info("finish query preparation", zap.Int("num_query", querySet.Size()))
 	return querySet, nil
 }
 
-func loadQuerySetFromStmtSummary(sctx sessionctx.Context) (s.Set[Query], error) {
-	sql := `SELECT any_value(schema_name) as schema_name,
+func loadQuerySetFromStmtSummary(sctx sessionctx.Context, option *Option) (s.Set[Query], error) {
+	template := `SELECT any_value(schema_name) as schema_name,
 				any_value(query_sample_text) as query_sample_text,
 				sum(cast(exec_count as double)) as exec_count
 			FROM information_schema.statements_summary_history
@@ -144,8 +155,8 @@ func loadQuerySetFromStmtSummary(sctx sessionctx.Context) (s.Set[Query], error) 
 				upper(schema_name) not in ("MYSQL", "INFORMATION_SCHEMA", "METRICS_SCHEMA", "PERFORMANCE_SCHEMA")
 			GROUP BY digest
 			ORDER BY sum(exec_count) DESC
-			LIMIT 5000`
-	rows, err := exec(sctx, sql)
+			LIMIT %?`
+	rows, err := exec(sctx, template, option.MaxNumQuery)
 	if err != nil {
 		return nil, err
 	}

@@ -700,6 +700,14 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 	return result, true
 }
 
+func compareGlobalIndex(lhs, rhs *candidatePath) int {
+	if lhs.path.IsTablePath() || rhs.path.IsTablePath() ||
+		len(lhs.path.PartialIndexPaths) != 0 || len(rhs.path.PartialIndexPaths) != 0 {
+		return 0
+	}
+	return compareBool(lhs.path.Index.Global, rhs.path.Index.Global)
+}
+
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 func compareCandidates(sctx base.PlanContext, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
@@ -728,7 +736,8 @@ func compareCandidates(sctx base.PlanContext, prop *property.PhysicalProperty, l
 	// Below compares the two candidate paths on three dimensions:
 	// (1): the set of columns that occurred in the access condition,
 	// (2): does it require a double scan,
-	// (3): whether or not it matches the physical property.
+	// (3): whether or not it matches the physical property,
+	// (4): it's a global index path or not.
 	// If `x` is not worse than `y` at all factors,
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
@@ -739,12 +748,12 @@ func compareCandidates(sctx base.PlanContext, prop *property.PhysicalProperty, l
 	if !comparable2 {
 		return 0
 	}
-	matchResult := compareBool(lhs.isMatchProp, rhs.isMatchProp)
-	sum := accessResult + scanResult + matchResult
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && sum > 0 {
+	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
+	sum := accessResult + scanResult + matchResult + globalResult
+	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
 		return 1
 	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && sum < 0 {
+	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
 		return -1
 	}
 	return 0
@@ -924,7 +933,19 @@ func matchPropForIndexMergeAlternatives(ds *DataSource, path *util.AccessPath, p
 				if len(tmpOneItemAlternatives[b].IndexFilters) > 0 {
 					rhsCountAfter = tmpOneItemAlternatives[b].CountAfterIndex
 				}
-				return cmp.Compare(lhsCountAfter, rhsCountAfter)
+				res := cmp.Compare(lhsCountAfter, rhsCountAfter)
+				if res != 0 {
+					return res
+				}
+				// If CountAfterAccess is same, any path is global index should be the first one.
+				var lIsGlobalIndex, rIsGlobalIndex int
+				if !tmpOneItemAlternatives[a].IsTablePath() && tmpOneItemAlternatives[a].Index.Global {
+					lIsGlobalIndex = 1
+				}
+				if !tmpOneItemAlternatives[b].IsTablePath() && tmpOneItemAlternatives[b].Index.Global {
+					rIsGlobalIndex = 1
+				}
+				return -cmp.Compare(lIsGlobalIndex, rIsGlobalIndex)
 			})
 		}
 		allMatchIdxes = append(allMatchIdxes, idxWrapper{matchIdxes, pathIdx})

@@ -44,13 +44,17 @@ func testPlacementPolicyInfo(t *testing.T, store kv.Storage, name string, settin
 
 func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, policyInfo *model.PolicyInfo) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaName: policyInfo.Name.L,
 		Type:       model.ActionCreatePlacementPolicy,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{policyInfo},
 	}
+	args := &model.PlacementPolicyArgs{
+		Policy: policyInfo,
+	}
+
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, false))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)

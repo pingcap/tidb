@@ -655,7 +655,6 @@ func TestCreateTableWithPlacementPolicy(t *testing.T) {
 		"PARTITION p1 VALUES LESS THAN (1000) placement policy y," +
 		"PARTITION p2 VALUES LESS THAN (10000))",
 	)
-	tk.MustExec("set tidb_enable_list_partition=1")
 	tk.MustExec("create table t_list_p(name varchar(10)) placement policy x partition by list columns(name) (" +
 		"PARTITION p0 VALUES IN ('a', 'b')," +
 		"PARTITION p1 VALUES IN ('c', 'd') placement policy y," +

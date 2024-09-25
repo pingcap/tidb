@@ -1186,3 +1186,53 @@ func GetRecoverArgs(job *Job) (*RecoverArgs, error) {
 
 	return getOrDecodeArgsV2[*RecoverArgs](job)
 }
+
+// PlacementPolicyArgs is the argument for create/alter/drop placement policy
+type PlacementPolicyArgs struct {
+	Policy         *PolicyInfo  `json:"policy,omitempty"`
+	ReplaceOnExist bool         `json:"replace_on_exist,omitempty"`
+	PolicyName     pmodel.CIStr `json:"policy_name,omitempty"`
+
+	// it's set for alter/drop policy in v2
+	PolicyID int64 `json:"policy_id"`
+}
+
+func (a *PlacementPolicyArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionCreatePlacementPolicy {
+			job.Args = []any{a.Policy, a.ReplaceOnExist}
+		} else if job.Type == ActionAlterPlacementPolicy {
+			job.Args = []any{a.Policy}
+		} else {
+			intest.Assert(job.Type == ActionDropPlacementPolicy, "Invalid job type for PlacementPolicyArgs")
+			job.Args = []any{a.PolicyName}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetPlacementPolicyArgs gets the placement policy args.
+func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &PlacementPolicyArgs{PolicyID: job.SchemaID}
+		var err error
+
+		if job.Type == ActionCreatePlacementPolicy {
+			err = job.DecodeArgs(&args.Policy, &args.ReplaceOnExist)
+		} else if job.Type == ActionAlterPlacementPolicy {
+			err = job.DecodeArgs(&args.Policy)
+		} else {
+			intest.Assert(job.Type == ActionDropPlacementPolicy, "Invalid job type for PlacementPolicyArgs")
+			err = job.DecodeArgs(&args.PolicyName)
+		}
+
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		return args, err
+	}
+
+	return getOrDecodeArgsV2[*PlacementPolicyArgs](job)
+}
