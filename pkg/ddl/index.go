@@ -886,14 +886,15 @@ func (w *worker) checkVectorIndexProcess(jobCtx *jobContext, tbl table.Table, jo
 	waitTimeout := ReorgWaitTimeout
 	ticker := time.NewTicker(waitTimeout)
 	defer ticker.Stop()
+	notAddedRowCnt := int64(-1)
 	for {
 		select {
 		case <-w.ddlCtx.ctx.Done():
 			return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 		case <-ticker.C:
-			logutil.DDLLogger().Info("[ddl] index backfill state running, check vector index process",
-				zap.Stringer("job", job), zap.Stringer("index name", index.Name), zap.Int64("index ID", index.ID),
-				zap.Duration("wait time", waitTimeout), zap.Int64("total added row count", job.RowCount))
+			logutil.DDLLogger().Info("[ddl] index backfill state running, check vector index process", zap.Stringer("job", job),
+				zap.Stringer("index name", index.Name), zap.Int64("index ID", index.ID), zap.Duration("wait time", waitTimeout),
+				zap.Int64("total added row count", job.RowCount), zap.Int64("not added row count", notAddedRowCnt))
 			return dbterror.ErrWaitReorgTimeout
 		default:
 		}
@@ -904,10 +905,11 @@ func (w *worker) checkVectorIndexProcess(jobCtx *jobContext, tbl table.Table, jo
 			return errors.Trace(dbterror.ErrNotOwner)
 		}
 
-		isDone, addedIndexCnt, err := w.checkVectorIndexProcessOnce(jobCtx, tbl, index.ID)
+		isDone, notAddedIndexCnt, addedIndexCnt, err := w.checkVectorIndexProcessOnce(jobCtx, tbl, index.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		notAddedRowCnt = notAddedIndexCnt
 		job.RowCount = addedIndexCnt
 
 		if isDone {
@@ -920,15 +922,16 @@ func (w *worker) checkVectorIndexProcess(jobCtx *jobContext, tbl table.Table, jo
 }
 
 // checkVectorIndexProcessOnce checks the backfill process of a vector index from TiFlash once.
-func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table, indexID int64) (bool, int64, error) {
+func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table, indexID int64) (
+	isDone bool, notAddedIndexCnt, addedIndexCnt int64, err error) {
 	failpoint.Inject("MockCheckVectorIndexProcess", func(val failpoint.Value) {
 		if valInt, ok := val.(int); ok {
 			if valInt < 0 {
-				failpoint.Return(false, 0, dbterror.ErrTiFlashBackfillIndex.FastGenByArgs("mock a check error"))
+				failpoint.Return(false, 0, 0, dbterror.ErrTiFlashBackfillIndex.FastGenByArgs("mock a check error"))
 			} else if valInt == 0 {
-				failpoint.Return(false, 0, nil)
+				failpoint.Return(false, 0, 0, nil)
 			} else {
-				failpoint.Return(true, int64(valInt), nil)
+				failpoint.Return(true, 0, int64(valInt), nil)
 			}
 		}
 	})
@@ -937,11 +940,11 @@ func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table
 		tbl.Meta().ID, indexID)
 	rows, err := w.sess.Execute(jobCtx.ctx, sql, "add_vector_index_check_result")
 	if err != nil || len(rows) == 0 {
-		return false, 0, errors.Trace(err)
+		return false, 0, 0, errors.Trace(err)
 	}
 
 	// Get and process info from multiple TiFlash nodes.
-	notAddedIndexCnt, addedIndexCnt, errMsg := int64(0), int64(0), ""
+	errMsg := ""
 	for _, row := range rows {
 		notAddedIndexCnt += row.GetInt64(0)
 		addedIndexCnt += row.GetInt64(1)
@@ -952,13 +955,13 @@ func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table
 		}
 	}
 	if err != nil {
-		return false, 0, errors.Trace(err)
+		return false, 0, 0, errors.Trace(err)
 	}
 	if notAddedIndexCnt != 0 {
-		return false, 0, nil
+		return false, 0, 0, nil
 	}
 
-	return true, rows[0].GetInt64(1), nil
+	return true, notAddedIndexCnt, addedIndexCnt, nil
 }
 
 func (w *worker) onCreateIndex(jobCtx *jobContext, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
