@@ -293,7 +293,7 @@ func TestTableRange(t *testing.T) {
 			for i, cond := range selection.Conditions {
 				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
-			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
+			tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
 			col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
 			require.NotNil(t, col)
 			var filter []expression.Expression
@@ -489,7 +489,7 @@ create table t(
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 			require.NoError(t, err)
 			selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
+			tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
@@ -853,7 +853,7 @@ func TestColumnRange(t *testing.T) {
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 			require.NoError(t, err)
 			sel := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-			ds, ok := sel.Children()[0].(*plannercore.DataSource)
+			ds, ok := sel.Children()[0].(*logicalop.DataSource)
 			require.True(t, ok)
 			conds := make([]expression.Expression, len(sel.Conditions))
 			for i, cond := range sel.Conditions {
@@ -1013,7 +1013,7 @@ func TestIndexRangeForYear(t *testing.T) {
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 			require.NoError(t, err)
 			selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
+			tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
@@ -1084,7 +1084,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 			require.NoError(t, err)
 			selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
+			tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
@@ -1433,7 +1433,7 @@ create table t(
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 			require.NoError(t, err)
 			selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
+			tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
@@ -1680,10 +1680,10 @@ func TestTableShardIndex(t *testing.T) {
 			for i, cond := range selection.Conditions {
 				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
-			ds, ok := selection.Children()[0].(*plannercore.DataSource)
+			ds, ok := selection.Children()[0].(*logicalop.DataSource)
 			if !ok {
 				if tt.childLevel == 4 {
-					ds = selection.Children()[0].Children()[0].Children()[0].(*plannercore.DataSource)
+					ds = selection.Children()[0].Children()[0].Children()[0].(*logicalop.DataSource)
 				}
 			}
 			newConds := ds.AddPrefix4ShardIndexes(ds.SCtx(), conds)
@@ -2338,7 +2338,7 @@ create table t(
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err, fmt.Sprintf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
+		tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
 		require.NotNil(t, selection, fmt.Sprintf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {
@@ -2502,7 +2502,7 @@ func TestMinAccessCondsForDNFCond(t *testing.T) {
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 			require.NoError(t, err)
 			selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo
+			tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {

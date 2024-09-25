@@ -456,7 +456,7 @@ func TestSelectivity(t *testing.T) {
 		require.NoErrorf(t, err, "for building plan, expr %s", err, tt.exprs)
 
 		sel := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-		ds := sel.Children()[0].(*plannercore.DataSource)
+		ds := sel.Children()[0].(*logicalop.DataSource)
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo, ds.Schema().Columns)
 
@@ -515,7 +515,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 		require.NoErrorf(t, err, "error %v, for building plan, sql %s", err, tt)
 
 		sel := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-		ds := sel.Children()[0].(*plannercore.DataSource)
+		ds := sel.Children()[0].(*logicalop.DataSource)
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo, ds.Schema().Columns)
 
