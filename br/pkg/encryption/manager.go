@@ -84,5 +84,7 @@ func (m *Manager) Decrypt(ctx context.Context, content []byte, fileEncryptionInf
 }
 
 func (m *Manager) Close() {
-	m.masterKeyBackends.Close()
+	if m.masterKeyBackends != nil {
+		m.masterKeyBackends.Close()
+	}
 }
