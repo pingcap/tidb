@@ -135,7 +135,7 @@ func buildHashJoinV2Exec(info *hashJoinInfo) *HashJoinV2Exec {
 	for i := uint(0); i < uint(concurrency); i++ {
 		e.ProbeWorkers[i] = &ProbeWorkerV2{
 			HashJoinCtx: e.HashJoinCtxV2,
-			JoinProbe:   NewJoinProbe(e.HashJoinCtxV2, i, info.joinType, probeKeyColIdx, joinedTypes, e.ProbeKeyTypes, e.RightAsBuildSide, e.ProbeSideTupleFetcher.ProbeSideExec.RetFieldTypes()),
+			JoinProbe:   NewJoinProbe(e.HashJoinCtxV2, i, info.joinType, probeKeyColIdx, joinedTypes, e.ProbeKeyTypes, e.RightAsBuildSide),
 		}
 		e.ProbeWorkers[i].WorkerID = i
 		e.BuildWorkers[i] = NewJoinBuildWorkerV2(e.HashJoinCtxV2, i, buildSideExec, buildKeyColIdx, exec.RetTypes(buildSideExec))
