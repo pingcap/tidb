@@ -406,7 +406,7 @@ func buildTableInfoWithCheck(ctx *metabuild.Context, s *ast.CreateTableStmt, dbC
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(tbInfo); err != nil {
+	if err = checkTableInfoValidExtra(ctx, tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
@@ -512,7 +512,7 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName pmodel.CIStr, table
 // name length and column count.
 // (checkTableInfoValid is also used in repairing objects which don't perform
 // these checks. Perhaps the two functions should be merged together regardless?)
-func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
+func checkTableInfoValidExtra(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	if err := checkTooLongTable(tbInfo.Name); err != nil {
 		return err
 	}
@@ -532,7 +532,7 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 	if err := checkColumnsAttributes(tbInfo.Columns); err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkGlobalIndexes(tbInfo); err != nil {
+	if err := checkGlobalIndexes(ctx, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
