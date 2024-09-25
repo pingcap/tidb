@@ -884,12 +884,13 @@ func (w *worker) checkVectorIndexProcessOnTiFlash(jobCtx *jobContext, t *meta.Me
 
 func (w *worker) checkVectorIndexProcess(jobCtx *jobContext, tbl table.Table, job *model.Job, index *model.IndexInfo) error {
 	waitTimeout := ReorgWaitTimeout
-	ticker := time.Tick(waitTimeout)
+	ticker := time.NewTicker(waitTimeout)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-w.ddlCtx.ctx.Done():
 			return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
-		case <-ticker:
+		case <-ticker.C:
 			logutil.DDLLogger().Info("[ddl] index backfill state running, check vector index process",
 				zap.Stringer("job", job), zap.Stringer("index name", index.Name), zap.Int64("index ID", index.ID),
 				zap.Duration("wait time", waitTimeout), zap.Int64("total added row count", job.RowCount))

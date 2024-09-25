@@ -1266,7 +1266,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test multi-schema change for unsupported operations
 	tk.MustContainErrMsg("alter table t drop column b;",
-		"can't drop column b with composite index covered or Primary Key or Vector Key covered now")
+		"can't drop column b with Vector Key covered now")
 	tk.MustContainErrMsg("alter table t add index idx2(a), add vector index idx3((vec_l2_distance(b))) USING HNSW COMMENT 'b comment'",
 		"Unsupported multi schema change for add vector index")
 
