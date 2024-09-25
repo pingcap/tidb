@@ -210,7 +210,8 @@ func (m *MetadataHelper) decodeCompressedData(data []byte, compressionType backu
 		"failed to decode compressed data: compression type is unimplemented. type id is %d", compressionType)
 }
 
-func (m *MetadataHelper) verifyChecksumAndDecryptIfNeeded(ctx context.Context, data []byte, encryptionInfo *encryptionpb.FileEncryptionInfo) ([]byte, error) {
+func (m *MetadataHelper) verifyChecksumAndDecryptIfNeeded(ctx context.Context, data []byte,
+	encryptionInfo *encryptionpb.FileEncryptionInfo) ([]byte, error) {
 	// no need to decrypt
 	if encryptionInfo == nil {
 		return data, nil
@@ -226,7 +227,8 @@ func (m *MetadataHelper) verifyChecksumAndDecryptIfNeeded(ctx context.Context, d
 		expectedChecksumHex := hex.EncodeToString(encryptionInfo.Checksum)
 		actualChecksumHex := hex.EncodeToString(actualChecksum[:])
 		if expectedChecksumHex != actualChecksumHex {
-			return nil, errors.Errorf("checksum mismatch before decryption, expected %s, actual %s", expectedChecksumHex, actualChecksumHex)
+			return nil, errors.Errorf("checksum mismatch before decryption, expected %s, actual %s",
+				expectedChecksumHex, actualChecksumHex)
 		}
 	}
 
