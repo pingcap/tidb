@@ -2117,3 +2117,35 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 		require.Equal(t, tc.expectMissNum, missNum.Load())
 	}
 }
+
+func TestIndexMergeCarePreferTiflash(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`i` bigint(20) NOT NULL, " +
+		"`w` varchar(32) NOT NULL," +
+		"`l` varchar(32) NOT NULL," +
+		"`a` tinyint(4) NOT NULL DEFAULT '0'," +
+		"`m` int(11) NOT NULL DEFAULT '0'," +
+		"`s` int(11) NOT NULL DEFAULT '0'," +
+		"PRIMARY KEY (`i`) /*T![clustered_index] NONCLUSTERED */," +
+		"KEY `idx_win_user_site_code` (`w`,`m`)," +
+		"KEY `idx_lose_user_site_code` (`l`,`m`)," +
+		"KEY `idx_win_site_code_status` (`w`,`a`)," +
+		"KEY `idx_lose_site_code_status` (`l`,`a`)" +
+		")")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustQuery("explain format=\"brief\" SELECT" +
+		"      /*+ read_from_storage(tiflash[a]) */ a.i FROM t a WHERE a.s = 0 AND a.a NOT IN (-1, 0) AND m >= 1726910326 AND m <= 1726910391 AND ( a.w IN ('1123') OR a.l IN ('1123'))").Check(
+		testkit.Rows("TableReader 0.00 root  MppVersion: 2, data:ExchangeSender",
+			"└─ExchangeSender 0.00 mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Projection 0.00 mpp[tiflash]  test.t.i",
+			"    └─Selection 0.00 mpp[tiflash]  ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",
+			"      └─TableFullScan 10.00 mpp[tiflash] table:a pushed down filter:eq(test.t.s, 0), keep order:false, stats:pseudo"))
+}

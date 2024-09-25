@@ -308,6 +308,19 @@ func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok
 	return slice[idx], true
 }
 
+func (is *infoSchema) SchemaNameByTableID(tableID int64) (schemaName pmodel.CIStr, ok bool) {
+	tbl, ok := is.TableByID(stdctx.Background(), tableID)
+	if !ok {
+		return
+	}
+	db, ok := is.SchemaByID(tbl.Meta().DBID)
+	if !ok {
+		return
+	}
+
+	return db.Name, true
+}
+
 // TableInfoByID implements InfoSchema.TableInfoByID
 func (is *infoSchema) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	tbl, ok := is.TableByID(stdctx.Background(), id)

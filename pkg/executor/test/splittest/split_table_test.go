@@ -215,7 +215,6 @@ func TestShowTableRegion(t *testing.T) {
 	// Test show table regions for partition table when disable split region when create table.
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	tk.MustExec("drop table if exists partition_t;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
 	re = tk.MustQuery("show table partition_t regions")
 	rows = re.Rows()
