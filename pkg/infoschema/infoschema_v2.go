@@ -589,6 +589,16 @@ func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
 	return &tmp
 }
 
+func (is *infoschemaV2) searchTableItemByID(tableID int64) (tableItem, bool) {
+	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
+	return search(
+		is.byID,
+		is.infoSchema.schemaMetaVersion,
+		tableItem{tableID: tableID, schemaVersion: math.MaxInt64},
+		eq,
+	)
+}
+
 // TableByID implements the InfoSchema interface.
 // As opposed to TableByName, TableByID will not refill cache when schema cache miss,
 // unless the caller changes the behavior by passing a context use WithRefillOption.
@@ -604,8 +614,7 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		return tbl, true
 	}
 
-	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
-	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, schemaVersion: math.MaxInt64}, eq)
+	itm, ok := is.searchTableItemByID(id)
 	if !ok {
 		return nil, false
 	}
@@ -644,6 +653,19 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		is.tableCache.Set(oldKey, ret)
 	}
 	return ret, true
+}
+
+func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName pmodel.CIStr, ok bool) {
+	if !tableIDIsValid(tableID) {
+		return
+	}
+
+	itm, ok := is.searchTableItemByID(tableID)
+	if !ok {
+		return
+	}
+
+	return itm.dbName, true
 }
 
 // TableItem is exported from tableItem.

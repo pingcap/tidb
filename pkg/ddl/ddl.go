@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -78,9 +77,6 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 10
-
-	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
-	checkFlagIndexInJobArgs = 1
 )
 
 const (
@@ -1033,16 +1029,16 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 	if len(unlockTables) == 0 {
 		return nil
 	}
-	arg := &LockTablesArg{
+	args := &model.LockTablesArgs{
 		UnlockTables: unlockTables,
 		SessionInfo:  se,
 	}
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   unlockTables[0].SchemaID,
 		TableID:    unlockTables[0].TableID,
 		Type:       model.ActionUnlockTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{arg},
 	}
 
 	ctx, err := d.sessPool.Get()
@@ -1050,7 +1046,7 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 		return err
 	}
 	defer d.sessPool.Put(ctx)
-	err = d.executor.DoDDLJob(ctx, job)
+	err = d.executor.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -1098,30 +1094,6 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	}
 	logutil.DDLLogger().Info("switch metadata lock feature", zap.Bool("enable", enable))
 	return nil
-}
-
-// RecoverInfo contains information needed by DDL.RecoverTable.
-type RecoverInfo struct {
-	SchemaID      int64
-	TableInfo     *model.TableInfo
-	DropJobID     int64
-	SnapshotTS    uint64
-	AutoIDs       meta.AutoIDGroup
-	OldSchemaName string
-	OldTableName  string
-}
-
-// RecoverSchemaInfo contains information needed by DDL.RecoverSchema.
-type RecoverSchemaInfo struct {
-	*model.DBInfo
-	RecoverTabsInfo []*RecoverInfo
-	// LoadTablesOnExecute is the new logic to avoid a large RecoverTabsInfo can't be
-	// persisted. If it's true, DDL owner will recover RecoverTabsInfo instead of the
-	// job submit node.
-	LoadTablesOnExecute bool
-	DropJobID           int64
-	SnapshotTS          uint64
-	OldSchemaName       pmodel.CIStr
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
