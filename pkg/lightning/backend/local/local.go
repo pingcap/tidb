@@ -1533,7 +1533,7 @@ func (local *Backend) doImport(
 		if balancer != nil {
 			intest.AssertFunc(func() bool {
 				allZero := true
-				balancer.storeLoadMap.Range(func(key, value any) bool {
+				balancer.storeLoadMap.Range(func(_, value any) bool {
 					if value.(int) != 0 {
 						allZero = false
 						return false
