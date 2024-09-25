@@ -2744,23 +2744,31 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.done = true
 
+	if e.Action == "set" {
+		return indexadvisor.SetOption(e.Ctx(), e.Option, e.Value)
+	}
+	if e.Action == "show" {
+		return e.showOptions(req)
+	}
+
 	if e.Action != "run" {
 		return fmt.Errorf("unsupported action: %s", e.Action)
 	}
 
-	results, err := indexadvisor.AdviseIndexes(ctx, e.Ctx(), &indexadvisor.Option{
-		MaxNumIndexes: 3,
-		MaxIndexWidth: 3,
-		SpecifiedSQLs: []string{e.SQL},
-	})
+	opt := &indexadvisor.Option{}
+	if e.SQL != "" {
+		opt.SpecifiedSQLs = []string{e.SQL}
+	}
+
+	results, err := indexadvisor.AdviseIndexes(ctx, e.Ctx(), opt)
 
 	for _, r := range results {
 		req.AppendString(0, r.Database)
 		req.AppendString(1, r.Table)
 		req.AppendString(2, r.IndexName)
 		req.AppendString(3, strings.Join(r.IndexColumns, ","))
-		req.AppendString(4, fmt.Sprintf("%v", r.IndexSize))
-		req.AppendString(5, r.Reason)
+		req.AppendString(4, fmt.Sprintf("%v", r.IndexDetail.IndexSize))
+		req.AppendString(5, r.IndexDetail.Reason)
 
 		jData, err := json.Marshal(r.TopImpactedQueries)
 		if err != nil {
@@ -2769,4 +2777,19 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendString(6, string(jData))
 	}
 	return err
+}
+
+func (e *RecommendIndexExec) showOptions(req *chunk.Chunk) error {
+	vals, desc, err := indexadvisor.GetOptions(e.Ctx(), indexadvisor.AllOptions...)
+	if err != nil {
+		return err
+	}
+	for _, opt := range indexadvisor.AllOptions {
+		if v, ok := vals[opt]; ok {
+			req.AppendString(0, opt)
+			req.AppendString(1, v)
+			req.AppendString(2, desc[opt])
+		}
+	}
+	return nil
 }

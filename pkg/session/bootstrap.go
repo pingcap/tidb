@@ -628,11 +628,12 @@ const (
 		start_time TIMESTAMP NOT NULL,
 		repeats int default 1,
 		match_type varchar(12) NOT NULL,
-		action varchar(12) NOT NULL,
+		action varchar(64) NOT NULL,
 		sample_sql TEXT NOT NULL,
 		sql_digest varchar(64) NOT NULL,
 		plan_digest varchar(64) NOT NULL,
 		tidb_server varchar(512),
+		rule VARCHAR(512) DEFAULT '',
 		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when select runaway query",
 		INDEX time_index(start_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -648,6 +649,7 @@ const (
 		source varchar(512) NOT NULL,
 		action bigint(10),
 		switch_group_name VARCHAR(32) DEFAULT '',
+		rule VARCHAR(512) DEFAULT '',
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -664,6 +666,7 @@ const (
 		source varchar(512) NOT NULL,
 		action bigint(10),
 		switch_group_name VARCHAR(32) DEFAULT '',
+		rule VARCHAR(512) DEFAULT '',
 		done_time TIMESTAMP(6) NOT NULL
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
@@ -726,6 +729,35 @@ const (
 		GROUP BY table_schema, table_name, index_name
 		HAVING
 			sum(last_access_time) is null;`
+
+	// CreateIndexAdvisorTable is a table to store the index advisor results.
+	CreateIndexAdvisorTable = `CREATE TABLE IF NOT EXISTS mysql.index_advisor_results (
+       id bigint primary key not null auto_increment,
+       created_at datetime not null,
+       updated_at datetime not null,
+
+       schema_name varchar(64) not null,
+       table_name varchar(64) not null,
+       index_name varchar(127) not null,
+       index_columns varchar(500) not null COMMENT 'split by ",", e.g. "c1", "c1,c2", "c1,c2,c3,c4,c5"',
+
+       index_details json,        -- est_index_size, reason, DDL to create this index, ...
+       top_impacted_queries json, -- improvement, plan before and after this index, ...
+       workload_impact json,      -- improvement and more details, ...
+       extra json,                -- for the cloud env to save more info like RU, cost_saving, ...
+       index idx_create(created_at),
+       index idx_update(updated_at),
+       unique index idx(schema_name, table_name, index_columns))`
+
+	// CreateKernelOptionsTable is a table to store kernel options for tidb.
+	CreateKernelOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_kernel_options (
+        module varchar(128),
+        name varchar(128),
+        value varchar(128),
+        updated_at datetime,
+        status varchar(128),
+        description text,
+        primary key(module, name))`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -1132,16 +1164,25 @@ const (
 	// 1. switchGroup: add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
 	// 2. modify column `plan_digest` type, modify column `time` to `start_time,
 	// modify column `original_sql` to `sample_sql` to `mysql.tidb_runaway_queries`.
+	// 3. modify column length of `action`.
+	// 4. add column `rule` to `mysql.tidb_runaway_watch`, `mysql.tidb_runaway_watch_done` and `mysql.tidb_runaway_queries`.
 	version212 = 212
 
 	// version 213
 	//   create `mysql.tidb_pitr_id_map` table
 	version213 = 213
+
+	// version 214
+	//   create `mysql.index_advisor_results` table
+	version214 = 214
+
+	// If the TiDB upgrading from the a version before v7.0 to a newer version, we keep the tidb_enable_inl_join_inner_multi_pattern to 0.
+	version215 = 215
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version213
+var currentBootstrapVersion int64 = version215
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1310,6 +1351,8 @@ var (
 		upgradeToVer211,
 		upgradeToVer212,
 		upgradeToVer213,
+		upgradeToVer214,
+		upgradeToVer215,
 	}
 )
 
@@ -1373,54 +1416,22 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
-func acquireLock(s sessiontypes.Session) bool {
+func acquireLock(s sessiontypes.Session) (func(), bool) {
 	dom := domain.GetDomain(s)
 	if dom == nil {
 		logutil.BgLogger().Warn("domain is nil")
-		return false
+		return nil, false
 	}
 	cli := dom.GetEtcdClient()
 	if cli == nil {
 		logutil.BgLogger().Warn("etcd client is nil")
-		return false
+		return nil, false
 	}
-	// The lock is used to make sure only one TiDB server is bootstrapping the system.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	lease, err := cli.Grant(ctx, 30)
-	cancel()
+	releaseFn, err := owner.AcquireDistributedLock(context.Background(), cli, ddl.DDLOwnerKey, 10)
 	if err != nil {
-		return false
+		return nil, false
 	}
-	etcdSession, err := concurrency.NewSession(cli, concurrency.WithLease(lease.ID))
-	if err != nil {
-		return false
-	}
-	mu := concurrency.NewMutex(etcdSession, bootstrapOwnerKey)
-	err = mu.Lock(context.Background())
-	return err == nil
-}
-
-func releaseLock(s sessiontypes.Session) {
-	dom := domain.GetDomain(s)
-	if dom == nil {
-		logutil.BgLogger().Warn("domain is nil")
-		return
-	}
-	cli := dom.GetEtcdClient()
-	if cli == nil {
-		logutil.BgLogger().Warn("etcd client is nil")
-		return
-	}
-	etcdSession, err := concurrency.NewSession(cli)
-	if err != nil {
-		return
-	}
-	mu := concurrency.NewMutex(etcdSession, bootstrapOwnerKey)
-	err = mu.Unlock(context.Background())
-	if err != nil {
-		logutil.BgLogger().Error("release lock failed", zap.Error(err))
-		return
-	}
+	return releaseFn, true
 }
 
 func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
@@ -1502,8 +1513,10 @@ func upgrade(s sessiontypes.Session) {
 	var ver int64
 	i := 0
 	var maxRetryCnt = 10
+	var releaseFn func()
+	var ok bool
 	for ; i < maxRetryCnt; i++ {
-		ok := acquireLock(s)
+		releaseFn, ok = acquireLock(s)
 		if ok {
 			break
 		}
@@ -1515,10 +1528,10 @@ func upgrade(s sessiontypes.Session) {
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
-		releaseLock(s)
+		releaseFn()
 		return
 	}
-	defer releaseLock(s)
+	defer releaseFn()
 
 	err = forceToLeader(context.Background(), s)
 	if err != nil {
@@ -3212,6 +3225,12 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`")
 	// modify column type of `plan_digest`.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
+	// 3. modify column length of `action`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `action` VARCHAR(64) NOT NULL;", infoschema.ErrColumnExists)
+	// 4. add column `rule` to `mysql.tidb_runaway_watch`, `mysql.tidb_runaway_watch_done` and `mysql.tidb_runaway_queries`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD COLUMN `rule` VARCHAR(512) DEFAULT '' AFTER `switch_group_name`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD COLUMN `rule` VARCHAR(512) DEFAULT '' AFTER `switch_group_name`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `rule` VARCHAR(512) DEFAULT '' AFTER `tidb_server`;", infoschema.ErrColumnExists)
 }
 
 func upgradeToVer213(s sessiontypes.Session, ver int64) {
@@ -3220,6 +3239,23 @@ func upgradeToVer213(s sessiontypes.Session, ver int64) {
 	}
 
 	mustExecute(s, CreatePITRIDMap)
+}
+
+func upgradeToVer214(s sessiontypes.Session, ver int64) {
+	if ver >= version214 {
+		return
+	}
+
+	mustExecute(s, CreateIndexAdvisorTable)
+	mustExecute(s, CreateKernelOptionsTable)
+}
+
+func upgradeToVer215(s sessiontypes.Session, ver int64) {
+	if ver >= version215 {
+		return
+	}
+
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableINLJoinInnerMultiPattern, variable.Off)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3372,6 +3408,10 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateSysSchema)
 	// create `sys.schema_unused_indexes` view
 	mustExecute(s, CreateSchemaUnusedIndexesView)
+	// create mysql.index_advisor_results
+	mustExecute(s, CreateIndexAdvisorTable)
+	// create mysql.tidb_kernel_options
+	mustExecute(s, CreateKernelOptionsTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

@@ -760,10 +760,12 @@ import (
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
 	priority              "PRIORITY"
+	processedKeys         "PROCESSED_KEYS"
 	queryLimit            "QUERY_LIMIT"
 	recent                "RECENT"
 	replayer              "REPLAYER"
 	restoredTS            "RESTORED_TS"
+	ru                    "RU"
 	running               "RUNNING"
 	ruRate                "RU_PER_SEC"
 	s3                    "S3"
@@ -805,6 +807,7 @@ import (
 	trueCardCost          "TRUE_CARD_COST"
 	unlimited             "UNLIMITED"
 	untilTS               "UNTIL_TS"
+	utilizationLimit      "UTILIZATION_LIMIT"
 	variance              "VARIANCE"
 	varPop                "VAR_POP"
 	varSamp               "VAR_SAMP"
@@ -854,7 +857,6 @@ import (
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
-	drainer                    "DRAINER"
 	dry                        "DRY"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
@@ -863,7 +865,6 @@ import (
 	nodeState                  "NODE_STATE"
 	optimistic                 "OPTIMISTIC"
 	pessimistic                "PESSIMISTIC"
-	pump                       "PUMP"
 	region                     "REGION"
 	regions                    "REGIONS"
 	reset                      "RESET"
@@ -1040,7 +1041,6 @@ import (
 	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
-	ChangeStmt                 "Change statement"
 	SetBindingStmt             "Set binding statement"
 	SetRoleStmt                "Set active role statement"
 	SetDefaultRoleStmt         "Set default statement for some user"
@@ -1840,10 +1840,22 @@ DirectResourceGroupRunawayOption:
 			return 1
 		}
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp: model.RunawayRule,
-			RuleOption: &ast.ResourceGroupRunawayRuleOption{
-				ExecElapsed: $3,
-			},
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleExecElapsed, ExecElapsed: $3},
+		}
+	}
+|	"PROCESSED_KEYS" EqOpt intLit
+	{
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleProcessedKeys, ProcessedKeys: $3.(int64)},
+		}
+	}
+|	"RU" EqOpt intLit
+	{
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleRequestUnit, RequestUnit: $3.(int64)},
 		}
 	}
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
@@ -1961,6 +1973,11 @@ DirectResourceGroupBackgroundOption:
 	{
 		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundOptionTaskNames, StrValue: $3}
 	}
+|	"UTILIZATION_LIMIT" EqOpt LengthNum
+	{
+		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundUtilizationLimit, UintValue: $3.(uint64)}
+	}
+
 
 PlacementOptionList:
 	DirectPlacementOption
@@ -7078,12 +7095,10 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
-|	"DRAINER"
 |	"JOBS"
 |	"JOB"
 |	"NODE_ID"
 |	"NODE_STATE"
-|	"PUMP"
 |	"SAMPLES"
 |	"SAMPLERATE"
 |	"SESSION_STATES"
@@ -7220,6 +7235,8 @@ NotKeywordToken:
 |	"RESTORED_TS"
 |	"FULL_BACKUP_STORAGE"
 |	"EXEC_ELAPSED"
+|	"PROCESSED_KEYS"
+|	"RU"
 |	"DRYRUN"
 |	"COOLDOWN"
 |	"SWITCH_GROUP"
@@ -7229,6 +7246,7 @@ NotKeywordToken:
 |	"BACKGROUND"
 |	"TASK_TYPES"
 |	"UNLIMITED"
+|	"UTILIZATION_LIMIT"
 
 /************************************************************************************
  *
@@ -10638,25 +10656,6 @@ SetOpr:
 SetOprOpt:
 	DefaultTrueDistinctOpt
 
-/********************Change Statement*******************************/
-ChangeStmt:
-	"CHANGE" "PUMP" "TO" "NODE_STATE" eq stringLit forKwd "NODE_ID" stringLit
-	{
-		$$ = &ast.ChangeStmt{
-			NodeType: ast.PumpType,
-			State:    $6,
-			NodeID:   $9,
-		}
-	}
-|	"CHANGE" "DRAINER" "TO" "NODE_STATE" eq stringLit forKwd "NODE_ID" stringLit
-	{
-		$$ = &ast.ChangeStmt{
-			NodeType: ast.DrainerType,
-			State:    $6,
-			NodeID:   $9,
-		}
-	}
-
 /********************Set Statement*******************************/
 SetStmt:
 	"SET" VariableAssignmentList
@@ -11845,18 +11844,6 @@ ShowTargetFilterable:
 			Tp: ast.ShowProcedureStatus,
 		}
 	}
-|	"PUMP" "STATUS"
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowPumpStatus,
-		}
-	}
-|	"DRAINER" "STATUS"
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowDrainerStatus,
-		}
-	}
 |	"FUNCTION" "STATUS"
 	{
 		// This statement is similar to SHOW PROCEDURE STATUS but for stored functions.
@@ -12163,7 +12150,6 @@ Statement:
 |	ExecuteStmt
 |	ExplainStmt
 |	CalibrateResourceStmt
-|	ChangeStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt

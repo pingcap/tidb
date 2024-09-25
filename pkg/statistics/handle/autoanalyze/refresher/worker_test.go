@@ -59,6 +59,9 @@ func (m *mockAnalysisJob) HasNewlyAddedIndex() bool {
 func (m *mockAnalysisJob) GetIndicators() priorityqueue.Indicators {
 	panic("not implemented")
 }
+func (m *mockAnalysisJob) SetIndicators(indicators priorityqueue.Indicators) {
+	panic("not implemented")
+}
 
 func TestWorker(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomain(t)
