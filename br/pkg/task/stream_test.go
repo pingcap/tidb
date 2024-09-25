@@ -48,6 +48,7 @@ func TestCheckLogRange(t *testing.T) {
 		logMinTS    uint64
 		logMaxTS    uint64
 		result      bool
+		errMsg      string
 	}{
 		{
 			logMinTS:    1,
@@ -76,6 +77,7 @@ func TestCheckLogRange(t *testing.T) {
 			restoreTo:   99,
 			logMaxTS:    100,
 			result:      false,
+			errMsg:      "restore log from 10(1970-01-01 08:00:00 +0800 CST) to 99(1970-01-01 08:00:00 +0800 CST),  but the current existed log from 11(1970-01-01 08:00:00 +0800 CST) to 100(1970-01-01 08:00:00 +0800 CST)",
 		},
 		{
 			logMinTS:    1,
@@ -83,6 +85,7 @@ func TestCheckLogRange(t *testing.T) {
 			restoreTo:   9,
 			logMaxTS:    100,
 			result:      false,
+			errMsg:      "restore log from 10(1970-01-01 08:00:00 +0800 CST) to 9(1970-01-01 08:00:00 +0800 CST),  but the current existed log from 1(1970-01-01 08:00:00 +0800 CST) to 100(1970-01-01 08:00:00 +0800 CST)",
 		},
 		{
 			logMinTS:    1,
@@ -97,6 +100,15 @@ func TestCheckLogRange(t *testing.T) {
 			restoreTo:   99,
 			logMaxTS:    98,
 			result:      false,
+			errMsg:      "restore log from 9(1970-01-01 08:00:00 +0800 CST) to 99(1970-01-01 08:00:00 +0800 CST),  but the current existed log from 1(1970-01-01 08:00:00 +0800 CST) to 98(1970-01-01 08:00:00 +0800 CST)",
+		},
+		{
+			logMinTS:    1,
+			restoreFrom: 1,
+			restoreTo:   1,
+			logMaxTS:    1,
+			result:      false,
+			errMsg:      "cannot find available log data, please make sure the backup checkpoint moving forward.",
 		},
 	}
 
@@ -105,7 +117,7 @@ func TestCheckLogRange(t *testing.T) {
 		if c.result {
 			require.Nil(t, err)
 		} else {
-			require.NotNil(t, err)
+			require.ErrorContains(t, err, c.errMsg)
 		}
 	}
 }
