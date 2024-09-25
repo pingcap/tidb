@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -641,8 +642,8 @@ func (r *CheckpointRunner[K, V]) checkLockFile(ctx context.Context, now int64) e
 	} else if lock.LockId != r.lockId {
 		return errors.Errorf("The existing lock will expire in %d seconds. "+
 			"There may be another BR(%d) running. If not, you can wait for the lock to expire, "+
-			"or delete the file `%s%s` manually.",
-			(lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(r.storage.URI(), "/"), r.CheckpointLockPath)
+			"or delete the file `%s` manually.",
+			(lock.ExpireAt-now)/1000, lock.LockId, path.Join(r.storage.URI(), r.CheckpointLockPath))
 	}
 
 	return nil
