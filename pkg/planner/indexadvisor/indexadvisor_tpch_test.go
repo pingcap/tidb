@@ -769,7 +769,7 @@ func TestIndexAdvisorTPCH1(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ7, Frequency: 1})
 
 	ctx := context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
-	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), option(""))
+	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, nil)
 	require.NoError(t, err) // no error and can get some recommendations
 	require.True(t, len(r) > 0)
 }
@@ -796,7 +796,7 @@ func TestIndexAdvisorTPCH2(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ22, Frequency: 1})
 
 	ctx := context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
-	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), option(""))
+	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, nil)
 	require.NoError(t, err) // no error and can get some recommendations
 	require.True(t, len(r) > 0)
 }

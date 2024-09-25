@@ -2351,11 +2351,12 @@ func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) 
 // onTruncateTablePartition truncates old partition meta.
 func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
-	var oldIDs, newIDs []int64
-	if err := job.DecodeArgs(&oldIDs, &newIDs); err != nil {
+	args, err := model.GetTruncateTableArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	oldIDs, newIDs := args.OldPartitionIDs, args.NewPartitionIDs
 	if len(oldIDs) != len(newIDs) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(errors.New("len(oldIDs) must be the same as len(newIDs)"))
@@ -2416,7 +2417,9 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		)
 		asyncNotifyEvent(jobCtx, truncatePartitionEvent, job)
 		// A background job will be created to delete old partition data.
-		job.Args = []any{oldIDs}
+		job.FillFinishedArgs(&model.TruncateTableArgs{
+			OldPartitionIDs: oldIDs,
+		})
 
 		return ver, err
 	}
@@ -2554,7 +2557,9 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		)
 		asyncNotifyEvent(jobCtx, truncatePartitionEvent, job)
 		// A background job will be created to delete old partition data.
-		job.Args = []any{oldIDs}
+		job.FillFinishedArgs(&model.TruncateTableArgs{
+			OldPartitionIDs: oldIDs,
+		})
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
@@ -2645,19 +2650,14 @@ func updateTruncatePartitionLabelRules(job *model.Job, t *meta.Meta, oldPartitio
 
 // onExchangeTablePartition exchange partition data
 func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var (
-		// defID only for updateSchemaVersion
-		defID          int64
-		ptSchemaID     int64
-		ptID           int64
-		partName       string
-		withValidation bool
-	)
-
-	if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+	args, err := model.GetExchangeTablePartitionArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	defID, ptSchemaID, ptID, partName :=
+		args.PartitionID, args.PTSchemaID, args.PTTableID, args.PartitionName
 
 	ntDbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
@@ -2717,7 +2717,8 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		if defID != partDef.ID {
 			logutil.DDLLogger().Info("Exchange partition id changed, updating to actual id",
 				zap.Stringer("job", job), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
-			job.Args[0] = partDef.ID
+			args.PartitionID = partDef.ID
+			job.FillArgs(args)
 			defID = partDef.ID
 			err = updateDDLJob2Table(w.sess, job, true)
 			if err != nil {
@@ -2758,7 +2759,10 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		// Should never happen, should have been updated above, in previous state!
 		logutil.DDLLogger().Error("Exchange partition id changed, updating to actual id",
 			zap.Stringer("job", job), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
-		job.Args[0] = partDef.ID
+		args.PartitionID = partDef.ID
+		job.FillArgs(args)
+		// might be used later, ignore the lint warning.
+		//nolint: ineffassign
 		defID = partDef.ID
 		err = updateDDLJob2Table(w.sess, job, true)
 		if err != nil {
@@ -2766,7 +2770,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		}
 	}
 
-	if withValidation {
+	if args.WithValidation {
 		ntbl, err := getTable(jobCtx.getAutoIDRequirement(), job.SchemaID, nt)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -3211,8 +3215,9 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 		// Doing the preSplitAndScatter here, since all checks are completed,
 		// and we will soon start writing to the new partitions.
 		if s, ok := jobCtx.store.(kv.SplittableStore); ok && s != nil {
-			// partInfo only contains the AddingPartitions
-			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, true)
+			// 1. partInfo only contains the AddingPartitions
+			// 2. ScatterTable control all new split region need waiting for scatter region finish at table level.
+			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, variable.ScatterTable)
 		}
 
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.

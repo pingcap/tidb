@@ -5801,8 +5801,7 @@ func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, e
 		Action:   v.Action,
 		SQL:      v.SQL,
 		AdviseID: v.ID,
-		Option:   v.Option,
-		Value:    v.Value,
+		Options:  v.Options,
 	}
 
 	switch v.Action {
@@ -5817,8 +5816,7 @@ func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, e
 		schema.Append(buildColumnWithName("", "top_impacted_query", mysql.TypeBlob, -1))
 		p.setSchemaAndNames(schema.col2Schema(), schema.names)
 	case "set":
-		p.Option = strings.TrimSpace(p.Option)
-		if p.Option == "" {
+		if len(p.Options) == 0 {
 			return nil, fmt.Errorf("option is empty")
 		}
 	case "show":

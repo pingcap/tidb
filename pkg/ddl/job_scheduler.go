@@ -722,8 +722,8 @@ func job2SchemaIDs(jobW *JobWrapper) string {
 		ids := []int64{oldSchemaID, jobW.SchemaID}
 		return makeStringForIDs(ids)
 	case model.ActionExchangeTablePartition:
-		ids := jobW.CtxVars[0].([]int64)
-		return makeStringForIDs(ids)
+		args := jobW.JobArgs.(*model.ExchangeTablePartitionArgs)
+		return makeStringForIDs([]int64{jobW.SchemaID, args.PTSchemaID})
 	default:
 		return strconv.FormatInt(jobW.SchemaID, 10)
 	}
@@ -740,8 +740,8 @@ func job2TableIDs(jobW *JobWrapper) string {
 		}
 		return makeStringForIDs(ids)
 	case model.ActionExchangeTablePartition:
-		ids := jobW.CtxVars[1].([]int64)
-		return makeStringForIDs(ids)
+		args := jobW.JobArgs.(*model.ExchangeTablePartitionArgs)
+		return makeStringForIDs([]int64{jobW.TableID, args.PTTableID})
 	case model.ActionTruncateTable:
 		newTableID := jobW.JobArgs.(*model.TruncateTableArgs).NewTableID
 		return strconv.FormatInt(jobW.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)

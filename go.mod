@@ -18,6 +18,7 @@ require (
 	github.com/aws/aws-sdk-go v1.50.0
 	github.com/bazelbuild/buildtools v0.0.0-20230926111657-7d855c59baeb
 	github.com/bazelbuild/rules_go v0.42.1-0.20231101215950-df20c987afcb
+	github.com/bits-and-blooms/bitset v1.14.3
 	github.com/blacktear23/go-proxyprotocol v1.0.6
 	github.com/butuzov/mirror v1.2.0
 	github.com/carlmjohnson/flagext v0.21.0
@@ -85,7 +86,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/failpoint v0.0.0-20240527053858-9b3b6e34194a
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20240910154453-b242104f8d31
+	github.com/pingcap/kvproto v0.0.0-20240924080114-4a3e17f5e62d
 	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -108,7 +109,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20240911041506-e7894a7b27ba
+	github.com/tikv/client-go/v2 v2.0.8-0.20240925070302-58f3322fc39a
 	github.com/tikv/pd/client v0.0.0-20240914083230-71f6f96816e9
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
@@ -185,6 +186,7 @@ require (
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/apache/thrift v0.16.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/bits-and-blooms/bitset v1.14.3
 	github.com/bmatcuk/doublestar/v2 v2.0.4 // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

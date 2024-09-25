@@ -1413,13 +1413,12 @@ func onAlterTableAttributes(jobCtx *jobContext, t *meta.Meta, job *model.Job) (v
 }
 
 func onAlterTablePartitionAttributes(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	var partitionID int64
-	rule := label.NewRule()
-	err = job.DecodeArgs(&partitionID, rule)
+	args, err := model.GetAlterTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
+	partitionID, rule := args.PartitionID, args.LabelRule
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
@@ -1435,7 +1434,8 @@ func onAlterTablePartitionAttributes(jobCtx *jobContext, t *meta.Meta, job *mode
 		patch := label.NewRulePatch([]*label.Rule{}, []string{rule.ID})
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	} else {
-		err = infosync.PutLabelRule(context.TODO(), rule)
+		labelRule := label.Rule(*rule)
+		err = infosync.PutLabelRule(context.TODO(), &labelRule)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1451,13 +1451,12 @@ func onAlterTablePartitionAttributes(jobCtx *jobContext, t *meta.Meta, job *mode
 }
 
 func onAlterTablePartitionPlacement(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	var partitionID int64
-	policyRefInfo := &model.PolicyRefInfo{}
-	err = job.DecodeArgs(&partitionID, &policyRefInfo)
+	args, err := model.GetAlterTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
+	partitionID, policyRefInfo := args.PartitionID, args.PolicyRefInfo
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
