@@ -48,10 +48,41 @@ func (p LogicalLimit) Init(ctx base.PlanContext, offset int) *LogicalLimit {
 
 // ************************ start implementation of HashEquals interface ************************
 
+// Hash64 returns the hash code for the operator.
 func (p *LogicalLimit) Hash64(h base2.Hasher) {
 	h.HashString(plancodec.TypeLimit)
+	h.HashInt(len(p.PartitionBy))
+	for _, one := range p.PartitionBy {
+		one.Hash64(h)
+	}
 	h.HashUint64(p.Offset)
 	h.HashUint64(p.Count)
+}
+
+// Equals checks whether the operator is equal to another operator.
+func (p *LogicalLimit) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	var p2 *LogicalLimit
+	switch x := other.(type) {
+	case *LogicalLimit:
+		p2 = x
+	case LogicalLimit:
+		p2 = &x
+	default:
+		return false
+	}
+	ok := len(p.PartitionBy) == len(p2.PartitionBy) && p.Offset == p2.Offset && p.Count == p2.Count
+	if !ok {
+		return false
+	}
+	for i, one := range p.PartitionBy {
+		if !one.Equals(p2.PartitionBy[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // *************************** start implementation of Plan interface ***************************
