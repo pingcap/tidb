@@ -13,6 +13,7 @@ SELECT FORMAT(100000.234,4,'nl_BE');
 SELECT FORMAT(100000.234,4,'fr_BE');
 SELECT FORMAT(100000.234,4,'en_IN');
 SELECT FORMAT(100000.234,4,'de_CH');
+SELECT FORMAT(100000.234,4,'no_NO');
 
 # The first two should work fine, the third should give a warning.
 --enable_warnings
