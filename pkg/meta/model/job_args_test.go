@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 func TestGetOrDecodeArgsV2(t *testing.T) {
@@ -251,27 +252,36 @@ func TestTruncateTableArgs(t *testing.T) {
 	inArgs := &TruncateTableArgs{
 		NewTableID:      1,
 		FKCheck:         true,
+		OldPartitionIDs: []int64{11, 2},
 		NewPartitionIDs: []int64{2, 3},
 	}
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionTruncateTable)))
-		args, err := GetTruncateTableArgs(j2)
-		require.NoError(t, err)
-		require.Equal(t, int64(1), args.NewTableID)
-		require.Equal(t, true, args.FKCheck)
-		require.Equal(t, []int64{2, 3}, args.NewPartitionIDs)
+	for _, tp := range []ActionType{ActionTruncateTable, ActionTruncateTablePartition} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			args, err := GetTruncateTableArgs(j2)
+			require.NoError(t, err)
+			if tp == ActionTruncateTable {
+				require.Equal(t, int64(1), args.NewTableID)
+				require.Equal(t, true, args.FKCheck)
+			} else {
+				require.Equal(t, []int64{11, 2}, args.OldPartitionIDs)
+			}
+			require.Equal(t, []int64{2, 3}, args.NewPartitionIDs)
+		}
 	}
 
 	inArgs = &TruncateTableArgs{
 		OldPartitionIDs: []int64{5, 6},
 	}
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionTruncateTable)))
-		args, err := GetFinishedTruncateTableArgs(j2)
-		require.NoError(t, err)
-		require.Equal(t, []int64{5, 6}, args.OldPartitionIDs)
+	for _, tp := range []ActionType{ActionTruncateTable, ActionTruncateTablePartition} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, tp)))
+			args, err := GetFinishedTruncateTableArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, []int64{5, 6}, args.OldPartitionIDs)
+		}
 	}
 }
 
@@ -393,6 +403,45 @@ func TestFinishedTablePartitionArgs(t *testing.T) {
 		args, err := GetFinishedTablePartitionArgs(j2)
 		require.NoError(t, err)
 		require.EqualValues(t, inArgs.OldPhysicalTblIDs, args.OldPhysicalTblIDs)
+	}
+}
+
+func TestExchangeTablePartitionArgs(t *testing.T) {
+	inArgs := &ExchangeTablePartitionArgs{
+		PartitionID:    100,
+		PTSchemaID:     123,
+		PTTableID:      345,
+		PartitionName:  "c",
+		WithValidation: true,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionExchangeTablePartition)))
+		args, err := GetExchangeTablePartitionArgs(j2)
+		require.NoError(t, err)
+		require.EqualValues(t, inArgs, args)
+	}
+}
+
+func TestAlterTablePartitionArgs(t *testing.T) {
+	inArgs := &AlterTablePartitionArgs{
+		PartitionID:   123,
+		LabelRule:     &pdhttp.LabelRule{ID: "ss"},
+		PolicyRefInfo: &PolicyRefInfo{ID: 462},
+	}
+	for _, tp := range []ActionType{ActionAlterTablePartitionAttributes, ActionAlterTablePartitionPlacement} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			args, err := GetAlterTablePartitionArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.PartitionID, args.PartitionID)
+			if tp == ActionAlterTablePartitionAttributes {
+				require.EqualValues(t, inArgs.LabelRule, args.LabelRule)
+			} else {
+				require.EqualValues(t, inArgs.PolicyRefInfo, args.PolicyRefInfo)
+			}
+		}
 	}
 }
 

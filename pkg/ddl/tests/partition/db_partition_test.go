@@ -1210,7 +1210,7 @@ func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	tk.MustExec("use test;")
 
 	tk.MustExec("drop table if exists t1;")
@@ -1653,7 +1653,7 @@ func TestGlobalIndexShowTableRegions(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
-	tk.MustExec("set @@global.tidb_scatter_region = on")
+	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
 	tk.MustExec(`create table p (id int, c int, d int, unique key uidx(c)) partition by range (c) (
 partition p0 values less than (4),
 partition p1 values less than (7),
