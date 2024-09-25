@@ -21,6 +21,10 @@ func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, er
 		encryptionpb.EncryptionMethod_AES256_CTR:
 		return encrypt.AESDecryptWithCTR(content, cipher.CipherKey, iv)
 	default:
-		return content, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
+		return content, errors.Annotatef(berrors.ErrInvalidArgument, "cipher type invalid %s", cipher.CipherType)
 	}
+}
+
+func IsEffectiveEncryptionMethod(method encryptionpb.EncryptionMethod) bool {
+	return method != encryptionpb.EncryptionMethod_UNKNOWN && method != encryptionpb.EncryptionMethod_PLAINTEXT
 }

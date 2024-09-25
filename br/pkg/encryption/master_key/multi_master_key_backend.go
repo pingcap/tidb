@@ -47,3 +47,9 @@ func (m *MultiMasterKeyBackend) Decrypt(ctx context.Context, encryptedContent *e
 
 	return nil, errors.Errorf("failed to decrypt in multi master key backend: %s", strings.Join(errMsgs, ","))
 }
+
+func (m *MultiMasterKeyBackend) Close() {
+	for _, backend := range m.backends {
+		backend.Close()
+	}
+}

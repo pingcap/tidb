@@ -9,4 +9,5 @@ import "context"
 type Provider interface {
 	DecryptDataKey(ctx context.Context, dataKey []byte) ([]byte, error)
 	Name() string
+	Close()
 }

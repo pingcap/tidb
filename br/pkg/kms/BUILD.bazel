@@ -17,6 +17,8 @@ go_library(
         "@com_github_aws_aws_sdk_go//service/kms",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
-        "@org_golang_x_oauth2//google",
+        "@com_google_cloud_go_kms//apiv1",
+        "@com_google_cloud_go_kms//apiv1/kmspb",
+        "@org_golang_google_protobuf//types/known/wrapperspb",
     ],
 )

@@ -329,12 +329,47 @@ test_aws_kms() {
     echo "KMS CreateKey response: $KMS_RESPONSE"
 
     AWS_KMS_KEY_ID=$(echo "$KMS_RESPONSE" | jq -r '.KeyMetadata.KeyId')
-    # export these two as required by aws-kms backend
     AWS_ACCESS_KEY_ID="TEST"
     AWS_SECRET_ACCESS_KEY="TEST"
     REGION="us-east-1"
 
     AWS_KMS_URI="aws-kms:///${AWS_KMS_KEY_ID}?AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}&AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}&REGION=${REGION}&ENDPOINT=${ENDPOINT}"
+
+    run_backup_restore_test "aws_kms" "--crypter.method AES256-CTR --crypter.key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" "--master-key-crypter-method AES256-CTR --master-key $AWS_KMS_URI"
+
+    # Stop LocalStack
+    localstack stop
+}
+
+test_aws_kms_with_iam() {
+    # Start LocalStack and wait for services to be ready
+    if ! start_and_wait_for_localstack; then
+        echo "Failed to start LocalStack services"
+        exit 1
+    fi
+
+    # localstack listening port
+    ENDPOINT="http://localhost:4566"
+
+    # Create KMS key using curl
+    KMS_RESPONSE=$(curl -X POST "$ENDPOINT/kms/" \
+     -H "Content-Type: application/x-amz-json-1.1" \
+     -H "X-Amz-Target: TrentService.CreateKey" \
+     -d '{
+           "Description": "My test key",
+           "KeyUsage": "ENCRYPT_DECRYPT",
+           "Origin": "AWS_KMS"
+         }')
+
+    echo "KMS CreateKey response: $KMS_RESPONSE"
+
+    AWS_KMS_KEY_ID=$(echo "$KMS_RESPONSE" | jq -r '.KeyMetadata.KeyId')
+    # export these two as required by aws-kms backend
+    export AWS_ACCESS_KEY_ID="TEST"
+    export AWS_SECRET_ACCESS_KEY="TEST"
+    REGION="us-east-1"
+
+    AWS_KMS_URI="aws-kms:///${AWS_KMS_KEY_ID}?&REGION=${REGION}&ENDPOINT=${ENDPOINT}"
 
     run_backup_restore_test "aws_kms" "--crypter.method AES256-CTR --crypter.key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" "--master-key-crypter-method AES256-CTR --master-key $AWS_KMS_URI"
 
@@ -384,6 +419,7 @@ test_plaintext
 test_plaintext_data_key
 test_local_master_key
 test_aws_kms
+test_aws_kms_with_iam
 test_mixed_full_encrypted_log_plain
 test_mixed_full_plain_log_encrypted
 

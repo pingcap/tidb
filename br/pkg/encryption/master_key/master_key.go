@@ -22,6 +22,7 @@ const (
 type Backend interface {
 	// Decrypt takes an EncryptedContent and returns the decrypted plaintext as a byte slice or an error.
 	Decrypt(ctx context.Context, ciphertext *encryptionpb.EncryptedContent) ([]byte, error)
+	Close()
 }
 
 func CreateBackend(config *encryptionpb.MasterKey) (Backend, error) {
@@ -31,8 +32,8 @@ func CreateBackend(config *encryptionpb.MasterKey) (Backend, error) {
 
 	switch backend := config.Backend.(type) {
 	case *encryptionpb.MasterKey_Plaintext:
-		// no need to create backend for plaintext
-		return nil, nil
+		// should not plaintext type as guarded by caller
+		return nil, errors.New("should not create plaintext master key")
 	case *encryptionpb.MasterKey_File:
 		fileBackend, err := createFileBackend(backend.File.Path)
 		if err != nil {

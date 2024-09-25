@@ -5,6 +5,7 @@ package task
 import (
 	"fmt"
 	"net/url"
+	"path"
 	"regexp"
 
 	"github.com/pingcap/errors"
@@ -34,7 +35,6 @@ const (
 )
 
 var (
-	localRegex = regexp.MustCompile(`^/.*$`)
 	awsRegex   = regexp.MustCompile(`^/([^/]+)$`)
 	azureRegex = regexp.MustCompile(`^/(.+)$`)
 	gcpRegex   = regexp.MustCompile(`^/projects/([^/]+)/locations/([^/]+)/keyRings/([^/]+)/cryptoKeys/([^/]+)/?$`)
@@ -61,7 +61,7 @@ func validateAndParseMasterKeyString(keyString string) (encryptionpb.MasterKey, 
 }
 
 func parseLocalDiskConfig(u *url.URL) (encryptionpb.MasterKey, error) {
-	if !localRegex.MatchString(u.Path) {
+	if !path.IsAbs(u.Path) {
 		return encryptionpb.MasterKey{}, errors.New("local master key path must be absolute")
 	}
 	return encryptionpb.MasterKey{
@@ -85,13 +85,16 @@ func parseAwsKmsConfig(u *url.URL) (encryptionpb.MasterKey, error) {
 	accessKey := q.Get(AWSAccessKeyId)
 	secretAccessKey := q.Get(AWSSecretKey)
 
-	if region == "" || accessKey == "" || secretAccessKey == "" {
-		return encryptionpb.MasterKey{}, errors.New("missing required AWS KMS parameters")
+	if region == "" {
+		return encryptionpb.MasterKey{}, errors.New("missing AWS KMS region info")
 	}
 
-	awsKms := &encryptionpb.AwsKms{
-		AccessKey:       accessKey,
-		SecretAccessKey: secretAccessKey,
+	var awsKms *encryptionpb.AwsKms
+	if accessKey != "" && secretAccessKey != "" {
+		awsKms = &encryptionpb.AwsKms{
+			AccessKey:       accessKey,
+			SecretAccessKey: secretAccessKey,
+		}
 	}
 
 	return encryptionpb.MasterKey{
@@ -101,7 +104,7 @@ func parseAwsKmsConfig(u *url.URL) (encryptionpb.MasterKey, error) {
 				KeyId:    keyID,
 				Region:   region,
 				Endpoint: q.Get(AWSEndpoint), // Optional
-				AwsKms:   awsKms,
+				AwsKms:   awsKms,             // Optional, can read from env
 			},
 		},
 	}, nil

@@ -166,13 +166,26 @@ type MetadataHelper struct {
 	encryptionManager *encryption.Manager
 }
 
-func NewMetadataHelper(encryptionManager *encryption.Manager) *MetadataHelper {
-	decoder, _ := zstd.NewReader(nil)
-	return &MetadataHelper{
-		cache:             make(map[string]*ContentRef),
-		decoder:           decoder,
-		encryptionManager: encryptionManager,
+type MetadataHelperOption func(*MetadataHelper)
+
+func WithEncryptionManager(manager *encryption.Manager) MetadataHelperOption {
+	return func(mh *MetadataHelper) {
+		mh.encryptionManager = manager
 	}
+}
+
+func NewMetadataHelper(opts ...MetadataHelperOption) *MetadataHelper {
+	decoder, _ := zstd.NewReader(nil)
+	helper := &MetadataHelper{
+		cache:   make(map[string]*ContentRef),
+		decoder: decoder,
+	}
+
+	for _, opt := range opts {
+		opt(helper)
+	}
+
+	return helper
 }
 
 func (m *MetadataHelper) InitCacheEntry(path string, ref int) {
@@ -204,14 +217,14 @@ func (m *MetadataHelper) verifyChecksumAndDecryptIfNeeded(ctx context.Context, d
 	}
 
 	if m.encryptionManager == nil {
-		return data, errors.New("need to decrypt data but encryption manager not set")
+		return nil, errors.New("need to decrypt data but encryption manager not set")
 	}
 
 	// Verify checksum before decryption
 	if encryptionInfo.Checksum != nil {
 		actualChecksum := sha256.Sum256(data)
 		if !bytes.Equal(actualChecksum[:], encryptionInfo.Checksum) {
-			return nil, errors.New("checksum mismatch before decryption")
+			return nil, errors.Errorf("checksum mismatch before decryption, expected %s, actual %s", encryptionInfo.Checksum, actualChecksum)
 		}
 	}
 

@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	// need to keep it exact same as in TiKV ENCRYPTION_VENDOR_NAME_AWS_KMS
 	EncryptionVendorNameAwsKms = "AWS"
 )
 
@@ -25,11 +26,23 @@ type AwsKms struct {
 }
 
 func NewAwsKms(masterKeyConfig *encryptionpb.MasterKeyKms) (*AwsKms, error) {
-	sess, err := session.NewSession(&aws.Config{
-		Region:      aws.String(masterKeyConfig.Region),
-		Endpoint:    aws.String(masterKeyConfig.Endpoint),
-		Credentials: credentials.NewStaticCredentials(masterKeyConfig.AwsKms.AccessKey, masterKeyConfig.AwsKms.SecretAccessKey, ""),
-	})
+	config := &aws.Config{
+		Region:   aws.String(masterKeyConfig.Region),
+		Endpoint: aws.String(masterKeyConfig.Endpoint),
+	}
+
+	// Only use static credentials if both access key and secret key are provided
+	if masterKeyConfig.AwsKms != nil &&
+		masterKeyConfig.AwsKms.AccessKey != "" &&
+		masterKeyConfig.AwsKms.SecretAccessKey != "" {
+		config.Credentials = credentials.NewStaticCredentials(
+			masterKeyConfig.AwsKms.AccessKey,
+			masterKeyConfig.AwsKms.SecretAccessKey,
+			"",
+		)
+	}
+
+	sess, err := session.NewSession(config)
 	if err != nil {
 		return nil, pErrors.Annotate(err, "failed to create AWS session")
 	}
@@ -58,6 +71,10 @@ func (a *AwsKms) DecryptDataKey(ctx context.Context, dataKey []byte) ([]byte, er
 	}
 
 	return result.Plaintext, nil
+}
+
+func (a *AwsKms) Close() {
+	// don't need to do manual close
 }
 
 // Update classifyDecryptError to use v1 SDK error types

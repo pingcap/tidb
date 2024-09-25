@@ -148,7 +148,7 @@ func TestTruncateLog(t *testing.T) {
 	require.NoError(t, fakeStreamBackup(l))
 
 	s := StreamMetadataSet{
-		Helper:                    NewMetadataHelper(nil),
+		Helper:                    NewMetadataHelper(),
 		MetadataDownloadBatchSize: 128,
 	}
 	require.NoError(t, s.LoadFrom(ctx, l))
@@ -221,7 +221,7 @@ func TestTruncateLogV2(t *testing.T) {
 	require.NoError(t, fakeStreamBackupV2(l))
 
 	s := StreamMetadataSet{
-		Helper:                    NewMetadataHelper(nil),
+		Helper:                    NewMetadataHelper(),
 		MetadataDownloadBatchSize: 128,
 	}
 	require.NoError(t, s.LoadFrom(ctx, l))
@@ -1190,7 +1190,7 @@ func TestTruncate1(t *testing.T) {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
 				metas := StreamMetadataSet{
-					Helper:                    NewMetadataHelper(nil),
+					Helper:                    NewMetadataHelper(),
 					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
@@ -1706,7 +1706,7 @@ func TestTruncate2(t *testing.T) {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
 				metas := StreamMetadataSet{
-					Helper:                    NewMetadataHelper(nil),
+					Helper:                    NewMetadataHelper(),
 					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
@@ -2090,7 +2090,7 @@ func TestTruncate3(t *testing.T) {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
 				metas := StreamMetadataSet{
-					Helper:                    NewMetadataHelper(nil),
+					Helper:                    NewMetadataHelper(),
 					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
@@ -2303,7 +2303,7 @@ func TestCalculateShiftTS(t *testing.T) {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
 				metas := StreamMetadataSet{
-					Helper:                    NewMetadataHelper(nil),
+					Helper:                    NewMetadataHelper(),
 					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)

@@ -13,6 +13,7 @@ import (
 
 const AesGcmKeyLen = 32 // AES-256 key length
 
+// FileBackend is ported from TiKV FileBackend
 type FileBackend struct {
 	memCache *MemAesGcmBackend
 }
@@ -57,4 +58,8 @@ func (f *FileBackend) Encrypt(ctx context.Context, plaintext []byte) (*encryptio
 
 func (f *FileBackend) Decrypt(ctx context.Context, content *encryptionpb.EncryptedContent) ([]byte, error) {
 	return f.memCache.DecryptContent(ctx, content)
+}
+
+func (f *FileBackend) Close() {
+	// nothing to close
 }

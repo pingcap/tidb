@@ -4,49 +4,44 @@ package kms
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
 	"hash/crc32"
-	"io"
-	"net/http"
-	"regexp"
 	"strings"
-	"time"
 
+	"cloud.google.com/go/kms/apiv1"
+	"cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"golang.org/x/oauth2/google"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const (
-	GcpKmsEndpoint       = "https://cloudkms.googleapis.com/v1/"
-	MethodDecrypt        = "decrypt"
-	KeyIdPattern         = `^projects/([^/]+)/locations/([^/]+)/keyRings/([^/]+)/cryptoKeys/([^/]+)/?$`
+	// need to keep it exactly same as TiKV STORAGE_VENDOR_NAME_GCP in TiKV
 	StorageVendorNameGcp = "gcp"
 )
 
-var KeyIdRegex = regexp.MustCompile(KeyIdPattern)
-
 type GcpKms struct {
-	config   *encryptionpb.MasterKeyKms
+	config *encryptionpb.MasterKeyKms
+	// the location prefix of key id,
+	// format: projects/{project_name}/locations/{location}
 	location string
-	client   *http.Client
+	client   *kms.KeyManagementClient
 }
 
 func NewGcpKms(config *encryptionpb.MasterKeyKms) (*GcpKms, error) {
 	if config.GcpKms == nil {
 		return nil, errors.New("GCP config is missing")
 	}
-	if !KeyIdRegex.MatchString(config.KeyId) {
-		return nil, errors.Errorf("invalid key: '%s'", config.KeyId)
-	}
+
+	// config string pattern verified at parsing flag phase, we should have valid string at this stage.
 	config.KeyId = strings.TrimSuffix(config.KeyId, "/")
+
+	// join the first 4 parts of the key id to get the location
 	location := strings.Join(strings.Split(config.KeyId, "/")[:4], "/")
 
-	client, err := google.DefaultClient(context.Background(), "https://www.googleapis.com/auth/cloud-platform")
+	ctx := context.Background()
+	client, err := kms.NewKeyManagementClient(ctx)
 	if err != nil {
-		return nil, errors.Errorf("failed to create GCP client: %v", err)
+		return nil, errors.Errorf("failed to create GCP KMS client: %v", err)
 	}
 
 	return &GcpKms{
@@ -56,111 +51,42 @@ func NewGcpKms(config *encryptionpb.MasterKeyKms) (*GcpKms, error) {
 	}, nil
 }
 
-func (g *GcpKms) doJSONRequest(ctx context.Context, keyName, method string, data any) ([]byte, error) {
-	url := g.formatCallURL(keyName, method)
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return nil, errors.Annotate(err, "failed to marshal request")
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(jsonData)))
-	if err != nil {
-		return nil, errors.Annotate(err, "failed to create request")
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	start := time.Now()
-	resp, err := g.client.Do(req)
-	if err != nil {
-		return nil, errors.Annotate(err, "request failed")
-	}
-	defer resp.Body.Close()
-
-	// TODO: Implement metrics
-	_ = time.Since(start)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, errors.Errorf("request failed with status: %s", resp.Status)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, errors.Annotate(err, "failed to read response body")
-	}
-
-	return body, nil
-}
-
-func (g *GcpKms) formatCallURL(key, method string) string {
-	return fmt.Sprintf("%s%s/:%s?alt=json", GcpKmsEndpoint, key, method)
-}
-
 func (g *GcpKms) Name() string {
 	return StorageVendorNameGcp
 }
 
 func (g *GcpKms) DecryptDataKey(ctx context.Context, dataKey []byte) ([]byte, error) {
-	decryptReq := DecryptRequest{
-		Ciphertext:       base64.StdEncoding.EncodeToString(dataKey),
-		CiphertextCrc32c: int64(crc32.Checksum(dataKey, crc32.MakeTable(crc32.Castagnoli))),
+	req := &kmspb.DecryptRequest{
+		Name:             g.config.KeyId,
+		Ciphertext:       dataKey,
+		CiphertextCrc32C: wrapperspb.Int64(int64(g.calculateCRC32C(dataKey))),
 	}
 
-	respBody, err := g.doJSONRequest(ctx, g.config.KeyId, MethodDecrypt, decryptReq)
+	resp, err := g.client.Decrypt(ctx, req)
 	if err != nil {
-		return nil, errors.Annotate(err, "decrypt request failed")
+		return nil, errors.Annotate(err, "gcp kms decrypt request failed")
 	}
 
-	var resp DecryptResp
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, errors.Annotate(err, "failed to unmarshal decrypt response")
+	if int64(g.calculateCRC32C(resp.Plaintext)) != resp.PlaintextCrc32C.Value {
+		return nil, errors.New("response corrupted in-transit")
 	}
 
-	plaintext, err := base64.StdEncoding.DecodeString(resp.Plaintext)
-	if err != nil {
-		return nil, errors.Annotate(err, "failed to decode plaintext")
-	}
-
-	if err := checkCRC32(plaintext, resp.PlaintextCrc32c); err != nil {
-		return nil, err
-	}
-
-	return plaintext, nil
+	return resp.Plaintext, nil
 }
 
-type EncryptRequest struct {
-	Plaintext       string `json:"plaintext"`
-	PlaintextCrc32c int64  `json:"plaintextCrc32c,string"`
-}
-
-type EncryptResp struct {
-	Ciphertext       string `json:"ciphertext"`
-	CiphertextCrc32c int64  `json:"ciphertextCrc32c,string"`
-}
-
-type DecryptRequest struct {
-	Ciphertext       string `json:"ciphertext"`
-	CiphertextCrc32c int64  `json:"ciphertextCrc32c,string"`
-}
-
-type DecryptResp struct {
-	Plaintext       string `json:"plaintext"`
-	PlaintextCrc32c int64  `json:"plaintextCrc32c,string"`
-}
-
-type GenRandomBytesReq struct {
-	LengthBytes     int    `json:"lengthBytes"`
-	ProtectionLevel string `json:"protectionLevel"`
-}
-
-type GenRandomBytesResp struct {
-	Data       string `json:"data"`
-	DataCrc32c int64  `json:"dataCrc32c,string"`
-}
-
-func checkCRC32(data []byte, expected int64) error {
-	crc := int64(crc32.Checksum(data, crc32.MakeTable(crc32.Castagnoli)))
+func (g *GcpKms) checkCRC32(data []byte, expected int64) error {
+	crc := int64(g.calculateCRC32C(data))
 	if crc != expected {
 		return errors.Errorf("crc32c mismatch, expected: %d, got: %d", expected, crc)
 	}
 	return nil
+}
+
+func (g *GcpKms) calculateCRC32C(data []byte) uint32 {
+	t := crc32.MakeTable(crc32.Castagnoli)
+	return crc32.Checksum(data, t)
+}
+
+func (g *GcpKms) Close() {
+	g.client.Close()
 }

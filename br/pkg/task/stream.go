@@ -643,7 +643,7 @@ func RunStreamStart(
 }
 
 func generateSecurityConfig(cfg *StreamConfig) backuppb.StreamBackupTaskSecurityConfig {
-	if len(cfg.LogBackupCipherInfo.CipherKey) > 0 && isEffectiveEncryptionMethod(cfg.LogBackupCipherInfo.CipherType) {
+	if len(cfg.LogBackupCipherInfo.CipherKey) > 0 && utils.IsEffectiveEncryptionMethod(cfg.LogBackupCipherInfo.CipherType) {
 		return backuppb.StreamBackupTaskSecurityConfig{
 			Encryption: &backuppb.StreamBackupTaskSecurityConfig_PlaintextDataKey{
 				PlaintextDataKey: &backuppb.CipherInfo{
@@ -653,7 +653,7 @@ func generateSecurityConfig(cfg *StreamConfig) backuppb.StreamBackupTaskSecurity
 			},
 		}
 	}
-	if len(cfg.MasterKeyConfig.MasterKeys) > 0 && isEffectiveEncryptionMethod(cfg.MasterKeyConfig.EncryptionType) {
+	if len(cfg.MasterKeyConfig.MasterKeys) > 0 && utils.IsEffectiveEncryptionMethod(cfg.MasterKeyConfig.EncryptionType) {
 		return backuppb.StreamBackupTaskSecurityConfig{
 			Encryption: &backuppb.StreamBackupTaskSecurityConfig_MasterKeyConfig{
 				MasterKeyConfig: &backuppb.MasterKeyConfig{
@@ -1037,7 +1037,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	readMetaDone := console.ShowTask("Reading log backup metadata... ", glue.WithTimeCost())
 	metas := stream.StreamMetadataSet{
 		MetadataDownloadBatchSize: cfg.MetadataDownloadBatchSize,
-		Helper:                    stream.NewMetadataHelper(nil),
+		Helper:                    stream.NewMetadataHelper(),
 		DryRun:                    cfg.DryRun,
 	}
 	shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, extStorage, cfg.Until)
@@ -1364,6 +1364,7 @@ func restoreStream(
 	if err != nil {
 		return errors.Annotate(err, "failed to create encryption manager for log restore")
 	}
+	defer encryptionManager.Close()
 	err = client.InstallLogFileManager(ctx, cfg.StartTS, cfg.RestoreTS, cfg.MetadataDownloadBatchSize, encryptionManager)
 	if err != nil {
 		return err

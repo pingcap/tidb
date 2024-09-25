@@ -103,7 +103,7 @@ func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFil
 		startTS:   init.StartTS,
 		restoreTS: init.RestoreTS,
 		storage:   init.Storage,
-		helper:    stream.NewMetadataHelper(init.EncryptionManager),
+		helper:    stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
 
 		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}

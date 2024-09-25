@@ -89,3 +89,7 @@ func (k *KmsBackend) decryptContent(ctx context.Context, content *encryptionpb.E
 func (k *KmsBackend) Decrypt(ctx context.Context, content *encryptionpb.EncryptedContent) ([]byte, error) {
 	return k.decryptContent(ctx, content)
 }
+
+func (k *KmsBackend) Close() {
+	k.kmsProvider.Close()
+}

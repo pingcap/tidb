@@ -306,7 +306,7 @@ func testReadFromMetadataWithVersion(t *testing.T, m metaMaker) {
 		}()
 
 		meta := new(stream.StreamMetadataSet)
-		meta.Helper = stream.NewMetadataHelper(nil)
+		meta.Helper = stream.NewMetadataHelper()
 		meta.MetadataDownloadBatchSize = 128
 		_, err := meta.LoadUntilAndCalculateShiftTS(ctx, loc, c.untilTS)
 		require.NoError(t, err)

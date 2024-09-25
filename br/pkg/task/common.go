@@ -542,7 +542,7 @@ func (cfg *Config) parseLogBackupCipherInfo(flags *pflag.FlagSet) (bool, error) 
 		return false, errors.Trace(err)
 	}
 
-	if !isEffectiveEncryptionMethod(cfg.LogBackupCipherInfo.CipherType) {
+	if !utils.IsEffectiveEncryptionMethod(cfg.LogBackupCipherInfo.CipherType) {
 		return false, nil
 	}
 
@@ -739,7 +739,7 @@ func (cfg *Config) parseAndValidateMasterKeyInfo(hasPlaintextKey bool, flags *pf
 		return errors.Errorf("failed to parse encryption method: %v", err)
 	}
 
-	if !isEffectiveEncryptionMethod(encryptionMethod) {
+	if !utils.IsEffectiveEncryptionMethod(encryptionMethod) {
 		return errors.Errorf("invalid encryption method: %s", encryptionMethodString)
 	}
 
@@ -758,11 +758,6 @@ func (cfg *Config) parseAndValidateMasterKeyInfo(hasPlaintextKey bool, flags *pf
 	}
 
 	return nil
-}
-
-func isEffectiveEncryptionMethod(method encryptionpb.EncryptionMethod) bool {
-	return method != encryptionpb.EncryptionMethod_UNKNOWN &&
-		method != encryptionpb.EncryptionMethod_PLAINTEXT
 }
 
 // NewMgr creates a new mgr at the given PD address.

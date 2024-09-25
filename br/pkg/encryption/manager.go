@@ -24,15 +24,14 @@ func NewManager(cipherInfo *backuppb.CipherInfo, masterKeyConfigs *backuppb.Mast
 		return nil, errors.New("cipherInfo or masterKeyConfigs is nil")
 	}
 
-	if cipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT && cipherInfo.CipherType != encryptionpb.EncryptionMethod_UNKNOWN {
+	if utils.IsEffectiveEncryptionMethod(cipherInfo.CipherType) {
 		return &Manager{
 			cipherInfo:        cipherInfo,
 			masterKeyBackends: nil,
 			encryptionMethod:  nil,
 		}, nil
 	}
-
-	if masterKeyConfigs.EncryptionType != encryptionpb.EncryptionMethod_PLAINTEXT && masterKeyConfigs.EncryptionType != encryptionpb.EncryptionMethod_UNKNOWN {
+	if utils.IsEffectiveEncryptionMethod(masterKeyConfigs.EncryptionType) {
 		masterKeyBackends, err := encryption.NewMultiMasterKeyBackend(masterKeyConfigs.GetMasterKeys())
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -59,7 +58,7 @@ func (m *Manager) Decrypt(ctx context.Context, content []byte, fileEncryptionInf
 		return decryptedContent, nil
 	case *encryptionpb.FileEncryptionInfo_MasterKeyBased:
 		encryptedContents := fileEncryptionInfo.GetMasterKeyBased().DataKeyEncryptedContent
-		if encryptedContents == nil || len(encryptedContents) == 0 {
+		if len(encryptedContents) == 0 {
 			return nil, errors.New("should contain at least one encrypted data key")
 		}
 		// pick first one, the list is for future expansion of multiple encrypted data keys by different master key backend
@@ -81,4 +80,8 @@ func (m *Manager) Decrypt(ctx context.Context, content []byte, fileEncryptionInf
 	default:
 		return nil, errors.Errorf("internal error: unsupported encryption mode type %T", mode)
 	}
+}
+
+func (m *Manager) Close() {
+	m.masterKeyBackends.Close()
 }
