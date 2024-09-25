@@ -2079,9 +2079,13 @@ var defaultSysVars = []*SysVar{
 		s.EnableTablePartition = val
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableListTablePartition, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableListTablePartition = TiDBOptOn(val)
-		return nil
+	// Keeping tidb_enable_list_partition here, to give errors if setting it to anything other than ON
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableListTablePartition, Value: On, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue, _ string, _ ScopeFlag) (string, error) {
+		vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(TiDBEnableListTablePartition))
+		if !TiDBOptOn(normalizedValue) {
+			return normalizedValue, errors.Errorf("tidb_enable_list_partition is now always on, and cannot be turned off")
+		}
+		return normalizedValue, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashJoinConcurrency, Value: strconv.Itoa(DefTiDBHashJoinConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency, AllowAutoValue: true, SetSession: func(s *SessionVars, val string) error {
 		s.hashJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
@@ -2341,9 +2345,12 @@ var defaultSysVars = []*SysVar{
 		s.EnableClusteredIndex = TiDBOptEnableClustered(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableGlobalIndex, Type: TypeBool, Value: BoolToOnOff(DefTiDBEnableGlobalIndex), SetSession: func(s *SessionVars, val string) error {
-		s.EnableGlobalIndex = TiDBOptOn(val)
-		return nil
+	// Keeping tidb_enable_global_index here, to give error if setting it to anything other than ON
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableGlobalIndex, Type: TypeBool, Value: On, Validation: func(vars *SessionVars, normalizedValue, _ string, _ ScopeFlag) (string, error) {
+		if !TiDBOptOn(normalizedValue) {
+			vars.StmtCtx.AppendWarning(errors.NewNoStackError("tidb_enable_global_index is always turned on. This variable has been deprecated and will be removed in the future releases"))
+		}
+		return normalizedValue, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPartitionPruneMode, Value: DefTiDBPartitionPruneMode, Type: TypeEnum, PossibleValues: []string{"static", "dynamic", "static-only", "dynamic-only"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		mode := PartitionPruneMode(normalizedValue).Update()
@@ -2911,7 +2918,7 @@ var defaultSysVars = []*SysVar{
 		s.EnablePlanCacheForParamLimit = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableINLJoinInnerMultiPattern, Value: BoolToOnOff(false), Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableINLJoinInnerMultiPattern, Value: BoolToOnOff(DefTiDBEnableINLJoinMultiPattern), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnableINLJoinInnerMultiPattern = TiDBOptOn(val)
 			return nil

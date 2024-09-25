@@ -140,3 +140,35 @@ func TestOptionTimeout(t *testing.T) {
 	rows = tk.MustQuery(`recommend index run for 'select a from t where a=1'`).Rows()
 	require.Equal(t, 1, len(rows))
 }
+
+func TestOptionShow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustQuery(`recommend index show`).Sort().
+		Check(testkit.Rows("max_index_columns 3 The maximum number of columns in an index.",
+			"max_num_index 5 The maximum number of indexes to recommend for a table.",
+			"max_num_query 1000 The maximum number of queries to recommend indexes.",
+			"timeout 30s The timeout of index advisor."))
+
+	tk.MustExec(`recommend index set max_num_query=1111`)
+	tk.MustQuery(`recommend index show`).Sort().
+		Check(testkit.Rows("max_index_columns 3 The maximum number of columns in an index.",
+			"max_num_index 5 The maximum number of indexes to recommend for a table.",
+			"max_num_query 1111 The maximum number of queries to recommend indexes.",
+			"timeout 30s The timeout of index advisor."))
+
+	tk.MustExec(`recommend index set max_index_columns=10`)
+	tk.MustQuery(`recommend index show`).Sort().
+		Check(testkit.Rows("max_index_columns 10 The maximum number of columns in an index.",
+			"max_num_index 5 The maximum number of indexes to recommend for a table.",
+			"max_num_query 1111 The maximum number of queries to recommend indexes.",
+			"timeout 30s The timeout of index advisor."))
+
+	tk.MustExec(`recommend index set timeout='10m'`)
+	tk.MustQuery(`recommend index show`).Sort().
+		Check(testkit.Rows("max_index_columns 10 The maximum number of columns in an index.",
+			"max_num_index 5 The maximum number of indexes to recommend for a table.",
+			"max_num_query 1111 The maximum number of queries to recommend indexes.",
+			"timeout 10m The timeout of index advisor."))
+}

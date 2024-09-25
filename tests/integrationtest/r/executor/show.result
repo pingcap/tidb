@@ -411,7 +411,6 @@ t	CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
   `b` char(10) GENERATED ALWAYS AS (_utf8'a') VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-set @@session.tidb_enable_list_partition = ON;
 DROP TABLE IF EXISTS t;
 create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
 partition p0 values in (3,5,6,9,17),
@@ -542,7 +541,6 @@ t	CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`a`)
 (PARTITION `p` VALUES LESS THAN (0x7f))
-set @@session.tidb_enable_list_partition = default;
 set @@foreign_key_checks=default;
 create table if not exists show_errors (a int);
 create table show_errors (a int);

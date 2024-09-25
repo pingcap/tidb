@@ -37,8 +37,13 @@ const (
 	OptTimeout = "timeout"
 )
 
+var (
+	// AllOptions is the list of all options.
+	AllOptions = []string{OptMaxNumIndex, OptMaxIndexColumns, OptMaxNumQuery, OptTimeout}
+)
+
 func fillOption(sctx sessionctx.Context, opt *Option) error {
-	vals, err := getOption(sctx, OptMaxNumIndex, OptMaxIndexColumns, OptMaxNumQuery, OptTimeout)
+	vals, _, err := GetOptions(sctx, AllOptions...)
 	if err != nil {
 		return err
 	}
@@ -95,7 +100,8 @@ func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
 	return err
 }
 
-func getOption(sctx sessionctx.Context, opts ...string) (map[string]string, error) {
+// GetOptions gets the values of options.
+func GetOptions(sctx sessionctx.Context, opts ...string) (vals, desc map[string]string, err error) {
 	template := `SELECT name, value FROM mysql.tidb_kernel_options WHERE module = '%v' AND name in (%v)`
 	var optStrs string
 	for i, opt := range opts {
@@ -108,18 +114,22 @@ func getOption(sctx sessionctx.Context, opts ...string) (map[string]string, erro
 	sql := fmt.Sprintf(template, OptModule, optStrs)
 	rows, err := exec(sctx, sql)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	res := make(map[string]string)
+	vals = make(map[string]string)
 	for _, row := range rows {
-		res[row.GetString(0)] = row.GetString(1)
+		vals[row.GetString(0)] = row.GetString(1)
 	}
 	for _, opt := range opts {
-		if _, ok := res[opt]; !ok {
-			res[opt] = defaultVal(opt)
+		if _, ok := vals[opt]; !ok {
+			vals[opt] = defaultVal(opt)
 		}
 	}
-	return res, nil
+	desc = make(map[string]string)
+	for _, opt := range opts {
+		desc[opt] = description(opt)
+	}
+	return vals, desc, nil
 }
 
 func description(opt string) string {
