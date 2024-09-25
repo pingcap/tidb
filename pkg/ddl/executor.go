@@ -2009,8 +2009,7 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	// we need refactor this part to support V2 job version after refactor all of ddl types.
 	var involvingSchemaInfo []model.InvolvingSchemaInfo
 	for _, j := range subJobs {
-		switch j.Type {
-		case model.ActionAddForeignKey:
+		if j.Type == model.ActionAddForeignKey {
 			ref, ok := j.Args[0].(*model.FKInfo)
 			if !ok {
 				logFn("unexpected type of foreign key info",
