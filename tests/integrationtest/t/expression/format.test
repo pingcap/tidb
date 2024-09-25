@@ -14,6 +14,11 @@ SELECT FORMAT(100000.234,4,'fr_BE');
 SELECT FORMAT(100000.234,4,'en_IN');
 SELECT FORMAT(100000.234,4,'de_CH');
 SELECT FORMAT(100000.234,4,'no_NO');
+SELECT FORMAT(100000.234,4,'bg_BG');
+SELECT FORMAT(100000.234,4,'ar_SA');
+SELECT FORMAT(100000.234,4,'es_MX');
+SELECT FORMAT(100000.234,4,'ps_AF');
+SELECT FORMAT(100000.234,4,'kv_RU');
 
 # The first two should work fine, the third should give a warning.
 --enable_warnings
