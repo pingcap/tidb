@@ -2326,13 +2326,35 @@ func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 
 // ResourceGroupRunawayRuleOption is used for parsing the resource group/query watch runaway rule.
 type ResourceGroupRunawayRuleOption struct {
-	ExecElapsed string
+	Tp            RunawayRuleOptionType
+	ExecElapsed   string
+	ProcessedKeys int64
+	RequestUnit   int64
 }
 
+type RunawayRuleOptionType int
+
+const (
+	RunawayRuleExecElapsed RunawayRuleOptionType = iota
+	RunawayRuleProcessedKeys
+	RunawayRuleRequestUnit
+)
+
 func (n *ResourceGroupRunawayRuleOption) restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("EXEC_ELAPSED ")
-	ctx.WritePlain("= ")
-	ctx.WriteString(n.ExecElapsed)
+	switch n.Tp {
+	case RunawayRuleExecElapsed:
+		ctx.WriteKeyWord("EXEC_ELAPSED ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.ExecElapsed)
+	case RunawayRuleProcessedKeys:
+		ctx.WriteKeyWord("PROCESSED_KEYS ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.ProcessedKeys)
+	case RunawayRuleRequestUnit:
+		ctx.WriteKeyWord("RU ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.RequestUnit)
+	}
 	return nil
 }
 
@@ -4777,6 +4799,10 @@ func CheckAppend(ops []*ResourceGroupOption, newOp *ResourceGroupOption) bool {
 func CheckRunawayAppend(ops []*ResourceGroupRunawayOption, newOp *ResourceGroupRunawayOption) bool {
 	for _, op := range ops {
 		if op.Tp == newOp.Tp {
+			// support multiple runaway rules.
+			if op.Tp == model.RunawayRule {
+				continue
+			}
 			return false
 		}
 	}

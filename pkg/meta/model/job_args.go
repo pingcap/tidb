@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -279,6 +280,76 @@ func GetBatchCreateTableArgs(job *Job) (*BatchCreateTableArgs, error) {
 	return getOrDecodeArgsV2[*BatchCreateTableArgs](job)
 }
 
+// DropTableArgs is the arguments for drop table/view/sequence job.
+// when dropping multiple objects, each object will have a separate job
+type DropTableArgs struct {
+	// below fields are only for drop table.
+	// when dropping multiple tables, the Identifiers is the same.
+	Identifiers []ast.Ident `json:"identifiers,omitempty"`
+	FKCheck     bool        `json:"fk_check,omitempty"`
+
+	// below fields are finished job args
+	StartKey        []byte   `json:"start_key,omitempty"`
+	OldPartitionIDs []int64  `json:"old_partition_ids,omitempty"`
+	OldRuleIDs      []string `json:"old_rule_ids,omitempty"`
+}
+
+func (a *DropTableArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		// only drop table job has in args.
+		if job.Type == ActionDropTable {
+			job.Args = []any{a.Identifiers, a.FKCheck}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *DropTableArgs) fillFinishedJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.StartKey, a.OldPartitionIDs, a.OldRuleIDs}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *DropTableArgs) decodeV1(job *Job) error {
+	intest.Assert(job.Type == ActionDropTable, "only drop table job can call GetDropTableArgs")
+	return job.DecodeArgs(&a.Identifiers, &a.FKCheck)
+}
+
+// GetDropTableArgs gets the drop-table args.
+func GetDropTableArgs(job *Job) (*DropTableArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &DropTableArgs{}
+		if err := args.decodeV1(job); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*DropTableArgs](job)
+}
+
+// GetFinishedDropTableArgs gets the drop-table args after the job is finished.
+func GetFinishedDropTableArgs(job *Job) (*DropTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			startKey        []byte
+			oldPartitionIDs []int64
+			oldRuleIDs      []string
+		)
+		if err := job.DecodeArgs(&startKey, &oldPartitionIDs, &oldRuleIDs); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &DropTableArgs{
+			StartKey:        startKey,
+			OldPartitionIDs: oldPartitionIDs,
+			OldRuleIDs:      oldRuleIDs,
+		}, nil
+	}
+	return getOrDecodeArgsV2[*DropTableArgs](job)
+}
+
 // TruncateTableArgs is the arguments for truncate table job.
 type TruncateTableArgs struct {
 	FKCheck         bool    `json:"fk_check,omitempty"`
@@ -434,7 +505,16 @@ func GetTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 		}
 		return args, nil
 	}
-	return getOrDecodeArgsV2[*TablePartitionArgs](job)
+	args, err := getOrDecodeArgsV2[*TablePartitionArgs](job)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// when it's ActionDropTablePartition job, or roll-backing a ActionAddTablePartition
+	// job, our execution part expect a non-nil PartInfo.
+	if args.PartInfo == nil {
+		args.PartInfo = &PartitionInfo{}
+	}
+	return args, nil
 }
 
 // GetFinishedTablePartitionArgs gets the table partition args after the job is finished.
@@ -605,6 +685,191 @@ func GetResourceGroupArgs(job *Job) (*ResourceGroupArgs, error) {
 		return &ResourceGroupArgs{RGInfo: &rgInfo}, nil
 	}
 	return getOrDecodeArgsV2[*ResourceGroupArgs](job)
+}
+
+// RebaseAutoIDArgs is the arguments for ActionRebaseAutoID DDL.
+// It is also for ActionRebaseAutoRandomBase.
+type RebaseAutoIDArgs struct {
+	NewBase int64 `json:"new_base,omitempty"`
+	Force   bool  `json:"force,omitempty"`
+}
+
+func (a *RebaseAutoIDArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.NewBase, a.Force}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetRebaseAutoIDArgs the args for ActionRebaseAutoID/ActionRebaseAutoRandomBase ddl.
+func GetRebaseAutoIDArgs(job *Job) (*RebaseAutoIDArgs, error) {
+	var (
+		newBase int64
+		force   bool
+	)
+
+	if job.Version == JobVersion1 {
+		if err := job.DecodeArgs(&newBase, &force); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &RebaseAutoIDArgs{
+			NewBase: newBase,
+			Force:   force,
+		}, nil
+	}
+
+	// for version V2
+	return getOrDecodeArgsV2[*RebaseAutoIDArgs](job)
+}
+
+// ModifyTableCommentArgs is the arguments for ActionModifyTableComment ddl.
+type ModifyTableCommentArgs struct {
+	Comment string `json:"comment,omitempty"`
+}
+
+func (a *ModifyTableCommentArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.Comment}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetModifyTableCommentArgs gets the args for ActionModifyTableComment.
+func GetModifyTableCommentArgs(job *Job) (*ModifyTableCommentArgs, error) {
+	if job.Version == JobVersion1 {
+		var comment string
+		if err := job.DecodeArgs(&comment); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &ModifyTableCommentArgs{
+			Comment: comment,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*ModifyTableCommentArgs](job)
+}
+
+// ModifyTableCharsetAndCollateArgs is the arguments for ActionModifyTableCharsetAndCollate ddl.
+type ModifyTableCharsetAndCollateArgs struct {
+	ToCharset          string `json:"to_charset,omitempty"`
+	ToCollate          string `json:"to_collate,omitempty"`
+	NeedsOverwriteCols bool   `json:"needs_overwrite_cols,omitempty"`
+}
+
+func (a *ModifyTableCharsetAndCollateArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.ToCharset, a.ToCollate, a.NeedsOverwriteCols}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetModifyTableCharsetAndCollateArgs gets the args for ActionModifyTableCharsetAndCollate ddl.
+func GetModifyTableCharsetAndCollateArgs(job *Job) (*ModifyTableCharsetAndCollateArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &ModifyTableCharsetAndCollateArgs{}
+		err := job.DecodeArgs(&args.ToCharset, &args.ToCollate, &args.NeedsOverwriteCols)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+
+	return getOrDecodeArgsV2[*ModifyTableCharsetAndCollateArgs](job)
+}
+
+// AlterIndexVisibilityArgs is the arguments for ActionAlterIndexVisibility ddl.
+type AlterIndexVisibilityArgs struct {
+	IndexName pmodel.CIStr `json:"index_name,omitempty"`
+	Invisible bool         `json:"invisible,omitempty"`
+}
+
+func (a *AlterIndexVisibilityArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.IndexName, a.Invisible}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAlterIndexVisibilityArgs gets the args for AlterIndexVisibility ddl.
+func GetAlterIndexVisibilityArgs(job *Job) (*AlterIndexVisibilityArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			indexName pmodel.CIStr
+			invisible bool
+		)
+		if err := job.DecodeArgs(&indexName, &invisible); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AlterIndexVisibilityArgs{
+			IndexName: indexName,
+			Invisible: invisible,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*AlterIndexVisibilityArgs](job)
+}
+
+// AddForeignKeyArgs is the arguments for ActionAddForeignKey ddl.
+type AddForeignKeyArgs struct {
+	FkInfo  *FKInfo `json:"fk_info,omitempty"`
+	FkCheck bool    `json:"fk_check,omitempty"`
+}
+
+func (a *AddForeignKeyArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.FkInfo, a.FkCheck}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAddForeignKeyArgs get the args for AddForeignKey ddl.
+func GetAddForeignKeyArgs(job *Job) (*AddForeignKeyArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			fkInfo  *FKInfo
+			fkCheck bool
+		)
+		if err := job.DecodeArgs(&fkInfo, &fkCheck); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AddForeignKeyArgs{
+			FkInfo:  fkInfo,
+			FkCheck: fkCheck,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*AddForeignKeyArgs](job)
+}
+
+// DropForeignKeyArgs is the arguments for DropForeignKey ddl.
+type DropForeignKeyArgs struct {
+	FkName pmodel.CIStr `json:"fk_name,omitempty"`
+}
+
+func (a *DropForeignKeyArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.FkName}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetDropForeignKeyArgs gets the args for DropForeignKey ddl.
+func GetDropForeignKeyArgs(job *Job) (*DropForeignKeyArgs, error) {
+	if job.Version == JobVersion1 {
+		var fkName pmodel.CIStr
+		if err := job.DecodeArgs(&fkName); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &DropForeignKeyArgs{FkName: fkName}, nil
+	}
+
+	return getOrDecodeArgsV2[*DropForeignKeyArgs](job)
 }
 
 // DropColumnArgs is the arguments of dropping column job.
