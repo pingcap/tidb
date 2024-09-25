@@ -750,12 +750,11 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 			return ver, errors.Trace(err)
 		}
 		// We should get startTS here to avoid lost startTS when TiDB crashed during send prepare flashback RPC.
-		startTS, err := jobCtx.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		args.StartTS, err = jobCtx.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		args.StartTS = startTS
 		keyRanges, err := getFlashbackKeyRanges(w.ctx, sess, args.FlashbackTS)
 		if err != nil {
 			return ver, errors.Trace(err)
