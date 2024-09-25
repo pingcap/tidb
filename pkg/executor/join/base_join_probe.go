@@ -139,8 +139,6 @@ type baseJoinProbe struct {
 	rowIndexInfos []matchedRowInfo
 	selected      []bool
 
-	probeSpillChkFieldTypes []*types.FieldType
-
 	// This marks which columns are probe columns, and it is used only in spill
 	usedColIdx  []int
 	spillTmpChk []*chunk.Chunk
@@ -174,6 +172,19 @@ func (j *baseJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk) {
 }
 
 func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
+	defer func() {
+		if j.ctx.spillHelper.areAllPartitionsSpilled() {
+			// We will not call `Probe` function when all partitions are spilled.
+			// So it's necessary to manually set `currentProbeRow` to avoid check fail.
+			j.currentProbeRow = j.chunkRows
+		}
+	}()
+
+	if j.currentChunk != nil {
+		if j.currentProbeRow < j.chunkRows {
+			return errors.New("Previous chunk is not probed yet")
+		}
+	}
 	j.currentChunk = chk
 	logicalRows := chk.NumRows()
 	// if chk.sel != nil, then physicalRows is different from logicalRows
@@ -248,14 +259,12 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	// spillTriggered can only be set in build stage, so it's ok to get it without lock
 	if j.ctx.spillHelper.isSpillTriggered() && len(j.spillTmpChk) == 0 {
 		for i := 0; i < int(j.ctx.partitionNumber); i++ {
-			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkWithCapacity(j.probeSpillChkFieldTypes, spillChunkSize))
+			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkWithCapacity(j.ctx.spillHelper.probeSpillFieldTypes, spillChunkSize))
 		}
 	}
 
 	j.spilledIdx = j.spilledIdx[:0]
 
-	// generate hash value
-	hash := fnv.New64()
 	for logicalRowIndex, physicalRowIndex := range j.usedRows {
 		if (j.filterVector != nil && !j.filterVector[physicalRowIndex]) || (j.nullKeyVector != nil && j.nullKeyVector[physicalRowIndex]) {
 			// explicit set the matchedRowsHeaders[logicalRowIndex] to nil to indicate there is no matched rows
@@ -264,12 +273,12 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			continue
 		}
 
-		hash.Reset()
+		j.hash.Reset()
 
 		// As the golang doc described, `Hash.Write` never returns an error.
 		// See https://golang.org/pkg/hash/#Hash
-		_, _ = hash.Write(j.serializedKeys[logicalRowIndex])
-		hashValue := hash.Sum64()
+		_, _ = j.hash.Write(j.serializedKeys[logicalRowIndex])
+		hashValue := j.hash.Sum64()
 		j.matchedRowsHashValue[logicalRowIndex] = hashValue
 		partIndex := generatePartitionIndex(hashValue, j.ctx.partitionMaskOffset)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
@@ -700,8 +709,6 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		hash:                  fnv.New64(),
 		rehashBuf:             make([]byte, serialization.Uint64Len),
 	}
-
-	base.probeSpillChkFieldTypes = getProbeSpillChunkFieldTypes(probeChkFieldTypes)
 
 	for i := range keyIndex {
 		if !mysql.HasNotNullFlag(base.keyTypes[i].GetFlag()) {

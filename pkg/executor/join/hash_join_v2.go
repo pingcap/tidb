@@ -1066,14 +1066,17 @@ func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {
 }
 
 func (e *HashJoinV2Exec) reset() {
-	e.spillHelper.setCanSpillFlag(true)
 	e.resetProbeStatus()
 	e.releaseDisk()
 	e.resetHashTableContextForRestore()
+	e.spillHelper.setCanSpillFlag(true)
 }
 
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 	defer func() {
+		if r := recover(); r != nil {
+			e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
+		}
 		close(e.joinResultCh)
 	}()
 
