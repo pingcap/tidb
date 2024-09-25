@@ -17,6 +17,7 @@ package priorityqueue
 import (
 	"container/heap"
 	"context"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -59,17 +60,21 @@ func pushJob(queue JobQueue, job AnalysisJob, calculator *PriorityCalculator) er
 // FetchAllTablesAndBuildAnalysisJobs builds analysis jobs for all eligible tables and partitions.
 func FetchAllTablesAndBuildAnalysisJobs(
 	sctx sessionctx.Context,
+	parameters map[string]string,
+	autoAnalysisTimeWindow AutoAnalysisTimeWindow,
 	statsHandle statstypes.StatsHandle,
 	jobQueue JobQueue,
 ) error {
-	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	// Query locked tables once to minimize overhead.
+	// Outdated lock info is acceptable as we verify table lock status pre-analysis.
 	lockedTables, err := lockstats.QueryLockedTables(sctx)
 	if err != nil {
 		return err
 	}
+	// Get current timestamp from the session context.
 	currentTs, err := getStartTs(sctx)
 	if err != nil {
 		return err
@@ -80,6 +85,13 @@ func FetchAllTablesAndBuildAnalysisJobs(
 
 	dbs := is.AllSchemaNames()
 	for _, db := range dbs {
+		// Sometimes the tables are too many. Auto-analyze will take too much time on it.
+		// so we need to check the available time.
+		if !autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
+			return nil
+		}
+
+		// Ignore the memory and system database.
 		if util.IsMemOrSysDB(db.L) {
 			continue
 		}
@@ -89,7 +101,9 @@ func FetchAllTablesAndBuildAnalysisJobs(
 			return err
 		}
 
+		// We need to check every partition of every table to see if it needs to be analyzed.
 		for _, tblInfo := range tbls {
+			// If table locked, skip analyze all partitions of the table.
 			if _, ok := lockedTables[tblInfo.ID]; ok {
 				continue
 			}
@@ -112,6 +126,7 @@ func FetchAllTablesAndBuildAnalysisJobs(
 				continue
 			}
 
+			// Only analyze the partition that has not been locked.
 			partitionDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions))
 			for _, def := range pi.Definitions {
 				if _, ok := lockedTables[def.ID]; !ok {
@@ -119,7 +134,7 @@ func FetchAllTablesAndBuildAnalysisJobs(
 				}
 			}
 			partitionStats := GetPartitionStats(statsHandle, tblInfo, partitionDefs)
-
+			// If the prune mode is static, we need to analyze every partition as a separate table.
 			if pruneMode == variable.Static {
 				for pIDAndName, stats := range partitionStats {
 					job := jobFactory.CreateStaticPartitionAnalysisJob(
