@@ -1,0 +1,53 @@
+# TestIssue29520
+set @@tidb_enable_mutation_checker=1;
+drop table if exists t;
+create table t(c year, PRIMARY KEY (c) CLUSTERED, KEY i1(c));
+insert into t values('2020');
+set @@tidb_enable_mutation_checker=default;
+
+# TestAssertionWithLazyCheck
+set @@tidb_txn_assertion_level = 'STRICT';
+drop table if exists t;
+create table t (id int primary key, v1 int, v2 int, index (v1), unique index (v2));
+set @@tidb_constraint_check_in_place = true;
+insert into t values (1, 1, 1);
+-- error 1062
+insert into t values (2, 1, 1);
+set @@tidb_constraint_check_in_place = false;
+insert into t values (3, 3, 3);
+-- error 1062
+insert into t values (4, 3, 3);
+set @@tidb_txn_assertion_level=default;
+set @@tidb_constraint_check_in_place=default;
+
+# TestDuplicateErrorOnPrefixIndex, Issue: #44316.
+drop table if exists t;
+create table t(a varchar(20), b varchar(20), unique index idx_a(a(1)));
+insert into t values ('qaa', 'abc');
+-- error 1062
+insert into t values ('qbb', 'xyz');
+insert into t values ('rcc', 'xyz');
+select * from t order by a;
+-- error 1062
+update t set a = 'qcc' where a = 'rcc';
+--enable_warnings;
+update ignore t set a = 'qcc' where a = 'rcc';
+--disable_warnings;
+
+# Test Issue 48295.
+drop table if exists t;
+create table t (id int, a varchar(64), b varchar(64), c varchar(64), index idx_a(a(64)));
+show create table t;
+alter table t add index idx_b(b(64));
+show create table t;
+alter table t add index idx_c(c(32));
+show create table t;
+alter table t modify column c varchar(32);
+show create table t;
+drop table t;
+
+# Test Issue 47115.
+drop table if exists t;
+create table t (a int, b int, k varchar(255), primary key (a, b), key k (k));
+insert into t values (1, 1, 'abc                                                                                                                                ');
+drop table t;
