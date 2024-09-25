@@ -163,7 +163,7 @@ done
 
 
 # check is there still exists scheduler in pause.
-pause_schedulers=$(curl https://$PD_ADDR/pd/api/v1/schedulers?status="paused" | grep "scheduler" | wc -l)
+pause_schedulers=$(run_curl https://$PD_ADDR/pd/api/v1/schedulers?status="paused" | grep "scheduler" | wc -l)
  # There shouldn't be any paused schedulers since BR gracfully shutdown.
  if [ "$pause_schedulers" -ne "0" ];then
   echo "TEST: [$TEST_NAME] failed because paused scheduler has changed"

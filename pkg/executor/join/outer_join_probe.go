@@ -293,6 +293,13 @@ func (j *outerJoinProbe) probeForInnerSideBuild(chk, joinedChk *chunk.Chunk, rem
 	return
 }
 
+func (j *outerJoinProbe) ClearProbeState() {
+	if j.isOuterSideBuild {
+		j.rowIter = nil
+	}
+	j.baseJoinProbe.ClearProbeState()
+}
+
 func (j *outerJoinProbe) probeForOuterSideBuild(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
 	hasOtherCondition := j.ctx.hasOtherCondition()

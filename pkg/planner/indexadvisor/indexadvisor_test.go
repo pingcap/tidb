@@ -385,3 +385,33 @@ FROM (SELECT block_number AS block_receipts
 	require.NoError(t, err)
 	require.True(t, len(r) > 0)
 }
+
+func TestIndexAdvisorStorage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int, d varchar(32))`)
+	q := `select index_columns, index_details->'$.Reason' from mysql.index_advisor_results`
+
+	tk.MustQuery(`recommend index run for "select a from t where a=1"`)
+	tk.MustQuery(q).Sort().Check(testkit.Rows(
+		"a \"Column [a] appear in Equal or Range Predicate clause(s) in query: select `a` from `test` . `t` where `a` = ?\""))
+
+	tk.MustQuery(`recommend index run for "select b from t where b=1"`)
+	tk.MustQuery(q).Sort().Check(testkit.Rows(
+		"a \"Column [a] appear in Equal or Range Predicate clause(s) in query: select `a` from `test` . `t` where `a` = ?\"",
+		"b \"Column [b] appear in Equal or Range Predicate clause(s) in query: select `b` from `test` . `t` where `b` = ?\""))
+
+	tk.MustQuery(`recommend index run for "select d from t where d='x'"`)
+	tk.MustQuery(q).Sort().Check(testkit.Rows(
+		"a \"Column [a] appear in Equal or Range Predicate clause(s) in query: select `a` from `test` . `t` where `a` = ?\"",
+		"b \"Column [b] appear in Equal or Range Predicate clause(s) in query: select `b` from `test` . `t` where `b` = ?\"",
+		"d \"Column [d] appear in Equal or Range Predicate clause(s) in query: select `d` from `test` . `t` where `d` = ?\""))
+
+	tk.MustQuery(`recommend index run for "select c, b from t where c=1 and b=1"`)
+	tk.MustQuery(q).Sort().Check(testkit.Rows(
+		"a \"Column [a] appear in Equal or Range Predicate clause(s) in query: select `a` from `test` . `t` where `a` = ?\"",
+		"b \"Column [b] appear in Equal or Range Predicate clause(s) in query: select `b` from `test` . `t` where `b` = ?\"",
+		"b,c \"Column [b c] appear in Equal or Range Predicate clause(s) in query: select `c` , `b` from `test` . `t` where `c` = ? and `b` = ?\"",
+		"d \"Column [d] appear in Equal or Range Predicate clause(s) in query: select `d` from `test` . `t` where `d` = ?\""))
+}

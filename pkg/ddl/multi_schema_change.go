@@ -251,11 +251,11 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		col := job.Args[0].(*table.Column)
 		info.ModifyColumns = append(info.ModifyColumns, col.Name)
 	case model.ActionAlterIndexVisibility:
-		idxName := job.Args[0].(pmodel.CIStr)
+		idxName := job.JobArgs.(*model.AlterIndexVisibilityArgs).IndexName
 		info.AlterIndexes = append(info.AlterIndexes, idxName)
 	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
 	case model.ActionAddForeignKey:
-		fkInfo := job.Args[0].(*model.FKInfo)
+		fkInfo := job.JobArgs.(*model.AddForeignKeyArgs).FkInfo
 		info.AddForeignKeys = append(info.AddForeignKeys, model.AddForeignKeyInfo{
 			Name: fkInfo.Name,
 			Cols: fkInfo.Cols,
