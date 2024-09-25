@@ -19,12 +19,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"math"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	s "github.com/pingcap/tidb/pkg/util/set"

@@ -2002,6 +2002,7 @@ func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 	return v.Leave(n)
 }
 
+// RecommendIndexOption is the option for recommend index.
 type RecommendIndexOption struct {
 	Option string
 	Value  ValueExpr
