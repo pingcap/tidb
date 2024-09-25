@@ -3999,11 +3999,11 @@ func (b *PlanBuilder) buildTableDual() *logicalop.LogicalTableDual {
 	return logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 }
 
-// AddExtraPhysTblIDColumn4DS for partition table.
+// addExtraPhysTblIDColumn4DS for partition table.
 // 'select ... for update' on a partition table need to know the partition ID
 // to construct the lock key, so this column is added to the chunk row.
 // Also needed for checking against the sessions transaction buffer
-func AddExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
+func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 	// Avoid adding multiple times (should never happen!)
 	cols := ds.TblCols
 	for i := len(cols) - 1; i >= 0; i-- {
@@ -4691,7 +4691,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
 			// Not using old static prune mode
 			// Single TableReader for all partitions, needs the PhysTblID from storage
-			_ = AddExtraPhysTblIDColumn4DS(ds)
+			_ = addExtraPhysTblIDColumn4DS(ds)
 		}
 		result = us
 	}

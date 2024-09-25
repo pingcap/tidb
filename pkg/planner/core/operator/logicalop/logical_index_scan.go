@@ -54,7 +54,7 @@ func (is LogicalIndexScan) Init(ctx base.PlanContext, offset int) *LogicalIndexS
 	return &is
 }
 
-// *************************** start implementation of Plan interface f***************************
+// *************************** start implementation of Plan interface ***************************
 
 // ExplainInfo implements Plan interface.
 func (is *LogicalIndexScan) ExplainInfo() string {
