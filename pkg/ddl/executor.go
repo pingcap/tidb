@@ -2021,27 +2021,6 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 				Table:    ref.RefTable.L,
 				Mode:     model.SharedInvolving,
 			})
-		case model.ActionAlterTablePartitionPlacement:
-			if len(j.Args) < 2 {
-				logFn("unexpected number of arguments for partition placement",
-					zap.Int("len(args)", len(j.Args)),
-					zap.Any("args", j.Args))
-				continue
-			}
-			ref, ok := j.Args[1].(*model.PolicyRefInfo)
-			if !ok {
-				logFn("unexpected type of policy reference info",
-					zap.Any("args[0]", j.Args[0]),
-					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
-				continue
-			}
-			if ref == nil {
-				continue
-			}
-			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
-				Policy: ref.Name.L,
-				Mode:   model.SharedInvolving,
-			})
 		}
 	}
 
@@ -5721,18 +5700,22 @@ func (e *executor) AlterTablePartitionAttributes(ctx sessionctx.Context, ident a
 	rule.Reset(schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        meta.ID,
 		SchemaName:     schema.Name.L,
 		TableName:      meta.Name.L,
 		Type:           model.ActionAlterTablePartitionAttributes,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{partitionID, rule},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+	args := &model.AlterTablePartitionArgs{
+		PartitionID: partitionID,
+		LabelRule:   rule,
+	}
 
-	err = e.DoDDLJob(ctx, job)
+	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5805,19 +5788,23 @@ func (e *executor) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIde
 	}
 
 	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
 		SchemaID:            schema.ID,
 		TableID:             tblInfo.ID,
 		SchemaName:          schema.Name.L,
 		TableName:           tblInfo.Name.L,
 		Type:                model.ActionAlterTablePartitionPlacement,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                []any{partitionID, policyRefInfo},
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involveSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
+	args := &model.AlterTablePartitionArgs{
+		PartitionID:   partitionID,
+		PolicyRefInfo: policyRefInfo,
+	}
 
-	err = e.DoDDLJob(ctx, job)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 

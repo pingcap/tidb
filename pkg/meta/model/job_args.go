@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 // getOrDecodeArgsV2 get the argsV2 from job, if the argsV2 is nil, decode rawArgsV2
@@ -594,6 +595,47 @@ func GetExchangeTablePartitionArgs(job *Job) (*ExchangeTablePartitionArgs, error
 		return args, nil
 	}
 	return getOrDecodeArgsV2[*ExchangeTablePartitionArgs](job)
+}
+
+// AlterTablePartitionArgs is the arguments for alter table partition job.
+// it's used for:
+//   - ActionAlterTablePartitionAttributes
+//   - ActionAlterTablePartitionPlacement
+type AlterTablePartitionArgs struct {
+	PartitionID   int64          `json:"partition_id,omitempty"`
+	LabelRule     *pdhttp.Rule   `json:"label_rule,omitempty"`
+	PolicyRefInfo *PolicyRefInfo `json:"policy_ref_info,omitempty"`
+}
+
+func (a *AlterTablePartitionArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionAlterTablePartitionAttributes {
+			job.Args = []any{a.PartitionID, a.LabelRule}
+		} else {
+			job.Args = []any{a.PartitionID, a.PolicyRefInfo}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *AlterTablePartitionArgs) decodeV1(job *Job) error {
+	if job.Type == ActionAlterTablePartitionAttributes {
+		return job.DecodeArgs(&a.PartitionID, &a.LabelRule)
+	}
+	return job.DecodeArgs(&a.PartitionID, &a.PolicyRefInfo)
+}
+
+// GetAlterTablePartitionArgs gets the alter table partition args.
+func GetAlterTablePartitionArgs(job *Job) (*AlterTablePartitionArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &AlterTablePartitionArgs{}
+		if err := args.decodeV1(job); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*AlterTablePartitionArgs](job)
 }
 
 // RenameTableArgs is the arguments for rename table DDL job.
