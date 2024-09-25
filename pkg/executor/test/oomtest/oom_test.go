@@ -152,14 +152,13 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 }
 
 func TestMemTracker4DeleteExec(t *testing.T) {
-	t.Skip("don't know why, skip first to test others")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=1")
-	tk.MustExec("create table MemTracker4DeleteExec1 (id int, a int, b int, index idx_a(`a`))")
-	tk.MustExec("create table MemTracker4DeleteExec2 (id int, a int, b int, index idx_a(`a`))")
+	tk.MustExec("create table MemTracker4DeleteExec1 (id int, a int, b int, index idx_a(a), index idx_b(b))")
+	tk.MustExec("create table MemTracker4DeleteExec2 (id int, a int, b int, index idx_a(a), index idx_b(b))")
 
 	// delete from single table
 	log.SetLevel(zap.InfoLevel)
@@ -197,7 +196,7 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/disableFixedRowCountHint"))
 	}()
 	tk.Session().GetSessionVars().EnabledRateLimitAction = true
-	tk.Session().GetSessionVars().MemQuotaQuery = 1
+	tk.Session().GetSessionVars().MemQuotaQuery = 10000
 	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
 	require.Equal(t, "memory exceeds quota, rateLimitAction delegate to fallback action", oom.GetTracker())
 }
