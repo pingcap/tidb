@@ -48,6 +48,9 @@ var (
 	// TiKVPath is the path of the TiKV Storage.
 	TiKVPath = flag.String("tikv-path", "tikv://127.0.0.1:2379?disableGC=true", "TiKV addr")
 
+	// PDAddr is the address of PD.
+	PDAddr = "127.0.0.1:2379"
+
 	// KeyspaceName is an option to specify the name of keyspace that the tests run on,
 	// this option is only valid while the flag WithRealTiKV is set.
 	KeyspaceName = flag.String("keyspace-name", "", "the name of keyspace that the tests run on")
