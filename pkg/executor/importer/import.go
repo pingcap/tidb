@@ -813,9 +813,12 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	optionMap := make(map[string]any, len(plan.Options))
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			var val string
+			// The option attached to the import statement here are all
+			// parameters entered by the user. TiDB will process the
+			// parameters entered by the user as constant. so we can
+			// directly convert it to constant.
 			cons := opt.Value.(*expression.Constant)
-			val = fmt.Sprintf("%v", cons.Value.GetValue())
+			val := fmt.Sprintf("%v", cons.Value.GetValue())
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
