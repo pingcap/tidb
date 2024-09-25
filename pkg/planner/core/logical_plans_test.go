@@ -2494,3 +2494,52 @@ func TestRollupExpand(t *testing.T) {
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 2)
 }
+
+// fix issue 51446
+func TestGenerateDualPlan(t *testing.T) {
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select * from t where a > null",
+			best: "Dual->Projection",
+		},
+		{
+			sql:  "select * from t where a != null",
+			best: "Dual->Projection",
+		},
+		{
+			sql:  "select * from t where a in (null,1)",
+			best: "DataScan(t)->Projection",
+		},
+		{
+			sql:  "select * from t where a <=> null",
+			best: "DataScan(t)->Projection",
+		},
+		{
+			sql:  "select * from t where not(a <=> null)",
+			best: "DataScan(t)->Projection",
+		},
+	}
+	s := createPlannerSuite()
+	defer s.Close()
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
+		nodeW := resolve.NewNodeW(stmt)
+		err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		require.NoError(t, err)
+		sctx := MockContext()
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
+		p, err := builder.Build(ctx, nodeW)
+		require.NoError(t, err)
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
+		require.NoError(t, err)
+		require.Equal(t, tt.best, ToString(p), comment)
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}
+}
