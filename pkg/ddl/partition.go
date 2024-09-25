@@ -2764,6 +2764,8 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 			zap.Stringer("job", job), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
 		args.PartitionID = partDef.ID
 		job.FillArgs(args)
+		// might be used later, ignore the lint warning.
+		//nolint: ineffassign
 		defID = partDef.ID
 		err = updateDDLJob2Table(w.sess, job, true)
 		if err != nil {
