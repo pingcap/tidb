@@ -148,6 +148,8 @@ func setWeightAndPushJob(pushFunc PushJobFunc, job AnalysisJob, calculator *Prio
 	if job == nil {
 		return nil
 	}
+	// We apply a penalty to larger tables, which can potentially result in a negative weight.
+	// To prevent this, we filter out any negative weights. Under normal circumstances, table sizes should not be negative.
 	weight := calculator.CalculateWeight(job)
 	if weight <= 0 {
 		statslogutil.SingletonStatsSamplerLogger().Warn(
@@ -157,6 +159,7 @@ func setWeightAndPushJob(pushFunc PushJobFunc, job AnalysisJob, calculator *Prio
 		)
 	}
 	job.SetWeight(weight)
+	// Push the job onto the queue.
 	return pushFunc(job)
 }
 
