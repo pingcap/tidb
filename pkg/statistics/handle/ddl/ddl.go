@@ -52,12 +52,6 @@ func NewDDLHandler(
 
 // HandleDDLEvent begins to process a ddl task.
 func (h *ddlHandlerImpl) HandleDDLEvent(s *notifier.SchemaChangeEvent) error {
-	sctx, err := h.statsHandler.SPool().Get()
-	if err != nil {
-		return err
-	}
-	defer h.statsHandler.SPool().Put(sctx)
-
 	switch s.GetType() {
 	case model.ActionCreateTable:
 		newTableInfo := s.GetCreateTableInfo()
@@ -192,6 +186,15 @@ func (h *ddlHandlerImpl) HandleDDLEvent(s *notifier.SchemaChangeEvent) error {
 	return nil
 }
 
+// UpdateStatsWithCountDeltaAndModifyCountDeltaForTest updates the global stats with the given count delta and modify count delta.
+func UpdateStatsWithCountDeltaAndModifyCountDeltaForTest(
+	sctx sessionctx.Context,
+	tableID int64,
+	countDelta, modifyCountDelta int64,
+) error {
+	return updateStatsWithCountDeltaAndModifyCountDelta(sctx, tableID, countDelta, modifyCountDelta)
+}
+
 // updateStatsWithCountDeltaAndModifyCountDelta updates
 // the global stats with the given count delta and modify count delta.
 // Only used by some special DDLs, such as exchange partition.
@@ -232,7 +235,7 @@ func updateStatsWithCountDeltaAndModifyCountDelta(
 	}
 
 	// Because count can not be negative, so we need to get the current and calculate the delta.
-	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(sctx, tableID)
+	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCountForUpdate(sctx, tableID)
 	if err != nil {
 		return err
 	}

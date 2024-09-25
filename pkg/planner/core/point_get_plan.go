@@ -1943,7 +1943,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if orderedList == nil {
 		return nil
 	}
-	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
+	handleCols := buildHandleCols(ctx, dbName, tbl, pointPlan)
 	updatePlan := Update{
 		SelectPlan:  pointPlan,
 		OrderedList: orderedList,
@@ -2064,27 +2064,25 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
-	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
-	delPlan := Delete{
-		SelectPlan: pointPlan,
-		TblColPosInfos: TblColPosInfoSlice{
-			TblColPosInfo{
-				TblID:      tbl.ID,
-				Start:      0,
-				End:        pointPlan.Schema().Len(),
-				HandleCols: handleCols,
-			},
-		},
-	}.Init(ctx)
+	handleCols := buildHandleCols(ctx, dbName, tbl, pointPlan)
 	var err error
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(context.Background(), tbl.ID)
-	if t != nil {
-		tblID2Table := map[int64]table.Table{tbl.ID: t}
-		err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
-		if err != nil {
-			return nil
-		}
+	intest.Assert(t != nil, "The point get executor is accessing a table without meta info.")
+	idxs := t.DeletableIndices()
+	deletableCols := t.DeletableCols()
+	colPosInfo, err := buildSingleTableColPosInfoForDelete(pointPlan.OutputNames(), handleCols, idxs, deletableCols, tbl)
+	if err != nil {
+		return nil
+	}
+	delPlan := Delete{
+		SelectPlan:     pointPlan,
+		TblColPosInfos: []TblColPosInfo{colPosInfo},
+	}.Init(ctx)
+	tblID2Table := map[int64]table.Table{tbl.ID: t}
+	err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
+	if err != nil {
+		return nil
 	}
 	return delPlan
 }
@@ -2113,7 +2111,8 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func buildHandleCols(ctx base.PlanContext, tbl *model.TableInfo, schema *expression.Schema) util.HandleCols {
+func buildHandleCols(ctx base.PlanContext, dbName string, tbl *model.TableInfo, pointget base.PhysicalPlan) util.HandleCols {
+	schema := pointget.Schema()
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
@@ -2130,6 +2129,18 @@ func buildHandleCols(ctx base.PlanContext, tbl *model.TableInfo, schema *express
 
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
 	schema.Append(handleCol)
+	newOutputNames := pointget.OutputNames().Shallow()
+	tableAliasName := tbl.Name
+	if schema.Len() > 0 {
+		tableAliasName = pointget.OutputNames()[0].TblName
+	}
+	newOutputNames = append(newOutputNames, &types.FieldName{
+		DBName:      pmodel.NewCIStr(dbName),
+		TblName:     tableAliasName,
+		OrigTblName: tbl.Name,
+		ColName:     model.ExtraHandleName,
+	})
+	pointget.SetOutputNames(newOutputNames)
 	return util.NewIntHandleCols(handleCol)
 }
 

@@ -2,7 +2,7 @@
   "__inputs": [
     {
       "name": "DS_TEST-CLUSTER",
-      "label": "test-cluster",
+      "label": "${DS_TEST-CLUSTER}",
       "description": "",
       "type": "datasource",
       "pluginId": "prometheus",
@@ -1231,7 +1231,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.17",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1386,7 +1386,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.17",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1538,7 +1538,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.17",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1672,7 +1672,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.17",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1791,7 +1791,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.17",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1925,7 +1925,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.17",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2051,7 +2051,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.17",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2189,7 +2189,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.17",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2297,6 +2297,10 @@
       "description": "The time cost of parsing SQL to AST",
       "editable": true,
       "error": false,
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -2304,7 +2308,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 35
+        "y": 43
       },
       "hiddenSeries": false,
       "id": 156,
@@ -2421,6 +2425,10 @@
       "description": "The time to build plan",
       "editable": true,
       "error": false,
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -2428,7 +2436,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 35
+        "y": 43
       },
       "hiddenSeries": false,
       "id": 170,
@@ -2532,6 +2540,10 @@
       "description": "The time cost of executing the SQL which does not include the time to get the results of the query .",
       "editable": true,
       "error": false,
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -2539,7 +2551,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 35
+        "y": 43
       },
       "hiddenSeries": false,
       "id": 169,

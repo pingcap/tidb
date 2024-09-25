@@ -623,8 +623,8 @@
           "      ├─ExchangeReceiver(Build) 7992.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection 7992.00 mpp[tiflash]  Column#9, test.t.b",
-          "      │     └─HashAgg 7992.00 mpp[tiflash]  group by:Column#25, funcs:sum(Column#24)->Column#9, funcs:firstrow(Column#25)->test.t.b",
-          "      │       └─Projection 9990.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#24, test.t.b->Column#25",
+          "      │     └─HashAgg 7992.00 mpp[tiflash]  group by:Column#32, funcs:sum(Column#31)->Column#9, funcs:firstrow(Column#32)->test.t.b",
+          "      │       └─Projection 9990.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#31, test.t.b->Column#32",
           "      │         └─ExchangeReceiver 9990.00 mpp[tiflash]  ",
           "      │           └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "      │             └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
@@ -644,11 +644,11 @@
           "      ├─ExchangeReceiver(Build) 7992.00 mpp[tiflash]  ",
           "      │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection 7992.00 mpp[tiflash]  Column#9, test.t.b",
-          "      │     └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.b, funcs:sum(Column#13)->Column#9, funcs:firstrow(test.t.b)->test.t.b",
+          "      │     └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.b, funcs:sum(Column#20)->Column#9, funcs:firstrow(test.t.b)->test.t.b",
           "      │       └─ExchangeReceiver 7992.00 mpp[tiflash]  ",
           "      │         └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
-          "      │           └─HashAgg 7992.00 mpp[tiflash]  group by:Column#29, funcs:sum(Column#28)->Column#13",
-          "      │             └─Projection 9990.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#28, test.t.b->Column#29",
+          "      │           └─HashAgg 7992.00 mpp[tiflash]  group by:Column#36, funcs:sum(Column#35)->Column#20",
+          "      │             └─Projection 9990.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#35, test.t.b->Column#36",
           "      │               └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
           "      │                 └─TableFullScan 10000.00 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false, stats:pseudo",
           "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
@@ -1704,17 +1704,16 @@
       {
         "SQL": "select /*+ inl_join(t2@sel_2) */ * from t1 where exists ( select /*+ semi_join_rewrite() */ * from t2 where t1.a = t2.a);",
         "Plan": [
-          "MergeJoin 9990.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
-          "├─StreamAgg(Build) 7992.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
-          "│ └─IndexReader 7992.00 root  index:StreamAgg",
-          "│   └─StreamAgg 7992.00 cop[tikv]  group by:test.t2.a, ",
-          "│     └─IndexFullScan 9990.00 cop[tikv] table:t2, index:ia(a) keep order:true, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "IndexJoin 9990.00 root  inner join, inner:HashAgg, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─HashAgg(Probe) 79920000.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "  └─IndexReader 79920000.00 root  index:HashAgg",
+          "    └─HashAgg 79920000.00 cop[tikv]  group by:test.t2.a, ",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "        └─IndexRangeScan 10000.00 cop[tikv] table:t2, index:ia(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ inl_join(t1) */ * from t1 where exists ( select /*+ semi_join_rewrite() */ * from t2 where t1.a = t2.a);",

@@ -935,7 +935,6 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 	tk.MustExec("create database test_pointget")
 	tk.MustExec("use test_pointget")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
 	// list partition table
 	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)(
@@ -2089,10 +2088,6 @@ func TestDropGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int) partition by range (c) (
@@ -2410,27 +2405,52 @@ func TestGlobalIndexWithSelectLock(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("set tidb_enable_global_index = true")
 	tk1.MustExec("use test")
-	tk1.MustExec("create table t(a int, b int, unique index(b) global, primary key(a)) partition by hash(a) partitions 5;")
-	tk1.MustExec("insert into t values (1,1),(2,2),(3,3),(4,4),(5,5);")
-	tk1.MustExec("begin")
-	tk1.MustExec("select * from t use index(b) where b = 2 order by b limit 1 for update;")
+	tk1.MustExec("create table t(" +
+		"	a int, " +
+		"	b int, " +
+		"	c int, " +
+		"	unique index(b) global, " +
+		"	unique index(c) global, " +
+		"	primary key(a)) " +
+		"partition by hash(a) partitions 5")
 
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
+	tk1.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
 
-	ch := make(chan int, 10)
-	go func() {
-		// Check the key is locked.
-		tk2.MustExec("update t set b = 6 where b = 2")
-		ch <- 1
-	}()
+	cases := []struct {
+		sql  string
+		plan string
+	}{
+		{"select * from t use index(b) where b > 1 order by b limit 1 for update", "IndexLookUp"},
+		{"select b from t use index(b) where b > 1 for update", "IndexReader"},
+		{"select * from t use index(b) where b = 2 for update", "Point_Get"},
+		{"select * from t use index(b) where b in (2, 3) for update", "Batch_Point_Get"},
+		{"select /*+ USE_INDEX_MERGE(t, b, c) */ * from t where b = 2 or c = 3 for update", "IndexMerge"},
+	}
 
-	time.Sleep(50 * time.Millisecond)
-	ch <- 0
-	tk1.MustExec("commit")
+	for _, c := range cases {
+		tk1.MustExec("begin")
+		tk1.MustHavePlan(c.sql, c.plan)
+		tk1.MustExec(c.sql)
 
-	require.Equal(t, <-ch, 0)
-	require.Equal(t, <-ch, 1)
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+
+		ch := make(chan int, 10)
+		go func() {
+			// Check the key is locked.
+			tk2.MustExec("update t set b = 6 where b = 2")
+			ch <- 1
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+		ch <- 0
+		tk1.MustExec("commit")
+
+		require.Equal(t, <-ch, 0)
+		require.Equal(t, <-ch, 1)
+
+		require.Equal(t, tk1.MustQuery("select * from t where b = 6").Rows(), testkit.Rows("2 6 2"))
+		tk1.MustExec("update t set b = 2 where b = 6")
+	}
 }

@@ -16,10 +16,13 @@ package indexadvisor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -36,6 +39,8 @@ func TestKey(key string) string {
 type Option struct {
 	MaxNumIndexes int
 	MaxIndexWidth int
+	MaxNumQuery   int
+	Timeout       time.Duration
 	SpecifiedSQLs []string
 }
 
@@ -46,7 +51,12 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
 		return nil, errors.New("nil input")
 	}
 
-	advisorLogger().Info("start to recommend indexes")
+	advisorLogger().Info("fill index advisor option")
+	if err := fillOption(sctx, option); err != nil {
+		advisorLogger().Error("fill index advisor option failed", zap.Error(err))
+		return nil, err
+	}
+	advisorLogger().Info("index advisor option filled and start", zap.Any("option", option))
 	defer func() {
 		if r := recover(); r != nil {
 			advisorLogger().Error("panic in AdviseIndexes", zap.Any("recover", r))
@@ -59,7 +69,7 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
 	advisorLogger().Info("what-if optimizer prepared")
 
 	defaultDB := sctx.GetSessionVars().CurrentDB
-	querySet, err := prepareQuerySet(ctx, sctx, defaultDB, opt, option.SpecifiedSQLs)
+	querySet, err := prepareQuerySet(ctx, sctx, defaultDB, opt, option)
 	if err != nil {
 		advisorLogger().Error("prepare workload failed", zap.Error(err))
 		return nil, err
@@ -74,7 +84,7 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
 	advisorLogger().Info("indexable columns filled", zap.Int("indexable-cols", indexableColSet.Size()))
 
 	// start the advisor
-	indexes, err := adviseIndexes(querySet, indexableColSet, option.MaxNumIndexes, option.MaxIndexWidth, opt)
+	indexes, err := adviseIndexes(querySet, indexableColSet, opt, option)
 	if err != nil {
 		advisorLogger().Error("advise indexes failed", zap.Error(err))
 		return nil, err
@@ -85,18 +95,18 @@ func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
 		return nil, err
 	}
 
+	saveRecommendations(sctx, results)
+
 	return results, nil
 }
 
 // prepareQuerySet prepares the target queries for the index advisor.
 func prepareQuerySet(ctx context.Context, sctx sessionctx.Context,
-	defaultDB string, opt Optimizer, specifiedSQLs []string) (s.Set[Query], error) {
+	defaultDB string, opt Optimizer, option *Option) (s.Set[Query], error) {
 	advisorLogger().Info("prepare target query set")
-	defer advisorLogger().Info("prepare target query set finished")
-
 	querySet := s.NewSet[Query]()
-	if len(specifiedSQLs) > 0 { // if target queries are specified
-		for _, sql := range specifiedSQLs {
+	if len(option.SpecifiedSQLs) > 0 { // if target queries are specified
+		for _, sql := range option.SpecifiedSQLs {
 			querySet.Add(Query{SchemaName: defaultDB, Text: sql, Frequency: 1})
 		}
 	} else {
@@ -104,32 +114,65 @@ func prepareQuerySet(ctx context.Context, sctx sessionctx.Context,
 			querySet = ctx.Value(TestKey("query_set")).(s.Set[Query])
 		} else {
 			var err error
-			if querySet, err = loadQuerySetFromStmtSummary(sctx, defaultDB); err != nil {
+			if querySet, err = loadQuerySetFromStmtSummary(sctx, option); err != nil {
 				return nil, err
+			}
+			if querySet.Size() == 0 {
+				return nil, errors.New("can't get any queries from statements_summary")
 			}
 		}
 	}
 
 	// filter invalid queries
 	var err error
-	querySet, err = RestoreSchemaName(defaultDB, querySet, len(specifiedSQLs) == 0)
+	querySet, err = RestoreSchemaName(defaultDB, querySet, len(option.SpecifiedSQLs) == 0)
 	if err != nil {
 		return nil, err
 	}
-	querySet, err = FilterSQLAccessingSystemTables(querySet, len(specifiedSQLs) == 0)
+	querySet, err = FilterSQLAccessingSystemTables(querySet, len(option.SpecifiedSQLs) == 0)
 	if err != nil {
 		return nil, err
 	}
-	querySet, err = FilterInvalidQueries(opt, querySet, len(specifiedSQLs) == 0)
+	querySet, err = FilterInvalidQueries(opt, querySet, len(option.SpecifiedSQLs) == 0)
 	if err != nil {
 		return nil, err
 	}
+	if querySet.Size() == 0 {
+		return nil, errors.New("empty query set after filtering invalid queries")
+	}
+	advisorLogger().Info("finish query preparation", zap.Int("num_query", querySet.Size()))
 	return querySet, nil
 }
 
-func loadQuerySetFromStmtSummary(sessionctx.Context, string) (s.Set[Query], error) {
-	// TODO: load target queries from statement_summary automatically
-	return nil, errors.New("not implemented yet")
+func loadQuerySetFromStmtSummary(sctx sessionctx.Context, option *Option) (s.Set[Query], error) {
+	template := `SELECT any_value(schema_name) as schema_name,
+				any_value(query_sample_text) as query_sample_text,
+				sum(cast(exec_count as double)) as exec_count
+			FROM information_schema.statements_summary_history
+			WHERE stmt_type = "Select" AND
+				summary_begin_time >= date_sub(now(), interval 1 day) AND
+				prepared = 0 AND
+				upper(schema_name) not in ("MYSQL", "INFORMATION_SCHEMA", "METRICS_SCHEMA", "PERFORMANCE_SCHEMA")
+			GROUP BY digest
+			ORDER BY sum(exec_count) DESC
+			LIMIT %?`
+	rows, err := exec(sctx, template, option.MaxNumQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	querySet := s.NewSet[Query]()
+	for _, r := range rows {
+		schemaName := r.GetString(0)
+		queryText := r.GetString(1)
+		execCount := r.GetFloat64(2)
+		querySet.Add(Query{
+			SchemaName: schemaName,
+			Text:       queryText,
+			Frequency:  int(execCount),
+		})
+	}
+	return querySet, nil
 }
 
 func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer Optimizer) ([]*Recommendation, error) {
@@ -146,6 +189,7 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 			Database:     idx.SchemaName,
 			Table:        idx.TableName,
 			IndexColumns: cols,
+			IndexDetail:  new(IndexDetail),
 		}
 
 		// generate a graceful index name
@@ -158,7 +202,7 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 			advisorLogger().Info("show index stats failed", zap.Error(err))
 			return nil, err
 		}
-		indexResult.IndexSize = uint64(indexSize)
+		indexResult.IndexDetail.IndexSize = uint64(indexSize)
 
 		// calculate the improvements
 		var workloadCostBefore, workloadCostAfter float64
@@ -181,7 +225,7 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 			workloadCostBefore += costBefore * float64(query.Frequency)
 			workloadCostAfter += costAfter * float64(query.Frequency)
 
-			queryImprovement := (costBefore - costAfter) / costBefore
+			queryImprovement := round((costBefore-costAfter)/costBefore, 6)
 			if queryImprovement < 0.0001 {
 				continue // this query has no benefit
 			}
@@ -204,7 +248,7 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 			workloadCostBefore += 0.1
 			workloadCostAfter += 0.1
 		}
-		workloadImpact.WorkloadImprovement = (workloadCostBefore - workloadCostAfter) / workloadCostBefore
+		workloadImpact.WorkloadImprovement = round((workloadCostBefore-workloadCostAfter)/workloadCostBefore, 6)
 
 		if workloadImpact.WorkloadImprovement < 0.000001 || len(indexResult.TopImpactedQueries) == 0 {
 			continue // this index has no benefit
@@ -212,11 +256,15 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 
 		normText, _ := NormalizeDigest(indexResult.TopImpactedQueries[0].Query)
 		indexResult.WorkloadImpact = workloadImpact
-		indexResult.Reason = fmt.Sprintf(`Column %v appear in Equal or
-Range Predicate clause(s) in query '%v'`, cols, normText)
+		indexResult.IndexDetail.Reason =
+			fmt.Sprintf(`Column %v appear in Equal or Range Predicate clause(s) in query: %v`, cols, normText)
 		results = append(results, indexResult)
 	}
 	return results, nil
+}
+
+func round(v float64, n int) float64 {
+	return math.Round(v*math.Pow(10, float64(n))) / math.Pow(10, float64(n))
 }
 
 func gracefulIndexName(opt Optimizer, schema, tableName string, cols []string) string {
@@ -244,4 +292,38 @@ func gracefulIndexName(opt Optimizer, schema, tableName string, cols []string) s
 		}
 	}
 	return indexName
+}
+
+func saveRecommendations(sctx sessionctx.Context, results []*Recommendation) {
+	for _, r := range results {
+		q, err := json.Marshal(r.TopImpactedQueries)
+		if err != nil {
+			advisorLogger().Error("marshal top impacted queries failed", zap.Error(err))
+			continue
+		}
+		w, err := json.Marshal(r.WorkloadImpact)
+		if err != nil {
+			advisorLogger().Error("marshal workload impact failed", zap.Error(err))
+			continue
+		}
+		d, err := json.Marshal(r.IndexDetail)
+		if err != nil {
+			advisorLogger().Error("marshal index detail failed", zap.Error(err))
+			continue
+		}
+
+		template := `insert into mysql.index_advisor_results (
+                created_at, updated_at, schema_name, table_name, index_name,
+                index_columns, index_details, top_impacted_queries, workload_impact, extra) values
+            (now(), now(), %?, %?, %?, %?, %?, %?, %?, null)
+            on duplicate key update
+            updated_at=now(), index_details=%?, top_impacted_queries=%?, workload_impact=%?`
+
+		if _, err := exec(sctx, template, r.Database, r.Table,
+			r.IndexName, strings.Join(r.IndexColumns, ","),
+			json.RawMessage(d), json.RawMessage(q), json.RawMessage(w),
+			json.RawMessage(d), json.RawMessage(q), json.RawMessage(w)); err != nil {
+			advisorLogger().Error("save advise result failed", zap.Error(err))
+		}
+	}
 }
