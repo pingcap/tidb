@@ -879,9 +879,20 @@ func (pi *PartitionInfo) GetDefaultListPartition() int {
 	return -1
 }
 
-// CanHaveOverlappingDroppingPartition returns true if special handling is needed
-// during DDL of partitioned tables, where range or list with default partition
-// can have overlapping partitions.
+// CanHaveOverlappingDroppingPartition returns true if special handling
+// is needed during DDL of partitioned tables,
+// where range or list with default partition can have
+// overlapping partitions.
+// Example:
+// ... PARTITION BY RANGE (a)
+// (PARTITION p0 VALUES LESS THAN (10),
+// PARTITION p1 VALUES LESS THAN (20))
+// ALTER TABLE t DROP PARTITION p0;
+// When p0 is gone, then p1 can have values < 10,
+// so if p0 is visible for one session, while another session
+// have dropped p0, a value '9' will then be in p1, instead of p0,
+// i.e. an "overlapping" partition, that needs special handling.
+// Same can happen for LIST partitioning, if there is a DEFAULT partition.
 func (pi *PartitionInfo) CanHaveOverlappingDroppingPartition() bool {
 	if pi.DDLAction == ActionDropTablePartition &&
 		pi.DDLState == StateWriteOnly {
@@ -893,8 +904,16 @@ func (pi *PartitionInfo) CanHaveOverlappingDroppingPartition() bool {
 // ReplaceWithOverlappingPartitionIdx returns the overlapping partition
 // if there is one and a previous error.
 // Functions based on locatePartitionCommon, like GetPartitionIdxByRow
-// will return the found partition, with an error, since it is being dropped.
+// will return the found partition, with an error,
+// since it is being dropped.
 // This function will correct the partition index and error if it can.
+// For example of Overlapping partition,
+// see CanHaveOverlappingDroppingPartition
+// This function should not be used for writing, since we should block
+// writes to partitions that are being dropped.
+// But for read, we should replace the dropping partitions with
+// the overlapping partition if it exists, so we can read new data
+// from sessions one step ahead in the DDL State.
 func (pi *PartitionInfo) ReplaceWithOverlappingPartitionIdx(idx int, err error) (int, error) {
 	if err != nil && idx >= 0 {
 		idx = pi.GetOverlappingDroppingPartitionIdx(idx)
@@ -913,6 +932,8 @@ func (pi *PartitionInfo) ReplaceWithOverlappingPartitionIdx(idx int, err error) 
 // returns same idx if no overlapping partition
 // return -1 if the partition is being dropped, with no overlapping partition,
 // like for last range partition dropped or no default list partition.
+// See CanHaveOverlappingDroppingPartition() for more info about
+// Overlapping dropping partition.
 func (pi *PartitionInfo) GetOverlappingDroppingPartitionIdx(idx int) int {
 	if idx < 0 || idx >= len(pi.Definitions) {
 		return -1
