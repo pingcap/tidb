@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 // AutoIDGroup represents a group of auto IDs of a specific table.
@@ -386,7 +387,7 @@ func GetFinishedDropTableArgs(job *Job) (*DropTableArgs, error) {
 	return getOrDecodeArgsV2[*DropTableArgs](job)
 }
 
-// TruncateTableArgs is the arguments for truncate table job.
+// TruncateTableArgs is the arguments for truncate table/partition job.
 type TruncateTableArgs struct {
 	FKCheck         bool    `json:"fk_check,omitempty"`
 	NewTableID      int64   `json:"new_table_id,omitempty"`
@@ -400,22 +401,40 @@ type TruncateTableArgs struct {
 
 func (a *TruncateTableArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
-		// Args[0] is the new table ID, args[2] is the ids for table partitions, we
-		// add a placeholder here, they will be filled by job submitter.
-		// the last param is not required for execution, we need it to calculate
-		// number of new IDs to generate.
-		job.Args = []any{a.NewTableID, a.FKCheck, a.NewPartitionIDs, len(a.OldPartitionIDs)}
+		if job.Type == ActionTruncateTable {
+			// Args[0] is the new table ID, args[2] is the ids for table partitions, we
+			// add a placeholder here, they will be filled by job submitter.
+			// the last param is not required for execution, we need it to calculate
+			// number of new IDs to generate.
+			job.Args = []any{a.NewTableID, a.FKCheck, a.NewPartitionIDs, len(a.OldPartitionIDs)}
+		} else {
+			job.Args = []any{a.OldPartitionIDs, a.NewPartitionIDs}
+		}
 		return
 	}
 	job.Args = []any{a}
 }
 
+func (a *TruncateTableArgs) decodeV1(job *Job) error {
+	var err error
+	if job.Type == ActionTruncateTable {
+		err = job.DecodeArgs(&a.NewTableID, &a.FKCheck, &a.NewPartitionIDs)
+	} else {
+		err = job.DecodeArgs(&a.OldPartitionIDs, &a.NewPartitionIDs)
+	}
+	return err
+}
+
 func (a *TruncateTableArgs) fillFinishedJob(job *Job) {
 	if job.Version == JobVersion1 {
-		// the first param is the start key of the old table, it's not used anywhere
-		// now, so we fill an empty byte slice here.
-		// we can call tablecodec.EncodeTablePrefix(tableID) to get it.
-		job.Args = []any{[]byte{}, a.OldPartitionIDs}
+		if job.Type == ActionTruncateTable {
+			// the first param is the start key of the old table, it's not used anywhere
+			// now, so we fill an empty byte slice here.
+			// we can call tablecodec.EncodeTablePrefix(tableID) to get it.
+			job.Args = []any{[]byte{}, a.OldPartitionIDs}
+		} else {
+			job.Args = []any{a.OldPartitionIDs}
+		}
 		return
 	}
 	job.Args = []any{a}
@@ -434,28 +453,26 @@ func GetFinishedTruncateTableArgs(job *Job) (*TruncateTableArgs, error) {
 func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, error) {
 	if job.Version == JobVersion1 {
 		if argsOfFinished {
-			var startKey []byte
+			if job.Type == ActionTruncateTable {
+				var startKey []byte
+				var oldPartitionIDs []int64
+				if err := job.DecodeArgs(&startKey, &oldPartitionIDs); err != nil {
+					return nil, errors.Trace(err)
+				}
+				return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
+			}
 			var oldPartitionIDs []int64
-			if err := job.DecodeArgs(&startKey, &oldPartitionIDs); err != nil {
+			if err := job.DecodeArgs(&oldPartitionIDs); err != nil {
 				return nil, errors.Trace(err)
 			}
 			return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
 		}
 
-		var (
-			newTableID      int64
-			fkCheck         bool
-			newPartitionIDs []int64
-		)
-		err := job.DecodeArgs(&newTableID, &fkCheck, &newPartitionIDs)
-		if err != nil {
+		args := &TruncateTableArgs{}
+		if err := args.decodeV1(job); err != nil {
 			return nil, errors.Trace(err)
 		}
-		return &TruncateTableArgs{
-			NewTableID:      newTableID,
-			FKCheck:         fkCheck,
-			NewPartitionIDs: newPartitionIDs,
-		}, nil
+		return args, nil
 	}
 
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
@@ -579,6 +596,82 @@ func FillRollbackArgsForAddPartition(job *Job, args *TablePartitionArgs) {
 		PartNames: args.PartNames,
 	})
 	job.Args = fake.Args
+}
+
+// ExchangeTablePartitionArgs is the arguments for exchange table partition job.
+// pt: the partition table to exchange
+// nt: the non-partition table to exchange with
+type ExchangeTablePartitionArgs struct {
+	PartitionID    int64  `json:"partition_id,omitempty"`
+	PTSchemaID     int64  `json:"pt_schema_id,omitempty"`
+	PTTableID      int64  `json:"pt_table_id,omitempty"`
+	PartitionName  string `json:"partition_name,omitempty"`
+	WithValidation bool   `json:"with_validation,omitempty"`
+}
+
+func (a *ExchangeTablePartitionArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.PartitionID, a.PTSchemaID, a.PTTableID, a.PartitionName, a.WithValidation}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *ExchangeTablePartitionArgs) decodeV1(job *Job) error {
+	return job.DecodeArgs(&a.PartitionID, &a.PTSchemaID, &a.PTTableID, &a.PartitionName, &a.WithValidation)
+}
+
+// GetExchangeTablePartitionArgs gets the exchange table partition args.
+func GetExchangeTablePartitionArgs(job *Job) (*ExchangeTablePartitionArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &ExchangeTablePartitionArgs{}
+		if err := args.decodeV1(job); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*ExchangeTablePartitionArgs](job)
+}
+
+// AlterTablePartitionArgs is the arguments for alter table partition job.
+// it's used for:
+//   - ActionAlterTablePartitionAttributes
+//   - ActionAlterTablePartitionPlacement
+type AlterTablePartitionArgs struct {
+	PartitionID   int64             `json:"partition_id,omitempty"`
+	LabelRule     *pdhttp.LabelRule `json:"label_rule,omitempty"`
+	PolicyRefInfo *PolicyRefInfo    `json:"policy_ref_info,omitempty"`
+}
+
+func (a *AlterTablePartitionArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionAlterTablePartitionAttributes {
+			job.Args = []any{a.PartitionID, a.LabelRule}
+		} else {
+			job.Args = []any{a.PartitionID, a.PolicyRefInfo}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *AlterTablePartitionArgs) decodeV1(job *Job) error {
+	if job.Type == ActionAlterTablePartitionAttributes {
+		return job.DecodeArgs(&a.PartitionID, &a.LabelRule)
+	}
+	return job.DecodeArgs(&a.PartitionID, &a.PolicyRefInfo)
+}
+
+// GetAlterTablePartitionArgs gets the alter table partition args.
+func GetAlterTablePartitionArgs(job *Job) (*AlterTablePartitionArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &AlterTablePartitionArgs{}
+		if err := args.decodeV1(job); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*AlterTablePartitionArgs](job)
 }
 
 // RenameTableArgs is the arguments for rename table DDL job.
