@@ -1,4 +1,5 @@
-#!/usr/bin/env bash
+#!/bin/bash
+#
 # Copyright 2022 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,13 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-cd proto/
+# This test is used to test compatible for BR restore.
+# It will download backup data from internal file server.
+# And make sure these backup data can restore through newly BR tools to newly cluster.
 
-echo "generate binlog code..."
-GOGO_ROOT=${GOPATH}/src/github.com/gogo/protobuf
-protoc -I.:${GOGO_ROOT}:${GOGO_ROOT}/protobuf --gofast_out=../go-binlog secondary_binlog.proto
-cd ../go-binlog
-sed -i.bak -E 's/_ \"github.com\/gogo\/protobuf\/gogoproto\"//g' *.pb.go
-sed -i.bak -E 's/import fmt \"fmt\"//g' *.pb.go
-rm -f *.bak
-goimports -w *.pb.go
+set -o pipefail
+
+make bazel_coverage_test_ddlargsv1
+EXIT_STATUS=$?
+# collect the junit and coverage report
+bazel_collect
+mkdir -p test_coverage
+mv bazel.xml test_coverage/bazel.xml
+exit ${EXIT_STATUS}

@@ -468,7 +468,7 @@ func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsV1(probeRowIndex int, bui
 func (j *baseJoinProbe) batchConstructBuildRows(chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
 	j.appendBuildRowToChunk(chk, currentColumnIndexInRow, forOtherCondition)
 	if forOtherCondition {
-		j.rowIndexInfos = append(j.rowIndexInfos, j.cachedBuildRows...)
+		j.rowIndexInfos = append(j.rowIndexInfos, j.cachedBuildRows[0:j.nextCachedBuildRowIndex]...)
 	}
 	j.nextCachedBuildRowIndex = 0
 }

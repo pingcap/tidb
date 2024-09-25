@@ -1674,6 +1674,7 @@ var tableRunawayWatchListCols = []columnInfo{
 	{name: "WATCH_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 	{name: "SOURCE", tp: mysql.TypeVarchar, size: 128, flag: mysql.NotNullFlag},
 	{name: "ACTION", tp: mysql.TypeVarchar, size: 12, flag: mysql.NotNullFlag},
+	{name: "RULE", tp: mysql.TypeVarchar, size: 128, flag: mysql.NotNullFlag},
 }
 
 // information_schema.CHECK_CONSTRAINTS

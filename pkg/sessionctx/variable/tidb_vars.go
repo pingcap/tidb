@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -189,6 +190,7 @@ const (
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 
 	// TiDBEnableListTablePartition is used to control list table partition feature.
+	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBEnableListTablePartition = "tidb_enable_list_partition"
 
 	// TiDBSkipIsolationLevelCheck is used to control whether to return error when set unsupported transaction
@@ -651,6 +653,7 @@ const (
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 
 	// TiDBEnableGlobalIndex means if we could create an global index on a partition table or not.
+	// Deprecated, will always be ON
 	TiDBEnableGlobalIndex = "tidb_enable_global_index"
 
 	// TiDBPartitionPruneMode indicates the partition prune mode used.
@@ -957,6 +960,9 @@ const (
 
 	// TiDBOptEnableHashJoin indicates whether to enable hash join.
 	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
+
+	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
+	TiDBHashJoinVersion = "tidb_hash_join_version"
 
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
@@ -1354,7 +1360,6 @@ const (
 	DefTiDBEnableCollectExecutionInfo       = true
 	DefTiDBAllowAutoRandExplicitInsert      = false
 	DefTiDBEnableClusteredIndex             = ClusteredIndexDefModeOn
-	DefTiDBEnableGlobalIndex                = false
 	DefTiDBRedactLog                        = Off
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
@@ -1426,7 +1431,7 @@ const (
 	DefTiDBAnalyzeColumnOptions                       = "PREDICATE"
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
-	DefTiDBAutoAnalyzeConcurrency                     = 2
+	DefTiDBAutoAnalyzeConcurrency                     = 1
 	DefTiDBEnablePrepPlanCache                        = true
 	DefTiDBPrepPlanCacheSize                          = 100
 	DefTiDBSessionPlanCacheSize                       = 100
@@ -1510,6 +1515,7 @@ const (
 	DefTiDBResourceControlStrictMode                  = true
 	DefTiDBPessimisticTransactionFairLocking          = false
 	DefTiDBEnablePlanCacheForParamLimit               = true
+	DefTiDBEnableINLJoinMultiPattern                  = true
 	DefTiFlashComputeDispatchPolicy                   = tiflashcompute.DispatchPolicyConsistentHashStr
 	DefTiDBEnablePlanCacheForSubquery                 = true
 	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
@@ -1539,6 +1545,7 @@ const (
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
+	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionLegacy
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0

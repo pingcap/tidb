@@ -181,12 +181,6 @@ func (ctx *litTableMutateContext) GetReservedRowIDAlloc() (*stmtctx.ReservedRowI
 	return &ctx.reservedRowIDAlloc, true
 }
 
-// GetBinlogSupport implements the `table.MutateContext` interface.
-func (*litTableMutateContext) GetBinlogSupport() (tblctx.BinlogSupport, bool) {
-	// lightning import does not support binlog.
-	return nil, false
-}
-
 // GetStatisticsSupport implements the `table.MutateContext` interface.
 func (ctx *litTableMutateContext) GetStatisticsSupport() (tblctx.StatisticsSupport, bool) {
 	return ctx, true
