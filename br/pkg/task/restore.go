@@ -696,7 +696,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBRPiTR); err != nil {
 			return errors.Trace(err)
 		}
-		restoreError = RunStreamRestore(c, mgr, g, cmdName, cfg)
+		restoreError = RunStreamRestore(c, mgr, g, cfg)
 	} else {
 		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBR); err != nil {
 			return errors.Trace(err)
@@ -768,12 +768,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	httpCli := httputil.NewClient(mgr.GetTLSConfig())
 	mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
 
-	keepaliveCfg := GetKeepalive(&cfg.Config)
+	keepaliveCfg = GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	// using tikv config to set the concurrency-per-store for client.
 	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
-	err := configureRestoreClient(ctx, client, cfg)
+	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
