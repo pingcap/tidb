@@ -1955,10 +1955,8 @@ func (do *Domain) loadStatsWorker() {
 		lease = 3 * time.Second
 	}
 	loadTicker := time.NewTicker(lease)
-	updStatsHealthyTicker := time.NewTicker(20 * lease)
 	defer func() {
 		loadTicker.Stop()
-		updStatsHealthyTicker.Stop()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
 	do.initStats()
@@ -1979,8 +1977,6 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
 			}
-		case <-updStatsHealthyTicker.C:
-			statsHandle.UpdateStatsHealthyMetrics()
 		case <-do.exit:
 			return
 		}
@@ -2046,7 +2042,12 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
 	loadLockedTablesTicker := time.NewTicker(5 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
+<<<<<<< HEAD:domain/domain.go
 	readMemTricker := time.NewTicker(memory.ReadMemInterval)
+=======
+	updateStatsHealthyTicker := time.NewTicker(20 * lease)
+	readMemTicker := time.NewTicker(memory.ReadMemInterval)
+>>>>>>> 0d5e0e921f6 (domain: move UpdateStatsHealthyMetrics into updateStatsWorker (#55386)):pkg/domain/domain.go
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
@@ -2054,7 +2055,12 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		dumpFeedbackTicker.Stop()
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
+<<<<<<< HEAD:domain/domain.go
 		readMemTricker.Stop()
+=======
+		readMemTicker.Stop()
+		updateStatsHealthyTicker.Stop()
+>>>>>>> 0d5e0e921f6 (domain: move UpdateStatsHealthyMetrics into updateStatsWorker (#55386)):pkg/domain/domain.go
 		do.SetStatsUpdating(false)
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
@@ -2102,9 +2108,15 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
 			}
+<<<<<<< HEAD:domain/domain.go
 
 		case <-readMemTricker.C:
+=======
+		case <-readMemTicker.C:
+>>>>>>> 0d5e0e921f6 (domain: move UpdateStatsHealthyMetrics into updateStatsWorker (#55386)):pkg/domain/domain.go
 			memory.ForceReadMemStats()
+		case <-updateStatsHealthyTicker.C:
+			statsHandle.UpdateStatsHealthyMetrics()
 		}
 	}
 }
