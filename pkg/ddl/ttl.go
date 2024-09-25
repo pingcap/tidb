@@ -51,14 +51,12 @@ func onTTLInfoRemove(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int6
 
 func onTTLInfoChange(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// at least one for them is not nil
-	var ttlInfo *model.TTLInfo
-	var ttlInfoEnable *bool
-	var ttlInfoJobInterval *string
-
-	if err := job.DecodeArgs(&ttlInfo, &ttlInfoEnable, &ttlInfoJobInterval); err != nil {
+	args, err := model.GetAlterTTLInfoArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	ttlInfo, ttlInfoEnable, ttlInfoJobInterval := args.TTLInfo, args.TTLEnable, args.TTLCronJobSchedule
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {

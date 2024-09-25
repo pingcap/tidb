@@ -118,16 +118,6 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 			},
 		},
 		{
-			field: "enableTablePartitionMode",
-			setSctx: func(val any) {
-				sessVars.EnableTablePartition = val.(string)
-			},
-			testVals: []any{variable.Off, variable.On, "AUTO"},
-			getter: func(ctx *metabuild.Context) any {
-				return ctx.GetEnableTablePartitionMode()
-			},
-		},
-		{
 			field: "suppressTooLongIndexErr",
 			extra: func() {
 				require.True(t,

@@ -1377,6 +1377,10 @@ func findBestTask4DS(ds *DataSource, prop *property.PhysicalProperty, planCounte
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
+			// prefer tiflash, while current table path is tikv, skip it.
+			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
+				continue
+			}
 			idxMergeTask, err := convertToIndexMergeScan(ds, prop, candidate, opt)
 			if err != nil {
 				return nil, 0, err
@@ -1512,9 +1516,11 @@ func findBestTask4DS(ds *DataSource, prop *property.PhysicalProperty, planCounte
 			}
 		}
 		if path.IsTablePath() {
+			// prefer tiflash, while current table path is tikv, skip it.
 			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
 				continue
 			}
+			// prefer tikv, while current table path is tiflash, skip it.
 			if ds.PreferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
 				continue
 			}

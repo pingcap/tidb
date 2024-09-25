@@ -508,11 +508,6 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 		return nil
 	}
 
-	if strings.EqualFold(ctx.GetEnableTablePartitionMode(), "OFF") {
-		ctx.AppendWarning(dbterror.ErrTablePartitionDisabled)
-		return nil
-	}
-
 	var enable bool
 	switch s.Tp {
 	case pmodel.PartitionTypeRange:
@@ -2840,7 +2835,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
 	// TODO: Fix the issue of big transactions during EXCHANGE PARTITION with AutoID.
 	// Similar to https://github.com/pingcap/tidb/issues/46904
-	newAutoIDs := meta.AutoIDGroup{
+	newAutoIDs := model.AutoIDGroup{
 		RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
 		IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
 		RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),

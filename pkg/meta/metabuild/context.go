@@ -84,13 +84,6 @@ func WithPreSplitRegions(regions uint64) Option {
 	})
 }
 
-// WithEnableTablePartitionMode sets the enable table partition mode.
-func WithEnableTablePartitionMode(mode string) Option {
-	return funcOpt(func(ctx *Context) {
-		ctx.enableTablePartitionMode = mode
-	})
-}
-
 // WithSuppressTooLongIndexErr sets whether to suppress too long index error.
 func WithSuppressTooLongIndexErr(suppress bool) Option {
 	return funcOpt(func(ctx *Context) {
@@ -113,7 +106,6 @@ type Context struct {
 	clusteredIndexDefMode          variable.ClusteredIndexDefMode
 	shardRowIDBits                 uint64
 	preSplitRegions                uint64
-	enableTablePartitionMode       string
 	suppressTooLongIndexErr        bool
 	is                             infoschemactx.MetaOnlyInfoSchema
 }
@@ -125,7 +117,6 @@ func NewContext(opts ...Option) *Context {
 		primaryKeyRequired:             false,
 		clusteredIndexDefMode:          variable.DefTiDBEnableClusteredIndex,
 		shardRowIDBits:                 variable.DefShardRowIDBits,
-		enableTablePartitionMode:       variable.On,
 		preSplitRegions:                variable.DefPreSplitRegions,
 		suppressTooLongIndexErr:        false,
 	}
@@ -189,11 +180,6 @@ func (ctx *Context) GetShardRowIDBits() uint64 {
 // GetPreSplitRegions returns the pre-split regions.
 func (ctx *Context) GetPreSplitRegions() uint64 {
 	return ctx.preSplitRegions
-}
-
-// GetEnableTablePartitionMode returns the enable table partition mode.
-func (ctx *Context) GetEnableTablePartitionMode() string {
-	return ctx.enableTablePartitionMode
 }
 
 // SuppressTooLongIndexErr returns whether suppress too long index error.

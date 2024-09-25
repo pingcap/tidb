@@ -117,16 +117,6 @@ func TestMetaBuildContext(t *testing.T) {
 			testVals: []any{uint64(123), uint64(456)},
 		},
 		{
-			name: "enableTablePartitionMode",
-			getter: func(ctx *metabuild.Context) any {
-				return ctx.GetEnableTablePartitionMode()
-			},
-			checkDefault: variable.On,
-			option: func(val any) metabuild.Option {
-				return metabuild.WithEnableTablePartitionMode(val.(string))
-			},
-		},
-		{
 			name: "suppressTooLongIndexErr",
 			getter: func(ctx *metabuild.Context) any {
 				return ctx.SuppressTooLongIndexErr()

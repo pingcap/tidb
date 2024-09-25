@@ -32,7 +32,6 @@ func NewMetaBuildContextWithSctx(sctx sessionctx.Context, otherOpts ...metabuild
 		metabuild.WithClusteredIndexDefMode(sessVars.EnableClusteredIndex),
 		metabuild.WithShardRowIDBits(sessVars.ShardRowIDBits),
 		metabuild.WithPreSplitRegions(sessVars.PreSplitRegions),
-		metabuild.WithEnableTablePartitionMode(sessVars.EnableTablePartition),
 		metabuild.WithInfoSchema(sctx.GetDomainInfoSchema()),
 	}
 
