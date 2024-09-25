@@ -70,6 +70,11 @@ var (
 	CPUProfileCounter               prometheus.Counter
 	LoadTableCacheDurationHistogram prometheus.Histogram
 	RCCheckTSWriteConfilictCounter  *prometheus.CounterVec
+<<<<<<< HEAD:metrics/server.go
+=======
+	MemoryLimit                     prometheus.Gauge
+	InternalSessions                prometheus.Gauge
+>>>>>>> f988947aad2 (server,metrics: add a metrics for internal session count (#56272)):pkg/metrics/server.go
 )
 
 // InitServerMetrics initializes server metrics.
@@ -373,6 +378,25 @@ func InitServerMetrics() {
 			Name:      "rc_check_ts_conflict_total",
 			Help:      "Counter of WriteConflict caused by RCCheckTS.",
 		}, []string{LblType})
+<<<<<<< HEAD:metrics/server.go
+=======
+
+	MemoryLimit = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "memory_quota_bytes",
+			Help:      "The value of memory quota bytes.",
+		})
+
+	InternalSessions = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "internal_sessions",
+			Help:      "The total count of internal sessions.",
+		})
+>>>>>>> f988947aad2 (server,metrics: add a metrics for internal session count (#56272)):pkg/metrics/server.go
 }
 
 // ExecuteErrorToLabel converts an execute error to label.
