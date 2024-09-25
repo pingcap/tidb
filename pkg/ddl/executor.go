@@ -3141,14 +3141,13 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       ntSchema.ID,
 		TableID:        ntMeta.ID,
 		SchemaName:     ntSchema.Name.L,
 		TableName:      ntMeta.Name.L,
 		Type:           model.ActionExchangeTablePartition,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{defID, ptSchema.ID, ptMeta.ID, partName, spec.WithValidation},
-		CtxVars:        []any{[]int64{ntSchema.ID, ptSchema.ID}, []int64{ntMeta.ID, ptMeta.ID}},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: ptSchema.Name.L, Table: ptMeta.Name.L},
@@ -3156,8 +3155,15 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 		},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+	args := &model.ExchangeTablePartitionArgs{
+		PartitionID:    defID,
+		PTSchemaID:     ptSchema.ID,
+		PTTableID:      ptMeta.ID,
+		PartitionName:  partName,
+		WithValidation: spec.WithValidation,
+	}
 
-	err = e.DoDDLJob(ctx, job)
+	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
 		return errors.Trace(err)
 	}

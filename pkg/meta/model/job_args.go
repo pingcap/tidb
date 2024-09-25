@@ -561,6 +561,41 @@ func FillRollbackArgsForAddPartition(job *Job, args *TablePartitionArgs) {
 	job.Args = fake.Args
 }
 
+// ExchangeTablePartitionArgs is the arguments for exchange table partition job.
+// pt: the partition table to exchange
+// nt: the non-partition table to exchange with
+type ExchangeTablePartitionArgs struct {
+	PartitionID    int64  `json:"partition_id,omitempty"`
+	PTSchemaID     int64  `json:"pt_schema_id,omitempty"`
+	PTTableID      int64  `json:"pt_table_id,omitempty"`
+	PartitionName  string `json:"partition_name,omitempty"`
+	WithValidation bool   `json:"with_validation,omitempty"`
+}
+
+func (a *ExchangeTablePartitionArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.PartitionID, a.PTSchemaID, a.PTTableID, a.PartitionName, a.WithValidation}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *ExchangeTablePartitionArgs) decodeV1(job *Job) error {
+	return job.DecodeArgs(&a.PartitionID, &a.PTSchemaID, &a.PTTableID, &a.PartitionName, &a.WithValidation)
+}
+
+// GetExchangeTablePartitionArgs gets the exchange table partition args.
+func GetExchangeTablePartitionArgs(job *Job) (*ExchangeTablePartitionArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &ExchangeTablePartitionArgs{}
+		if err := args.decodeV1(job); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*ExchangeTablePartitionArgs](job)
+}
+
 // RenameTableArgs is the arguments for rename table DDL job.
 // It's also used for rename tables.
 type RenameTableArgs struct {
