@@ -190,11 +190,11 @@ func TestRegionJobRetryer(t *testing.T) {
 		ctx, cancel = context.WithCancel(context.Background())
 		done        = make(chan struct{})
 	)
-	retryer := newRegionJobRetryer(putBackCh, &jobWg)
+	retryer := newRegionJobRetryer(ctx, putBackCh, &jobWg)
 	require.Len(t, putBackCh, 0)
 	go func() {
 		defer close(done)
-		retryer.run(ctx)
+		retryer.run()
 	}()
 
 	for i := 0; i < 8; i++ {
@@ -241,11 +241,11 @@ func TestRegionJobRetryer(t *testing.T) {
 
 	ctx, cancel = context.WithCancel(context.Background())
 	putBackCh = make(chan *regionJob)
-	retryer = newRegionJobRetryer(putBackCh, &jobWg)
+	retryer = newRegionJobRetryer(ctx, putBackCh, &jobWg)
 	done = make(chan struct{})
 	go func() {
 		defer close(done)
-		retryer.run(ctx)
+		retryer.run()
 	}()
 
 	job = &regionJob{
@@ -275,11 +275,11 @@ func TestRegionJobRetryer(t *testing.T) {
 	// test when close successfully, regionJobRetryer should close the putBackCh
 	ctx = context.Background()
 	putBackCh = make(chan *regionJob)
-	retryer = newRegionJobRetryer(putBackCh, &jobWg)
+	retryer = newRegionJobRetryer(ctx, putBackCh, &jobWg)
 	done = make(chan struct{})
 	go func() {
 		defer close(done)
-		retryer.run(ctx)
+		retryer.run()
 	}()
 
 	job = &regionJob{

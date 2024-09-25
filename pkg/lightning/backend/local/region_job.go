@@ -917,20 +917,24 @@ type regionJobRetryer struct {
 	reload    chan struct{}
 	jobWg     *sync.WaitGroup
 
-	done chan struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // newRegionJobRetryer creates a regionJobRetryer. regionJobRetryer.run is
 // expected to be called soon.
 func newRegionJobRetryer(
+	workerCtx context.Context,
 	putBackCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) *regionJobRetryer {
+	ctx, cancel := context.WithCancel(workerCtx)
 	ret := &regionJobRetryer{
 		putBackCh: putBackCh,
 		reload:    make(chan struct{}, 1),
 		jobWg:     jobWg,
-		done:      make(chan struct{}),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 	ret.protectedQueue.q = make(regionJobRetryHeap, 0, 16)
 	return ret
@@ -939,7 +943,7 @@ func newRegionJobRetryer(
 // run occupies the goroutine and starts the retry loop. Cancel the `ctx` will
 // stop retryer and `jobWg.Done` will be trigger for jobs that are not put back
 // yet. It should only be used in error case.
-func (q *regionJobRetryer) run(ctx context.Context) {
+func (q *regionJobRetryer) run() {
 	defer q.cleanupUnprocessedJobs()
 
 	for {
@@ -953,9 +957,7 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 		switch {
 		case front != nil:
 			select {
-			case <-ctx.Done():
-				return
-			case <-q.done:
+			case <-q.ctx.Done():
 				return
 			case <-q.reload:
 			case <-time.After(time.Until(front.waitUntil)):
@@ -968,10 +970,7 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 				// hold the lock of toPutBack to make sending to putBackCh and
 				// resetting toPutBack atomic w.r.t. regionJobRetryer.close
 				select {
-				case <-ctx.Done():
-					q.protectedToPutBack.mu.Unlock()
-					return
-				case <-q.done:
+				case <-q.ctx.Done():
 					q.protectedToPutBack.mu.Unlock()
 					return
 				case q.putBackCh <- q.protectedToPutBack.toPutBack:
@@ -982,9 +981,7 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 		default:
 			// len(q.q) == 0
 			select {
-			case <-ctx.Done():
-				return
-			case <-q.done:
+			case <-q.ctx.Done():
 				return
 			case <-q.reload:
 			}
@@ -995,7 +992,7 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 // close stops the retryer. It should only be used in the happy path where all
 // jobs are finished.
 func (q *regionJobRetryer) close() {
-	close(q.done)
+	q.cancel()
 	close(q.putBackCh)
 	intest.AssertFunc(func() bool {
 		q.protectedToPutBack.mu.Lock()

@@ -1436,9 +1436,9 @@ func (local *Backend) doImport(
 		testJobWg = &jobWg
 	})
 
-	retryer := newRegionJobRetryer(jobToWorkerCh, &jobWg)
+	retryer := newRegionJobRetryer(workerCtx, jobToWorkerCh, &jobWg)
 	workGroup.Go(func() error {
-		retryer.run(workerCtx)
+		retryer.run()
 		return nil
 	})
 
