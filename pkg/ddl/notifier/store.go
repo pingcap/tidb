@@ -87,19 +87,24 @@ func (t *tableStore) DeleteAndCommit(
 	se *sess.Session,
 	ddlJobID int64,
 	multiSchemaChangeID int,
-) error {
-	if err := se.Begin(ctx); err != nil {
+) (err error) {
+	if err = se.Begin(ctx); err != nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		if err == nil {
+			err = errors.Trace(se.Commit(ctx))
+		} else {
+			se.Rollback()
+		}
+	}()
 	sql := fmt.Sprintf(`
 		DELETE FROM %s.%s
 		WHERE ddl_job_id = %d AND multi_schema_change_seq = %d`,
 		t.db, t.table,
 		ddlJobID, multiSchemaChangeID)
-	if _, err := se.Execute(ctx, sql, "ddl_notifier"); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(se.Commit(ctx))
+	_, err = se.Execute(ctx, sql, "ddl_notifier")
+	return errors.Trace(err)
 }
 
 func (t *tableStore) List(ctx context.Context, se *sess.Session) ([]*schemaChange, error) {

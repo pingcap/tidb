@@ -63,6 +63,16 @@ const (
 	TestHandlerID HandlerID = 0
 )
 
+// String implements fmt.Stringer interface.
+func (id HandlerID) String() string {
+	switch id {
+	case TestHandlerID:
+		return "TestHandler"
+	default:
+		return fmt.Sprintf("HandlerID(%d)", id)
+	}
+}
+
 // RegisterHandler must be called with an exclusive and fixed HandlerID for each
 // handler to register the handler. Illegal ID will panic. RegisterHandler should
 // not be called after the global ddlNotifier is started.
@@ -88,6 +98,7 @@ type ddlNotifier struct {
 	handlers     map[HandlerID]SchemaChangeHandler
 	pollInterval time.Duration
 
+	// handlersBitMap is set to the full bitmap of all registered handlers in Start.
 	handlersBitMap uint64
 }
 
@@ -127,6 +138,7 @@ func (n *ddlNotifier) Start(ctx context.Context) {
 	}
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDDLNotifier)
+	ctx = logutil.WithCategory(ctx, "ddl-notifier")
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 	for {
@@ -162,7 +174,7 @@ func (n *ddlNotifier) processEvents(ctx context.Context) error {
 					logutil.Logger(ctx).Error("Error processing change",
 						zap.Int64("ddlJobID", change.ddlJobID),
 						zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
-						zap.Int("handlerID", int(handlerID)),
+						zap.Stringer("handler", handlerID),
 						zap.Error(err2))
 				}
 				continue
@@ -187,7 +199,7 @@ func (n *ddlNotifier) processEvents(ctx context.Context) error {
 	return nil
 }
 
-const logSlowProcess = time.Second * 5
+const slowHandlerLogThreshold = time.Second * 5
 
 func (n *ddlNotifier) processEventForHandler(
 	ctx context.Context,
@@ -216,9 +228,9 @@ func (n *ddlNotifier) processEventForHandler(
 	if err = handler(ctx, n.ownedSCtx, change.event); err != nil {
 		return errors.Trace(err)
 	}
-	if time.Since(now) > logSlowProcess {
+	if time.Since(now) > slowHandlerLogThreshold {
 		logutil.Logger(ctx).Warn("Slow process event",
-			zap.Int("handlerID", int(handlerID)),
+			zap.Stringer("handler", handlerID),
 			zap.Int64("ddlJobID", change.ddlJobID),
 			zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
 			zap.Stringer("event", change.event),
