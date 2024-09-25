@@ -642,6 +642,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_bits_and_blooms_bitset",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/bits-and-blooms/bitset",
+        sha256 = "29542828d3fa62199ac8fe6b69ed5284502b52549e1c64dcdbeeed4eab981a37",
+        strip_prefix = "github.com/bits-and-blooms/bitset@v1.14.3",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/bits-and-blooms/bitset/com_github_bits_and_blooms_bitset-v1.14.3.zip",
+            "http://ats.apps.svc/gomod/github.com/bits-and-blooms/bitset/com_github_bits_and_blooms_bitset-v1.14.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/bits-and-blooms/bitset/com_github_bits_and_blooms_bitset-v1.14.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/bits-and-blooms/bitset/com_github_bits_and_blooms_bitset-v1.14.3.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_bkielbasa_cyclop",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/bkielbasa/cyclop",

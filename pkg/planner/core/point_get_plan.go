@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -883,8 +884,9 @@ type PointPlanVal struct {
 
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
-	if checkStableResultMode(ctx) {
+	if checkStableResultMode(ctx) || fixcontrol.GetBoolWithDefault(ctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
+		// or Fix52592 is turn on to disable fast path for select, update and delete
 		return nil
 	}
 
@@ -892,6 +894,7 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	ctx.GetSessionVars().PlanColumnID.Store(0)
 	switch x := node.Node.(type) {
 	case *ast.SelectStmt:
+		// TODO: move this up to cover Delete as well after we have finished the fix for https://github.com/pingcap/tidb/issues/38911
 		if x.SelectIntoOpt != nil {
 			return nil
 		}
@@ -2071,7 +2074,12 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	intest.Assert(t != nil, "The point get executor is accessing a table without meta info.")
 	idxs := t.DeletableIndices()
 	deletableCols := t.DeletableCols()
-	colPosInfo, err := buildSingleTableColPosInfoForDelete(pointPlan.OutputNames(), handleCols, idxs, deletableCols, tbl)
+	publicCols := t.Cols()
+	colPosInfo, err := initColPosInfo(tbl.ID, pointPlan.OutputNames(), handleCols)
+	if err != nil {
+		return nil
+	}
+	_, err = pruneAndBuildSingleTableColPosInfoForDelete(pointPlan.OutputNames(), idxs, deletableCols, publicCols, tbl, &colPosInfo, 0, nil)
 	if err != nil {
 		return nil
 	}
