@@ -26,7 +26,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
@@ -113,6 +112,7 @@ type userInfo struct {
 	authString string
 }
 
+<<<<<<< HEAD:executor/simple.go
 func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
 	dom := domain.GetDomain(e.ctx)
 	sysSessionPool := dom.SysSessionPool()
@@ -148,6 +148,8 @@ func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
 	sctx.(pools.Resource).Close()
 }
 
+=======
+>>>>>>> 23facada83f (executor: fix forget to release session (#56299)):pkg/executor/simple.go
 // Next implements the Executor Next interface.
 func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e.done {
@@ -1734,12 +1736,21 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 	}
 
+<<<<<<< HEAD:executor/simple.go
 	sysSession, err := e.getSysSession()
 	defer clearSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+=======
+	sysSession, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(ctx, sysSession)
+	sqlExecutor := sysSession.GetSQLExecutor()
+>>>>>>> 23facada83f (executor: fix forget to release session (#56299)):pkg/executor/simple.go
 	// session isolation level changed to READ-COMMITTED.
 	// When tidb is at the RR isolation level, executing `begin` will obtain a consistent state.
 	// When operating the same user concurrently, it may happen that historical versions are read.
@@ -2454,11 +2465,16 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
+<<<<<<< HEAD:executor/simple.go
 	sysSession, err := e.getSysSession()
 	defer clearSysSession(ctx, sysSession)
+=======
+	sysSession, err := e.GetSysSession()
+>>>>>>> 23facada83f (executor: fix forget to release session (#56299)):pkg/executor/simple.go
 	if err != nil {
 		return err
 	}
+	defer e.ReleaseSysSession(ctx, sysSession)
 
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	// session isolation level changed to READ-COMMITTED.
