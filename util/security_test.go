@@ -75,14 +75,13 @@ func TestVerifyCommonNameAndRotate(t *testing.T) {
 		util.WithVerifyCommonName([]string{"client1"}),
 	)
 	require.NoError(t, err)
-	port := 9292
-	url := fmt.Sprintf("https://127.0.0.1:%d", port)
 	ctx, cancel := context.WithCancel(context.Background())
-	server := runServer(ctx, serverTLS, port, t)
+	server, port := runServer(ctx, serverTLS, t)
 	defer func() {
 		cancel()
 		server.Close()
 	}()
+	url := fmt.Sprintf("https://127.0.0.1:%d", port)
 
 	clientTLS1, err := util.NewTLSConfig(
 		util.WithCAContent(caData),
@@ -143,14 +142,13 @@ func TestCA(t *testing.T) {
 		util.WithCertAndKeyContent(serverCert, serverKey),
 	)
 	require.NoError(t, err)
-	port := 9293
-	url := fmt.Sprintf("https://127.0.0.1:%d", port)
 	ctx, cancel := context.WithCancel(context.Background())
-	server := runServer(ctx, serverTLS, port, t)
+	server, port := runServer(ctx, serverTLS, t)
 	defer func() {
 		cancel()
 		server.Close()
 	}()
+	url := fmt.Sprintf("https://127.0.0.1:%d", port)
 
 	// test only CA
 	clientTLS1, err := util.NewTLSConfig(
@@ -202,18 +200,19 @@ func handler(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte("This an example server"))
 }
 
-func runServer(ctx context.Context, tlsCfg *tls.Config, port int, t *testing.T) *http.Server {
+func runServer(ctx context.Context, tlsCfg *tls.Config, t *testing.T) (*http.Server, int) {
 	http.HandleFunc("/", handler)
-	server := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: nil}
+	server := &http.Server{Addr: ":0", Handler: nil}
 
 	conn, err := net.Listen("tcp", server.Addr)
 	if err != nil {
 		require.NoError(t, err)
 	}
+	port := conn.Addr().(*net.TCPAddr).Port
 
 	tlsListener := tls.NewListener(conn, tlsCfg)
 	go server.Serve(tlsListener)
-	return server
+	return server, port
 }
 
 // generateCerts returns the PEM contents of a CA certificate and some certificates and private keys per Common Name in
