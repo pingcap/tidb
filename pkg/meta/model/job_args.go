@@ -1062,7 +1062,7 @@ func (a *AlterTablePlacementArgs) fillJob(job *Job) {
 func GetAlterTablePlacementArgs(job *Job) (*AlterTablePlacementArgs, error) {
 	if job.Version == JobVersion1 {
 		placementPolicyRef := &PolicyRefInfo{}
-		if err := job.DecodeArgs(&placementPolicyRef); err != nil {
+		if err := job.DecodeArgs(placementPolicyRef); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &AlterTablePlacementArgs{
@@ -1075,7 +1075,7 @@ func GetAlterTablePlacementArgs(job *Job) (*AlterTablePlacementArgs, error) {
 
 // SetTiFlashReplicaArgs is the arguments for setting TiFlash replica ddl.
 type SetTiFlashReplicaArgs struct {
-	TiflashReplica ast.TiFlashReplicaSpec
+	TiflashReplica ast.TiFlashReplicaSpec `json:"tiflash_replica,omitempty"`
 }
 
 func (a *SetTiFlashReplicaArgs) fillJob(job *Job) {
@@ -1101,8 +1101,8 @@ func GetSetTiFlashReplicaArgs(job *Job) (*SetTiFlashReplicaArgs, error) {
 
 // UpdateTiFlashReplicaStatusArgs is the arguments for updating TiFlash replica status ddl.
 type UpdateTiFlashReplicaStatusArgs struct {
-	Available  bool
-	PhysicalID int64
+	Available  bool  `json:"available,omitempty"`
+	PhysicalID int64 `json:"physical_id,omitempty"`
 }
 
 func (a *UpdateTiFlashReplicaStatusArgs) fillJob(job *Job) {
