@@ -266,17 +266,11 @@ func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job) error {
 
 // SetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.
 func SetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error {
-	var (
-		recoverSchemaInfo      *RecoverSchemaInfo
-		recoverSchemaCheckFlag int64
-	)
-	err := job.DecodeArgs(&recoverSchemaInfo, &recoverSchemaCheckFlag)
+	args, err := model.GetRecoverArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Reserved recoverSchemaCheckFlag value for gc work judgment.
-	job.Args[checkFlagIndexInJobArgs] = recoverSchemaCheckFlag
-	recoverTabsInfo := recoverSchemaInfo.RecoverTabsInfo
+	recoverTabsInfo := args.RecoverTableInfos()
 	diff.AffectedOpts = make([]*model.AffectedOption, len(recoverTabsInfo))
 	for i := range recoverTabsInfo {
 		diff.AffectedOpts[i] = &model.AffectedOption{

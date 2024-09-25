@@ -244,6 +244,41 @@ func TestBasic(t *testing.T) {
 	tbls, err := is.SchemaTableInfos(context.Background(), schema.Name)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(tbls))
+
+	// Test SchemaNameByTableID
+	tests := []struct {
+		name       string
+		tableID    int64
+		wantSchema pmodel.CIStr
+		wantOK     bool
+	}{
+		{
+			name:       "valid table ID",
+			tableID:    tbID,
+			wantSchema: dbName,
+			wantOK:     true,
+		},
+		{
+			name:       "non-existent table ID",
+			tableID:    tbID + 1,
+			wantSchema: pmodel.CIStr{},
+			wantOK:     false,
+		},
+		{
+			name:       "invalid table ID (negative)",
+			tableID:    -1,
+			wantSchema: pmodel.CIStr{},
+			wantOK:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSchema, gotOK := is.SchemaNameByTableID(tt.tableID)
+			require.Equal(t, tt.wantOK, gotOK)
+			require.Equal(t, tt.wantSchema, gotSchema)
+		})
+	}
 }
 
 func TestMockInfoSchema(t *testing.T) {

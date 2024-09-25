@@ -137,15 +137,13 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver in
 }
 
 func (w *worker) onRecoverTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	var (
-		recoverInfo           *RecoverInfo
-		recoverTableCheckFlag int64
-	)
-	if err = job.DecodeArgs(&recoverInfo, &recoverTableCheckFlag); err != nil {
+	args, err := model.GetRecoverArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	recoverInfo := args.RecoverTableInfos()[0]
 
 	schemaID := recoverInfo.SchemaID
 	tblInfo := recoverInfo.TableInfo
@@ -198,10 +196,11 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, t *meta.Meta, job *model.Job
 		// none -> write only
 		// check GC enable and update flag.
 		if gcEnable {
-			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagEnableGC
+			args.CheckFlag = recoverCheckFlagEnableGC
 		} else {
-			job.Args[checkFlagIndexInJobArgs] = recoverCheckFlagDisableGC
+			args.CheckFlag = recoverCheckFlagDisableGC
 		}
+		job.FillArgs(args)
 
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
@@ -242,7 +241,7 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, t *meta.Meta, job *model.Job
 	return ver, nil
 }
 
-func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *RecoverInfo) (ver int64, err error) {
+func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *model.RecoverTableInfo) (ver int64, err error) {
 	var tids []int64
 	if recoverInfo.TableInfo.GetPartitionInfo() != nil {
 		tids = getPartitionIDs(recoverInfo.TableInfo)
@@ -287,6 +286,8 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to update the label rule to PD")
 	}
+
+	// TODO(joechenrh): tid is used in SerSchemaDiffForDropTable, remove this after refactor done.
 	job.CtxVars = []any{tids}
 	return ver, nil
 }
@@ -658,8 +659,8 @@ func onRebaseAutoID(jobCtx *jobContext, t *meta.Meta, job *model.Job, tp autoid.
 }
 
 func onModifyTableAutoIDCache(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, error) {
-	var cache int64
-	if err := job.DecodeArgs(&cache); err != nil {
+	args, err := model.GetModifyTableAutoIDCacheArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
@@ -669,7 +670,7 @@ func onModifyTableAutoIDCache(jobCtx *jobContext, t *meta.Meta, job *model.Job) 
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo.AutoIDCache = cache
+	tblInfo.AutoIDCache = args.NewCache
 	ver, err := updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -679,12 +680,13 @@ func onModifyTableAutoIDCache(jobCtx *jobContext, t *meta.Meta, job *model.Job) 
 }
 
 func (w *worker) onShardRowID(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var shardRowIDBits uint64
-	err := job.DecodeArgs(&shardRowIDBits)
+	args, err := model.GetShardRowIDArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	shardRowIDBits := args.ShardRowIDBits
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1337,18 +1339,19 @@ type schemaIDAndTableInfo struct {
 
 func onRepairTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
-	tblInfo := &model.TableInfo{}
 
-	if err := job.DecodeArgs(tblInfo); err != nil {
+	args, err := model.GetRepairTableArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
+	tblInfo := args.TableInfo
 	tblInfo.State = model.StateNone
 
 	// Check the old DB and old table exist.
-	_, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	_, err = GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
