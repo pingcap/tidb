@@ -186,9 +186,7 @@ func testAddIndex(t *testing.T, tp testAddIndexType, createTableSQL, idxTp strin
 			tk.MustExec("set global tidb_scatter_region = 0")
 		}()
 	}
-	if isTestPartition {
-		tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
-	} else if (testClusteredIndex & tp) > 0 {
+	if (testClusteredIndex & tp) > 0 {
 		tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	}
 	tk.MustExec("drop table if exists test_add_index")

@@ -508,11 +508,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		return nil
 	}
 
-	if strings.EqualFold(ctx.GetSessionVars().EnableTablePartition, "OFF") {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTablePartitionDisabled)
-		return nil
-	}
-
 	var enable bool
 	switch s.Tp {
 	case pmodel.PartitionTypeRange:
