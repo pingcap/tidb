@@ -197,7 +197,7 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/disableFixedRowCountHint"))
 	}()
 	tk.Session().GetSessionVars().EnabledRateLimitAction = true
-	tk.Session().GetSessionVars().MemQuotaQuery = 10000
+	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
 	require.Equal(t, "memory exceeds quota, rateLimitAction delegate to fallback action", oom.GetTracker())
 }

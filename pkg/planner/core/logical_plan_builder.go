@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -5265,10 +5264,11 @@ func buildColumns2HandleWithWrtiableColumns(
 //     But we need them because the non-public indexes may rely on them.
 //
 // The two kind of columns forms the whole columns of the table. Public part first.
-// This function does the following things:
-//  1. Prune the columns that are not used by indexes and row id(and the partition expression and foreign keys in the near future).
-//  2. The position of the columns used by indexes in the DELETE's select's output.
-//  3. The row id's position in the final output.
+//
+// This function returns the following things:
+//  1. TblColPosInfoSlice stores the each table's column's position information in the final mixed row.
+//  2. The bitset records which column in the original mixed row is not pruned..
+//  3. The error we meet during the algorithm.
 func pruneAndBuildColPositionInfoForDelete(
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
@@ -5277,6 +5277,9 @@ func pruneAndBuildColPositionInfoForDelete(
 ) (TblColPosInfoSlice, *bitset.BitSet, error) {
 	var nonPruned *bitset.BitSet
 	// If there is foreign key, we can't prune the columns.
+	// Use a very relax check for foreign key cascades and checks.
+	// If there's one table containing foreign keys, all of the tables would not do pruning.
+	// It should be strict in the future or just support pruning column when there is foreign key.
 	if !hasFK {
 		nonPruned = bitset.New(uint(len(names)))
 		nonPruned.SetAll()
@@ -5292,15 +5295,8 @@ func pruneAndBuildColPositionInfoForDelete(
 		}
 	}
 	// Sort by start position. To do the later column pruning.
-	slices.SortFunc(cols2PosInfos, func(i, j TblColPosInfo) int {
-		if i.Start < j.Start {
-			return -1
-		}
-		if i.Start > j.Start {
-			return 1
-		}
-		return 0
-	})
+	// TODO: `sort`` package has a rather worse performance. We should replace it with the new `slice` package.
+	sort.Sort(cols2PosInfos)
 	prunedColCnt := 0
 	var err error
 	for i := range cols2PosInfos {
@@ -5316,7 +5312,7 @@ func pruneAndBuildColPositionInfoForDelete(
 			}
 			continue
 		}
-		prunedColCnt, err = pruneAndBuildSingleTableColPosInfoForDelete(tbl, tblInfo, names, cols2PosInfo, prunedColCnt, nonPruned)
+		prunedColCnt, err = pruneAndBuildSingleTableColPosInfoForDelete(tbl, tblInfo.Name.O, names, cols2PosInfo, prunedColCnt, nonPruned)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -5346,19 +5342,8 @@ func buildSingleTableColPosInfoForDelete(
 	tbl table.Table,
 	colPosInfo *TblColPosInfo,
 ) error {
-	deletableIdxs := tbl.DeletableIndices()
 	tblLen := len(tbl.DeletableCols())
-	indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
-	for _, idx := range deletableIdxs {
-		idxCols := idx.Meta().Columns
-		colPos := make([]int, 0, len(idxCols))
-		for _, col := range idxCols {
-			colPos = append(colPos, col.Offset)
-		}
-		indexColMap[idx.Meta().ID] = colPos
-	}
 	colPosInfo.End = colPosInfo.Start + tblLen
-	colPosInfo.IndexesRowLayout = indexColMap
 	return nil
 }
 
@@ -5366,7 +5351,7 @@ func buildSingleTableColPosInfoForDelete(
 // And it will try to prune columns that not used in pk or indexes.
 func pruneAndBuildSingleTableColPosInfoForDelete(
 	t table.Table,
-	tblInfo *model.TableInfo,
+	tableName string,
 	names []*types.FieldName,
 	colPosInfo *TblColPosInfo,
 	prePrunedCount int,
@@ -5393,7 +5378,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	for _, idx := range deletableIdxs {
 		for _, col := range idx.Meta().Columns {
 			if col.Offset+originalStart >= len(names) || deletableCols[col.Offset].Name.L != names[col.Offset+originalStart].ColName.L {
-				return 0, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tblInfo.Name.O)
+				return 0, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tableName)
 			}
 			fixedPos[col.Offset] = 0
 		}
@@ -6063,9 +6048,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		finalProjCols  []*expression.Column
 		finalProjNames types.NameSlice
 	)
-	// Use a very relax check for foreign key cascades and checks.
-	// It should be strict in the future or just support pruning column when there is foreign key.
 	if nonPruned != nil {
+		// If the pruning happens, we project the columns not pruned as the final output of the below plan.
 		finalProjCols = make([]*expression.Column, 0, oldLen/2)
 		finalProjNames = make(types.NameSlice, 0, oldLen/2)
 		for i, found := nonPruned.NextSet(0); found; i, found = nonPruned.NextSet(i + 1) {
@@ -6073,6 +6057,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			finalProjNames = append(finalProjNames, p.OutputNames()[i])
 		}
 	} else {
+		// Otherwise, we just use the original schema.
 		finalProjCols = make([]*expression.Column, oldLen)
 		copy(finalProjCols, p.Schema().Columns[:oldLen])
 		finalProjNames = preProjNames.Shallow()
