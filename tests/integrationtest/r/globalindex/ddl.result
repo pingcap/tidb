@@ -1,29 +1,27 @@
-set tidb_enable_global_index=OFF;
 create table t (a int, b int, unique index idx(a) global);
 Error 8200 (HY000): Unsupported Global Index on non-partitioned table
 create table t (a int, b int, index idx(a) global);
 Error 8200 (HY000): Unsupported Global Index on non-partitioned table
 create table t (a int, b int, unique index idx(a) global) partition by hash(b) partitions 3;
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+drop table t;
 create table t (a int, b int, index idx(a) global) partition by hash(b) partitions 3;
-Error 8200 (HY000): Unsupported GLOBAL IndexOption when tidb_enable_global_index is disabled
+Error 8200 (HY000): Unsupported GLOBAL IndexOption on non-unique index
 create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3;
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+drop table t3;
 create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3;
-Error 1503 (HY000): A PRIMARY KEY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3;
 alter table t partition by hash(b) partitions 3;
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table t partition by hash(b) partitions 3 update indexes (a global);
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
 alter table t add index idxErr (b) global;
 Error 8200 (HY000): Unsupported Global IndexOption on non-unique index
 alter table t add unique index idxErr (b) global;
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8200 (HY000): Unsupported Global IndexOption on index including all columns in the partitioning expression
 create index idxErr on t (b) global;
 Error 8200 (HY000): Unsupported Global IndexOption on non-unique index
 create unique index idxErr on t (b) global;
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8200 (HY000): Unsupported Global IndexOption on index including all columns in the partitioning expression
 alter table t remove partitioning;
 alter table t add index idxErr (b) global;
 Error 8200 (HY000): Unsupported Global Index on non-partitioned table
@@ -34,7 +32,6 @@ Error 8200 (HY000): Unsupported Global Index on non-partitioned table
 create unique index idxErr on t (b) global;
 Error 8200 (HY000): Unsupported Global Index on non-partitioned table
 drop table t;
-set tidb_enable_global_index=ON;
 create table t (a int, b int, unique index idx(a) global);
 Error 8200 (HY000): Unsupported Global Index on non-partitioned table
 create table t (a int, b int, index idx(a) global);

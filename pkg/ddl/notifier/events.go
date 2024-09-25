@@ -423,7 +423,7 @@ func (s *SchemaChangeEvent) MarshalJSON() ([]byte, error) {
 func (s *SchemaChangeEvent) UnmarshalJSON(b []byte) error {
 	var j jsonSchemaChangeEvent
 	err := json.Unmarshal(b, &j)
-	if err != nil {
+	if err == nil {
 		s.inner = &j
 	}
 	return err
