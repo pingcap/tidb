@@ -1189,7 +1189,7 @@ func checkColumnDefaultValue(ctx exprctx.BuildContext, col *table.Column, value 
 	if value != nil && col.GetType() == mysql.TypeTiDBVectorFloat32 {
 		// In any SQL mode we don't allow VECTOR column to have a default value.
 		// Note that expression default is still supported.
-		return hasDefaultValue, value, errors.Errorf("VECTOR column '%-.192s' can't have a default value", col.Name.O)
+		return hasDefaultValue, value, errors.Errorf("VECTOR column '%-.192s' can't have a literal default. Use expression default instead: ((VEC_FROM_TEXT('...')))", col.Name.O)
 	}
 	if value != nil && (col.GetType() == mysql.TypeJSON ||
 		col.GetType() == mysql.TypeTinyBlob || col.GetType() == mysql.TypeMediumBlob ||

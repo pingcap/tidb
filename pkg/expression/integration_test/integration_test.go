@@ -126,7 +126,7 @@ func TestVectorDefaultValue(t *testing.T) {
 	// ============================
 	// NULLABLE, DEFAULT
 
-	tk.MustGetErrMsg("create table t(embedding VECTOR DEFAULT '[1,2,3]')", `VECTOR column 'embedding' can't have a default value`)
+	tk.MustGetErrMsg("create table t(embedding VECTOR DEFAULT '[1,2,3]')", `VECTOR column 'embedding' can't have a literal default. Use expression default instead: ((VEC_FROM_TEXT('...')))`)
 	tk.MustExec("create table t(embedding VECTOR DEFAULT (VEC_FROM_TEXT('[1,2,3]')))")
 	tk.MustExec("insert into t values ()")
 	tk.MustExec("insert into t values ('[4]')")
