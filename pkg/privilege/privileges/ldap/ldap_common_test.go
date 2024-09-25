@@ -107,6 +107,7 @@ func TestConnectThrough636(t *testing.T) {
 	_, port, err := net.SplitHostPort(randomTLSServiceAddress)
 	require.NoError(t, err)
 	p, err := strconv.Atoi(port)
+	require.NoError(t, err)
 	impl.SetLDAPServerPort(p)
 
 	impl.caPool = x509.NewCertPool()
