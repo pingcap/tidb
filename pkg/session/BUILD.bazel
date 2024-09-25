@@ -119,6 +119,7 @@ go_library(
         "//pkg/util/topsql/state",
         "//pkg/util/topsql/stmtstats",
         "//pkg/util/tracing",
+        "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
