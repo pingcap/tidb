@@ -17,6 +17,7 @@ package notifier_test
 import (
 	"context"
 	"io"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -127,6 +128,74 @@ func TestBasicPubSub(t *testing.T) {
 	require.Equal(t, event1, seenChanges[0])
 	require.Equal(t, event2, seenChanges[1])
 	require.Equal(t, event3, seenChanges[2])
+
+	cancel()
+	<-done
+}
+
+func TestDeliverOrderAndCleanup(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS ddl_notifier")
+	tk.MustExec(tableStructure)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s := notifier.OpenTableStore("test", "ddl_notifier")
+
+	notifier.InitDDLNotifier(tk.Session(), s, 50*time.Millisecond)
+	t.Cleanup(notifier.ResetDDLNotifier)
+
+	newRndFailHandler := func() notifier.SchemaChangeHandler {
+		maxFail := 5
+		lastTableID := int64(0)
+		h := func(
+			_ context.Context,
+			_ sessionctx.Context,
+			change *notifier.SchemaChangeEvent,
+		) error {
+			if maxFail > 0 {
+				if rand.Int63n(2) == 0 {
+					maxFail--
+					return notifier.ErrNotReadyRetryLater
+				}
+			}
+
+			require.Greater(t, change.GetCreateTableInfo().ID, lastTableID)
+			lastTableID = change.GetCreateTableInfo().ID
+			return nil
+		}
+		return h
+	}
+
+	notifier.RegisterHandler(3, newRndFailHandler())
+	notifier.RegisterHandler(4, newRndFailHandler())
+	notifier.RegisterHandler(9, newRndFailHandler())
+
+	done := make(chan struct{})
+	go func() {
+		notifier.StartDDLNotifier(ctx)
+		close(done)
+	}()
+
+	tk2 := testkit.NewTestKit(t, store)
+	se := sess.NewSession(tk2.Session())
+
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
+	require.NoError(t, err)
+	event2 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
+	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
+	require.NoError(t, err)
+	event3 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1002, Name: pmodel.NewCIStr("t3")})
+	err = notifier.PubSchemeChangeToStore(ctx, se, 3, -1, event3, s)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		changes, err2 := s.List(ctx, se)
+		require.NoError(t, err2)
+		return len(changes) == 0
+	}, time.Second, 50*time.Millisecond)
 
 	cancel()
 	<-done

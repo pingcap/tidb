@@ -87,8 +87,12 @@ type ddlNotifier struct {
 	store        Store
 	handlers     map[HandlerID]SchemaChangeHandler
 	pollInterval time.Duration
+
+	handlersBitMap uint64
 }
 
+// TODO(lance6716): remove this global variable. Move it into Domain and make
+// related functions a member of it.
 var globalDDLNotifier *ddlNotifier
 
 // InitDDLNotifier initializes the global ddlNotifier. It should be called only
@@ -118,6 +122,10 @@ func StartDDLNotifier(ctx context.Context) {
 
 // Start starts the ddlNotifier. It will block until the context is canceled.
 func (n *ddlNotifier) Start(ctx context.Context) {
+	for id := range n.handlers {
+		n.handlersBitMap |= 1 << id
+	}
+
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDDLNotifier)
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
@@ -160,11 +168,26 @@ func (n *ddlNotifier) processEvents(ctx context.Context) error {
 				continue
 			}
 		}
-		// TODO: remove the processed change after all handlers processed it.
+
+		if change.processedByFlag == n.handlersBitMap {
+			if err2 := n.store.DeleteAndCommit(
+				ctx,
+				sess.NewSession(n.ownedSCtx),
+				change.ddlJobID,
+				int(change.multiSchemaChangeSeq),
+			); err2 != nil {
+				logutil.Logger(ctx).Error("Error deleting change",
+					zap.Int64("ddlJobID", change.ddlJobID),
+					zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
+					zap.Error(err2))
+			}
+		}
 	}
 
 	return nil
 }
+
+const logSlowProcess = time.Second * 5
 
 func (n *ddlNotifier) processEventForHandler(
 	ctx context.Context,
@@ -189,9 +212,17 @@ func (n *ddlNotifier) processEventForHandler(
 		}
 	}()
 
-	// TODO: Should we attach a timeout to this ctx?
+	now := time.Now()
 	if err = handler(ctx, n.ownedSCtx, change.event); err != nil {
 		return errors.Trace(err)
+	}
+	if time.Since(now) > logSlowProcess {
+		logutil.Logger(ctx).Warn("Slow process event",
+			zap.Int("handlerID", int(handlerID)),
+			zap.Int64("ddlJobID", change.ddlJobID),
+			zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
+			zap.Stringer("event", change.event),
+			zap.Duration("duration", time.Since(now)))
 	}
 
 	newFlag := change.processedByFlag | (1 << handlerID)
