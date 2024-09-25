@@ -170,7 +170,7 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 			if !r.autoAnalysisTimeWindow.IsWithinTimeWindow(time.Now()) {
 				return nil
 			}
-			return priorityqueue.FetchAllTablesAndBuildAnalysisJobs(sctx, parameters, r.autoAnalysisTimeWindow, r.statsHandle, r.Jobs)
+			return priorityqueue.FetchAllTablesAndBuildAnalysisJobs(sctx, parameters, r.autoAnalysisTimeWindow, r.statsHandle, r.Jobs.Push)
 		},
 		statsutil.FlagWrapTxn,
 	); err != nil {

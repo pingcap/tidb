@@ -31,31 +31,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// Make sure AnalysisPriorityQueue implements JobQueue.
-var _ JobQueue = &AnalysisPriorityQueue{}
-
-// JobQueue is an interface that represents a queue of analysis jobs.
-// This is temporarily used to decouple the rebuilding process from the actual queue implementation.
-// TODO: Remove this interface when we switch to the new priority queue implementation.
-type JobQueue interface {
-	Push(job AnalysisJob) error
-}
-
-func pushJob(queue JobQueue, job AnalysisJob, calculator *PriorityCalculator) error {
-	if job == nil {
-		return nil
-	}
-	weight := calculator.CalculateWeight(job)
-	if weight <= 0 {
-		statslogutil.SingletonStatsSamplerLogger().Warn(
-			"Table gets a negative weight",
-			zap.Float64("weight", weight),
-			zap.Stringer("job", job),
-		)
-	}
-	job.SetWeight(weight)
-	return queue.Push(job)
-}
+// PushJobFunc is a function that pushes an AnalysisJob to a queue.
+type PushJobFunc func(job AnalysisJob) error
 
 // FetchAllTablesAndBuildAnalysisJobs builds analysis jobs for all eligible tables and partitions.
 func FetchAllTablesAndBuildAnalysisJobs(
@@ -63,7 +40,7 @@ func FetchAllTablesAndBuildAnalysisJobs(
 	parameters map[string]string,
 	autoAnalysisTimeWindow AutoAnalysisTimeWindow,
 	statsHandle statstypes.StatsHandle,
-	jobQueue JobQueue,
+	jobFunc PushJobFunc,
 ) error {
 	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
@@ -119,7 +96,7 @@ func FetchAllTablesAndBuildAnalysisJobs(
 					tblInfo,
 					statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
 				)
-				err := pushJob(jobQueue, job, calculator)
+				err := setWeightAndPushJob(jobFunc, job, calculator)
 				if err != nil {
 					return err
 				}
@@ -144,7 +121,7 @@ func FetchAllTablesAndBuildAnalysisJobs(
 						pIDAndName.Name,
 						stats,
 					)
-					err := pushJob(jobQueue, job, calculator)
+					err := setWeightAndPushJob(jobFunc, job, calculator)
 					if err != nil {
 						return err
 					}
@@ -156,7 +133,7 @@ func FetchAllTablesAndBuildAnalysisJobs(
 					statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
 					partitionStats,
 				)
-				err := pushJob(jobQueue, job, calculator)
+				err := setWeightAndPushJob(jobFunc, job, calculator)
 				if err != nil {
 					return err
 				}
@@ -165,6 +142,22 @@ func FetchAllTablesAndBuildAnalysisJobs(
 	}
 
 	return nil
+}
+
+func setWeightAndPushJob(pushFunc PushJobFunc, job AnalysisJob, calculator *PriorityCalculator) error {
+	if job == nil {
+		return nil
+	}
+	weight := calculator.CalculateWeight(job)
+	if weight <= 0 {
+		statslogutil.SingletonStatsSamplerLogger().Warn(
+			"Table gets a negative weight",
+			zap.Float64("weight", weight),
+			zap.Stringer("job", job),
+		)
+	}
+	job.SetWeight(weight)
+	return pushFunc(job)
 }
 
 func getStartTs(sctx sessionctx.Context) (uint64, error) {
