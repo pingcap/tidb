@@ -658,7 +658,6 @@ func (e *executor) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, 
 	args := &model.AlterTablePlacementArgs{
 		PlacementPolicyRef: placementPolicyRef,
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
