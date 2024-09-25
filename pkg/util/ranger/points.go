@@ -647,12 +647,12 @@ func (r *builder) buildFromIn(
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
-			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
+			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not constant", e.StringWithCtx(false))
 			return getFullRange(), hasNull
 		}
 		dt, err := v.Eval(chunk.Row{})
 		if err != nil {
-			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
+			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e.StringWithCtx(false))
 			return getFullRange(), hasNull
 		}
 		if dt.IsNull() {

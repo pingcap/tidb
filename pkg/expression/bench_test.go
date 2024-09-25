@@ -1379,7 +1379,7 @@ func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases)
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, _, input, output := genVecExprBenchCase(ctx, funcName, testCase)
-			exprName := expr.String()
+			exprName := expr.StringWithCtx(false)
 			if sf, ok := expr.(*ScalarFunction); ok {
 				exprName = fmt.Sprintf("%v", reflect.TypeOf(sf.Function))
 				tmp := strings.Split(exprName, ".")

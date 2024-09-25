@@ -564,21 +564,21 @@ func appendModifyAggTraceStep(outerPlan LogicalPlan, p *LogicalApply, agg *Logic
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(col.String())
+			buffer.WriteString(col.StringWithCtx(false))
 		}
 		buffer.WriteString("], and functions added [")
 		for i, f := range appendedAggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(f.String())
+			buffer.WriteString(f.StringWithCtx(false))
 		}
 		fmt.Fprintf(buffer, "], and %v_%v's conditions added [", p.TP(), p.ID())
 		for i, cond := range eqCondWithCorCol {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(false))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
@@ -589,7 +589,7 @@ func appendModifyAggTraceStep(outerPlan LogicalPlan, p *LogicalApply, agg *Logic
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(false))
 		}
 		fmt.Fprintf(buffer, "] are correlated to %v_%v and pulled up as %v_%v's join key",
 			outerPlan.TP(), outerPlan.ID(), p.TP(), p.ID())

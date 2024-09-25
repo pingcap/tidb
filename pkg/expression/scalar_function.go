@@ -112,18 +112,23 @@ func (sf *ScalarFunction) GetCtx() sessionctx.Context {
 
 // String implements fmt.Stringer interface.
 func (sf *ScalarFunction) String() string {
+	return sf.StringWithCtx(false)
+}
+
+// StringWithCtx implements Expression interface.
+func (sf *ScalarFunction) StringWithCtx(redact bool) string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
 	switch sf.FuncName.L {
 	case ast.Cast:
 		for _, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.String())
+			buffer.WriteString(arg.StringWithCtx(redact))
 			buffer.WriteString(", ")
 			buffer.WriteString(sf.RetType.String())
 		}
 	default:
 		for i, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.String())
+			buffer.WriteString(arg.StringWithCtx(redact))
 			if i+1 != len(sf.GetArgs()) {
 				buffer.WriteString(", ")
 			}
@@ -249,12 +254,12 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		Function: f,
 	}
 	if fold == 1 {
-		return FoldConstant(sf), nil
+		return FoldConstant(ctx, sf), nil
 	} else if fold == -1 {
 		// try to fold constants, and return the original function if errors/warnings occur
 		sc := ctx.GetSessionVars().StmtCtx
 		beforeWarns := sc.WarningCount()
-		newSf := FoldConstant(sf)
+		newSf := FoldConstant(ctx, sf)
 		afterWarns := sc.WarningCount()
 		if afterWarns > beforeWarns {
 			sc.TruncateWarnings(int(beforeWarns))

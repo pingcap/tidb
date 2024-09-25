@@ -216,7 +216,7 @@ func (s *ScalarSubQueryExpr) RemapColumn(_ map[int64]*expression.Column) (expres
 }
 
 // ExplainInfo implements the Expression interface.
-func (s *ScalarSubQueryExpr) ExplainInfo() string {
+func (s *ScalarSubQueryExpr) ExplainInfo(sessionctx.Context) string {
 	return s.String()
 }
 

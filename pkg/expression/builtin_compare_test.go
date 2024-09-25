@@ -77,7 +77,7 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 	for _, test := range tests {
 		f, err := ParseSimpleExprsWithNames(ctx, test.exprStr, schema, names)
 		require.NoError(t, err)
-		require.Equal(t, test.result, f[0].String())
+		require.Equal(t, test.result, f[0].StringWithCtx(false))
 	}
 }
 

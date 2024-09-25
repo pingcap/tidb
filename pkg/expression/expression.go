@@ -178,7 +178,7 @@ type Expression interface {
 	RemapColumn(map[int64]*Column) (Expression, error)
 
 	// ExplainInfo returns operator information to be explained.
-	ExplainInfo() string
+	ExplainInfo(ctx sessionctx.Context) string
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
@@ -192,6 +192,8 @@ type Expression interface {
 
 	// MemoryUsage return the memory usage of Expression
 	MemoryUsage() int64
+
+	StringWithCtx(redact bool) string
 }
 
 // CNFExprs stands for a CNF expression.
@@ -820,7 +822,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("%v affects null check"))
+		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("%v affects null check", expr.StringWithCtx(false)))
 	}
 	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
@@ -844,7 +846,7 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(x)
+			return FoldConstant(ctx, x)
 		}
 	}
 	return expr
@@ -909,7 +911,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schem
 		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(x), false
+			return FoldConstant(ctx, x), false
 		}
 	}
 	return expr, false
@@ -1384,10 +1386,11 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 			storageName = "storage layer"
 		}
 		warnErr := errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
-		if pc.sc.InExplainStmt {
-			pc.sc.AppendWarning(warnErr)
+		statCtx := pc.sc.GetSessionVars().StmtCtx
+		if statCtx.InExplainStmt {
+			statCtx.AppendWarning(warnErr)
 		} else {
-			pc.sc.AppendExtraWarning(warnErr)
+			statCtx.AppendExtraWarning(warnErr)
 		}
 		return false
 	}
@@ -1411,6 +1414,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 }
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
+	statCtx := pc.sc.GetSessionVars().StmtCtx
 	if storeType == kv.TiFlash {
 		switch expr.GetType().GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
@@ -1418,19 +1422,19 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 				break
 			}
 			warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
-			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(warnErr)
+			if statCtx.InExplainStmt {
+				statCtx.AppendWarning(warnErr)
 			} else {
-				pc.sc.AppendExtraWarning(warnErr)
+				statCtx.AppendExtraWarning(warnErr)
 			}
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType().IsDecimalValid() {
 				warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
-				if pc.sc.InExplainStmt {
-					pc.sc.AppendWarning(warnErr)
+				if statCtx.InExplainStmt {
+					statCtx.AppendWarning(warnErr)
 				} else {
-					pc.sc.AppendExtraWarning(warnErr)
+					statCtx.AppendExtraWarning(warnErr)
 				}
 				return false
 			}
@@ -1450,7 +1454,7 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 }
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprsWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
+func PushDownExprsWithExtraInfo(sc sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
 	pc := PbConverter{sc: sc, client: client}
 	for _, expr := range exprs {
 		if canExprPushDown(expr, pc, storeType, canEnumPush) {
@@ -1463,18 +1467,18 @@ func PushDownExprsWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression
 }
 
 // PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+func PushDownExprs(sc sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
 	return PushDownExprsWithExtraInfo(sc, exprs, client, storeType, false)
 }
 
 // CanExprsPushDownWithExtraInfo return true if all the expr in exprs can be pushed down
-func CanExprsPushDownWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) bool {
+func CanExprsPushDownWithExtraInfo(sc sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) bool {
 	_, remained := PushDownExprsWithExtraInfo(sc, exprs, client, storeType, canEnumPush)
 	return len(remained) == 0
 }
 
 // CanExprsPushDown return true if all the expr in exprs can be pushed down
-func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
+func CanExprsPushDown(sc sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
 	return CanExprsPushDownWithExtraInfo(sc, exprs, client, storeType, false)
 }
 
@@ -1514,7 +1518,7 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 	if keepNull {
 		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
 	}
-	return FoldConstant(sf), nil
+	return FoldConstant(ctx, sf), nil
 }
 
 // PropagateType propagates the type information to the `expr`.
@@ -1606,4 +1610,19 @@ func Args2Expressions4Test(args ...interface{}) []Expression {
 		exprs[i] = &Constant{Value: d, RetType: ft}
 	}
 	return exprs
+}
+
+// StringifyExpressionsWithCtx turns a slice of expressions into string
+func StringifyExpressionsWithCtx(exprs []Expression) string {
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i, expr := range exprs {
+		sb.WriteString(expr.StringWithCtx(false))
+
+		if i != len(exprs)-1 {
+			sb.WriteString(" ")
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
 }

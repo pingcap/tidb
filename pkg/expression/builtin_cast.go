@@ -1009,7 +1009,7 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 	if !b.inUnion || val >= 0 {
 		err = res.FromFloat64(val)
 		if types.ErrOverflow.Equal(err) {
-			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
+			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0].StringWithCtx(false))
 			err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
 		} else if types.ErrTruncated.Equal(err) {
 			// This behavior is consistent with MySQL.
@@ -2137,7 +2137,7 @@ func BuildCastFunctionWithCheck(ctx sessionctx.Context, expr Expression, tp *typ
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.
 	if tp.EvalType() != types.ETJson && err == nil {
-		res = FoldConstant(res)
+		res = FoldConstant(ctx, res)
 	}
 	return res, err
 }

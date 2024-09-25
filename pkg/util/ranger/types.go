@@ -184,15 +184,36 @@ func HasFullRange(ranges []*Range, unsignedIntHandle bool) bool {
 	return false
 }
 
+func dealWithRedact(input string, redact bool) string {
+	if input == "-inf" || input == "+inf" {
+		return input
+	}
+	if redact {
+		return "?"
+	}
+	return input
+}
+
 // String implements the Stringer interface.
+// don't use it in the product.
 func (ran *Range) String() string {
+	return ran.string(false)
+}
+
+// Redact is to print the range with redacting sensitive data.
+func (ran *Range) Redact(redact bool) string {
+	return ran.string(redact)
+}
+
+// String implements the Stringer interface.
+func (ran *Range) string(redact bool) string {
 	lowStrs := make([]string, 0, len(ran.LowVal))
 	for _, d := range ran.LowVal {
-		lowStrs = append(lowStrs, formatDatum(d, true))
+		lowStrs = append(lowStrs, dealWithRedact(formatDatum(d, true), redact))
 	}
 	highStrs := make([]string, 0, len(ran.LowVal))
 	for _, d := range ran.HighVal {
-		highStrs = append(highStrs, formatDatum(d, false))
+		highStrs = append(highStrs, dealWithRedact(formatDatum(d, false), redact))
 	}
 	l, r := "[", "]"
 	if ran.LowExclude {
