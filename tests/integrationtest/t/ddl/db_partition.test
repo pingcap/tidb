@@ -1,39 +1,14 @@
 # TestDisableTablePartition
-set @@session.tidb_enable_table_partition = 'AUTO';
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-	    partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
--- error 1505
-alter table t add partition (
-		partition p4 values in (7),
-		partition p5 values in (8,9));
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = 'OFF';
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-	    partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
--- error 1505
-alter table t add partition (
-		partition p4 values in (7),
-		partition p5 values in (8,9));
-insert into t values (1),(3),(5),(100),(null);
-set @@session.tidb_enable_table_partition = 0;
-set @@session.tidb_enable_list_partition = OFF;
-drop table if exists t;
-create table t (id int) partition by list  (id) (
-	    partition p0 values in (1,2),partition p1 values in (3,4));
-show create table t;
--- error 1505
-alter table t add partition (
-		partition p4 values in (7),
-		partition p5 values in (8,9));
-insert into t values (1),(3),(5),(100),(null);
 set @@session.tidb_enable_table_partition = 'ON';
-set @@session.tidb_enable_list_partition = OFF;
+drop table if exists t;
+create table t (id int) partition by list  (id) (
+	    partition p0 values in (1,2),partition p1 values in (3,4));
+show create table t;
+alter table t add partition (
+		partition p4 values in (7),
+		partition p5 values in (8,9));
+insert into t values (1),(3),(7),(9);
+set @@session.tidb_enable_table_partition = 'OFF';
 drop table if exists t;
 create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),partition p1 values in (3,4));
@@ -42,9 +17,27 @@ show create table t;
 alter table t add partition (
 		partition p4 values in (7),
 		partition p5 values in (8,9));
-insert into t values (1),(3),(5),(100),(null);
+insert into t values (1),(3),(7),(9);
+set @@session.tidb_enable_table_partition = 0;
+drop table if exists t;
+create table t (id int) partition by list  (id) (
+	    partition p0 values in (1,2),partition p1 values in (3,4));
+show create table t;
+-- error 1505
+alter table t add partition (
+		partition p4 values in (7),
+		partition p5 values in (8,9));
+insert into t values (1),(3),(7),(9);
+set @@session.tidb_enable_table_partition = 'ON';
+drop table if exists t;
+create table t (id int) partition by list  (id) (
+	    partition p0 values in (1,2),partition p1 values in (3,4));
+show create table t;
+alter table t add partition (
+		partition p4 values in (7),
+		partition p5 values in (8,9));
+insert into t values (1),(3),(7),(9);
 set @@session.tidb_enable_table_partition = default;
-set @@session.tidb_enable_list_partition = default;
 
 # TestPartitionRangeColumnsCollate
 drop table if exists t;
@@ -117,7 +110,6 @@ select * from t where a > "b" collate utf8mb4_bin;
 
 # TestAlterTableAddPartitionByList
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 -- error 1495
 create table t (a int) partition by list (a) (partition p1 values in (null, 6), partition p2 values in (7,null));
 create table t (id int) partition by list  (id) (
@@ -175,11 +167,9 @@ drop table if exists t;
 create table t (a datetime) partition by list columns (a) (partition p0 values in ('2020-11-30 12:00:00'));
 -- error 1654
 alter table t add partition (partition p1 values in ('2020-11-31 12:00:00'));
-set @@session.tidb_enable_list_partition = default;
 
 # TestAlterTableAddPartitionByListColumns
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 create table t (id int, name varchar(10)) partition by list columns (id,name) (
 	    partition p0 values in ((1,'a'),(2,'b')),
 	    partition p1 values in ((3,'a'),(4,'b')),
@@ -272,7 +262,6 @@ PARTITION BY LIST COLUMNS(`id`,`name`)
  PARTITION `pDef` VALUES IN ((9,'d'),DEFAULT,(10,'d')));
 --sorted_result
 select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema = 'ddl__db_partition';
-set @@session.tidb_enable_list_partition = OFF;
 alter table t drop partition pDef;
 -- error 1479
 alter table t add partition (partition pDef);
@@ -282,7 +271,6 @@ select partition_name,partition_ordinal_position,partition_method,partition_expr
 alter table t reorganize partition pDef into (partition pDef VALUES IN (DEFAULT,(9,'c')));
 --sorted_result
 select partition_name,partition_ordinal_position,partition_method,partition_expression,partition_description,partition_comment,tidb_placement_policy_name from information_schema.partitions where table_name = 't' and table_schema = 'ddl__db_partition';
-set @@session.tidb_enable_list_partition = default;
 
 # TestDefaultListPartition
 drop table if exists t;
@@ -398,7 +386,6 @@ create table t (a int) partition by list (a) (partition p0 values in ());
 
 # TestAlterTableDropPartitionByList
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 create table t (id int) partition by list  (id) (
     partition p0 values in (1,2),
     partition p1 values in (3,4),
@@ -415,11 +402,9 @@ alter table t drop partition p3;
 select * from t;
 -- error 1508
 alter table t drop partition p0;
-set @@session.tidb_enable_list_partition = default;
 
 # TestAlterTableDropPartitionByListColumns
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 create table t (id int, name varchar(10)) partition by list columns (id,name) (
     partition p0 values in ((1,'a'),(2,'b')),
     partition p1 values in ((3,'a'),(4,'b')),
@@ -438,7 +423,6 @@ alter table t drop partition p3;
 select * from t;
 -- error 1508
 alter table t drop partition p0;
-set @@session.tidb_enable_list_partition = default;
 
 # TestAlterTableAddPartition
 drop table if exists employees;
@@ -943,7 +927,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -956,7 +940,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -970,7 +954,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -984,7 +968,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -998,7 +982,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -1011,7 +995,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -1025,7 +1009,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists Part1;
--- error 1503
+-- error 8264
 create table Part1 (
 	col1 int not null,
 	col2 date not null,
@@ -1039,7 +1023,7 @@ partition p1 values less than (11),
 partition p2 values less than (15)
 );
 drop table if exists part6;
--- error 1503
+-- error 8264
 create table part6 (
 	col1 int not null,
 	col2 date not null,
@@ -1053,7 +1037,7 @@ partition by range( col1 + col2 ) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
--- error 1503
+-- error 8264
 create table part7 (
 	col1 int not null,
 	col2 int not null,
@@ -1064,7 +1048,7 @@ partition by range (col1 + col2) (
 partition p1 values less than (11),
 partition p2 values less than (15)
 );
--- error 1503
+-- error 8264
 create table part8 (
          a int not null,
          b int not null,
@@ -1079,7 +1063,7 @@ partition by range columns (b) (
        partition p1 values less than (7),
        partition p2 values less than (11)
 );
--- error 1503
+-- error 8264
 create table part9 (
          a int not null,
          b int not null,
@@ -1094,7 +1078,7 @@ partition by range columns (b, c) (
        partition p1 values less than (7, 9),
        partition p2 values less than (11, 22)
 );
--- error 1503
+-- error 8264
 create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
 			partition p0 values less than ('aaaaa'),
 			partition p1 values less than ('bbbbb'),
@@ -1103,7 +1087,7 @@ create table part12 (a varchar(20), b binary) partition by range columns (a) (
 			partition p0 values less than ('aaaaa'),
 			partition p1 values less than ('bbbbb'),
 			partition p2 values less than ('ccccc'));
--- error 1503
+-- error 8264
 alter table part12 add unique index (a(5));
 create table part13 (a varchar(20), b varchar(10), unique index (a(5),b)) partition by range columns (b) (
 			partition p0 values less than ('aaaaa'),
@@ -1390,16 +1374,13 @@ alter table t_date add partition (partition p1 values less than (0x20));
 alter table t_date add partition (partition p1 values less than (20));
 
 # TestPartitionListWithTimeType
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists t_list1;
 create table t_list1(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));
 insert into t_list1(a) values (20180203);
 select * from t_list1 partition (p0);
-set @@session.tidb_enable_list_partition = default;
 
 # TestPartitionListWithNewCollation
 drop table if exists t;
-set @@session.tidb_enable_list_partition = ON;
 -- error 1495
 create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));
 create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));
@@ -1409,7 +1390,6 @@ select * from t11 order by a;
 select * from t11 partition (p0);
 select * from t11 partition (p1);
 desc select * from t11 where a = 'b';
-set @@session.tidb_enable_list_partition = default;
 
 # TestAddTableWithPartition
 drop table if exists global_partition_table;
@@ -1429,7 +1409,6 @@ create global temporary table partition_range_table (c1 smallint(6) not null, c2
 ) ON COMMIT DELETE ROWS;
 drop table if exists partition_range_table;
 drop table if exists partition_list_table;
-set @@session.tidb_enable_list_partition = ON;
 -- error 1562
 create global temporary table partition_list_table (id int) partition by list  (id) (
     partition p0 values in (1,2),
@@ -1454,7 +1433,6 @@ create temporary table local_partition_range_table (c1 smallint(6) not null, c2 
 );
 drop table if exists local_partition_range_table;
 drop table if exists local_partition_list_table;
-set @@session.tidb_enable_list_partition = ON;
 -- error 1562
 create temporary table local_partition_list_table (id int) partition by list  (id) (
     partition p0 values in (1,2),
@@ -1462,11 +1440,9 @@ create temporary table local_partition_list_table (id int) partition by list  (i
     partition p3 values in (5,null)
 );
 drop table if exists local_partition_list_table;
-set @@session.tidb_enable_list_partition = default;
 
 # TestDuplicatePartitionNames
 drop table if exists t1;
-set @@tidb_enable_list_partition=on;
 create table t1 (a int) partition by list (a) (partition p1 values in (1), partition p2 values in (2), partition p3 values in (3));
 insert into t1 values (1),(2),(3);
 alter table t1 truncate partition p1,p1;
@@ -1487,7 +1463,6 @@ alter table t1 drop partition p1;
 --sorted_result
 select * from t1;
 Show create table t1;
-set @@tidb_enable_list_partition=default;
 
 # TestCreateIntervalPartitionSyntax
 drop table if exists t;
@@ -2093,7 +2068,6 @@ alter table pt1 exchange partition p0 with table nt2;
 
 
 # TestExchangePartitionTableCompatiable
-set tidb_enable_global_index=true;
 
 drop database if exists partition_exchange;
 create database partition_exchange;
@@ -2282,7 +2256,6 @@ alter table pt35 exchange partition p0 with table nt35;
 
 drop database partition_exchange;
 use ddl__db_partition;
-set tidb_enable_global_index=default;
 
 --echo # 53385
 drop table if exists t,t1;

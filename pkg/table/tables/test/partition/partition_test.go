@@ -318,7 +318,6 @@ func TestLocatePartition(t *testing.T) {
 func TestIssue31629(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_enable_list_partition = 1")
 	tk.MustExec("create database Issue31629")
 	defer tk.MustExec("drop database Issue31629")
 	tk.MustExec("use Issue31629")
@@ -2286,10 +2285,8 @@ func TestGlobalIndexPartitionByIntExtensivePart(t *testing.T) {
 	schemaName := "PartitionByIntExtensive"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
-	tk.MustExec(`set @@tidb_enable_global_index = ON`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + schemaName)
-	tk2.MustExec(`set @@tidb_enable_global_index = ON`)
 
 	tBase := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a), unique key idx_b(b), key (c,b), unique key idx_dc(d,c), key(e))`
 	tBaseA := `(a int unsigned not null, b varchar(255) collate utf8mb4_general_ci, c int, d datetime, e timestamp, f double, g text, unique key idx_a(a), unique key idx_b(b) Global, key (c,b), unique key idx_dc(d,c) Global, key(e))`

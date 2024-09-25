@@ -184,8 +184,12 @@ func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBa
 	return nil
 }
 
-func (rc *LogClient) SetCurrentTS(ts uint64) {
+func (rc *LogClient) SetCurrentTS(ts uint64) error {
+	if ts == 0 {
+		return errors.Errorf("set rewrite ts to an invalid ts: %d", ts)
+	}
 	rc.currentTS = ts
+	return nil
 }
 
 // GetClusterID gets the cluster id from down-stream cluster.
@@ -208,8 +212,8 @@ func (rc *LogClient) CleanUpKVFiles(
 	return rc.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
 }
 
-func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context, taskName string) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
-	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.storage, rc.cipher, taskName)
+func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
+	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.se)
 	return runner, errors.Trace(err)
 }
 
@@ -246,36 +250,43 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 	rc.fileImporter = NewLogFileImporter(metaClient, importCli, backend)
 }
 
-func (rc *LogClient) InitCheckpointMetadataForLogRestore(ctx context.Context, taskName string, gcRatio string) (string, error) {
+func (rc *LogClient) InitCheckpointMetadataForLogRestore(
+	ctx context.Context,
+	startTS, restoredTS uint64,
+	gcRatio string,
+	tiflashRecorder *tiflashrec.TiFlashRecorder,
+) (string, error) {
 	rc.useCheckpoint = true
 
-	// it shows that the user has modified gc-ratio, if `gcRatio` doesn't equal to "1.1".
-	// update the `gcRatio` for checkpoint metadata.
-	if gcRatio == utils.DefaultGcRatioVal {
-		// if the checkpoint metadata exists in the external storage, the restore is not
-		// for the first time.
-		exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, rc.storage, taskName)
+	// if the checkpoint metadata exists in the external storage, the restore is not
+	// for the first time.
+	if checkpoint.ExistsLogRestoreCheckpointMetadata(ctx, rc.dom) {
+		// load the checkpoint since this is not the first time to restore
+		meta, err := checkpoint.LoadCheckpointMetadataForLogRestore(ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor())
 		if err != nil {
 			return "", errors.Trace(err)
 		}
 
-		if exists {
-			// load the checkpoint since this is not the first time to restore
-			meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, rc.storage, taskName)
-			if err != nil {
-				return "", errors.Trace(err)
-			}
-
-			log.Info("reuse gc ratio from checkpoint metadata", zap.String("gc-ratio", gcRatio))
-			return meta.GcRatio, nil
-		}
+		log.Info("reuse gc ratio from checkpoint metadata", zap.String("gc-ratio", gcRatio))
+		return meta.GcRatio, nil
 	}
 
 	// initialize the checkpoint metadata since it is the first time to restore.
-	log.Info("save gc ratio into checkpoint metadata", zap.String("gc-ratio", gcRatio))
-	if err := checkpoint.SaveCheckpointMetadataForRestore(ctx, rc.storage, &checkpoint.CheckpointMetadataForRestore{
-		GcRatio: gcRatio,
-	}, taskName); err != nil {
+	var items map[int64]model.TiFlashReplicaInfo
+	if tiflashRecorder != nil {
+		items = tiflashRecorder.GetItems()
+	}
+	log.Info("save gc ratio into checkpoint metadata",
+		zap.Uint64("start-ts", startTS), zap.Uint64("restored-ts", restoredTS), zap.Uint64("rewrite-ts", rc.currentTS),
+		zap.String("gc-ratio", gcRatio), zap.Int("tiflash-item-count", len(items)))
+	if err := checkpoint.SaveCheckpointMetadataForLogRestore(ctx, rc.se, &checkpoint.CheckpointMetadataForLogRestore{
+		UpstreamClusterID: rc.upstreamClusterID,
+		RestoredTS:        restoredTS,
+		StartTS:           startTS,
+		RewriteTS:         rc.currentTS,
+		GcRatio:           gcRatio,
+		TiFlashItems:      items,
+	}); err != nil {
 		return gcRatio, errors.Trace(err)
 	}
 
@@ -1228,18 +1239,19 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[
 	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
 }
 
-func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}, taskName string) (*LogFilesSkipMap, error) {
+func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}) (*LogFilesSkipMap, error) {
 	skipMap := NewLogFilesSkipMap()
-	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
-		for tableID, foffs := range off.Foffs {
-			// filter out the checkpoint data of dropped table
-			if _, exists := downstreamIdset[tableID]; exists {
-				for _, foff := range foffs {
-					skipMap.Insert(groupKey, off.Goff, foff)
+	t, err := checkpoint.LoadCheckpointDataForLogRestore(
+		ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor(), func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
+			for tableID, foffs := range off.Foffs {
+				// filter out the checkpoint data of dropped table
+				if _, exists := downstreamIdset[tableID]; exists {
+					for _, foff := range foffs {
+						skipMap.Insert(groupKey, off.Goff, foff)
+					}
 				}
 			}
-		}
-	})
+		})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1247,15 +1259,40 @@ func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset
 	return skipMap, nil
 }
 
+func WrapLogFilesIterWithCheckpointFailpoint(
+	v failpoint.Value,
+	logIter LogIter,
+	rules map[int64]*restoreutils.RewriteRules,
+) (LogIter, error) {
+	if cmd, ok := v.(string); ok {
+		switch cmd {
+		case "corrupt-last-table-files": // skip some files and eventually return an error to make the restore fail
+			newLogIter := iter.FilterOut(logIter, func(d *LogDataFileInfo) bool {
+				return d.OffsetInMergedGroup&1 > 0
+			})
+			return newLogIter, errors.Errorf("skip the last table files")
+		case "only-last-table-files": // check whether all the files, except files skipped before, are skipped by checkpoint
+			newLogIter := iter.FilterOut(logIter, func(d *LogDataFileInfo) bool {
+				_, exists := rules[d.TableId]
+				if d.OffsetInMergedGroup&1 == 0 && exists {
+					log.Panic("has files but not the files skipped before")
+				}
+				return false
+			})
+			return newLogIter, nil
+		}
+	}
+	return logIter, nil
+}
+
 func (rc *LogClient) WrapLogFilesIterWithCheckpoint(
 	ctx context.Context,
 	logIter LogIter,
 	downstreamIdset map[int64]struct{},
-	taskName string,
 	updateStats func(kvCount, size uint64),
 	onProgress func(),
 ) (LogIter, error) {
-	skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset, taskName)
+	skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1279,16 +1316,11 @@ const (
 func (rc *LogClient) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
-	taskName string,
 ) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
 	if rc.useCheckpoint {
-		exists, err := checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, rc.storage, taskName)
-		if err != nil {
-			return sqls, false, errors.Trace(err)
-		}
-		if exists {
-			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.storage, taskName)
+		if checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, rc.dom) {
+			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor())
 			if err != nil {
 				return sqls, false, errors.Trace(err)
 			}
@@ -1353,9 +1385,9 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 	}
 
 	if rc.useCheckpoint && len(sqls) > 0 {
-		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.storage, &checkpoint.CheckpointIngestIndexRepairSQLs{
+		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.se, &checkpoint.CheckpointIngestIndexRepairSQLs{
 			SQLs: sqls,
-		}, taskName); err != nil {
+		}); err != nil {
 			return sqls, false, errors.Trace(err)
 		}
 	}
@@ -1363,8 +1395,8 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 }
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
-func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue, taskName string) error {
-	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, taskName)
+func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue) error {
+	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1544,18 +1576,10 @@ func (rc *LogClient) saveIDMap(
 	}
 
 	if rc.useCheckpoint {
-		var items map[int64]model.TiFlashReplicaInfo
-		if sr.TiflashRecorder != nil {
-			items = sr.TiflashRecorder.GetItems()
-		}
 		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
-		if err := checkpoint.SaveCheckpointTaskInfoForLogRestore(ctx, rc.storage, &checkpoint.CheckpointTaskInfoForLogRestore{
-			Progress:     checkpoint.InLogRestoreAndIdMapPersist,
-			StartTS:      rc.startTS,
-			RestoreTS:    rc.restoreTS,
-			RewriteTS:    rc.currentTS,
-			TiFlashItems: items,
-		}, rc.GetClusterID(ctx)); err != nil {
+		if err := checkpoint.SaveCheckpointProgress(ctx, rc.se, &checkpoint.CheckpointProgress{
+			Progress: checkpoint.InLogRestoreAndIdMapPersist,
+		}); err != nil {
 			return errors.Trace(err)
 		}
 	}
