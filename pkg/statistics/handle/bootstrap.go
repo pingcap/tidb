@@ -617,7 +617,7 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 				hasErr = true
 				failedTableID = tableID
 				failedHistID = histID
-				table.DelCol(histID)
+				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
@@ -630,7 +630,7 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 				hasErr = true
 				failedTableID = tableID
 				failedHistID = histID
-				table.DelCol(histID)
+				delete(table.Columns, histID)
 				continue
 			}
 		}
