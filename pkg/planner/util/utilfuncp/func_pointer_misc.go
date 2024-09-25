@@ -112,8 +112,8 @@ var FindBestTask4LogicalTableDual func(lp base.LogicalPlan, prop *property.Physi
 	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error)
 
 // FindBestTask4LogicalDataSource will be called by LogicalDataSource in logicalOp pkg.
-var FindBestTask4LogicalDataSource func(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
-	opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error)
+var FindBestTask4LogicalDataSource func(lp base.LogicalPlan, prop *property.PhysicalProperty,
+	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error)
 
 // ExhaustPhysicalPlans4LogicalSequence will be called by LogicalSequence in logicalOp pkg.
 var ExhaustPhysicalPlans4LogicalSequence func(lp base.LogicalPlan, prop *property.PhysicalProperty) (
