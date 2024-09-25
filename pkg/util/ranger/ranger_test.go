@@ -1726,6 +1726,7 @@ func TestTableShardIndex(t *testing.T) {
 		del := p.(*plannercore.Delete)
 		require.Equal(t, "PointGet(Index(test6.uk_expr)[KindUint64 32 KindInt64 45])->Sel([eq(test.test6.b, 46)])->Projection", plannercore.ToString(del.SelectPlan))
 		proj := del.SelectPlan.(*plannercore.PhysicalProjection)
+		//nolint: printexpression
 		require.Equal(t, "[test.test6.id test.test6.a tidb_shard(test.test6.a)]", fmt.Sprintf("%v", proj.Exprs))
 	})
 }
