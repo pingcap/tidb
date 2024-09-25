@@ -18,11 +18,8 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-<<<<<<< HEAD
-	"math/rand"
-=======
 	"math"
->>>>>>> a5e07a2ed36 (store/driver: set `MaxCallRecvMsgSize` to `MaxInt32` for pd client (#56278))
+	"math/rand"
 	"net/url"
 	"strings"
 	"sync"
