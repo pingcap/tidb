@@ -938,7 +938,7 @@ insert into t value(18446744073709551615);
 insert into t1 value(-1);
 select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;
 t.c1	hex(t1.c1)
-18446744073709551615	FFFFFFFFFFFFFFFF
+18446744073709551615	FFFFFFFFFFFFFFFFF
 drop table if exists t;
 drop table if exists t1;
 create table t(c1 bigint);
