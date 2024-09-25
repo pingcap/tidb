@@ -186,7 +186,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 			if err != nil {
 				return nil, err
 			}
-			col.GeneratedExpr = table.NewClonableExprNode(func() ast.ExprNode {
+			col.GeneratedExpr = model.NewClonableExprNode(func() ast.ExprNode {
 				newExpr, err1 := buildGeneratedExpr(tblInfo, genStr)
 				if err1 != nil {
 					logutil.BgLogger().Warn("unexpected parse generated string error",

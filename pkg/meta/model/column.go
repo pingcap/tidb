@@ -18,10 +18,12 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 const (
@@ -309,4 +311,42 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 	colInfo.SetCharset(charset.CharsetBin)
 	colInfo.SetCollate(charset.CollationBin)
 	return colInfo
+}
+
+// ClonableExprNode is a wrapper for ast.ExprNode.
+type ClonableExprNode struct {
+	ctor     func() ast.ExprNode
+	internal ast.ExprNode
+}
+
+// NewClonableExprNode creates a ClonableExprNode.
+func NewClonableExprNode(ctor func() ast.ExprNode, internal ast.ExprNode) *ClonableExprNode {
+	return &ClonableExprNode{
+		ctor:     ctor,
+		internal: internal,
+	}
+}
+
+// Clone makes a "copy" of internal ast.ExprNode by reconstructing it.
+func (n *ClonableExprNode) Clone() ast.ExprNode {
+	intest.AssertNotNil(n.ctor)
+	if n.ctor == nil {
+		return n.internal
+	}
+	return n.ctor()
+}
+
+// Internal returns the reference of the internal ast.ExprNode.
+// Note: only use this method when you are sure that the internal ast.ExprNode is not modified concurrently.
+func (n *ClonableExprNode) Internal() ast.ExprNode {
+	return n.internal
+}
+
+// Column provides meta data describing a table column.
+type Column struct {
+	*ColumnInfo
+	// If this column is a generated column, the expression will be stored here.
+	GeneratedExpr *ClonableExprNode
+	// If this column has default expr value, this expression will be stored here.
+	DefaultExpr ast.ExprNode
 }

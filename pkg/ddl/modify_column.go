@@ -1202,7 +1202,7 @@ func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 			col.GeneratedStored = opt.Stored
 			col.Dependences = make(map[string]struct{})
 			// Only used by checkModifyGeneratedColumn, there is no need to set a ctor for it.
-			col.GeneratedExpr = table.NewClonableExprNode(nil, opt.Expr)
+			col.GeneratedExpr = model.NewClonableExprNode(nil, opt.Expr)
 			for _, colName := range FindColumnNamesInExpr(opt.Expr) {
 				col.Dependences[colName.Name.L] = struct{}{}
 			}
