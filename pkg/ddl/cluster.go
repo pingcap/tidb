@@ -344,7 +344,7 @@ func mergeContinuousKeyRanges(schemaKeyRanges []keyRangeMayExclude) []kv.KeyRang
 		continuousStart, continuousEnd kv.Key
 	)
 
-	result := make([]kv.KeyRange, 0, 2)
+	result := make([]kv.KeyRange, 0, 1)
 
 	for _, r := range schemaKeyRanges {
 		if r.exclude {
@@ -699,7 +699,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 	}
 
 	var totalRegions, completedRegions atomic.Uint64
-	totalRegions.Store(args.TotalRegions)
+	totalRegions.Store(args.LockedRegions)
 
 	sess, err := w.sessPool.Get()
 	if err != nil {
@@ -792,7 +792,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, t *meta.Meta, job *model
 				return ver, err
 			}
 		}
-		args.TotalRegions = totalRegions.Load()
+		args.LockedRegions = totalRegions.Load()
 
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
 		args.CommitTS, err = jobCtx.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})

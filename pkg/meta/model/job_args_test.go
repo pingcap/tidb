@@ -624,7 +624,7 @@ func TestFlashbackClusterArgs(t *testing.T) {
 		EnableAutoAnalyze: true,
 		EnableTTLJob:      true,
 		SuperReadOnly:     true,
-		TotalRegions:      444,
+		LockedRegions:     444,
 		PDScheduleValue:   map[string]any{"t1": 123.0},
 		FlashbackKeyRanges: []KeyRange{
 			{StartKey: []byte("db1"), EndKey: []byte("db2")},
@@ -640,7 +640,7 @@ func TestFlashbackClusterArgs(t *testing.T) {
 		require.Equal(t, inArgs.FlashbackTS, args.FlashbackTS)
 		require.Equal(t, inArgs.StartTS, args.StartTS)
 		require.Equal(t, inArgs.CommitTS, args.CommitTS)
-		require.Equal(t, inArgs.TotalRegions, args.TotalRegions)
+		require.Equal(t, inArgs.LockedRegions, args.LockedRegions)
 		require.Equal(t, inArgs.FlashbackKeyRanges, args.FlashbackKeyRanges)
 		require.Equal(t, inArgs.PDScheduleValue, args.PDScheduleValue)
 
