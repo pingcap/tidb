@@ -146,9 +146,9 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	notifier.InitDDLNotifier(tk.Session(), s, 50*time.Millisecond)
 	t.Cleanup(notifier.ResetDDLNotifier)
 
-	newRndFailHandler := func() notifier.SchemaChangeHandler {
+	newRndFailHandler := func() (notifier.SchemaChangeHandler, *[]int64) {
 		maxFail := 5
-		lastTableID := int64(0)
+		tableIDs := make([]int64, 0, 8)
 		h := func(
 			_ context.Context,
 			_ sessionctx.Context,
@@ -161,16 +161,18 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 				}
 			}
 
-			require.Greater(t, change.GetCreateTableInfo().ID, lastTableID)
-			lastTableID = change.GetCreateTableInfo().ID
+			tableIDs = append(tableIDs, change.GetCreateTableInfo().ID)
 			return nil
 		}
-		return h
+		return h, &tableIDs
 	}
 
-	notifier.RegisterHandler(3, newRndFailHandler())
-	notifier.RegisterHandler(4, newRndFailHandler())
-	notifier.RegisterHandler(9, newRndFailHandler())
+	h1, id1 := newRndFailHandler()
+	h2, id2 := newRndFailHandler()
+	h3, id3 := newRndFailHandler()
+	notifier.RegisterHandler(3, h1)
+	notifier.RegisterHandler(4, h2)
+	notifier.RegisterHandler(9, h3)
 
 	done := make(chan struct{})
 	go func() {
@@ -196,6 +198,10 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 		require.NoError(t, err2)
 		return len(changes) == 0
 	}, time.Second, 50*time.Millisecond)
+
+	require.Equal(t, []int64{1000, 1001, 1002}, *id1)
+	require.Equal(t, []int64{1000, 1001, 1002}, *id2)
+	require.Equal(t, []int64{1000, 1001, 1002}, *id3)
 
 	cancel()
 	<-done
