@@ -411,11 +411,10 @@ func checkStoreScoreZero(t *testing.T, b *storeBalancer) {
 
 func TestStoreBalancerPick(t *testing.T) {
 	jobToWorkerCh := make(chan *regionJob)
-	jobFromWorkerCh := make(chan *regionJob)
 	jobWg := sync.WaitGroup{}
 	ctx := context.Background()
 
-	b := newStoreBalancer(jobToWorkerCh, jobFromWorkerCh, &jobWg)
+	b := newStoreBalancer(jobToWorkerCh, &jobWg)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -438,14 +437,8 @@ func TestStoreBalancerPick(t *testing.T) {
 	got := mockWorkerReadJob(t, b, []*regionJob{job}, jobToWorkerCh)
 	require.Equal(t, []*regionJob{job}, got)
 
-	// mimic the worker is handled the job and send back to storeBalancer
-	gotCh := make(chan *regionJob)
-	go func() {
-		<-jobFromWorkerCh
-		close(gotCh)
-	}()
-	b.innerJobFromWorkerCh <- job
-	<-gotCh
+	// mimic the worker is handled the job and storeBalancer release it
+	b.releaseStoreLoad(job.region.Region.GetPeers())
 	checkStoreScoreZero(t, b)
 
 	busyStoreJob := &regionJob{
@@ -475,20 +468,27 @@ func TestStoreBalancerPick(t *testing.T) {
 	got = mockWorkerReadJob(t, b, []*regionJob{job, busyStoreJob, idleStoreJob}, jobToWorkerCh)
 	require.Equal(t, []*regionJob{job, idleStoreJob, busyStoreJob}, got)
 	// mimic the worker finished the job in different order
+	jonDone := make(chan struct{}, 3)
 	go func() {
-		b.innerJobFromWorkerCh <- idleStoreJob
-		b.innerJobFromWorkerCh <- job
-		b.innerJobFromWorkerCh <- busyStoreJob
+		b.releaseStoreLoad(idleStoreJob.region.Region.GetPeers())
+		jonDone <- struct{}{}
 	}()
+	go func() {
+		b.releaseStoreLoad(job.region.Region.GetPeers())
+		jonDone <- struct{}{}
+	}()
+	go func() {
+		b.releaseStoreLoad(busyStoreJob.region.Region.GetPeers())
+		jonDone <- struct{}{}
+	}()
+
 	for i := 0; i < 3; i++ {
-		<-jobFromWorkerCh
+		<-jonDone
 	}
 	checkStoreScoreZero(t, b)
 
-	close(b.innerJobFromWorkerCh)
 	close(jobToWorkerCh)
 	<-done
-	<-jobFromWorkerCh
 }
 
 func mockRegionJob4Balance(t *testing.T, cnt int) []*regionJob {
@@ -517,7 +517,7 @@ func TestCancelBalancer(t *testing.T) {
 	jobWg := sync.WaitGroup{}
 	ctx, cancel := context.WithCancel(context.Background())
 
-	b := newStoreBalancer(jobToWorkerCh, nil, &jobWg)
+	b := newStoreBalancer(jobToWorkerCh, &jobWg)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -542,7 +542,7 @@ func TestStoreBalancerNoRace(t *testing.T) {
 	jobWg := sync.WaitGroup{}
 	ctx, cancel := context.WithCancel(context.Background())
 
-	b := newStoreBalancer(jobToWorkerCh, jobFromWorkerCh, &jobWg)
+	b := newStoreBalancer(jobToWorkerCh, &jobWg)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -563,22 +563,20 @@ func TestStoreBalancerNoRace(t *testing.T) {
 		// mimic that worker handles the job and send back to storeBalancer concurrently
 		for j := range b.innerJobToWorkerCh {
 			j := j
-			go func() { b.innerJobFromWorkerCh <- j }()
+			go func() {
+				b.releaseStoreLoad(j.region.Region.GetPeers())
+				j.done(&jobWg)
+			}()
 		}
 		close(done2)
 	}()
 
-	for i := 0; i < cnt; i++ {
-		j := <-jobFromWorkerCh
-		j.done(&jobWg)
-	}
-	checkStoreScoreZero(t, b)
 	jobWg.Wait()
+	checkStoreScoreZero(t, b)
 
 	cancel()
 	<-done
 	close(b.innerJobToWorkerCh)
-	close(b.innerJobFromWorkerCh)
 	<-done2
 	require.Len(t, jobFromWorkerCh, 0)
 }

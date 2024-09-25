@@ -1050,10 +1050,8 @@ type storeBalancer struct {
 	jobIdx int
 	jobWg  *sync.WaitGroup
 
-	jobToWorkerCh        <-chan *regionJob
-	jobFromWorkerCh      chan<- *regionJob
-	innerJobToWorkerCh   chan *regionJob
-	innerJobFromWorkerCh chan *regionJob
+	jobToWorkerCh      <-chan *regionJob
+	innerJobToWorkerCh chan *regionJob
 
 	wakeSendToWorker chan struct{}
 
@@ -1063,16 +1061,13 @@ type storeBalancer struct {
 
 func newStoreBalancer(
 	jobToWorkerCh <-chan *regionJob,
-	jobFromWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) *storeBalancer {
 	return &storeBalancer{
-		jobToWorkerCh:        jobToWorkerCh,
-		jobFromWorkerCh:      jobFromWorkerCh,
-		innerJobToWorkerCh:   make(chan *regionJob),
-		innerJobFromWorkerCh: make(chan *regionJob),
-		wakeSendToWorker:     make(chan struct{}, 1),
-		jobWg:                jobWg,
+		jobToWorkerCh:      jobToWorkerCh,
+		innerJobToWorkerCh: make(chan *regionJob),
+		wakeSendToWorker:   make(chan struct{}, 1),
+		jobWg:              jobWg,
 	}
 }
 
@@ -1088,10 +1083,6 @@ func (b *storeBalancer) run(workerCtx context.Context) error {
 	})
 	wg.Go(func() error {
 		b.runSendToWorker(sendToWorkerCtx)
-		return nil
-	})
-	wg.Go(func() error {
-		b.runReadFromWorker(ctx2)
 		return nil
 	})
 
@@ -1228,45 +1219,23 @@ func (b *storeBalancer) pickJob() *regionJob {
 	return best
 }
 
-func (b *storeBalancer) runReadFromWorker(workerCtx context.Context) {
-	for {
-		select {
-		case <-workerCtx.Done():
-			return
-		case job, ok := <-b.innerJobFromWorkerCh:
-			if !ok {
-				close(b.jobFromWorkerCh)
-				return
-			}
-			// in unit tests, the fields of job may not set
-			if job.region != nil && job.region.Region != nil {
-				for _, p := range job.region.Region.Peers {
-				retry:
-					val, ok2 := b.storeLoadMap.Load(p.StoreId)
-					if !ok2 {
-						intest.Assert(false,
-							"missing key in storeLoadMap. key: %d, job: %+v",
-							p.StoreId, job,
-						)
-						log.L().Error("missing key in storeLoadMap",
-							zap.Uint64("storeID", p.StoreId),
-							zap.Any("job", job))
-						continue
-					}
+func (b *storeBalancer) releaseStoreLoad(peers []*metapb.Peer) {
+	for _, p := range peers {
+	retry:
+		val, ok := b.storeLoadMap.Load(p.StoreId)
+		if !ok {
+			intest.Assert(false,
+				"missing key in storeLoadMap. key: %d",
+				p.StoreId,
+			)
+			log.L().Error("missing key in storeLoadMap",
+				zap.Uint64("storeID", p.StoreId))
+			continue
+		}
 
-					old := val.(int)
-					if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old-1) {
-						goto retry
-					}
-				}
-			}
-
-			select {
-			case <-workerCtx.Done():
-				job.done(b.jobWg)
-				return
-			case b.jobFromWorkerCh <- job:
-			}
+		old := val.(int)
+		if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old-1) {
+			goto retry
 		}
 	}
 }

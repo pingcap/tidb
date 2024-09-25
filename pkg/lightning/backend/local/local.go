@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -1078,6 +1079,7 @@ func (local *Backend) generateJobForRange(
 func (local *Backend) startWorker(
 	ctx context.Context,
 	jobInCh, jobOutCh chan *regionJob,
+	afterExecuteJob func([]*metapb.Peer),
 	jobWg *sync.WaitGroup,
 ) error {
 	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
@@ -1090,9 +1092,18 @@ func (local *Backend) startWorker(
 				return nil
 			}
 
+			var peers []*metapb.Peer
+			// in unit test, we may not have the real peers
+			if job.region != nil && job.region.Region != nil {
+				peers = job.region.Region.GetPeers()
+			}
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
 			err := local.executeJob(ctx, job)
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
+
+			if afterExecuteJob != nil {
+				afterExecuteJob(peers)
+			}
 			switch job.stage {
 			case regionScanned, wrote, ingested:
 				select {
@@ -1369,9 +1380,6 @@ func (local *Backend) doImport(
 	/*
 	 [prepareAndSendJob]---jobToWorkerCh->[storeBalancer(optional)]->[workers]
 	                     ^                                             |
-	                     |                                             v
-	                     |                           [storeBalancer(optional)]
-	                     |                                             |
 	                     |                                     jobFromWorkerCh
 	                     |                                             |
 	                     |                                             v
@@ -1390,7 +1398,7 @@ func (local *Backend) doImport(
 	// next components. The exit order is important because if the next component is
 	// exited before the owner component, deadlock will happen.
 	//
-	// All components is spawned by workGroup so the main goroutine can wait all
+	// All components are spawned by workGroup so the main goroutine can wait all
 	// components to exit. Component exit order in happy path is:
 	//
 	// 1. prepareAndSendJob is finished, its goroutine will wait all jobs are
@@ -1425,7 +1433,7 @@ func (local *Backend) doImport(
 	// storeBalancer does not have backpressure, it should not be used with external
 	// engine to avoid OOM.
 	if _, ok := engine.(*Engine); ok {
-		balancer = newStoreBalancer(jobToWorkerCh, jobFromWorkerCh, &jobWg)
+		balancer = newStoreBalancer(jobToWorkerCh, &jobWg)
 		workGroup.Go(func() error {
 			return balancer.run(workerCtx)
 		})
@@ -1495,11 +1503,13 @@ func (local *Backend) doImport(
 
 	for i := 0; i < local.WorkerConcurrency; i++ {
 		workGroup.Go(func() error {
-			toCh, fromCh := jobToWorkerCh, jobFromWorkerCh
+			toCh := jobToWorkerCh
+			var afterExecuteJob func([]*metapb.Peer)
 			if balancer != nil {
-				toCh, fromCh = balancer.innerJobToWorkerCh, balancer.innerJobFromWorkerCh
+				toCh = balancer.innerJobToWorkerCh
+				afterExecuteJob = balancer.releaseStoreLoad
 			}
-			return local.startWorker(workerCtx, toCh, fromCh, &jobWg)
+			return local.startWorker(workerCtx, toCh, jobFromWorkerCh, afterExecuteJob, &jobWg)
 		})
 	}
 
@@ -1520,11 +1530,25 @@ func (local *Backend) doImport(
 		}
 
 		jobWg.Wait()
-		firstCloseCh := jobFromWorkerCh
 		if balancer != nil {
-			firstCloseCh = balancer.innerJobFromWorkerCh
+			intest.AssertFunc(func() bool {
+				allZero := true
+				balancer.storeLoadMap.Range(func(key, value interface{}) bool {
+					if value.(int) != 0 {
+						allZero = false
+						println("intest: store load is not zero", key.(uint64), value.(int))
+						log.FromContext(workerCtx).Error(
+							"intest: store load is not zero",
+							zap.Any("storeID", key),
+							zap.Any("load", value))
+						return false
+					}
+					return true
+				})
+				return allZero
+			})
 		}
-		close(firstCloseCh)
+		close(jobFromWorkerCh)
 		return nil
 	})
 
