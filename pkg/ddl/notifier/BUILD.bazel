@@ -6,14 +6,19 @@ go_library(
         "events.go",
         "publish.go",
         "store.go",
+        "subscribe.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/ddl/notifier",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/ddl/session",
+        "//pkg/kv",
         "//pkg/meta/model",
+        "//pkg/sessionctx",
         "//pkg/util/intest",
+        "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -22,14 +27,16 @@ go_test(
     timeout = "short",
     srcs = [
         "events_test.go",
-        "publish_testkit_test.go",
+        "testkit_test.go",
     ],
     embed = [":notifier"],
     flaky = True,
+    shard_count = 3,
     deps = [
         "//pkg/ddl/session",
         "//pkg/meta/model",
         "//pkg/parser/model",
+        "//pkg/sessionctx",
         "//pkg/testkit",
         "@com_github_stretchr_testify//require",
     ],

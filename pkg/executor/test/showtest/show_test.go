@@ -74,9 +74,6 @@ func TestShowCreateTablePlacement(t *testing.T) {
 
 	// Partitioned tables
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("set @old_list_part = @@tidb_enable_list_partition")
-	defer tk.MustExec("set @@tidb_enable_list_partition = @old_list_part")
-	tk.MustExec("set tidb_enable_list_partition = 1")
 	tk.MustExec("create table t(a int, b varchar(255))" +
 		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
 		"PARTITION BY LIST (a)\n" +

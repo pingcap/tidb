@@ -760,10 +760,12 @@ import (
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
 	priority              "PRIORITY"
+	processedKeys         "PROCESSED_KEYS"
 	queryLimit            "QUERY_LIMIT"
 	recent                "RECENT"
 	replayer              "REPLAYER"
 	restoredTS            "RESTORED_TS"
+	ru                    "RU"
 	running               "RUNNING"
 	ruRate                "RU_PER_SEC"
 	s3                    "S3"
@@ -1837,10 +1839,22 @@ DirectResourceGroupRunawayOption:
 			return 1
 		}
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp: model.RunawayRule,
-			RuleOption: &ast.ResourceGroupRunawayRuleOption{
-				ExecElapsed: $3,
-			},
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleExecElapsed, ExecElapsed: $3},
+		}
+	}
+|	"PROCESSED_KEYS" EqOpt intLit
+	{
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleProcessedKeys, ProcessedKeys: $3.(int64)},
+		}
+	}
+|	"RU" EqOpt intLit
+	{
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleRequestUnit, RequestUnit: $3.(int64)},
 		}
 	}
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
@@ -7215,6 +7229,8 @@ NotKeywordToken:
 |	"RESTORED_TS"
 |	"FULL_BACKUP_STORAGE"
 |	"EXEC_ELAPSED"
+|	"PROCESSED_KEYS"
+|	"RU"
 |	"DRYRUN"
 |	"COOLDOWN"
 |	"SWITCH_GROUP"

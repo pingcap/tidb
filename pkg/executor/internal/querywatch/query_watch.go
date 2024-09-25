@@ -121,9 +121,10 @@ func setWatchOption(ctx context.Context,
 func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Context,
 	optionList []*ast.QueryWatchOption) (*runaway.QuarantineRecord, error) {
 	record := &runaway.QuarantineRecord{
-		Source:    runaway.ManualSource,
-		StartTime: time.Now().UTC(),
-		EndTime:   runaway.NullTime,
+		Source:      runaway.ManualSource,
+		StartTime:   time.Now().UTC(),
+		EndTime:     runaway.NullTime,
+		ExceedCause: "None",
 	}
 	for _, op := range optionList {
 		if err := setWatchOption(ctx, sctx, newSctx, record, op); err != nil {

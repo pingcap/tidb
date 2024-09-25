@@ -2385,35 +2385,31 @@ func TestDuplicateErrorMessage(t *testing.T) {
 
 	for _, newCollate := range []bool{false, true} {
 		collate.SetNewCollationEnabledForTest(newCollate)
-		for _, globalIndex := range []bool{false, true} {
-			tk.MustExec(fmt.Sprintf("set tidb_enable_global_index=%t", globalIndex))
-			for _, clusteredIndex := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
-				tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
-				for _, t := range tests {
-					tk.MustExec("drop table if exists t;")
-					fields := make([]string, len(t.types))
+		for _, clusteredIndex := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
+			tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
+			for _, t := range tests {
+				tk.MustExec("drop table if exists t;")
+				fields := make([]string, len(t.types))
 
-					for i, tp := range t.types {
-						fields[i] = fmt.Sprintf("a%d %s", i, tp)
-					}
-					tk.MustExec("create table t (id1 int, id2 varchar(10), " + strings.Join(fields, ",") + ",primary key(id1, id2)) " +
-						"collate utf8mb4_general_ci " +
-						"partition by range (id1) (partition p1 values less than (2), partition p2 values less than (maxvalue))")
-
-					vals := strings.Join(t.values, ",")
-					tk.MustExec(fmt.Sprintf("insert into t values (1, 'asd', %s), (1, 'dsa', %s)", vals, vals))
-					for i := range t.types {
-						fields[i] = fmt.Sprintf("a%d", i)
-					}
-					index := strings.Join(fields, ",")
-					for i, val := range t.values {
-						fields[i] = strings.Replace(val, "'", "", -1)
-					}
-					tk.MustGetErrMsg("alter table t add unique index t_idx(id1,"+index+")",
-						fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't.t_idx'", strings.Join(fields, "-")))
+				for i, tp := range t.types {
+					fields[i] = fmt.Sprintf("a%d %s", i, tp)
 				}
+				tk.MustExec("create table t (id1 int, id2 varchar(10), " + strings.Join(fields, ",") + ",primary key(id1, id2)) " +
+					"collate utf8mb4_general_ci " +
+					"partition by range (id1) (partition p1 values less than (2), partition p2 values less than (maxvalue))")
+
+				vals := strings.Join(t.values, ",")
+				tk.MustExec(fmt.Sprintf("insert into t values (1, 'asd', %s), (1, 'dsa', %s)", vals, vals))
+				for i := range t.types {
+					fields[i] = fmt.Sprintf("a%d", i)
+				}
+				index := strings.Join(fields, ",")
+				for i, val := range t.values {
+					fields[i] = strings.Replace(val, "'", "", -1)
+				}
+				tk.MustGetErrMsg("alter table t add unique index t_idx(id1,"+index+")",
+					fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't.t_idx'", strings.Join(fields, "-")))
 			}
-			tk.MustExec("set tidb_enable_global_index=default")
 		}
 	}
 }
