@@ -609,6 +609,7 @@ func detachCondAndBuildRangeForPath(
 	path.EqCondCount = res.EqCondCount
 	path.EqOrInCondCount = res.EqOrInCount
 	path.IsDNFCond = res.IsDNFCond
+	path.MinAccessCondsForDNFCond = res.MinAccessCondsForDNFCond
 	path.ConstCols = make([]bool, len(path.IdxCols))
 	if res.ColumnValues != nil {
 		for i := range path.ConstCols {

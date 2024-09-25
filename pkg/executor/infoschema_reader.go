@@ -1199,7 +1199,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				avgRowLength = dataLength / rowCount
 			}
 			// If there are any condition on the `PARTITION_NAME` in the extractor, this record should be ignored
-			if len(ex.ColPredicates["partition_name"]) > 0 {
+			if ex.HasPartitionPred() {
 				continue
 			}
 			record := types.MakeDatums(
@@ -1617,7 +1617,7 @@ func (e *DDLJobsReaderExec) Next(_ context.Context, req *chunk.Chunk) error {
 	var err error
 
 	// Append history DDL jobs.
-	if count < req.Capacity() {
+	if count < req.Capacity() && e.historyJobIter != nil {
 		e.cacheJobs, err = e.historyJobIter.GetLastJobs(req.Capacity()-count, e.cacheJobs)
 		if err != nil {
 			return err
@@ -2594,7 +2594,6 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error 
 			info.Lease,           // LEASE
 			info.Version,         // VERSION
 			info.GitHash,         // GIT_HASH
-			info.BinlogStatus,    // BINLOG_STATUS
 			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
 		if sem.IsEnabled() {
@@ -3656,6 +3655,7 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 			watch.WatchText,
 			watch.Source,
 			watch.GetActionString(),
+			watch.GetExceedCause(),
 		)
 		if watch.EndTime.Equal(runaway.NullTime) {
 			row[3].SetString("UNLIMITED", mysql.DefaultCollationName)
@@ -3695,8 +3695,27 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			if setting.Rule == nil {
 				return errors.Errorf("unexpected runaway config in resource group")
 			}
-			dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
-			fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
+			// rule settings
+			firstParam := true
+			if setting.Rule.ExecElapsedTimeMs > 0 {
+				dur := time.Duration(setting.Rule.ExecElapsedTimeMs) * time.Millisecond
+				fmt.Fprintf(limitBuilder, "EXEC_ELAPSED='%s'", dur.String())
+				firstParam = false
+			}
+			if setting.Rule.ProcessedKeys > 0 {
+				if !firstParam {
+					fmt.Fprintf(limitBuilder, ", ")
+				}
+				fmt.Fprintf(limitBuilder, "PROCESSED_KEYS=%d", setting.Rule.ProcessedKeys)
+				firstParam = false
+			}
+			if setting.Rule.RequestUnit > 0 {
+				if !firstParam {
+					fmt.Fprintf(limitBuilder, ", ")
+				}
+				fmt.Fprintf(limitBuilder, "RU=%d", setting.Rule.RequestUnit)
+			}
+			// action settings
 			actionType := pmodel.RunawayActionType(setting.Action)
 			switch actionType {
 			case pmodel.RunawayActionDryRun, pmodel.RunawayActionCooldown, pmodel.RunawayActionKill:
@@ -3718,7 +3737,17 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 		// convert background settings
 		bgBuilder := new(strings.Builder)
 		if setting := group.BackgroundSettings; setting != nil {
-			fmt.Fprintf(bgBuilder, "TASK_TYPES='%s'", strings.Join(setting.JobTypes, ","))
+			first := true
+			if len(setting.JobTypes) > 0 {
+				fmt.Fprintf(bgBuilder, "TASK_TYPES='%s'", strings.Join(setting.JobTypes, ","))
+				first = false
+			}
+			if setting.UtilizationLimit > 0 {
+				if !first {
+					bgBuilder.WriteString(", ")
+				}
+				fmt.Fprintf(bgBuilder, "UTILIZATION_LIMIT=%d", setting.UtilizationLimit)
+			}
 		}
 		background := bgBuilder.String()
 
@@ -3773,50 +3802,47 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 	dom := domain.GetDomain(sctx)
 	rows := make([][]types.Datum, 0, 100)
 	checker := privilege.GetPrivilegeManager(sctx)
-	extractor, ok := e.extractor.(*plannercore.InfoSchemaTiDBIndexUsageExtractor)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTiDBIndexUsageExtractor)
 	if !ok {
 		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaIndexUsageExtractor", e.extractor)
 	}
-	if extractor.SkipRequest {
+	if ex.SkipRequest {
 		return nil
 	}
 
-	schemas := extractor.ListSchemas(e.is)
-	for _, schema := range schemas {
-		tbls, err := extractor.ListTables(ctx, schema, e.is)
-		if err != nil {
-			return errors.Trace(err)
+	schemas, tbls, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i, tbl := range tbls {
+		schema := schemas[i]
+		if checker != nil && !checker.RequestVerification(
+			sctx.GetSessionVars().ActiveRoles,
+			schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+			continue
 		}
 
-		for _, tbl := range tbls {
-			if checker != nil && !checker.RequestVerification(
-				sctx.GetSessionVars().ActiveRoles,
-				schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
-				continue
+		idxs := ex.ListIndexes(tbl)
+		for _, idx := range idxs {
+			row := make([]types.Datum, 0, 14)
+			usage := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
+			row = append(row, types.NewStringDatum(schema.O))
+			row = append(row, types.NewStringDatum(tbl.Name.O))
+			row = append(row, types.NewStringDatum(idx.Name.O))
+			row = append(row, types.NewIntDatum(int64(usage.QueryTotal)))
+			row = append(row, types.NewIntDatum(int64(usage.KvReqTotal)))
+			row = append(row, types.NewIntDatum(int64(usage.RowAccessTotal)))
+			for _, percentage := range usage.PercentageAccess {
+				row = append(row, types.NewIntDatum(int64(percentage)))
 			}
-
-			idxs := extractor.ListIndexes(tbl)
-			for _, idx := range idxs {
-				row := make([]types.Datum, 0, 14)
-				usage := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
-				row = append(row, types.NewStringDatum(schema.O))
-				row = append(row, types.NewStringDatum(tbl.Name.O))
-				row = append(row, types.NewStringDatum(idx.Name.O))
-				row = append(row, types.NewIntDatum(int64(usage.QueryTotal)))
-				row = append(row, types.NewIntDatum(int64(usage.KvReqTotal)))
-				row = append(row, types.NewIntDatum(int64(usage.RowAccessTotal)))
-				for _, percentage := range usage.PercentageAccess {
-					row = append(row, types.NewIntDatum(int64(percentage)))
-				}
-				lastUsedAt := types.Datum{}
-				lastUsedAt.SetNull()
-				if !usage.LastUsedAt.IsZero() {
-					t := types.NewTime(types.FromGoTime(usage.LastUsedAt), mysql.TypeTimestamp, 0)
-					lastUsedAt = types.NewTimeDatum(t)
-				}
-				row = append(row, lastUsedAt)
-				rows = append(rows, row)
+			lastUsedAt := types.Datum{}
+			lastUsedAt.SetNull()
+			if !usage.LastUsedAt.IsZero() {
+				t := types.NewTime(types.FromGoTime(usage.LastUsedAt), mysql.TypeTimestamp, 0)
+				lastUsedAt = types.NewTimeDatum(t)
 			}
+			row = append(row, lastUsedAt)
+			rows = append(rows, row)
 		}
 	}
 

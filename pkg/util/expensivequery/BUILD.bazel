@@ -20,7 +20,7 @@ go_library(
 go_test(
     name = "expensivequery_test",
     timeout = "short",
-    srcs = ["expensivequerey_test.go"],
+    srcs = ["expensivequery_test.go"],
     embed = [":expensivequery"],
     flaky = True,
     deps = [

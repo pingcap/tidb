@@ -390,6 +390,12 @@ func TestMemtableInfoschemaExtractorPart1(t *testing.T) {
 			prepareData:  prepareDataViews,
 			cleanData:    cleanDataViews,
 		},
+	}
+	testMemtableInfoschemaExtractor(t, tcs)
+}
+
+func TestMemtableInfoschemaExtractorPart2(t *testing.T) {
+	tcs := []testCase{
 		{
 			memTableName: infoschema.TableKeyColumn,
 			prepareData:  prepareDataKeyColumnUsage,
@@ -409,7 +415,7 @@ func TestMemtableInfoschemaExtractorPart1(t *testing.T) {
 	testMemtableInfoschemaExtractor(t, tcs)
 }
 
-func TestMemtableInfoschemaExtractorPart2(t *testing.T) {
+func TestMemtableInfoschemaExtractorPart3(t *testing.T) {
 	tcs := []testCase{
 		{
 			memTableName: infoschema.TableStatistics,
@@ -426,6 +432,12 @@ func TestMemtableInfoschemaExtractorPart2(t *testing.T) {
 			prepareData:  prepareDataCheckConstraints,
 			cleanData:    cleanDataCheckConstraints,
 		},
+	}
+	testMemtableInfoschemaExtractor(t, tcs)
+}
+
+func TestMemtableInfoschemaExtractorPart4(t *testing.T) {
+	tcs := []testCase{
 		{
 			memTableName: infoschema.TableTiDBCheckConstraints,
 			prepareData:  prepareDataTidbCheckConstraints,

@@ -1,7 +1,6 @@
 create database list_partition_dml;
 use list_partition_dml;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tlist (a int) partition by list (a) (
 partition p0 values in (0, 1, 2, 3, 4),
 partition p1 values in (5, 6, 7, 8, 9),
@@ -81,17 +80,16 @@ a
 create database list_partition_cre;
 use list_partition_cre;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tuk1 (a int, b int, unique key(a)) partition by list (a) (partition p0 values in (0));
 create table tuk2 (a int, b int, unique key(a)) partition by list (b) (partition p0 values in (0));
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table tuk2 (a int, b int, unique key(a), unique key(b)) partition by list (a) (partition p0 values in (0));
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table tcoluk1 (a int, b int, unique key(a)) partition by list columns(a) (partition p0 values in (0));
 create table tcoluk2 (a int, b int, unique key(a)) partition by list columns(b) (partition p0 values in (0));
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table tcoluk2 (a int, b int, unique key(a), unique key(b)) partition by list columns(a) (partition p0 values in (0));
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table tpk1 (a int, b int, primary key(a)) partition by list (a) (partition p0 values in (0));
 create table tpk2 (a int, b int, primary key(a, b)) partition by list (a) (partition p0 values in (0));
 create table tcolpk1 (a int, b int, primary key(a)) partition by list columns(a) (partition p0 values in (0));
@@ -112,22 +110,23 @@ Error 1564 (HY000): This partition function is not allowed
 create database list_partition_ddl;
 use list_partition_ddl;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tlist (a int, b int) partition by list (a) (partition p0 values in (0));
 alter table tlist add primary key (b);
-Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table tlist add primary key (a);
 alter table tlist add unique key (b);
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table tlist add key (b);
 alter table tlist rename index b to bb;
 alter table tlist drop index bb;
 create table tcollist (a int, b int) partition by list columns (a) (partition p0 values in (0));
 alter table tcollist add primary key (b);
-Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table tcollist add primary key (a);
+alter table tcollist add primary key (b);
+Error 1068 (42000): Multiple primary key defined
 alter table tcollist add unique key (b);
-Error 1503 (HY000): A UNIQUE INDEX must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table tcollist add key (b);
 alter table tcollist rename index b to bb;
 alter table tcollist drop index bb;
@@ -146,7 +145,6 @@ drop table tcollistxx;
 create database list_partition_op;
 use list_partition_op;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tlist (a int) partition by list (a) (
 partition p0 values in (0, 1, 2, 3, 4),
 partition p1 values in (5, 6, 7, 8, 9),
@@ -262,7 +260,6 @@ Error 1495 (HY000): Multiple definition of same constant in list partitioning
 create database list_partition_shard_bits;
 use list_partition_shard_bits;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tlist (a int) partition by list (a) (
 partition p0 values in (0, 1, 2, 3, 4),
 partition p1 values in (5, 6, 7, 8, 9),
@@ -312,7 +309,6 @@ a
 create database list_partition_split_region;
 use list_partition_split_region;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tlist (a int, key(a)) partition by list (a) (
 partition p0 values in (0, 1, 2, 3, 4),
 partition p1 values in (5, 6, 7, 8, 9),
@@ -368,7 +364,6 @@ a
 create database list_partition_auto_incre;
 use list_partition_auto_incre;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tlist1 (a int, b int AUTO_INCREMENT) partition by list (a) (
 partition p0 values in (0, 1, 2, 3, 4),
 partition p1 values in (5, 6, 7, 8, 9),
@@ -396,7 +391,6 @@ insert into tcollist (a) values (1);
 create database list_partition_auto_rand;
 use list_partition_auto_rand;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tlist (a int, b bigint AUTO_RANDOM) partition by list (a) (
 partition p0 values in (0, 1, 2, 3, 4),
 partition p1 values in (5, 6, 7, 8, 9),
@@ -418,7 +412,6 @@ partition p2 values in (10, 11, 12, 13, 14));
 create database list_partition_invisible_idx;
 use list_partition_invisible_idx;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tlist (a int, b int, key(a)) partition by list (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5));
 alter table tlist alter index a invisible;
 explain select a from tlist where a>=0 and a<=5;
@@ -436,7 +429,6 @@ TableReader_7	250.00	root	partition:p0,p1	data:Selection_6
 create database list_partition_cte;
 use list_partition_cte;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tlist (a int) partition by list (a) (
 partition p0 values in (0, 1, 2, 3, 4),
 partition p1 values in (5, 6, 7, 8, 9),
@@ -464,7 +456,6 @@ a
 create database list_partition_temp_table;
 use list_partition_temp_table;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows;
 Error 1562 (HY000): Cannot create temporary table with partitions
 create global temporary table t(a int, b int) partition by list columns (a) (partition p0 values in (0)) on commit delete rows;
@@ -472,7 +463,6 @@ Error 1562 (HY000): Cannot create temporary table with partitions
 create database list_partition_alter_pk;
 use list_partition_alter_pk;
 drop table if exists tlist;
-set tidb_enable_list_partition = 1;
 create table tlist (a int, b int) partition by list (a) (
 partition p0 values in (0, 1, 2, 3, 4),
 partition p1 values in (5, 6, 7, 8, 9),
@@ -480,7 +470,7 @@ partition p2 values in (10, 11, 12, 13, 14));
 alter table tlist add primary key(a);
 alter table tlist drop primary key;
 alter table tlist add primary key(b);
-Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create table tcollist (a int, b int) partition by list columns (a) (
 partition p0 values in (0, 1, 2, 3, 4),
 partition p1 values in (5, 6, 7, 8, 9),
@@ -488,10 +478,9 @@ partition p2 values in (10, 11, 12, 13, 14));
 alter table tcollist add primary key(a);
 alter table tcollist drop primary key;
 alter table tcollist add primary key(b);
-Error 1503 (HY000): A PRIMARY must include all columns in the table's partitioning function
+Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 create database issue_27018;
 use issue_27018;
-set tidb_enable_list_partition = 1;
 CREATE TABLE PK_LP9326 (
 COL1 tinyint(45) NOT NULL DEFAULT '30' COMMENT 'NUMERIC PK',
 PRIMARY KEY (COL1) /*T![clustered_index] CLUSTERED */
@@ -515,7 +504,6 @@ COL1
 56
 create database issue_27017;
 use issue_27017;
-set tidb_enable_list_partition = 1;
 CREATE TABLE PK_LP9465 (
 COL1 mediumint(45) NOT NULL DEFAULT '77' COMMENT 'NUMERIC PK',
 PRIMARY KEY (COL1) /*T![clustered_index] CLUSTERED */
@@ -539,7 +527,6 @@ COL1
 8263677
 create database issue_27544;
 use issue_27544;
-set tidb_enable_list_partition = 1;
 create table t3 (a datetime) partition by list (mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1) (
 partition p0 values in (2),
 partition p1 values in (3),
@@ -549,7 +536,6 @@ insert into t3 values ('1921-05-10 15:20:20');
 insert into t3 values ('1921-05-10 15:20:30');
 create database issue_27012;
 use issue_27012;
-set tidb_enable_list_partition = 1;
 CREATE TABLE IDT_LP24306 (
 COL1 tinyint(16) DEFAULT '41' COMMENT 'NUMERIC UNIQUE INDEX',
 KEY UK_COL1 (COL1) /*!80000 INVISIBLE */
@@ -575,7 +561,6 @@ COL1
 -128
 create database issue_27030;
 use issue_27030;
-set tidb_enable_list_partition = 1;
 CREATE TABLE PK_LCP9290 (
 COL1 varbinary(10) NOT NULL,
 PRIMARY KEY (COL1) /*T![clustered_index] NONCLUSTERED */
@@ -598,13 +583,9 @@ COL1
 ÿ¬­ëBAy¼K\
 create database issue_27070;
 use issue_27070;
-set @@tidb_enable_list_partition = OFF;
 create table if not exists t (id int,   create_date date NOT NULL DEFAULT '2000-01-01',   PRIMARY KEY (id,create_date)  ) PARTITION BY list COLUMNS(create_date) (   PARTITION p20210506 VALUES IN ("20210507"),   PARTITION p20210507 VALUES IN ("20210508") );
-Level	Code	Message
-Warning	8200	Unsupported partition type LIST, treat as normal table
 create database issue_27031;
 use issue_27031;
-set tidb_enable_list_partition = 1;
 CREATE TABLE NT_LP27390 (
 COL1 mediumint(28) DEFAULT '114' COMMENT 'NUMERIC NO INDEX'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -617,7 +598,6 @@ COL1
 -4123498
 create database issue_27493;
 use issue_27493;
-set tidb_enable_list_partition = 1;
 CREATE TABLE UK_LP17321 (
 COL1 mediumint(16) DEFAULT '82' COMMENT 'NUMERIC UNIQUE INDEX',
 COL3 bigint(20) DEFAULT NULL,
@@ -630,7 +610,6 @@ select * from UK_LP17321 where col1 is null;
 COL1	COL3
 create database issue_27532;
 use issue_27532;
-set tidb_enable_list_partition = 1;
 create table t2 (c1 int primary key, c2 int, c3 int, c4 int, key k2 (c2), key k3 (c3)) partition by hash(c1) partitions 10;
 insert into t2 values (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4);
 set @@tidb_partition_prune_mode="dynamic";
@@ -1277,7 +1256,6 @@ drop database issue42323;
 drop database if exists list_partition_pri;
 create database list_partition_pri;
 use list_partition_pri;
-set tidb_enable_list_partition = 1;
 create table tlist (a int) partition by list (a) (partition p0 values in (0), partition p1 values in (1));
 drop user if exists 'priv_test'@'%';
 create user 'priv_test'@'%';
@@ -1292,7 +1270,6 @@ Error 1142 (42000): ALTER command denied to user 'priv_test'@'%' for table 'tlis
 insert into tlist values (1);
 Error 1142 (42000): INSERT command denied to user 'priv_test'@'%' for table 'tlist'
 use planner__core__integration_partition;
-set tidb_enable_list_partition = DEFAULT;
 drop table if exists t;
 create table t(id int) PARTITION BY HASH(id) partitions 5;
 insert into t values(0),(0);

@@ -1333,7 +1333,8 @@ func assertAlterWarnExec(tk *testkit.TestKit, t *testing.T, sql string) {
 }
 
 func TestAlterAlgorithm(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
+	ddlChecker := dom.DDL().(*schematracker.Checker)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1375,6 +1376,20 @@ func TestAlterAlgorithm(t *testing.T) {
 	assertAlterWarnExec(tk, t, "alter table t rename index idx_c1 to idx_c2, ALGORITHM=INPLACE")
 	tk.MustExec("alter table t rename index idx_c2 to idx_c, ALGORITHM=INSTANT")
 	tk.MustExec("alter table t rename index idx_c to idx_c1, ALGORITHM=DEFAULT")
+
+	// Test corner case for renameIndexes
+	tk.MustExec(`create table tscalar(c1 int, col_1_1 int, key col_1(col_1_1))`)
+	tk.MustExec("alter table tscalar rename index col_1 to col_2")
+	tk.MustExec("admin check table tscalar")
+	tk.MustExec("drop table tscalar")
+
+	// Test rename index with scalar function
+	ddlChecker.Disable()
+	tk.MustExec(`create table tscalar(id int, col_1 json, KEY idx_1 ((cast(col_1 as char(64) array))))`)
+	tk.MustExec("alter table tscalar rename index idx_1 to idx_1_1")
+	tk.MustExec("admin check table tscalar")
+	tk.MustExec("drop table tscalar")
+	ddlChecker.Enable()
 
 	// partition.
 	assertAlterWarnExec(tk, t, "alter table t ALGORITHM=COPY, truncate partition p1")
@@ -2370,35 +2385,31 @@ func TestDuplicateErrorMessage(t *testing.T) {
 
 	for _, newCollate := range []bool{false, true} {
 		collate.SetNewCollationEnabledForTest(newCollate)
-		for _, globalIndex := range []bool{false, true} {
-			tk.MustExec(fmt.Sprintf("set tidb_enable_global_index=%t", globalIndex))
-			for _, clusteredIndex := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
-				tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
-				for _, t := range tests {
-					tk.MustExec("drop table if exists t;")
-					fields := make([]string, len(t.types))
+		for _, clusteredIndex := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
+			tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
+			for _, t := range tests {
+				tk.MustExec("drop table if exists t;")
+				fields := make([]string, len(t.types))
 
-					for i, tp := range t.types {
-						fields[i] = fmt.Sprintf("a%d %s", i, tp)
-					}
-					tk.MustExec("create table t (id1 int, id2 varchar(10), " + strings.Join(fields, ",") + ",primary key(id1, id2)) " +
-						"collate utf8mb4_general_ci " +
-						"partition by range (id1) (partition p1 values less than (2), partition p2 values less than (maxvalue))")
-
-					vals := strings.Join(t.values, ",")
-					tk.MustExec(fmt.Sprintf("insert into t values (1, 'asd', %s), (1, 'dsa', %s)", vals, vals))
-					for i := range t.types {
-						fields[i] = fmt.Sprintf("a%d", i)
-					}
-					index := strings.Join(fields, ",")
-					for i, val := range t.values {
-						fields[i] = strings.Replace(val, "'", "", -1)
-					}
-					tk.MustGetErrMsg("alter table t add unique index t_idx(id1,"+index+")",
-						fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't.t_idx'", strings.Join(fields, "-")))
+				for i, tp := range t.types {
+					fields[i] = fmt.Sprintf("a%d %s", i, tp)
 				}
+				tk.MustExec("create table t (id1 int, id2 varchar(10), " + strings.Join(fields, ",") + ",primary key(id1, id2)) " +
+					"collate utf8mb4_general_ci " +
+					"partition by range (id1) (partition p1 values less than (2), partition p2 values less than (maxvalue))")
+
+				vals := strings.Join(t.values, ",")
+				tk.MustExec(fmt.Sprintf("insert into t values (1, 'asd', %s), (1, 'dsa', %s)", vals, vals))
+				for i := range t.types {
+					fields[i] = fmt.Sprintf("a%d", i)
+				}
+				index := strings.Join(fields, ",")
+				for i, val := range t.values {
+					fields[i] = strings.Replace(val, "'", "", -1)
+				}
+				tk.MustGetErrMsg("alter table t add unique index t_idx(id1,"+index+")",
+					fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't.t_idx'", strings.Join(fields, "-")))
 			}
-			tk.MustExec("set tidb_enable_global_index=default")
 		}
 	}
 }

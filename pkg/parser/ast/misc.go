@@ -72,9 +72,6 @@ const (
 	ReadUncommitted = "READ-UNCOMMITTED"
 	Serializable    = "SERIALIZABLE"
 	RepeatableRead  = "REPEATABLE-READ"
-
-	PumpType    = "PUMP"
-	DrainerType = "DRAINER"
 )
 
 // Transaction mode constants.
@@ -2002,6 +1999,54 @@ func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 		}
 		n.UserVar = node.(*VariableExpr)
 	}
+	return v.Leave(n)
+}
+
+// RecommendIndexStmt is a statement to recommend index.
+type RecommendIndexStmt struct {
+	stmtNode
+
+	Action string
+	SQL    string
+	ID     int64
+	Option string
+	Value  ValueExpr
+}
+
+func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RECOMMEND INDEX")
+	switch n.Action {
+	case "run":
+		ctx.WriteKeyWord(" RUN")
+		if n.SQL != "" {
+			ctx.WriteKeyWord(" FOR ")
+			ctx.WriteString(n.SQL)
+		}
+	case "show":
+		ctx.WriteKeyWord(" SHOW")
+	case "apply":
+		ctx.WriteKeyWord(" APPLY ")
+		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
+	case "ignore":
+		ctx.WriteKeyWord(" IGNORE ")
+		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
+	case "set":
+		ctx.WriteKeyWord(" SET ")
+		ctx.WriteKeyWord(n.Option)
+		ctx.WritePlain(" = ")
+		if err := n.Value.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore RecommendIndexStmt.Value")
+		}
+	}
+	return nil
+}
+
+func (n *RecommendIndexStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RecommendIndexStmt)
 	return v.Leave(n)
 }
 

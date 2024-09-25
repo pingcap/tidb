@@ -164,8 +164,6 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 	switch v := p.(type) {
 	case nil:
 		return nil
-	case *plannercore.Change:
-		return b.buildChange(v)
 	case *plannercore.CheckTable:
 		return b.buildCheckTable(v)
 	case *plannercore.RecoverIndex:
@@ -316,6 +314,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildAdminShowBDRRole(v)
 	case *plannercore.PhysicalExpand:
 		return b.buildExpand(v)
+	case *plannercore.RecommendIndexPlan:
+		return b.buildRecommendIndex(v)
 	default:
 		if mp, ok := p.(testutil.MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -357,13 +357,6 @@ func (b *executorBuilder) buildResumeDDLJobs(v *plannercore.ResumeDDLJobs) exec.
 		},
 	}
 	return e
-}
-
-func (b *executorBuilder) buildChange(v *plannercore.Change) exec.Executor {
-	return &ChangeExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		ChangeStmt:   v.ChangeStmt,
-	}
 }
 
 func (b *executorBuilder) buildShowNextRowID(v *plannercore.ShowNextRowID) exec.Executor {
@@ -1486,7 +1479,8 @@ func collectColumnIndexFromExpr(expr expression.Expression, leftColumnSize int, 
 			leftColumnIndex = append(leftColumnIndex, colIndex)
 		}
 		return leftColumnIndex, rightColumnIndex
-	case *expression.Constant:
+	case *expression.Constant, *expression.CorrelatedColumn:
+		// correlatedColumn can be treated as constant during runtime
 		return leftColumnIndex, rightColumnIndex
 	case *expression.ScalarFunction:
 		for _, arg := range x.GetArgs() {
@@ -1664,7 +1658,7 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 }
 
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Executor {
-	if join.IsHashJoinV2Enabled() && v.CanUseHashJoinV2() {
+	if b.ctx.GetSessionVars().UseHashJoinV2 && join.IsHashJoinV2Supported() && v.CanUseHashJoinV2() {
 		return b.buildHashJoinV2(v)
 	}
 	leftExec := b.build(v.Children()[0])
@@ -2348,7 +2342,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			}
 		case strings.ToLower(infoschema.TableDDLJobs):
 			loc := b.ctx.GetSessionVars().Location()
-			ddlJobRetriever := DDLJobRetriever{TZLoc: loc}
+			ddlJobRetriever := DDLJobRetriever{TZLoc: loc, extractor: v.Extractor}
 			return &DDLJobsReaderExec{
 				BaseExecutor:    exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				is:              b.is,
@@ -5645,4 +5639,15 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) exec.Ex
 
 func (b *executorBuilder) buildAdminShowBDRRole(v *plannercore.AdminShowBDRRole) exec.Executor {
 	return &AdminShowBDRRoleExec{BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())}
+}
+
+func (b *executorBuilder) buildRecommendIndex(v *plannercore.RecommendIndexPlan) exec.Executor {
+	return &RecommendIndexExec{
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		Action:       v.Action,
+		SQL:          v.SQL,
+		AdviseID:     v.AdviseID,
+		Option:       v.Option,
+		Value:        v.Value,
+	}
 }

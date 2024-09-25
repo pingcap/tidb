@@ -18,7 +18,9 @@ import (
 	"math"
 	"testing"
 	"time"
+	"unsafe"
 
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -32,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	clikv "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 type handleRange struct {
@@ -851,4 +855,43 @@ func TestBuildTableRangeCommonHandle(t *testing.T) {
 	require.Equal(t, []kv.KeyRange{
 		{StartKey: tablecodec.EncodeRowKey(7, low), EndKey: tablecodec.EncodeRowKey(7, high)},
 	}, ranges)
+}
+
+func TestRequestBuilderHandle(t *testing.T) {
+	handles := []kv.Handle{kv.IntHandle(0), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4),
+		kv.IntHandle(5), kv.IntHandle(10), kv.IntHandle(11), kv.IntHandle(100)}
+
+	resourceTagBuilder := kv.NewResourceGroupTagBuilder()
+	tableID := int64(15)
+	actual, err := (&RequestBuilder{}).SetTableHandles(tableID, handles).
+		SetDAGRequest(&tipb.DAGRequest{}).
+		SetDesc(false).
+		SetKeepOrder(false).
+		SetFromSessionVars(DefaultDistSQLContext).
+		SetResourceGroupTagger(resourceTagBuilder).
+		Build()
+	require.NoError(t, err)
+	ranges := make([]*coprocessor.KeyRange, 0, actual.KeyRanges.TotalRangeNum())
+	actual.KeyRanges.ForEachPartition(
+		func(innerRanges []kv.KeyRange) {
+			for _, ran := range innerRanges {
+				ranges = append(ranges, (*coprocessor.KeyRange)(unsafe.Pointer(&ran)))
+			}
+		})
+
+	copReq := coprocessor.Request{
+		Tp:      actual.Tp,
+		StartTs: actual.StartTs,
+		Data:    actual.Data,
+		Ranges:  ranges,
+	}
+	var seed uint32
+	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdCop, &copReq, clikv.ReplicaReadLeader, &seed)
+	actual.ResourceGroupTagger.Build(req)
+
+	// the request should have the resource group tag, and the tag should contain the table id
+	tag := &tipb.ResourceGroupTag{}
+	err = tag.Unmarshal(req.ResourceGroupTag)
+	require.NoError(t, err)
+	require.Equal(t, tag.TableId, tableID)
 }

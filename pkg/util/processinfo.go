@@ -155,7 +155,7 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 		cpuUsages = pi.SQLCPUUsage.GetCPUUsages()
 	}
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed,
-		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows, cpuUsages.TidbCPUTime.Seconds(), cpuUsages.TikvCPUTime.Seconds())
+		pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias, affectedRows, cpuUsages.TidbCPUTime.Nanoseconds(), cpuUsages.TikvCPUTime.Nanoseconds())
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.

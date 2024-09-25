@@ -47,7 +47,7 @@ go_test(
     ],
     embed = [":schematracker"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 16,
     deps = [
         "//pkg/executor",
         "//pkg/infoschema",

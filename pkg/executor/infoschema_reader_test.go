@@ -20,17 +20,20 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -290,16 +293,16 @@ func TestForAnalyzeStatus(t *testing.T) {
 		"  `TABLE_NAME` varchar(64) DEFAULT NULL,\n" +
 		"  `PARTITION_NAME` varchar(64) DEFAULT NULL,\n" +
 		"  `JOB_INFO` longtext DEFAULT NULL,\n" +
-		"  `PROCESSED_ROWS` bigint(64) unsigned DEFAULT NULL,\n" +
+		"  `PROCESSED_ROWS` bigint(21) unsigned DEFAULT NULL,\n" +
 		"  `START_TIME` datetime DEFAULT NULL,\n" +
 		"  `END_TIME` datetime DEFAULT NULL,\n" +
 		"  `STATE` varchar(64) DEFAULT NULL,\n" +
 		"  `FAIL_REASON` longtext DEFAULT NULL,\n" +
 		"  `INSTANCE` varchar(512) DEFAULT NULL,\n" +
-		"  `PROCESS_ID` bigint(64) unsigned DEFAULT NULL,\n" +
+		"  `PROCESS_ID` bigint(21) unsigned DEFAULT NULL,\n" +
 		"  `REMAINING_SECONDS` varchar(512) DEFAULT NULL,\n" +
 		"  `PROGRESS` double(22,6) DEFAULT NULL,\n" +
-		"  `ESTIMATED_TOTAL_ROWS` bigint(64) unsigned DEFAULT NULL\n" +
+		"  `ESTIMATED_TOTAL_ROWS` bigint(21) unsigned DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	tk.MustQuery("show create table information_schema.analyze_status").Check(testkit.Rows("ANALYZE_STATUS " + analyzeStatusTable))
 	tk.MustExec("delete from mysql.analyze_jobs")
@@ -368,7 +371,6 @@ func TestForServersInfo(t *testing.T) {
 	require.Equal(t, info.Lease, rows[0][4])
 	require.Equal(t, info.Version, rows[0][5])
 	require.Equal(t, info.GitHash, rows[0][6])
-	require.Equal(t, info.BinlogStatus, rows[0][7])
 	require.Equal(t, stringutil.BuildStringFromLabels(info.Labels), rows[0][8])
 }
 
@@ -605,7 +607,7 @@ func TestColumnTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_2"))
 	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
-		testkit.RowsWithSep("|", "4937"))
+		testkit.RowsWithSep("|", "4965"))
 }
 
 func TestIndexUsageTable(t *testing.T) {
@@ -652,7 +654,7 @@ func TestIndexUsageTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|idt2|idx_4"))
 	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage;`).Check(
-		testkit.RowsWithSep("|", "72"))
+		testkit.RowsWithSep("|", "77"))
 
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())
@@ -803,7 +805,7 @@ func TestReferencedTableSchemaWithForeignKey(t *testing.T) {
 	tk.MustExec("create table test.t1(id int primary key);")
 	tk.MustExec("create table test2.t2(i int, id int, foreign key (id) references test.t1(id));")
 
-	tk.MustQuery(`SELECT column_name, referenced_column_name, referenced_table_name, table_schema, referenced_table_schema 
+	tk.MustQuery(`SELECT column_name, referenced_column_name, referenced_table_name, table_schema, referenced_table_schema
 	FROM information_schema.key_column_usage
 	WHERE table_name = 't2' AND table_schema = 'test2';`).Check(testkit.Rows(
 		"id id t1 test2 test"))
@@ -837,6 +839,84 @@ func TestSameTableNameInTwoSchemas(t *testing.T) {
 		Check(testkit.Rows())
 	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'unknown' and tidb_table_id = %d;", t1ID)).
 		Check(testkit.Rows())
+}
+
+func TestInfoSchemaDDLJobs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	for i := 0; i < 2; i++ {
+		tk.MustExec(fmt.Sprintf("create database d%d", i))
+		tk.MustExec(fmt.Sprintf("use d%d", i))
+		for j := 0; j < 4; j++ {
+			tk.MustExec(fmt.Sprintf("create table t%d(id int, col1 int, col2 int)", j))
+			tk.MustExec(fmt.Sprintf("alter table t%d add index (col1)", j))
+		}
+	}
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
+				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
+		"131|add index /* txn-merge */|public|124|129|t1|synced",
+		"130|create table|public|124|129|t1|synced",
+		"117|add index /* txn-merge */|public|110|115|t1|synced",
+		"116|create table|public|110|115|t1|synced",
+	))
+	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
+				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
+		"137|add index /* txn-merge */|public|124|135|t3|synced",
+		"134|add index /* txn-merge */|public|124|132|t2|synced",
+		"131|add index /* txn-merge */|public|124|129|t1|synced",
+		"128|add index /* txn-merge */|public|124|126|t0|synced",
+	))
+	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
+				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
+		"123|add index /* txn-merge */|public|110|121|t3|synced",
+		"122|create table|public|110|121|t3|synced",
+	))
+	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
+					FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.Rows())
+
+	// Test running job
+	loaded := atomic.Bool{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly && loaded.CompareAndSwap(false, true) {
+			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
+				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
+				"138 add index /* txn-merge */ write only 110 112 t0 running",
+			))
+			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
+				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
+				"138 add index /* txn-merge */ write only 110 112 t0 running",
+			))
+			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
+				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
+				"138 add index /* txn-merge */ write only 110 112 t0 running",
+			))
+		}
+	})
+
+	tk.MustExec("use d0")
+	tk.MustExec("alter table t0 add index (col2)")
+
+	// Test search history jobs
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t1(id int)")
+	tk.MustExec("drop database test2")
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t1(id int)")
+	tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
+				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
+		"147|create table|public|144|146|t1|synced",
+		"142|create table|public|139|141|t1|synced",
+	))
+
+	// Test explain output, since the output may change in future.
+	tk.MustQuery(`EXPLAIN SELECT * FROM information_schema.ddl_jobs where db_name = "test2" limit 10;`).Check(testkit.Rows(
+		`Limit_10 10.00 root  offset:0, count:10`,
+		`└─Selection_11 10.00 root  eq(Column#2, "test2")`,
+		`  └─MemTableScan_12 10000.00 root table:DDL_JOBS db_name:["test2"]`,
+	))
 }
 
 func TestInfoSchemaConditionWorks(t *testing.T) {
