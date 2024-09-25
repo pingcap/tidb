@@ -224,7 +224,6 @@ func (importer *LogFileImporter) downloadAndApplyKVFile(
 	supportBatch bool,
 	cipherInfo *backuppb.CipherInfo,
 	masterKeys []*encryptionpb.MasterKey) RPCResult {
-
 	leader := regionInfo.Leader
 	if leader == nil {
 		return RPCResultFromError(errors.Annotatef(berrors.ErrPDLeaderNotFound,
