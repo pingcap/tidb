@@ -260,7 +260,7 @@ func TestGeneratePartitionExpr(t *testing.T) {
 		"1",
 	}
 	for i, expr := range pe.UpperBounds {
-		require.Equal(t, upperBounds[i], expr.String())
+		require.Equal(t, upperBounds[i], expr.StringWithCtx(false))
 	}
 }
 

@@ -50,7 +50,7 @@ func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 			if j > 0 {
 				idxMergeDisgest += ","
 			}
-			idxMergeDisgest += path.TableFilters[j].String()
+			idxMergeDisgest += path.TableFilters[j].StringWithCtx(false)
 		}
 		idxMergeDisgest += "]}"
 	}

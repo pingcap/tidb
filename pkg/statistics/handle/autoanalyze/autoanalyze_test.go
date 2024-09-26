@@ -44,9 +44,9 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 	tk.MustExec("lock stats t")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(is))
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	// Try to analyze the locked table, it should not analyze the table.
 	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
@@ -70,11 +70,10 @@ func TestDisableAutoAnalyze(t *testing.T) {
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(is))
 
-	// Set auto analyze ratio to 0.
-	tk.MustExec("set @@global.tidb_auto_analyze_ratio = 0")
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 0")
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	// Even auto analyze ratio is set to 0, we still need to analyze the unanalyzed tables.
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
@@ -97,9 +96,9 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("set @@global.tidb_analyze_version = 1")
 	do := dom
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	h := do.StatsHandle()
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
@@ -286,10 +285,10 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	require.NoError(t, h.Update(dom.InfoSchema()))
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
 
-	originalVal := autoanalyze.AutoAnalyzeMinCnt
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	originalVal := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = originalVal
+		statistics.AutoAnalyzeMinCnt = originalVal
 	}()
 	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
 	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate"))
@@ -318,7 +317,7 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	// to pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
-	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(autoanalyze.AutoAnalyzeMinCnt)))
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(statistics.AutoAnalyzeMinCnt)))
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
@@ -353,7 +352,7 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	// to pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
-	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(autoanalyze.AutoAnalyzeMinCnt)))
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(statistics.AutoAnalyzeMinCnt)))
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 

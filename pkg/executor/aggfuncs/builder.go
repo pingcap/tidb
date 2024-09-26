@@ -92,9 +92,9 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 	case ast.WindowFuncCumeDist:
 		return buildCumeDist(ordinal, orderByCols)
 	case ast.WindowFuncNthValue:
-		return buildNthValue(windowFuncDesc, ordinal)
+		return buildNthValue(ctx, windowFuncDesc, ordinal)
 	case ast.WindowFuncNtile:
-		return buildNtile(windowFuncDesc, ordinal)
+		return buildNtile(ctx, windowFuncDesc, ordinal)
 	case ast.WindowFuncPercentRank:
 		return buildPercentRank(ordinal, orderByCols)
 	case ast.WindowFuncLead:
@@ -680,22 +680,22 @@ func buildCumeDist(ordinal int, orderByCols []*expression.Column) AggFunc {
 	return r
 }
 
-func buildNthValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func buildNthValue(sctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
 	// Already checked when building the function description.
-	nth, _, _ := expression.GetUint64FromConstant(aggFuncDesc.Args[1])
+	nth, _, _ := expression.GetUint64FromConstant(sctx, aggFuncDesc.Args[1])
 	return &nthValue{baseAggFunc: base, tp: aggFuncDesc.RetTp, nth: nth}
 }
 
-func buildNtile(aggFuncDes *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func buildNtile(sctx sessionctx.Context, aggFuncDes *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
 		args:    aggFuncDes.Args,
 		ordinal: ordinal,
 	}
-	n, _, _ := expression.GetUint64FromConstant(aggFuncDes.Args[0])
+	n, _, _ := expression.GetUint64FromConstant(sctx, aggFuncDes.Args[0])
 	return &ntile{baseAggFunc: base, n: n}
 }
 
@@ -709,7 +709,7 @@ func buildPercentRank(ordinal int, orderByCols []*expression.Column) AggFunc {
 func buildLeadLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag {
 	offset := uint64(1)
 	if len(aggFuncDesc.Args) >= 2 {
-		offset, _, _ = expression.GetUint64FromConstant(aggFuncDesc.Args[1])
+		offset, _, _ = expression.GetUint64FromConstant(ctx, aggFuncDesc.Args[1])
 	}
 	var defaultExpr expression.Expression
 	defaultExpr = expression.NewNull()

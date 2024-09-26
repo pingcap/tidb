@@ -546,7 +546,7 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	// make sure the correlated columns are extracted correctly
 	correlated := ts.ExtractCorrelatedCols()
 	require.Equal(t, 1, len(correlated))
-	require.Equal(t, "test.t2.company_no", correlated[0].String())
+	require.Equal(t, "test.t2.company_no", correlated[0].StringWithCtx(false))
 }
 
 func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {

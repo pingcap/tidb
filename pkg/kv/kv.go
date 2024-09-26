@@ -591,6 +591,9 @@ type Request struct {
 
 	// ConnID stores the session connection id.
 	ConnID uint64
+
+	// Killed is a flag to indicate that this query is killed.
+	Killed *uint32
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.

@@ -69,7 +69,7 @@ go_test(
     embed = [":ttlworker"],
     flaky = True,
     race = "on",
-    shard_count = 48,
+    shard_count = 49,
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",
@@ -81,7 +81,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
-        "//pkg/statistics/handle/autoanalyze",
+        "//pkg/statistics",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/timer/api",
