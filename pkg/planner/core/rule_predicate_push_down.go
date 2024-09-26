@@ -124,15 +124,22 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
-	if expression.ContainVirtualColumn(predicates) {
-		// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
-		// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
-		return predicates, p
+	var predicatesWithVCol, predicatesWithoutVCol []expression.Expression
+	// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
+	// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
+	for _, expr := range predicates {
+		if expression.ContainVirtualColumn([]expression.Expression{expr}) {
+			predicatesWithVCol = append(predicatesWithVCol, expr)
+		} else {
+			predicatesWithoutVCol = append(predicatesWithoutVCol, expr)
+		}
 	}
+	predicates = predicatesWithoutVCol
 	retainedPredicates, _ := p.children[0].PredicatePushDown(predicates, opt)
 	p.conditions = make([]expression.Expression, 0, len(predicates))
 	p.conditions = append(p.conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
+	retainedPredicates = append(retainedPredicates, predicatesWithVCol...)
 	return retainedPredicates, p
 }
 
@@ -144,7 +151,7 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	// TODO: remove it to the place building logical plan
 	predicates = ds.AddPrefix4ShardIndexes(ds.SCtx(), predicates)
 	ds.allConds = predicates
-	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.SCtx().GetSessionVars().StmtCtx, predicates, ds.SCtx().GetClient(), kv.UnSpecified)
+	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.SCtx(), predicates, ds.SCtx().GetClient(), kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds
 }
@@ -848,7 +855,7 @@ func appendTableDualTraceStep(replaced LogicalPlan, dual LogicalPlan, conditions
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(false))
 		}
 		buffer.WriteString("] are constant false or null")
 		return buffer.String()
@@ -870,7 +877,7 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 				if i > 0 {
 					buffer.WriteString(",")
 				}
-				buffer.WriteString(cond.String())
+				buffer.WriteString(cond.StringWithCtx(false))
 			}
 			fmt.Fprintf(buffer, "] in %v_%v are pushed down", p.TP(), p.ID())
 			return buffer.String()
@@ -892,7 +899,7 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *logicalOpti
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(cond.String())
+			buffer.WriteString(cond.StringWithCtx(false))
 		}
 		fmt.Fprintf(buffer, "] are pushed down across %v_%v", ds.TP(), ds.ID())
 		return buffer.String()

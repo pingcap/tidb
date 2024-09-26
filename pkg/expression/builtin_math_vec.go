@@ -287,7 +287,7 @@ func (b *builtinExpSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) er
 		}
 		exp := math.Exp(f64s[i])
 		if math.IsInf(exp, 0) || math.IsNaN(exp) {
-			s := fmt.Sprintf("exp(%s)", b.args[0].String())
+			s := fmt.Sprintf("exp(%s)", b.args[0].StringWithCtx(false))
 			if err := types.ErrOverflow.GenWithStackByArgs("DOUBLE", s); err != nil {
 				return err
 			}

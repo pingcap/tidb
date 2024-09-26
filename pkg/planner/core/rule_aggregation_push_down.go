@@ -687,7 +687,7 @@ func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, ag
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(aggFunc.String())
+			buffer.WriteString(aggFunc.StringWithCtx(false))
 		}
 		buffer.WriteString("] are decomposable with join")
 		return buffer.String()
@@ -712,7 +712,7 @@ func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *Logical
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(aggFunc.String())
+			buffer.WriteString(aggFunc.StringWithCtx(false))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
@@ -730,7 +730,7 @@ func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalA
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(aggFunc.String())
+			buffer.WriteString(aggFunc.StringWithCtx(false))
 		}
 		fmt.Fprintf(buffer, "] are decomposable with %v_%v", union.TP(), union.ID())
 		return buffer.String()

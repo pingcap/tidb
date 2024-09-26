@@ -101,7 +101,7 @@ func (desc *baseFuncDesc) GetTiPBExpr(tryWindowDesc bool) (tp tipb.ExprType) {
 
 // AggFuncToPBExpr converts aggregate function to pb.
 func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFuncDesc, storeType kv.StoreType) (*tipb.Expr, error) {
-	pc := expression.NewPBConverter(client, sctx.GetSessionVars().StmtCtx)
+	pc := expression.NewPBConverter(client, sctx)
 	tp := aggFunc.GetTiPBExpr(false)
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil, errors.New("select request is not supported by client")
@@ -111,7 +111,7 @@ func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFunc
 	for _, arg := range aggFunc.Args {
 		pbArg := pc.ExprToPB(arg)
 		if pbArg == nil {
-			return nil, errors.New(aggFunc.String() + " can't be converted to PB.")
+			return nil, errors.New(aggFunc.StringWithCtx(false) + " can't be converted to PB.")
 		}
 		children = append(children, pbArg)
 	}
@@ -122,11 +122,10 @@ func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFunc
 
 	if tp == tipb.ExprType_GroupConcat {
 		orderBy := make([]*tipb.ByItem, 0, len(aggFunc.OrderByItems))
-		sc := sctx.GetSessionVars().StmtCtx
 		for _, arg := range aggFunc.OrderByItems {
-			pbArg := expression.SortByItemToPB(sc, client, arg.Expr, arg.Desc)
+			pbArg := expression.SortByItemToPB(sctx, client, arg.Expr, arg.Desc)
 			if pbArg == nil {
-				return nil, errors.New(aggFunc.String() + " can't be converted to PB.")
+				return nil, errors.New(aggFunc.StringWithCtx(false) + " can't be converted to PB.")
 			}
 			orderBy = append(orderBy, pbArg)
 		}

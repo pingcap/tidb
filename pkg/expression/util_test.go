@@ -154,37 +154,37 @@ func TestClone(t *testing.T) {
 }
 
 func TestGetUint64FromConstant(t *testing.T) {
+	ctx := mock.NewContext()
 	con := &Constant{
 		Value: types.NewDatum(nil),
 	}
-	_, isNull, ok := GetUint64FromConstant(con)
+	_, isNull, ok := GetUint64FromConstant(ctx, con)
 	require.True(t, ok)
 	require.True(t, isNull)
 
 	con = &Constant{
 		Value: types.NewIntDatum(-1),
 	}
-	_, _, ok = GetUint64FromConstant(con)
+	_, _, ok = GetUint64FromConstant(ctx, con)
 	require.False(t, ok)
 
 	con.Value = types.NewIntDatum(1)
-	num, isNull, ok := GetUint64FromConstant(con)
+	num, isNull, ok := GetUint64FromConstant(ctx, con)
 	require.True(t, ok)
 	require.False(t, isNull)
 	require.Equal(t, uint64(1), num)
 
 	con.Value = types.NewUintDatum(1)
-	num, _, _ = GetUint64FromConstant(con)
+	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(1), num)
 
 	con.DeferredExpr = &Constant{Value: types.NewIntDatum(1)}
-	num, _, _ = GetUint64FromConstant(con)
+	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(1), num)
 
-	ctx := mock.NewContext()
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewUintDatum(100))
 	con.ParamMarker = &ParamMarker{order: 0, ctx: ctx}
-	num, _, _ = GetUint64FromConstant(con)
+	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(100), num)
 }
 
@@ -246,16 +246,16 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	plus := newFunction(ast.Plus, cast, corCol2)
 	plus2 := newFunction(ast.Plus, plus, NewOne())
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	ret, err := SubstituteCorCol2Constant(plus2)
+	ret, err := SubstituteCorCol2Constant(ctx, plus2)
 	require.NoError(t, err)
 	require.True(t, ret.Equal(ctx, ans1))
 	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	ret, err = SubstituteCorCol2Constant(col1)
+	ret, err = SubstituteCorCol2Constant(ctx, col1)
 	require.NoError(t, err)
 	ans2 := col1
 	require.True(t, ret.Equal(ctx, ans2))
 	plus3 := newFunction(ast.Plus, plus2, col1)
-	ret, err = SubstituteCorCol2Constant(plus3)
+	ret, err = SubstituteCorCol2Constant(ctx, plus3)
 	require.NoError(t, err)
 	ans3 := newFunction(ast.Plus, ans1, col1)
 	require.False(t, ret.Equal(ctx, ans3))
@@ -520,6 +520,7 @@ func (m *MockExpr) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 }
 
 func (m *MockExpr) String() string                          { return "" }
+func (m *MockExpr) StringWithCtx(bool) string               { return "" }
 func (m *MockExpr) MarshalJSON() ([]byte, error)            { return nil, nil }
 func (m *MockExpr) Eval(row chunk.Row) (types.Datum, error) { return types.NewDatum(m.i), m.err }
 func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
@@ -578,7 +579,7 @@ func (m *MockExpr) resolveIndices(schema *Schema) error                         
 func (m *MockExpr) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) { return m, true }
 func (m *MockExpr) resolveIndicesByVirtualExpr(schema *Schema) bool               { return true }
 func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error)           { return m, nil }
-func (m *MockExpr) ExplainInfo() string                                           { return "" }
+func (m *MockExpr) ExplainInfo(sessionctx.Context) string                         { return "" }
 func (m *MockExpr) ExplainNormalizedInfo() string                                 { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte                  { return nil }
 func (m *MockExpr) Vectorized() bool                                              { return false }
@@ -588,6 +589,8 @@ func (m *MockExpr) Coercibility() Coercibility                                  
 func (m *MockExpr) SetCoercibility(Coercibility)                                  {}
 func (m *MockExpr) Repertoire() Repertoire                                        { return UNICODE }
 func (m *MockExpr) SetRepertoire(Repertoire)                                      {}
+func (m *MockExpr) IsExplicitCharset() bool                                       { return false }
+func (m *MockExpr) SetExplicitCharset(bool)                                       {}
 
 func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""

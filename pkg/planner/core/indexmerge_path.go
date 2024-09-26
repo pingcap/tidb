@@ -127,7 +127,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 
 			pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
 			for _, cnfItem := range cnfItems {
-				if expression.CanExprsPushDown(ds.SCtx().GetSessionVars().StmtCtx,
+				if expression.CanExprsPushDown(ds.SCtx(),
 					[]expression.Expression{cnfItem},
 					ds.SCtx().GetClient(),
 					kv.TiKV,
@@ -358,12 +358,12 @@ func (ds *DataSource) buildIndexMergeOrPath(
 			shouldKeepCurrentFilter = true
 		}
 		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
-		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetSessionVars().StmtCtx, path.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
+		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx(), path.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
 			shouldKeepCurrentFilter = true
 			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			path.IndexFilters = nil
 		}
-		if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetSessionVars().StmtCtx, path.TableFilters, ds.SCtx().GetClient(), kv.TiKV) {
+		if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx(), path.TableFilters, ds.SCtx().GetClient(), kv.TiKV) {
 			shouldKeepCurrentFilter = true
 			path.TableFilters = nil
 		}
@@ -420,7 +420,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 		coveredConds = append(coveredConds, path.AccessConds...)
 		for i, cond := range path.IndexFilters {
 			// IndexFilters can be covered by partial path if it can be pushed down to TiKV.
-			if !expression.CanExprsPushDown(ds.SCtx().GetSessionVars().StmtCtx, []expression.Expression{cond}, ds.SCtx().GetClient(), kv.TiKV) {
+			if !expression.CanExprsPushDown(ds.SCtx(), []expression.Expression{cond}, ds.SCtx().GetClient(), kv.TiKV) {
 				path.IndexFilters = append(path.IndexFilters[:i], path.IndexFilters[i+1:]...)
 				notCoveredConds = append(notCoveredConds, cond)
 			} else {
@@ -504,7 +504,7 @@ func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, index
 			// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
 			warnings := stmtCtx.GetWarnings()
 			extraWarnings := stmtCtx.GetExtraWarnings()
-			_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.SCtx().GetClient(), kv.UnSpecified)
+			_, remaining := expression.PushDownExprs(ds.SCtx(), indexMergeConds, ds.SCtx().GetClient(), kv.UnSpecified)
 			stmtCtx.SetWarnings(warnings)
 			stmtCtx.SetExtraWarnings(extraWarnings)
 			if len(remaining) > 0 {

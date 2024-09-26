@@ -92,10 +92,10 @@ func appendSubstituteColumnStep(lp LogicalPlan, candidateExpr expression.Express
 	reason := func() string { return "" }
 	action := func() string {
 		buffer := bytes.NewBufferString("expression:")
-		buffer.WriteString(candidateExpr.String())
+		buffer.WriteString(candidateExpr.StringWithCtx(false))
 		buffer.WriteString(" substituted by")
 		buffer.WriteString(" column:")
-		buffer.WriteString(col.String())
+		buffer.WriteString(col.StringWithCtx(false))
 		return buffer.String()
 	}
 	opt.appendStepToCurrent(lp.ID(), lp.TP(), reason, action)

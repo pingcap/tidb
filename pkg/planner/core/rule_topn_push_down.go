@@ -136,7 +136,7 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN, opt *logicalOptimize
 	if topN != nil {
 		substitutedExprs := make([]expression.Expression, 0, len(topN.ByItems))
 		for _, by := range topN.ByItems {
-			substituted := expression.FoldConstant(expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs))
+			substituted := expression.FoldConstant(p.SCtx(), expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs))
 			if expression.IsMutableFunc(substituted) {
 				// after substituting, if the order-by expression is un-deterministic like 'order by rand()', stop pushing down.
 				return p.baseLogicalPlan.pushDownTopN(topN, opt)
@@ -258,7 +258,7 @@ func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int,
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(item.String())
+			buffer.WriteString(item.StringWithCtx(false))
 		}
 		buffer.WriteString("] contained in ")
 		if idx == 0 {
@@ -279,7 +279,7 @@ func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *l
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(item.String())
+			buffer.WriteString(item.StringWithCtx(false))
 		}
 		fmt.Fprintf(buffer, "] to %v_%v", topN.TP(), topN.ID())
 		return buffer.String()

@@ -560,7 +560,8 @@ type PlanBuilder struct {
 	//   If it's a aggregation, we pop the map and push a nil map since no handle information left.
 	//   If it's a union, we pop all children's and push a nil map.
 	//   If it's a join, we pop its children's out then merge them and push the new map to stack.
-	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
+	//   If we meet a subquery or CTE, it's clearly that it's an independent problem so we just pop one map out when we
+	//   finish building the subquery or CTE.
 	handleHelper *handleColHelper
 
 	hintProcessor *hint.BlockHintProcessor
@@ -4483,6 +4484,13 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		}
 		options = append(options, &loadDataOpt)
 	}
+
+	tableInfo := ld.Table.TableInfo
+	if tableInfo.TempTableType != model.TempTableNone {
+		return nil, errors.Errorf("IMPORT INTO does not support temporary table")
+	} else if tableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return nil, errors.Errorf("IMPORT INTO does not support cached table")
+	}
 	p := ImportInto{
 		Path:               ld.Path,
 		Format:             ld.Format,
@@ -4511,7 +4519,6 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	if importFromServer {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	}
-	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		db := b.ctx.GetSessionVars().CurrentDB

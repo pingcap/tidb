@@ -86,6 +86,10 @@ func TestCreateTableLongIndex(t *testing.T) {
 	tracker := schematracker.NewSchemaTracker(2)
 	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
+	sql2 := "create table test.t2 (c1 int, c2 blob, c3 varchar(64), unique index idx_c2(c2(555555)));"
+	execCreate(t, tracker, sql2)
+	sql3 := "create table test.t3 (c1 int, c2 blob, c3 varchar(64), index idx_c2_c3(c3, c2(555555)));"
+	execCreate(t, tracker, sql3)
 }
 
 func execAlter(t *testing.T, tracker schematracker.SchemaTracker, sql string) {

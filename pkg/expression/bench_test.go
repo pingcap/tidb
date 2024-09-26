@@ -1379,7 +1379,7 @@ func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases)
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, _, input, output := genVecExprBenchCase(ctx, funcName, testCase)
-			exprName := expr.String()
+			exprName := expr.StringWithCtx(false)
 			if sf, ok := expr.(*ScalarFunction); ok {
 				exprName = fmt.Sprintf("%v", reflect.TypeOf(sf.Function))
 				tmp := strings.Split(exprName, ".")
@@ -1452,7 +1452,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 		case types.ETJson:
 			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		case types.ETString:
-			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		}
 		baseFunc, err = fc.getFunction(ctx, cols)
 	} else if funcName == ast.GetVar {

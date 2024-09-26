@@ -207,31 +207,6 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 
 	if it.req.KeepOrder {
-		// Don't set high concurrency for the keep order case. It wastes a lot of memory and gains nothing.
-		// TL;DR
-		// Because for a keep order coprocessor request, the cop tasks are handled one by one, if we set a
-		// higher concurrency, the data is just cached and not consumed for a while, this increase the memory usage.
-		// Set concurrency to 2 can reduce the memory usage and I've tested that it does not necessarily
-		// decrease the performance.
-		// For ReqTypeAnalyze, we keep its concurrency to avoid slow analyze(see https://github.com/pingcap/tidb/issues/40162 for details).
-		if it.concurrency > 2 && it.req.Tp != kv.ReqTypeAnalyze {
-			oldConcurrency := it.concurrency
-			partitionNum := req.KeyRanges.PartitionNum()
-			if partitionNum > it.concurrency {
-				partitionNum = it.concurrency
-			}
-			it.concurrency = 2
-			if it.concurrency < partitionNum {
-				it.concurrency = partitionNum
-			}
-
-			failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
-				if val.(bool) {
-					// When the concurrency is too small, test case tests/realtikvtest/sessiontest.TestCoprocessorOOMAction can't trigger OOM condition
-					it.concurrency = oldConcurrency
-				}
-			})
-		}
 		if it.smallTaskConcurrency > 20 {
 			it.smallTaskConcurrency = 20
 		}
@@ -345,7 +320,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	})
 
 	// TODO(youjiali1995): is there any request type that needn't be splitted by buckets?
-	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges)
+	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges, req.Killed)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -915,7 +890,16 @@ func (sender *copIteratorTaskSender) run(connID uint64) {
 	}
 }
 
+// GlobalSyncChForTest is a global channel for test.
+var GlobalSyncChForTest = make(chan struct{})
+
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
+	failpoint.Inject("CtxCancelBeforeReceive", func(_ failpoint.Value) {
+		if ctx.Value("TestContextCancel") == "test" {
+			GlobalSyncChForTest <- struct{}{}
+			<-GlobalSyncChForTest
+		}
+	})
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -1052,7 +1036,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
 			it.actionOnExceed.close()
-			return nil, nil
+			return nil, errors.Trace(ctx.Err())
 		}
 		if resp == finCopResp {
 			it.actionOnExceed.destroyTokenIfNeeded(func() {
@@ -1070,8 +1054,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			task := it.tasks[it.curr]
 			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
 			if closed {
-				// Close() is already called, so Next() is invalid.
-				return nil, nil
+				// Close() is called or context cancelled/timeout, so Next() is invalid.
+				return nil, errors.Trace(ctx.Err())
 			}
 			if ok {
 				break
@@ -1220,7 +1204,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	req.StoreTp = getEndPointType(task.storeType)
 	startTime := time.Now()
 	if worker.kvclient.Stats == nil {
-		worker.kvclient.Stats = make(map[tikvrpc.CmdType]*tikv.RPCRuntimeStats)
+		worker.kvclient.Stats = tikv.NewRegionRequestRuntimeStats()
 	}
 	// set ReadReplicaScope and TxnScope so that req.IsStaleRead will be true when it's a global scope stale read.
 	req.ReadReplicaScope = worker.req.ReadReplicaScope
@@ -1305,9 +1289,15 @@ const (
 
 func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *coprocessor.Response) {
 	logStr := fmt.Sprintf("[TIME_COP_PROCESS] resp_time:%s txnStartTS:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.GetID(), task.storeAddr)
+	if worker.kvclient.Stats != nil {
+		logStr += fmt.Sprintf(" stats:%s", worker.kvclient.Stats.String())
+	}
 	if bo.GetTotalSleep() > minLogBackoffTime {
 		backoffTypes := strings.ReplaceAll(fmt.Sprintf("%v", bo.TiKVBackoffer().GetTypes()), " ", ",")
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.GetTotalSleep(), backoffTypes)
+	}
+	if regionErr := resp.GetRegionError(); regionErr != nil {
+		logStr += fmt.Sprintf(" region_err:%s", regionErr.String())
 	}
 	// resp might be nil, but it is safe to call resp.GetXXX here.
 	detailV2 := resp.GetExecDetailsV2()
@@ -1756,7 +1746,11 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 	if resp.detail == nil {
 		resp.detail = new(CopRuntimeStats)
 	}
-	resp.detail.Stats = worker.kvclient.Stats
+	worker.collectCopRuntimeStats(resp.detail, bo, rpcCtx, resp)
+}
+
+func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) {
+	copStats.ReqStats = worker.kvclient.Stats
 	backoffTimes := bo.GetBackoffTimes()
 	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
@@ -1796,7 +1790,7 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 // CopRuntimeStats contains execution detail information.
 type CopRuntimeStats struct {
 	execdetails.ExecDetails
-	tikv.RegionRequestRuntimeStats
+	ReqStats *tikv.RegionRequestRuntimeStats
 
 	CoprCacheHit bool
 }
