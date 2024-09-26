@@ -183,7 +183,7 @@ func onCreateTable(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64,
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-	asyncNotifyEvent(jobCtx, createTableEvent, job)
+	asyncNotifyEvent(jobCtx, createTableEvent, job, nil)
 	return ver, errors.Trace(err)
 }
 
@@ -213,7 +213,7 @@ func createTableWithForeignKeys(jobCtx *jobContext, t *meta.Meta, job *model.Job
 		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-		asyncNotifyEvent(jobCtx, createTableEvent, job)
+		asyncNotifyEvent(jobCtx, createTableEvent, job, nil)
 		return ver, nil
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
@@ -269,7 +269,7 @@ func onCreateTables(jobCtx *jobContext, t *meta.Meta, job *model.Job) (int64, er
 	job.BinlogInfo.SetTableInfos(ver, tableInfos)
 	for i := range tableInfos {
 		createTableEvent := notifier.NewCreateTableEvent(tableInfos[i])
-		asyncNotifyEvent(jobCtx, createTableEvent, job)
+		asyncNotifyEvent(jobCtx, createTableEvent, job, nil)
 	}
 
 	return ver, errors.Trace(err)

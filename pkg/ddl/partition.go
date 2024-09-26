@@ -230,7 +230,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, t *meta.Meta, job *mode
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		addPartitionEvent := notifier.NewAddPartitionEvent(tblInfo, partInfo)
-		asyncNotifyEvent(jobCtx, addPartitionEvent, job)
+		asyncNotifyEvent(jobCtx, addPartitionEvent, job, w.sessPool)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
@@ -2330,7 +2330,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, t *meta.Meta, job *mod
 			tblInfo,
 			&model.PartitionInfo{Definitions: droppedDefs},
 		)
-		asyncNotifyEvent(jobCtx, dropPartitionEvent, job)
+		asyncNotifyEvent(jobCtx, dropPartitionEvent, job, w.sessPool)
 		// A background job will be created to delete old partition data.
 		args.OldPhysicalTblIDs = physicalTableIDs
 		job.FillFinishedArgs(args)
@@ -2424,7 +2424,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 			&model.PartitionInfo{Definitions: newPartitions},
 			&model.PartitionInfo{Definitions: oldPartitions},
 		)
-		asyncNotifyEvent(jobCtx, truncatePartitionEvent, job)
+		asyncNotifyEvent(jobCtx, truncatePartitionEvent, job, w.sessPool)
 		// A background job will be created to delete old partition data.
 		job.FillFinishedArgs(&model.TruncateTableArgs{
 			OldPartitionIDs: oldIDs,
@@ -2564,7 +2564,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 			&model.PartitionInfo{Definitions: newPartitions},
 			&model.PartitionInfo{Definitions: oldPartitions},
 		)
-		asyncNotifyEvent(jobCtx, truncatePartitionEvent, job)
+		asyncNotifyEvent(jobCtx, truncatePartitionEvent, job, w.sessPool)
 		// A background job will be created to delete old partition data.
 		job.FillFinishedArgs(&model.TruncateTableArgs{
 			OldPartitionIDs: oldIDs,
@@ -2937,7 +2937,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job 
 		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
 		originalNt,
 	)
-	asyncNotifyEvent(jobCtx, exchangePartitionEvent, job)
+	asyncNotifyEvent(jobCtx, exchangePartitionEvent, job, w.sessPool)
 	return ver, nil
 }
 
@@ -3489,7 +3489,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, t *meta.Meta, job *mo
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		asyncNotifyEvent(jobCtx, event, job)
+		asyncNotifyEvent(jobCtx, event, job, w.sessPool)
 		// A background job will be created to delete old partition data.
 		args, err := model.GetTablePartitionArgs(job)
 		if err != nil {

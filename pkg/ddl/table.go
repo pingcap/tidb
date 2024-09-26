@@ -128,7 +128,7 @@ func onDropTableOrView(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver in
 		})
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
 			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
-			asyncNotifyEvent(jobCtx, dropTableEvent, job)
+			asyncNotifyEvent(jobCtx, dropTableEvent, job, nil)
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
@@ -576,7 +576,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, t *meta.Meta, job *model.Jo
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
-	asyncNotifyEvent(jobCtx, truncateTableEvent, job)
+	asyncNotifyEvent(jobCtx, truncateTableEvent, job, nil)
 	// see truncateTableByReassignPartitionIDs for why they might change.
 	args.OldPartitionIDs = oldPartitionIDs
 	args.NewPartitionIDs = newPartitionIDs
