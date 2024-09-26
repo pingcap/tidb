@@ -182,6 +182,7 @@ var ActionMap = map[ActionType]string{
 	ActionDropResourceGroup:             "drop resource group",
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
+	ActionAddVectorIndex:                "add vector index",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -748,7 +749,7 @@ func (job *Job) IsPausing() bool {
 
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
-	// TODO: We can remove it after TiFlash support pause operation.
+	// TODO: We can remove it after TiFlash supports the pause operation.
 	if job.Type == ActionAddVectorIndex && job.SchemaState == StateWriteReorganization {
 		return false
 	}

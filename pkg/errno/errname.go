@@ -1158,6 +1158,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTiKVServerBusy:            mysql.Message("TiKV server is busy", nil),
 	ErrTiFlashServerTimeout:      mysql.Message("TiFlash server timeout", nil),
 	ErrTiFlashServerBusy:         mysql.Message("TiFlash server is busy", nil),
+	ErrTiFlashBackfillIndex:      mysql.Message("TiFlash backfill index failed: %s", nil),
 	ErrResolveLockTimeout:        mysql.Message("Resolve lock timeout", nil),
 	ErrRegionUnavailable:         mysql.Message("Region is unavailable", nil),
 	ErrGCTooEarly:                mysql.Message("GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v", nil),

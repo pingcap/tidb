@@ -509,6 +509,38 @@ func checkGeneratedColumn(ctx sessionctx.Context, schemaName pmodel.CIStr, table
 	return nil
 }
 
+func checkVectorIndexIfNeedTiFlashReplica(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+	var hasVectorIndex bool
+	for _, idx := range tblInfo.Indices {
+		if idx.VectorInfo != nil {
+			hasVectorIndex = true
+			break
+		}
+	}
+	if !hasVectorIndex {
+		return nil
+	}
+
+	if tblInfo.TiFlashReplica == nil {
+		replicas, err := infoschema.GetTiFlashStoreCount(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if replicas == 0 {
+			return errors.Trace(dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
+		}
+
+		// Always try to set to 1 as the default replica count.
+		defaultReplicas := uint64(1)
+		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:          defaultReplicas,
+			LocationLabels: make([]string, 0),
+		}
+	}
+
+	return errors.Trace(checkTableTypeForVectorIndex(tblInfo))
+}
+
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
 // table info comes from untrusted source and performs further checks such as
 // name length and column count.
@@ -535,6 +567,10 @@ func checkTableInfoValidExtra(ctx sessionctx.Context, tbInfo *model.TableInfo) e
 		return errors.Trace(err)
 	}
 	if err := checkGlobalIndexes(ctx, tbInfo); err != nil {
+		return errors.Trace(err)
+	}
+	// A special rule on Serverless is to add TiFlash replica by default if there is a vector index.
+	if err := checkVectorIndexIfNeedTiFlashReplica(ctx, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1161,14 +1197,13 @@ func BuildTableInfo(
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
-		if constr.Tp == ast.ConstraintVector {
-			return nil, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("not currently supported")
-		}
-
-		// Build hidden columns if necessary.
-		hiddenCols, err := buildHiddenColumnInfoWithCheck(ctx, constr.Keys, pmodel.NewCIStr(constr.Name), tbInfo, tblColumns)
-		if err != nil {
-			return nil, err
+		var hiddenCols []*model.ColumnInfo
+		if constr.Tp != ast.ConstraintVector {
+			// Build hidden columns if necessary.
+			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, pmodel.NewCIStr(constr.Name), tbInfo, tblColumns)
+			if err != nil {
+				return nil, err
+			}
 		}
 		for _, hiddenCol := range hiddenCols {
 			hiddenCol.State = model.StatePublic
@@ -1233,11 +1268,11 @@ func BuildTableInfo(
 		}
 
 		var (
-			indexName       = constr.Name
-			primary, unique bool
+			indexName               = constr.Name
+			primary, unique, vector bool
 		)
 
-		// Check if the index is primary or unique.
+		// Check if the index is primary, unique or vector.
 		switch constr.Tp {
 		case ast.ConstraintPrimaryKey:
 			primary = true
@@ -1245,6 +1280,11 @@ func BuildTableInfo(
 			indexName = mysql.PrimaryKeyName
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			unique = true
+		case ast.ConstraintVector:
+			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
+			}
+			vector = true
 		}
 
 		// check constraint
@@ -1317,7 +1357,7 @@ func BuildTableInfo(
 			pmodel.NewCIStr(indexName),
 			primary,
 			unique,
-			false,
+			vector,
 			constr.Keys,
 			constr.Option,
 			model.StatePublic,

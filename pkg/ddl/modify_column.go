@@ -62,6 +62,16 @@ type modifyingColInfo struct {
 	removedIdxs           []int64
 }
 
+func hasVectorIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool {
+	indexesToChange := FindRelatedIndexesToChange(tblInfo, col.Name)
+	for _, idx := range indexesToChange {
+		if idx.IndexInfo.VectorInfo != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, tblInfo, oldCol, modifyInfo, err := getModifyColumnInfo(t, job)
 	if err != nil {
@@ -112,6 +122,9 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job
 	if tblInfo.Partition != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table"))
+	}
+	if hasVectorIndexColumn(tblInfo, oldCol) {
+		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column"))
 	}
 
 	changingCol := modifyInfo.changingCol
@@ -761,6 +774,9 @@ func GetModifiableColumnJob(
 		}
 		if t.Meta().Partition != nil {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
+		}
+		if hasVectorIndexColumn(t.Meta(), col.ColumnInfo) {
+			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column")
 		}
 	}
 
