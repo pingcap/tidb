@@ -141,6 +141,20 @@ func TestIndexAdvisorFixControl43817(t *testing.T) {
 	check(nil, t, tk, "err", "select * from t1 where a=(select max(a) from t2)")
 	check(nil, t, tk, "err",
 		"select * from t1 where a=(select max(a) from t2); select * from t1 where b=1")
+	check(nil, t, tk, "err",
+		"select * from t1 where a=(select max(a) from t2);select a from t1 where a=1")
+
+	querySet := s.NewSet[indexadvisor.Query]()
+	querySet.Add(indexadvisor.Query{SchemaName: "test",
+		Text: "select * from t1 where a=(select max(a) from t2)", Frequency: 1})
+	ctx := context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
+	check(ctx, t, tk, "err", "") // empty query set after filtering invalid queries
+	querySet.Add(indexadvisor.Query{SchemaName: "test",
+		Text: "select * from t1 where a=(select max(a) from t2); select * from t1 where b=1", Frequency: 1})
+	check(ctx, t, tk, "err", "") // empty query set after filtering invalid queries
+	querySet.Add(indexadvisor.Query{SchemaName: "test",
+		Text: "select a from t1 where a=1", Frequency: 1})
+	check(ctx, t, tk, "test.t1.a", "") // invalid queries would be ignored
 }
 
 func TestIndexAdvisorView(t *testing.T) {
