@@ -32,8 +32,7 @@ local TiDBResourceControlDash = dashboard.new(
   graphTooltip="shared_crosshair",
   refresh="30s",
   time_from="now-1h",
-)
-                                .addInput(
+).addInput(
   name=myNameFlag,
   label="test-cluster",
   type="datasource",
@@ -817,7 +816,6 @@ local BackgroundTaskRUPanel = graphPanel.new(
 );
 
 // Background Task Resource Utilization
-
 local BackgroundTaskResourceUtilizationPanel = graphPanel.new(
   title="Background Task Resource Utilization",
   datasource=myDS,
