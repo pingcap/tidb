@@ -52,6 +52,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
@@ -540,8 +541,14 @@ func doRequest(
 					zap.String("leader", leaderAddr),
 					errMsgField,
 				)
-				if leaderAddr != "" && leaderAddr != addr {
-					req2, err2 := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+				leaderIsUsed := leaderAddr == addr
+				if intest.InTest {
+					leaderIsUsed = false
+				}
+
+				if leaderAddr != "" && !leaderIsUsed {
+					url2 := util2.ComposeURL(leaderAddr, route)
+					req2, err2 := http.NewRequestWithContext(ctx, method, url2, bytes.NewReader(body))
 					if err2 != nil {
 						return nil, err2
 					}
