@@ -63,6 +63,16 @@ const (
 	TestHandlerID HandlerID = 0
 )
 
+// String implements fmt.Stringer interface.
+func (id HandlerID) String() string {
+	switch id {
+	case TestHandlerID:
+		return "TestHandler"
+	default:
+		return fmt.Sprintf("HandlerID(%d)", id)
+	}
+}
+
 // RegisterHandler must be called with an exclusive and fixed HandlerID for each
 // handler to register the handler. Illegal ID will panic. RegisterHandler should
 // not be called after the global ddlNotifier is started.
@@ -87,8 +97,13 @@ type ddlNotifier struct {
 	store        Store
 	handlers     map[HandlerID]SchemaChangeHandler
 	pollInterval time.Duration
+
+	// handlersBitMap is set to the full bitmap of all registered handlers in Start.
+	handlersBitMap uint64
 }
 
+// TODO(lance6716): remove this global variable. Move it into Domain and make
+// related functions a member of it.
 var globalDDLNotifier *ddlNotifier
 
 // InitDDLNotifier initializes the global ddlNotifier. It should be called only
@@ -118,7 +133,12 @@ func StartDDLNotifier(ctx context.Context) {
 
 // Start starts the ddlNotifier. It will block until the context is canceled.
 func (n *ddlNotifier) Start(ctx context.Context) {
+	for id := range n.handlers {
+		n.handlersBitMap |= 1 << id
+	}
+
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDDLNotifier)
+	ctx = logutil.WithCategory(ctx, "ddl-notifier")
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 	for {
@@ -154,17 +174,32 @@ func (n *ddlNotifier) processEvents(ctx context.Context) error {
 					logutil.Logger(ctx).Error("Error processing change",
 						zap.Int64("ddlJobID", change.ddlJobID),
 						zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
-						zap.Int("handlerID", int(handlerID)),
+						zap.Stringer("handler", handlerID),
 						zap.Error(err2))
 				}
 				continue
 			}
 		}
-		// TODO: remove the processed change after all handlers processed it.
+
+		if change.processedByFlag == n.handlersBitMap {
+			if err2 := n.store.DeleteAndCommit(
+				ctx,
+				sess.NewSession(n.ownedSCtx),
+				change.ddlJobID,
+				int(change.multiSchemaChangeSeq),
+			); err2 != nil {
+				logutil.Logger(ctx).Error("Error deleting change",
+					zap.Int64("ddlJobID", change.ddlJobID),
+					zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
+					zap.Error(err2))
+			}
+		}
 	}
 
 	return nil
 }
+
+const slowHandlerLogThreshold = time.Second * 5
 
 func (n *ddlNotifier) processEventForHandler(
 	ctx context.Context,
@@ -189,9 +224,17 @@ func (n *ddlNotifier) processEventForHandler(
 		}
 	}()
 
-	// TODO: Should we attach a timeout to this ctx?
+	now := time.Now()
 	if err = handler(ctx, n.ownedSCtx, change.event); err != nil {
 		return errors.Trace(err)
+	}
+	if time.Since(now) > slowHandlerLogThreshold {
+		logutil.Logger(ctx).Warn("Slow process event",
+			zap.Stringer("handler", handlerID),
+			zap.Int64("ddlJobID", change.ddlJobID),
+			zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
+			zap.Stringer("event", change.event),
+			zap.Duration("duration", time.Since(now)))
 	}
 
 	newFlag := change.processedByFlag | (1 << handlerID)

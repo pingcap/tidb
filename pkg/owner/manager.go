@@ -500,6 +500,16 @@ func init() {
 	}
 }
 
+// DeleteLeader deletes the leader key.
+func DeleteLeader(ctx context.Context, cli *clientv3.Client, key string) error {
+	ownerKey, _, _, _, _, err := getOwnerInfo(ctx, ctx, cli, key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = cli.Delete(ctx, ownerKey)
+	return err
+}
+
 // AcquireDistributedLock creates a mutex with ETCD client, and returns a mutex release function.
 func AcquireDistributedLock(
 	ctx context.Context,
@@ -512,7 +522,14 @@ func AcquireDistributedLock(
 		return nil, err
 	}
 	mu := concurrency.NewMutex(se, key)
-	err = mu.Lock(ctx)
+	maxRetryCnt := 10
+	err = util2.RunWithRetry(maxRetryCnt, util2.RetryInterval, func() (bool, error) {
+		err = mu.Lock(ctx)
+		if err != nil {
+			return true, err
+		}
+		return false, nil
+	})
 	if err != nil {
 		err1 := se.Close()
 		if err1 != nil {

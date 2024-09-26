@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	s "github.com/pingcap/tidb/pkg/util/set"
@@ -44,23 +45,30 @@ type Option struct {
 	SpecifiedSQLs []string
 }
 
-// AdviseIndexes is the only entry point for the index advisor.
+// AdviseIndexes is the entry point for the index advisor.
 func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
+	userSQLs []string, userOptions []ast.RecommendIndexOption) ([]*Recommendation, error) {
+	advisorLogger().Info("fill index advisor option")
+	option := &Option{SpecifiedSQLs: userSQLs}
+	if err := fillOption(sctx, option, userOptions); err != nil {
+		advisorLogger().Error("fill index advisor option failed", zap.Error(err))
+		return nil, err
+	}
+
+	return adviseIndexesWithOption(ctx, sctx, option)
+}
+
+func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 	option *Option) (results []*Recommendation, err error) {
 	if ctx == nil || sctx == nil || option == nil {
 		return nil, errors.New("nil input")
 	}
 
-	advisorLogger().Info("fill index advisor option")
-	if err := fillOption(sctx, option); err != nil {
-		advisorLogger().Error("fill index advisor option failed", zap.Error(err))
-		return nil, err
-	}
 	advisorLogger().Info("index advisor option filled and start", zap.Any("option", option))
 	defer func() {
 		if r := recover(); r != nil {
-			advisorLogger().Error("panic in AdviseIndexes", zap.Any("recover", r))
-			err = fmt.Errorf("panic in AdviseIndexes: %v", r)
+			advisorLogger().Error("panic in AdviseIndexesWithOption", zap.Any("recover", r))
+			err = fmt.Errorf("panic in AdviseIndexesWithOption: %v", r)
 		}
 	}()
 
