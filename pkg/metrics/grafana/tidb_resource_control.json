@@ -118,7 +118,7 @@
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{name}}",
+              "legendFormat": "tp-{{name}}",
               "refId": "A",
               "step": 40
             },
@@ -128,8 +128,30 @@
               "hide": false,
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "total",
+              "legendFormat": "tp-total",
               "refId": "B"
+            },
+            {
+                "exemplar": true,
+                "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[1m])) by (name) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[1m])) by (name)",
+                "format": "time_series",
+                "hide": false,
+                "interval": "",
+                "intervalFactor": 2,
+                "legendFormat": "ap-{{name}}",
+                "refId": "C",
+                "step": 40
+            },
+            {
+                "exemplar": true,
+                "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[1m]))",
+                "format": "time_series",
+                "hide": false,
+                "interval": "",
+                "intervalFactor": 2,
+                "legendFormat": "ap-total",
+                "refId": "D",
+                "step": 40
             }
           ],
           "thresholds": [],
