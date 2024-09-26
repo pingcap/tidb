@@ -1173,9 +1173,8 @@ func (*LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPl
 		return child
 	}
 	physicalProj := PhysicalProjection{
-		Exprs:                proj.Exprs,
-		CalculateNoDelay:     proj.CalculateNoDelay,
-		AvoidColumnEvaluator: proj.AvoidColumnEvaluator,
+		Exprs:            proj.Exprs,
+		CalculateNoDelay: proj.CalculateNoDelay,
 	}.Init(proj.SCtx(), proj.StatsInfo(), proj.SelectBlockOffset(), nil)
 	physicalProj.SetChildren(child)
 	return physicalProj
@@ -2666,9 +2665,8 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	ret := make([]PhysicalPlan, 0, len(newProps))
 	for _, newProp := range newProps {
 		proj := PhysicalProjection{
-			Exprs:                p.Exprs,
-			CalculateNoDelay:     p.CalculateNoDelay,
-			AvoidColumnEvaluator: p.AvoidColumnEvaluator,
+			Exprs:            p.Exprs,
+			CalculateNoDelay: p.CalculateNoDelay,
 		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.SelectBlockOffset(), newProp)
 		proj.SetSchema(p.schema)
 		ret = append(ret, proj)
