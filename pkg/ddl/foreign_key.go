@@ -22,8 +22,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -38,26 +39,26 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, t *meta.Meta, job *model
 		return ver, errors.Trace(err)
 	}
 
-	var fkInfo model.FKInfo
-	var fkCheck bool
-	err = job.DecodeArgs(&fkInfo, &fkCheck)
+	args, err := model.GetAddForeignKeyArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	fkInfo, fkCheck := args.FkInfo, args.FkCheck
+
 	if job.IsRollingback() {
 		return dropForeignKey(jobCtx, t, job, tblInfo, fkInfo.Name)
 	}
 	switch job.SchemaState {
 	case model.StateNone:
-		err = checkAddForeignKeyValidInOwner(jobCtx.infoCache, job.SchemaName, tblInfo, &fkInfo, fkCheck)
+		err = checkAddForeignKeyValidInOwner(jobCtx.infoCache, job.SchemaName, tblInfo, fkInfo, fkCheck)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
 		fkInfo.State = model.StateWriteOnly
 		fkInfo.ID = allocateFKIndexID(tblInfo)
-		tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
+		tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, fkInfo)
 		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -65,7 +66,7 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, t *meta.Meta, job *model
 		job.SchemaState = model.StateWriteOnly
 		return ver, nil
 	case model.StateWriteOnly:
-		err = checkForeignKeyConstrain(w, job.SchemaName, tblInfo.Name.L, &fkInfo, fkCheck)
+		err = checkForeignKeyConstrain(w, job.SchemaName, tblInfo.Name.L, fkInfo, fkCheck)
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, err
@@ -98,16 +99,15 @@ func onDropForeignKey(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int
 		return ver, errors.Trace(err)
 	}
 
-	var fkName model.CIStr
-	err = job.DecodeArgs(&fkName)
+	args, err := model.GetDropForeignKeyArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	return dropForeignKey(jobCtx, t, job, tblInfo, fkName)
+	return dropForeignKey(jobCtx, t, job, tblInfo, args.FkName)
 }
 
-func dropForeignKey(jobCtx *jobContext, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, fkName model.CIStr) (ver int64, err error) {
+func dropForeignKey(jobCtx *jobContext, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, fkName pmodel.CIStr) (ver int64, err error) {
 	var fkInfo *model.FKInfo
 	for _, fk := range tblInfo.ForeignKeys {
 		if fk.Name.L == fkName.L {
@@ -404,13 +404,12 @@ func checkDropTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache,
 	if !variable.EnableForeignKey.Load() {
 		return nil
 	}
-	var objectIdents []ast.Ident
-	var fkCheck bool
-	err := job.DecodeArgs(&objectIdents, &fkCheck)
+	args, err := model.GetDropTableArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return errors.Trace(err)
 	}
+	objectIdents, fkCheck := args.Identifiers, args.FKCheck
 	referredFK, err := checkTableHasForeignKeyReferredInOwner(infoCache, job.SchemaName, job.TableName, objectIdents, fkCheck)
 	if err != nil {
 		return err
@@ -424,7 +423,7 @@ func checkDropTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache,
 }
 
 func checkTruncateTableHasForeignKeyReferredInOwner(infoCache *infoschema.InfoCache, job *model.Job, tblInfo *model.TableInfo, fkCheck bool) error {
-	referredFK, err := checkTableHasForeignKeyReferredInOwner(infoCache, job.SchemaName, job.TableName, []ast.Ident{{Name: tblInfo.Name, Schema: model.NewCIStr(job.SchemaName)}}, fkCheck)
+	referredFK, err := checkTableHasForeignKeyReferredInOwner(infoCache, job.SchemaName, job.TableName, []ast.Ident{{Name: tblInfo.Name, Schema: pmodel.NewCIStr(job.SchemaName)}}, fkCheck)
 	if err != nil {
 		return err
 	}
@@ -457,7 +456,7 @@ func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName string, tbInf
 		}
 		remainIdxs = append(remainIdxs, idx)
 	}
-	checkFn := func(cols []model.CIStr) error {
+	checkFn := func(cols []pmodel.CIStr) error {
 		if !model.IsIndexPrefixCovered(tbInfo, idxInfo, cols...) {
 			return nil
 		}
@@ -563,7 +562,7 @@ func (h *foreignKeyHelper) getLoadedTables() []schemaIDAndTableInfo {
 	return tableList
 }
 
-func (h *foreignKeyHelper) getTableFromStorage(is infoschema.InfoSchema, t *meta.Meta, schema, table model.CIStr) (result schemaIDAndTableInfo, _ error) {
+func (h *foreignKeyHelper) getTableFromStorage(is infoschema.InfoSchema, t *meta.Meta, schema, table pmodel.CIStr) (result schemaIDAndTableInfo, _ error) {
 	k := schemaAndTable{schema: schema.L, table: table.L}
 	if info, ok := h.loaded[k]; ok {
 		return info, nil
@@ -585,19 +584,19 @@ func (h *foreignKeyHelper) getTableFromStorage(is infoschema.InfoSchema, t *meta
 	return result, nil
 }
 
-func checkDatabaseHasForeignKeyReferred(ctx context.Context, is infoschema.InfoSchema, schema model.CIStr, fkCheck bool) error {
+func checkDatabaseHasForeignKeyReferred(ctx context.Context, is infoschema.InfoSchema, schema pmodel.CIStr, fkCheck bool) error {
 	if !fkCheck {
 		return nil
 	}
-	tables, err := is.SchemaTableInfos(ctx, schema)
+	tableNameInfos, err := is.SchemaSimpleTableInfos(ctx, schema)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tableNames := make([]ast.Ident, len(tables))
-	for i := range tables {
-		tableNames[i] = ast.Ident{Schema: schema, Name: tables[i].Name}
+	tableNames := make([]ast.Ident, len(tableNameInfos))
+	for i := range tableNameInfos {
+		tableNames[i] = ast.Ident{Schema: schema, Name: tableNameInfos[i].Name}
 	}
-	for _, tbl := range tables {
+	for _, tbl := range tableNameInfos {
 		if referredFK := checkTableHasForeignKeyReferred(is, schema.L, tbl.Name.L, tableNames, fkCheck); referredFK != nil {
 			return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tbl.Name, referredFK.ChildFKName, referredFK.ChildTable))
 		}
@@ -609,24 +608,24 @@ func checkDatabaseHasForeignKeyReferredInOwner(jobCtx *jobContext, job *model.Jo
 	if !variable.EnableForeignKey.Load() {
 		return nil
 	}
-	var fkCheck bool
-	err := job.DecodeArgs(&fkCheck)
+	args, err := model.GetDropSchemaArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return errors.Trace(err)
 	}
+	fkCheck := args.FKCheck
 	if !fkCheck {
 		return nil
 	}
 	is := jobCtx.infoCache.GetLatest()
-	err = checkDatabaseHasForeignKeyReferred(jobCtx.ctx, is, model.NewCIStr(job.SchemaName), fkCheck)
+	err = checkDatabaseHasForeignKeyReferred(jobCtx.ctx, is, pmodel.NewCIStr(job.SchemaName), fkCheck)
 	if err != nil {
 		job.State = model.JobStateCancelled
 	}
 	return errors.Trace(err)
 }
 
-func checkFKDupName(tbInfo *model.TableInfo, fkName model.CIStr) error {
+func checkFKDupName(tbInfo *model.TableInfo, fkName pmodel.CIStr) error {
 	for _, fkInfo := range tbInfo.ForeignKeys {
 		if fkName.L == fkInfo.Name.L {
 			return dbterror.ErrFkDupName.GenWithStackByArgs(fkName.O)

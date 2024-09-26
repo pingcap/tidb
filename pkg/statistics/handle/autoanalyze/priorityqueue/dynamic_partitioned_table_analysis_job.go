@@ -84,6 +84,11 @@ func NewDynamicPartitionedTableAnalysisJob(
 	}
 }
 
+// GetTableID gets the table ID of the job.
+func (j *DynamicPartitionedTableAnalysisJob) GetTableID() int64 {
+	return j.GlobalTableID
+}
+
 // Analyze analyzes the partitions or partition indexes.
 func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
@@ -103,6 +108,11 @@ func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 // GetIndicators returns the indicators of the table.
 func (j *DynamicPartitionedTableAnalysisJob) GetIndicators() Indicators {
 	return j.Indicators
+}
+
+// SetIndicators sets the indicators of the table.
+func (j *DynamicPartitionedTableAnalysisJob) SetIndicators(indicators Indicators) {
+	j.Indicators = indicators
 }
 
 // HasNewlyAddedIndex checks whether the job has newly added index.

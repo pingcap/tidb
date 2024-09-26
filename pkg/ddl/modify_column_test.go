@@ -25,8 +25,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -93,7 +94,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 			currJob = job
 			var (
 				_newCol                *model.ColumnInfo
-				_oldColName            *model.CIStr
+				_oldColName            *pmodel.CIStr
 				_pos                   = &ast.ColumnPosition{}
 				_modifyColumnTp        byte
 				_updatedAutoRandomBits uint64

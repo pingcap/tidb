@@ -106,10 +106,12 @@ func (eqh *Handle) Run() {
 						sm.Kill(info.ID, true, false, false)
 					}
 				}
-				if info.RunawayChecker != nil && info.RunawayChecker.CheckRuleKillAction() {
-					logutil.BgLogger().Warn("runaway query timeout", zap.Duration("costTime", costTime), zap.String("groupName", info.ResourceGroupName),
-						zap.String("rule", info.RunawayChecker.Rule()), zap.String("processInfo", info.String()))
-					sm.Kill(info.ID, true, false, true)
+				if info.RunawayChecker != nil {
+					if cause, kill := info.RunawayChecker.CheckRuleKillAction(); kill {
+						logutil.BgLogger().Warn("runaway query timeout", zap.Duration("costTime", costTime), zap.String("groupName", info.ResourceGroupName),
+							zap.String("exceedCause", cause), zap.String("processInfo", info.String()))
+						sm.Kill(info.ID, true, false, true)
+					}
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)

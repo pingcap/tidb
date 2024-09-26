@@ -1742,6 +1742,38 @@ func TestTiDBSchemaCacheSize(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestEnableWindowFunction(t *testing.T) {
+	vars := NewSessionVars(nil)
+	require.Equal(t, vars.EnableWindowFunction, DefEnableWindowFunction)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "on"))
+	require.Equal(t, vars.EnableWindowFunction, true)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "0"))
+	require.Equal(t, vars.EnableWindowFunction, false)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "1"))
+	require.Equal(t, vars.EnableWindowFunction, true)
+}
+
+func TestTiDBHashJoinVersion(t *testing.T) {
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(TiDBHashJoinVersion)
+	// set error value
+	_, err := sv.Validation(vars, "invalid", "invalid", ScopeSession)
+	require.NotNil(t, err)
+	// set valid value
+	_, err = sv.Validation(vars, "legacy", "legacy", ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "optimized", "optimized", ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "Legacy", "Legacy", ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "Optimized", "Optimized", ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "LegaCy", "LegaCy", ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "OptimiZed", "OptimiZed", ScopeSession)
+	require.NoError(t, err)
+}
+
 func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 	vars := NewSessionVars(nil)
 

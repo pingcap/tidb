@@ -30,13 +30,13 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -102,6 +102,7 @@ type litBackendCtx struct {
 	updateInterval  time.Duration
 	checkpointMgr   *CheckpointManager
 	etcdClient      *clientv3.Client
+	initTS          uint64
 
 	// unregisterMu prevents concurrent calls of `FinishAndUnregisterEngines`.
 	// For details, see https://github.com/pingcap/tidb/issues/53843.
@@ -149,20 +150,12 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
 	dupeController := bc.backend.GetDupeController(bc.cfg.WorkerConcurrency, nil)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-		SysVars: bc.sysVars,
-		IndexID: indexID,
+		SQLMode:     mysql.ModeStrictAllTables,
+		SysVars:     bc.sysVars,
+		IndexID:     indexID,
+		MinCommitTS: bc.initTS,
 	}, lightning.ErrorOnDup)
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
-}
-
-func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
-	mu := concurrency.NewMutex(se, key)
-	err := mu.Lock(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return mu, nil
 }
 
 // Flush implements FlushController.
@@ -191,28 +184,17 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err erro
 		return true, false, nil
 	}
 
-	// Use distributed lock if run in distributed mode).
 	if bc.etcdClient != nil {
-		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d", bc.jobID)
-		se, _ := concurrency.NewSession(bc.etcdClient)
-		mu, err := acquireLock(bc.ctx, se, distLockKey)
+		key := fmt.Sprintf("/tidb/distributeLock/%d", bc.jobID)
+		release, err := owner.AcquireDistributedLock(bc.ctx, bc.etcdClient, key, 10)
 		if err != nil {
-			return true, false, errors.Trace(err)
+			return true, false, err
 		}
-		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
-		defer func() {
-			err = mu.Unlock(bc.ctx)
-			if err != nil {
-				logutil.Logger(bc.ctx).Warn("release distributed flush lock error", zap.Error(err), zap.Int64("jobID", bc.jobID))
-			} else {
-				logutil.Logger(bc.ctx).Info("release distributed flush lock success", zap.Int64("jobID", bc.jobID))
-			}
-			err = se.Close()
-			if err != nil {
-				logutil.Logger(bc.ctx).Warn("close session error", zap.Error(err))
-			}
-		}()
+		if release != nil {
+			defer release()
+		}
 	}
+
 	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
 		if MockDMLExecutionStateBeforeImport != nil {
 			MockDMLExecutionStateBeforeImport()
@@ -254,6 +236,8 @@ func (bc *litBackendCtx) Flush(mode FlushMode) (flushed, imported bool, err erro
 
 	return true, true, err
 }
+
+const distributedLockLease = 10 // Seconds
 
 func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 	logger := log.FromContext(bc.ctx).With(

@@ -33,8 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -188,7 +189,12 @@ func onDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.Args = append(job.Args, indexInfosToIDList(idxInfos))
+		dropColumnArgs, err := model.GetDropColumnArgs(job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		dropColumnArgs.IndexIDs = indexInfosToIDList(idxInfos)
+		job.FillArgs(dropColumnArgs)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		colInfo.State = model.StateDeleteReorganization
@@ -214,7 +220,12 @@ func onDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, 
 		} else {
 			// We should set related index IDs for job
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, getPartitionIDs(tblInfo))
+			dropColumnArgs, err := model.GetDropColumnArgs(job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			dropColumnArgs.PartitionIDs = getPartitionIDs(tblInfo)
+			job.FillArgs(dropColumnArgs)
 		}
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State))
@@ -230,16 +241,13 @@ func checkDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (*model.T
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
-	var colName model.CIStr
-	var ifExists bool
-	// indexIDs is used to make sure we don't truncate args when decoding the rawArgs.
-	var indexIDs []int64
-	err = job.DecodeArgs(&colName, &ifExists, &indexIDs)
+	dropColumnArgs, err := model.GetDropColumnArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
 	}
 
+	colName, ifExists := dropColumnArgs.ColName, dropColumnArgs.IfExists
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil || colInfo.Hidden {
 		job.State = model.JobStateCancelled
@@ -259,7 +267,7 @@ func checkDropColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (*model.T
 	return tblInfo, colInfo, idxInfos, false, nil
 }
 
-func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
+func isDroppableColumn(tblInfo *model.TableInfo, colName pmodel.CIStr) error {
 	if ok, dep, isHidden := hasDependentByGeneratedColumn(tblInfo, colName); ok {
 		if isHidden {
 			return dbterror.ErrDependentByFunctionalIndex.GenWithStackByArgs(dep)
@@ -294,7 +302,7 @@ func onSetDefaultValue(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver in
 	return updateColumnDefaultValue(jobCtx, t, job, newCol, &newCol.Name)
 }
 
-func setIdxIDName(idxInfo *model.IndexInfo, newID int64, newName model.CIStr) {
+func setIdxIDName(idxInfo *model.IndexInfo, newID int64, newName pmodel.CIStr) {
 	idxInfo.ID = newID
 	idxInfo.Name = newName
 }
@@ -328,7 +336,7 @@ func removeChangingColAndIdxs(tblInfo *model.TableInfo, changingColID int64) {
 }
 
 func replaceOldColumn(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo,
-	newName model.CIStr) *model.ColumnInfo {
+	newName pmodel.CIStr) *model.ColumnInfo {
 	tblInfo.MoveColumnInfo(changingCol.Offset, len(tblInfo.Columns)-1)
 	changingCol = updateChangingCol(changingCol, newName, oldCol.Offset)
 	tblInfo.Columns[oldCol.Offset] = changingCol
@@ -359,7 +367,7 @@ func replaceOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo
 		idxName := getChangingIndexOriginName(cIdx)
 		for i, idx := range tblInfo.Indices {
 			if strings.EqualFold(idxName, idx.Name.O) {
-				cIdx.Name = model.NewCIStr(idxName)
+				cIdx.Name = pmodel.NewCIStr(idxName)
 				tblInfo.Indices[i] = cIdx
 				break
 			}
@@ -369,7 +377,7 @@ func replaceOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo
 
 // updateNewIdxColsNameOffset updates the name&offset of the index column.
 func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
-	oldName model.CIStr, changingCol *model.ColumnInfo) {
+	oldName pmodel.CIStr, changingCol *model.ColumnInfo) {
 	for _, idx := range changingIdxs {
 		for _, col := range idx.Columns {
 			if col.Name.L == oldName.L {
@@ -380,7 +388,7 @@ func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
 }
 
 // filterIndexesToRemove filters out the indexes that can be removed.
-func filterIndexesToRemove(changingIdxs []*model.IndexInfo, colName model.CIStr, tblInfo *model.TableInfo) []*model.IndexInfo {
+func filterIndexesToRemove(changingIdxs []*model.IndexInfo, colName pmodel.CIStr, tblInfo *model.TableInfo) []*model.IndexInfo {
 	indexesToRemove := make([]*model.IndexInfo, 0, len(changingIdxs))
 	for _, idx := range changingIdxs {
 		var hasOtherChangingCol bool
@@ -401,7 +409,7 @@ func filterIndexesToRemove(changingIdxs []*model.IndexInfo, colName model.CIStr,
 	return indexesToRemove
 }
 
-func updateChangingCol(col *model.ColumnInfo, newName model.CIStr, newOffset int) *model.ColumnInfo {
+func updateChangingCol(col *model.ColumnInfo, newName pmodel.CIStr, newOffset int) *model.ColumnInfo {
 	col.Name = newName
 	col.ChangeStateInfo = nil
 	col.Offset = newOffset
@@ -605,17 +613,10 @@ type updateColumnWorker struct {
 }
 
 func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*updateColumnWorker, error) {
-	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, "update_col_rate", false)
+	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, "update_col_rate", false, true)
 	if err != nil {
 		return nil, err
 	}
-
-	sessCtx := bCtx.sessCtx
-	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(
-		sessCtx.GetSessionVars().StmtCtx.TypeFlags().
-			WithIgnoreZeroDateErr(!reorgInfo.ReorgMeta.SQLMode.HasStrictMode()))
-	bCtx.exprCtx = bCtx.sessCtx.GetExprCtx()
-	bCtx.tblCtx = bCtx.sessCtx.GetTableCtx()
 
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		logutil.DDLLogger().Error("Element type for updateColumnWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
@@ -995,7 +996,7 @@ func applyNewAutoRandomBits(jobCtx *jobContext, m *meta.Meta, dbInfo *model.DBIn
 
 // checkForNullValue ensure there are no null values of the column of this table.
 // `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
-func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTruncated bool, schema, table model.CIStr, newCol *model.ColumnInfo, oldCols ...*model.ColumnInfo) error {
+func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTruncated bool, schema, table pmodel.CIStr, newCol *model.ColumnInfo, oldCols ...*model.ColumnInfo) error {
 	needCheckNullValue := false
 	for _, oldCol := range oldCols {
 		if oldCol.GetType() != mysql.TypeTimestamp && newCol.GetType() == mysql.TypeTimestamp {
@@ -1036,7 +1037,7 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 	return nil
 }
 
-func updateColumnDefaultValue(jobCtx *jobContext, t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
+func updateColumnDefaultValue(jobCtx *jobContext, t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *pmodel.CIStr) (ver int64, _ error) {
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -1310,8 +1311,8 @@ func getChangingColumnOriginName(changingColumn *model.ColumnInfo) string {
 	return columnName[:pos]
 }
 
-func getExpressionIndexOriginName(expressionIdx *model.ColumnInfo) string {
-	columnName := strings.TrimPrefix(expressionIdx.Name.O, expressionIndexPrefix+"_")
+func getExpressionIndexOriginName(originalName pmodel.CIStr) string {
+	columnName := strings.TrimPrefix(originalName.O, expressionIndexPrefix+"_")
 	var pos int
 	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
 		return columnName

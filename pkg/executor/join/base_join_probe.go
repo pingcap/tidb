@@ -70,6 +70,8 @@ type ProbeV2 interface {
 	GetProbeCollision() uint64
 	// Reset probe collsion
 	ResetProbeCollision()
+	// Clear probe state
+	ClearProbeState()
 }
 
 type offsetAndLength struct {
@@ -86,12 +88,6 @@ type matchedRowInfo struct {
 	buildRowOffset int
 }
 
-func createMatchRowInfo(probeRowIndex int, buildRowStart unsafe.Pointer) *matchedRowInfo {
-	ret := &matchedRowInfo{probeRowIndex: probeRowIndex}
-	*(*unsafe.Pointer)(unsafe.Pointer(&ret.buildRowStart)) = buildRowStart
-	return ret
-}
-
 type posAndHashValue struct {
 	hashValue uint64
 	pos       int
@@ -106,8 +102,9 @@ type baseJoinProbe struct {
 	selRows  []int
 	usedRows []int
 	// matchedRowsHeaders, serializedKeys is indexed by logical row index
-	matchedRowsHeaders []uintptr // the start address of each matched rows
-	serializedKeys     [][]byte  // used for save serialized keys
+	matchedRowsHeaders   []taggedPtr // the start address of each matched rows
+	matchedRowsHashValue []uint64    // the hash value of each matched rows
+	serializedKeys       [][]byte    // used for save serialized keys
 	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
 	filterVector                  []bool              // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector                 []bool              // nullKeyVector[i] = true if any of the key is null
@@ -115,7 +112,8 @@ type baseJoinProbe struct {
 	currentProbeRow               int
 	matchedRowsForCurrentProbeRow int
 	chunkRows                     int
-	cachedBuildRows               []*matchedRowInfo
+	cachedBuildRows               []matchedRowInfo
+	nextCachedBuildRowIndex       int
 
 	keyIndex         []int
 	keyTypes         []*types.FieldType
@@ -132,7 +130,7 @@ type baseJoinProbe struct {
 	offsetAndLengthArray []offsetAndLength
 	// these 3 variables are used for join that has other condition, should be inited when the join has other condition
 	tmpChk        *chunk.Chunk
-	rowIndexInfos []*matchedRowInfo
+	rowIndexInfos []matchedRowInfo
 	selected      []bool
 
 	probeCollision uint64
@@ -151,7 +149,7 @@ func (j *baseJoinProbe) IsCurrentChunkProbeDone() bool {
 }
 
 func (j *baseJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk) {
-	if len(j.cachedBuildRows) > 0 {
+	if j.nextCachedBuildRowIndex > 0 {
 		j.batchConstructBuildRows(joinedChk, 0, j.ctx.hasOtherCondition())
 	}
 	j.finishLookupCurrentProbeRow()
@@ -184,7 +182,12 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	if cap(j.matchedRowsHeaders) >= logicalRows {
 		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRows]
 	} else {
-		j.matchedRowsHeaders = make([]uintptr, logicalRows)
+		j.matchedRowsHeaders = make([]taggedPtr, logicalRows)
+	}
+	if cap(j.matchedRowsHashValue) >= logicalRows {
+		j.matchedRowsHashValue = j.matchedRowsHashValue[:logicalRows]
+	} else {
+		j.matchedRowsHashValue = make([]uint64, logicalRows)
 	}
 	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		j.hashValues[i] = j.hashValues[i][:0]
@@ -234,6 +237,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		if (j.filterVector != nil && !j.filterVector[physicalRowIndex]) || (j.nullKeyVector != nil && j.nullKeyVector[physicalRowIndex]) {
 			// explicit set the matchedRowsHeaders[logicalRowIndex] to nil to indicate there is no matched rows
 			j.matchedRowsHeaders[logicalRowIndex] = 0
+			j.matchedRowsHashValue[logicalRowIndex] = 0
 			continue
 		}
 		hash.Reset()
@@ -241,16 +245,26 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		// See https://golang.org/pkg/hash/#Hash
 		_, _ = hash.Write(j.serializedKeys[logicalRowIndex])
 		hashValue := hash.Sum64()
+		j.matchedRowsHashValue[logicalRowIndex] = hashValue
 		partIndex := hashValue >> j.ctx.partitionMaskOffset
 		j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
 	}
 	j.currentProbeRow = 0
 	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		for index := range j.hashValues[i] {
-			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.hashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
+			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.lookup(i, j.hashValues[i][index].hashValue)
 		}
 	}
 	return
+}
+
+func (j *baseJoinProbe) ClearProbeState() {
+	for i := 0; i < len(j.cachedBuildRows); i++ {
+		j.cachedBuildRows[i] = matchedRowInfo{}
+	}
+	if j.ctx.OtherCondition != nil {
+		j.rowIndexInfos = nil
+	}
 }
 
 func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
@@ -270,9 +284,20 @@ func checkSQLKiller(killer *sqlkiller.SQLKiller, fpName string) error {
 	return err
 }
 
-func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(buildRow *matchedRowInfo, chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
-	j.cachedBuildRows = append(j.cachedBuildRows, buildRow)
-	if len(j.cachedBuildRows) >= batchBuildRowSize {
+func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsV2(rowInfo *matchedRowInfo, chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
+	j.cachedBuildRows[j.nextCachedBuildRowIndex] = *rowInfo
+	j.nextCachedBuildRowIndex++
+	if j.nextCachedBuildRowIndex == batchBuildRowSize {
+		j.batchConstructBuildRows(chk, currentColumnIndexInRow, forOtherCondition)
+	}
+}
+
+func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsV1(probeRowIndex int, buildRowStart unsafe.Pointer, chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
+	j.cachedBuildRows[j.nextCachedBuildRowIndex].probeRowIndex = probeRowIndex
+	j.cachedBuildRows[j.nextCachedBuildRowIndex].buildRowOffset = 0
+	*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[j.nextCachedBuildRowIndex].buildRowStart)) = buildRowStart
+	j.nextCachedBuildRowIndex++
+	if j.nextCachedBuildRowIndex == batchBuildRowSize {
 		j.batchConstructBuildRows(chk, currentColumnIndexInRow, forOtherCondition)
 	}
 }
@@ -280,14 +305,14 @@ func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNe
 func (j *baseJoinProbe) batchConstructBuildRows(chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
 	j.appendBuildRowToChunk(chk, currentColumnIndexInRow, forOtherCondition)
 	if forOtherCondition {
-		j.rowIndexInfos = append(j.rowIndexInfos, j.cachedBuildRows...)
+		j.rowIndexInfos = append(j.rowIndexInfos, j.cachedBuildRows[0:j.nextCachedBuildRowIndex]...)
 	}
-	j.cachedBuildRows = j.cachedBuildRows[:0]
+	j.nextCachedBuildRowIndex = 0
 }
 
 func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk) (joinedChk *chunk.Chunk, remainCap int, err error) {
 	j.offsetAndLengthArray = j.offsetAndLengthArray[:0]
-	j.cachedBuildRows = j.cachedBuildRows[:0]
+	j.nextCachedBuildRowIndex = 0
 	j.matchedRowsForCurrentProbeRow = 0
 	joinedChk = chk
 	if j.ctx.OtherCondition != nil {
@@ -318,15 +343,15 @@ func (j *baseJoinProbe) appendBuildRowToChunk(chk *chunk.Chunk, currentColumnInd
 func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols []int, forOtherCondition bool, colOffset int, currentColumnInRow int) {
 	chkRows := chk.NumRows()
 	needUpdateVirtualRow := currentColumnInRow == 0
-	if len(usedCols) == 0 || len(j.cachedBuildRows) == 0 {
+	if len(usedCols) == 0 || j.nextCachedBuildRowIndex == 0 {
 		if needUpdateVirtualRow {
-			chk.SetNumVirtualRows(chkRows + len(j.cachedBuildRows))
+			chk.SetNumVirtualRows(chkRows + j.nextCachedBuildRowIndex)
 		}
 		return
 	}
-	for i := 0; i < len(j.cachedBuildRows); i++ {
+	for i := 0; i < j.nextCachedBuildRowIndex; i++ {
 		if j.cachedBuildRows[i].buildRowOffset == 0 {
-			j.ctx.hashTableMeta.advanceToRowData(j.cachedBuildRows[i])
+			j.ctx.hashTableMeta.advanceToRowData(&j.cachedBuildRows[i])
 		}
 	}
 	colIndexMap := make(map[int]int)
@@ -356,16 +381,14 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 		var currentColumn *chunk.Column
 		if ok {
 			currentColumn = chk.Column(indexInDstChk)
-			// Other goroutine will use `atomic.StoreUint32` to write to the first 32 bit in nullmap when it need to set usedFlag
-			// so read from nullMap may meet concurrent write if meta.colOffsetInNullMap == 1 && (columnIndex + meta.colOffsetInNullMap <= 32)
-			mayConcurrentWrite := meta.colOffsetInNullMap == 1 && columnIndex <= 31
-			if !mayConcurrentWrite {
-				for index := range j.cachedBuildRows {
+			readNullMapThreadSafe := meta.isReadNullMapThreadSafe(columnIndex)
+			if readNullMapThreadSafe {
+				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
 					currentColumn.AppendNullBitmap(!meta.isColumnNull(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), columnIndex))
 					j.cachedBuildRows[index].buildRowOffset = chunk.AppendCellFromRawData(currentColumn, *(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset)
 				}
 			} else {
-				for index := range j.cachedBuildRows {
+				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
 					currentColumn.AppendNullBitmap(!meta.isColumnNullThreadSafe(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), columnIndex))
 					j.cachedBuildRows[index].buildRowOffset = chunk.AppendCellFromRawData(currentColumn, *(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset)
 				}
@@ -373,19 +396,19 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 		} else {
 			// not used so don't need to insert into chk, but still need to advance rowData
 			if meta.columnsSize[columnIndex] < 0 {
-				for index := range j.cachedBuildRows {
+				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
 					size := *(*uint64)(unsafe.Add(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset))
 					j.cachedBuildRows[index].buildRowOffset += sizeOfLengthField + int(size)
 				}
 			} else {
-				for index := range j.cachedBuildRows {
+				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
 					j.cachedBuildRows[index].buildRowOffset += meta.columnsSize[columnIndex]
 				}
 			}
 		}
 	}
 	if needUpdateVirtualRow {
-		chk.SetNumVirtualRows(chkRows + len(j.cachedBuildRows))
+		chk.SetNumVirtualRows(chkRows + j.nextCachedBuildRowIndex)
 	}
 }
 
@@ -473,14 +496,14 @@ func (j *baseJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedC
 		}
 	}
 	if hasRemainCols {
-		j.cachedBuildRows = j.cachedBuildRows[:0]
+		j.nextCachedBuildRowIndex = 0
 		// build column that is not in joinedChk
 		for index, result := range j.selected {
 			if result {
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(j.rowIndexInfos[index], chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition, false)
+				j.appendBuildRowToCachedBuildRowsV2(&j.rowIndexInfos[index], chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition, false)
 			}
 		}
-		if len(j.cachedBuildRows) > 0 {
+		if j.nextCachedBuildRowIndex > 0 {
 			j.batchConstructBuildRows(chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition, false)
 		}
 	}
@@ -494,7 +517,7 @@ func (j *baseJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedC
 	return
 }
 
-func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer, meta *TableMeta) bool {
+func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer, meta *joinTableMeta) bool {
 	switch keyMode {
 	case OneInt64:
 		return *(*int64)(unsafe.Pointer(&serializedKey[0])) == *(*int64)(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr))
@@ -526,8 +549,10 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 			base.hasNullableKey = true
 		}
 	}
-	base.cachedBuildRows = make([]*matchedRowInfo, 0, batchBuildRowSize)
-	base.matchedRowsHeaders = make([]uintptr, 0, chunk.InitialCapacity)
+	base.cachedBuildRows = make([]matchedRowInfo, batchBuildRowSize)
+	base.nextCachedBuildRowIndex = 0
+	base.matchedRowsHeaders = make([]taggedPtr, 0, chunk.InitialCapacity)
+	base.matchedRowsHashValue = make([]uint64, 0, chunk.InitialCapacity)
 	base.selRows = make([]int, 0, chunk.InitialCapacity)
 	for i := 0; i < chunk.InitialCapacity; i++ {
 		base.selRows = append(base.selRows, i)
@@ -547,7 +572,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		base.tmpChk = chunk.NewChunkWithCapacity(joinedColumnTypes, chunk.InitialCapacity)
 		base.tmpChk.SetInCompleteChunk(true)
 		base.selected = make([]bool, 0, chunk.InitialCapacity)
-		base.rowIndexInfos = make([]*matchedRowInfo, 0, chunk.InitialCapacity)
+		base.rowIndexInfos = make([]matchedRowInfo, 0, chunk.InitialCapacity)
 	}
 	switch joinType {
 	case logicalop.InnerJoin:
@@ -599,5 +624,7 @@ func newMockJoinProbe(ctx *HashJoinCtxV2) *mockJoinProbe {
 		rUsedInOtherCondition: ctx.RUsedInOtherCondition,
 		rightAsBuildSide:      false,
 	}
+	base.cachedBuildRows = make([]matchedRowInfo, batchBuildRowSize)
+	base.nextCachedBuildRowIndex = 0
 	return &mockJoinProbe{base}
 }

@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -40,21 +41,20 @@ import (
 
 var (
 	_ exec.Executor = &HashJoinV2Exec{}
-	// enableHashJoinV2 is a variable used only in test
-	enableHashJoinV2 = atomic.Bool{}
+	// EnableHashJoinV2 enable hash join v2, used for test
+	EnableHashJoinV2 = "set tidb_hash_join_version = " + joinversion.HashJoinVersionOptimized
+	// DisableHashJoinV2 disable hash join v2, used for test
+	DisableHashJoinV2 = "set tidb_hash_join_version = " + joinversion.HashJoinVersionLegacy
+	// HashJoinV2Strings is used for test
+	HashJoinV2Strings = []string{DisableHashJoinV2, EnableHashJoinV2}
 )
 
-// IsHashJoinV2Enabled return true if hash join v2 is enabled
-func IsHashJoinV2Enabled() bool {
+// IsHashJoinV2Supported return true if hash join v2 is supported in current env
+func IsHashJoinV2Supported() bool {
 	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
 	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
 	// change this
-	return !heapObjectsCanMove() && enableHashJoinV2.Load() && sizeOfUintptr >= sizeOfUnsafePointer
-}
-
-// SetEnableHashJoinV2 enable/disable hash join v2
-func SetEnableHashJoinV2(enable bool) {
-	enableHashJoinV2.Store(enable)
+	return !heapObjectsCanMove() && sizeOfUintptr >= sizeOfUnsafePointer
 }
 
 type hashTableContext struct {
@@ -62,16 +62,26 @@ type hashTableContext struct {
 	// its own rowTable
 	rowTables     [][]*rowTable
 	hashTable     *hashTableV2
+	tagHelper     *tagPtrHelper
 	memoryTracker *memory.Tracker
 }
 
 func (htc *hashTableContext) reset() {
 	htc.rowTables = nil
 	htc.hashTable = nil
+	htc.tagHelper = nil
 	htc.memoryTracker.Detach()
 }
 
-func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *TableMeta, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
+func (htc *hashTableContext) build(task *buildTask) {
+	htc.hashTable.tables[task.partitionIdx].build(task.segStartIdx, task.segEndIdx, htc.tagHelper)
+}
+
+func (htc *hashTableContext) lookup(partitionIndex int, hashValue uint64) taggedPtr {
+	return htc.hashTable.tables[partitionIndex].lookup(hashValue, htc.tagHelper)
+}
+
+func (htc *hashTableContext) getCurrentRowSegment(workerID, partitionID int, tableMeta *joinTableMeta, allowCreate bool, firstSegSizeHint uint) *rowTableSegment {
 	if htc.rowTables[workerID][partitionID] == nil {
 		htc.rowTables[workerID][partitionID] = newRowTable(tableMeta)
 	}
@@ -96,11 +106,12 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerID, partitionID int, build
 	seg := htc.getCurrentRowSegment(workerID, partitionID, nil, false, 0)
 	builder.rowNumberInCurrentRowTableSeg[partitionID] = 0
 	failpoint.Inject("finalizeCurrentSegPanic", nil)
+	seg.initTaggedBits()
 	seg.finalized = true
 	htc.memoryTracker.Consume(seg.totalUsedBytes())
 }
 
-func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, partitionNumber uint) int {
+func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *joinTableMeta, partitionNumber uint) int {
 	rowTables := make([]*rowTable, partitionNumber)
 	for i := 0; i < int(partitionNumber); i++ {
 		rowTables[i] = newRowTable(tableMeta)
@@ -115,9 +126,15 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(tableMeta *TableMeta, par
 			totalSegmentCnt += len(rt.segments)
 		}
 	}
+	taggedBits := uint8(maxTaggedBits)
 	for i := 0; i < int(partitionNumber); i++ {
+		for _, seg := range rowTables[i].segments {
+			taggedBits = min(taggedBits, seg.taggedBits)
+		}
 		htc.hashTable.tables[i] = newSubTable(rowTables[i])
 	}
+	htc.tagHelper = &tagPtrHelper{}
+	htc.tagHelper.init(taggedBits)
 	htc.rowTables = nil
 	return totalSegmentCnt
 }
@@ -136,7 +153,7 @@ type HashJoinCtxV2 struct {
 	ProbeFilter                    expression.CNFExprs
 	OtherCondition                 expression.CNFExprs
 	hashTableContext               *hashTableContext
-	hashTableMeta                  *TableMeta
+	hashTableMeta                  *joinTableMeta
 	needScanRowTableAfterProbeDone bool
 
 	LUsed, RUsed                                 []int
@@ -278,6 +295,7 @@ func (e *HashJoinV2Exec) Close() error {
 		for i := range e.ProbeWorkers {
 			close(e.ProbeWorkers[i].joinChkResourceCh)
 			channel.Clear(e.ProbeWorkers[i].joinChkResourceCh)
+			e.ProbeWorkers[i].JoinProbe.ClearProbeState()
 		}
 		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
 		e.waiterWg.Wait()
@@ -453,6 +471,9 @@ func (e *HashJoinV2Exec) waitJoinWorkersAndCloseResultChan() {
 			}, e.handleJoinWorkerPanic)
 		}
 		e.workerWg.Wait()
+	}
+	for _, probeWorker := range e.ProbeWorkers {
+		probeWorker.JoinProbe.ClearProbeState()
 	}
 	close(e.joinResultCh)
 }
@@ -829,8 +850,7 @@ func (w *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
 	}()
 	for task := range taskCh {
 		start := time.Now()
-		partIdx, segStartIdx, segEndIdx := task.partitionIdx, task.segStartIdx, task.segEndIdx
-		w.HashJoinCtx.hashTableContext.hashTable.tables[partIdx].build(segStartIdx, segEndIdx)
+		w.HashJoinCtx.hashTableContext.build(task)
 		failpoint.Inject("buildHashTablePanic", nil)
 		cost += int64(time.Since(start))
 	}
@@ -865,20 +885,12 @@ func (*hashJoinRuntimeStatsV2) Tp() int {
 func (e *hashJoinRuntimeStatsV2) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	if e.fetchAndBuildHashTable > 0 {
-		buf.WriteString("build_hash_table:{concurrency:")
-		buf.WriteString(strconv.Itoa(e.concurrent))
-		buf.WriteString(", total:")
+		buf.WriteString("build_hash_table:{total:")
 		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
 		buf.WriteString(", fetch:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(int64(e.fetchAndBuildHashTable) - e.maxBuildHashTable - e.maxPartitionData)))
-		buf.WriteString(", partition:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.partitionData)))
-		buf.WriteString(", max partition:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxPartitionData)))
 		buf.WriteString(", build:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.buildHashTable)))
-		buf.WriteString(", max build:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxBuildHashTable)))
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {

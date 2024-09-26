@@ -10,8 +10,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -48,7 +49,7 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*
 func produceDBInfoValue(dbName string, dbID int64) ([]byte, error) {
 	dbInfo := model.DBInfo{
 		ID:   dbID,
-		Name: model.NewCIStr(dbName),
+		Name: pmodel.NewCIStr(dbName),
 	}
 	return json.Marshal(&dbInfo)
 }
@@ -56,7 +57,7 @@ func produceDBInfoValue(dbName string, dbID int64) ([]byte, error) {
 func produceTableInfoValue(tableName string, tableID int64) ([]byte, error) {
 	tableInfo := model.TableInfo{
 		ID:   tableID,
-		Name: model.NewCIStr(tableName),
+		Name: pmodel.NewCIStr(tableName),
 	}
 
 	return json.Marshal(&tableInfo)
@@ -351,11 +352,11 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 	// create tableinfo.
 	pt1 := model.PartitionDefinition{
 		ID:   pt1ID,
-		Name: model.NewCIStr(pt1Name),
+		Name: pmodel.NewCIStr(pt1Name),
 	}
 	pt2 := model.PartitionDefinition{
 		ID:   pt2ID,
-		Name: model.NewCIStr(pt2Name),
+		Name: pmodel.NewCIStr(pt2Name),
 	}
 
 	pi := model.PartitionInfo{
@@ -367,7 +368,7 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 
 	tbl := model.TableInfo{
 		ID:        tableID,
-		Name:      model.NewCIStr(tableName),
+		Name:      pmodel.NewCIStr(tableName),
 		Partition: &pi,
 	}
 	value, err := json.Marshal(&tbl)
@@ -451,11 +452,11 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	// construct table t1 with the partition pi(pt1, pt2).
 	pt1 := model.PartitionDefinition{
 		ID:   pt1ID,
-		Name: model.NewCIStr(pt1Name),
+		Name: pmodel.NewCIStr(pt1Name),
 	}
 	pt2 := model.PartitionDefinition{
 		ID:   pt2ID,
-		Name: model.NewCIStr(pt2Name),
+		Name: pmodel.NewCIStr(pt2Name),
 	}
 
 	pi := model.PartitionInfo{
@@ -465,7 +466,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	pi.Definitions = append(pi.Definitions, pt1, pt2)
 	t1 := model.TableInfo{
 		ID:        tableID1,
-		Name:      model.NewCIStr(tableName1),
+		Name:      pmodel.NewCIStr(tableName1),
 		Partition: &pi,
 	}
 	db1 := model.DBInfo{}
@@ -473,7 +474,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	// construct table t2 without partition.
 	t2 := model.TableInfo{
 		ID:   tableID2,
-		Name: model.NewCIStr(tableName2),
+		Name: pmodel.NewCIStr(tableName2),
 	}
 	db2 := model.DBInfo{}
 
@@ -537,16 +538,16 @@ func TestRewriteTableInfoForTTLTable(t *testing.T) {
 
 	tbl := model.TableInfo{
 		ID:   tableID,
-		Name: model.NewCIStr(tableName),
+		Name: pmodel.NewCIStr(tableName),
 		Columns: []*model.ColumnInfo{
 			{
 				ID:        colID,
-				Name:      model.NewCIStr(colName),
+				Name:      pmodel.NewCIStr(colName),
 				FieldType: *types.NewFieldType(mysql.TypeTimestamp),
 			},
 		},
 		TTLInfo: &model.TTLInfo{
-			ColumnName:       model.NewCIStr(colName),
+			ColumnName:       pmodel.NewCIStr(colName),
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: int(ast.TimeUnitDay),
 			Enable:           true,
@@ -668,24 +669,25 @@ var (
 )
 
 var (
-	dropSchemaJob                 = &model.Job{Type: model.ActionDropSchema, SchemaID: mDDLJobDBOldID, RawArgs: json.RawMessage(`[[71,72,73,74,75]]`)}
-	dropTable0Job                 = &model.Job{Type: model.ActionDropTable, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",[72,73,74],[""]]`)}
-	dropTable1Job                 = &model.Job{Type: model.ActionDropTable, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",[],[""]]`)}
-	dropTable0Partition1Job       = &model.Job{Type: model.ActionDropTablePartition, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[73]]`)}
-	reorganizeTable0Partition1Job = &model.Job{Type: model.ActionReorganizePartition, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[73]]`)}
-	removeTable0Partition1Job     = &model.Job{Type: model.ActionRemovePartitioning, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[73]]`)}
-	alterTable0Partition1Job      = &model.Job{Type: model.ActionAlterTablePartitioning, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[73]]`)}
-	rollBackTable0IndexJob        = &model.Job{Type: model.ActionAddIndex, State: model.JobStateRollbackDone, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[2,false,[72,73,74]]`)}
-	rollBackTable1IndexJob        = &model.Job{Type: model.ActionAddIndex, State: model.JobStateRollbackDone, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[2,false,[]]`)}
-	addTable0IndexJob             = &model.Job{Type: model.ActionAddIndex, State: model.JobStateSynced, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[2,false,[72,73,74]]`)}
-	addTable1IndexJob             = &model.Job{Type: model.ActionAddIndex, State: model.JobStateSynced, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[2,false,[]]`)}
-	dropTable0IndexJob            = &model.Job{Type: model.ActionDropIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",false,2,[72,73,74]]`)}
-	dropTable1IndexJob            = &model.Job{Type: model.ActionDropIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",false,2,[]]`)}
-	dropTable0ColumnJob           = &model.Job{Type: model.ActionDropColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",false,[2,3],[72,73,74]]`)}
-	dropTable1ColumnJob           = &model.Job{Type: model.ActionDropColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",false,[2,3],[]]`)}
-	modifyTable0ColumnJob         = &model.Job{Type: model.ActionModifyColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[2,3],[72,73,74]]`)}
-	modifyTable1ColumnJob         = &model.Job{Type: model.ActionModifyColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[[2,3],[]]`)}
+	dropSchemaJob                 *model.Job
+	dropTable0Job                 *model.Job
+	dropTable1Job                 *model.Job
+	dropTable0Partition1Job       *model.Job
+	reorganizeTable0Partition1Job *model.Job
+	removeTable0Partition1Job     *model.Job
+	alterTable0Partition1Job      *model.Job
+	rollBackTable0IndexJob        = &model.Job{Version: model.JobVersion1, Type: model.ActionAddIndex, State: model.JobStateRollbackDone, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[2,false,[72,73,74]]`)}
+	rollBackTable1IndexJob        = &model.Job{Version: model.JobVersion1, Type: model.ActionAddIndex, State: model.JobStateRollbackDone, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[2,false,[]]`)}
+	addTable0IndexJob             = &model.Job{Version: model.JobVersion1, Type: model.ActionAddIndex, State: model.JobStateSynced, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[2,false,[72,73,74]]`)}
+	addTable1IndexJob             = &model.Job{Version: model.JobVersion1, Type: model.ActionAddIndex, State: model.JobStateSynced, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[2,false,[]]`)}
+	dropTable0IndexJob            = &model.Job{Version: model.JobVersion1, Type: model.ActionDropIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",false,2,[72,73,74]]`)}
+	dropTable1IndexJob            = &model.Job{Version: model.JobVersion1, Type: model.ActionDropIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",false,2,[]]`)}
+	dropTable0ColumnJob           = &model.Job{Version: model.JobVersion1, Type: model.ActionDropColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",false,[2,3],[72,73,74]]`)}
+	dropTable1ColumnJob           = &model.Job{Version: model.JobVersion1, Type: model.ActionDropColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",false,[2,3],[]]`)}
+	modifyTable0ColumnJob         = &model.Job{Version: model.JobVersion1, Type: model.ActionModifyColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[2,3],[72,73,74]]`)}
+	modifyTable1ColumnJob         = &model.Job{Version: model.JobVersion1, Type: model.ActionModifyColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[[2,3],[]]`)}
 	multiSchemaChangeJob0         = &model.Job{
+		Version:  model.JobVersion1,
 		Type:     model.ActionMultiSchemaChange,
 		SchemaID: mDDLJobDBOldID,
 		TableID:  mDDLJobTable0OldID,
@@ -703,6 +705,7 @@ var (
 		},
 	}
 	multiSchemaChangeJob1 = &model.Job{
+		Version:  model.JobVersion1,
 		Type:     model.ActionMultiSchemaChange,
 		SchemaID: mDDLJobDBOldID,
 		TableID:  mDDLJobTable1OldID,
@@ -720,6 +723,31 @@ var (
 		},
 	}
 )
+
+func genFinishedJob(job *model.Job, args model.FinishedJobArgs) *model.Job {
+	job.FillFinishedArgs(args)
+	bytes, _ := job.Encode(true)
+	resJob := &model.Job{}
+	_ = resJob.Decode(bytes)
+	return resJob
+}
+
+func init() {
+	dropSchemaJob = genFinishedJob(&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionDropSchema,
+		SchemaID: mDDLJobDBOldID}, &model.DropSchemaArgs{AllDroppedTableIDs: []int64{71, 72, 73, 74, 75}})
+	alterTable0Partition1Job = genFinishedJob(&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionAlterTablePartitioning,
+		SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID}, &model.TablePartitionArgs{OldPhysicalTblIDs: []int64{73}})
+	removeTable0Partition1Job = genFinishedJob(&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionRemovePartitioning,
+		SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID}, &model.TablePartitionArgs{OldPhysicalTblIDs: []int64{73}})
+	reorganizeTable0Partition1Job = genFinishedJob(&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionReorganizePartition,
+		SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID}, &model.TablePartitionArgs{OldPhysicalTblIDs: []int64{73}})
+	dropTable0Partition1Job = genFinishedJob(&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionDropTablePartition,
+		SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID}, &model.TablePartitionArgs{OldPhysicalTblIDs: []int64{73}})
+	dropTable0Job = genFinishedJob(&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionDropTable,
+		SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID}, &model.DropTableArgs{OldPartitionIDs: []int64{72, 73, 74}})
+	dropTable1Job = genFinishedJob(&model.Job{Version: model.GetJobVerInUse(), Type: model.ActionDropTable,
+		SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID}, &model.DropTableArgs{})
+}
 
 type mockInsertDeleteRange struct {
 	queryCh chan *PreDelRangeQuery

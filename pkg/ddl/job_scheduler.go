@@ -41,12 +41,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -111,7 +110,6 @@ func (l *ownerListener) OnBecomeOwner() {
 		unSyncedTracker:   newUnSyncedJobTracker(),
 		schemaVerMgr:      newSchemaVersionManager(l.ddl.store),
 		schemaVerSyncer:   l.ddl.schemaVerSyncer,
-		binlogCli:         l.ddl.binlogCli,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.jobSubmitter.ddlJobNotifyCh,
@@ -144,7 +142,6 @@ type jobScheduler struct {
 	unSyncedTracker   *unSyncedJobTracker
 	schemaVerMgr      *schemaVersionManager
 	schemaVerSyncer   schemaver.Syncer
-	binlogCli         *pumpcli.PumpsClient
 
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
@@ -402,6 +399,7 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		intest.Assert(job.Version > 0, "job version should be greater than 0")
 
 		involving := job.GetInvolvingSchemaInfo()
 		if targetPool.available() == 0 {
@@ -536,7 +534,6 @@ func (s *jobScheduler) getJobRunCtx(jobID int64) *jobContext {
 		autoidCli:            s.autoidCli,
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
-		binlogCli:            s.binlogCli,
 
 		notifyCh: ch,
 
@@ -674,6 +671,11 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	var sql bytes.Buffer
 	sql.WriteString(addDDLJobSQL)
 	for i, jobW := range jobWs {
+		// TODO remove this check when all job type pass args in this way.
+		if jobW.JobArgs != nil {
+			jobW.FillArgs(jobW.JobArgs)
+		}
+		injectModifyJobArgFailPoint(jobWs)
 		b, err := jobW.Encode(true)
 		if err != nil {
 			return err
@@ -682,7 +684,7 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 			sql.WriteString(",")
 		}
 		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", jobW.ID, jobW.MayNeedReorg(),
-			strconv.Quote(job2SchemaIDs(jobW.Job)), strconv.Quote(job2TableIDs(jobW.Job)),
+			strconv.Quote(job2SchemaIDs(jobW)), strconv.Quote(job2TableIDs(jobW)),
 			util.WrapKey2String(b), jobW.Type, jobW.Started())
 	}
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
@@ -691,44 +693,61 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	return errors.Trace(err)
 }
 
-func job2SchemaIDs(job *model.Job) string {
-	return job2UniqueIDs(job, true)
+func makeStringForIDs(ids []int64) string {
+	set := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+
+	s := make([]string, 0, len(set))
+	for id := range set {
+		s = append(s, strconv.FormatInt(id, 10))
+	}
+	slices.Sort(s)
+	return strings.Join(s, ",")
 }
 
-func job2TableIDs(job *model.Job) string {
-	return job2UniqueIDs(job, false)
-}
-
-func job2UniqueIDs(job *model.Job, schema bool) string {
-	switch job.Type {
-	case model.ActionExchangeTablePartition, model.ActionRenameTables, model.ActionRenameTable:
+func job2SchemaIDs(jobW *JobWrapper) string {
+	switch jobW.Type {
+	case model.ActionRenameTables:
 		var ids []int64
-		if schema {
-			ids = job.CtxVars[0].([]int64)
-		} else {
-			ids = job.CtxVars[1].([]int64)
+		arg := jobW.JobArgs.(*model.RenameTablesArgs)
+		ids = make([]int64, 0, len(arg.RenameTableInfos)*2)
+		for _, info := range arg.RenameTableInfos {
+			ids = append(ids, info.OldSchemaID, info.NewSchemaID)
 		}
-		set := make(map[int64]struct{}, len(ids))
-		for _, id := range ids {
-			set[id] = struct{}{}
-		}
+		return makeStringForIDs(ids)
+	case model.ActionRenameTable:
+		oldSchemaID := jobW.JobArgs.(*model.RenameTableArgs).OldSchemaID
+		ids := []int64{oldSchemaID, jobW.SchemaID}
+		return makeStringForIDs(ids)
+	case model.ActionExchangeTablePartition:
+		ids := jobW.CtxVars[0].([]int64)
+		return makeStringForIDs(ids)
+	default:
+		return strconv.FormatInt(jobW.SchemaID, 10)
+	}
+}
 
-		s := make([]string, 0, len(set))
-		for id := range set {
-			s = append(s, strconv.FormatInt(id, 10))
+func job2TableIDs(jobW *JobWrapper) string {
+	switch jobW.Type {
+	case model.ActionRenameTables:
+		var ids []int64
+		arg := jobW.JobArgs.(*model.RenameTablesArgs)
+		ids = make([]int64, 0, len(arg.RenameTableInfos))
+		for _, info := range arg.RenameTableInfos {
+			ids = append(ids, info.TableID)
 		}
-		slices.Sort(s)
-		return strings.Join(s, ",")
+		return makeStringForIDs(ids)
+	case model.ActionExchangeTablePartition:
+		ids := jobW.CtxVars[1].([]int64)
+		return makeStringForIDs(ids)
 	case model.ActionTruncateTable:
-		if schema {
-			return strconv.FormatInt(job.SchemaID, 10)
-		}
-		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(job.Args[0].(int64), 10)
+		newTableID := jobW.JobArgs.(*model.TruncateTableArgs).NewTableID
+		return strconv.FormatInt(jobW.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
+	default:
+		return strconv.FormatInt(jobW.TableID, 10)
 	}
-	if schema {
-		return strconv.FormatInt(job.SchemaID, 10)
-	}
-	return strconv.FormatInt(job.TableID, 10)
 }
 
 func updateDDLJob2Table(se *sess.Session, job *model.Job, updateRawArgs bool) error {

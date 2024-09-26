@@ -206,4 +206,21 @@ select * from t2;
 id	b
 2	2
 admin check table t1,t2;
+create database test_db_1;
+create database test_db_2;
+create database test_db_3;
+use test_db_1;
+create table t1 (id int primary key);
+use test_db_2;
+create table t2 (id int primary key, b int, foreign key (b) references test_db_1.t1(id));
+use test_db_3;
+create table t3 (id int primary key);
+drop table test_db_1.t1;
+Error 3730 (HY000): Cannot drop table 't1' referenced by a foreign key constraint 'fk_1' on table 't2'.
+drop database test_db_1;
+Error 3730 (HY000): Cannot drop table 't1' referenced by a foreign key constraint 'fk_1' on table 't2'.
+drop table test_db_3.t3;
+drop database test_db_3;
+drop database test_db_2;
+drop database test_db_1;
 set @@foreign_key_checks=default;

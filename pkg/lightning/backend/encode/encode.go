@@ -52,13 +52,16 @@ type Encoder interface {
 
 // SessionOptions is the initial configuration of the session.
 type SessionOptions struct {
-	SQLMode   mysql.SQLMode
-	Timestamp int64
-	SysVars   map[string]string
+	SQLMode               mysql.SQLMode
+	Timestamp             int64
+	SysVars               map[string]string
+	LogicalImportPrepStmt bool
 	// a seed used for tableKvEncoder's auto random bits value
 	AutoRandomSeed int64
-	// IndexID is used by the DuplicateManager. Only the key range with the specified index ID is scanned.
+	// IndexID is used by the dupeDetector. Only the key range with the specified index ID is scanned.
 	IndexID int64
+	// MinCommitTS is used by dupeDetector. Only records that larger than commit TS are considered.
+	MinCommitTS uint64
 }
 
 // Rows represents a collection of encoded rows.

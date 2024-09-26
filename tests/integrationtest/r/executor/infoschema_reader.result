@@ -420,5 +420,28 @@ select * from information_schema.table_constraints where table_schema = 'executo
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
 select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and CONSTRAINT_NAME = 'c1';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	CONSTRAINT_TYPE
-def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t	PRIMARY KEY
-def	executor__infoschema_reader	PRIMARY	executor__infoschema_reader	t_int	PRIMARY KEY
+select TABLE_CATALOG,TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,ENGINE,VERSION from information_schema.tables where table_name = 't';
+TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	TABLE_TYPE	ENGINE	VERSION
+def	executor__infoschema_reader	t	BASE TABLE	InnoDB	10
+select table_name, table_schema from information_schema.tables where table_name = 't';
+table_name	table_schema
+t	executor__infoschema_reader
+select table_name from information_schema.tables where table_name = 't';
+table_name
+t
+explain format='brief' select table_name, table_schema from information_schema.tables;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#3, Column#2
+└─MemTableScan	10000.00	root	table:TABLES	
+select count(*) from information_schema.tables where table_name = 't';
+count(*)
+1
+select count(table_name) from information_schema.tables where table_name = 't';
+count(table_name)
+1
+drop table if exists t;
+create table t (c text);
+alter table t add index idx_t (c(16));
+select SUB_PART from information_schema.statistics where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 't';
+SUB_PART
+16

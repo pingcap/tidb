@@ -69,6 +69,11 @@ func NewNonPartitionedTableAnalysisJob(
 	}
 }
 
+// GetTableID gets the table ID of the job.
+func (j *NonPartitionedTableAnalysisJob) GetTableID() int64 {
+	return j.TableID
+}
+
 // Analyze analyzes the table or indexes.
 func (j *NonPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
@@ -119,6 +124,11 @@ func (j *NonPartitionedTableAnalysisJob) GetWeight() float64 {
 // GetIndicators returns the indicators of the table.
 func (j *NonPartitionedTableAnalysisJob) GetIndicators() Indicators {
 	return j.Indicators
+}
+
+// SetIndicators sets the indicators of the table.
+func (j *NonPartitionedTableAnalysisJob) SetIndicators(indicators Indicators) {
+	j.Indicators = indicators
 }
 
 // String implements fmt.Stringer interface.

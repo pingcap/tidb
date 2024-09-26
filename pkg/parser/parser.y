@@ -320,6 +320,7 @@ import (
 	algorithm             "ALGORITHM"
 	always                "ALWAYS"
 	any                   "ANY"
+	apply                 "APPLY"
 	ascii                 "ASCII"
 	attribute             "ATTRIBUTE"
 	attributes            "ATTRIBUTES"
@@ -561,6 +562,7 @@ import (
 	quick                 "QUICK"
 	rateLimit             "RATE_LIMIT"
 	rebuild               "REBUILD"
+	recommend             "RECOMMEND"
 	recover               "RECOVER"
 	redundant             "REDUNDANT"
 	reload                "RELOAD"
@@ -758,10 +760,12 @@ import (
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
 	priority              "PRIORITY"
+	processedKeys         "PROCESSED_KEYS"
 	queryLimit            "QUERY_LIMIT"
 	recent                "RECENT"
 	replayer              "REPLAYER"
 	restoredTS            "RESTORED_TS"
+	ru                    "RU"
 	running               "RUNNING"
 	ruRate                "RU_PER_SEC"
 	s3                    "S3"
@@ -781,6 +785,7 @@ import (
 	substring             "SUBSTRING"
 	sum                   "SUM"
 	survivalPreferences   "SURVIVAL_PREFERENCES"
+	switchGroup           "SWITCH_GROUP"
 	target                "TARGET"
 	taskTypes             "TASK_TYPES"
 	tidbJson              "TIDB_JSON"
@@ -802,6 +807,7 @@ import (
 	trueCardCost          "TRUE_CARD_COST"
 	unlimited             "UNLIMITED"
 	untilTS               "UNTIL_TS"
+	utilizationLimit      "UTILIZATION_LIMIT"
 	variance              "VARIANCE"
 	varPop                "VAR_POP"
 	varSamp               "VAR_SAMP"
@@ -851,7 +857,6 @@ import (
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
-	drainer                    "DRAINER"
 	dry                        "DRY"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
@@ -860,7 +865,6 @@ import (
 	nodeState                  "NODE_STATE"
 	optimistic                 "OPTIMISTIC"
 	pessimistic                "PESSIMISTIC"
-	pump                       "PUMP"
 	region                     "REGION"
 	regions                    "REGIONS"
 	reset                      "RESET"
@@ -1010,7 +1014,6 @@ import (
 	GrantRoleStmt              "Grant role statement"
 	InsertIntoStmt             "INSERT INTO statement"
 	CallStmt                   "CALL statement"
-	IndexAdviseStmt            "INDEX ADVISE statement"
 	ImportIntoStmt             "IMPORT INTO statement"
 	ImportFromSelectStmt       "SELECT statement of IMPORT INTO"
 	KillStmt                   "Kill statement"
@@ -1038,7 +1041,6 @@ import (
 	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
-	ChangeStmt                 "Change statement"
 	SetBindingStmt             "Set binding statement"
 	SetRoleStmt                "Set active role statement"
 	SetDefaultRoleStmt         "Set default statement for some user"
@@ -1055,6 +1057,7 @@ import (
 	UseStmt                    "USE statement"
 	ShutdownStmt               "SHUTDOWN statement"
 	RestartStmt                "RESTART statement"
+	RecommendIndexStmt         "RECOMMEND INDEX statement"
 	CreateViewSelectOpt        "Select/Union/Except/Intersect statement in CREATE VIEW ... AS SELECT"
 	BindableStmt               "Statement that can be created binding on"
 	UpdateStmtNoWith           "Update statement without CTE clause"
@@ -1466,10 +1469,6 @@ import (
 	EnforcedOrNotOrNotNullOpt              "{[ENFORCED|NOT ENFORCED|NOT NULL]}"
 	Match                                  "[MATCH FULL | MATCH PARTIAL | MATCH SIMPLE]"
 	MatchOpt                               "optional MATCH clause"
-	MaxMinutesOpt                          "MAX_MINUTES num(int)"
-	MaxIndexNumOpt                         "MAX_IDXNUM clause"
-	PerTable                               "Max index number PER_TABLE"
-	PerDB                                  "Max index number PER_DB"
 	BRIETables                             "List of tables or databases for BRIE statements"
 	DBNameList                             "List of database names"
 	BRIEOption                             "Single BRIE option"
@@ -1824,6 +1823,13 @@ ResourceGroupRunawayActionOption:
 	{
 		$$ = &ast.ResourceGroupRunawayActionOption{Type: model.RunawayActionKill}
 	}
+|	"SWITCH_GROUP" '(' ResourceGroupName ')'
+	{
+		$$ = &ast.ResourceGroupRunawayActionOption{
+			Type:            model.RunawayActionSwitchGroup,
+			SwitchGroupName: model.NewCIStr($3),
+		}
+	}
 
 DirectResourceGroupRunawayOption:
 	"EXEC_ELAPSED" EqOpt stringLit
@@ -1834,16 +1840,28 @@ DirectResourceGroupRunawayOption:
 			return 1
 		}
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp: ast.RunawayRule,
-			RuleOption: &ast.ResourceGroupRunawayRuleOption{
-				ExecElapsed: $3,
-			},
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleExecElapsed, ExecElapsed: $3},
+		}
+	}
+|	"PROCESSED_KEYS" EqOpt intLit
+	{
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleProcessedKeys, ProcessedKeys: $3.(int64)},
+		}
+	}
+|	"RU" EqOpt intLit
+	{
+		$$ = &ast.ResourceGroupRunawayOption{
+			Tp:         model.RunawayRule,
+			RuleOption: &ast.ResourceGroupRunawayRuleOption{Tp: ast.RunawayRuleRequestUnit, RequestUnit: $3.(int64)},
 		}
 	}
 |	"ACTION" EqOpt ResourceGroupRunawayActionOption
 	{
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp:           ast.RunawayAction,
+			Tp:           model.RunawayAction,
 			ActionOption: $3.(*ast.ResourceGroupRunawayActionOption),
 		}
 	}
@@ -1861,7 +1879,7 @@ DirectResourceGroupRunawayOption:
 			}
 		}
 		$$ = &ast.ResourceGroupRunawayOption{
-			Tp: ast.RunawayWatch,
+			Tp: model.RunawayWatch,
 			WatchOption: &ast.ResourceGroupRunawayWatchOption{
 				Type:     $3.(model.RunawayWatchType),
 				Duration: dur,
@@ -1955,6 +1973,11 @@ DirectResourceGroupBackgroundOption:
 	{
 		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundOptionTaskNames, StrValue: $3}
 	}
+|	"UTILIZATION_LIMIT" EqOpt LengthNum
+	{
+		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundUtilizationLimit, UintValue: $3.(uint64)}
+	}
+
 
 PlacementOptionList:
 	DirectPlacementOption
@@ -6680,6 +6703,7 @@ UnReservedKeyword:
 	"ACTION"
 |	"ADVISE"
 |	"ASCII"
+|	"APPLY"
 |	"ATTRIBUTE"
 |	"ATTRIBUTES"
 |	"BINDING_CACHE"
@@ -6762,6 +6786,7 @@ UnReservedKeyword:
 |	"PROXY"
 |	"QUICK"
 |	"REBUILD"
+|	"RECOMMEND"
 |	"REDUNDANT"
 |	"REORGANIZE"
 |	"RESOURCE"
@@ -7070,12 +7095,10 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
-|	"DRAINER"
 |	"JOBS"
 |	"JOB"
 |	"NODE_ID"
 |	"NODE_STATE"
-|	"PUMP"
 |	"SAMPLES"
 |	"SAMPLERATE"
 |	"SESSION_STATES"
@@ -7212,14 +7235,18 @@ NotKeywordToken:
 |	"RESTORED_TS"
 |	"FULL_BACKUP_STORAGE"
 |	"EXEC_ELAPSED"
+|	"PROCESSED_KEYS"
+|	"RU"
 |	"DRYRUN"
 |	"COOLDOWN"
+|	"SWITCH_GROUP"
 |	"WATCH"
 |	"SIMILAR"
 |	"QUERY_LIMIT"
 |	"BACKGROUND"
 |	"TASK_TYPES"
 |	"UNLIMITED"
+|	"UTILIZATION_LIMIT"
 
 /************************************************************************************
  *
@@ -10629,25 +10656,6 @@ SetOpr:
 SetOprOpt:
 	DefaultTrueDistinctOpt
 
-/********************Change Statement*******************************/
-ChangeStmt:
-	"CHANGE" "PUMP" "TO" "NODE_STATE" eq stringLit forKwd "NODE_ID" stringLit
-	{
-		$$ = &ast.ChangeStmt{
-			NodeType: ast.PumpType,
-			State:    $6,
-			NodeID:   $9,
-		}
-	}
-|	"CHANGE" "DRAINER" "TO" "NODE_STATE" eq stringLit forKwd "NODE_ID" stringLit
-	{
-		$$ = &ast.ChangeStmt{
-			NodeType: ast.DrainerType,
-			State:    $6,
-			NodeID:   $9,
-		}
-	}
-
 /********************Set Statement*******************************/
 SetStmt:
 	"SET" VariableAssignmentList
@@ -11836,18 +11844,6 @@ ShowTargetFilterable:
 			Tp: ast.ShowProcedureStatus,
 		}
 	}
-|	"PUMP" "STATUS"
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowPumpStatus,
-		}
-	}
-|	"DRAINER" "STATUS"
-	{
-		$$ = &ast.ShowStmt{
-			Tp: ast.ShowDrainerStatus,
-		}
-	}
 |	"FUNCTION" "STATUS"
 	{
 		// This statement is similar to SHOW PROCEDURE STATUS but for stored functions.
@@ -12154,7 +12150,6 @@ Statement:
 |	ExecuteStmt
 |	ExplainStmt
 |	CalibrateResourceStmt
-|	ChangeStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
@@ -12193,7 +12188,6 @@ Statement:
 |	CallStmt
 |	ImportIntoStmt
 |	InsertIntoStmt
-|	IndexAdviseStmt
 |	KillStmt
 |	LoadDataStmt
 |	LoadStatsStmt
@@ -12240,6 +12234,7 @@ Statement:
 |	LockTablesStmt
 |	ShutdownStmt
 |	RestartStmt
+|	RecommendIndexStmt
 |	HelpStmt
 |	NonTransactionalDMLStmt
 |	OptimizeTableStmt
@@ -14152,6 +14147,61 @@ SetBindingStmt:
 		$$ = x
 	}
 
+RecommendIndexStmt:
+	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "run",
+			SQL:    $5,
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "RUN"
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "run",
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "SHOW"
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "show",
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "APPLY" NUM
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "apply",
+			ID:     $4.(int64),
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "IGNORE" NUM
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "ignore",
+			ID:     $4.(int64),
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "SET" Identifier "=" Literal
+	{
+		x := &ast.RecommendIndexStmt{
+			Action: "set",
+			Option: $4,
+			Value:  ast.NewValueExpr($6, parser.charset, parser.collation),
+		}
+
+		$$ = x
+	}
+
 /*************************************************************************************
  * Grant statement
  * See https://dev.mysql.com/doc/refman/5.7/en/grant.html
@@ -15353,80 +15403,6 @@ AlterSequenceOption:
 |	"RESTART" "WITH" SignedNum
 	{
 		$$ = &ast.SequenceOption{Tp: ast.SequenceRestartWith, IntValue: $3.(int64)}
-	}
-
-/********************************************************************
- * Index Advisor Statement
- *
- * INDEX ADVISE
- * 	[LOCAL]
- *	INFILE 'file_name'
- *	[MAX_MINUTES number]
- *	[MAX_IDXNUM
- *  	[PER_TABLE number]
- *  	[PER_DB number]
- *	]
- *	[LINES
- *  	[STARTING BY 'string']
- *  	[TERMINATED BY 'string']
- *	]
- *******************************************************************/
-IndexAdviseStmt:
-	"INDEX" "ADVISE" LocalOpt "INFILE" stringLit MaxMinutesOpt MaxIndexNumOpt Lines
-	{
-		x := &ast.IndexAdviseStmt{
-			Path:       $5,
-			MaxMinutes: $6.(uint64),
-		}
-		if $3 != nil {
-			x.IsLocal = true
-		}
-		if $7 != nil {
-			x.MaxIndexNum = $7.(*ast.MaxIndexNumClause)
-		}
-		if $8 != nil {
-			x.LinesInfo = $8.(*ast.LinesClause)
-		}
-		$$ = x
-	}
-
-MaxMinutesOpt:
-	{
-		$$ = uint64(ast.UnspecifiedSize)
-	}
-|	"MAX_MINUTES" NUM
-	{
-		$$ = getUint64FromNUM($2)
-	}
-
-MaxIndexNumOpt:
-	{
-		$$ = nil
-	}
-|	"MAX_IDXNUM" PerTable PerDB
-	{
-		$$ = &ast.MaxIndexNumClause{
-			PerTable: $2.(uint64),
-			PerDB:    $3.(uint64),
-		}
-	}
-
-PerTable:
-	{
-		$$ = uint64(ast.UnspecifiedSize)
-	}
-|	"PER_TABLE" NUM
-	{
-		$$ = getUint64FromNUM($2)
-	}
-
-PerDB:
-	{
-		$$ = uint64(ast.UnspecifiedSize)
-	}
-|	"PER_DB" NUM
-	{
-		$$ = getUint64FromNUM($2)
 	}
 
 EncryptionOpt:

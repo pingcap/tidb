@@ -54,14 +54,15 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextsession"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/param"
@@ -69,13 +70,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	planctx "github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
@@ -85,7 +87,6 @@ import (
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -96,8 +97,8 @@ import (
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
-	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
+	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
@@ -186,8 +187,8 @@ type session struct {
 	sessionManager util.SessionManager
 
 	pctx    *planContextImpl
-	exprctx *contextsession.SessionExprContext
-	tblctx  *tbctximpl.TableContextImpl
+	exprctx *sessionexpr.ExprContext
+	tblctx  *tblsession.MutateContext
 
 	statsCollector *usage.SessionStatsItem
 	// ddlOwnerManager is used in `select tidb_is_ddl_owner()` statement;
@@ -229,7 +230,7 @@ var parserPool = &sync.Pool{New: func() any { return parser.New() }}
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	for _, l := range locks {
 		// read only lock is session unrelated, skip it when adding lock to session.
-		if l.Tp != model.TableLockReadOnly {
+		if l.Tp != pmodel.TableLockReadOnly {
 			s.lockedTables[l.TableID] = l
 		}
 	}
@@ -250,10 +251,10 @@ func (s *session) ReleaseTableLockByTableIDs(tableIDs []int64) {
 }
 
 // CheckTableLocked checks the table lock.
-func (s *session) CheckTableLocked(tblID int64) (bool, model.TableLockType) {
+func (s *session) CheckTableLocked(tblID int64) (bool, pmodel.TableLockType) {
 	lt, ok := s.lockedTables[tblID]
 	if !ok {
-		return false, model.TableLockNone
+		return false, pmodel.TableLockNone
 	}
 	return true, lt.Tp
 }
@@ -424,10 +425,10 @@ func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
 }
 
 // FieldList returns fields list of a table.
-func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
+func (s *session) FieldList(tableName string) ([]*resolve.ResultField, error) {
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
-	tName := model.NewCIStr(tableName)
+	dbName := pmodel.NewCIStr(s.GetSessionVars().CurrentDB)
+	tName := pmodel.NewCIStr(tableName)
 	pm := privilege.GetPrivilegeManager(s)
 	if pm != nil && s.sessionVars.User != nil {
 		if !pm.RequestVerification(s.sessionVars.ActiveRoles, dbName.O, tName.O, "", mysql.AllPrivMask) {
@@ -447,9 +448,9 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	}
 
 	cols := table.Cols()
-	fields := make([]*ast.ResultField, 0, len(cols))
+	fields := make([]*resolve.ResultField, 0, len(cols))
 	for _, col := range table.Cols() {
-		rf := &ast.ResultField{
+		rf := &resolve.ResultField{
 			ColumnAsName: col.Name,
 			TableAsName:  tName,
 			DBName:       dbName,
@@ -1185,10 +1186,6 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = se.sessionVars.SetSystemVar(variable.TiDBEnableWindowFunction, variable.BoolToOnOff(variable.DefEnableWindowFunction))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		err = se.sessionVars.SetSystemVar(variable.TiDBConstraintCheckInPlacePessimistic, variable.On)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1415,6 +1412,12 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		p = explain.TargetPlan
 	}
 
+	sqlCPUUsages := &s.sessionVars.SQLCPUUsages
+	// If command == mysql.ComSleep, it means the SQL execution is finished. Then cpu usages should be nil.
+	if command == mysql.ComSleep {
+		sqlCPUUsages = nil
+	}
+
 	pi := util.ProcessInfo{
 		ID:                    s.sessionVars.ConnectionID,
 		Port:                  s.sessionVars.Port,
@@ -1429,6 +1432,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		CurTxnStartTS:         curTxnStartTS,
 		CurTxnCreateTime:      curTxnCreateTime,
 		StmtCtx:               s.sessionVars.StmtCtx,
+		SQLCPUUsage:           sqlCPUUsages,
 		RefCountOfStmtCtx:     &s.sessionVars.RefCountOfStmtCtx,
 		MemTracker:            s.sessionVars.MemTracker,
 		DiskTracker:           s.sessionVars.DiskTracker,
@@ -1760,7 +1764,7 @@ var _ sqlexec.SQLExecutor = &session{}
 
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
-	[]chunk.Row, []*ast.ResultField, error) {
+	[]chunk.Row, []*resolve.ResultField, error) {
 	defer pprof.SetGoroutineLabels(ctx)
 	execOption := sqlexec.GetExecOption(opts)
 	var se *session
@@ -1809,7 +1813,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 // ExecRestrictedStmt4Test wrapper `(s *session) ExecRestrictedStmt` for test.
 func ExecRestrictedStmt4Test(ctx context.Context, s types.Session,
 	stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
-	[]chunk.Row, []*ast.ResultField, error) {
+	[]chunk.Row, []*resolve.ResultField, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	return s.(*session).ExecRestrictedStmt(ctx, stmtNode, opts...)
 }
@@ -1923,7 +1927,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	}, nil
 }
 
-func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.OptionFuncAlias, fn func(context.Context, *session) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.OptionFuncAlias, fn func(context.Context, *session) ([]chunk.Row, []*resolve.ResultField, error)) ([]chunk.Row, []*resolve.ResultField, error) {
 	execOption := sqlexec.GetExecOption(opts)
 	var se *session
 	var clean func()
@@ -1948,8 +1952,8 @@ func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.
 	return fn(ctx, se)
 }
 
-func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, params ...any) ([]chunk.Row, []*ast.ResultField, error) {
-	return s.withRestrictedSQLExecutor(ctx, opts, func(ctx context.Context, se *session) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, params ...any) ([]chunk.Row, []*resolve.ResultField, error) {
+	return s.withRestrictedSQLExecutor(ctx, opts, func(ctx context.Context, se *session) ([]chunk.Row, []*resolve.ResultField, error) {
 		stmt, err := se.ParseWithParams(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -2017,7 +2021,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
-			args, err := param.ExecArgs(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
+			args, err := expression.ExecBinaryParam(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
 			if err != nil {
 				return nil, err
 			}
@@ -2095,7 +2099,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// infoschema there.
 	if sessVars.StmtCtx.ResourceGroupName != sessVars.ResourceGroupName {
 		// if target resource group doesn't exist, fallback to the origin resource group.
-		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(model.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); !ok {
+		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(pmodel.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); !ok {
 			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.StmtCtx.ResourceGroupName))
 			sessVars.StmtCtx.ResourceGroupName = sessVars.ResourceGroupName
 			if txn, err := s.Txn(false); err == nil && txn != nil && txn.Valid() {
@@ -2225,7 +2229,6 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 var fileTransInConnKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
-	executor.IndexAdviseVarKey,
 	executor.PlanReplayerLoadVarKey,
 }
 
@@ -2430,7 +2433,7 @@ func (s *session) rollbackOnError(ctx context.Context) {
 }
 
 // PrepareStmt is used for executing prepare statement in binary protocol
-func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
+func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*resolve.ResultField, err error) {
 	defer func() {
 		if s.sessionVars.StmtCtx != nil {
 			s.sessionVars.StmtCtx.DetachMemDiskTracker()
@@ -2585,7 +2588,7 @@ func (s *session) GetExprCtx() exprctx.ExprContext {
 }
 
 // GetTableCtx returns the table.MutateContext
-func (s *session) GetTableCtx() tbctx.MutateContext {
+func (s *session) GetTableCtx() tblctx.MutateContext {
 	return s.tblctx
 }
 
@@ -2610,6 +2613,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			Location:         sc.TimeZone(),
 			RuntimeStatsColl: sc.RuntimeStatsColl,
 			SQLKiller:        &vars.SQLKiller,
+			CPUUsage:         &vars.SQLCPUUsages,
 			ErrCtx:           sc.ErrCtx(),
 
 			TiFlashReplicaRead:                   vars.TiFlashReplicaRead,
@@ -3736,9 +3740,9 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.sessionVars = variable.NewSessionVars(s)
-	s.exprctx = contextsession.NewSessionExprContext(s)
+	s.exprctx = sessionexpr.NewExprContext(s)
 	s.pctx = newPlanContextImpl(s)
-	s.tblctx = tbctximpl.NewTableContextImpl(s)
+	s.tblctx = tblsession.NewMutateContext(s)
 
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.sessionPlanCache = opt.PreparedPlanCache
@@ -3750,7 +3754,6 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
-	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
 
 	sessionBindHandle := bindinfo.NewSessionBindingHandle()
@@ -3799,9 +3802,9 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		stmtStats:             stmtstats.CreateStatementStats(),
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
-	s.exprctx = contextsession.NewSessionExprContext(s)
+	s.exprctx = sessionexpr.NewExprContext(s)
 	s.pctx = newPlanContextImpl(s)
-	s.tblctx = tbctximpl.NewTableContextImpl(s)
+	s.tblctx = tblsession.NewMutateContext(s)
 	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
@@ -4028,7 +4031,7 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 		}
 	case *ast.CreateIndexStmt:
 		isCrucial = true
-		if stmt.IndexOption != nil && stmt.IndexOption.Tp == model.IndexTypeHypo {
+		if stmt.IndexOption != nil && stmt.IndexOption.Tp == pmodel.IndexTypeHypo {
 			isCrucial = false
 		}
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
@@ -4459,10 +4462,6 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode"))
 		return false
 	}
-	if vars.BinlogClient != nil {
-		stmtCtx.AppendWarning(errors.New("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode"))
-		return false
-	}
 	if !(stmtCtx.InInsertStmt || stmtCtx.InDeleteStmt || stmtCtx.InUpdateStmt) {
 		if !stmtCtx.IsReadOnly {
 			stmtCtx.AppendWarning(errors.New("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode"))
@@ -4498,7 +4497,7 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 	}
 	for _, t := range stmtCtx.Tables {
 		// get table schema from current infoschema
-		tbl, err := is.TableByName(ctx, model.NewCIStr(t.DB), model.NewCIStr(t.Table))
+		tbl, err := is.TableByName(ctx, pmodel.NewCIStr(t.DB), pmodel.NewCIStr(t.Table))
 		if err != nil {
 			stmtCtx.AppendWarning(errors.New("Pipelined DML failed to get table schema. Fallback to standard mode"))
 			return false

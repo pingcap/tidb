@@ -30,7 +30,7 @@ import (
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -681,10 +681,6 @@ func TestAddGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	tk.MustExec("create table test_t1 (a int, b int) partition by range (b)" +
 		" (partition p0 values less than (10), " +
 		"  partition p1 values less than (maxvalue));")
