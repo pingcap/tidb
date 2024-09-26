@@ -295,24 +295,18 @@ func rollbackExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job *model
 	if len(tblInfo.Constraints) == 0 {
 		return updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	}
-	var (
-		defID          int64
-		ptSchemaID     int64
-		ptID           int64
-		partName       string
-		withValidation bool
-	)
-	if err = job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+	args, err := model.GetExchangeTablePartitionArgs(job)
+	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	pt, err := getTableInfo(t, ptID, ptSchemaID)
+	pt, err := getTableInfo(t, args.PTTableID, args.PTSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	pt.ExchangePartitionInfo = nil
 	var ptInfo []schemaIDAndTableInfo
 	ptInfo = append(ptInfo, schemaIDAndTableInfo{
-		schemaID: ptSchemaID,
+		schemaID: args.PTSchemaID,
 		tblInfo:  pt,
 	})
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true, ptInfo...)

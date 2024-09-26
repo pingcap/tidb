@@ -75,9 +75,6 @@ const (
 	dialTimeout             = 5 * time.Minute
 	maxRetryTimes           = 20
 	defaultRetryBackoffTime = 3 * time.Second
-	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
-	// A large retry times is for tolerating tikv cluster failures.
-	maxWriteAndIngestRetryTimes = 30
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -111,6 +108,10 @@ var (
 
 	errorEngineClosed     = errors.New("engine is closed")
 	maxRetryBackoffSecond = 30
+
+	// MaxWriteAndIngestRetryTimes is the max retry times for write and ingest.
+	// A large retry times is for tolerating tikv cluster failures.
+	MaxWriteAndIngestRetryTimes = 30
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
@@ -1469,9 +1470,20 @@ func (local *Backend) doImport(
 			switch job.stage {
 			case regionScanned, wrote:
 				job.retryCount++
-				if job.retryCount > maxWriteAndIngestRetryTimes {
+				if job.retryCount > MaxWriteAndIngestRetryTimes {
 					job.done(&jobWg)
-					return job.lastRetryableErr
+					lastErr := job.lastRetryableErr
+					intest.Assert(lastErr != nil, "lastRetryableErr should not be nil")
+					if lastErr == nil {
+						lastErr = errors.New("retry limit exceeded")
+						log.FromContext(ctx).Error(
+							"lastRetryableErr should not be nil",
+							logutil.Key("startKey", job.keyRange.Start),
+							logutil.Key("endKey", job.keyRange.End),
+							zap.Stringer("stage", job.stage),
+							zap.Error(lastErr))
+					}
+					return lastErr
 				}
 				// max retry backoff time: 2+4+8+16+30*26=810s
 				sleepSecond := math.Pow(2, float64(job.retryCount))

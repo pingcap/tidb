@@ -133,22 +133,15 @@ func SetSchemaDiffForExchangeTablePartition(diff *model.SchemaDiff, job *model.J
 	diff.OldTableID = job.TableID
 	diff.OldSchemaID = job.SchemaID
 	// Update the partitioned table (it is only done in the last state)
-	var (
-		ptSchemaID     int64
-		ptTableID      int64
-		ptDefID        int64
-		partName       string // Not used
-		withValidation bool   // Not used
-	)
 	// See ddl.ExchangeTablePartition
-	err := job.DecodeArgs(&ptDefID, &ptSchemaID, &ptTableID, &partName, &withValidation)
+	args, err := model.GetExchangeTablePartitionArgs(job)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// This is needed for not crashing TiFlash!
 	// TODO: Update TiFlash, to handle StateWriteOnly
 	diff.AffectedOpts = []*model.AffectedOption{{
-		TableID: ptTableID,
+		TableID: args.PTTableID,
 	}}
 	if job.SchemaState != model.StatePublic {
 		// No change, just to refresh the non-partitioned table
@@ -159,13 +152,13 @@ func SetSchemaDiffForExchangeTablePartition(diff *model.SchemaDiff, job *model.J
 		diff.AffectedOpts[0].SchemaID = job.SchemaID
 		// Need reload partition table, use diff.AffectedOpts[0].OldSchemaID to mark it.
 		if len(multiInfos) > 0 {
-			diff.AffectedOpts[0].OldSchemaID = ptSchemaID
+			diff.AffectedOpts[0].OldSchemaID = args.PTSchemaID
 		}
 	} else {
 		// Swap
-		diff.TableID = ptDefID
+		diff.TableID = args.PartitionID
 		// Also add correct SchemaID in case different schemas
-		diff.AffectedOpts[0].SchemaID = ptSchemaID
+		diff.AffectedOpts[0].SchemaID = args.PTSchemaID
 	}
 	return nil
 }

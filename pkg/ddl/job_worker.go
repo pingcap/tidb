@@ -868,7 +868,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionSetTiFlashReplica:
 		ver, err = w.onSetTableFlashReplica(jobCtx, t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
-		ver, err = onUpdateFlashReplicaStatus(jobCtx, t, job)
+		ver, err = onUpdateTiFlashReplicaStatus(jobCtx, t, job)
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(jobCtx, t, job)
 	case model.ActionAlterIndexVisibility:

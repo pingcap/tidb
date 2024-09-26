@@ -775,7 +775,21 @@ var defaultSysVars = []*SysVar{
 		SetMaxDeltaSchemaCount(TidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBScatterRegion, Value: BoolToOnOff(DefTiDBScatterRegion), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBScatterRegion, Value: DefTiDBScatterRegion, PossibleValues: []string{ScatterOff, ScatterTable, ScatterGlobal}, Type: TypeStr,
+		SetSession: func(vars *SessionVars, val string) error {
+			vars.ScatterRegion = val
+			return nil
+		},
+		GetSession: func(vars *SessionVars) (string, error) {
+			return vars.ScatterRegion, nil
+		},
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			if normalizedValue != ScatterOff && normalizedValue != ScatterTable && normalizedValue != ScatterGlobal {
+				return "", fmt.Errorf("invalid value for '%s', it should be either '%s', '%s' or '%s'", normalizedValue, ScatterOff, ScatterTable, ScatterGlobal)
+			}
+			return normalizedValue, nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(DefTiDBEnableStmtSummary), Type: TypeBool, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetEnabled(TiDBOptOn(val))
@@ -3385,6 +3399,11 @@ var defaultSysVars = []*SysVar{
 		s.SharedLockPromotion = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBTSOClientRPCMode, Value: DefTiDBTSOClientRPCMode, Type: TypeEnum, PossibleValues: []string{TSOClientRPCModeDefault, TSOClientRPCModeParallel, TSOClientRPCModeParallelFast},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

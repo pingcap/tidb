@@ -854,7 +854,7 @@
         "Result": null,
         "Plan": [
           "TableReader 0.01 root partition:dual data:Selection",
-          "└─Selection 0.01 cop[tikv]  eq(test_partition.t1.a, 1), or(eq(test_partition.t1.b, 6), 0)",
+          "└─Selection 0.01 cop[tikv]  eq(test_partition.t1.a, 1), eq(test_partition.t1.b, 6)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
@@ -867,7 +867,7 @@
         "Result": null,
         "Plan": [
           "TableReader 0.01 root partition:dual data:Selection",
-          "└─Selection 0.01 cop[tikv]  eq(test_partition.t1.a, 100), or(eq(test_partition.t1.b, 200), 0)",
+          "└─Selection 0.01 cop[tikv]  eq(test_partition.t1.a, 100), eq(test_partition.t1.b, 200)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [

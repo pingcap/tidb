@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
@@ -1067,11 +1066,12 @@ func onModifyTableCharsetAndCollate(jobCtx *jobContext, t *meta.Meta, job *model
 }
 
 func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var replicaInfo ast.TiFlashReplicaSpec
-	if err := job.DecodeArgs(&replicaInfo); err != nil {
+	args, err := model.GetSetTiFlashReplicaArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	replicaInfo := args.TiflashReplica
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
@@ -1146,13 +1146,13 @@ func (w *worker) checkTiFlashReplicaCount(replicaCount uint64) error {
 	return checkTiFlashReplicaCount(ctx, replicaCount)
 }
 
-func onUpdateFlashReplicaStatus(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var available bool
-	var physicalID int64
-	if err := job.DecodeArgs(&available, &physicalID); err != nil {
+func onUpdateTiFlashReplicaStatus(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetUpdateTiFlashReplicaStatusArgs(job)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	available, physicalID := args.Available, args.PhysicalID
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
@@ -1413,13 +1413,12 @@ func onAlterTableAttributes(jobCtx *jobContext, t *meta.Meta, job *model.Job) (v
 }
 
 func onAlterTablePartitionAttributes(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	var partitionID int64
-	rule := label.NewRule()
-	err = job.DecodeArgs(&partitionID, rule)
+	args, err := model.GetAlterTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
+	partitionID, rule := args.PartitionID, args.LabelRule
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
@@ -1435,7 +1434,8 @@ func onAlterTablePartitionAttributes(jobCtx *jobContext, t *meta.Meta, job *mode
 		patch := label.NewRulePatch([]*label.Rule{}, []string{rule.ID})
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	} else {
-		err = infosync.PutLabelRule(context.TODO(), rule)
+		labelRule := label.Rule(*rule)
+		err = infosync.PutLabelRule(context.TODO(), &labelRule)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1451,13 +1451,12 @@ func onAlterTablePartitionAttributes(jobCtx *jobContext, t *meta.Meta, job *mode
 }
 
 func onAlterTablePartitionPlacement(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	var partitionID int64
-	policyRefInfo := &model.PolicyRefInfo{}
-	err = job.DecodeArgs(&partitionID, &policyRefInfo)
+	args, err := model.GetAlterTablePartitionArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
+	partitionID, policyRefInfo := args.PartitionID, args.PolicyRefInfo
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
@@ -1516,12 +1515,12 @@ func onAlterTablePartitionPlacement(jobCtx *jobContext, t *meta.Meta, job *model
 }
 
 func onAlterTablePlacement(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	policyRefInfo := &model.PolicyRefInfo{}
-	err = job.DecodeArgs(&policyRefInfo)
+	args, err := model.GetAlterTablePlacementArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
+	policyRefInfo := args.PlacementPolicyRef
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {

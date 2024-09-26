@@ -20,12 +20,16 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // PredicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
-// in-list and not equal list intersection.
+//  1. in-list and not equal list intersection.
+//  2. Drop OR predicates if they are empty for this pattern: P AND (P1 OR P2 ... OR Pn)
+//     Pi is removed if P & Pi is false/empty.
 type PredicateSimplification struct {
 }
 
@@ -34,35 +38,57 @@ type predicateType = byte
 const (
 	inListPredicate predicateType = iota
 	notEqualPredicate
+	equalPredicate
+	lessThanPredicate
+	greaterThanPredicate
+	lessThanOrEqualPredicate
+	greaterThanOrEqualPredicate
+	orPredicate
+	scalarPredicate
 	otherPredicate
 )
 
 func findPredicateType(expr expression.Expression) (*expression.Column, predicateType) {
 	switch v := expr.(type) {
 	case *expression.ScalarFunction:
+		if v.FuncName.L == ast.LogicOr {
+			return nil, orPredicate
+		}
 		args := v.GetArgs()
 		col, colOk := args[0].(*expression.Column)
 		if !colOk {
 			return nil, otherPredicate
 		}
-		if v.FuncName.L == ast.NE {
+		if len(args) > 1 {
 			if _, ok := args[1].(*expression.Constant); !ok {
 				return nil, otherPredicate
 			}
-			return col, notEqualPredicate
 		}
-		if v.FuncName.L == ast.In {
+		if v.FuncName.L == ast.NE {
+			return col, notEqualPredicate
+		} else if v.FuncName.L == ast.EQ {
+			return col, equalPredicate
+		} else if v.FuncName.L == ast.LT {
+			return col, lessThanPredicate
+		} else if v.FuncName.L == ast.GT {
+			return col, greaterThanPredicate
+		} else if v.FuncName.L == ast.LE {
+			return col, lessThanOrEqualPredicate
+		} else if v.FuncName.L == ast.GE {
+			return col, greaterThanOrEqualPredicate
+		} else if v.FuncName.L == ast.In {
 			for _, value := range args[1:] {
 				if _, ok := value.(*expression.Constant); !ok {
 					return nil, otherPredicate
 				}
 			}
 			return col, inListPredicate
+		} else {
+			return nil, otherPredicate
 		}
 	default:
 		return nil, otherPredicate
 	}
-	return nil, otherPredicate
 }
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
@@ -109,7 +135,24 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
+// splitCNF converts AND to list using SplitCNFItems. It is needed since simplification may lead to AND at the top level.
+// Several optimizations are based on a list of predicates and AND will block those.
+func splitCNF(conditions []expression.Expression) []expression.Expression {
+	newConditions := make([]expression.Expression, 0, len(conditions))
+	for _, cond := range conditions {
+		newConditions = append(newConditions, expression.SplitCNFItems(cond)...)
+	}
+	return newConditions
+}
+
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+	simplifiedPredicate := mergeInAndNotEQLists(sctx, predicates)
+	pruneEmptyORBranches(sctx, simplifiedPredicate)
+	simplifiedPredicate = splitCNF(simplifiedPredicate)
+	return simplifiedPredicate
+}
+
+func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	if len(predicates) <= 1 {
 		return predicates
 	}
@@ -145,6 +188,117 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 		}
 	}
 	return newValues
+}
+
+// Check for constant false condition.
+func unsatisfiableExpression(ctx base.PlanContext, p expression.Expression) bool {
+	if constExpr, ok := p.(*expression.Constant); ok {
+		if b, err := constExpr.Value.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx()); err == nil && b == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
+	var equalPred expression.Expression
+	var otherPred expression.Expression
+	col1, p1Type := findPredicateType(p1)
+	col2, p2Type := findPredicateType(p2)
+	if col1 != col2 || col1 == nil {
+		return false
+	}
+	if p1Type == equalPredicate {
+		equalPred = p1
+		otherPred = p2
+	} else if p2Type == equalPredicate {
+		equalPred = p2
+		otherPred = p1
+	}
+	if equalPred == nil || otherPred == nil {
+		return false
+	}
+	// Copy constant from equal predicate into other predicate.
+	equalValue := equalPred.(*expression.ScalarFunction)
+	otherValue := otherPred.(*expression.ScalarFunction)
+	newPred := expression.NewFunctionInternal(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValue.GetArgs()[1], otherValue.GetArgs()[1])
+	newPredList := make([]expression.Expression, 0, 1)
+	newPredList = append(newPredList, newPred)
+	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList)
+	return unsatisfiableExpression(ctx, newPredList[0])
+}
+
+func comparisonPred(predType predicateType) predicateType {
+	if predType == equalPredicate || predType == lessThanPredicate ||
+		predType == greaterThanPredicate || predType == lessThanOrEqualPredicate ||
+		predType == greaterThanOrEqualPredicate {
+		return scalarPredicate
+	}
+	return predType
+}
+
+// updateOrPredicate simplifies OR predicates by dropping OR predicates if they are empty.
+// It is applied for this pattern: P AND (P1 OR P2 ... OR Pn)
+// Pi is removed if P & Pi is false/empty.
+func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expression, scalarPredicatePtr expression.Expression) expression.Expression {
+	_, orPredicateType := findPredicateType(orPredicateList)
+	_, scalarPredicateType := findPredicateType(scalarPredicatePtr)
+	scalarPredicateType = comparisonPred(scalarPredicateType)
+	if orPredicateType != orPredicate || scalarPredicateType != scalarPredicate {
+		return orPredicateList
+	}
+	v := orPredicateList.(*expression.ScalarFunction)
+	firstCondition := v.GetArgs()[0]
+	secondCondition := v.GetArgs()[1]
+	_, firstConditionType := findPredicateType(firstCondition)
+	_, secondConditionType := findPredicateType(secondCondition)
+	emptyFirst := false
+	emptySecond := false
+	if comparisonPred(firstConditionType) == scalarPredicate {
+		emptyFirst = unsatisfiable(ctx, firstCondition, scalarPredicatePtr)
+	} else if firstConditionType == orPredicate {
+		firstCondition = updateOrPredicate(ctx, firstCondition, scalarPredicatePtr)
+	}
+	if comparisonPred(secondConditionType) == scalarPredicate {
+		emptySecond = unsatisfiable(ctx, secondCondition, scalarPredicatePtr)
+	} else if secondConditionType == orPredicate {
+		secondCondition = updateOrPredicate(ctx, secondCondition, scalarPredicatePtr)
+	}
+	emptyFirst = emptyFirst || unsatisfiableExpression(ctx, firstCondition)
+	emptySecond = emptySecond || unsatisfiableExpression(ctx, secondCondition)
+	if emptyFirst && !emptySecond {
+		return secondCondition
+	} else if !emptyFirst && emptySecond {
+		return firstCondition
+	} else if emptyFirst && emptySecond {
+		return &expression.Constant{Value: types.NewIntDatum(0), RetType: types.NewFieldType(mysql.TypeTiny)}
+	}
+	return expression.NewFunctionInternal(ctx.GetExprCtx(), ast.LogicOr, v.RetType, firstCondition, secondCondition)
+}
+
+// pruneEmptyORBranches applies iteratively updateOrPredicate for each pair of OR predicate
+// and another scalar predicate.
+func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Expression) {
+	if len(predicates) <= 1 {
+		return
+	}
+	for i := range predicates {
+		for j := i + 1; j < len(predicates); j++ {
+			ithPredicate := predicates[i]
+			jthPredicate := predicates[j]
+			_, iType := findPredicateType(ithPredicate)
+			_, jType := findPredicateType(jthPredicate)
+			iType = comparisonPred(iType)
+			jType = comparisonPred(jType)
+			if iType == scalarPredicate && jType == orPredicate {
+				predicates[j] = updateOrPredicate(sctx, jthPredicate, ithPredicate)
+				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+			} else if iType == orPredicate && jType == scalarPredicate {
+				predicates[i] = updateOrPredicate(sctx, ithPredicate, jthPredicate)
+				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
+			}
+		}
+	}
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.

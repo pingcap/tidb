@@ -83,6 +83,18 @@ const (
 	OOMActionCancel = "CANCEL"
 	// OOMActionLog constants represents the valid action configurations for OOMAction "LOG".
 	OOMActionLog = "LOG"
+
+	// TSOClientRPCModeDefault is a choice of variable TiDBTSOClientRPCMode. In this mode, the TSO client sends batched
+	// TSO requests serially.
+	TSOClientRPCModeDefault = "DEFAULT"
+	// TSOClientRPCModeParallel is a choice of variable TiDBTSOClientRPCMode. In this mode, the TSO client tries to
+	// keep approximately 2 batched TSO requests running in parallel. This option tries to reduce the batch-waiting time
+	// by half, at the expense of about twice the amount of TSO RPC calls.
+	TSOClientRPCModeParallel = "PARALLEL"
+	// TSOClientRPCModeParallelFast is a choice of variable TiDBTSOClientRPCMode. In this mode, the TSO client tries to
+	// keep approximately 4 batched TSO requests running in parallel. This option tries to reduce the batch-waiting time
+	// by 3/4, at the expense of about 4 times the amount of TSO RPC calls.
+	TSOClientRPCModeParallelFast = "PARALLEL-FAST"
 )
 
 // Global config name list.

@@ -15,7 +15,6 @@
 package pattern
 
 import (
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
@@ -91,7 +90,7 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandMaxOneRow
 	case *logicalop.LogicalTableDual:
 		return OperandTableDual
-	case *plannercore.DataSource:
+	case *logicalop.DataSource:
 		return OperandDataSource
 	case *logicalop.LogicalUnionScan:
 		return OperandUnionScan
@@ -105,13 +104,13 @@ func GetOperand(p base.LogicalPlan) Operand {
 		return OperandLock
 	case *logicalop.LogicalLimit:
 		return OperandLimit
-	case *plannercore.TiKVSingleGather:
+	case *logicalop.TiKVSingleGather:
 		return OperandTiKVSingleGather
-	case *plannercore.LogicalTableScan:
+	case *logicalop.LogicalTableScan:
 		return OperandTableScan
 	case *logicalop.LogicalMemTable:
 		return OperandMemTableScan
-	case *plannercore.LogicalIndexScan:
+	case *logicalop.LogicalIndexScan:
 		return OperandIndexScan
 	case *logicalop.LogicalShow:
 		return OperandShow

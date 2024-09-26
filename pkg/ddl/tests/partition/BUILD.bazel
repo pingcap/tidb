@@ -7,6 +7,7 @@ go_test(
         "db_partition_test.go",
         "main_test.go",
         "multi_domain_test.go",
+        "placement_test.go",
     ],
     flaky = True,
     shard_count = 50,

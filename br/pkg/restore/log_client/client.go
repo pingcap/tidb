@@ -33,11 +33,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
+	"github.com/pingcap/tidb/br/pkg/encryption"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -293,13 +295,15 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 	return gcRatio, nil
 }
 
-func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint) error {
+func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint,
+	encryptionManager *encryption.Manager) error {
 	init := LogFileManagerInit{
 		StartTS:   startTS,
 		RestoreTS: restoreTS,
 		Storage:   rc.storage,
 
 		MetadataDownloadBatchSize: metadataDownloadBatchSize,
+		EncryptionManager:         encryptionManager,
 	}
 	var err error
 	rc.LogFileManager, err = CreateLogFileManager(ctx, init)
@@ -436,7 +440,7 @@ func ApplyKVFilesWithBatchMethod(
 	return nil
 }
 
-func ApplyKVFilesWithSingelMethod(
+func ApplyKVFilesWithSingleMethod(
 	ctx context.Context,
 	files LogIter,
 	applyFunc func(file []*LogDataFileInfo, kvCount int64, size uint64),
@@ -477,6 +481,8 @@ func (rc *LogClient) RestoreKVFiles(
 	pitrBatchSize uint32,
 	updateStats func(kvCount uint64, size uint64),
 	onProgress func(cnt int64),
+	cipherInfo *backuppb.CipherInfo,
+	masterKeys []*encryptionpb.MasterKey,
 ) error {
 	var (
 		err          error
@@ -488,7 +494,7 @@ func (rc *LogClient) RestoreKVFiles(
 	defer func() {
 		if err == nil {
 			elapsed := time.Since(start)
-			log.Info("Restore KV files", zap.Duration("take", elapsed))
+			log.Info("Restored KV files", zap.Duration("take", elapsed))
 			summary.CollectSuccessUnit("files", fileCount, elapsed)
 		}
 	}()
@@ -548,7 +554,8 @@ func (rc *LogClient) RestoreKVFiles(
 					}
 				}()
 
-				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
+				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS,
+					supportBatch, cipherInfo, masterKeys)
 			})
 		}
 	}
@@ -557,7 +564,7 @@ func (rc *LogClient) RestoreKVFiles(
 		if supportBatch {
 			err = ApplyKVFilesWithBatchMethod(ectx, logIter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc, &applyWg)
 		} else {
-			err = ApplyKVFilesWithSingelMethod(ectx, logIter, applyFunc, &applyWg)
+			err = ApplyKVFilesWithSingleMethod(ectx, logIter, applyFunc, &applyWg)
 		}
 		return errors.Trace(err)
 	})
@@ -619,18 +626,25 @@ func initFullBackupTables(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	tableFilter filter.Filter,
+	cipherInfo *backuppb.CipherInfo,
 ) (map[int64]*metautil.Table, error) {
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	backupMetaBytes, err := metautil.DecryptFullBackupMetaIfNeeded(metaData, cipherInfo)
+	if err != nil {
+		return nil, errors.Annotate(err, "decrypt failed with wrong key")
+	}
+
 	backupMeta := &backuppb.BackupMeta{}
-	if err = backupMeta.Unmarshal(metaData); err != nil {
+	if err = backupMeta.Unmarshal(backupMetaBytes); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// read full backup databases to get map[table]table.Info
-	reader := metautil.NewMetaReader(backupMeta, s, nil)
+	reader := metautil.NewMetaReader(backupMeta, s, cipherInfo)
 
 	databases, err := metautil.LoadBackupTables(ctx, reader, false)
 	if err != nil {
@@ -684,6 +698,7 @@ const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTO
 func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	ctx context.Context,
 	cfg *InitSchemaConfig,
+	cipherInfo *backuppb.CipherInfo,
 ) (map[stream.UpstreamID]*stream.DBReplace, error) {
 	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
 	if cfg.FullBackupStorage == nil {
@@ -698,7 +713,7 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fullBackupTables, err := initFullBackupTables(ctx, s, cfg.TableFilter)
+	fullBackupTables, err := initFullBackupTables(ctx, s, cfg.TableFilter, cipherInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -741,6 +756,7 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 func (rc *LogClient) InitSchemasReplaceForDDL(
 	ctx context.Context,
 	cfg *InitSchemaConfig,
+	cipherInfo *backuppb.CipherInfo,
 ) (*stream.SchemasReplace, error) {
 	var (
 		err    error
@@ -785,7 +801,7 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 	if len(dbMaps) <= 0 {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
 		needConstructIdMap = true
-		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg)
+		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg, cipherInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

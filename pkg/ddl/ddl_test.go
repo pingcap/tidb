@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -32,7 +33,6 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -115,7 +115,7 @@ func TestGetIntervalFromPolicy(t *testing.T) {
 	require.False(t, changed)
 }
 
-func colDefStrToFieldType(t *testing.T, str string, ctx sessionctx.Context) *types.FieldType {
+func colDefStrToFieldType(t *testing.T, str string, ctx *metabuild.Context) *types.FieldType {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	require.NoError(t, err)
@@ -127,7 +127,7 @@ func colDefStrToFieldType(t *testing.T, str string, ctx sessionctx.Context) *typ
 }
 
 func TestModifyColumn(t *testing.T) {
-	ctx := mock.NewContext()
+	ctx := NewMetaBuildContextWithSctx(mock.NewContext())
 	tests := []struct {
 		origin string
 		to     string
