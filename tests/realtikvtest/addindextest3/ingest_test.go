@@ -643,7 +643,7 @@ func TestConcFastReorg(t *testing.T) {
 	wg.Wait()
 }
 
-func TestIssue56338(t *testing.T) {
+func TestIssue55808(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
