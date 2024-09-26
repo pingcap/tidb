@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -81,9 +82,6 @@ const (
 	dialTimeout             = 5 * time.Minute
 	maxRetryTimes           = 5
 	defaultRetryBackoffTime = 3 * time.Second
-	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
-	// A large retry times is for tolerating tikv cluster failures.
-	maxWriteAndIngestRetryTimes = 30
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -116,6 +114,10 @@ var (
 
 	errorEngineClosed     = errors.New("engine is closed")
 	maxRetryBackoffSecond = 30
+
+	// MaxWriteAndIngestRetryTimes is the max retry times for write and ingest.
+	// A large retry times is for tolerating tikv cluster failures.
+	MaxWriteAndIngestRetryTimes = 30
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
@@ -1701,8 +1703,19 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 			switch job.stage {
 			case regionScanned, wrote:
 				job.retryCount++
-				if job.retryCount > maxWriteAndIngestRetryTimes {
-					firstErr.Set(job.lastRetryableErr)
+				if job.retryCount > MaxWriteAndIngestRetryTimes {
+					lastErr := job.lastRetryableErr
+					intest.Assert(lastErr != nil, "lastRetryableErr should not be nil")
+					if lastErr == nil {
+						lastErr = errors.New("retry limit exceeded")
+						log.FromContext(ctx).Error(
+							"lastRetryableErr should not be nil",
+							logutil.Key("startKey", job.keyRange.Start),
+							logutil.Key("endKey", job.keyRange.End),
+							zap.Stringer("stage", job.stage),
+							zap.Error(lastErr))
+					}
+					firstErr.Set(lastErr)
 					workerCancel()
 					job.done(&jobWg)
 					continue
