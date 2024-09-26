@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -39,7 +40,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -913,30 +916,35 @@ type regionJobRetryer struct {
 	putBackCh chan<- *regionJob
 	reload    chan struct{}
 	jobWg     *sync.WaitGroup
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
-// startRegionJobRetryer starts a new regionJobRetryer and it will run in
-// background to put the job back to `putBackCh` when job's waitUntil is reached.
-// Cancel the `ctx` will stop retryer and `jobWg.Done` will be trigger for jobs
-// that are not put back yet.
-func startRegionJobRetryer(
-	ctx context.Context,
+// newRegionJobRetryer creates a regionJobRetryer. regionJobRetryer.run is
+// expected to be called soon.
+func newRegionJobRetryer(
+	workerCtx context.Context,
 	putBackCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) *regionJobRetryer {
+	ctx, cancel := context.WithCancel(workerCtx)
 	ret := &regionJobRetryer{
 		putBackCh: putBackCh,
 		reload:    make(chan struct{}, 1),
 		jobWg:     jobWg,
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 	ret.protectedQueue.q = make(regionJobRetryHeap, 0, 16)
-	go ret.run(ctx)
 	return ret
 }
 
-// run is only internally used, caller should not use it.
-func (q *regionJobRetryer) run(ctx context.Context) {
-	defer q.close()
+// run occupies the goroutine and starts the retry loop. Cancel the `ctx` will
+// stop retryer and `jobWg.Done` will be trigger for jobs that are not put back
+// yet. It should only be used in error case.
+func (q *regionJobRetryer) run() {
+	defer q.cleanupUnprocessedJobs()
 
 	for {
 		var front *regionJob
@@ -949,7 +957,7 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 		switch {
 		case front != nil:
 			select {
-			case <-ctx.Done():
+			case <-q.ctx.Done():
 				return
 			case <-q.reload:
 			case <-time.After(time.Until(front.waitUntil)):
@@ -962,7 +970,7 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 				// hold the lock of toPutBack to make sending to putBackCh and
 				// resetting toPutBack atomic w.r.t. regionJobRetryer.close
 				select {
-				case <-ctx.Done():
+				case <-q.ctx.Done():
 					q.protectedToPutBack.mu.Unlock()
 					return
 				case q.putBackCh <- q.protectedToPutBack.toPutBack:
@@ -973,7 +981,7 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 		default:
 			// len(q.q) == 0
 			select {
-			case <-ctx.Done():
+			case <-q.ctx.Done():
 				return
 			case <-q.reload:
 			}
@@ -981,8 +989,25 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 	}
 }
 
-// close is only internally used, caller should not use it.
+// close stops the retryer. It should only be used in the happy path where all
+// jobs are finished.
 func (q *regionJobRetryer) close() {
+	q.cancel()
+	close(q.putBackCh)
+	intest.AssertFunc(func() bool {
+		q.protectedToPutBack.mu.Lock()
+		defer q.protectedToPutBack.mu.Unlock()
+		return q.protectedToPutBack.toPutBack == nil
+	}, "toPutBack should be nil considering it's happy path")
+	intest.AssertFunc(func() bool {
+		q.protectedQueue.mu.Lock()
+		defer q.protectedQueue.mu.Unlock()
+		return len(q.protectedQueue.q) == 0
+	}, "queue should be empty considering it's happy path")
+}
+
+// cleanupUnprocessedJobs is only internally used, caller should not use it.
+func (q *regionJobRetryer) cleanupUnprocessedJobs() {
 	q.protectedClosed.mu.Lock()
 	defer q.protectedClosed.mu.Unlock()
 	q.protectedClosed.closed = true
@@ -1012,4 +1037,205 @@ func (q *regionJobRetryer) push(job *regionJob) bool {
 	default:
 	}
 	return true
+}
+
+// storeBalancer is used to balance the store load when sending region jobs to
+// worker. Internally it maintains a large enough buffer to hold all region jobs,
+// and pick the job related to stores that has the least load to send to worker.
+// Because it does not have backpressure, it should not be used with external
+// engine to avoid OOM.
+type storeBalancer struct {
+	// map[int]*regionJob
+	jobs   sync.Map
+	jobIdx int
+	jobWg  *sync.WaitGroup
+
+	jobToWorkerCh      <-chan *regionJob
+	innerJobToWorkerCh chan *regionJob
+
+	wakeSendToWorker chan struct{}
+
+	// map[uint64]int. 0 can appear in the map after it's decremented to 0.
+	storeLoadMap sync.Map
+}
+
+func newStoreBalancer(
+	jobToWorkerCh <-chan *regionJob,
+	jobWg *sync.WaitGroup,
+) *storeBalancer {
+	return &storeBalancer{
+		jobToWorkerCh:      jobToWorkerCh,
+		innerJobToWorkerCh: make(chan *regionJob),
+		wakeSendToWorker:   make(chan struct{}, 1),
+		jobWg:              jobWg,
+	}
+}
+
+func (b *storeBalancer) run(workerCtx context.Context) error {
+	// all goroutine will not return error except panic, so we make use of
+	// ErrorGroupWithRecover.
+	wg, ctx2 := util2.NewErrorGroupWithRecoverWithCtx(workerCtx)
+	sendToWorkerCtx, cancelSendToWorker := context.WithCancel(ctx2)
+	wg.Go(func() error {
+		b.runReadToWorkerCh(ctx2)
+		cancelSendToWorker()
+		return nil
+	})
+	wg.Go(func() error {
+		b.runSendToWorker(sendToWorkerCtx)
+		return nil
+	})
+
+	if err := wg.Wait(); err != nil {
+		return err
+	}
+
+	b.jobs.Range(func(_, value any) bool {
+		value.(*regionJob).done(b.jobWg)
+		return true
+	})
+	return nil
+}
+
+func (b *storeBalancer) runReadToWorkerCh(workerCtx context.Context) {
+	for {
+		select {
+		case <-workerCtx.Done():
+			return
+		case job, ok := <-b.jobToWorkerCh:
+			if !ok {
+				close(b.innerJobToWorkerCh)
+				return
+			}
+			b.jobs.Store(b.jobIdx, job)
+			b.jobIdx++
+
+			select {
+			case b.wakeSendToWorker <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+func (b *storeBalancer) jobLen() int {
+	cnt := 0
+	b.jobs.Range(func(_, _ any) bool {
+		cnt++
+		return true
+	})
+	return cnt
+}
+
+func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
+	for {
+		select {
+		case <-workerCtx.Done():
+			return
+		case <-b.wakeSendToWorker:
+		}
+
+		remainJobCnt := b.jobLen()
+		for i := 0; i < remainJobCnt; i++ {
+			j := b.pickJob()
+			if j == nil {
+				// j can be nil if it's executed after the jobs.Store of runReadToWorkerCh
+				// and before the sending to wakeSendToWorker of runReadToWorkerCh.
+				break
+			}
+
+			// after the job is picked and before the job is sent to worker, the score may
+			// have changed so we should pick again to get the optimal job. However for
+			// simplicity we don't do it. The optimal job will be picked in the next round.
+			select {
+			case <-workerCtx.Done():
+				j.done(b.jobWg)
+				return
+			case b.innerJobToWorkerCh <- j:
+			}
+		}
+	}
+}
+
+func (b *storeBalancer) pickJob() *regionJob {
+	var (
+		best     *regionJob
+		bestIdx  = -1
+		minScore = math.MaxInt64
+	)
+	b.jobs.Range(func(key, value any) bool {
+		idx := key.(int)
+		job := value.(*regionJob)
+
+		score := 0
+		// in unit tests, the fields of job may not set
+		if job.region == nil || job.region.Region == nil {
+			best = job
+			bestIdx = idx
+			return false
+		}
+
+		for _, p := range job.region.Region.Peers {
+			if v, ok := b.storeLoadMap.Load(p.StoreId); ok {
+				score += v.(int)
+			}
+		}
+
+		if score == 0 {
+			best = job
+			bestIdx = idx
+			return false
+		}
+		if score < minScore {
+			minScore = score
+			best = job
+			bestIdx = idx
+		}
+		return true
+	})
+	if bestIdx == -1 {
+		return nil
+	}
+
+	b.jobs.Delete(bestIdx)
+	// in unit tests, the fields of job may not set
+	if best.region == nil || best.region.Region == nil {
+		return best
+	}
+
+	for _, p := range best.region.Region.Peers {
+	retry:
+		val, loaded := b.storeLoadMap.LoadOrStore(p.StoreId, 1)
+		if !loaded {
+			continue
+		}
+
+		old := val.(int)
+		if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old+1) {
+			// retry the whole check because the entry may have been deleted
+			goto retry
+		}
+	}
+	return best
+}
+
+func (b *storeBalancer) releaseStoreLoad(peers []*metapb.Peer) {
+	for _, p := range peers {
+	retry:
+		val, ok := b.storeLoadMap.Load(p.StoreId)
+		if !ok {
+			intest.Assert(false,
+				"missing key in storeLoadMap. key: %d",
+				p.StoreId,
+			)
+			log.L().Error("missing key in storeLoadMap",
+				zap.Uint64("storeID", p.StoreId))
+			continue
+		}
+
+		old := val.(int)
+		if !b.storeLoadMap.CompareAndSwap(p.StoreId, old, old-1) {
+			goto retry
+		}
+	}
 }

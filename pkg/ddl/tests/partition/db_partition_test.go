@@ -275,7 +275,6 @@ func TestCreateTableWithPartition(t *testing.T) {
 		  partition p4 values less than (18446744073709551000 + 10)
 		);`)
 
-	tk.MustExec("set @@tidb_enable_table_partition = 1")
 	tk.MustExec(`create table t30 (
 		  a int,
 		  b varchar(20),
@@ -349,7 +348,6 @@ func TestCreateTableWithHashPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists employees;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`
 	create table employees (
 		id int not null,
@@ -1212,7 +1210,7 @@ func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	tk.MustExec("use test;")
 
 	tk.MustExec("drop table if exists t1;")
@@ -1655,7 +1653,7 @@ func TestGlobalIndexShowTableRegions(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
-	tk.MustExec("set @@global.tidb_scatter_region = on")
+	tk.MustExec("set @@session.tidb_scatter_region = 'table'")
 	tk.MustExec(`create table p (id int, c int, d int, unique key uidx(c)) partition by range (c) (
 partition p0 values less than (4),
 partition p1 values less than (7),
@@ -2251,7 +2249,6 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 
 	// Test truncate table partition reassigns new partitionIDs.
 	tk.MustExec("drop table if exists t5;")
-	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`create table t5(
 		id int, name varchar(50),
 		purchased date
@@ -2276,7 +2273,6 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
 	require.True(t, oldPID != newPID)
 
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1;")
 	tk.MustExec("drop table if exists clients;")
 	tk.MustExec(`create table clients (
 		id int,
@@ -2392,7 +2388,6 @@ func testPartitionAddIndexOrPK(t *testing.T, tk *testkit.TestKit, key string) {
 	testPartitionAddIndex(tk, t, key)
 
 	// test hash partition table.
-	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	tk.MustExec("drop table if exists partition_add_idx")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
@@ -2403,7 +2398,6 @@ func testPartitionAddIndexOrPK(t *testing.T, tk *testkit.TestKit, key string) {
 	// Test hash partition for pr 10475.
 	tk.MustExec("drop table if exists t1")
 	defer tk.MustExec("drop table if exists t1")
-	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	tk.MustExec("create table t1 (a int, b int, unique key(a)) partition by hash(a) partitions 5;")
 	tk.MustExec("insert into t1 values (0,0),(1,1),(2,2),(3,3);")
 	tk.MustExec(fmt.Sprintf("alter table t1 add %s idx(a)", key))
@@ -2549,7 +2543,6 @@ func TestPartitionErrorCode(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 
 	// add partition
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec("drop database if exists test_db_with_partition")
 	tk.MustExec("create database test_db_with_partition")
 	tk.MustExec("use test_db_with_partition")

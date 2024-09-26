@@ -234,15 +234,13 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 
 func onAlterSequence(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
-	var (
-		sequenceOpts []*ast.SequenceOption
-		ident        ast.Ident
-	)
-	if err := job.DecodeArgs(&ident, &sequenceOpts); err != nil {
+	args, err := model.GetAlterSequenceArgs(job)
+	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	ident, sequenceOpts := args.Ident, args.SeqOptions
 
 	// Get the old tableInfo.
 	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, schemaID)

@@ -93,8 +93,8 @@ func (a *autoIDAccessor) CopyTo(databaseID, tableID int64) error {
 
 // AutoIDAccessors represents all the auto IDs of a table.
 type AutoIDAccessors interface {
-	Get() (AutoIDGroup, error)
-	Put(autoIDs AutoIDGroup) error
+	Get() (model.AutoIDGroup, error)
+	Put(autoIDs model.AutoIDGroup) error
 	Del() error
 
 	AccessorPicker
@@ -117,7 +117,7 @@ type autoIDAccessors struct {
 const sepAutoIncVer = model.TableInfoVersion5
 
 // Get implements the interface AutoIDAccessors.
-func (a *autoIDAccessors) Get() (autoIDs AutoIDGroup, err error) {
+func (a *autoIDAccessors) Get() (autoIDs model.AutoIDGroup, err error) {
 	if autoIDs.RowID, err = a.RowID().Get(); err != nil {
 		return autoIDs, err
 	}
@@ -131,7 +131,7 @@ func (a *autoIDAccessors) Get() (autoIDs AutoIDGroup, err error) {
 }
 
 // Put implements the interface AutoIDAccessors.
-func (a *autoIDAccessors) Put(autoIDs AutoIDGroup) error {
+func (a *autoIDAccessors) Put(autoIDs model.AutoIDGroup) error {
 	if err := a.RowID().Put(autoIDs.RowID); err != nil {
 		return err
 	}
@@ -196,11 +196,4 @@ func NewAutoIDAccessors(m *Meta, databaseID, tableID int64) AutoIDAccessors {
 			tableID:    tableID,
 		},
 	}
-}
-
-// AutoIDGroup represents a group of auto IDs of a specific table.
-type AutoIDGroup struct {
-	RowID       int64
-	IncrementID int64
-	RandomID    int64
 }
