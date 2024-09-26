@@ -25,13 +25,22 @@ func newInvalidModeErr(s string) error {
 	return NewErr(ErrWrongValueForVar, "sql_mode", s)
 }
 
+const (
+	mysqlCompatibilityVersion = "8.0.11"
+	// VersionSeparator NOTE: DON'T MODIFY THIS VALUE.
+	// We don't store TiDB server version directly inside PD, but stores a concatenated
+	// one with MySQL compatibility version, with this fixed then we can parse TiDB
+	// version from ServerVersion.
+	VersionSeparator = "-TiDB-"
+)
+
 // Version information.
 var (
 	// TiDBReleaseVersion is initialized by (git describe --tags) in Makefile.
-	TiDBReleaseVersion = "None"
+	TiDBReleaseVersion = "v8.4.0-this-is-a-placeholder"
 
 	// ServerVersion is the version information of this tidb-server in MySQL's format.
-	ServerVersion = fmt.Sprintf("8.0.11-TiDB-%s", TiDBReleaseVersion)
+	ServerVersion = fmt.Sprintf("%s%s%s", mysqlCompatibilityVersion, VersionSeparator, TiDBReleaseVersion)
 )
 
 // Header information.

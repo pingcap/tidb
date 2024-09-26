@@ -25,6 +25,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -5184,7 +5185,7 @@ type TblColPosInfo struct {
 	// HandleOrdinal represents the ordinal of the handle column.
 	HandleCols util.HandleCols
 
-	IndexesForDelete table.IndexesLayout
+	*table.ExtraPartialRowOption
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -5256,86 +5257,195 @@ func buildColumns2HandleWithWrtiableColumns(
 	return cols2Handles, nil
 }
 
-// buildColPositionInfoForDelete builds columns to handle mapping for delete.
+// pruneAndBuildColPositionInfoForDelete prune unneeded columns and construct the column position information.
 // We'll have two kinds of columns seen by DELETE:
 //  1. The columns that are public. They are the columns that not affected by any DDL.
 //  2. The columns that are not public. They are the columns that are affected by DDL.
 //     But we need them because the non-public indexes may rely on them.
 //
 // The two kind of columns forms the whole columns of the table. Public part first.
-// This function records the following things:
-//  1. The position of the columns used by indexes in the DELETE's select's output.
-//  2. The row id's position in the output.
-func buildColPositionInfoForDelete(
+//
+// This function returns the following things:
+//  1. TblColPosInfoSlice stores the each table's column's position information in the final mixed row.
+//  2. The bitset records which column in the original mixed row is not pruned..
+//  3. The error we meet during the algorithm.
+func pruneAndBuildColPositionInfoForDelete(
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
 	tblID2Table map[int64]table.Table,
-) (TblColPosInfoSlice, error) {
-	var cols2PosInfos TblColPosInfoSlice
-	for tblID, handleCols := range tblID2Handle {
-		tbl := tblID2Table[tblID]
-		deletableIdxs := tbl.DeletableIndices()
-		deletableCols := tbl.DeletableCols()
-		tblInfo := tbl.Meta()
-
+	hasFK bool,
+) (TblColPosInfoSlice, *bitset.BitSet, error) {
+	var nonPruned *bitset.BitSet
+	// If there is foreign key, we can't prune the columns.
+	// Use a very relax check for foreign key cascades and checks.
+	// If there's one table containing foreign keys, all of the tables would not do pruning.
+	// It should be strict in the future or just support pruning column when there is foreign key.
+	if !hasFK {
+		nonPruned = bitset.New(uint(len(names)))
+		nonPruned.SetAll()
+	}
+	cols2PosInfos := make(TblColPosInfoSlice, 0, len(tblID2Handle))
+	for tid, handleCols := range tblID2Handle {
 		for _, handleCol := range handleCols {
-			curColPosInfo, err := buildSingleTableColPosInfoForDelete(names, handleCol, deletableIdxs, deletableCols, tblInfo)
+			curColPosInfo, err := initColPosInfo(tid, names, handleCol)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			cols2PosInfos = append(cols2PosInfos, curColPosInfo)
 		}
 	}
+	// Sort by start position. To do the later column pruning.
+	// TODO: `sort`` package has a rather worse performance. We should replace it with the new `slice` package.
 	sort.Sort(cols2PosInfos)
-	return cols2PosInfos, nil
+	prunedColCnt := 0
+	var err error
+	for i := range cols2PosInfos {
+		cols2PosInfo := &cols2PosInfos[i]
+		tbl := tblID2Table[cols2PosInfo.TblID]
+		tblInfo := tbl.Meta()
+		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
+		// nonPrunedSet will be nil if it's a point get or has foreign keys.
+		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
+			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
+			if err != nil {
+				return nil, nil, err
+			}
+			continue
+		}
+		prunedColCnt, err = pruneAndBuildSingleTableColPosInfoForDelete(tbl, tblInfo.Name.O, names, cols2PosInfo, prunedColCnt, nonPruned)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return cols2PosInfos, nonPruned, nil
 }
 
-// buildSingleTableColPosInfoForDelete builds columns mapping for delete.
-func buildSingleTableColPosInfoForDelete(
-	names []*types.FieldName,
-	handleCol util.HandleCols,
-	deletableIdxs []table.Index,
-	deletableCols []*table.Column,
-	tblInfo *model.TableInfo,
-) (TblColPosInfo, error) {
-	// Columns can be seen by DELETE are the deletable columns.
-	tblLen := len(deletableCols)
+// initColPosInfo initializes the column position information.
+// It's used before we call pruneAndBuildSingleTableColPosInfoForDelete or buildSingleTableColPosInfoForDelete.
+// It initializes the needed information for the following pruning: the tid, starting position and the handle column.
+func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCols) (TblColPosInfo, error) {
 	offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
 	if err != nil {
 		return TblColPosInfo{}, err
 	}
-	end := offset + tblLen
+	return TblColPosInfo{
+		TblID:                 tid,
+		Start:                 offset,
+		HandleCols:            handleCol,
+		ExtraPartialRowOption: &table.ExtraPartialRowOption{},
+	}, nil
+}
 
-	// Index only records its columns' offsets in the deletableCols(the whole columns).
-	// So we need to first change the offsets to the real position of SELECT's output.
-	offsetMap := make(map[int]int, len(deletableCols))
-	// For multi-delete case, the offset is recorded for the mixed row. We need to use its position in single table's row layout.
-	//	e.g. The multi-delete case is [t1.a, t1.b, t2.a, t2.b] and There's a index [t2.b].
-	//	     The idxCols' original offset is [3]. And we should use [1] instead.
-	for i, name := range names[offset:end] {
-		found := false
-		for j, col := range deletableCols {
-			if col.Name.L == name.ColName.L {
-				offsetMap[j] = i
-				found = true
-				break
+// buildSingleTableColPosInfoForDelete builds columns mapping for delete without pruning any columns.
+// It's temp code path for partition table, foreign key and point get plan.
+func buildSingleTableColPosInfoForDelete(
+	tbl table.Table,
+	colPosInfo *TblColPosInfo,
+) error {
+	tblLen := len(tbl.DeletableCols())
+	colPosInfo.End = colPosInfo.Start + tblLen
+	return nil
+}
+
+// pruneAndBuildSingleTableColPosInfoForDelete builds columns mapping for delete.
+// And it will try to prune columns that not used in pk or indexes.
+func pruneAndBuildSingleTableColPosInfoForDelete(
+	t table.Table,
+	tableName string,
+	names []*types.FieldName,
+	colPosInfo *TblColPosInfo,
+	prePrunedCount int,
+	nonPrunedSet *bitset.BitSet,
+) (int, error) {
+	// Columns can be seen by DELETE are the deletable columns.
+	deletableCols := t.DeletableCols()
+	deletableIdxs := t.DeletableIndices()
+	publicCols := t.Cols()
+	tblLen := len(deletableCols)
+
+	// Fix the start position of the columns.
+	originalStart := colPosInfo.Start
+	colPosInfo.Start -= prePrunedCount
+
+	// Mark the columns in handle.
+	fixedPos := make(map[int]int, len(deletableCols))
+	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
+		col := colPosInfo.HandleCols.GetCol(i)
+		fixedPos[col.Index-originalStart] = 0
+	}
+
+	// Mark the columns in indexes.
+	for _, idx := range deletableIdxs {
+		for _, col := range idx.Meta().Columns {
+			if col.Offset+originalStart >= len(names) || deletableCols[col.Offset].Name.L != names[col.Offset+originalStart].ColName.L {
+				return 0, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tableName)
 			}
-		}
-		if !found {
-			return TblColPosInfo{}, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(name.ColName.O, tblInfo.Name.O)
+			fixedPos[col.Offset] = 0
 		}
 	}
+
+	// Fix the column offsets.
+	pruned := 0
+	for i := 0; i < tblLen; i++ {
+		if _, ok := fixedPos[i]; !ok {
+			nonPrunedSet.Clear(uint(i + originalStart))
+			pruned++
+			continue
+		}
+		fixedPos[i] = i - pruned
+	}
+
+	// Fill in the ColumnSizes.
+	colPosInfo.ColumnsSizeHelper = &table.ColumnsSizeHelper{
+		NotPruned:        bitset.New(uint(len(publicCols))),
+		AvgSizes:         make([]float64, 0, len(publicCols)),
+		PublicColsLayout: make([]int, 0, len(publicCols)),
+	}
+	colPosInfo.ColumnsSizeHelper.NotPruned.SetAll()
+	for i, col := range publicCols {
+		// If the column is not pruned, we can use the column data to get a more accurate size.
+		// We just need to record its position info.
+		if _, ok := fixedPos[col.Offset]; ok {
+			colPosInfo.ColumnsSizeHelper.PublicColsLayout = append(colPosInfo.ColumnsSizeHelper.PublicColsLayout, fixedPos[col.Offset])
+			continue
+		}
+		// Otherwise we need to get the average size of the column by its field type.
+		// TODO: use statistics to get a maybe more accurate size.
+		colPosInfo.ColumnsSizeHelper.NotPruned.Clear(uint(i))
+		colPosInfo.ColumnsSizeHelper.AvgSizes = append(colPosInfo.ColumnsSizeHelper.AvgSizes, float64(chunk.EstimateTypeWidth(&col.FieldType)))
+	}
+	// Fix the index layout and fill in table.IndexRowLayoutOption.
 	indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
 	for _, idx := range deletableIdxs {
 		idxCols := idx.Meta().Columns
 		colPos := make([]int, 0, len(idxCols))
 		for _, col := range idxCols {
-			colPos = append(colPos, offsetMap[col.Offset])
+			colPos = append(colPos, fixedPos[col.Offset])
 		}
 		indexColMap[idx.Meta().ID] = colPos
 	}
 
-	return TblColPosInfo{tblInfo.ID, offset, end, handleCol, indexColMap}, nil
+	// Fix the column offset of handle columns.
+	newStart := originalStart - prePrunedCount
+	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
+		col := colPosInfo.HandleCols.GetCol(i)
+		// If the row id the hidden extra row id, it can not be in deletableCols.
+		// It will be appended to the end of the row.
+		// So we use newStart + tblLen to get the tail, then minus the pruned to the its new offset of the whole mixed row.
+		if col.Index-originalStart >= tblLen {
+			col.Index = newStart + tblLen - pruned
+			continue
+		}
+		// Its index is the offset in the original mixed row.
+		// col.Index-originalStart is the offset in the table.
+		// Then we use its offset in the table to find the new offset in the pruned row by fixedPos[col.Index-originalStart].
+		// Finally, we plus the newStart to get new offset in the mixed row.
+		col.Index = fixedPos[col.Index-originalStart] + newStart
+	}
+	colPosInfo.End = colPosInfo.Start + tblLen - pruned
+	colPosInfo.IndexesRowLayout = indexColMap
+
+	return prePrunedCount + pruned, nil
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (base.Plan, error) {
@@ -5823,17 +5933,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
 
-	proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
-	proj.SetChildren(p)
-	proj.SetSchema(oldSchema.Clone())
-	proj.SetOutputNames(p.OutputNames()[:oldLen])
-	p = proj
-
 	del := Delete{
 		IsMultiTable: ds.IsMultiTable,
 	}.Init(b.ctx)
 
-	del.names = p.OutputNames()
 	localResolveCtx := resolve.NewContext()
 	// Collect visitInfo.
 	if ds.Tables != nil {
@@ -5913,6 +6016,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	if err != nil {
 		return nil, err
 	}
+	preProjNames := p.OutputNames()[:oldLen]
 	if del.IsMultiTable {
 		// tblID2TableName is the table map value is an array which contains table aliases.
 		// Table ID may not be unique for deleting multiple tables, for statements like
@@ -5923,23 +6027,49 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			tnW := localResolveCtx.GetTableName(tn)
 			tblID2TableName[tnW.TableInfo.ID] = append(tblID2TableName[tnW.TableInfo.ID], tnW)
 		}
-		tblID2Handle = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handle, del.names)
+		tblID2Handle = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handle, preProjNames)
 	}
 	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(ctx, id)
 	}
-	del.TblColPosInfos, err = buildColPositionInfoForDelete(del.names, tblID2Handle, tblID2table)
-	if err != nil {
-		return nil, err
-	}
-
-	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
-	if err != nil {
-		return nil, err
-	}
 
 	err = del.buildOnDeleteFKTriggers(b.ctx, b.is, tblID2table)
+	if err != nil {
+		return nil, err
+	}
+
+	var nonPruned *bitset.BitSet
+	del.TblColPosInfos, nonPruned, err = pruneAndBuildColPositionInfoForDelete(preProjNames, tblID2Handle, tblID2table, len(del.FKCascades) > 0 || len(del.FKChecks) > 0)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		finalProjCols  []*expression.Column
+		finalProjNames types.NameSlice
+	)
+	if nonPruned != nil {
+		// If the pruning happens, we project the columns not pruned as the final output of the below plan.
+		finalProjCols = make([]*expression.Column, 0, oldLen/2)
+		finalProjNames = make(types.NameSlice, 0, oldLen/2)
+		for i, found := nonPruned.NextSet(0); found; i, found = nonPruned.NextSet(i + 1) {
+			finalProjCols = append(finalProjCols, p.Schema().Columns[i])
+			finalProjNames = append(finalProjNames, p.OutputNames()[i])
+		}
+	} else {
+		// Otherwise, we just use the original schema.
+		finalProjCols = make([]*expression.Column, oldLen)
+		copy(finalProjCols, p.Schema().Columns[:oldLen])
+		finalProjNames = preProjNames.Shallow()
+	}
+	proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(finalProjCols)}.Init(b.ctx, b.getSelectOffset())
+	proj.SetChildren(p)
+	proj.SetSchema(expression.NewSchema(finalProjCols...))
+	proj.SetOutputNames(finalProjNames)
+	p = proj
+	del.names = p.OutputNames()
+	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
+
 	return del, err
 }
 

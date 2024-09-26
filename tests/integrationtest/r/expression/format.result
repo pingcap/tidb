@@ -46,6 +46,9 @@ FORMAT(12345678.9,4,'ps_AF')
 SELECT FORMAT(12345678.9,4,'kv_RU');
 FORMAT(12345678.9,4,'kv_RU')
 12,345,678.9000
+SELECT FORMAT(12345678.9,4,'bn');
+FORMAT(12345678.9,4,'bn')
+১,২৩,৪৫,৬৭৮.৯০০০
 SELECT FORMAT(12345678.9,999999999999999999,'de_CH');
 FORMAT(12345678.9,999999999999999999,'de_CH')
 12’345’678.900000000372529029846191406250
@@ -90,3 +93,34 @@ FORMAT(.45, 3)
 SELECT FORMAT(-.45, 3);
 FORMAT(-.45, 3)
 -0.450
+WITH RECURSIVE cte(n) AS (
+SELECT 1 n
+UNION ALL
+SELECT 100+n FROM cte WHERE n<1000
+)
+SELECT FORMAT(n+0.01,3,'foo_bar') FROM cte;
+FORMAT(n+0.01,3,'foo_bar')
+1.010
+101.010
+201.010
+301.010
+401.010
+501.010
+601.010
+701.010
+801.010
+901.010
+1,001.010
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'
+Warning	1649	Unknown locale: 'foo_bar'

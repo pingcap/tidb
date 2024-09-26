@@ -2420,20 +2420,26 @@ type BackgroundOptionType int
 const (
 	BackgroundOptionNone BackgroundOptionType = iota
 	BackgroundOptionTaskNames
+	BackgroundUtilizationLimit
 )
 
 // ResourceGroupBackgroundOption is used to config background job settings.
 type ResourceGroupBackgroundOption struct {
-	Type     BackgroundOptionType
-	StrValue string
+	Type      BackgroundOptionType
+	StrValue  string
+	UintValue uint64
 }
 
 func (n *ResourceGroupBackgroundOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Type {
 	case BackgroundOptionTaskNames:
-		ctx.WriteKeyWord("TASK_TYPES ")
-		ctx.WritePlain("= ")
+		ctx.WriteKeyWord("TASK_TYPES")
+		ctx.WritePlain(" = ")
 		ctx.WriteString(n.StrValue)
+	case BackgroundUtilizationLimit:
+		ctx.WriteKeyWord("UTILIZATION_LIMIT")
+		ctx.WritePlain(" = ")
+		ctx.WritePlainf("%d", n.UintValue)
 	default:
 		return errors.Errorf("unknown ResourceGroupBackgroundOption: %d", n.Type)
 	}

@@ -121,6 +121,43 @@ func TestV2Basic(t *testing.T) {
 	require.Equal(t, 0, len(tblInfos))
 
 	require.Equal(t, int64(2), is.SchemaMetaVersion())
+
+	// Test SchemaNameByTableID
+	schemaNameByTableIDTests := []struct {
+		name       string
+		tableID    int64
+		wantSchema pmodel.CIStr
+		wantOK     bool
+	}{
+		{
+			name:       "valid table ID",
+			tableID:    tblInfo.ID,
+			wantSchema: schemaName,
+			wantOK:     true,
+		},
+		{
+			name:       "non-existent table ID",
+			tableID:    tblInfo.ID + 1,
+			wantSchema: pmodel.CIStr{},
+			wantOK:     false,
+		},
+		{
+			name:       "invalid table ID (negative)",
+			tableID:    -1,
+			wantSchema: pmodel.CIStr{},
+			wantOK:     false,
+		},
+	}
+
+	for _, tt := range schemaNameByTableIDTests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSchema, gotOK := is.SchemaNameByTableID(tt.tableID)
+
+			require.Equal(t, tt.wantOK, gotOK)
+			require.Equal(t, tt.wantSchema, gotSchema)
+		})
+	}
+
 	// TODO: support FindTableByPartitionID.
 }
 

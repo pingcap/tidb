@@ -81,7 +81,7 @@ func TestCompareIndexData(t *testing.T) {
 		}
 		indexInfo := &model.IndexInfo{Name: pmodel.NewCIStr("i0"), Columns: indexCols}
 
-		err := compareIndexData(tc, cols, data.indexData, data.inputData, indexInfo, &model.TableInfo{Name: pmodel.NewCIStr("t")})
+		err := compareIndexData(tc, cols, data.indexData, data.inputData, indexInfo, &model.TableInfo{Name: pmodel.NewCIStr("t")}, nil)
 		require.Equal(t, data.correct, err == nil, "case id = %v", caseID)
 	}
 }
@@ -297,7 +297,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 					}
 					err = checkIndexKeys(
 						tc, table, rowToInsert, rowToRemove, indexMutations, maps.IndexIDToInfo,
-						maps.IndexIDToRowColInfos,
+						maps.IndexIDToRowColInfos, nil,
 					)
 					require.Nil(t, err)
 

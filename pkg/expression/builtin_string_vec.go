@@ -2978,6 +2978,10 @@ func formatDecimal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result 
 			// FORMAT(x, d, NULL)
 			tc := typeCtx(ctx)
 			tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
+		} else {
+			// force copy of the string
+			// https://github.com/pingcap/tidb/issues/56193
+			locale := strings.Clone(localeBuf.GetString(i))
 		}
 
 		lang, err := language.Parse(locale)
@@ -3019,6 +3023,10 @@ func formatReal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *ch
 			// FORMAT(x, d, NULL)
 			tc := typeCtx(ctx)
 			tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
+		} else {
+			// force copy of the string
+			// https://github.com/pingcap/tidb/issues/56193
+			locale := strings.Clone(localeBuf.GetString(i))
 		}
 
 		lang, err := language.Parse(locale)

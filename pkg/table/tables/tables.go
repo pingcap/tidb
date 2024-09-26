@@ -1183,7 +1183,7 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 
 	tc := ctx.GetExprCtx().GetEvalCtx().TypeCtx()
 	if ctx.EnableMutationChecker() {
-		if err = CheckDataConsistency(txn, tc, t, nil, r, memBuffer, sh); err != nil {
+		if err = checkDataConsistency(txn, tc, t, nil, r, memBuffer, sh, opt.GetIndexesLayout()); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1194,8 +1194,22 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 		// Note: The buffer should not be referenced or modified outside this function.
 		// It can only act as a temporary buffer for the current function call.
 		colSizeBuffer := ctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
+		pruned, notPruned := 0, 0
+		columnSizeOpt := opt.GetColumnSizeOpt()
+		var size int
 		for id, col := range t.Cols() {
-			size, err := codec.EstimateValueSize(tc, r[id])
+			columnOffset := id
+			if columnSizeOpt != nil {
+				if !columnSizeOpt.NotPruned.Test(uint(id)) {
+					size = int(columnSizeOpt.AvgSizes[pruned])
+					pruned++
+					colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
+					continue
+				}
+				columnOffset = columnSizeOpt.PublicColsLayout[notPruned]
+				notPruned++
+			}
+			size, err = codec.EstimateValueSize(tc, r[columnOffset])
 			if err != nil {
 				continue
 			}

@@ -37,10 +37,22 @@ const (
 	OptTimeout = "timeout"
 )
 
-func fillOption(sctx sessionctx.Context, opt *Option) error {
-	vals, err := getOption(sctx, OptMaxNumIndex, OptMaxIndexColumns, OptMaxNumQuery, OptTimeout)
+var (
+	// AllOptions is the list of all options.
+	AllOptions = []string{OptMaxNumIndex, OptMaxIndexColumns, OptMaxNumQuery, OptTimeout}
+)
+
+func fillOption(sctx sessionctx.Context, opt *Option, userOptions []ast.RecommendIndexOption) error {
+	vals, _, err := GetOptions(sctx, AllOptions...)
 	if err != nil {
 		return err
+	}
+	for _, userOpt := range userOptions {
+		userVal, err := optionVal(userOpt.Option, userOpt.Value)
+		if err != nil {
+			return err
+		}
+		vals[userOpt.Option] = userVal
 	}
 	if opt.MaxNumIndexes == 0 {
 		i, _ := strconv.ParseInt(vals[OptMaxNumIndex], 10, 64)
@@ -64,38 +76,57 @@ func fillOption(sctx sessionctx.Context, opt *Option) error {
 	return nil
 }
 
-// SetOption sets the value of an option.
-func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
+// SetOptions sets the values of options.
+func SetOptions(sctx sessionctx.Context, options ...ast.RecommendIndexOption) error {
+	for _, opt := range options {
+		if err := SetOption(sctx, opt.Option, opt.Value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func optionVal(opt string, val ast.ValueExpr) (string, error) {
 	var v string
 	switch opt {
 	case OptMaxNumIndex, OptMaxIndexColumns, OptMaxNumQuery:
 		x, err := intVal(val)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if x <= 0 {
-			return errors.Errorf("invalid value %v for %s", x, opt)
+			return "", errors.Errorf("invalid value %v for %s", x, opt)
 		}
 		v = strconv.Itoa(x)
 	case OptTimeout:
 		v = val.GetValue().(string)
 		d, err := time.ParseDuration(v)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if d < 0 {
-			return errors.Errorf("invalid value %v for %s", d, opt)
+			return "", errors.Errorf("invalid value %v for %s", d, opt)
 		}
 	default:
-		return errors.Errorf("unknown option %s", opt)
+		return "", errors.Errorf("unknown option %s", opt)
+	}
+	return v, nil
+}
+
+// SetOption sets the value of an option.
+func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
+	v, err := optionVal(opt, val)
+	if err != nil {
+		return err
 	}
 	template := `INSERT INTO mysql.tidb_kernel_options VALUES (%?, %?, %?, now(), 'valid', %?)
 		ON DUPLICATE KEY UPDATE value = %?, updated_at=now(), description = %?`
-	_, err := exec(sctx, template, OptModule, opt, v, description(opt), v, description(opt))
+	_, err = exec(sctx, template, OptModule, opt, v, description(opt), v, description(opt))
 	return err
 }
 
-func getOption(sctx sessionctx.Context, opts ...string) (map[string]string, error) {
+// GetOptions gets the values of options.
+func GetOptions(sctx sessionctx.Context, opts ...string) (vals, desc map[string]string, err error) {
 	template := `SELECT name, value FROM mysql.tidb_kernel_options WHERE module = '%v' AND name in (%v)`
 	var optStrs string
 	for i, opt := range opts {
@@ -108,18 +139,22 @@ func getOption(sctx sessionctx.Context, opts ...string) (map[string]string, erro
 	sql := fmt.Sprintf(template, OptModule, optStrs)
 	rows, err := exec(sctx, sql)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	res := make(map[string]string)
+	vals = make(map[string]string)
 	for _, row := range rows {
-		res[row.GetString(0)] = row.GetString(1)
+		vals[row.GetString(0)] = row.GetString(1)
 	}
 	for _, opt := range opts {
-		if _, ok := res[opt]; !ok {
-			res[opt] = defaultVal(opt)
+		if _, ok := vals[opt]; !ok {
+			vals[opt] = defaultVal(opt)
 		}
 	}
-	return res, nil
+	desc = make(map[string]string)
+	for _, opt := range opts {
+		desc[opt] = description(opt)
+	}
+	return vals, desc, nil
 }
 
 func description(opt string) string {
