@@ -292,13 +292,12 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName pmodel.CIStr) error {
 }
 
 func onSetDefaultValue(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	newCol := &model.ColumnInfo{}
-	err := job.DecodeArgs(newCol)
+	args, err := model.GetSetDefaultValueArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
+	newCol := args.Col
 	return updateColumnDefaultValue(jobCtx, t, job, newCol, &newCol.Name)
 }
 

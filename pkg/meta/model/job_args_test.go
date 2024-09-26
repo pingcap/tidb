@@ -641,3 +641,19 @@ func TestPlacementPolicyArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestGetSetDefaultValueArgs(t *testing.T) {
+	inArgs := &SetDefaultValueArgs{
+		Col: &ColumnInfo{
+			ID:   7527,
+			Name: model.NewCIStr("col_name"),
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionSetDefaultValue)))
+		args, err := GetSetDefaultValueArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
