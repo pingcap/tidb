@@ -1212,6 +1212,9 @@ const (
 	// TiDBEnableLazyCursorFetch defines whether to enable the lazy cursor fetch. If it's `OFF`, all results of
 	// of a cursor will be stored in the tidb node in `EXECUTE` command.
 	TiDBEnableLazyCursorFetch = "tidb_enable_lazy_cursor_fetch"
+	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
+	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
+	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
 )
 
 // TiDB intentional limits
@@ -1560,6 +1563,7 @@ const (
 	DefTiDBEnableLazyCursorFetch                      = false
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
+	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 )
 
 // Process global variables.
