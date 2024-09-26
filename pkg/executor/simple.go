@@ -26,7 +26,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -122,16 +121,6 @@ type userInfo struct {
 	pLI        *passwordOrLockOptionsInfo
 	pwd        string
 	authString string
-}
-
-// clearSysSession close the session does not return the session.
-// Since the environment variables in the session are changed, the session object is not returned.
-func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
-	if sctx == nil {
-		return
-	}
-	_, _ = sctx.GetSQLExecutor().ExecuteInternal(ctx, "rollback")
-	sctx.(pools.Resource).Close()
 }
 
 // Next implements the Executor Next interface.
@@ -1731,10 +1720,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 
 	sysSession, err := e.GetSysSession()
-	defer clearSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
+	defer e.ReleaseSysSession(ctx, sysSession)
 	sqlExecutor := sysSession.GetSQLExecutor()
 	// session isolation level changed to READ-COMMITTED.
 	// When tidb is at the RR isolation level, executing `begin` will obtain a consistent state.
@@ -2461,10 +2450,10 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	sysSession, err := e.GetSysSession()
-	defer clearSysSession(ctx, sysSession)
 	if err != nil {
 		return err
 	}
+	defer e.ReleaseSysSession(ctx, sysSession)
 
 	sqlExecutor := sysSession.GetSQLExecutor()
 	// session isolation level changed to READ-COMMITTED.

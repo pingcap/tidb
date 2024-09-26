@@ -1278,6 +1278,9 @@ import (
 	OnUpdate                               "ON UPDATE clause"
 	OnDeleteUpdateOpt                      "optional ON DELETE and UPDATE clause"
 	OptGConcatSeparator                    "optional GROUP_CONCAT SEPARATOR"
+	RecommendIndexOptionListOpt            "Optional recommend index option list"
+	RecommendIndexOptionList               "Recommend index option list"
+	RecommendIndexOption                   "Recommend index option"
 	ReferOpt                               "reference option"
 	ReorganizePartitionRuleOpt             "optional reorganize partition partition list and definitions"
 	RequireList                            "require list for tls options"
@@ -1977,7 +1980,6 @@ DirectResourceGroupBackgroundOption:
 	{
 		$$ = &ast.ResourceGroupBackgroundOption{Type: ast.BackgroundUtilizationLimit, UintValue: $3.(uint64)}
 	}
-
 
 PlacementOptionList:
 	DirectPlacementOption
@@ -14148,19 +14150,21 @@ SetBindingStmt:
 	}
 
 RecommendIndexStmt:
-	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit
+	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "run",
-			SQL:    $5,
+			Action:  "run",
+			SQL:     $5,
+			Options: $6.([]ast.RecommendIndexOption),
 		}
 
 		$$ = x
 	}
-|	"RECOMMEND" "INDEX" "RUN"
+|	"RECOMMEND" "INDEX" "RUN" RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "run",
+			Action:  "run",
+			Options: $4.([]ast.RecommendIndexOption),
 		}
 
 		$$ = x
@@ -14191,15 +14195,42 @@ RecommendIndexStmt:
 
 		$$ = x
 	}
-|	"RECOMMEND" "INDEX" "SET" Identifier "=" Literal
+|	"RECOMMEND" "INDEX" "SET" RecommendIndexOptionList
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "set",
-			Option: $4,
-			Value:  ast.NewValueExpr($6, parser.charset, parser.collation),
+			Action:  "set",
+			Options: $4.([]ast.RecommendIndexOption),
 		}
 
 		$$ = x
+	}
+
+RecommendIndexOptionListOpt:
+	{
+		$$ = []ast.RecommendIndexOption{}
+	}
+|	"WITH" RecommendIndexOptionList
+	{
+		$$ = $2.([]ast.RecommendIndexOption)
+	}
+
+RecommendIndexOptionList:
+	RecommendIndexOption
+	{
+		$$ = []ast.RecommendIndexOption{$1.(ast.RecommendIndexOption)}
+	}
+|	RecommendIndexOptionList ',' RecommendIndexOption
+	{
+		$$ = append($1.([]ast.RecommendIndexOption), $3.(ast.RecommendIndexOption))
+	}
+
+RecommendIndexOption:
+	Identifier "=" Literal
+	{
+		$$ = ast.RecommendIndexOption{
+			Option: $1,
+			Value:  ast.NewValueExpr($3, parser.charset, parser.collation),
+		}
 	}
 
 /*************************************************************************************

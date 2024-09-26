@@ -180,15 +180,13 @@ func testAddIndex(t *testing.T, tp testAddIndexType, createTableSQL, idxTp strin
 	isTestPartition := (testPartition & tp) > 0
 	if isTestShardRowID {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-		tk.MustExec("set global tidb_scatter_region = 1")
+		tk.MustExec("set global tidb_scatter_region = 'table'")
 		defer func() {
 			atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
-			tk.MustExec("set global tidb_scatter_region = 0")
+			tk.MustExec("set global tidb_scatter_region = ''")
 		}()
 	}
-	if isTestPartition {
-		tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
-	} else if (testClusteredIndex & tp) > 0 {
+	if (testClusteredIndex & tp) > 0 {
 		tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	}
 	tk.MustExec("drop table if exists test_add_index")
@@ -475,10 +473,10 @@ func testAddIndexWithSplitTable(t *testing.T, createSQL, splitTableSQL string) {
 	hasAutoRandomField := len(splitTableSQL) > 0
 	if !hasAutoRandomField {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-		tk.MustExec("set global tidb_scatter_region = 1")
+		tk.MustExec("set global tidb_scatter_region = 'table'")
 		defer func() {
 			atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
-			tk.MustExec("set global tidb_scatter_region = 0")
+			tk.MustExec("set global tidb_scatter_region = ''")
 		}()
 	}
 	tk.MustExec(createSQL)

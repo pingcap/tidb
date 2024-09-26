@@ -174,17 +174,18 @@
       {
         "SQL": "delete from t1",
         "Plan": [
-          " TableReader     root ",
-          " └─TableFullScan cop  table:t1, range:[?,?], keep order:false"
+          " IndexReader     root index:IndexFullScan",
+          " └─IndexFullScan cop  table:t1, index:b(b), range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "delete from t1 where a>0 and b=1 and c!=2",
         "Plan": [
-          " IndexLookUp        root ",
-          " ├─IndexRangeScan   cop  table:t1, index:b(b), range:[?,?], keep order:false",
-          " └─Selection        cop  ne(test.t1.c, ?)",
-          "   └─TableRowIDScan cop  table:t1, keep order:false"
+          " Projection           root test.t1.a, test.t1.b",
+          " └─IndexLookUp        root ",
+          "   ├─IndexRangeScan   cop  table:t1, index:b(b), range:[?,?], keep order:false",
+          "   └─Selection        cop  ne(test.t1.c, ?)",
+          "     └─TableRowIDScan cop  table:t1, keep order:false"
         ]
       },
       {

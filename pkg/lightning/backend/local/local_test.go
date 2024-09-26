@@ -1092,7 +1092,7 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	jobCh := make(chan *regionJob, 1)
 	jobCh <- &regionJob{}
 	jobOutCh := make(chan *regionJob, 1)
-	err := bak.startWorker(context.Background(), jobCh, jobOutCh, nil)
+	err := bak.startWorker(context.Background(), jobCh, jobOutCh, nil, nil)
 	require.Error(t, err)
 	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	require.Len(t, jobCh, 0)
@@ -1293,7 +1293,7 @@ func TestCheckPeersBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, nil)
+		err := local.startWorker(ctx, jobCh, jobOutCh, nil, nil)
 		require.NoError(t, err)
 	}()
 
@@ -1400,7 +1400,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, &jobWg)
+		err := local.startWorker(ctx, jobCh, jobOutCh, nil, &jobWg)
 		require.NoError(t, err)
 	}()
 
@@ -1500,7 +1500,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, &jobWg)
+		err := local.startWorker(ctx, jobCh, jobOutCh, nil, &jobWg)
 		require.NoError(t, err)
 	}()
 
@@ -1620,7 +1620,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, &jobWg)
+		err := local.startWorker(ctx, jobCh, jobOutCh, nil, &jobWg)
 		require.NoError(t, err)
 	}()
 
@@ -2116,12 +2116,30 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
 					retryCount: maxWriteAndIngestRetryTimes,
+					region: &split.RegionInfo{
+						Region: &metapb.Region{
+							Peers: []*metapb.Peer{
+								{Id: 1, StoreId: 1},
+								{Id: 2, StoreId: 2},
+								{Id: 3, StoreId: 3},
+							},
+						},
+					},
 				},
 				{
 					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 					retryCount: maxWriteAndIngestRetryTimes,
+					region: &split.RegionInfo{
+						Region: &metapb.Region{
+							Peers: []*metapb.Peer{
+								{Id: 4, StoreId: 4},
+								{Id: 5, StoreId: 5},
+								{Id: 6, StoreId: 6},
+							},
+						},
+					},
 				},
 			},
 		},
@@ -2131,6 +2149,15 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
+					region: &split.RegionInfo{
+						Region: &metapb.Region{
+							Peers: []*metapb.Peer{
+								{Id: 7, StoreId: 7},
+								{Id: 8, StoreId: 8},
+								{Id: 9, StoreId: 9},
+							},
+						},
+					},
 				},
 			},
 		},

@@ -451,7 +451,7 @@
       },
       {
         "SQL": "delete from t where b < 1 order by d limit 1",
-        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Delete",
+        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Projection->Delete",
         "Hints": "use_index(@`del_1` `test`.`t` ), no_order_index(@`del_1` `test`.`t` `primary`), limit_to_cop(@`del_1`)"
       },
       {
@@ -461,7 +461,7 @@
       },
       {
         "SQL": "delete from t use index(c_d_e) where b = 1",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t)->Sel([eq(test.t.b, 1)]))->Delete",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t)->Sel([eq(test.t.b, 1)]))->Projection->Delete",
         "Hints": "use_index(@`del_1` `test`.`t` `c_d_e`), no_order_index(@`del_1` `test`.`t` `c_d_e`)"
       },
       {

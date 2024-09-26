@@ -115,7 +115,7 @@ func testLockTable(
 	tblInfo *model.TableInfo,
 	lockTp pmodel.TableLockType,
 ) *model.Job {
-	arg := &ddl.LockTablesArg{
+	args := &model.LockTablesArgs{
 		LockTables: []model.TableLockTpInfo{{SchemaID: newSchemaID, TableID: tblInfo.ID, Tp: lockTp}},
 		SessionInfo: model.SessionInfo{
 			ServerID:  uuid,
@@ -123,17 +123,17 @@ func testLockTable(
 		},
 	}
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionLockTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{arg},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: schemaName.L, Table: tblInfo.Name.L},
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -403,17 +403,17 @@ func testAlterCacheTable(
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAlterCacheTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: newSchemaName.L, Table: tblInfo.Name.L},
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true))
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -430,17 +430,17 @@ func testAlterNoCacheTable(
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAlterNoCacheTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{},
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{Database: newSchemaName.L, Table: tblInfo.Name.L},
 		},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true)))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
@@ -577,20 +577,23 @@ func TestAlterTTL(t *testing.T) {
 	}
 
 	job = &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionAlterTTLInfo,
 		BinlogInfo: &model.HistoryInfo{},
-		Args: []any{&model.TTLInfo{
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	args := &model.AlterTTLInfoArgs{
+		TTLInfo: &model.TTLInfo{
 			ColumnName:       tblInfo.Columns[1].Name,
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: int(ast.TimeUnitYear),
-		}},
+		},
 	}
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.NoError(t, de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
@@ -602,16 +605,16 @@ func TestAlterTTL(t *testing.T) {
 
 	// submit a ddl job to modify ttlEnabled
 	job = &model.Job{
+		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableID:    tblInfo.ID,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionAlterTTLRemove,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []any{true},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, de.DoDDLJobWrapper(ctx, ddl.NewJobWrapper(job, true)))
+	require.NoError(t, de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true)))
 
 	v = getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})

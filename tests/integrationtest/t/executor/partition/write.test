@@ -505,7 +505,6 @@ set tidb_opt_fix_control=default;
 
 
 # TestHashPartitionedTableReplace
-set @@session.tidb_enable_table_partition = '1';
 drop table if exists replace_test;
 create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
 			partition by hash(id) partitions 4;
@@ -595,8 +594,6 @@ CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by hash (
 insert into tIssue989 (a, b) values (1, 2);
 replace into tIssue989(a, b) values (111, 2);
 select * from tIssue989;
-
-set @@session.tidb_enable_table_partition = default;
 
 ## test partition insert/update ignore to invalid partition
 drop table if exists insert_update_ignore_test;

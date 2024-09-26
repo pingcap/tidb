@@ -1057,6 +1057,7 @@ func (s *Server) ServerID() uint64 {
 func (s *Server) StoreInternalSession(se any) {
 	s.sessionMapMutex.Lock()
 	s.internalSessions[se] = struct{}{}
+	metrics.InternalSessions.Set(float64(len(s.internalSessions)))
 	s.sessionMapMutex.Unlock()
 }
 
@@ -1065,6 +1066,7 @@ func (s *Server) StoreInternalSession(se any) {
 func (s *Server) DeleteInternalSession(se any) {
 	s.sessionMapMutex.Lock()
 	delete(s.internalSessions, se)
+	metrics.InternalSessions.Set(float64(len(s.internalSessions)))
 	s.sessionMapMutex.Unlock()
 }
 

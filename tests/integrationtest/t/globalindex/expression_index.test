@@ -6,6 +6,8 @@ CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 5;
 
+show warnings;
+
 insert into t values (1, 'a'), (2, 'b'), (3, 'C'), (4, 'd'), (5, 'x');
 
 --error 1062

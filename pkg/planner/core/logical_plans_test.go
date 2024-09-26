@@ -2494,3 +2494,97 @@ func TestRollupExpand(t *testing.T) {
 	require.NotNil(t, gm)
 	require.Equal(t, len(gm), 2)
 }
+
+func TestPruneColumnsForDelete(t *testing.T) {
+	s := createPlannerSuite()
+	defer s.Close()
+	var (
+		inputs  []string
+		outputs []struct {
+			SQL            string
+			PrunedOutput   string
+			FullLayoutInfo [][]string
+			InsidePlan     string
+		}
+	)
+	testData := planSuiteUnexportedData
+	testData.LoadTestCases(t, &inputs, &outputs)
+	ctx := context.Background()
+	for i, input := range inputs {
+		comment := fmt.Sprintf("for %s %d", input, i)
+		stmt, err := s.p.ParseOneStmt(input, "", "")
+		require.NoError(t, err, comment)
+
+		nodeW := resolve.NewNodeW(stmt)
+		err = Preprocess(context.Background(), s.sctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		require.NoError(t, err)
+		p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
+		require.NoError(t, err)
+		deletePlan, ok := p.(*Delete)
+		require.True(t, ok, comment)
+		var sb strings.Builder
+
+		outputNames := func() string {
+			for i, names := range deletePlan.OutputNames() {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				fmt.Fprintf(&sb, "%s: %d", names, i)
+			}
+			return sb.String()
+		}()
+
+		fullLayout := func() [][]string {
+			ret := make([][]string, 0, len(deletePlan.TblColPosInfos))
+			for _, colsLayout := range deletePlan.TblColPosInfos {
+				innerRet := make([]string, 0, len(colsLayout.IndexesRowLayout)*2+2)
+				if colsLayout.ExtraPartialRowOption.IndexesRowLayout == nil {
+					sb.Reset()
+					fmt.Fprintf(&sb, "no column-pruning happened")
+					innerRet = append(innerRet, sb.String())
+					ret = append(ret, innerRet)
+					continue
+				}
+				sb.Reset()
+				fmt.Fprintf(&sb, "tid: %d, [start, end]: [%d, %d] ", colsLayout.TblID, colsLayout.Start, colsLayout.End)
+				innerRet = append(innerRet, sb.String())
+				sb.Reset()
+				fmt.Fprintf(&sb, "handle cols: %s:", colsLayout.HandleCols.StringWithCtx(s.sctx.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
+				for i := 0; i < colsLayout.HandleCols.NumCols(); i++ {
+					if i > 0 {
+						sb.WriteString(", ")
+					}
+					fmt.Fprintf(&sb, "%d", colsLayout.HandleCols.GetCol(i).Index)
+				}
+				innerRet = append(innerRet, sb.String())
+				tbl, _ := s.is.TableByID(context.Background(), colsLayout.TblID)
+				idxes := tbl.DeletableIndices()
+				require.Equal(t, len(colsLayout.IndexesRowLayout), len(idxes), comment)
+				for _, idx := range idxes {
+					sb.Reset()
+					idxInfo := idx.Meta()
+					fmt.Fprintf(&sb, "index %v: ", idxInfo.Name.O)
+					for _, col := range idxInfo.Columns {
+						fmt.Fprintf(&sb, "%s ", col.Name.O)
+					}
+					innerRet = append(innerRet, sb.String())
+					sb.Reset()
+					indexLayout := colsLayout.IndexesRowLayout[idxInfo.ID]
+					fmt.Fprintf(&sb, "col offset: %v", indexLayout)
+					innerRet = append(innerRet, sb.String())
+				}
+				ret = append(ret, innerRet)
+			}
+			return ret
+		}()
+
+		testdata.OnRecord(func() {
+			outputs[i].PrunedOutput = outputNames
+			outputs[i].FullLayoutInfo = fullLayout
+			outputs[i].InsidePlan = ToString(deletePlan.SelectPlan)
+		})
+		require.Equal(t, outputs[i].PrunedOutput, outputNames, comment)
+		require.Equal(t, outputs[i].FullLayoutInfo, fullLayout, comment)
+		require.Equal(t, outputs[i].InsidePlan, ToString(deletePlan.SelectPlan), comment)
+	}
+}

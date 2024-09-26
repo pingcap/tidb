@@ -4204,7 +4204,117 @@
             "align": false,
             "alignLevel": null
           }
-        }
+        },
+	{
+	  "aliasColors": {},
+	  "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+	  "description": "The total count of internal sessions.",
+	  "editable": true,
+	  "fieldConfig": {
+	    "defaults": {},
+	    "overrides": []
+	  },
+	  "grid": {},
+	  "gridPos": {
+	    "h": 7,
+	    "w": 12,
+	    "x": 12,
+	    "y": 66
+	  },
+	  "id": 23763572016,
+	  "legend": {
+	    "alignAsTable": true,
+	    "avg": false,
+	    "current": true,
+	    "hideEmpty": true,
+	    "hideZero": false,
+	    "max": true,
+	    "min": false,
+	    "rightSide": true,
+	    "show": true,
+	    "sideWidth": null,
+	    "total": false,
+	    "values": true
+	  },
+	  "lines": true,
+	  "linewidth": 1,
+	  "links": [],
+	  "nullPointMode": "null as zero",
+	  "options": {
+	    "alertThreshold": true
+	  },
+	  "pluginVersion": "7.5.11",
+	  "pointradius": 5,
+	  "renderer": "flot",
+	  "seriesOverrides": [],
+	  "spaceLength": 10,
+	  "targets": [
+	    {
+	      "expr": "tidb_server_internal_sessions{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
+	      "legendFormat": "{{instance}}",
+	      "interval": "",
+	      "exemplar": true,
+	      "format": "time_series",
+	      "hide": false,
+	      "intervalFactor": 1,
+	      "refId": "H"
+	    }
+	  ],
+	  "thresholds": [],
+	  "timeRegions": [],
+	  "title": "Internal Sessions",
+	  "tooltip": {
+	    "msResolution": true,
+	    "shared": true,
+	    "sort": 0,
+	    "value_type": "cumulative"
+	  },
+	  "type": "graph",
+	  "xaxis": {
+	    "buckets": null,
+	    "mode": "time",
+	    "name": null,
+	    "show": true,
+	    "values": []
+	  },
+	  "yaxes": [
+	    {
+	      "format": "short",
+	      "label": "",
+	      "logBase": 1,
+	      "max": null,
+	      "min": "0",
+	      "show": true,
+	      "$$hashKey": "object:264"
+	    },
+	    {
+	      "format": "short",
+	      "label": "",
+	      "logBase": 1,
+	      "max": null,
+	      "min": null,
+	      "show": false,
+	      "$$hashKey": "object:265"
+	    }
+	  ],
+	  "yaxis": {
+	    "align": false,
+	    "alignLevel": null
+	  },
+	  "timeFrom": null,
+	  "timeShift": null,
+	  "bars": false,
+	  "dashes": false,
+	  "error": false,
+	  "fill": 0,
+	  "fillGradient": 0,
+	  "hiddenSeries": false,
+	  "percentage": false,
+	  "points": false,
+	  "stack": false,
+	  "steppedLine": false
+	}
       ],
       "repeat": null,
       "title": "Server",

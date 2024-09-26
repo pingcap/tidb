@@ -21,7 +21,39 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	pdhttp "github.com/tikv/pd/client/http"
 )
+
+// AutoIDGroup represents a group of auto IDs of a specific table.
+type AutoIDGroup struct {
+	RowID       int64
+	IncrementID int64
+	RandomID    int64
+}
+
+// RecoverTableInfo contains information needed by DDL.RecoverTable.
+type RecoverTableInfo struct {
+	SchemaID      int64
+	TableInfo     *TableInfo
+	DropJobID     int64
+	SnapshotTS    uint64
+	AutoIDs       AutoIDGroup
+	OldSchemaName string
+	OldTableName  string
+}
+
+// RecoverSchemaInfo contains information needed by DDL.RecoverSchema.
+type RecoverSchemaInfo struct {
+	*DBInfo
+	RecoverTableInfos []*RecoverTableInfo
+	// LoadTablesOnExecute is the new logic to avoid a large RecoverTabsInfo can't be
+	// persisted. If it's true, DDL owner will recover RecoverTabsInfo instead of the
+	// job submit node.
+	LoadTablesOnExecute bool
+	DropJobID           int64
+	SnapshotTS          uint64
+	OldSchemaName       pmodel.CIStr
+}
 
 // getOrDecodeArgsV2 get the argsV2 from job, if the argsV2 is nil, decode rawArgsV2
 // and fill argsV2.
@@ -54,6 +86,11 @@ type FinishedJobArgs interface {
 	// calling it directly, use Job.FillFinishedArgs to fill the job args.
 	fillFinishedJob(job *Job)
 }
+
+// EmptyArgs is the args for ddl job with no args.
+type EmptyArgs struct{}
+
+func (*EmptyArgs) fillJob(*Job) {}
 
 // CreateSchemaArgs is the arguments for create schema job.
 type CreateSchemaArgs struct {
@@ -350,7 +387,7 @@ func GetFinishedDropTableArgs(job *Job) (*DropTableArgs, error) {
 	return getOrDecodeArgsV2[*DropTableArgs](job)
 }
 
-// TruncateTableArgs is the arguments for truncate table job.
+// TruncateTableArgs is the arguments for truncate table/partition job.
 type TruncateTableArgs struct {
 	FKCheck         bool    `json:"fk_check,omitempty"`
 	NewTableID      int64   `json:"new_table_id,omitempty"`
@@ -364,22 +401,40 @@ type TruncateTableArgs struct {
 
 func (a *TruncateTableArgs) fillJob(job *Job) {
 	if job.Version == JobVersion1 {
-		// Args[0] is the new table ID, args[2] is the ids for table partitions, we
-		// add a placeholder here, they will be filled by job submitter.
-		// the last param is not required for execution, we need it to calculate
-		// number of new IDs to generate.
-		job.Args = []any{a.NewTableID, a.FKCheck, a.NewPartitionIDs, len(a.OldPartitionIDs)}
+		if job.Type == ActionTruncateTable {
+			// Args[0] is the new table ID, args[2] is the ids for table partitions, we
+			// add a placeholder here, they will be filled by job submitter.
+			// the last param is not required for execution, we need it to calculate
+			// number of new IDs to generate.
+			job.Args = []any{a.NewTableID, a.FKCheck, a.NewPartitionIDs, len(a.OldPartitionIDs)}
+		} else {
+			job.Args = []any{a.OldPartitionIDs, a.NewPartitionIDs}
+		}
 		return
 	}
 	job.Args = []any{a}
 }
 
+func (a *TruncateTableArgs) decodeV1(job *Job) error {
+	var err error
+	if job.Type == ActionTruncateTable {
+		err = job.DecodeArgs(&a.NewTableID, &a.FKCheck, &a.NewPartitionIDs)
+	} else {
+		err = job.DecodeArgs(&a.OldPartitionIDs, &a.NewPartitionIDs)
+	}
+	return err
+}
+
 func (a *TruncateTableArgs) fillFinishedJob(job *Job) {
 	if job.Version == JobVersion1 {
-		// the first param is the start key of the old table, it's not used anywhere
-		// now, so we fill an empty byte slice here.
-		// we can call tablecodec.EncodeTablePrefix(tableID) to get it.
-		job.Args = []any{[]byte{}, a.OldPartitionIDs}
+		if job.Type == ActionTruncateTable {
+			// the first param is the start key of the old table, it's not used anywhere
+			// now, so we fill an empty byte slice here.
+			// we can call tablecodec.EncodeTablePrefix(tableID) to get it.
+			job.Args = []any{[]byte{}, a.OldPartitionIDs}
+		} else {
+			job.Args = []any{a.OldPartitionIDs}
+		}
 		return
 	}
 	job.Args = []any{a}
@@ -398,28 +453,26 @@ func GetFinishedTruncateTableArgs(job *Job) (*TruncateTableArgs, error) {
 func getTruncateTableArgs(job *Job, argsOfFinished bool) (*TruncateTableArgs, error) {
 	if job.Version == JobVersion1 {
 		if argsOfFinished {
-			var startKey []byte
+			if job.Type == ActionTruncateTable {
+				var startKey []byte
+				var oldPartitionIDs []int64
+				if err := job.DecodeArgs(&startKey, &oldPartitionIDs); err != nil {
+					return nil, errors.Trace(err)
+				}
+				return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
+			}
 			var oldPartitionIDs []int64
-			if err := job.DecodeArgs(&startKey, &oldPartitionIDs); err != nil {
+			if err := job.DecodeArgs(&oldPartitionIDs); err != nil {
 				return nil, errors.Trace(err)
 			}
 			return &TruncateTableArgs{OldPartitionIDs: oldPartitionIDs}, nil
 		}
 
-		var (
-			newTableID      int64
-			fkCheck         bool
-			newPartitionIDs []int64
-		)
-		err := job.DecodeArgs(&newTableID, &fkCheck, &newPartitionIDs)
-		if err != nil {
+		args := &TruncateTableArgs{}
+		if err := args.decodeV1(job); err != nil {
 			return nil, errors.Trace(err)
 		}
-		return &TruncateTableArgs{
-			NewTableID:      newTableID,
-			FKCheck:         fkCheck,
-			NewPartitionIDs: newPartitionIDs,
-		}, nil
+		return args, nil
 	}
 
 	return getOrDecodeArgsV2[*TruncateTableArgs](job)
@@ -543,6 +596,82 @@ func FillRollbackArgsForAddPartition(job *Job, args *TablePartitionArgs) {
 		PartNames: args.PartNames,
 	})
 	job.Args = fake.Args
+}
+
+// ExchangeTablePartitionArgs is the arguments for exchange table partition job.
+// pt: the partition table to exchange
+// nt: the non-partition table to exchange with
+type ExchangeTablePartitionArgs struct {
+	PartitionID    int64  `json:"partition_id,omitempty"`
+	PTSchemaID     int64  `json:"pt_schema_id,omitempty"`
+	PTTableID      int64  `json:"pt_table_id,omitempty"`
+	PartitionName  string `json:"partition_name,omitempty"`
+	WithValidation bool   `json:"with_validation,omitempty"`
+}
+
+func (a *ExchangeTablePartitionArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.PartitionID, a.PTSchemaID, a.PTTableID, a.PartitionName, a.WithValidation}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *ExchangeTablePartitionArgs) decodeV1(job *Job) error {
+	return job.DecodeArgs(&a.PartitionID, &a.PTSchemaID, &a.PTTableID, &a.PartitionName, &a.WithValidation)
+}
+
+// GetExchangeTablePartitionArgs gets the exchange table partition args.
+func GetExchangeTablePartitionArgs(job *Job) (*ExchangeTablePartitionArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &ExchangeTablePartitionArgs{}
+		if err := args.decodeV1(job); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*ExchangeTablePartitionArgs](job)
+}
+
+// AlterTablePartitionArgs is the arguments for alter table partition job.
+// it's used for:
+//   - ActionAlterTablePartitionAttributes
+//   - ActionAlterTablePartitionPlacement
+type AlterTablePartitionArgs struct {
+	PartitionID   int64             `json:"partition_id,omitempty"`
+	LabelRule     *pdhttp.LabelRule `json:"label_rule,omitempty"`
+	PolicyRefInfo *PolicyRefInfo    `json:"policy_ref_info,omitempty"`
+}
+
+func (a *AlterTablePartitionArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionAlterTablePartitionAttributes {
+			job.Args = []any{a.PartitionID, a.LabelRule}
+		} else {
+			job.Args = []any{a.PartitionID, a.PolicyRefInfo}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+func (a *AlterTablePartitionArgs) decodeV1(job *Job) error {
+	if job.Type == ActionAlterTablePartitionAttributes {
+		return job.DecodeArgs(&a.PartitionID, &a.LabelRule)
+	}
+	return job.DecodeArgs(&a.PartitionID, &a.PolicyRefInfo)
+}
+
+// GetAlterTablePartitionArgs gets the alter table partition args.
+func GetAlterTablePartitionArgs(job *Job) (*AlterTablePartitionArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &AlterTablePartitionArgs{}
+		if err := args.decodeV1(job); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+	return getOrDecodeArgsV2[*AlterTablePartitionArgs](job)
 }
 
 // RenameTableArgs is the arguments for rename table DDL job.
@@ -997,6 +1126,123 @@ func GetRenameTablesArgs(job *Job) (*RenameTablesArgs, error) {
 	return getOrDecodeArgsV2[*RenameTablesArgs](job)
 }
 
+// AlterSequenceArgs is the arguments for alter sequence ddl job.
+type AlterSequenceArgs struct {
+	Ident      ast.Ident             `json:"ident,omitempty"`
+	SeqOptions []*ast.SequenceOption `json:"seq_options,omitempty"`
+}
+
+func (a *AlterSequenceArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.Ident, a.SeqOptions}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAlterSequenceArgs gets the args for alter Sequence ddl job.
+func GetAlterSequenceArgs(job *Job) (*AlterSequenceArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			ident      ast.Ident
+			seqOptions []*ast.SequenceOption
+		)
+		if err := job.DecodeArgs(&ident, &seqOptions); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AlterSequenceArgs{
+			Ident:      ident,
+			SeqOptions: seqOptions,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*AlterSequenceArgs](job)
+}
+
+// ModifyTableAutoIDCacheArgs is the arguments for Modify Table AutoID Cache ddl job.
+type ModifyTableAutoIDCacheArgs struct {
+	NewCache int64 `json:"new_cache,omitempty"`
+}
+
+func (a *ModifyTableAutoIDCacheArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.NewCache}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetModifyTableAutoIDCacheArgs gets the args for modify table autoID cache ddl job.
+func GetModifyTableAutoIDCacheArgs(job *Job) (*ModifyTableAutoIDCacheArgs, error) {
+	if job.Version == JobVersion1 {
+		var newCache int64
+		if err := job.DecodeArgs(&newCache); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &ModifyTableAutoIDCacheArgs{
+			NewCache: newCache,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*ModifyTableAutoIDCacheArgs](job)
+}
+
+// ShardRowIDArgs is the arguments for shard row ID ddl job.
+type ShardRowIDArgs struct {
+	ShardRowIDBits uint64 `json:"shard_row_id_bits,omitempty"`
+}
+
+func (a *ShardRowIDArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.ShardRowIDBits}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetShardRowIDArgs gets the args for shard row ID ddl job.
+func GetShardRowIDArgs(job *Job) (*ShardRowIDArgs, error) {
+	if job.Version == JobVersion1 {
+		var val uint64
+		if err := job.DecodeArgs(&val); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &ShardRowIDArgs{
+			ShardRowIDBits: val,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*ShardRowIDArgs](job)
+}
+
+// AlterTTLInfoArgs is the arguments for alter ttl info job.
+type AlterTTLInfoArgs struct {
+	TTLInfo            *TTLInfo `json:"ttl_info,omitempty"`
+	TTLEnable          *bool    `json:"ttl_enable,omitempty"`
+	TTLCronJobSchedule *string  `json:"ttl_cron_job_schedule,omitempty"`
+}
+
+func (a *AlterTTLInfoArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.TTLInfo, a.TTLEnable, a.TTLCronJobSchedule}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAlterTTLInfoArgs gets the args for alter ttl info job.
+func GetAlterTTLInfoArgs(job *Job) (*AlterTTLInfoArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &AlterTTLInfoArgs{}
+		if err := job.DecodeArgs(&args.TTLInfo, &args.TTLEnable, &args.TTLCronJobSchedule); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return args, nil
+	}
+
+	return getOrDecodeArgsV2[*AlterTTLInfoArgs](job)
+}
+
 // GetCheckConstraintArgs gets the AlterCheckConstraint args.
 func GetCheckConstraintArgs(job *Job) (*CheckConstraintArgs, error) {
 	if job.Version == JobVersion1 {
@@ -1043,4 +1289,165 @@ func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
 		}, nil
 	}
 	return getOrDecodeArgsV2[*AddCheckConstraintArgs](job)
+}
+
+// LockTablesArgs is the argument for LockTables.
+type LockTablesArgs struct {
+	LockTables    []TableLockTpInfo `json:"lock_tables,omitempty"`
+	IndexOfLock   int               `json:"index_of_lock,omitempty"`
+	UnlockTables  []TableLockTpInfo `json:"unlock_tables,omitempty"`
+	IndexOfUnlock int               `json:"index_of_unlock,omitempty"`
+	SessionInfo   SessionInfo       `json:"session_info,omitempty"`
+	IsCleanup     bool              `json:"is_cleanup:omitempty"`
+}
+
+func (a *LockTablesArgs) fillJob(job *Job) {
+	job.Args = []any{a}
+}
+
+// GetLockTablesArgs get the LockTablesArgs argument.
+func GetLockTablesArgs(job *Job) (*LockTablesArgs, error) {
+	var args *LockTablesArgs
+	var err error
+
+	if job.Version == JobVersion1 {
+		err = job.DecodeArgs(&args)
+	} else {
+		args, err = getOrDecodeArgsV2[*LockTablesArgs](job)
+	}
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return args, nil
+}
+
+// RepairTableArgs is the argument for repair table
+type RepairTableArgs struct {
+	*TableInfo `json:"table_info"`
+}
+
+func (a *RepairTableArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.TableInfo}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetRepairTableArgs get the repair table args.
+func GetRepairTableArgs(job *Job) (*RepairTableArgs, error) {
+	if job.Version == JobVersion1 {
+		var tblInfo *TableInfo
+		if err := job.DecodeArgs(&tblInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &RepairTableArgs{tblInfo}, nil
+	}
+
+	return getOrDecodeArgsV2[*RepairTableArgs](job)
+}
+
+// RecoverArgs is the argument for recover table/schema.
+type RecoverArgs struct {
+	RecoverInfo *RecoverSchemaInfo `json:"recover_info,omitempty"`
+	CheckFlag   int64              `json:"check_flag,omitempty"`
+}
+
+func (a *RecoverArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionRecoverTable {
+			job.Args = []any{a.RecoverTableInfos()[0], a.CheckFlag}
+		} else {
+			job.Args = []any{a.RecoverInfo, a.CheckFlag}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// RecoverTableInfos get all the recover infos.
+func (a *RecoverArgs) RecoverTableInfos() []*RecoverTableInfo {
+	return a.RecoverInfo.RecoverTableInfos
+}
+
+// GetRecoverArgs get the recover table/schema args.
+func GetRecoverArgs(job *Job) (*RecoverArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			recoverTableInfo  *RecoverTableInfo
+			recoverSchemaInfo = &RecoverSchemaInfo{}
+			recoverCheckFlag  int64
+		)
+
+		if job.Type == ActionRecoverTable {
+			err := job.DecodeArgs(&recoverTableInfo, &recoverCheckFlag)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			recoverSchemaInfo.RecoverTableInfos = []*RecoverTableInfo{recoverTableInfo}
+		} else {
+			err := job.DecodeArgs(recoverSchemaInfo, &recoverCheckFlag)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		return &RecoverArgs{
+			RecoverInfo: recoverSchemaInfo,
+			CheckFlag:   recoverCheckFlag,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*RecoverArgs](job)
+}
+
+// PlacementPolicyArgs is the argument for create/alter/drop placement policy
+type PlacementPolicyArgs struct {
+	Policy         *PolicyInfo  `json:"policy,omitempty"`
+	ReplaceOnExist bool         `json:"replace_on_exist,omitempty"`
+	PolicyName     pmodel.CIStr `json:"policy_name,omitempty"`
+
+	// it's set for alter/drop policy in v2
+	PolicyID int64 `json:"policy_id"`
+}
+
+func (a *PlacementPolicyArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		if job.Type == ActionCreatePlacementPolicy {
+			job.Args = []any{a.Policy, a.ReplaceOnExist}
+		} else if job.Type == ActionAlterPlacementPolicy {
+			job.Args = []any{a.Policy}
+		} else {
+			intest.Assert(job.Type == ActionDropPlacementPolicy, "Invalid job type for PlacementPolicyArgs")
+			job.Args = []any{a.PolicyName}
+		}
+		return
+	}
+	job.Args = []any{a}
+}
+
+// GetPlacementPolicyArgs gets the placement policy args.
+func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
+	if job.Version == JobVersion1 {
+		args := &PlacementPolicyArgs{PolicyID: job.SchemaID}
+		var err error
+
+		if job.Type == ActionCreatePlacementPolicy {
+			err = job.DecodeArgs(&args.Policy, &args.ReplaceOnExist)
+		} else if job.Type == ActionAlterPlacementPolicy {
+			err = job.DecodeArgs(&args.Policy)
+		} else {
+			intest.Assert(job.Type == ActionDropPlacementPolicy, "Invalid job type for PlacementPolicyArgs")
+			err = job.DecodeArgs(&args.PolicyName)
+		}
+
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		return args, err
+	}
+
+	return getOrDecodeArgsV2[*PlacementPolicyArgs](job)
 }

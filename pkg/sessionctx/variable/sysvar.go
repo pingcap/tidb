@@ -775,7 +775,21 @@ var defaultSysVars = []*SysVar{
 		SetMaxDeltaSchemaCount(TidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBScatterRegion, Value: BoolToOnOff(DefTiDBScatterRegion), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBScatterRegion, Value: DefTiDBScatterRegion, PossibleValues: []string{ScatterOff, ScatterTable, ScatterGlobal}, Type: TypeStr,
+		SetSession: func(vars *SessionVars, val string) error {
+			vars.ScatterRegion = val
+			return nil
+		},
+		GetSession: func(vars *SessionVars) (string, error) {
+			return vars.ScatterRegion, nil
+		},
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			if normalizedValue != ScatterOff && normalizedValue != ScatterTable && normalizedValue != ScatterGlobal {
+				return "", fmt.Errorf("invalid value for '%s', it should be either '%s', '%s' or '%s'", normalizedValue, ScatterOff, ScatterTable, ScatterGlobal)
+			}
+			return normalizedValue, nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(DefTiDBEnableStmtSummary), Type: TypeBool, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetEnabled(TiDBOptOn(val))
@@ -2075,9 +2089,11 @@ var defaultSysVars = []*SysVar{
 		s.SetEnableIndexMerge(TiDBOptOn(val))
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTablePartition, Value: On, Type: TypeEnum, PossibleValues: []string{Off, On, "AUTO"}, SetSession: func(s *SessionVars, val string) error {
-		s.EnableTablePartition = val
-		return nil
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTablePartition, Value: On, Type: TypeEnum, PossibleValues: []string{Off, On, "AUTO"}, Validation: func(vars *SessionVars, s string, s2 string, flag ScopeFlag) (string, error) {
+		if s == Off {
+			vars.StmtCtx.AppendWarning(errors.NewNoStackError("tidb_enable_table_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
+		}
+		return On, nil
 	}},
 	// Keeping tidb_enable_list_partition here, to give errors if setting it to anything other than ON
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableListTablePartition, Value: On, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue, _ string, _ ScopeFlag) (string, error) {
