@@ -683,6 +683,9 @@ func (local *Backend) checkWriteStall(
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
 // When meet error, it will remove finished sstMetas before return.
 func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
+	failpoint.Inject("doIngestFailed", func() {
+		failpoint.Return(nil, errors.New("injected error"))
+	})
 	clientFactory := local.importClientFactory
 	supportMultiIngest := local.supportMultiIngest
 	shouldCheckWriteStall := local.ShouldCheckWriteStall
