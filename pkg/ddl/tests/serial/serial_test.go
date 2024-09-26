@@ -156,7 +156,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	// Test create table like for partition table.
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_scatter_region=1")
+	tk.MustExec("set @@session.tidb_scatter_region='table'")
 	tk.MustExec("drop table if exists partition_t")
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
 	tk.MustExec("drop table if exists t1")
@@ -1108,7 +1108,7 @@ func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 	origin := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, origin)
-	tk.MustExec("set @@global.tidb_scatter_region=1")
+	tk.MustExec("set @@session.tidb_scatter_region='table'")
 
 	// Test pre-split table region for auto_random table.
 	tk.MustExec("create table t (a bigint auto_random(2) primary key clustered, b int) pre_split_regions=2")

@@ -79,6 +79,14 @@ func CheckDataConsistency(
 	txn kv.Transaction, tc types.Context, t *TableCommon,
 	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle,
 ) error {
+	return checkDataConsistency(txn, tc, t, rowToInsert, rowToRemove, memBuffer, sh, nil)
+}
+
+func checkDataConsistency(
+	txn kv.Transaction, tc types.Context, t *TableCommon,
+	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle,
+	extraIndexesLayout table.IndexesLayout,
+) error {
 	if t.Meta().GetPartitionInfo() != nil {
 		return nil
 	}
@@ -114,7 +122,7 @@ func CheckDataConsistency(
 	}
 
 	if err := checkIndexKeys(
-		tc, t, rowToInsert, rowToRemove, indexMutations, columnMaps.IndexIDToInfo, columnMaps.IndexIDToRowColInfos,
+		tc, t, rowToInsert, rowToRemove, indexMutations, columnMaps.IndexIDToInfo, columnMaps.IndexIDToRowColInfos, extraIndexesLayout,
 	); err != nil {
 		return errors.Trace(err)
 	}
@@ -207,6 +215,7 @@ func checkIndexKeys(
 	tc types.Context, t *TableCommon, rowToInsert, rowToRemove []types.Datum,
 	indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo,
 	indexIDToRowColInfos map[int64][]rowcodec.ColInfo,
+	extraIndexesLayout table.IndexesLayout,
 ) error {
 	var indexData []types.Datum
 	for _, m := range indexMutations {
@@ -271,9 +280,9 @@ func checkIndexKeys(
 
 		// When it is in add index new backfill state.
 		if len(value) == 0 || isTmpIdxValAndDeleted {
-			err = compareIndexData(tc, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
+			err = compareIndexData(tc, t.Columns, indexData, rowToRemove, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID))
 		} else {
-			err = compareIndexData(tc, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())
+			err = compareIndexData(tc, t.Columns, indexData, rowToInsert, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID))
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -358,30 +367,36 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 func compareIndexData(
 	tc types.Context, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
 	tableInfo *model.TableInfo,
+	extraIndexLayout table.IndexRowLayoutOption,
 ) error {
 	for i := range indexData {
+		offsetInRow := indexInfo.Columns[i].Offset
+		if len(extraIndexLayout) > 0 {
+			offsetInRow = extraIndexLayout[i]
+		}
+		offsetInTable := indexInfo.Columns[i].Offset
 		decodedMutationDatum := indexData[i]
-		expectedDatum := input[indexInfo.Columns[i].Offset]
+		expectedDatum := input[offsetInRow]
 
 		tablecodec.TruncateIndexValue(
 			&expectedDatum, indexInfo.Columns[i],
-			cols[indexInfo.Columns[i].Offset].ColumnInfo,
+			cols[offsetInTable].ColumnInfo,
 		)
 		tablecodec.TruncateIndexValue(
 			&decodedMutationDatum, indexInfo.Columns[i],
-			cols[indexInfo.Columns[i].Offset].ColumnInfo,
+			cols[offsetInTable].ColumnInfo,
 		)
 
 		comparison, err := CompareIndexAndVal(tc, expectedDatum, decodedMutationDatum,
 			collate.GetCollator(decodedMutationDatum.Collation()),
-			cols[indexInfo.Columns[i].Offset].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
+			cols[offsetInTable].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		if comparison != 0 {
 			err = ErrInconsistentIndexedValue.GenWithStackByArgs(
-				tableInfo.Name.O, indexInfo.Name.O, cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O,
+				tableInfo.Name.O, indexInfo.Name.O, cols[offsetInTable].ColumnInfo.Name.O,
 				decodedMutationDatum.String(), expectedDatum.String(),
 			)
 			logutil.BgLogger().Error("inconsistent indexed value in index insertion", zap.Error(err))
