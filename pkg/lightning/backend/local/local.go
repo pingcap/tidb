@@ -74,9 +74,6 @@ const (
 	dialTimeout             = 5 * time.Minute
 	maxRetryTimes           = 20
 	defaultRetryBackoffTime = 3 * time.Second
-	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
-	// A large retry times is for tolerating tikv cluster failures.
-	maxWriteAndIngestRetryTimes = 30
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -110,6 +107,10 @@ var (
 
 	errorEngineClosed     = errors.New("engine is closed")
 	maxRetryBackoffSecond = 30
+
+	// MaxWriteAndIngestRetryTimes is the max retry times for write and ingest.
+	// A large retry times is for tolerating tikv cluster failures.
+	MaxWriteAndIngestRetryTimes = 30
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
@@ -1432,11 +1433,28 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 			switch job.stage {
 			case regionScanned, wrote:
 				job.retryCount++
+<<<<<<< HEAD
 				if job.retryCount > maxWriteAndIngestRetryTimes {
 					firstErr.Set(job.lastRetryableErr)
 					workerCancel()
 					job.done(&jobWg)
 					continue
+=======
+				if job.retryCount > MaxWriteAndIngestRetryTimes {
+					job.done(&jobWg)
+					lastErr := job.lastRetryableErr
+					intest.Assert(lastErr != nil, "lastRetryableErr should not be nil")
+					if lastErr == nil {
+						lastErr = errors.New("retry limit exceeded")
+						log.FromContext(ctx).Error(
+							"lastRetryableErr should not be nil",
+							logutil.Key("startKey", job.keyRange.Start),
+							logutil.Key("endKey", job.keyRange.End),
+							zap.Stringer("stage", job.stage),
+							zap.Error(lastErr))
+					}
+					return lastErr
+>>>>>>> 448d56910cd (lightning: fix forget to set lastRetryableErr when ingest RPC fail (#56345))
 				}
 				// max retry backoff time: 2+4+8+16+30*26=810s
 				sleepSecond := math.Pow(2, float64(job.retryCount))
