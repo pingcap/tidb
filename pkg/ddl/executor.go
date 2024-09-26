@@ -563,12 +563,12 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 		}
 
 		job := &model.Job{
+			Version:        model.GetJobVerInUse(),
 			SchemaID:       dbInfo.ID,
 			SchemaName:     dbInfo.Name.L,
 			TableID:        tbl.ID,
 			Type:           model.ActionSetTiFlashReplica,
 			BinlogInfo:     &model.HistoryInfo{},
-			Args:           []any{*tiflashReplica},
 			CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 			InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 				Database: dbInfo.Name.L,
@@ -576,7 +576,8 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 			}},
 			SQLMode: sctx.GetSessionVars().SQLMode,
 		}
-		err := e.DoDDLJob(sctx, job)
+		args := &model.SetTiFlashReplicaArgs{TiflashReplica: *tiflashReplica}
+		err := e.doDDLJob2(sctx, job, args)
 		if err != nil {
 			oneFail = tbl.ID
 			fail++
@@ -641,6 +642,7 @@ func (e *executor) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, 
 	}
 
 	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
 		SchemaID:            schema.ID,
 		TableID:             tblInfo.ID,
 		SchemaName:          schema.Name.L,
@@ -648,12 +650,13 @@ func (e *executor) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, 
 		Type:                model.ActionAlterTablePlacement,
 		BinlogInfo:          &model.HistoryInfo{},
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
-		Args:                []any{placementPolicyRef},
 		InvolvingSchemaInfo: involvingSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
-
-	err = e.DoDDLJob(ctx, job)
+	args := &model.AlterTablePlacementArgs{
+		PlacementPolicyRef: placementPolicyRef,
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -1991,23 +1994,7 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	// we need refactor this part to support V2 job version after refactor all of ddl types.
 	var involvingSchemaInfo []model.InvolvingSchemaInfo
 	for _, j := range subJobs {
-		switch j.Type {
-		case model.ActionAlterTablePlacement:
-			ref, ok := j.Args[0].(*model.PolicyRefInfo)
-			if !ok {
-				logFn("unexpected type of policy reference info",
-					zap.Any("args[0]", j.Args[0]),
-					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
-				continue
-			}
-			if ref == nil {
-				continue
-			}
-			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
-				Policy: ref.Name.L,
-				Mode:   model.SharedInvolving,
-			})
-		case model.ActionAddForeignKey:
+		if j.Type == model.ActionAddForeignKey {
 			ref, ok := j.Args[0].(*model.FKInfo)
 			if !ok {
 				logFn("unexpected type of foreign key info",
@@ -3683,17 +3670,18 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
 		TableName:      tb.Meta().Name.L,
 		Type:           model.ActionSetTiFlashReplica,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{*replicaInfo},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = e.DoDDLJob(ctx, job)
+	args := &model.SetTiFlashReplicaArgs{TiflashReplica: *replicaInfo}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -3912,17 +3900,21 @@ func (e *executor) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       db.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     db.Name.L,
 		TableName:      tb.Meta().Name.L,
 		Type:           model.ActionUpdateTiFlashReplicaStatus,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{available, physicalID},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err := e.DoDDLJob(ctx, job)
+	args := &model.UpdateTiFlashReplicaStatusArgs{
+		Available:  available,
+		PhysicalID: physicalID,
+	}
+	err := e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 

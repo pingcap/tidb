@@ -1291,6 +1291,94 @@ func GetAddCheckConstraintArgs(job *Job) (*AddCheckConstraintArgs, error) {
 	return getOrDecodeArgsV2[*AddCheckConstraintArgs](job)
 }
 
+// AlterTablePlacementArgs is the arguments for alter table placements ddl job.
+type AlterTablePlacementArgs struct {
+	PlacementPolicyRef *PolicyRefInfo `json:"placement_policy_ref,omitempty"`
+}
+
+func (a *AlterTablePlacementArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.PlacementPolicyRef}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetAlterTablePlacementArgs gets the args for alter table placements ddl job.
+func GetAlterTablePlacementArgs(job *Job) (*AlterTablePlacementArgs, error) {
+	if job.Version == JobVersion1 {
+		// when the target policy is 'default', policy info is nil
+		var placementPolicyRef *PolicyRefInfo
+		if err := job.DecodeArgs(&placementPolicyRef); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &AlterTablePlacementArgs{
+			PlacementPolicyRef: placementPolicyRef,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*AlterTablePlacementArgs](job)
+}
+
+// SetTiFlashReplicaArgs is the arguments for setting TiFlash replica ddl.
+type SetTiFlashReplicaArgs struct {
+	TiflashReplica ast.TiFlashReplicaSpec `json:"tiflash_replica,omitempty"`
+}
+
+func (a *SetTiFlashReplicaArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.TiflashReplica}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetSetTiFlashReplicaArgs gets the args for setting TiFlash replica ddl.
+func GetSetTiFlashReplicaArgs(job *Job) (*SetTiFlashReplicaArgs, error) {
+	if job.Version == JobVersion1 {
+		tiflashReplica := ast.TiFlashReplicaSpec{}
+		if err := job.DecodeArgs(&tiflashReplica); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &SetTiFlashReplicaArgs{TiflashReplica: tiflashReplica}, nil
+	}
+
+	return getOrDecodeArgsV2[*SetTiFlashReplicaArgs](job)
+}
+
+// UpdateTiFlashReplicaStatusArgs is the arguments for updating TiFlash replica status ddl.
+type UpdateTiFlashReplicaStatusArgs struct {
+	Available  bool  `json:"available,omitempty"`
+	PhysicalID int64 `json:"physical_id,omitempty"`
+}
+
+func (a *UpdateTiFlashReplicaStatusArgs) fillJob(job *Job) {
+	if job.Version == JobVersion1 {
+		job.Args = []any{a.Available, a.PhysicalID}
+	} else {
+		job.Args = []any{a}
+	}
+}
+
+// GetUpdateTiFlashReplicaStatusArgs gets the args for updating TiFlash replica status ddl.
+func GetUpdateTiFlashReplicaStatusArgs(job *Job) (*UpdateTiFlashReplicaStatusArgs, error) {
+	if job.Version == JobVersion1 {
+		var (
+			available  bool
+			physicalID int64
+		)
+		if err := job.DecodeArgs(&available, &physicalID); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &UpdateTiFlashReplicaStatusArgs{
+			Available:  available,
+			PhysicalID: physicalID,
+		}, nil
+	}
+
+	return getOrDecodeArgsV2[*UpdateTiFlashReplicaStatusArgs](job)
+}
+
 // LockTablesArgs is the argument for LockTables.
 type LockTablesArgs struct {
 	LockTables    []TableLockTpInfo `json:"lock_tables,omitempty"`
