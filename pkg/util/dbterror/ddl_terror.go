@@ -168,8 +168,6 @@ var (
 	ErrFunctionalIndexRowValueIsNotAllowed = ClassDDL.NewStd(mysql.ErrFunctionalIndexRowValueIsNotAllowed)
 	// ErrUnsupportedCreatePartition returns for does not support create partitions.
 	ErrUnsupportedCreatePartition = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "partition type, treat as normal table"), nil))
-	// ErrTablePartitionDisabled returns for table partition is disabled.
-	ErrTablePartitionDisabled = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Partitions are ignored because Table Partition is disabled, please set 'tidb_enable_table_partition' if you need to need to enable it", nil))
 	// ErrUnsupportedIndexType returns for unsupported index type.
 	ErrUnsupportedIndexType = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "index type"), nil))
 	// ErrWindowInvalidWindowFuncUse returns for invalid window function use.
@@ -497,6 +495,9 @@ var (
 			"tidb_enable_dist_task setting. To utilize distributed task execution, please enable tidb_ddl_enable_fast_reorg first."), nil))
 	// ErrGlobalIndexNotExplicitlySet is for Global index when not explicitly said GLOBAL, including UPDATE INDEXES
 	ErrGlobalIndexNotExplicitlySet = ClassDDL.NewStd(mysql.ErrGlobalIndexNotExplicitlySet)
+	// ErrWarnGlobalIndexNeedManuallyAnalyze is used for global indexes,
+	// which cannot trigger automatic analysis when it contains prefix columns or virtual generated columns.
+	ErrWarnGlobalIndexNeedManuallyAnalyze = ClassDDL.NewStd(mysql.ErrWarnGlobalIndexNeedManuallyAnalyze)
 )
 
 // ReorgRetryableErrCodes is the error codes that are retryable for reorganization.

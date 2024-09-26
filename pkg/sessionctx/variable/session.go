@@ -1106,12 +1106,6 @@ type SessionVars struct {
 	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
 	OptimizerEnableNAAJ bool
 
-	// EnableTablePartition enables table partition feature.
-	EnableTablePartition string
-
-	// EnableListTablePartition enables list table partition feature.
-	EnableListTablePartition bool
-
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
 
@@ -1311,9 +1305,6 @@ type SessionVars struct {
 
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex ClusteredIndexDefMode
-
-	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
-	EnableGlobalIndex bool
 
 	// EnableParallelApply indicates that whether to use parallel apply.
 	EnableParallelApply bool
@@ -1714,6 +1705,9 @@ type SessionVars struct {
 	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
 	// `select for update` statements which do acquire pessimsitic locks.
 	SharedLockPromotion bool
+
+	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
+	ScatterRegion string
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -4018,3 +4012,12 @@ func (s *SessionVars) PessimisticLockEligible() bool {
 	}
 	return false
 }
+
+const (
+	// ScatterOff means default, will not scatter region
+	ScatterOff string = ""
+	// ScatterTable means scatter region at table level
+	ScatterTable string = "table"
+	// ScatterGlobal means scatter region at global level
+	ScatterGlobal string = "global"
+)

@@ -238,6 +238,8 @@ func SetDirectResourceGroupSettings(groupInfo *model.ResourceGroupInfo, opt *ast
 		if len(opt.BackgroundOptions) == 0 {
 			resourceGroupSettings.Background = nil
 		}
+		resourceGroupSettings.Background = &model.ResourceGroupBackgroundSettings{}
+
 		for _, opt := range opt.BackgroundOptions {
 			if err := SetDirectResourceGroupBackgroundOption(resourceGroupSettings, opt); err != nil {
 				return err
@@ -300,9 +302,6 @@ func SetDirectResourceGroupRunawayOption(resourceGroupSettings *model.ResourceGr
 
 // SetDirectResourceGroupBackgroundOption set background configs of the ResourceGroupSettings.
 func SetDirectResourceGroupBackgroundOption(resourceGroupSettings *model.ResourceGroupSettings, opt *ast.ResourceGroupBackgroundOption) error {
-	if resourceGroupSettings.Background == nil {
-		resourceGroupSettings.Background = &model.ResourceGroupBackgroundSettings{}
-	}
 	switch opt.Type {
 	case ast.BackgroundOptionTaskNames:
 		jobTypes, err := parseBackgroundJobTypes(opt.StrValue)
@@ -310,6 +309,11 @@ func SetDirectResourceGroupBackgroundOption(resourceGroupSettings *model.Resourc
 			return err
 		}
 		resourceGroupSettings.Background.JobTypes = jobTypes
+	case ast.BackgroundUtilizationLimit:
+		if opt.UintValue == 0 || opt.UintValue > 100 {
+			return errors.Trace(errors.New("invalid background resource utilization limit, the valid range is (0, 100]"))
+		}
+		resourceGroupSettings.Background.ResourceUtilLimit = opt.UintValue
 	default:
 		return errors.Trace(errors.New("unknown background option type"))
 	}

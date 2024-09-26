@@ -2731,8 +2731,7 @@ type RecommendIndexExec struct {
 	Action   string
 	SQL      string
 	AdviseID int64
-	Option   string
-	Value    ast.ValueExpr
+	Options  []ast.RecommendIndexOption
 	done     bool
 }
 
@@ -2745,19 +2744,21 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.done = true
 
 	if e.Action == "set" {
-		return indexadvisor.SetOption(e.Ctx(), e.Option, e.Value)
+		return indexadvisor.SetOptions(e.Ctx(), e.Options...)
+	}
+	if e.Action == "show" {
+		return e.showOptions(req)
 	}
 
 	if e.Action != "run" {
 		return fmt.Errorf("unsupported action: %s", e.Action)
 	}
 
-	opt := &indexadvisor.Option{}
+	var sqls []string
 	if e.SQL != "" {
-		opt.SpecifiedSQLs = []string{e.SQL}
+		sqls = strings.Split(e.SQL, ";")
 	}
-
-	results, err := indexadvisor.AdviseIndexes(ctx, e.Ctx(), opt)
+	results, err := indexadvisor.AdviseIndexes(ctx, e.Ctx(), sqls, e.Options)
 
 	for _, r := range results {
 		req.AppendString(0, r.Database)
@@ -2774,4 +2775,19 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendString(6, string(jData))
 	}
 	return err
+}
+
+func (e *RecommendIndexExec) showOptions(req *chunk.Chunk) error {
+	vals, desc, err := indexadvisor.GetOptions(e.Ctx(), indexadvisor.AllOptions...)
+	if err != nil {
+		return err
+	}
+	for _, opt := range indexadvisor.AllOptions {
+		if v, ok := vals[opt]; ok {
+			req.AppendString(0, opt)
+			req.AppendString(1, v)
+			req.AppendString(2, desc[opt])
+		}
+	}
+	return nil
 }

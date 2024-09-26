@@ -212,7 +212,24 @@ func TestIssue53951(t *testing.T) {
 	tk.MustExec(`start transaction;`)
 	tk.MustExec(`update gholla_dummy2 set deleted_at = NOW(), mark=2 where account_id = 'ABC' and metastore_id = 'ABC' and id = 'ABC';`)
 	tk.MustQuery(`select
-  /*+ INL_JOIN(g1, g2) */
+  /*+ INL_JOIN(g1) */
+  g1.account_id,
+  g2.mark
+from
+  gholla_dummy1 g1 FORCE INDEX(isDeleted_accountId_metastoreId)
+STRAIGHT_JOIN
+  gholla_dummy2 g2 FORCE INDEX (PRIMARY)
+ON
+  g1.account_id = g2.account_id AND
+  g1.metastore_id = g2.metastore_id AND
+  g1.id = g2.id
+WHERE
+  g1.account_id = 'ABC' AND
+  g1.metastore_id = 'ABC' AND
+  g1.is_deleted = FALSE AND
+  g2.is_deleted = FALSE;`).Check(testkit.Rows()) // empty result, no error
+	tk.MustQuery(`select
+  /*+ INL_JOIN(g2) */
   g1.account_id,
   g2.mark
 from

@@ -466,12 +466,20 @@ func RunErrMsgTest(t *testing.T, table []testErrMsgCase) {
 func TestRecommendIndex(t *testing.T) {
 	table := []testCase{
 		{"recommend index run", true, "RECOMMEND INDEX RUN"},
+		{"recommend index run with A = 1", true, "RECOMMEND INDEX RUN WITH A = 1"},
+		{"recommend index run with A = 1, B = 2", true, "RECOMMEND INDEX RUN WITH A = 1, B = 2"},
 		{"recommend index run for 'select * from t where a=1'", true,
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1'"},
+		{"recommend index run for 'select * from t where a=1' with A = 1", true,
+			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1"},
+		{"recommend index run for 'select * from t where a=1' with A = 1, B = 2", true,
+			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1, B = 2"},
 		{"recommend index show", true, "RECOMMEND INDEX SHOW"},
 		{"recommend index apply 1", true, "RECOMMEND INDEX APPLY 1"},
 		{"recommend index ignore 1", true, "RECOMMEND INDEX IGNORE 1"},
 		{"recommend index set A = 1", true, "RECOMMEND INDEX SET A = 1"},
+		{"recommend index set A = 1, B = 2", true, "RECOMMEND INDEX SET A = 1, B = 2"},
+		{"recommend index set A = 1, B = 2, C = 3", true, "RECOMMEND INDEX SET A = 1, B = 2, C = 3"},
 	}
 	RunTest(t, table, false)
 }
@@ -3877,9 +3885,13 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' WATCH SIMILAR DURATION '10m' ACTION COOLDOWN)", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' WATCH = SIMILAR DURATION = '10m' ACTION = COOLDOWN)"},
 		{"alter resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' ACTION COOLDOWN WATCH EXACT DURATION '10m')", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m')"},
 		{"create resource group x ru_per_sec=1000 background = (task_types='')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (TASK_TYPES = '')"},
+		{"create resource group x ru_per_sec=1000 background = (UTILIZATION_LIMIT=50)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (UTILIZATION_LIMIT = 50)"},
+		{"create resource group x ru_per_sec=1000 background = (UTILIZATION_LIMIT=\"NAN\")", false, ""},
 		{"create resource group x ru_per_sec=1000 background (task_types='br,lightning')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (TASK_TYPES = 'br,lightning')"},
+		{"create resource group x ru_per_sec=1000 background (task_types='br,lightning',utilization_limit=50)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BACKGROUND = (TASK_TYPES = 'br,lightning', UTILIZATION_LIMIT = 50)"},
 		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH EXACT DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = EXACT DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH PLAN DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = PLAN DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
+		{`create resource group x ru_per_sec=1000 QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH PLAN DURATION='10m')  background (task_types 'br,lightning', utilization_limit 10)`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = PLAN DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning', UTILIZATION_LIMIT = 10)"},
 		{`create resource group x ru_per_sec=UNLIMITED QUERY_LIMIT (EXEC_ELAPSED "10s" ACTION COOLDOWN WATCH PLAN DURATION='10m')  background (task_types 'br,lightning')`, true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = COOLDOWN WATCH = PLAN DURATION = '10m'), BACKGROUND = (TASK_TYPES = 'br,lightning')"},
 		// This case is expected in parser test but not in actual ddl job.
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT = (EXEC_ELAPSED '10s')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s')"},
@@ -3941,6 +3953,9 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x background NULL", true, "ALTER RESOURCE GROUP `x` BACKGROUND = NULL"},
 		{"alter resource group default priority=low background = ( task_types \"ttl\" )", true, "ALTER RESOURCE GROUP `default` PRIORITY = LOW, BACKGROUND = (TASK_TYPES = 'ttl')"},
 		{"alter resource group default burstable background ( task_types = 'a,b,c' )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (TASK_TYPES = 'a,b,c')"},
+		{"alter resource group default burstable background ( utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable background ( task_types = 'a,b,c', utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (TASK_TYPES = 'a,b,c', UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable background ( utilization_limit = 'abc' )", false, ""},
 
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},
 		{"drop resource group DEFAULT;", true, "DROP RESOURCE GROUP `DEFAULT`"},

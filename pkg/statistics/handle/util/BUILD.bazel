@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "util",
@@ -14,12 +14,14 @@ go_library(
     deps = [
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/terror",
         "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/variable",
         "//pkg/table",
+        "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/intest",
@@ -31,5 +33,17 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@org_golang_x_exp//maps",
         "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "util_test",
+    timeout = "short",
+    srcs = ["util_test.go"],
+    flaky = True,
+    deps = [
+        ":util",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
     ],
 )
