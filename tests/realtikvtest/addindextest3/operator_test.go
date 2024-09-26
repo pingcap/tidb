@@ -79,7 +79,7 @@ func TestBackfillOperators(t *testing.T) {
 		require.Equal(t, startKey, tasks[0].Start)
 		require.Equal(t, endKey, tasks[9].End)
 
-		opCtx.Cancel()
+		cancel()
 		require.NoError(t, opCtx.OperatorErr())
 
 		opTasks = tasks
@@ -122,7 +122,7 @@ func TestBackfillOperators(t *testing.T) {
 		}
 		require.Equal(t, 10, cnt)
 
-		opCtx.Cancel()
+		cancel()
 		require.NoError(t, opCtx.OperatorErr())
 	}
 
@@ -169,7 +169,7 @@ func TestBackfillOperators(t *testing.T) {
 		require.Len(t, values, 10)
 		require.Equal(t, 10, cnt)
 
-		opCtx.Cancel()
+		cancel()
 		require.NoError(t, opCtx.OperatorErr())
 	}
 }
@@ -210,7 +210,6 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	err = pipeline.Close()
 	require.NoError(t, err)
 
-	opCtx.Cancel()
 	require.NoError(t, opCtx.OperatorErr())
 }
 
@@ -306,14 +305,12 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 			err = pipeline.Close()
 			comment := fmt.Sprintf("case: %s", tc.failPointPath)
 			require.ErrorContains(t, err, tc.closeErrMsg, comment)
-			opCtx.Cancel()
 			if tc.operatorErrMsg == "" {
 				require.NoError(t, opCtx.OperatorErr())
 			} else {
 				require.Error(t, opCtx.OperatorErr())
 				require.Equal(t, tc.operatorErrMsg, opCtx.OperatorErr().Error())
 			}
-			cancel()
 		})
 	}
 }

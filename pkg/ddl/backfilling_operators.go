@@ -113,11 +113,6 @@ func (ctx *OperatorCtx) onError(err error) {
 	ctx.cancel()
 }
 
-// Cancel cancels the pipeline.
-func (ctx *OperatorCtx) Cancel() {
-	ctx.cancel()
-}
-
 // OperatorErr returns the error of the operator.
 func (ctx *OperatorCtx) OperatorErr() error {
 	err := ctx.err.Load()
