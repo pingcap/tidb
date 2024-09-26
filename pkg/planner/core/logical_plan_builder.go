@@ -15,11 +15,12 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
 	"math/bits"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -76,7 +77,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -5166,70 +5166,14 @@ func getTableOffset(names []*types.FieldName, handleName *types.FieldName) (int,
 	return -1, errors.Errorf("Couldn't get column information when do update/delete")
 }
 
-// TblColPosInfo represents an mapper from column index to handle index.
-type TblColPosInfo struct {
-	TblID int64
-	// Start and End represent the ordinal range [Start, End) of the consecutive columns.
-	Start, End int
-	// HandleOrdinal represents the ordinal of the handle column.
-	HandleCols util.HandleCols
-
-	*table.ExtraPartialRowOption
-}
-
-// MemoryUsage return the memory usage of TblColPosInfo
-func (t *TblColPosInfo) MemoryUsage() (sum int64) {
-	if t == nil {
-		return
-	}
-
-	sum = size.SizeOfInt64 + size.SizeOfInt*2
-	if t.HandleCols != nil {
-		sum += t.HandleCols.MemoryUsage()
-	}
-	return
-}
-
-// TblColPosInfoSlice attaches the methods of sort.Interface to []TblColPosInfos sorting in increasing order.
-type TblColPosInfoSlice []TblColPosInfo
-
-// Len implements sort.Interface#Len.
-func (c TblColPosInfoSlice) Len() int {
-	return len(c)
-}
-
-// Swap implements sort.Interface#Swap.
-func (c TblColPosInfoSlice) Swap(i, j int) {
-	c[i], c[j] = c[j], c[i]
-}
-
-// Less implements sort.Interface#Less.
-func (c TblColPosInfoSlice) Less(i, j int) bool {
-	return c[i].Start < c[j].Start
-}
-
-// FindTblIdx finds the ordinal of the corresponding access column.
-func (c TblColPosInfoSlice) FindTblIdx(colOrdinal int) (int, bool) {
-	if len(c) == 0 {
-		return 0, false
-	}
-	// find the smallest index of the range that its start great than colOrdinal.
-	// @see https://godoc.org/sort#Search
-	rangeBehindOrdinal := sort.Search(len(c), func(i int) bool { return c[i].Start > colOrdinal })
-	if rangeBehindOrdinal == 0 {
-		return 0, false
-	}
-	return rangeBehindOrdinal - 1, true
-}
-
 // buildColumns2HandleWithWrtiableColumns builds columns to handle mapping.
 // This func is called by Update and can only see writable columns.
 func buildColumns2HandleWithWrtiableColumns(
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
 	tblID2Table map[int64]table.Table,
-) (TblColPosInfoSlice, error) {
-	var cols2Handles TblColPosInfoSlice
+) (util.TblColPosInfoSlice, error) {
+	cols2Handles := make(util.TblColPosInfoSlice, 0, len(tblID2Handle))
 	for tblID, handleCols := range tblID2Handle {
 		tbl := tblID2Table[tblID]
 		tblLen := len(tbl.WritableCols())
@@ -5239,10 +5183,10 @@ func buildColumns2HandleWithWrtiableColumns(
 				return nil, err
 			}
 			end := offset + tblLen
-			cols2Handles = append(cols2Handles, TblColPosInfo{TblID: tblID, Start: offset, End: end, HandleCols: handleCol})
+			cols2Handles = append(cols2Handles, util.TblColPosInfo{TblID: tblID, Start: offset, End: end, HandleCols: handleCol})
 		}
 	}
-	sort.Sort(cols2Handles)
+	cols2Handles.SortByStart()
 	return cols2Handles, nil
 }
 
@@ -5263,7 +5207,7 @@ func pruneAndBuildColPositionInfoForDelete(
 	tblID2Handle map[int64][]util.HandleCols,
 	tblID2Table map[int64]table.Table,
 	hasFK bool,
-) (TblColPosInfoSlice, *bitset.BitSet, error) {
+) (util.TblColPosInfoSlice, *bitset.BitSet, error) {
 	var nonPruned *bitset.BitSet
 	// If there is foreign key, we can't prune the columns.
 	// Use a very relax check for foreign key cascades and checks.
@@ -5273,7 +5217,7 @@ func pruneAndBuildColPositionInfoForDelete(
 		nonPruned = bitset.New(uint(len(names)))
 		nonPruned.SetAll()
 	}
-	cols2PosInfos := make(TblColPosInfoSlice, 0, len(tblID2Handle))
+	cols2PosInfos := make(util.TblColPosInfoSlice, 0, len(tblID2Handle))
 	for tid, handleCols := range tblID2Handle {
 		for _, handleCol := range handleCols {
 			curColPosInfo, err := initColPosInfo(tid, names, handleCol)
@@ -5283,9 +5227,8 @@ func pruneAndBuildColPositionInfoForDelete(
 			cols2PosInfos = append(cols2PosInfos, curColPosInfo)
 		}
 	}
-	// Sort by start position. To do the later column pruning.
 	// TODO: `sort`` package has a rather worse performance. We should replace it with the new `slice` package.
-	sort.Sort(cols2PosInfos)
+	cols2PosInfos.SortByStart()
 	prunedColCnt := 0
 	var err error
 	for i := range cols2PosInfos {
@@ -5312,12 +5255,12 @@ func pruneAndBuildColPositionInfoForDelete(
 // initColPosInfo initializes the column position information.
 // It's used before we call pruneAndBuildSingleTableColPosInfoForDelete or buildSingleTableColPosInfoForDelete.
 // It initializes the needed information for the following pruning: the tid, starting position and the handle column.
-func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCols) (TblColPosInfo, error) {
+func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCols) (util.TblColPosInfo, error) {
 	offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
 	if err != nil {
-		return TblColPosInfo{}, err
+		return util.TblColPosInfo{}, err
 	}
-	return TblColPosInfo{
+	return util.TblColPosInfo{
 		TblID:                 tid,
 		Start:                 offset,
 		HandleCols:            handleCol,
@@ -5329,7 +5272,7 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 // It's temp code path for partition table, foreign key and point get plan.
 func buildSingleTableColPosInfoForDelete(
 	tbl table.Table,
-	colPosInfo *TblColPosInfo,
+	colPosInfo *util.TblColPosInfo,
 ) error {
 	tblLen := len(tbl.DeletableCols())
 	colPosInfo.End = colPosInfo.Start + tblLen
@@ -5342,7 +5285,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	t table.Table,
 	tableName string,
 	names []*types.FieldName,
-	colPosInfo *TblColPosInfo,
+	colPosInfo *util.TblColPosInfo,
 	prePrunedCount int,
 	nonPrunedSet *bitset.BitSet,
 ) (int, error) {
@@ -5564,7 +5507,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 }
 
 // GetUpdateColumnsInfo get the update columns info.
-func GetUpdateColumnsInfo(tblID2Table map[int64]table.Table, tblColPosInfos TblColPosInfoSlice, size int) []*table.Column {
+func GetUpdateColumnsInfo(tblID2Table map[int64]table.Table, tblColPosInfos util.TblColPosInfoSlice, size int) []*table.Column {
 	colsInfo := make([]*table.Column, size)
 	for _, content := range tblColPosInfos {
 		tbl := tblID2Table[content.TblID]
@@ -6416,19 +6359,19 @@ func restoreByItemText(item *ast.ByItem) string {
 	return sb.String()
 }
 
-func compareItems(lItems []*ast.ByItem, rItems []*ast.ByItem) bool {
+func compareItems(lItems []*ast.ByItem, rItems []*ast.ByItem) int {
 	minLen := min(len(lItems), len(rItems))
 	for i := 0; i < minLen; i++ {
 		res := strings.Compare(restoreByItemText(lItems[i]), restoreByItemText(rItems[i]))
 		if res != 0 {
-			return res < 0
+			return res
 		}
 		res = compareBool(lItems[i].Desc, rItems[i].Desc)
 		if res != 0 {
-			return res < 0
+			return res
 		}
 	}
-	return len(lItems) < len(rItems)
+	return cmp.Compare(len(lItems), len(rItems))
 }
 
 type windowFuncs struct {
@@ -6445,10 +6388,10 @@ func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, ord
 	}
 	lItemsBuf := make([]*ast.ByItem, 0, 4)
 	rItemsBuf := make([]*ast.ByItem, 0, 4)
-	sort.SliceStable(windows, func(i, j int) bool {
-		lItemsBuf = getAllByItems(lItemsBuf, windows[i].spec)
-		rItemsBuf = getAllByItems(rItemsBuf, windows[j].spec)
-		return !compareItems(lItemsBuf, rItemsBuf)
+	slices.SortStableFunc(windows, func(x, y windowFuncs) int {
+		lItemsBuf = getAllByItems(lItemsBuf, x.spec)
+		rItemsBuf = getAllByItems(rItemsBuf, y.spec)
+		return compareItems(lItemsBuf, rItemsBuf)
 	})
 	return windows
 }

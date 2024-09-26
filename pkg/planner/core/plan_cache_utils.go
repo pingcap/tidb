@@ -19,7 +19,6 @@ import (
 	"context"
 	"math"
 	"slices"
-	"sort"
 	"strconv"
 	"time"
 
@@ -237,9 +236,7 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i] < keys[j]
-	})
+	slices.Sort(keys)
 
 	for _, k := range keys {
 		v := m[k]
@@ -382,7 +379,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 			}
 			dirtyTableIDs = append(dirtyTableIDs, t.ID)
 		}
-		sort.Slice(dirtyTableIDs, func(i, j int) bool { return dirtyTableIDs[i] < dirtyTableIDs[j] })
+		slices.Sort(dirtyTableIDs)
 		for _, id := range dirtyTableIDs {
 			hash = codec.EncodeInt(hash, id)
 		}

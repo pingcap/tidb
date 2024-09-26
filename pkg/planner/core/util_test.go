@@ -16,7 +16,7 @@ package core
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -36,11 +36,11 @@ func tableNamesAsStr(tableNames []*ast.TableName) string {
 }
 
 func sortTableNames(tableNames []*ast.TableName) {
-	sort.Slice(tableNames, func(i, j int) bool {
-		if tableNames[i].Schema.L == tableNames[j].Schema.L {
-			return tableNames[i].Name.L < tableNames[j].Name.L
+	slices.SortFunc(tableNames, func(x, y *ast.TableName) int {
+		if x.Schema.L == y.Schema.L {
+			return strings.Compare(x.Name.L, y.Name.L)
 		}
-		return tableNames[i].Schema.L < tableNames[j].Schema.L
+		return strings.Compare(x.Schema.L, y.Schema.L)
 	})
 }
 

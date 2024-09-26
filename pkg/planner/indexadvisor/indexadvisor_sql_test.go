@@ -16,7 +16,7 @@ package indexadvisor_test
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -31,7 +31,7 @@ func checkResult(t *testing.T, tk *testkit.TestKit, stmts, indexes string) {
 	for _, r := range results {
 		resultIndexes = append(resultIndexes, fmt.Sprintf("%v.%v.%v", r[0], r[1], r[3]))
 	}
-	sort.Strings(resultIndexes)
+	slices.Sort(resultIndexes)
 	require.Equal(t, indexes, strings.Join(resultIndexes, "|"))
 }
 

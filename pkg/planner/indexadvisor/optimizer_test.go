@@ -17,7 +17,7 @@ package indexadvisor_test
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -112,7 +112,7 @@ func TestOptimizerPossibleColumns(t *testing.T) {
 		for _, col := range cols {
 			tmp = append(tmp, fmt.Sprintf("%v.%v", col.TableName, col.ColumnName))
 		}
-		sort.Strings(tmp)
+		slices.Sort(tmp)
 		require.Equal(t, expected, tmp)
 	}
 
@@ -143,7 +143,7 @@ func TestOptimizerTableColumns(t *testing.T) {
 			require.Equal(t, tableName, col.TableName)
 			tmp = append(tmp, col.ColumnName)
 		}
-		sort.Strings(tmp)
+		slices.Sort(tmp)
 		require.Equal(t, columns, tmp)
 	}
 

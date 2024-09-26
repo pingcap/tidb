@@ -936,7 +936,9 @@ func (or partitionRangeOR) simplify() partitionRangeOR {
 		return or
 	}
 	// Make the ranges order by start.
-	sort.Sort(or)
+	slices.SortFunc(or, func(x, y partitionRange) int {
+		return cmp.Compare(x.start, y.start)
+	})
 	sorted := or
 
 	// Iterate the sorted ranges, merge the adjacent two when their range overlap.

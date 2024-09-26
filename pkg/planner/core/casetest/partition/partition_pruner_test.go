@@ -17,7 +17,7 @@ package partition
 import (
 	"bytes"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -98,11 +98,11 @@ func getPartitionInfoFromPlan(plan []string) string {
 			infos = append(infos, info)
 		}
 	}
-	sort.Slice(infos, func(i, j int) bool {
-		if infos[i].Table != infos[j].Table {
-			return infos[i].Table < infos[j].Table
+	slices.SortFunc(infos, func(x, y testTablePartitionInfo) int {
+		if x.Table != y.Table {
+			return strings.Compare(x.Table, y.Table)
 		}
-		return infos[i].Partitions < infos[j].Partitions
+		return strings.Compare(x.Partitions, y.Partitions)
 	})
 	buf := bytes.NewBuffer(nil)
 	for i, info := range infos {

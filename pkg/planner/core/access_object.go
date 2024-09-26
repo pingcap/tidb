@@ -17,7 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -342,7 +342,7 @@ func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
 		for k := range uniqueIdx {
 			idxs = append(idxs, k)
 		}
-		sort.Ints(idxs)
+		slices.Sort(idxs)
 		for _, idx := range idxs {
 			res.Partitions = append(res.Partitions, p.TblInfo.Partition.Definitions[idx].Name.O)
 		}

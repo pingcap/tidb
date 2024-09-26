@@ -20,7 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -243,8 +243,14 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 			})
 		}
 
-		sort.Slice(impacts, func(i, j int) bool {
-			return impacts[i].Improvement > impacts[j].Improvement
+		slices.SortFunc(impacts, func(x, y *ImpactedQuery) int {
+			if x.Improvement == y.Improvement {
+				return 0
+			}
+			if x.Improvement < y.Improvement {
+				return -1
+			}
+			return 1
 		})
 
 		topN := 3

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -266,6 +267,22 @@ func (e *ExtraPartialRowOption) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
 	opt.columnSize = e.ColumnsSizeHelper
 }
 
+// MemoryUsage returns the memory usage of ExtraPartialRowOption.
+func (e *ExtraPartialRowOption) MemoryUsage() (sum int64) {
+	if e == nil {
+		return
+	}
+	if e.IndexesRowLayout != nil {
+		for _, idxLayout := range e.IndexesRowLayout {
+			sum += int64(len(idxLayout)) * size.SizeOfInt
+		}
+	}
+	if e.ColumnsSizeHelper != nil {
+		sum += e.ColumnsSizeHelper.MemoryUsage()
+	}
+	return
+}
+
 // IndexRowLayoutOption is the option for index row layout.
 // It is used to specify the order of the index columns in the row.
 type IndexRowLayoutOption []int
@@ -297,6 +314,18 @@ type ColumnsSizeHelper struct {
 	// If the column is not pruned, we use the accurate size. They are stored by their ordinal in the pruned row.
 	// The ith element is the position of the ith public column in the pruned row.
 	PublicColsLayout []int
+}
+
+// MemoryUsage returns the memory usage of ColumnsSizeHelper.
+func (c *ColumnsSizeHelper) MemoryUsage() (sum int64) {
+	if c == nil {
+		return
+	}
+	sum = size.SizeOfPointer
+	c.NotPruned.BinaryStorageSize()
+	sum += size.SizeOfPointer + size.SizeOfFloat64*int64(len(c.AvgSizes))
+	sum += size.SizeOfPointer + size.SizeOfInt*int64(len(c.PublicColsLayout))
+	return
 }
 
 // CommonMutateOptFunc is a function to provide common options for mutating a table.

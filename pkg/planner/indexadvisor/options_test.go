@@ -16,7 +16,7 @@ package indexadvisor_test
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -184,7 +184,7 @@ func TestOptionWithRun(t *testing.T) {
 		for _, r := range rs {
 			indexes = append(indexes, r[2].(string))
 		}
-		sort.Strings(indexes)
+		slices.Sort(indexes)
 		require.Equal(t, expected, strings.Join(indexes, ","))
 	}
 

@@ -17,7 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1555,50 +1555,43 @@ func TestVisitInfo(t *testing.T) {
 	}
 }
 
-type visitInfoArray []visitInfo
-
-func (v visitInfoArray) Len() int {
-	return len(v)
-}
-
-func (v visitInfoArray) Less(i, j int) bool {
-	if v[i].privilege < v[j].privilege {
-		return true
+func visitInfoCmp(a, b visitInfo) int {
+	if a.privilege < b.privilege {
+		return -1
 	}
-	if v[i].db < v[j].db {
-		return true
+	if a.privilege > b.privilege {
+		return 1
 	}
-	if v[i].table < v[j].table {
-		return true
+	if a.db < b.db {
+		return -1
 	}
-	if v[i].column < v[j].column {
-		return true
+	if a.db > b.db {
+		return 1
 	}
-
-	return false
-}
-
-func (v visitInfoArray) Swap(i, j int) {
-	v[i], v[j] = v[j], v[i]
-}
-
-func unique(v []visitInfo) []visitInfo {
-	repeat := 0
-	for i := 1; i < len(v); i++ {
-		if v[i].Equals(&v[i-1]) {
-			repeat++
-		} else {
-			v[i-repeat] = v[i]
-		}
+	if a.table < b.table {
+		return -1
 	}
-	return v[:len(v)-repeat]
+	if a.table > b.table {
+		return 1
+	}
+	if a.column < b.column {
+		return -1
+	}
+	if a.column > b.column {
+		return 1
+	}
+	return 0
 }
 
 func checkVisitInfo(t *testing.T, v1, v2 []visitInfo, comment string) {
-	sort.Sort(visitInfoArray(v1))
-	sort.Sort(visitInfoArray(v2))
-	v1 = unique(v1)
-	v2 = unique(v2)
+	slices.SortFunc(v1, visitInfoCmp)
+	slices.SortFunc(v2, visitInfoCmp)
+	slices.CompactFunc(v1, func(x, y visitInfo) bool {
+		return x.Equals(&y)
+	})
+	slices.CompactFunc(v1, func(x, y visitInfo) bool {
+		return x.Equals(&y)
+	})
 
 	require.Equal(t, len(v2), len(v1), comment)
 	for i := 0; i < len(v1); i++ {
