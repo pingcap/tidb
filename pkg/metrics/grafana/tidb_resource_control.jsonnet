@@ -1135,10 +1135,10 @@ TiDBResourceControlDash
   .addPanel(BackgroundTaskRUPanel, gridPos=leftPanelPos)
   .addPanel(BackgroundTaskResourceUtilizationPanel, gridPos=rightPanelPos)
   .addPanel(BackgroundTaskIOLimitPanel, gridPos=leftPanelPos)
-  .addPanel(BackgroundTaskCPULimitPanel, gridPos=rightPanelPos)
   .addPanel(BackgroundTaskCPUConsumptionPanel, gridPos=rightPanelPos)
-  .addPanel(BackgroundTaskIOConsumptionPanel, gridPos=leftPanelPos)
-  .addPanel(BackgroundTaskTotalWaitDurationPanel, gridPos=rightPanelPos)
+  .addPanel(BackgroundTaskCPULimitPanel, gridPos=leftPanelPos)
+  .addPanel(BackgroundTaskIOConsumptionPanel, gridPos=rightPanelPos)
+  .addPanel(BackgroundTaskTotalWaitDurationPanel, gridPos=leftPanelPos)
   ,
   gridPos=rowPos
 ).addPanel(
