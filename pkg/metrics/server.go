@@ -72,6 +72,7 @@ var (
 	LoadTableCacheDurationHistogram prometheus.Histogram
 	RCCheckTSWriteConfilictCounter  *prometheus.CounterVec
 	MemoryLimit                     prometheus.Gauge
+	InternalSessions                prometheus.Gauge
 )
 
 // InitServerMetrics initializes server metrics.
@@ -392,6 +393,14 @@ func InitServerMetrics() {
 			Subsystem: "server",
 			Name:      "memory_quota_bytes",
 			Help:      "The value of memory quota bytes.",
+		})
+
+	InternalSessions = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "internal_sessions",
+			Help:      "The total count of internal sessions.",
 		})
 }
 

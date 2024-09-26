@@ -2444,10 +2444,8 @@ func (do *Domain) loadStatsWorker() {
 		lease = 3 * time.Second
 	}
 	loadTicker := time.NewTicker(lease)
-	updStatsHealthyTicker := time.NewTicker(20 * lease)
 	defer func() {
 		loadTicker.Stop()
-		updStatsHealthyTicker.Stop()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
 
@@ -2470,8 +2468,6 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
 			}
-		case <-updStatsHealthyTicker.C:
-			statsHandle.UpdateStatsHealthyMetrics()
 		case <-do.exit:
 			return
 		}
@@ -2545,6 +2541,7 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
+	updateStatsHealthyTicker := time.NewTicker(20 * lease)
 	readMemTicker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
 	defer func() {
@@ -2552,6 +2549,7 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
 		readMemTicker.Stop()
+		updateStatsHealthyTicker.Stop()
 		do.SetStatsUpdating(false)
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
@@ -2581,9 +2579,10 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 			if err != nil {
 				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
 			}
-
 		case <-readMemTicker.C:
 			memory.ForceReadMemStats()
+		case <-updateStatsHealthyTicker.C:
+			statsHandle.UpdateStatsHealthyMetrics()
 		}
 	}
 }
@@ -3110,9 +3109,9 @@ func (do *Domain) StopAutoAnalyze() {
 
 // InitInstancePlanCache initializes the instance level plan cache for this Domain.
 func (do *Domain) InitInstancePlanCache() {
-	softLimit := variable.InstancePlanCacheTargetMemSize.Load()
 	hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
-	do.instancePlanCache = NewInstancePlanCache(softLimit, hardLimit)
+	softLimit := float64(hardLimit) * (1 - variable.InstancePlanCacheReservedPercentage.Load())
+	do.instancePlanCache = NewInstancePlanCache(int64(softLimit), hardLimit)
 	// use a separate goroutine to avoid the eviction blocking other operations.
 	do.wg.Run(do.planCacheEvictTrigger, "planCacheEvictTrigger")
 	do.wg.Run(do.planCacheMetricsAndVars, "planCacheMetricsAndVars")
@@ -3136,8 +3135,8 @@ func (do *Domain) planCacheMetricsAndVars() {
 		select {
 		case <-ticker.C:
 			// update limits
-			softLimit := variable.InstancePlanCacheTargetMemSize.Load()
 			hardLimit := variable.InstancePlanCacheMaxMemSize.Load()
+			softLimit := int64(float64(hardLimit) * (1 - variable.InstancePlanCacheReservedPercentage.Load()))
 			curSoft, curHard := do.instancePlanCache.GetLimits()
 			if curSoft != softLimit || curHard != hardLimit {
 				do.instancePlanCache.SetLimits(softLimit, hardLimit)

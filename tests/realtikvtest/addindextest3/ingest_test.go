@@ -642,3 +642,28 @@ func TestConcFastReorg(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestIssue55808(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+	tk.MustExec("set global tidb_ddl_error_count_limit = 0")
+
+	backup := local.MaxWriteAndIngestRetryTimes
+	local.MaxWriteAndIngestRetryTimes = 1
+	t.Cleanup(func() {
+		local.MaxWriteAndIngestRetryTimes = backup
+	})
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 4; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/doIngestFailed", "return()")
+	err := tk.ExecToErr("alter table t add index idx(a);")
+	require.ErrorContains(t, err, "injected error")
+}

@@ -295,24 +295,18 @@ func rollbackExchangeTablePartition(jobCtx *jobContext, t *meta.Meta, job *model
 	if len(tblInfo.Constraints) == 0 {
 		return updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	}
-	var (
-		defID          int64
-		ptSchemaID     int64
-		ptID           int64
-		partName       string
-		withValidation bool
-	)
-	if err = job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+	args, err := model.GetExchangeTablePartitionArgs(job)
+	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	pt, err := getTableInfo(t, ptID, ptSchemaID)
+	pt, err := getTableInfo(t, args.PTTableID, args.PTSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	pt.ExchangePartitionInfo = nil
 	var ptInfo []schemaIDAndTableInfo
 	ptInfo = append(ptInfo, schemaIDAndTableInfo{
-		schemaID: ptSchemaID,
+		schemaID: args.PTSchemaID,
 		tblInfo:  pt,
 	})
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true, ptInfo...)
@@ -340,18 +334,18 @@ func convertAddTablePartitionJob2RollbackJob(jobCtx *jobContext, t *meta.Meta, j
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	if job.Type == model.ActionReorganizePartition ||
 		job.Type == model.ActionAlterTablePartitioning ||
 		job.Type == model.ActionRemovePartitioning {
-		partInfo := &model.PartitionInfo{}
-		var pNames []string
-		err = job.DecodeArgs(&pNames, &partInfo)
-		if err != nil {
-			return ver, err
-		}
-		job.Args = []any{partNames, partInfo}
+		args.PartNames = partNames
+		job.FillArgs(args)
 	} else {
-		job.Args = []any{partNames}
+		args.PartNames = partNames
+		model.FillRollbackArgsForAddPartition(job, args)
 	}
 	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
 	if err != nil {

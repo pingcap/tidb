@@ -830,3 +830,14 @@ a	b	c
 2021-05-04	2021-05-04 10:10:10	4
 2022-05-04	2022-05-04 10:10:10	5
 2022-05-05	2022-05-06 11:11:11	6
+drop table t;
+create table t(a varchar(20), b int) partition by hash(a) partitions 2;
+Error 1659 (HY000): Field 'a' is of a not allowed type for this type of partitioning
+create table t(a varchar(20), b int);
+alter table t partition by hash(a) partitions 2;
+Error 1659 (HY000): Field 'ddl__reorg_partition.t.a' is of a not allowed type for this type of partitioning
+alter table t partition by key() partitions 2;
+Error 1105 (HY000): expression should not be an empty string
+alter table t partition by key(c) partitions 2;
+Error 1488 (HY000): Field in list of fields for partition function not found in table
+drop table t;

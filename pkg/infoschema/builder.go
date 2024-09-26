@@ -274,7 +274,7 @@ func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSche
 		}
 
 		// Set both tables to the maximum auto IDs between normal table and partitioned table.
-		newAutoIDs := meta.AutoIDGroup{
+		newAutoIDs := model.AutoIDGroup{
 			RowID:       max(ptAutoIDs.RowID, ntAutoIDs.RowID),
 			IncrementID: max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
 			RandomID:    max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),

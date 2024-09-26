@@ -166,6 +166,8 @@ addr = "127.0.0.1:8287"
 # the rows will be split in a way to respect both settings.
 # This value may be decreased to reduce the stress on the cluster due to large transaction.
 #logical-import-batch-rows = 65536
+# logical-import-prep-stmt controls whether to use prepared statements in logical mode (TiDB backend).
+#logical-import-prep-stmt = false
 
 [mydumper]
 # block size of file reading
