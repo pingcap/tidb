@@ -3324,11 +3324,12 @@ func (b *builtinFormatWithLocaleSig) evalString(ctx EvalContext, row chunk.Row) 
 	tc := typeCtx(ctx)
 	if isNull {
 		tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
+		locale = "en_US"
 	}
 
 	lang, err := language.Parse(locale)
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("can't set locale to '%s': %w", locale, err)
 	}
 	p := message.NewPrinter(lang)
 	xint, err := strconv.ParseFloat(x, 64)
