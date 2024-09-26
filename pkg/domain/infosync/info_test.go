@@ -324,11 +324,10 @@ func TestDoRequestRetryLeader(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
+
+	ctx := context.Background()
+
 	integration.BeforeTestExternal(t)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 3})
 	defer cluster.Terminate(t)
 
