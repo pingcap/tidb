@@ -589,6 +589,7 @@ func TestIssue55808(t *testing.T) {
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	tk.MustExec("set global tidb_enable_dist_task = off;")
+	tk.MustExec("set global tidb_ddl_error_count_limit = 0")
 
 	backup := local.MaxWriteAndIngestRetryTimes
 	local.MaxWriteAndIngestRetryTimes = 1
@@ -603,7 +604,7 @@ func TestIssue55808(t *testing.T) {
 	}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/doIngestFailed", "return()"))
-	tk.MustExec("alter table t add index idx(a);")
-	tk.MustExec("admin check table t;")
+	err := tk.ExecToErr("alter table t add index idx(a);")
+	require.ErrorContains(t, err, "injected error")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/doIngestFailed"))
 }
