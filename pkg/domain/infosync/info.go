@@ -15,6 +15,7 @@
 package infosync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -477,13 +478,21 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 	return progress, nil
 }
 
-func doRequest(ctx context.Context, apiName string, addrs []string, route, method string, body io.Reader) ([]byte, error) {
+func doRequest(
+	ctx context.Context,
+	apiName string,
+	etcdCli *clientv3.Client,
+	route, method string,
+	body []byte,
+) ([]byte, error) {
 	var err error
 	var req *http.Request
 	var res *http.Response
+	addrs := etcdCli.Endpoints()
+
 	for idx, addr := range addrs {
 		url := util2.ComposeURL(addr, route)
-		req, err = http.NewRequestWithContext(ctx, method, url, body)
+		req, err = http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
@@ -501,13 +510,57 @@ func doRequest(ctx context.Context, apiName string, addrs []string, route, metho
 				return nil, err
 			}
 			if res.StatusCode != http.StatusOK {
-				logutil.BgLogger().Warn("response not 200",
+				var (
+					leaderAddr string
+				)
+				for _, addr2 := range addrs {
+					status, err2 := etcdCli.Status(ctx, addr2)
+					if err2 != nil {
+						logutil.BgLogger().Warn(
+							"failed to get leader by checking endpoint status",
+							zap.String("endpoint", addr2),
+							zap.Error(err2))
+						continue
+					}
+					if status.Leader == status.Header.MemberId {
+						leaderAddr = addr2
+						break
+					}
+				}
+
+				logutil.BgLogger().Warn("response not 200, will retry sending to etcd leader",
 					zap.String("method", method),
 					zap.String("hosts", addr),
 					zap.String("url", url),
 					zap.Int("http status", res.StatusCode),
 					zap.Int("address order", idx),
+					zap.String("leader", leaderAddr),
 				)
+				if leaderAddr != "" {
+					req2, err2 := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+					if err2 != nil {
+						return nil, err2
+					}
+					if body != nil {
+						req2.Header.Set("Content-Type", "application/json")
+					}
+					res2, err2 := doRequestWithFailpoint(req2)
+					if err2 == nil {
+						bodyBytes2, err2 := io.ReadAll(res2.Body)
+						terror.Log(res2.Body.Close())
+						if err2 != nil {
+							return nil, err2
+						}
+						if res2.StatusCode == http.StatusOK {
+							return bodyBytes2, nil
+						}
+						// if leader is still not 200, log and return the old error
+						logutil.BgLogger().Warn("response not 200 after sending to etcd leader",
+							zap.Int("http status", res2.StatusCode),
+							zap.ByteString("response body", bodyBytes2))
+					}
+				}
+
 				err = ErrHTTPServiceError.FastGen("%s", bodyBytes)
 				if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusPreconditionFailed {
 					err = nil
