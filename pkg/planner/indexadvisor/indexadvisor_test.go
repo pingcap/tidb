@@ -376,6 +376,25 @@ FROM (SELECT block_number AS block_receipts
 	require.True(t, len(r) > 0)
 }
 
+func TestIndexAdvisorRunFor(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int, b int, c int)`)
+	tk.MustExec(`create table t2 (a int, b int, c int)`)
+
+	r := tk.MustQuery(`recommend index run for "select * from t1 where a=1"`)
+	require.True(t, len(r.Rows()) == 1)
+	r = tk.MustQuery(`recommend index run for "select * from t1 where a=1;select * from t2 where b=1"`)
+	require.True(t, len(r.Rows()) == 2)
+	tk.MustQueryToErr(`recommend index run for ";"`)
+	tk.MustQueryToErr(`recommend index run for "xxx"`)
+	tk.MustQueryToErr(`recommend index run for ";;;"`)
+	tk.MustQueryToErr(`recommend index run for ";;xx;"`)
+	r = tk.MustQuery(`recommend index run for ";;select * from t1 where a=1;; ;;  ;"`)
+	require.True(t, len(r.Rows()) == 1)
+}
+
 func TestIndexAdvisorStorage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
