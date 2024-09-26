@@ -30,7 +30,7 @@ func TestAnalysisPriorityQueueV2(t *testing.T) {
 	tk.MustExec("use test")
 
 	handle := dom.StatsHandle()
-	pq := priorityqueue.NewAnalysisPriorityQueue2(handle)
+	pq := priorityqueue.NewAnalysisPriorityQueueV2(handle)
 	defer pq.Close()
 
 	t.Run("Initialize", func(t *testing.T) {
@@ -79,7 +79,7 @@ func TestIsWithinTimeWindow(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	handle := dom.StatsHandle()
-	pq := priorityqueue.NewAnalysisPriorityQueue2(handle)
+	pq := priorityqueue.NewAnalysisPriorityQueueV2(handle)
 	err := pq.Initialize()
 	require.NoError(t, err)
 	require.True(t, pq.IsWithinTimeWindow())
@@ -88,7 +88,7 @@ func TestIsWithinTimeWindow(t *testing.T) {
 	tk.MustExec("set global tidb_auto_analyze_start_time = '00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time = '00:00 +0000'")
 	// Reset the priority queue with the new time window.
-	pq = priorityqueue.NewAnalysisPriorityQueue2(handle)
+	pq = priorityqueue.NewAnalysisPriorityQueueV2(handle)
 	err = pq.Initialize()
 	require.NoError(t, err)
 	require.False(t, pq.IsWithinTimeWindow())
@@ -114,7 +114,7 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	tbl2, err := dom.InfoSchema().TableByName(ctx, schema, pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 
-	pq := priorityqueue.NewAnalysisPriorityQueue2(handle)
+	pq := priorityqueue.NewAnalysisPriorityQueueV2(handle)
 	defer pq.Close()
 	require.NoError(t, pq.Initialize())
 

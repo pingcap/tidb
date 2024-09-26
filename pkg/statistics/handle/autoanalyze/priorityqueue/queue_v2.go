@@ -51,8 +51,8 @@ type AnalysisPriorityQueueV2 struct {
 	initialized atomic.Bool
 }
 
-// NewAnalysisPriorityQueue2 creates a new AnalysisPriorityQueue2.
-func NewAnalysisPriorityQueue2(handle statstypes.StatsHandle) *AnalysisPriorityQueueV2 {
+// NewAnalysisPriorityQueueV2 creates a new AnalysisPriorityQueue2.
+func NewAnalysisPriorityQueueV2(handle statstypes.StatsHandle) *AnalysisPriorityQueueV2 {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &AnalysisPriorityQueueV2{
@@ -118,6 +118,12 @@ func (pq *AnalysisPriorityQueueV2) init() error {
 
 // run maintains the priority queue.
 func (pq *AnalysisPriorityQueueV2) run() {
+	defer func() {
+		if r := recover(); r != nil {
+			statslogutil.StatsLogger().Error("Priority queue panicked", zap.Any("recover", r), zap.Stack("stack"))
+		}
+	}()
+
 	timeRefreshInterval := time.NewTicker(lastAnalysisDurationRefreshInterval)
 	defer timeRefreshInterval.Stop()
 
@@ -221,6 +227,10 @@ func (pq *AnalysisPriorityQueueV2) IsWithinTimeWindow() bool {
 
 // Close closes the priority queue.
 func (pq *AnalysisPriorityQueueV2) Close() {
+	if !pq.initialized.Load() {
+		return
+	}
+
 	pq.cancel()
 	pq.wg.Wait()
 	pq.inner.Close()
