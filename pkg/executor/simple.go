@@ -118,19 +118,6 @@ type userInfo struct {
 	authString string
 }
 
-<<<<<<< HEAD
-// clearSysSession close the session does not return the session.
-// Since the environment variables in the session are changed, the session object is not returned.
-func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
-	if sctx == nil {
-		return
-	}
-	_, _ = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
-	sctx.(pools.Resource).Close()
-}
-
-=======
->>>>>>> 23facada83f (executor: fix forget to release session (#56299))
 // Next implements the Executor Next interface.
 func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	if e.done {
@@ -1723,12 +1710,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD
-	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
-=======
 	defer e.ReleaseSysSession(ctx, sysSession)
-	sqlExecutor := sysSession.GetSQLExecutor()
->>>>>>> 23facada83f (executor: fix forget to release session (#56299))
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	// session isolation level changed to READ-COMMITTED.
 	// When tidb is at the RR isolation level, executing `begin` will obtain a consistent state.
 	// When operating the same user concurrently, it may happen that historical versions are read.
