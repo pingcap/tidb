@@ -580,3 +580,65 @@ func TestFirstLitSlowStart(t *testing.T) {
 	}()
 	wg.Wait()
 }
+<<<<<<< HEAD:tests/realtikvtest/addindextest4/ingest_test.go
+=======
+
+func TestConcFastReorg(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tblNum := 10
+	for i := 0; i < tblNum; i++ {
+		tk.MustExec(fmt.Sprintf("create table t%d(a int);", i))
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(tblNum)
+	for i := 0; i < tblNum; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use addindexlit;")
+			tk2.MustExec(fmt.Sprintf("insert into t%d values (1), (2), (3);", i))
+
+			if i%2 == 0 {
+				tk2.MustExec(fmt.Sprintf("alter table t%d add index idx(a);", i))
+			} else {
+				tk2.MustExec(fmt.Sprintf("alter table t%d add unique index idx(a);", i))
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestIssue55808(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+	tk.MustExec("set global tidb_ddl_error_count_limit = 0")
+
+	backup := local.MaxWriteAndIngestRetryTimes
+	local.MaxWriteAndIngestRetryTimes = 1
+	t.Cleanup(func() {
+		local.MaxWriteAndIngestRetryTimes = backup
+	})
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 4; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/doIngestFailed", "return()")
+	err := tk.ExecToErr("alter table t add index idx(a);")
+	require.ErrorContains(t, err, "injected error")
+}
+>>>>>>> 448d56910cd (lightning: fix forget to set lastRetryableErr when ingest RPC fail (#56345)):tests/realtikvtest/addindextest3/ingest_test.go
