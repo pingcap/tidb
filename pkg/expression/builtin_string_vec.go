@@ -2981,12 +2981,14 @@ func formatDecimal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result 
 		} else {
 			// force copy of the string
 			// https://github.com/pingcap/tidb/issues/56193
-			locale := strings.Clone(localeBuf.GetString(i))
+			locale = strings.Clone(localeBuf.GetString(i))
 		}
 
 		lang, err := language.Parse(locale)
 		if err != nil {
-			return fmt.Errorf("can't set locale to '%s': %w", locale, err)
+			tc := typeCtx(ctx)
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+			lang = language.English
 		}
 		p := message.NewPrinter(lang)
 		xint, err := strconv.ParseFloat(x.String(), 64)
@@ -3026,12 +3028,14 @@ func formatReal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *ch
 		} else {
 			// force copy of the string
 			// https://github.com/pingcap/tidb/issues/56193
-			locale := strings.Clone(localeBuf.GetString(i))
+			locale = strings.Clone(localeBuf.GetString(i))
 		}
 
 		lang, err := language.Parse(locale)
 		if err != nil {
-			return fmt.Errorf("can't set locale to '%s': %w", locale, err)
+			tc := typeCtx(ctx)
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+			lang = language.English
 		}
 		p := message.NewPrinter(lang)
 		formatString := p.Sprintf("%v", number.Decimal(x, number.Scale(int(d))))

@@ -3329,7 +3329,8 @@ func (b *builtinFormatWithLocaleSig) evalString(ctx EvalContext, row chunk.Row) 
 
 	lang, err := language.Parse(locale)
 	if err != nil {
-		return "", false, fmt.Errorf("can't set locale to '%s': %w", locale, err)
+		tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+		lang = language.English
 	}
 	p := message.NewPrinter(lang)
 	xint, err := strconv.ParseFloat(x, 64)
