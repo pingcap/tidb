@@ -47,9 +47,13 @@ func TestEventString(t *testing.T) {
 					{ID: 6},
 				},
 			},
-			ColumnInfos: []*model.ColumnInfo{
+			Columns: []*model.ColumnInfo{
 				{ID: 7, Name: pmodel.NewCIStr("Column1")},
 				{ID: 8, Name: pmodel.NewCIStr("Column2")},
+			},
+			Indexes: []*model.IndexInfo{
+				{ID: 9, Name: pmodel.NewCIStr("Index1")},
+				{ID: 10, Name: pmodel.NewCIStr("Index2")},
 			},
 		},
 	}
@@ -60,6 +64,7 @@ func TestEventString(t *testing.T) {
 	// Check the result
 	expected := "(Event Type: add column, Table ID: 1, Table Name: Table1, Old Table ID: 4, Old Table Name: Table2," +
 		" Partition ID: 2, Partition ID: 3, Dropped Partition ID: 5, Dropped Partition ID: 6, " +
-		"Column ID: 7, Column Name: Column1, Column ID: 8, Column Name: Column2)"
+		"Column ID: 7, Column Name: Column1, Column ID: 8, Column Name: Column2, " +
+		"Index ID: 9, Index Name: Index1, Index ID: 10, Index Name: Index2)"
 	require.Equal(t, expected, result)
 }
